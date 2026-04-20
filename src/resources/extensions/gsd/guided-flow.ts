@@ -421,6 +421,12 @@ const MAX_EMPTY_TURN_RETRIES = 2;
 const COMMIT_INTENT_RE =
   /\b(?:I['’]ll|I will|Next,? I['’]ll|Now I['’]ll|Let me|I['’]m going to|I am going to)\s+(?:now\s+)?(?:write|create|call|invoke|update|add|make|run|execute|generate|produce|emit|compose|implement|save|apply|commit)\b/i;
 
+// #4574 follow-up — imperative-style user handoffs that the trailing-`?`
+// heuristic missed. When the LLM says "just reply 'yes'" or "let me know", the
+// ball is in the user's court even if the sentence doesn't end with `?`.
+const HANDOFF_RE =
+  /\b(?:just\s+(?:reply|say|respond|answer|type)|reply\s+with|let\s+me\s+know|tell\s+me|confirm\s+(?:and|by|with|if)|say\s+(?:yes|"yes"|'yes')|respond\s+with|if\s+you['’]d\s+like|when\s+you['’]re\s+ready|awaiting\s+your)\b/i;
+
 /**
  * Reset the empty-turn counter for a basePath after a successful tool-use turn.
  * Called from handleAgentEnd when the last message contains tool_use blocks.
@@ -434,9 +440,12 @@ export function maybeHandleEmptyIntentTurn(
   event: { messages: any[] },
   isAuto: boolean,
 ): boolean {
-  // Gate: only fire when there is system-driven work in flight. Interactive
-  // /gsd discuss (user-driven) produces legitimate text-only turns.
-  if (!isAuto && pendingAutoStartMap.size === 0) return false;
+  // Gate: only fire in auto-mode. The original gate also allowed
+  // `pendingAutoStartMap.size > 0`, but that map is populated for the entire
+  // discuss session — so the detector fired on legitimate mid-interview
+  // clarification turns (#4574 regression). The stall this handler targets is
+  // the post-ready-signal writes phase, which always runs under auto-mode.
+  if (!isAuto) return false;
 
   const lastMsg = event.messages[event.messages.length - 1];
   if (!lastMsg) return false;
@@ -449,12 +458,14 @@ export function maybeHandleEmptyIntentTurn(
   // path, handled by maybeHandleReadyPhraseWithoutFiles.
   if (READY_PHRASE_RE.test(text)) return false;
 
-  // Skip if the LLM is clearly handing back to the user. Keep the heuristic
-  // tight: a trailing question mark on the last non-empty line is the common
-  // signal for "I asked the user a question and stopped."
+  // Skip if the LLM is clearly handing back to the user. Trailing `?` catches
+  // direct questions; HANDOFF_RE covers imperative-style handoffs like
+  // "just reply 'yes'" or "let me know" (#4574 regression: these slipped
+  // through the original `?`-only check).
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const lastLine = lines[lines.length - 1] ?? "";
   if (lastLine.endsWith("?")) return false;
+  if (HANDOFF_RE.test(text)) return false;
 
   // Must contain a commit-intent phrase — this is the stall we care about.
   if (!COMMIT_INTENT_RE.test(text)) return false;

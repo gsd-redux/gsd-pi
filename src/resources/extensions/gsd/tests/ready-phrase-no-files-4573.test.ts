@@ -230,6 +230,30 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
     assert.equal(handled, false);
   });
 
+  // #4574 regression: the original gate also allowed pendingAutoStartMap.size>0
+  // as a trigger, so it fired on every mid-discuss clarification turn. The
+  // fixed gate is `isAuto` only — discuss-phase turns must never trigger.
+  test("#4574 — isAuto false + pending discuss entry → not flagged (mid-discuss clarification)", () => {
+    const base = mkBase();
+    try {
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleEmptyIntentTurn(
+        { messages: [assistantMsg("I'll now write the CONTEXT.md file.")] },
+        false,
+      );
+      assert.equal(handled, false, "discuss-phase turn must not trigger");
+      assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
   test("text-only turn WITHOUT commit phrase → not flagged (legitimate text)", () => {
     const base = mkBase();
     try {
@@ -242,7 +266,7 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const handled = maybeHandleEmptyIntentTurn(
         { messages: [assistantMsg("Here is the roadmap preview — three slices.")] },
-        false,
+        true,
       );
       assert.equal(handled, false);
       assert.equal(cap.messages.length, 0);
@@ -263,7 +287,7 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const handled = maybeHandleEmptyIntentTurn(
         { messages: [assistantMsg("Ready to write, or want to adjust?")] },
-        false,
+        true,
       );
       assert.equal(handled, false);
     } finally {
@@ -271,7 +295,64 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
     }
   });
 
-  test("commit-intent phrase WITHOUT tool call → nudge fires", () => {
+  // #4574 regression: imperative handoff that doesn't end with `?` but contains
+  // a commit-intent phrase ("...and I'll write the files.") — must not fire.
+  test("#4574 — imperative handoff 'just reply yes' → not flagged", () => {
+    const base = mkBase();
+    try {
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleEmptyIntentTurn(
+        {
+          messages: [
+            assistantMsg(
+              "The remote confirmation tool isn't reachable. To unblock — " +
+                "just reply 'yes' or correct anything I missed, and I'll write the files.",
+            ),
+          ],
+        },
+        true,
+      );
+      assert.equal(handled, false, "imperative handoff must not trigger");
+      assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
+  test("#4574 — 'let me know' handoff → not flagged", () => {
+    const base = mkBase();
+    try {
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleEmptyIntentTurn(
+        {
+          messages: [
+            assistantMsg(
+              "Let me know which option you prefer and I'll write it up.",
+            ),
+          ],
+        },
+        true,
+      );
+      assert.equal(handled, false);
+      assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
+  test("commit-intent phrase WITHOUT tool call (isAuto) → nudge fires", () => {
     const base = mkBase();
     try {
       const cap = mkCapture();
@@ -283,7 +364,7 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const handled = maybeHandleEmptyIntentTurn(
         { messages: [assistantMsg("I'll now write the CONTEXT.md file.")] },
-        false,
+        true,
       );
       assert.equal(handled, true);
       assert.equal(cap.messages.length, 1);
@@ -305,7 +386,7 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const handled = maybeHandleEmptyIntentTurn(
         { messages: [assistantMsg("I'll write the file now.", { toolUse: true })] },
-        false,
+        true,
       );
       assert.equal(handled, false);
       assert.equal(cap.messages.length, 0);
@@ -326,7 +407,7 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const handled = maybeHandleEmptyIntentTurn(
         { messages: [assistantMsg("Milestone M001 ready.")] },
-        false,
+        true,
       );
       assert.equal(handled, false);
     } finally {
@@ -346,9 +427,9 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const event = { messages: [assistantMsg("I'll write the CONTEXT.md file.")] };
 
-      maybeHandleEmptyIntentTurn(event, false); // 1
-      maybeHandleEmptyIntentTurn(event, false); // 2
-      const third = maybeHandleEmptyIntentTurn(event, false); // > cap
+      maybeHandleEmptyIntentTurn(event, true); // 1
+      maybeHandleEmptyIntentTurn(event, true); // 2
+      const third = maybeHandleEmptyIntentTurn(event, true); // > cap
 
       assert.equal(cap.messages.length, 2, "only 2 nudges sent");
       assert.equal(third, false, "after cap, no further injection");
@@ -373,12 +454,12 @@ describe("#4573 maybeHandleEmptyIntentTurn", () => {
       });
       const event = { messages: [assistantMsg("I'll write the CONTEXT.md file.")] };
 
-      maybeHandleEmptyIntentTurn(event, false); // 1
-      maybeHandleEmptyIntentTurn(event, false); // 2 — at cap
+      maybeHandleEmptyIntentTurn(event, true); // 1
+      maybeHandleEmptyIntentTurn(event, true); // 2 — at cap
       resetEmptyTurnCounter(); // simulate a successful tool-use turn in between
 
       cap.messages.length = 0;
-      const after = maybeHandleEmptyIntentTurn(event, false);
+      const after = maybeHandleEmptyIntentTurn(event, true);
       assert.equal(after, true, "counter reset — nudge fires again");
       assert.equal(cap.messages.length, 1);
     } finally {
