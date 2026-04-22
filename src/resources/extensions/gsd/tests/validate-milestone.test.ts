@@ -257,8 +257,8 @@ Test
 `);
     openTestDb(base);
     insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
-    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [], sequence: 1 });
-    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [], sequence: 2 });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
 
     const prompt = await buildCompleteMilestonePrompt("M001", "Test Milestone", base);
@@ -296,8 +296,8 @@ Test
 `);
     openTestDb(base);
     insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
-    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [], sequence: 1 });
-    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [], sequence: 2 });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
     writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
 
