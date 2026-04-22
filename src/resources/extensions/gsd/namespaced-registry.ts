@@ -1,5 +1,5 @@
 /**
- * Namespaced Component Registry Module
+ * GSD2 — Namespaced Component Registry Module
  *
  * Provides the canonical identity model for imported plugin components.
  * Supports both namespaced (plugin:component) and flat (bare name) components,
@@ -8,6 +8,7 @@
  *
  * This registry serves as the bridge between S01's plugin discovery output
  * and Pi's internal component resolution system.
+ *
  */
 
 import type { DiscoveredPlugin } from './marketplace-discovery.js';

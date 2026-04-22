@@ -1,9 +1,10 @@
 /**
- * workflow-dispatch.ts — Shared dispatchers for workflow plugins.
+ * GSD2 — workflow-dispatch.ts — Shared dispatchers for workflow plugins.
  *
  * Called by both `/gsd start <template>` (existing markdown path) and
  * `/gsd workflow <name>` (new direct dispatch). Keeps the prompt-build
  * logic in one place so md template behavior stays consistent.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

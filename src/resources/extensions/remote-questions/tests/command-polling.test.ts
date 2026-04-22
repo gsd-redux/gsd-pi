@@ -1,12 +1,13 @@
 /**
- * Tests for startCommandPolling() background interval.
+ * GSD2 — Tests for startCommandPolling() background interval.
  *
  * Framework: node:test + node:assert/strict (CONTRIBUTING.md rules)
  *
  * Covers:
- *   - startCommandPolling returns a cleanup function
- *   - Calling cleanup stops further poll invocations
- *   - When no remote channel is configured, a no-op cleanup is returned
+ * - startCommandPolling returns a cleanup function
+ * - Calling cleanup stops further poll invocations
+ * - When no remote channel is configured, a no-op cleanup is returned
+ *
  */
 
 import test from "node:test";

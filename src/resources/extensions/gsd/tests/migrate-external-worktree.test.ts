@@ -1,3 +1,4 @@
+// GSD2 — Tests for Migrate External Worktree
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import {

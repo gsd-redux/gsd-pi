@@ -1,6 +1,7 @@
 /**
- * Shared fetch-mocking utilities for test files that need to intercept
+ * GSD2 — Shared fetch-mocking utilities for test files that need to intercept
  * globalThis.fetch and inspect request headers/body.
+ *
  */
 
 export function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> | undefined {

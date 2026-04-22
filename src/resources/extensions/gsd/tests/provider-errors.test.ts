@@ -1,8 +1,9 @@
 /**
- * Provider error handling tests — consolidated from:
- *   - provider-error-classify.test.ts (classifyError)
- *   - network-error-fallback.test.ts (isTransientNetworkError, getNextFallbackModel)
- *   - agent-end-provider-error.test.ts (pauseAutoForProviderError)
+ * GSD2 — Provider error handling tests — consolidated from:
+ * - provider-error-classify.test.ts (classifyError)
+ * - network-error-fallback.test.ts (isTransientNetworkError, getNextFallbackModel)
+ * - agent-end-provider-error.test.ts (pauseAutoForProviderError)
+ *
  */
 
 import test from "node:test";

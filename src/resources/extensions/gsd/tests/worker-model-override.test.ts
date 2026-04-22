@@ -1,7 +1,8 @@
 /**
- * Worker model override — tests for parallel.worker_model preference.
+ * GSD2 — Worker model override — tests for parallel.worker_model preference.
  *
  * Verifies validation, resolveParallelConfig pass-through, and type definitions.
+ *
  */
 
 import test from "node:test";

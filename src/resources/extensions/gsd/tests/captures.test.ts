@@ -1,5 +1,5 @@
 /**
- * Unit tests for GSD Captures — file I/O, parsing, and worktree path resolution.
+ * GSD2 — Unit tests for GSD Captures — file I/O, parsing, and worktree path resolution.
  *
  * Exercises the boundary contract that S02 (auto-mode dispatch) depends on:
  * - appendCapture creates/appends entries to CAPTURES.md
@@ -8,6 +8,7 @@
  * - markCaptureResolved updates entry in place
  * - resolveCapturesPath handles worktree paths
  * - parseTriageOutput handles valid, malformed, and partial JSON
+ *
  */
 
 import test from "node:test";

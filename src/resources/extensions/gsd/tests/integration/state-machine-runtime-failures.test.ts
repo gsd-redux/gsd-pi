@@ -1,5 +1,5 @@
 /**
- * state-machine-runtime-failures.test.ts — Tests for auto-loop runtime failures,
+ * GSD2 — state-machine-runtime-failures.test.ts — Tests for auto-loop runtime failures,
  * infrastructure errors, stuck detection, session management, merge conflicts,
  * concurrent access, and race conditions.
  *
@@ -17,6 +17,7 @@
  * 8. s.active race: pause signal during unit execution
  * 9. Filesystem mutation during dispatch cycle
  * 10. Worktree disappearance detection
+ *
  */
 
 // GSD State Machine Runtime Failure Tests

@@ -1,3 +1,4 @@
+// GSD2 — Audit Toggle — AUDIT_ENV_KEY constant
 const AUDIT_ENV_KEY = "GSD_UOK_AUDIT_UNIFIED";
 
 export function setUnifiedAuditEnabled(enabled: boolean): void {

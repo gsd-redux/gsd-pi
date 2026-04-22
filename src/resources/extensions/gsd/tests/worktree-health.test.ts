@@ -1,8 +1,9 @@
 /**
- * worktree-health.test.ts — Unit tests for worktree health status computation.
+ * GSD2 — worktree-health.test.ts — Unit tests for worktree health status computation.
  *
  * Creates real temp git repos with GSD worktrees in various states and verifies
  * that getWorktreeHealth and formatWorktreeStatusLine return correct results.
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
@@ -14,7 +15,6 @@ import { getWorktreeHealth, formatWorktreeStatusLine } from "../worktree-health.
 import { listWorktrees } from "../worktree-manager.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();

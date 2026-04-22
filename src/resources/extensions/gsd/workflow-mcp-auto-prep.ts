@@ -1,3 +1,4 @@
+// GSD2 — Workflow Mcp Auto Prep — EnsureProjectWorkflowMcpConfigResult type
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import {

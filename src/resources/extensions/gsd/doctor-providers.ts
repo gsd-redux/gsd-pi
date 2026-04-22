@@ -1,14 +1,15 @@
 /**
- * GSD Doctor — Provider & Integration Health Checks
+ * GSD2 — GSD Doctor — Provider & Integration Health Checks
  *
  * Fast, deterministic checks for external service configuration.
  * Checks key presence in auth.json and environment variables — no HTTP calls,
  * no network I/O, always sub-10ms.
  *
  * Covers:
- *   - LLM providers required by the effective model preferences (per phase)
- *   - Remote questions channel if configured (Slack/Discord/Telegram token)
- *   - Optional search/tool integrations (Brave, Tavily, Jina, Context7)
+ * - LLM providers required by the effective model preferences (per phase)
+ * - Remote questions channel if configured (Slack/Discord/Telegram token)
+ * - Optional search/tool integrations (Brave, Tavily, Jina, Context7)
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

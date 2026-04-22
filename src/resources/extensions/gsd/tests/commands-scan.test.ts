@@ -1,5 +1,6 @@
 /**
- * Tests for /gsd scan command — pure functions + handler integration
+ * GSD2 — Tests for /gsd scan command — pure functions + handler integration
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

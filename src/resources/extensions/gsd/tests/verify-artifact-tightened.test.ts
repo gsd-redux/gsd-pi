@@ -1,5 +1,5 @@
 /**
- * Regression test for #3607 — tighten verifyExpectedArtifact legacy branch
+ * GSD2 — Regression test for #3607 — tighten verifyExpectedArtifact legacy branch
  *
  * The legacy (pre-migration) fallback in verifyExpectedArtifact previously
  * accepted either a heading match (### T01 --) or a checked checkbox as proof
@@ -9,6 +9,7 @@
  * The fix removes the hdRe heading regex and requires only a checked checkbox
  * (cbRe) in the legacy branch, ensuring that only actual tool-completed tasks
  * are treated as verified.
+ *
  */
 
 import { describe, it } from 'node:test'

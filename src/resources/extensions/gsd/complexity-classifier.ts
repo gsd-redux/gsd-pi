@@ -1,7 +1,4 @@
-// GSD Extension — Complexity Classifier
-// Classifies unit complexity for dynamic model routing.
-// Pure heuristics + adaptive learning — no LLM calls. Sub-millisecond classification.
-
+// GSD2 — Extension — Complexity Classifier
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";

@@ -1,3 +1,4 @@
+// GSD2 — Web Auth Storage — types and interfaces
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 

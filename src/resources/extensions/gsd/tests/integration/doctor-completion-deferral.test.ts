@@ -1,8 +1,9 @@
 /**
- * Regression test for #1808: Completion-transition doctor fix deferral.
+ * GSD2 — Regression test for #1808: Completion-transition doctor fix deferral.
  *
  * Reconciliation codes are removed — doctor no longer creates summary/UAT
  * stubs or reports checkbox/file mismatch issues.
+ *
  */
 
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";

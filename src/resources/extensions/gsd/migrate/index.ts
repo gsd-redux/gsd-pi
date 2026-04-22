@@ -1,5 +1,4 @@
-// Barrel export for old .planning migration module
-
+// GSD2 — Barrel export for old .planning migration module
 export { handleMigrate } from './command.js';
 export { parsePlanningDirectory } from './parser.js';
 export { validatePlanningDirectory } from './validator.js';

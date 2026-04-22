@@ -1,9 +1,10 @@
 /**
- * Auto-mode Prompt Builders — construct dispatch prompts for each unit type.
+ * GSD2 — Auto-mode Prompt Builders — construct dispatch prompts for each unit type.
  *
  * Pure async functions that load templates and inline file content. No module-level
  * state, no globals — every dependency is passed as a parameter or imported as a
  * utility.
+ *
  */
 
 import { loadFile, parseContinue, parseSummary, loadActiveOverrides, formatOverridesSection, parseTaskPlanFile } from "./files.js";

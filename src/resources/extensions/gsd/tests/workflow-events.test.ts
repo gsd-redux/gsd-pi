@@ -1,6 +1,4 @@
-// GSD Extension — workflow-events unit tests
-// Tests appendEvent, readEvents, findForkPoint, compactMilestoneEvents.
-
+// GSD2 — Extension — workflow-events unit tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

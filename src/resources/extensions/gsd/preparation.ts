@@ -1,10 +1,11 @@
 /**
- * GSD Preparation — Structured brief generation for discussion LLM sessions.
+ * GSD2 — GSD Preparation — Structured brief generation for discussion LLM sessions.
  *
  * Produces structured briefs (codebase, prior context, ecosystem) before
  * the discussion LLM session starts.
  *
  * Pure functions, zero UI dependencies (except for runPreparation orchestrator).
+ *
  */
 
 import { readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";

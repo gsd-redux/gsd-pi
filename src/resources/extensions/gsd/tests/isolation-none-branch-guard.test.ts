@@ -1,5 +1,5 @@
 /**
- * Regression test for #3675 — isolation:none stale branch guard
+ * GSD2 — Regression test for #3675 — isolation:none stale branch guard
  *
  * When switching from isolation:branch/worktree to isolation:none, HEAD
  * could remain on a milestone/<MID> branch. The fix in auto-start.ts
@@ -7,6 +7,7 @@
  *
  * This structural test verifies the milestone/ branch check exists
  * in auto-start.ts.
+ *
  */
 
 import { describe, test } from 'node:test';

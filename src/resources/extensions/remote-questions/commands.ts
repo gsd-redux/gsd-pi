@@ -1,17 +1,18 @@
 /**
- * Telegram Command Handler
+ * GSD2 — Telegram Command Handler
  *
  * Handles slash-commands sent by the user via Telegram chat:
- *   /help     — list all commands
- *   /status   — current auto-mode state (milestone, unit, cost)
- *   /progress — roadmap overview (done / open milestones)
- *   /budget   — token and cost usage this session
- *   /pause    — pause auto-mode via a stop capture
- *   /resume   — clear pending stop captures so auto-mode can proceed
- *   /log [n]  — last n activity log entries (default: 5)
+ * /help     — list all commands
+ * /status   — current auto-mode state (milestone, unit, cost)
+ * /progress — roadmap overview (done / open milestones)
+ * /budget   — token and cost usage this session
+ * /pause    — pause auto-mode via a stop capture
+ * /resume   — clear pending stop captures so auto-mode can proceed
+ * /log [n]  — last n activity log entries (default: 5)
  *
  * Only Telegram is supported here. Other channels (Slack, Discord) use
  * webhook models and do not share the same polling loop.
+ *
  */
 
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";

@@ -1,3 +1,4 @@
+// GSD2 — Wizard — ApiKeyCredential type
 import type { AuthStorage } from '@gsd/pi-coding-agent'
 
 type ApiKeyCredential = {

@@ -1,6 +1,4 @@
-// gsd / infra-errors cooldown detection tests
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — gsd / infra-errors cooldown detection tests
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 

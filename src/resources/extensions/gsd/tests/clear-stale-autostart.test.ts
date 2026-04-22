@@ -1,9 +1,10 @@
 /**
- * clear-stale-autostart.test.ts — #3667
+ * GSD2 — clear-stale-autostart.test.ts — #3667
  *
  * Verify that guided-flow.ts adds a createdAt timestamp to pending auto-start
  * entries and implements a staleness check (30s age guard) so that /clear
  * interrupted discussions don't permanently block future /gsd invocations.
+ *
  */
 
 import { describe, test } from "node:test";

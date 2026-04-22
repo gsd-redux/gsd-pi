@@ -1,3 +1,4 @@
+// GSD2 — Tests for Git Service
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from "node:fs";
@@ -28,7 +29,6 @@ function run(command: string, cwd: string): string {
 
 describe('git-service', async () => {
   // ─── inferCommitType ───────────────────────────────────────────────────
-
 
   assert.deepStrictEqual(
     inferCommitType("Implement user authentication"),
@@ -193,7 +193,6 @@ describe('git-service', async () => {
 
   // ─── inferCommitType with oneLiner ──────────────────────────────────────
 
-
   assert.deepStrictEqual(
     inferCommitType("implement dashboard", "Fixed rendering bug in sidebar"),
     "fix",
@@ -245,7 +244,6 @@ describe('git-service', async () => {
 
   // ─── RUNTIME_EXCLUSION_PATHS ───────────────────────────────────────────
 
-
   assert.deepStrictEqual(
     RUNTIME_EXCLUSION_PATHS.length,
     15,
@@ -287,7 +285,6 @@ describe('git-service', async () => {
 
   // ─── runGit ────────────────────────────────────────────────────────────
 
-
   const tempDir = mkdtempSync(join(tmpdir(), "gsd-git-service-test-"));
   runGit(tempDir, ["init", "-b", "main"]);
   runGit(tempDir, ["config", "user.name", "Pi Test"]);
@@ -315,7 +312,6 @@ describe('git-service', async () => {
   assert.ok(threw, "runGit throws without allowFailure on error");
 
   // ─── Type exports compile check ────────────────────────────────────────
-
 
   // These are compile-time checks — if we got here, the types import fine
   const _prefs: GitPreferences = { auto_push: true, remote: "origin" };

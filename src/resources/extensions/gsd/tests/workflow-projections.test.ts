@@ -1,6 +1,4 @@
-// GSD Extension — workflow-projections unit tests
-// Tests the pure rendering functions (no DB required).
-
+// GSD2 — Extension — workflow-projections unit tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderPlanContent } from '../workflow-projections.ts';

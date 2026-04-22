@@ -1,3 +1,4 @@
+// GSD2 — Roadmap Slices
 import type { RoadmapSliceEntry, RiskLevel } from "./types.js";
 
 /**

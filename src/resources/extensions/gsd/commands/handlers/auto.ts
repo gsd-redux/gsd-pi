@@ -1,3 +1,4 @@
+// GSD2 — Auto
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { existsSync, readFileSync } from "node:fs";

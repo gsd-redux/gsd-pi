@@ -1,5 +1,5 @@
 /**
- * git-self-heal.ts — Automated git state recovery utilities.
+ * GSD2 — git-self-heal.ts — Automated git state recovery utilities.
  *
  * Four synchronous functions for recovering from broken git state
  * during auto-mode operations. Uses only `git reset --hard HEAD` —
@@ -8,6 +8,7 @@
  * Observability: Each function returns structured results describing
  * what actions were taken. `formatGitError` maps raw git errors to
  * user-friendly messages suggesting `/gsd doctor`.
+ *
  */
 
 import { existsSync, unlinkSync } from "node:fs";

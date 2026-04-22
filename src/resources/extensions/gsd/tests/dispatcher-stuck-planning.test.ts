@@ -1,10 +1,11 @@
 /**
- * dispatcher-stuck-planning.test.ts — #3656
+ * GSD2 — dispatcher-stuck-planning.test.ts — #3656
  *
  * Verify that state.ts contains the disk-to-DB task reconciliation logic
  * that prevents the dispatcher from getting stuck in an infinite planning
  * loop when the planner writes a PLAN.md but never calls the persistence
  * tool, leaving the DB with zero task rows.
+ *
  */
 
 import { describe, test } from "node:test";

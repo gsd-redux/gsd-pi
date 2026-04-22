@@ -1,5 +1,5 @@
 /**
- * Cross-platform filesystem safety — static analysis guard.
+ * GSD2 — Cross-platform filesystem safety — static analysis guard.
  *
  * Scans ALL production .ts files and flags patterns that break on
  * Windows, Linux, or macOS. Modelled after the git-locale static
@@ -7,6 +7,7 @@
  *
  * Patterns 1, 3, 4 → hard fail (clear bugs).
  * Patterns 2, 5, 6 → warn only (logged, no assertion failure).
+ *
  */
 
 import { describe, test } from "node:test";

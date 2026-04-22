@@ -1,5 +1,5 @@
 /**
- * Milestone validation quality gate persistence.
+ * GSD2 — Milestone validation quality gate persistence.
  *
  * #2945 Bug 4: validate-milestone was writing VALIDATION.md to disk and
  * inserting an assessment row, but never persisted structured quality_gates
@@ -9,6 +9,7 @@
  * Gate IDs for milestone validation (MV01–MV04) are sourced from the
  * gate registry so the definitions stay in lockstep with prompt builders,
  * dispatch rules, and state derivation. See gate-registry.ts.
+ *
  */
 
 import { isDbAvailable, upsertQualityGate } from "./gsd-db.js";

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Prompt Ordering
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { reorderForCaching, analyzeCacheEfficiency } from "../prompt-ordering.js";

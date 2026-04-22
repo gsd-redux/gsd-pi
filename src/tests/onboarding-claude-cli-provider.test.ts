@@ -1,3 +1,4 @@
+// GSD2 — Tests for Onboarding Claude Cli Provider
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"

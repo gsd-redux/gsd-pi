@@ -1,3 +1,4 @@
+// GSD2 — Git Summary Service
 import { execFileSync } from "node:child_process"
 import { relative, resolve, sep } from "node:path"
 

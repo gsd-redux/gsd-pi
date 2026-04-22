@@ -1,7 +1,8 @@
 /**
- * Model selection and dynamic routing for auto-mode unit dispatch.
+ * GSD2 — Model selection and dynamic routing for auto-mode unit dispatch.
  * Handles complexity-based routing, model resolution across providers,
  * and fallback chains.
+ *
  */
 
 import type { Api, Model } from "@gsd/pi-ai";

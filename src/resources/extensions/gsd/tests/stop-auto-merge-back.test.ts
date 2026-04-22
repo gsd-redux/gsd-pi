@@ -1,10 +1,11 @@
 /**
- * stop-auto-merge-back.test.ts — Regression test for #2317.
+ * GSD2 — stop-auto-merge-back.test.ts — Regression test for #2317.
  *
  * When auto-mode stops after a milestone is complete, stopAuto should trigger
  * merge-back (mergeAndExit) instead of just exiting the worktree with
  * preserveBranch: true. Otherwise milestone code stays stranded on the
  * worktree branch and never reaches main.
+ *
  */
 
 import test from "node:test";

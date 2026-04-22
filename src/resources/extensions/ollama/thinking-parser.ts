@@ -1,5 +1,4 @@
 // GSD2 — Ollama Extension: Stateful <think> tag stream parser
-
 /**
  * Extracts <think>...</think> thinking blocks from a streaming text response.
  * Handles the case where tag boundaries span multiple chunks by buffering

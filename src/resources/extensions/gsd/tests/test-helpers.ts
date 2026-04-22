@@ -1,9 +1,4 @@
-// Shared assertion helpers for GSD test files.
-//
-// Usage:
-//   import { createTestContext } from './test-helpers.ts';
-//   const { assertEq, assertTrue, assertMatch, assertNoMatch, report } = createTestContext();
-
+// GSD2 — Shared assertion helpers for GSD test files.
 /**
  * Create an isolated set of assertion helpers with their own pass/fail counters.
  * Each test file gets its own context to avoid shared state across vitest workers.

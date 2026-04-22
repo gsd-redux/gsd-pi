@@ -1,5 +1,5 @@
 /**
- * e2e-workflow-pipeline-integration.test.ts — End-to-end integration test
+ * GSD2 — e2e-workflow-pipeline-integration.test.ts — End-to-end integration test
  * proving the assembled workflow engine pipeline works.
  *
  * Exercises every engine feature in a single multi-step workflow:
@@ -18,6 +18,7 @@
  *
  * Follows the pattern from iterate-engine-integration.test.ts:
  * real temp dirs via mkdtempSync, dispatch()/reconcile() helpers, afterEach cleanup.
+ *
  */
 
 import { describe, it, afterEach } from "node:test";

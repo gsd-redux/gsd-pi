@@ -1,11 +1,12 @@
 /**
- * gitignore-tracked-gsd.test.ts — Regression tests for #1364.
+ * GSD2 — gitignore-tracked-gsd.test.ts — Regression tests for #1364.
  *
  * Verifies that ensureGitignore() does NOT add ".gsd" to .gitignore
  * when .gsd/ contains git-tracked files, and that migrateToExternalState()
  * aborts migration for tracked .gsd/ directories.
  *
  * Uses real temporary git repos — no mocks.
+ *
  */
 
 import test from "node:test";

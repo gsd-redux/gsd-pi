@@ -1,12 +1,13 @@
 /**
- * Unit tests for the CONTEXT.md write-gate (D031 guard chain).
+ * GSD2 — Unit tests for the CONTEXT.md write-gate (D031 guard chain).
  *
  * Exercises shouldBlockContextWrite() — a pure function that implements:
- *   (a) toolName !== "write" → pass
- *   (b) milestone context must resolve to a verified milestone
- *   (c) path doesn't match /M\d+-CONTEXT\.md$/ → pass
- *   (d) non-context files → pass
- *   (e) else → block with actionable reason
+ * (a) toolName !== "write" → pass
+ * (b) milestone context must resolve to a verified milestone
+ * (c) path doesn't match /M\d+-CONTEXT\.md$/ → pass
+ * (d) non-context files → pass
+ * (e) else → block with actionable reason
+ *
  */
 
 import test from 'node:test';

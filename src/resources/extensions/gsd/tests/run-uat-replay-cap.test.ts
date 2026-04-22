@@ -1,5 +1,5 @@
 /**
- * Regression test for #3624 — cap run-uat dispatch attempts
+ * GSD2 — Regression test for #3624 — cap run-uat dispatch attempts
  *
  * When verification commands fail before writing a verdict, the run-uat
  * dispatch rule fires repeatedly in an infinite loop. The fix adds a
@@ -8,6 +8,7 @@
  *
  * Structural verification test — reads source to confirm MAX_UAT_ATTEMPTS
  * and incrementUatCount exist.
+ *
  */
 
 import { describe, test } from 'node:test';

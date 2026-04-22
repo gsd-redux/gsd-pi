@@ -1,10 +1,11 @@
 /**
- * Regression test for discuss-slice structured questions availability
+ * GSD2 — Regression test for discuss-slice structured questions availability
  *
  * The guided-discuss-slice.md template must use the structuredQuestionsAvailable
  * template variable to conditionally switch between ask_user_questions tool
  * calls and plain-text questions, so the prompt works correctly when the
  * structured questions tool is not available.
+ *
  */
 
 import { describe, it } from 'node:test'

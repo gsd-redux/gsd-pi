@@ -1,6 +1,4 @@
-// GSD Extension — /gsd escalate Command Handler (ADR-011 Phase 2)
-// Surface and resolve mid-execution escalations from the CLI.
-
+// GSD2 — Extension — /gsd escalate Command Handler (ADR-011 Phase 2)
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { projectRoot } from "../context.js";

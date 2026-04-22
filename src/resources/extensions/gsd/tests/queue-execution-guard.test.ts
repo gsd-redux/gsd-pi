@@ -1,19 +1,20 @@
 /**
- * Unit tests for the queue-mode execution guard (#2545).
+ * GSD2 — Unit tests for the queue-mode execution guard (#2545).
  *
  * When queue phase is active, the agent should only create milestones —
  * not execute work. This guard blocks write/edit/bash tool calls that
  * target source code (non-.gsd/ paths) during queue mode.
  *
  * Exercises shouldBlockQueueExecution() — a pure function that checks:
- *   (a) queuePhaseActive false → pass (not in queue mode)
- *   (b) toolName is read-only (read, grep, find, ls) → pass
- *   (c) toolName is ask_user_questions → pass (discussion tool)
- *   (d) write/edit to .gsd/ path → pass (planning artifacts)
- *   (e) write/edit to source path → block
- *   (f) bash command → block (could execute work)
- *   (g) registered GSD tools (gsd_milestone_generate_id, gsd_summary_save) → pass
- *   (h) unknown custom tools → block
+ * (a) queuePhaseActive false → pass (not in queue mode)
+ * (b) toolName is read-only (read, grep, find, ls) → pass
+ * (c) toolName is ask_user_questions → pass (discussion tool)
+ * (d) write/edit to .gsd/ path → pass (planning artifacts)
+ * (e) write/edit to source path → block
+ * (f) bash command → block (could execute work)
+ * (g) registered GSD tools (gsd_milestone_generate_id, gsd_summary_save) → pass
+ * (h) unknown custom tools → block
+ *
  */
 
 import test from 'node:test';

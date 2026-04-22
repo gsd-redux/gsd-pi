@@ -1,10 +1,11 @@
 /**
- * complete-slice gate closure integration test.
+ * GSD2 — complete-slice gate closure integration test.
  *
  * Pins the fix for the Q8-stall bug: complete-slice must close every gate
  * owned by the complete-slice turn based on the content of the matching
  * CompleteSliceParams field. Without this, Q8 stays pending forever and
  * blocks state derivation on subsequent loops.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

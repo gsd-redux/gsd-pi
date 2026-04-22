@@ -1,5 +1,4 @@
 // GSD2 — Ollama Extension: NDJSON streaming parser
-
 /**
  * Parses a streaming NDJSON (newline-delimited JSON) response body into
  * typed objects. Used for Ollama's /api/chat and /api/pull endpoints.

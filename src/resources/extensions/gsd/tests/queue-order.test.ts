@@ -1,3 +1,4 @@
+// GSD2 — Tests for Queue Order
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
@@ -26,7 +27,6 @@ function cleanup(base: string): void {
 // ═══════════════════════════════════════════════════════════════════════════
 // sortByQueueOrder
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 describe('queue-order', () => {
 test('sortByQueueOrder', () => {

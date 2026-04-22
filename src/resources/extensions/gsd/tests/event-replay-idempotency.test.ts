@@ -1,5 +1,4 @@
-// GSD State Machine Regression Tests — Event Replay & Reconciliation (#3161)
-
+// GSD2 — State Machine Regression Tests — Event Replay & Reconciliation (#3161)
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {

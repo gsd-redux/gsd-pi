@@ -1,5 +1,5 @@
 /**
- * none-mode-gates.test.ts — Tests for isolation-mode gate functions.
+ * GSD2 — none-mode-gates.test.ts — Tests for isolation-mode gate functions.
  *
  * Verifies that shouldUseWorktreeIsolation(), getIsolationMode(), and
  * getActiveAutoWorktreeContext() behave correctly across all three
@@ -9,6 +9,7 @@
  * PROJECT_PREFERENCES_PATH is a module-level constant frozen at import
  * time, so process.chdir() won't redirect preference loading. We write
  * prefs to the runner's cwd .gsd/PREFERENCES.md and clean up in finally.
+ *
  */
 
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";

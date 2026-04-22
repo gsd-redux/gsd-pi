@@ -1,3 +1,4 @@
+// GSD2 — Onboarding Service — RequiredProviderCatalogEntry type
 import { randomUUID } from "node:crypto";
 
 import { getEnvApiKey } from "../../packages/pi-ai/src/web-runtime-env-api-keys.ts";

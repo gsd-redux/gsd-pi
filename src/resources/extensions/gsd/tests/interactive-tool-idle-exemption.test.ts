@@ -1,6 +1,7 @@
 /**
- * Tests for #2676: idle watchdog must exempt user-interactive tools
+ * GSD2 — Tests for #2676: idle watchdog must exempt user-interactive tools
  * (ask_user_questions, secure_env_collect) from stall detection.
+ *
  */
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert/strict";

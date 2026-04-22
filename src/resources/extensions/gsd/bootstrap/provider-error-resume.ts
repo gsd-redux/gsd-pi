@@ -1,3 +1,4 @@
+// GSD2 — Provider Error Resume — types and interfaces
 import type {
   ExtensionAPI,
   ExtensionCommandContext,

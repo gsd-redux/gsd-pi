@@ -1,8 +1,4 @@
-// GSD Extension — Rule Registry Tests
-//
-// Tests the RuleRegistry class, UnifiedRule types, singleton accessors,
-// and evaluation methods using mock rules.
-
+// GSD2 — Extension — Rule Registry Tests
 import assert from 'node:assert/strict';
 import { test, describe, beforeEach } from "node:test";
 import {

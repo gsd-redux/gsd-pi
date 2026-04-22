@@ -1,3 +1,4 @@
+// GSD2 — Tests for Tui Classic Theme
 import test from "node:test";
 import assert from "node:assert/strict";
 

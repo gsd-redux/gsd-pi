@@ -1,9 +1,10 @@
 /**
- * complete-milestone handler — the core operation behind gsd_complete_milestone.
+ * GSD2 — complete-milestone handler — the core operation behind gsd_complete_milestone.
  *
  * Validates all slices are complete, updates milestone status in DB,
  * renders MILESTONE-SUMMARY.md to disk, stores rendered markdown in DB
  * for recovery, and invalidates caches.
+ *
  */
 
 import { join } from "node:path";

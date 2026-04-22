@@ -1,7 +1,8 @@
 /**
- * Tests for atomic task closeout (#1650):
+ * GSD2 — Tests for atomic task closeout (#1650):
  * Doctor no longer does checkbox reconciliation (reconciliation removed in S06).
  * This file retains only the non-reconciliation behavior tests.
+ *
  */
 
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";

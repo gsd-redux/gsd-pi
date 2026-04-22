@@ -1,6 +1,7 @@
 /**
- * Regression tests for memory pressure monitoring (#3331) and
+ * GSD2 — Regression tests for memory pressure monitoring (#3331) and
  * stuck detection persistence (#3704) in auto/loop.ts.
+ *
  */
 
 import { describe, test } from "node:test";

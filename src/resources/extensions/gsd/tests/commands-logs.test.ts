@@ -1,3 +1,4 @@
+// GSD2 — Tests for Commands Logs
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, utimesSync } from "node:fs";

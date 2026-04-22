@@ -1,5 +1,5 @@
 /**
- * Regression test for #2379: /gsd queue fails with 429 rate limit on projects
+ * GSD2 — Regression test for #2379: /gsd queue fails with 429 rate limit on projects
  * with many completed milestones.
  *
  * The bug: buildExistingMilestonesContext iterates over ALL milestones
@@ -9,6 +9,7 @@
  *
  * The fix: completed milestones should emit a short summary line without
  * loading their heavy artifact files (CONTEXT.md, SUMMARY.md, etc.).
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

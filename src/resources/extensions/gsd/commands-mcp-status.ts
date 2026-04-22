@@ -1,13 +1,14 @@
 /**
- * MCP Status — `/gsd mcp` command handler.
+ * GSD2 — MCP Status — `/gsd mcp` command handler.
  *
  * Shows configured MCP servers, their connection status, and available tools.
  *
  * Subcommands:
- *   /gsd mcp             — Overview of all servers (alias: /gsd mcp status)
- *   /gsd mcp status      — Same as bare /gsd mcp
- *   /gsd mcp check <srv> — Detailed status for a specific server
- *   /gsd mcp init [dir]  — Write project-local GSD workflow MCP config
+ * /gsd mcp             — Overview of all servers (alias: /gsd mcp status)
+ * /gsd mcp status      — Same as bare /gsd mcp
+ * /gsd mcp check <srv> — Detailed status for a specific server
+ * /gsd mcp init [dir]  — Write project-local GSD workflow MCP config
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

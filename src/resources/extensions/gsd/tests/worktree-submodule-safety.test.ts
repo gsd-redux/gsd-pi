@@ -1,9 +1,10 @@
 /**
- * worktree-submodule-safety.test.ts — #2337
+ * GSD2 — worktree-submodule-safety.test.ts — #2337
  *
  * Worktree teardown (removeWorktree) uses --force which destroys
  * uncommitted changes in submodule directories. This test verifies
  * that the removal logic detects submodules and preserves their state.
+ *
  */
 
 import { readFileSync } from "node:fs";

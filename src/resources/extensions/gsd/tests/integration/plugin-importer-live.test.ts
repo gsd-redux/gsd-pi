@@ -1,5 +1,5 @@
 /**
- * Live E2E Tests Against Real Marketplace Repos
+ * GSD2 — Live E2E Tests Against Real Marketplace Repos
  *
  * Tests R014: validates PluginImporter against real marketplace data.
  *
@@ -7,6 +7,7 @@
  * - Prefer Claude Code managed marketplace locations when available
  * - Fall back to cloned fixture repos for portability
  * - Never require a contributor's personal sibling repo layout
+ *
  */
 
 import { describe, it, before, after } from 'node:test';

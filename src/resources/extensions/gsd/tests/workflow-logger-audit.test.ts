@@ -1,6 +1,4 @@
-// GSD Extension — Workflow Logger Audit Persistence Tests
-// Validates error-only persistence, sanitization, and warning ephemeral behavior.
-
+// GSD2 — Extension — Workflow Logger Audit Persistence Tests
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync } from "node:fs";

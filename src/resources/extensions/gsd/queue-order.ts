@@ -1,5 +1,5 @@
 /**
- * GSD Queue Order — Custom milestone execution ordering.
+ * GSD2 — GSD Queue Order — Custom milestone execution ordering.
  *
  * Stores an explicit execution order in `.gsd/QUEUE-ORDER.json`.
  * When present, `findMilestoneIds()` uses this order instead of
@@ -7,6 +7,7 @@
  *
  * The file is committed to git (not gitignored) so ordering
  * survives branch switches and is shared across sessions.
+ *
  */
 
 import { join } from "node:path";

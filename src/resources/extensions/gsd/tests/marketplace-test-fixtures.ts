@@ -1,3 +1,4 @@
+// GSD2 — Marketplace Test Fixtures
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';

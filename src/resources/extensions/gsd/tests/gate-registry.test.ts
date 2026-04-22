@@ -1,7 +1,8 @@
 /**
- * Gate registry tests — enforce that every declared GateId has a registry
+ * GSD2 — Gate registry tests — enforce that every declared GateId has a registry
  * entry, that every owner-turn bucket is non-empty, and that coverage
  * assertions fail loudly instead of silently skipping unknown gates.
+ *
  */
 
 import { describe, test } from "node:test";

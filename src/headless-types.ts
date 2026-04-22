@@ -1,8 +1,9 @@
 /**
- * Headless Types — shared types for the headless orchestrator surface.
+ * GSD2 — Headless Types — shared types for the headless orchestrator surface.
  *
  * Contains the structured result type emitted in --output-format json mode
  * and the output format discriminator.
+ *
  */
 
 // ---------------------------------------------------------------------------

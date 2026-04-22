@@ -1,5 +1,5 @@
 /**
- * Project Relocation Recovery Tests (#2750)
+ * GSD2 — Project Relocation Recovery Tests (#2750)
  *
  * Verifies that moving/renaming a GSD project directory does not cause
  * silent data loss. When a repo has a remote URL, the identity hash
@@ -8,6 +8,7 @@
  * For local-only repos (no remote), ensureGsdSymlink should detect
  * orphaned state directories with a matching .gsd-id marker and
  * recover them automatically.
+ *
  */
 
 import { describe, test, before, after } from "node:test";

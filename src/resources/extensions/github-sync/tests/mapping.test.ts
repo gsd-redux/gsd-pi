@@ -1,3 +1,4 @@
+// GSD2 — Tests for Mapping
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";

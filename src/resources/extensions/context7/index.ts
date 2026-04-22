@@ -1,25 +1,26 @@
 /**
- * Context7 Documentation Extension
+ * GSD2 — Context7 Documentation Extension
  *
  * Replaces the context7 MCP server with a native pi extension.
  * Provides two tools for the LLM:
  *
- *   resolve_library   - Search for a library by name, returns candidates with metadata
- *   get_library_docs  - Fetch docs for a library ID, scoped to an optional query/topic
+ * resolve_library   - Search for a library by name, returns candidates with metadata
+ * get_library_docs  - Fetch docs for a library ID, scoped to an optional query/topic
  *
  * API contract (verified against live API 2026-03-04):
- *   Search:  GET /api/v2/libs/search?libraryName=&query=  → { results: C7Library[] }
- *   Context: GET /api/v2/context?libraryId=&query=&tokens= → text/plain (markdown)
+ * Search:  GET /api/v2/libs/search?libraryName=&query=  → { results: C7Library[] }
+ * Context: GET /api/v2/context?libraryId=&query=&tokens= → text/plain (markdown)
  *
  * Features:
- *   - Bearer auth via CONTEXT7_API_KEY env var (optional, increases rate limits)
- *   - In-session caching of search results and doc pages
- *   - Smart token budgeting (default 5000, configurable per call, max 10000)
- *   - Proper truncation guard so context is never overwhelmed
- *   - Custom TUI rendering for clean display in pi
+ * - Bearer auth via CONTEXT7_API_KEY env var (optional, increases rate limits)
+ * - In-session caching of search results and doc pages
+ * - Smart token budgeting (default 5000, configurable per call, max 10000)
+ * - Proper truncation guard so context is never overwhelmed
+ * - Custom TUI rendering for clean display in pi
  *
  * Setup:
- *   export CONTEXT7_API_KEY=your_key   (get one at context7.com/dashboard)
+ * export CONTEXT7_API_KEY=your_key   (get one at context7.com/dashboard)
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

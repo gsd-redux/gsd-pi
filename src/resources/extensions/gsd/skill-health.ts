@@ -1,16 +1,17 @@
 /**
- * GSD Skill Health — Dashboard, Staleness, and Heal-Skill Integration (#599)
+ * GSD2 — GSD Skill Health — Dashboard, Staleness, and Heal-Skill Integration (#599)
  *
  * Aggregates skill telemetry from metrics.json to surface:
- *   - Per-skill pass/fail rates, token usage, and trends
- *   - Staleness warnings for unused skills
- *   - Declining performance flags
- *   - Heal-skill suggestions (inspired by glittercowboy's heal-skill command)
+ * - Per-skill pass/fail rates, token usage, and trends
+ * - Staleness warnings for unused skills
+ * - Declining performance flags
+ * - Heal-skill suggestions (inspired by glittercowboy's heal-skill command)
  *
  * The heal-skill concept: when an agent deviates from what a skill recommends
  * during execution, detect the drift and propose specific fixes with user
  * approval before applying. This closes the feedback loop that SkillsBench
  * research identified as critical for skill quality.
+ *
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";

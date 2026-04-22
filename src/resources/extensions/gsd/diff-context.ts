@@ -1,9 +1,10 @@
 /**
- * Diff-aware context module — prioritizes recently-changed files when building
+ * GSD2 — Diff-aware context module — prioritizes recently-changed files when building
  * context for the AI agent. Uses git diff/status to discover changes, then
  * provides ranking utilities for context-window budget allocation.
  *
  * Standalone module: only imports node:child_process and node:path.
+ *
  */
 
 import { execFileSync, execFile } from "node:child_process";

@@ -1,8 +1,9 @@
 /**
- * GSD Command Handlers — fire-and-forget handlers that delegate to other modules.
+ * GSD2 — GSD Command Handlers — fire-and-forget handlers that delegate to other modules.
  *
  * Contains: handleDoctor, handleSteer, handleCapture, handleTriage, handleKnowledge,
  * handleRunHook, handleUpdate, handleSkillHealth
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

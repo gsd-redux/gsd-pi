@@ -1,8 +1,9 @@
 /**
- * Native Anthropic web search hook logic.
+ * GSD2 — Native Anthropic web search hook logic.
  *
  * Extracted from index.ts so it can be unit-tested without importing
  * the heavy tool-registration modules.
+ *
  */
 
 import { isAnthropicApi } from "@gsd/pi-ai";

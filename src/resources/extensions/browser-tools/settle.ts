@@ -1,9 +1,10 @@
 /**
- * browser-tools — DOM settle logic
+ * GSD2 — browser-tools — DOM settle logic
  *
  * Adaptive settling after browser actions. Polls for DOM quiet (mutation
  * counter stable, no pending critical requests, optional focus stability)
  * before returning control.
+ *
  */
 
 import type { Frame, Page } from "playwright";

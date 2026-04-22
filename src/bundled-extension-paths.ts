@@ -1,3 +1,4 @@
+// GSD2 — Bundled Extension Paths
 import { delimiter } from "node:path";
 
 export function serializeBundledExtensionPaths(

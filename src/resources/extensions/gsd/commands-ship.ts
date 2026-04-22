@@ -1,8 +1,9 @@
 /**
- * GSD Command — /gsd ship
+ * GSD2 — GSD Command — /gsd ship
  *
  * Creates a PR from milestone artifacts: generates title + body from
  * roadmap, slice summaries, and metrics, then opens via `gh pr create`.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,11 +1,12 @@
 /**
- * GSD Forensics — Post-mortem investigation of auto-mode failures
+ * GSD2 — GSD Forensics — Post-mortem investigation of auto-mode failures
  *
  * Programmatically scans activity logs, metrics, crash locks, and doctor
  * diagnostics for anomalies, then hands a structured report to the LLM
  * for interactive investigation.
  *
  * Entry point: handleForensics() called from commands.ts
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

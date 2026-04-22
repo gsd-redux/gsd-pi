@@ -1,10 +1,11 @@
 /**
- * complete-slice handler — the core operation behind gsd_slice_complete.
+ * GSD2 — complete-slice handler — the core operation behind gsd_slice_complete.
  *
  * Validates inputs, checks all tasks are complete, writes slice row to DB in
  * a transaction, then (outside the transaction) renders SUMMARY.md + UAT.md
  * to disk, toggles the roadmap checkbox, stores rendered markdown in DB for
  * D004 recovery, and invalidates caches.
+ *
  */
 
 import { join } from "node:path";

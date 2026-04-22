@@ -1,5 +1,5 @@
 /**
- * Validates that the create-gsd-extension skill documentation uses the correct
+ * GSD2 — Validates that the create-gsd-extension skill documentation uses the correct
  * community extension install path (~/.pi/agent/extensions/) instead of the
  * bundled-only path (~/.gsd/agent/extensions/).
  *
@@ -7,6 +7,7 @@
  *
  * ~/.gsd/agent/extensions/ is reserved for bundled extensions synced from
  * the gsd-pi package. Community/user extensions must use ~/.pi/agent/extensions/.
+ *
  */
 
 import test from "node:test";

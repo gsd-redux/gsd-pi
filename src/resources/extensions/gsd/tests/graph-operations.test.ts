@@ -1,9 +1,10 @@
 /**
- * graph-operations.test.ts — Comprehensive tests for graph.ts DAG operations.
+ * GSD2 — graph-operations.test.ts — Comprehensive tests for graph.ts DAG operations.
  *
  * Covers: YAML I/O round-trips, DAG queries (getNextPendingStep),
  * immutable step completion, iteration expansion with downstream dep
  * rewriting, initializeGraph conversion, and atomic write safety.
+ *
  */
 
 import { describe, it } from "node:test";

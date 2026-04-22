@@ -1,3 +1,4 @@
+// GSD2 — Tests for Bootstrap Derive State Db Open
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -1,3 +1,4 @@
+// GSD2 — Milestone Id Utils — match constant
 import { readdirSync } from "node:fs";
 
 import { milestonesDir } from "./paths.js";

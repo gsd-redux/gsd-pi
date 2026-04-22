@@ -1,11 +1,12 @@
 /**
- * GSD Parallel Monitor Overlay
+ * GSD2 — GSD Parallel Monitor Overlay
  *
  * Full-screen TUI overlay showing real-time parallel worker progress.
  * Opened via `/gsd parallel watch`, Ctrl+Alt+P (⌃⌥P on macOS),
  * or Ctrl+Shift+P fallback.
  * Reads the same data sources as `scripts/parallel-monitor.mjs` but
  * renders as a native pi-tui overlay with theme integration.
+ *
  */
 
 import { existsSync, statSync, readFileSync, openSync, readSync, closeSync, readdirSync } from "node:fs";

@@ -1,9 +1,10 @@
 /**
- * Tests for worktree edge-case bugfixes:
+ * GSD2 — Tests for worktree edge-case bugfixes:
  *
- *   1. resolveGitDir() follows gitdir: pointer in worktrees
- *   2. captureIntegrationBranch() is a no-op in worktrees
- *   3. detectWorktreeName() correctly identifies worktree paths
+ * 1. resolveGitDir() follows gitdir: pointer in worktrees
+ * 2. captureIntegrationBranch() is a no-op in worktrees
+ * 3. detectWorktreeName() correctly identifies worktree paths
+ *
  */
 
 import {

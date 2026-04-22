@@ -1,7 +1,8 @@
 /**
- * GSD Inspect — SQLite DB diagnostics.
+ * GSD2 — GSD Inspect — SQLite DB diagnostics.
  *
  * Contains: InspectData type, formatInspectOutput, handleInspect
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,15 +1,16 @@
 /**
- * GSD Command — `/gsd memory`
+ * GSD2 — GSD Command — `/gsd memory`
  *
  * Subcommands:
- *   list            — show recent active memories
- *   show <id>       — print one memory
- *   ingest <uri>    — persist a source row (file path, URL, or "-" for stdin-piped note)
- *   note "<text>"   — persist an inline note as a source
- *   forget <id>     — supersede a memory (CAP_EXCEEDED sentinel)
- *   stats           — category / scope counts + source count
- *   sources         — list recent memory_sources rows
- *   extract <src>   — dispatch an agent turn that distils a source into memories
+ * list            — show recent active memories
+ * show <id>       — print one memory
+ * ingest <uri>    — persist a source row (file path, URL, or "-" for stdin-piped note)
+ * note "<text>"   — persist an inline note as a source
+ * forget <id>     — supersede a memory (CAP_EXCEEDED sentinel)
+ * stats           — category / scope counts + source count
+ * sources         — list recent memory_sources rows
+ * extract <src>   — dispatch an agent turn that distils a source into memories
+ *
  */
 
 import { readFileSync, writeFileSync } from "node:fs";

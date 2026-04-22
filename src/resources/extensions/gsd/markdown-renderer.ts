@@ -1,13 +1,4 @@
-// GSD Markdown Renderer — DB → Markdown file generation
-//
-// Transforms DB state into correct markdown files on disk.
-// Each render function reads from DB (with disk fallback),
-// patches content to match DB status, writes atomically to disk,
-// stores updated content in the artifacts table, and invalidates caches.
-//
-// Critical invariant: rendered markdown must round-trip through
-// parseRoadmap(), parsePlan(), parseSummary() in files.ts.
-
+// GSD2 — Markdown Renderer — DB → Markdown file generation
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";

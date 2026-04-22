@@ -1,3 +1,4 @@
+// GSD2 — Tests for Bundled Extension Paths
 import test from "node:test";
 import assert from "node:assert/strict";
 import { delimiter } from "node:path";

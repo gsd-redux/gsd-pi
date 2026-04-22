@@ -1,10 +1,11 @@
 /**
- * GSD Parallel Orchestrator — Core engine for parallel milestone orchestration.
+ * GSD2 — GSD Parallel Orchestrator — Core engine for parallel milestone orchestration.
  *
  * Manages worker lifecycle, budget tracking, and coordination. Workers are
  * separate processes spawned via child_process, each running in its own git
  * worktree with GSD_MILESTONE_LOCK env var set. The coordinator monitors
  * workers via session status files (see session-status-io.ts).
+ *
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -304,7 +305,6 @@ async function waitForWorkerExit(worker: WorkerInfo, timeoutMs: number): Promise
   }
   return !isPidAlive(worker.pid);
 }
-
 
 // ─── Accessors ─────────────────────────────────────────────────────────────
 

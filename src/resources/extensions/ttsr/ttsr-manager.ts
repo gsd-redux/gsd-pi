@@ -1,5 +1,5 @@
 /**
- * Time Traveling Stream Rules (TTSR) Manager
+ * GSD2 — Time Traveling Stream Rules (TTSR) Manager
  *
  * Manages rules that get injected mid-stream when their condition pattern matches
  * the agent's output. When a match occurs, the stream is aborted, the rule is
@@ -8,6 +8,7 @@
  * The regex hot-path is delegated to a native Rust RegexSet engine when
  * available, testing all patterns in a single DFA pass. Falls back to
  * per-rule JS RegExp iteration when the native module is not loaded.
+ *
  */
 import { createRequire } from "node:module";
 import { debugTime, debugCount, debugPeak } from "../gsd/debug-logger.js";

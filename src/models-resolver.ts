@@ -1,5 +1,5 @@
 /**
- * Models.json resolution with fallback to ~/.pi/agent/models.json
+ * GSD2 — Models.json resolution with fallback to ~/.pi/agent/models.json
  *
  * GSD uses ~/.gsd/agent/models.json, but for a smooth migration/development
  * experience, this module provides resolution logic that:
@@ -7,6 +7,7 @@
  * 1. Reads ~/.gsd/agent/models.json if it exists
  * 2. Falls back to ~/.pi/agent/models.json if GSD file doesn't exist
  * 3. Merges both files if both exist (GSD takes precedence)
+ *
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -36,5 +37,4 @@ export function resolveModelsJsonPath(): string {
   }
   return GSD_MODELS_PATH
 }
-
 

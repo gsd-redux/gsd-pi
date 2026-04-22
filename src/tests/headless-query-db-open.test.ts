@@ -1,6 +1,7 @@
 /**
- * Regression test for #4123: headless-query must open the project DB
+ * GSD2 — Regression test for #4123: headless-query must open the project DB
  * before deriveState(), otherwise it falls back to filesystem parsing.
+ *
  */
 
 import { test } from "node:test";

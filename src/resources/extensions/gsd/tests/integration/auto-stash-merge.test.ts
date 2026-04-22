@@ -1,8 +1,9 @@
 /**
- * auto-stash-merge.test.ts — Regression tests for #2151.
+ * GSD2 — auto-stash-merge.test.ts — Regression tests for #2151.
  *
  * Tests that mergeMilestoneToMain auto-stashes dirty files before squash merge,
  * and that nativeMergeSquash returns dirty filenames from git stderr.
+ *
  */
 
 import test from "node:test";

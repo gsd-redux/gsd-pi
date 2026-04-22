@@ -1,5 +1,5 @@
 /**
- * gsdroot-worktree-detection.test.ts — Regression test for #2594.
+ * GSD2 — gsdroot-worktree-detection.test.ts — Regression test for #2594.
  *
  * gsdRoot() must return the worktree's own .gsd directory when the basePath
  * is inside a .gsd/worktrees/<name>/ structure, not walk up to the project
@@ -10,6 +10,7 @@
  * main project root (not the worktree root) depending on git version and
  * worktree setup. The walk-up then finds /project/.gsd and returns that
  * instead of the worktree's own .gsd path.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

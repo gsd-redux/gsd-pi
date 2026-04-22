@@ -1,3 +1,4 @@
+// GSD2 — Tool Bootstrap — ManagedTool type
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { delimiter, join } from "node:path";
 

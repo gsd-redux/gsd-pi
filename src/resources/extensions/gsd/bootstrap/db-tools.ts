@@ -1,3 +1,4 @@
+// GSD2 — Db Tools
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { Text } from "@gsd/pi-tui";

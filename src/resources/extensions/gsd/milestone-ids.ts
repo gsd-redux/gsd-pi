@@ -1,8 +1,9 @@
 /**
- * Milestone ID primitives — pure utilities for generating, parsing, sorting,
+ * GSD2 — Milestone ID primitives — pure utilities for generating, parsing, sorting,
  * and discovering milestone identifiers.
  *
  * Consumed by 15+ modules across the GSD extension. Zero side-effects.
+ *
  */
 
 import { randomInt } from "node:crypto";

@@ -1,3 +1,4 @@
+// GSD2 — Update Check — CACHE_FILE constant
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve as resolvePath, sep } from 'node:path'
 import { homedir } from 'node:os'

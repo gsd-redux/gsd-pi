@@ -1,15 +1,4 @@
-// native-git-bridge-exec-fallback.test.ts — regression for #4180
-//
-// nativeCommit, nativeIsRepo, and nativeResetHard used execSync() (string
-// command) in their fallback paths. On Windows, execSync spawns cmd.exe which
-// cannot resolve git when Git for Windows is installed via MSYS2/bash but not
-// in cmd.exe's PATH. All other fallback paths in this file use execFileSync()
-// which invokes the binary directly — these three must do the same.
-//
-// Static-analysis tests fail before the fix (source still has execSync calls)
-// and pass after (replaced with execFileSync). Integration tests verify the
-// fallback functions behave correctly on all platforms.
-
+// GSD2 — native-git-bridge-exec-fallback.test.ts — regression for #4180
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";

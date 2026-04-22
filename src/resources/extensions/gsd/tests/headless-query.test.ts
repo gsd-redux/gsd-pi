@@ -1,8 +1,9 @@
 /**
- * Tests for `gsd headless query` — single JSON snapshot command.
+ * GSD2 — Tests for `gsd headless query` — single JSON snapshot command.
  *
  * Validates that the snapshot contains state, next dispatch preview,
  * and parallel worker costs in one response.
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test'

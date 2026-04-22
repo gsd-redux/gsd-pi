@@ -1,3 +1,4 @@
+// GSD2 — Tests for Gsd Tools
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 // gsd-tools — Structured LLM tool tests

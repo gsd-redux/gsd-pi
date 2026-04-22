@@ -1,3 +1,4 @@
+// GSD2 — Tests for Gsd Recover
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 // gsd-recover.test.ts — Tests for the `gsd recover` recovery logic.
@@ -52,7 +53,6 @@ const ROADMAP_M001 = `# M001: Recovery Test
 
 - All recovery tests pass
 - State matches after round-trip
-
 
 ## Slices
 

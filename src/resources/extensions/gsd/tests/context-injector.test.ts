@@ -1,9 +1,10 @@
 /**
- * context-injector.test.ts — Tests for injectContext().
+ * GSD2 — context-injector.test.ts — Tests for injectContext().
  *
  * Tests context injection from prior step artifacts: single-step,
  * multi-step chain, missing artifact, no contextFrom, truncation,
  * and unknown step ID in contextFrom.
+ *
  */
 
 import { describe, it } from "node:test";

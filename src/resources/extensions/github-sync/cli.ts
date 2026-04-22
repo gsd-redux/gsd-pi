@@ -1,8 +1,9 @@
 /**
- * Thin wrapper around the `gh` CLI.
+ * GSD2 — Thin wrapper around the `gh` CLI.
  *
  * Every public function returns `GhResult<T>` — never throws.
  * Uses `execFileSync` (not `execSync`) for safety.
+ *
  */
 
 import { execFileSync } from "node:child_process";

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Debug Command Handler
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

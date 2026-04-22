@@ -1,5 +1,5 @@
 /**
- * AutoSession — encapsulates all mutable auto-mode state into a single instance.
+ * GSD2 — AutoSession — encapsulates all mutable auto-mode state into a single instance.
  *
  * Replaces ~40 module-level variables scattered across auto.ts with typed
  * properties on a class instance. Benefits:
@@ -14,6 +14,7 @@
  * needs clearing on stop, add it to reset(). Tests in
  * auto-session-encapsulation.test.ts enforce that auto.ts has no module-level
  * `let` or `var` declarations.
+ *
  */
 
 import type { Api, Model } from "@gsd/pi-ai";

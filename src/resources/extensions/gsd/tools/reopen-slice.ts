@@ -1,15 +1,15 @@
 /**
- * reopen-slice handler — the core operation behind gsd_slice_reopen.
+ * GSD2 — reopen-slice handler — the core operation behind gsd_slice_reopen.
  *
  * Resets a completed slice back to "in_progress" and resets ALL of its
  * tasks back to "pending". This is intentional — if you're reopening a
  * slice, you're re-doing the work. Partial resets create ambiguous state.
  *
  * The parent milestone must still be open (not complete).
+ *
  */
 
 // GSD — reopen-slice tool handler
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import {
   getMilestone,

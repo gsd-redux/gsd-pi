@@ -1,7 +1,8 @@
 /**
- * GSD Extension — Shared Constants
+ * GSD2 — GSD Extension — Shared Constants
  *
  * Centralized timeout and cache-size constants used across the GSD extension.
+ *
  */
 
 // ─── Timeouts ─────────────────────────────────────────────────────────────────

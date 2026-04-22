@@ -1,3 +1,4 @@
+// GSD2 — Commands Cmux
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { clearCmuxSidebar, CmuxClient, detectCmuxEnvironment, resolveCmuxConfig } from "../cmux/index.js";

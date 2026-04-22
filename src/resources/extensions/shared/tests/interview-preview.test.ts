@@ -1,3 +1,4 @@
+// GSD2 — Tests for Interview Preview
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { Markdown, visibleWidth } from "@gsd/pi-tui";

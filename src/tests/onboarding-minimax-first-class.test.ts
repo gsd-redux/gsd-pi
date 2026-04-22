@@ -1,3 +1,4 @@
+// GSD2 — Tests for Onboarding Minimax First Class
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

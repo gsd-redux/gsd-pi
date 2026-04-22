@@ -1,5 +1,5 @@
 /**
- * Regression test for #1852: removeWorktree targets wrong path when .gsd/ is a symlink.
+ * GSD2 — Regression test for #1852: removeWorktree targets wrong path when .gsd/ is a symlink.
  *
  * When .gsd/ is a symlink to an external state directory, git registers
  * the worktree at the resolved (real) path. But removeWorktree recomputes
@@ -8,6 +8,7 @@
  *
  * Fix: removeWorktree should query `git worktree list` to find the actual
  * registered path when the computed path doesn't match.
+ *
  */
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,6 @@ import {
 } from "../worktree-manager.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();

@@ -1,10 +1,11 @@
 /**
- * Regression test for #2661: Auto-mode dispatches deferred slices.
+ * GSD2 — Regression test for #2661: Auto-mode dispatches deferred slices.
  *
  * When a decision defers a slice, the dispatcher must skip it and advance
  * to the next eligible slice. This tests both:
- *   1. deriveStateFromDb skips slices with status "deferred"
- *   2. saveDecisionToDb updates the slice status when the decision is a deferral
+ * 1. deriveStateFromDb skips slices with status "deferred"
+ * 2. saveDecisionToDb updates the slice status when the decision is a deferral
+ *
  */
 
 import { describe, test } from "node:test";

@@ -1,5 +1,6 @@
 /**
- * Unit tests for token-counter.ts — provider-aware token estimation.
+ * GSD2 — Unit tests for token-counter.ts — provider-aware token estimation.
+ *
  */
 
 import { describe, it } from "node:test";

@@ -1,5 +1,4 @@
-// Barrel file — re-exports consumed by external modules
-
+// GSD2 — Barrel file — re-exports consumed by external modules
 export {
 	GLYPH,
 	INDENT,

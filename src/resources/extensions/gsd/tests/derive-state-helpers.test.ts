@@ -1,13 +1,4 @@
-// GSD Extension — Tests for extracted deriveStateFromDb helper functions
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-//
-// Tests the composable helpers extracted from deriveStateFromDb:
-//   reconcileDiskToDb, buildCompletenessSet, buildRegistryAndFindActive,
-//   handleNoActiveMilestone, resolveSliceDependencies, reconcileSliceTasks,
-//   detectBlockers, checkReplanTrigger, checkInterruptedWork
-//
-// Helpers are private — exercised through deriveStateFromDb integration.
-
+// GSD2 — Extension — Tests for extracted deriveStateFromDb helper functions
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';

@@ -1,6 +1,4 @@
-// GSD Web — Notifications Service
-// Loads notification data via a child process that imports the notification store.
-
+// GSD2 — Web — Notifications Service
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"

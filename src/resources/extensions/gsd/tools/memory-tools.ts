@@ -1,14 +1,4 @@
-// GSD Memory Tools — Phase 1 executors for capture_thought, memory_query, gsd_graph
-//
-// These executors back the three memory-layer tools the LLM can call at any
-// point in a session. They build on the existing `memory-store.ts` layer
-// (SQLite memories table) and degrade gracefully when the DB is unavailable.
-//
-// Phase 1 scope:
-//   - capture_thought → create a memory with the caller-supplied category/content
-//   - memory_query    → keyword-filtered, score-ranked listing of active memories
-//   - gsd_graph       → returns a memory and its supersedes edges only (Phase 4 adds memory_relations)
-
+// GSD2 — Memory Tools — Phase 1 executors for capture_thought, memory_query, gsd_graph
 import { _getAdapter, isDbAvailable } from "../gsd-db.js";
 import {
   createMemory,

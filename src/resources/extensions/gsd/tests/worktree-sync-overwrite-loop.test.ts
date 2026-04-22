@@ -1,21 +1,22 @@
 /**
- * worktree-sync-overwrite-loop.test.ts — Regression tests for #1886.
+ * GSD2 — worktree-sync-overwrite-loop.test.ts — Regression tests for #1886.
  *
  * Reproduces the infinite validate-milestone loop caused by two bugs
  * in syncProjectRootToWorktree:
  *
  * 1. safeCopyRecursive overwrites worktree-authoritative files (e.g.
- *    VALIDATION.md written by validate-milestone gets clobbered by the
- *    stale project root copy that lacks the file).
+ * VALIDATION.md written by validate-milestone gets clobbered by the
+ * stale project root copy that lacks the file).
  *
  * 2. completed-units.json is not forward-synced from project root to
- *    worktree, so the worktree never learns about already-completed units.
+ * worktree, so the worktree never learns about already-completed units.
  *
  * Covers:
- *   - syncProjectRootToWorktree does NOT overwrite existing worktree files
- *   - syncProjectRootToWorktree copies files missing from the worktree
- *   - completed-units.json is forward-synced from project root to worktree
- *   - completed-units.json sync uses force:true (project root is authoritative)
+ * - syncProjectRootToWorktree does NOT overwrite existing worktree files
+ * - syncProjectRootToWorktree copies files missing from the worktree
+ * - completed-units.json is forward-synced from project root to worktree
+ * - completed-units.json sync uses force:true (project root is authoritative)
+ *
  */
 
 import {

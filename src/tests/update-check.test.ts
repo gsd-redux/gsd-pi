@@ -1,3 +1,4 @@
+// GSD2 — Tests for Update Check
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'

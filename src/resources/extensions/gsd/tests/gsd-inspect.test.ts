@@ -1,3 +1,4 @@
+// GSD2 — Tests for Gsd Inspect
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 // gsd-inspect — Tests for /gsd inspect output formatting

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Docker Template
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";

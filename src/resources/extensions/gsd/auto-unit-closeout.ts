@@ -1,7 +1,8 @@
 /**
- * Unit closeout helper — consolidates the repeated pattern of
+ * GSD2 — Unit closeout helper — consolidates the repeated pattern of
  * snapshotting metrics + saving activity log + extracting memories
  * that appears 6+ times in auto.ts.
+ *
  */
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

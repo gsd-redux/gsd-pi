@@ -1,9 +1,10 @@
 /**
- * Tests that /gsd quick is blocked when auto-mode is active.
+ * GSD2 — Tests that /gsd quick is blocked when auto-mode is active.
  *
  * Relates to #2417: /gsd quick freezes terminal when auto-mode is active.
  * The fix adds an isAutoActive() guard in handleWorkflowCommand before
  * delegating to handleQuick.
+ *
  */
 
 import { describe, it, mock, beforeEach, afterEach } from "node:test";

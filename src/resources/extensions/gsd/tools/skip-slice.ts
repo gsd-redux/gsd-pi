@@ -1,5 +1,5 @@
 /**
- * skip-slice handler — the core operation behind gsd_skip_slice.
+ * GSD2 — skip-slice handler — the core operation behind gsd_skip_slice.
  *
  * Marks a slice as skipped and cascades the skip to every non-closed task in
  * that slice. Without the task cascade the deep-check in
@@ -8,6 +8,7 @@
  *
  * This function performs DB writes only. The MCP wrapper in
  * bootstrap/db-tools.ts handles state-cache invalidation and STATE.md rebuild.
+ *
  */
 
 import {

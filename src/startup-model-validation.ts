@@ -1,5 +1,5 @@
 /**
- * Startup model validation — extracted from cli.ts so it can be called
+ * GSD2 — Startup model validation — extracted from cli.ts so it can be called
  * AFTER extensions register their models in the ModelRegistry.
  *
  * Before this extraction (bug #2626), the validation ran before
@@ -7,6 +7,7 @@
  * claude-code/claude-sonnet-4-6) were not yet in the registry.
  * configuredExists was always false for extension models, causing the
  * user's valid choice to be silently overwritten with a built-in fallback.
+ *
  */
 
 import { getPiDefaultModelAndProvider } from './pi-migration.js'

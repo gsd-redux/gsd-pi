@@ -1,5 +1,5 @@
 /**
- * Regression test for #3672 — query-tools uses ensureDbOpen
+ * GSD2 — Regression test for #3672 — query-tools uses ensureDbOpen
  *
  * gsd_milestone_status previously called isDbAvailable() but never
  * ensureDbOpen(), making it always fail outside auto-mode sessions.
@@ -8,6 +8,7 @@
  *
  * This structural test verifies the ensureDbOpen import and usage exist
  * in query-tools.ts.
+ *
  */
 
 import { describe, test } from 'node:test';

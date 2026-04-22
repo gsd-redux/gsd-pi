@@ -1,11 +1,11 @@
 /**
- * Pre-unit git checkpoint and rollback for auto-mode safety harness.
+ * GSD2 — Pre-unit git checkpoint and rollback for auto-mode safety harness.
  * Uses the existing refs/gsd/ namespace (already pruned by doctor).
  *
  * Creates a lightweight ref at HEAD before unit execution. On failure,
  * the ref can be used to rollback the branch to the pre-unit state.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { execFileSync } from "node:child_process";

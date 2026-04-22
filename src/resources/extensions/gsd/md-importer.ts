@@ -1,9 +1,4 @@
-// GSD Markdown Importer
-// Parses DECISIONS.md, REQUIREMENTS.md, and hierarchy artifacts from a .gsd/ tree,
-// then upserts everything into the SQLite database.
-//
-// Exports: parseDecisionsTable, parseRequirementsSections, migrateFromMarkdown
-
+// GSD2 — Markdown Importer
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Decision, Requirement } from './types.js';

@@ -1,20 +1,21 @@
 /**
- * custom-verification.ts — Step verification for custom workflows.
+ * GSD2 — custom-verification.ts — Step verification for custom workflows.
  *
  * Reads the frozen DEFINITION.yaml from a run directory, finds the step's
  * `verify` policy, and dispatches to the appropriate handler. Four policies:
  *
- *   - content-heuristic: file existence + optional minSize + optional pattern match
- *   - shell-command: spawnSync with 30s timeout, exit 0 → continue, else retry
- *   - prompt-verify: always "pause" (defers to agent)
- *   - human-review: always "pause" (waits for manual inspection)
- *   - (no policy): returns "continue" (passthrough)
+ * - content-heuristic: file existence + optional minSize + optional pattern match
+ * - shell-command: spawnSync with 30s timeout, exit 0 → continue, else retry
+ * - prompt-verify: always "pause" (defers to agent)
+ * - human-review: always "pause" (waits for manual inspection)
+ * - (no policy): returns "continue" (passthrough)
  *
  * Observability:
  * - Return value is the typed verification outcome ("continue" | "retry" | "pause").
  * - shell-command captures stderr from spawnSync — callers can inspect on retry.
  * - content-heuristic logs the specific failure (missing file, below minSize, pattern mismatch).
  * - The frozen DEFINITION.yaml on disk is the single source of truth for step policies.
+ *
  */
 
 import { logWarning } from "./workflow-logger.js";

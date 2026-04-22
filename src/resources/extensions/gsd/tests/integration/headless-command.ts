@@ -1,19 +1,20 @@
 /**
- * Integration test for `gsd headless` CLI subcommand
+ * GSD2 — Integration test for `gsd headless` CLI subcommand
  *
  * Validates that the headless CLI entry point works end-to-end:
- *   1. Creates a temp dir with a complete .gsd/ project fixture
- *   2. Initializes a git repo in the temp dir
- *   3. Spawns `node dist/loader.js headless --json next` as a child process
- *   4. Waits for the process to exit (with a 5-minute timeout)
- *   5. Validates exit code, JSONL stdout, stderr progress, and task artifact
+ * 1. Creates a temp dir with a complete .gsd/ project fixture
+ * 2. Initializes a git repo in the temp dir
+ * 3. Spawns `node dist/loader.js headless --json next` as a child process
+ * 4. Waits for the process to exit (with a 5-minute timeout)
+ * 5. Validates exit code, JSONL stdout, stderr progress, and task artifact
  *
  * Auth: Uses OAuth credentials from ~/.gsd/agent/auth.json (Claude Code Max).
  * Falls back to ANTHROPIC_API_KEY env var if OAuth is not configured (D013).
  *
  * Usage:
- *   npx tsx src/resources/extensions/gsd/tests/integration/headless-command.ts
- *   Add --dry-run to validate fixture without running the agent.
+ * npx tsx src/resources/extensions/gsd/tests/integration/headless-command.ts
+ * Add --dry-run to validate fixture without running the agent.
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";

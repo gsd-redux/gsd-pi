@@ -1,8 +1,9 @@
 /**
- * browser-tools — page state capture
+ * GSD2 — browser-tools — page state capture
  *
  * Functions for capturing compact page state, screenshots, and summaries.
  * Used by tool implementations for post-action feedback.
+ *
  */
 
 import type { Frame, Page } from "playwright";

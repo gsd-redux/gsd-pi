@@ -1,8 +1,9 @@
 /**
- * json-persistence-atomic.test.ts — Tests for atomic JSON persistence.
+ * GSD2 — json-persistence-atomic.test.ts — Tests for atomic JSON persistence.
  *
  * Verifies that saveJsonFile() uses atomic write-tmp-rename pattern
  * so that crashes mid-write don't corrupt the target file.
+ *
  */
 
 import test from "node:test";

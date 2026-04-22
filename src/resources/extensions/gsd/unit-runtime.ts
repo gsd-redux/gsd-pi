@@ -1,3 +1,4 @@
+// GSD2 — Unit Runtime — types and interfaces
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {

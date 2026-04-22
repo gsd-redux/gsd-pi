@@ -1,8 +1,4 @@
-// GSD Exec Search Tool — lists and filters prior gsd_exec runs.
-//
-// Scans .gsd/exec/*.meta.json and returns a ranked summary so agents can
-// re-discover past runs without re-executing. Read-only; no DB writes.
-
+// GSD2 — Exec Search Tool — lists and filters prior gsd_exec runs.
 import { searchExecHistory, type ExecSearchOptions } from "../exec-history.js";
 
 export interface ExecSearchToolParams {

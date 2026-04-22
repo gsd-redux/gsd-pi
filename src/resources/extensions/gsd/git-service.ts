@@ -1,11 +1,12 @@
 /**
- * GSD Git Service
+ * GSD2 — GSD Git Service
  *
  * Core git operations for GSD: types, constants, and pure helpers.
  * Higher-level operations (commit, staging, branching) build on these.
  *
  * This module centralizes the GitPreferences interface, runtime exclusion
  * paths, commit type inference, and the runGit shell helper.
+ *
  */
 
 import { execFileSync, execSync } from "node:child_process";
@@ -14,7 +15,6 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-
 
 import {
   detectWorktreeName,
@@ -393,7 +393,6 @@ export function resolveMilestoneIntegrationBranch(
 }
 
 // ─── Git Helper ────────────────────────────────────────────────────────────
-
 
 /**
  * Strip git-svn noise from error messages.

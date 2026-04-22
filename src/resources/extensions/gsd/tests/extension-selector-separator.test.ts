@@ -1,11 +1,4 @@
-// Tests for the SEPARATOR_PREFIX convention used by ExtensionSelectorComponent
-// and the two-step provider→model picker in configureModels.
-//
-// We cannot import the component directly in node:test because its transitive
-// dependency (countdown-timer.ts) uses TypeScript parameter properties which
-// are unsupported under --experimental-strip-types. Instead we duplicate the
-// separator detection logic here and verify the contract.
-
+// GSD2 — Tests for the SEPARATOR_PREFIX convention used by ExtensionSelectorComponent
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 

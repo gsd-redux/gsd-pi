@@ -1,3 +1,4 @@
+// GSD2 — Tests for Plan Milestone Boundary Map Preservation
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync } from 'node:fs';

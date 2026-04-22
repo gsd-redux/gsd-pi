@@ -1,11 +1,12 @@
 /**
- * LRU cache with TTL — zero external dependencies.
+ * GSD2 — LRU cache with TTL — zero external dependencies.
  *
  * - max: maximum entries before oldest is evicted
  * - ttlMs: time-to-live per entry
  *
  * Uses a Map (insertion-ordered) for O(1) LRU eviction:
  * on every access the entry is deleted and re-inserted at the tail.
+ *
  */
 export class LRUTTLCache<V> {
   private readonly max: number;

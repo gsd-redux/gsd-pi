@@ -1,13 +1,14 @@
 /**
- * Contract tests for S04 diagnostics panels pipeline.
+ * GSD2 — Contract tests for S04 diagnostics panels pipeline.
  *
  * Validates: type exports, contract state shape, dispatch→surface routing,
  * surface→section mapping, and store method existence.
  *
  * Requirements covered:
- *   R103 — Forensics panel (type exports, dispatch, section, state, store)
- *   R104 — Doctor panel (type exports, dispatch, section, state, store + fix action)
- *   R105 — Skill-health panel (type exports, dispatch, section, state, store)
+ * R103 — Forensics panel (type exports, dispatch, section, state, store)
+ * R104 — Doctor panel (type exports, dispatch, section, state, store + fix action)
+ * R105 — Skill-health panel (type exports, dispatch, section, state, store)
+ *
  */
 import test, { describe, it } from "node:test"
 import assert from "node:assert/strict"

@@ -1,6 +1,7 @@
 /**
- * Regression test for #3471: headless-query must load extensions from
+ * GSD2 — Regression test for #3471: headless-query must load extensions from
  * the synced agent directory, not directly from src/resources/.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -1,25 +1,4 @@
-// gsd-2: provider-equality guardrail test (ADR-012)
-//
-// Purpose: prevent regressions of bug class #4478 — gating API-shape-dependent
-// behavior on `model.provider === "<transport>"` instead of `model.api`.
-//
-// Rule (see docs/dev/ADR-012-provider-id-vs-api-shape.md):
-//   Source files must either gate API-shape behavior through the shared
-//   helpers in @gsd/pi-ai (isAnthropicApi / isOpenAIApi / isGeminiApi /
-//   isBedrockApi), OR be present in the allowlist below with a justified
-//   `reason` — one of a small set of legitimate transport-specific use cases.
-//
-// When this test fails, you have two options:
-//   1. Replace the `model.provider === "x"` check with an isXxxApi() call
-//      from @gsd/pi-ai. This is the default answer.
-//   2. If your check really is transport-specific (credential resolution,
-//      transport-only fallback targeting, display labels, etc.), add the
-//      file path to ALLOWED_FILES below with a short reason.
-//
-// Scope: `.ts` source files under `src/` and `packages/`. Excludes tests
-// (*.test.ts), scripts (generate-models, etc.), node_modules, .worktrees,
-// dist, and documentation (*.md).
-
+// GSD2 — gsd-2: provider-equality guardrail test (ADR-012)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";

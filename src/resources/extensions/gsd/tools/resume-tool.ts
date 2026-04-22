@@ -1,7 +1,4 @@
-// GSD Resume Tool — returns the contents of .gsd/last-snapshot.md so
-// agents can re-orient after compaction or session resume without
-// re-deriving project memory state.
-
+// GSD2 — Resume Tool — returns the contents of .gsd/last-snapshot.md so
 import { readCompactionSnapshot } from "../compaction-snapshot.js";
 
 export interface ResumeToolParams {

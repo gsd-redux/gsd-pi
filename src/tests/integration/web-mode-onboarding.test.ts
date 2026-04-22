@@ -1,3 +1,4 @@
+// GSD2 — Tests for Web Mode Onboarding
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -309,7 +310,6 @@ function configureBridgeRuntime(
     },
   };
 }
-
 
 test("successful browser onboarding restarts the stale bridge child and unlocks the first prompt", async (t) => {
   const fixture = makeWorkspaceFixture();

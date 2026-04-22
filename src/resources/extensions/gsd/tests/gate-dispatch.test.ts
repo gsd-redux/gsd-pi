@@ -1,6 +1,4 @@
-// Quality gate dispatch + state derivation tests
-// Verifies the evaluating-gates phase and dispatch rule behavior.
-
+// GSD2 — Quality gate dispatch + state derivation tests
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";

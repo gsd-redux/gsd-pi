@@ -1,3 +1,4 @@
+// GSD2 — Tests for Phase Anchor
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs";

@@ -1,11 +1,12 @@
 /**
- * auto/resolve.ts — Per-unit one-shot promise state and resolution.
+ * GSD2 — auto/resolve.ts — Per-unit one-shot promise state and resolution.
  *
  * Module-level mutable state: `_currentResolve` and `_sessionSwitchInFlight`.
  * Setter functions are exported because ES modules can't mutate `let` vars
  * across module boundaries.
  *
  * Imports from: auto/types
+ *
  */
 
 import type { UnitResult, AgentEndEvent, ErrorContext } from "./types.js";

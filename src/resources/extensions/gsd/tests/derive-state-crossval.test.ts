@@ -1,3 +1,4 @@
+// GSD2 — Tests for Derive State Crossval
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 // derive-state-crossval.test.ts — Cross-validation: deriveStateFromDb() vs _deriveStateImpl()

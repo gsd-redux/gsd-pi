@@ -1,5 +1,5 @@
 /**
- * Regression test for #3651 — renderAllProjections must NOT call renderPlanProjection
+ * GSD2 — Regression test for #3651 — renderAllProjections must NOT call renderPlanProjection
  *
  * renderAllProjections previously called renderPlanProjection inside the slice
  * loop, which overwrote the authoritative PLAN.md (produced by markdown-renderer.js
@@ -9,6 +9,7 @@
  *
  * The fix removes the renderPlanProjection call from the renderAllProjections
  * loop. The renderIfMissing recovery path is preserved.
+ *
  */
 
 import { describe, it } from 'node:test'

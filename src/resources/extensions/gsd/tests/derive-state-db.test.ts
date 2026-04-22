@@ -1,3 +1,4 @@
+// GSD2 — Tests for Derive State  DB
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -798,7 +799,6 @@ describe('derive-state-db', async () => {
       adapter!.prepare(
         "UPDATE slices SET replan_triggered_at = :ts WHERE milestone_id = :mid AND id = :sid",
       ).run({ ":ts": new Date().toISOString(), ":mid": "M001", ":sid": "S01" });
-
 
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);

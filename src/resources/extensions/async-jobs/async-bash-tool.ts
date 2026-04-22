@@ -1,9 +1,10 @@
 /**
- * async_bash tool — run a bash command in the background.
+ * GSD2 — async_bash tool — run a bash command in the background.
  *
  * Registers the command with the AsyncJobManager and returns a job ID
  * immediately. The LLM can continue working and check results later
  * with await_job.
+ *
  */
 
 import type { ToolDefinition } from "@gsd/pi-coding-agent";

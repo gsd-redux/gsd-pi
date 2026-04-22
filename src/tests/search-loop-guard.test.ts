@@ -1,12 +1,13 @@
 /**
- * Regression tests for the consecutive duplicate search loop guard.
+ * GSD2 — Regression tests for the consecutive duplicate search loop guard.
  *
  * Covers:
  * - Guard fires after MAX_CONSECUTIVE_DUPES identical calls (#949)
  * - Guard stays armed after firing — subsequent duplicates immediately
- *   re-trigger the error (#1671: the original fix reset state on trigger,
- *   allowing the loop to restart)
+ * re-trigger the error (#1671: the original fix reset state on trigger,
+ * allowing the loop to restart)
  * - Guard resets cleanly when a different query is issued
+ *
  */
 
 import test from "node:test";

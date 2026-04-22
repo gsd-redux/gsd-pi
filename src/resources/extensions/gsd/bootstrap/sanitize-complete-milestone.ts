@@ -1,5 +1,5 @@
 /**
- * Input sanitization for gsd_complete_milestone parameters.
+ * GSD2 — Input sanitization for gsd_complete_milestone parameters.
  *
  * The Claude SDK deserializes tool-call JSON before the handler runs.
  * When an LLM (especially smaller models like haiku) generates large markdown
@@ -9,6 +9,7 @@
  * handleCompleteMilestone never crashes on type mismatches.
  *
  * See: https://github.com/gsd-build/gsd-2/issues/3013
+ *
  */
 
 import type { CompleteMilestoneParams } from "../tools/complete-milestone.js";

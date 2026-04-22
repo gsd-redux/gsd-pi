@@ -1,10 +1,4 @@
-// GSD — /gsd init → unified preferences-write routing tests.
-//
-// Verifies the refactor that routes init's preferences write through the same
-// writePreferencesFile helper used by handlePrefsWizard, and that the typed
-// ProjectPreferences shape maps correctly into the wizard's
-// Record<string, unknown> shape.
-
+// GSD2 — /gsd init → unified preferences-write routing tests.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

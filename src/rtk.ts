@@ -1,3 +1,4 @@
+// GSD2 — Rtk
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, chmodSync, readdirSync } from "node:fs";
@@ -180,7 +181,6 @@ async function extractArchiveAsync(assetName: string, archivePath: string, extra
   }
   extractArchive(assetName, archivePath, extractDir);
 }
-
 
 export interface ResolveRtkBinaryPathOptions {
   binaryPath?: string;

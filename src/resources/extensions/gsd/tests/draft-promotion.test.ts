@@ -1,3 +1,4 @@
+// GSD2 — Tests for Draft Promotion
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

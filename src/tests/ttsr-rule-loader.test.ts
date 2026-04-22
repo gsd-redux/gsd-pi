@@ -1,6 +1,7 @@
 /**
- * Tests for TTSR rule loader: frontmatter parsing, directory scanning,
+ * GSD2 — Tests for TTSR rule loader: frontmatter parsing, directory scanning,
  * and project-overrides-global merge logic.
+ *
  */
 
 import test from 'node:test'

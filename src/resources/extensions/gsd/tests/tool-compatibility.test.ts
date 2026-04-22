@@ -1,4 +1,4 @@
-// GSD-2 — Tool Compatibility + Model Router Tool Filtering Tests (ADR-005 Phases 2-3)
+// GSD2 — GSD-2 — Tool Compatibility + Model Router Tool Filtering Tests (ADR-005 Phases 2-3)
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 

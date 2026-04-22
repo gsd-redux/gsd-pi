@@ -1,3 +1,4 @@
+// GSD2 — Register Hooks
 import { join } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

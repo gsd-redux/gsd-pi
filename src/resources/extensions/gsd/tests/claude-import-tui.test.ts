@@ -1,11 +1,12 @@
 /**
- * TUI Command Flow Tests for import-claude
+ * GSD2 — TUI Command Flow Tests for import-claude
  *
  * Tests R015: validates the TUI command flow for /gsd prefs import-claude.
  * These tests currently use mock UI, and marketplace availability is still
  * derived from real/local marketplace roots. Follow-up work should route these
  * through portable marketplace fixtures that mirror Claude Code's
  * `/plugin marketplace add ...` source model.
+ *
  */
 
 import { describe, it, before, after, mock } from 'node:test';

@@ -1,8 +1,4 @@
-// tool-call-loop-guard — Tests for the tool-call loop detection guard.
-//
-// Verifies that identical consecutive tool calls are detected and blocked
-// after exceeding the threshold, and that the guard resets properly.
-
+// GSD2 — tool-call-loop-guard — Tests for the tool-call loop detection guard.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -11,7 +7,6 @@ import {
   disableToolCallLoopGuard,
   getToolCallLoopCount,
 } from '../bootstrap/tool-call-loop-guard.ts';
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Allows first N calls, blocks after threshold

@@ -1,6 +1,4 @@
-// Quality gate DB storage tests
-// Verifies CRUD operations on the quality_gates table.
-
+// GSD2 — Quality gate DB storage tests
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

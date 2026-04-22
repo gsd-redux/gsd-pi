@@ -1,10 +1,11 @@
 /**
- * Regression test suite for save_gate_result renderResult.
+ * GSD2 — Regression test suite for save_gate_result renderResult.
  *
  * Verifies that renderResult does not print "undefined: undefined" when
  * `details` is empty, and that the error fallback does not produce a
  * duplicated `Error: Error:` prefix when `content[0].text` already starts
  * with `Error:`.
+ *
  */
 
 import { test } from 'node:test';

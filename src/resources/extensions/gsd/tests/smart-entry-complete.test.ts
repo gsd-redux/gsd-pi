@@ -1,3 +1,4 @@
+// GSD2 — Tests for Smart Entry Complete
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";

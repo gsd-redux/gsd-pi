@@ -1,3 +1,4 @@
+// GSD2 — Tests for Export Html All
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";

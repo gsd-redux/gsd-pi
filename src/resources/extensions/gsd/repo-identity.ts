@@ -1,9 +1,10 @@
 /**
- * GSD Repo Identity — external state directory primitives.
+ * GSD2 — GSD Repo Identity — external state directory primitives.
  *
  * Computes a stable per-repo identity hash, resolves the external
  * `~/.gsd/projects/<hash>/` state directory, and manages the
  * `<project>/.gsd → external` symlink.
+ *
  */
 
 import { createHash } from "node:crypto";

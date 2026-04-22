@@ -1,3 +1,4 @@
+// GSD2 — Workflow Events
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";

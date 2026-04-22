@@ -1,3 +1,4 @@
+// GSD2 — Tests for Startup Perf
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

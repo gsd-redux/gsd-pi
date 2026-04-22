@@ -1,6 +1,7 @@
 /**
- * Tests for the discovery orchestrator.
+ * GSD2 — Tests for the discovery orchestrator.
  * Runs with: node --experimental-strip-types --test
+ *
  */
 
 import { describe, test } from "node:test";

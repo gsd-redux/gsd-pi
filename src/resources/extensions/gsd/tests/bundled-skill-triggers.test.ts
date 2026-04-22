@@ -1,8 +1,4 @@
-// GSD-2 — BUNDLED_SKILL_TRIGGERS regression test
-//
-// Guards the skill-trigger table in system-context.ts against accidental
-// regression. Every entry must have a non-empty trigger + skill, and the
-// skills added in PR #4505 must remain present.
+// GSD2 — GSD-2 — BUNDLED_SKILL_TRIGGERS regression test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

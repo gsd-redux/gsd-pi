@@ -1,3 +1,4 @@
+// GSD2 — Loop Adapter — types and interfaces
 import type {
   TurnCloseoutRecord,
   TurnContract,

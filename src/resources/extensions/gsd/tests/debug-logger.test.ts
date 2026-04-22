@@ -1,5 +1,4 @@
-// Debug Logger Tests
-
+// GSD2 — Debug Logger Tests
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { mkdtempSync, mkdirSync, readFileSync, existsSync, writeFileSync, readdirSync } from 'node:fs';

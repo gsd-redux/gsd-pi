@@ -1,8 +1,9 @@
 /**
- * worktree-expected-warnings.test.ts — #3665
+ * GSD2 — worktree-expected-warnings.test.ts — #3665
  *
  * Verify that auto-worktree.ts and worktree-manager.ts suppress expected
  * ENOENT and EISDIR conditions instead of logging misleading warnings.
+ *
  */
 
 import { describe, test } from "node:test";

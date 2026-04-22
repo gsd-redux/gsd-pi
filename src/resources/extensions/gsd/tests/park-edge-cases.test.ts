@@ -1,5 +1,5 @@
 /**
- * Edge Case Tests for Park/Discard Milestone Feature
+ * GSD2 — Edge Case Tests for Park/Discard Milestone Feature
  *
  * Tests critical edge cases:
  * 1. Discard breaks depends_on chain → permanent block
@@ -10,6 +10,7 @@
  * 6. Queue order survives discards
  * 7. Circular deps + park interaction
  * 8. Discard milestone that has depends_on on others
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -21,7 +22,6 @@ import { tmpdir } from 'node:os';
 import { deriveState, invalidateStateCache } from '../state.ts';
 import { clearPathCache } from '../paths.ts';
 import { parkMilestone, unparkMilestone, discardMilestone } from '../milestone-actions.ts';
-
 
 function createFixture(): string {
   const b = mkdtempSync(join(tmpdir(), 'gsd-edge-'));

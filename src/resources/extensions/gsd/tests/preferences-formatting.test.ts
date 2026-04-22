@@ -1,7 +1,8 @@
 /**
- * Tests for formatSkillRef — pure formatting logic for skill references
+ * GSD2 — Tests for formatSkillRef — pure formatting logic for skill references
  * in the system prompt. Moved from preferences-skills.ts to preferences-types.ts
  * to break the preferences ↔ preferences-skills circular dependency.
+ *
  */
 
 import { describe, test } from "node:test";

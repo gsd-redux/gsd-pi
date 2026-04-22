@@ -1,9 +1,10 @@
 /**
- * GSD Welcome Screen
+ * GSD2 — GSD Welcome Screen
  *
  * Two-panel bar layout: full-width accent bars at top/bottom (matching the
  * auto-mode progress widget style), logo left (fixed width), info right.
  * Falls back to simple text on narrow terminals (<70 cols) or non-TTY.
+ *
  */
 
 import { readFileSync } from 'node:fs'

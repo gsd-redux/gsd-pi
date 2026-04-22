@@ -1,11 +1,12 @@
 /**
- * Regression test for #2985 Bugs 3 & 4:
- *   Bug 3 — module-level pendingAutoStart singleton clobbers concurrent sessions.
- *   Bug 4 — getDiscussionMilestoneId() returns wrong project's milestone under concurrency.
+ * GSD2 — Regression test for #2985 Bugs 3 & 4:
+ * Bug 3 — module-level pendingAutoStart singleton clobbers concurrent sessions.
+ * Bug 4 — getDiscussionMilestoneId() returns wrong project's milestone under concurrency.
  *
  * pendingAutoStart must be keyed by basePath so concurrent discuss sessions
  * in different projects are independent.  getDiscussionMilestoneId() must accept
  * a basePath parameter to perform a keyed lookup.
+ *
  */
 
 import { describe, test, beforeEach } from "node:test";

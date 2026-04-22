@@ -1,11 +1,12 @@
 /**
- * milestone-transition-worktree.test.ts — Tests for #616 fix.
+ * GSD2 — milestone-transition-worktree.test.ts — Tests for #616 fix.
  *
  * Verifies that when auto-mode transitions between milestones, the
  * worktree lifecycle is handled: old worktree merged, new worktree created.
  *
  * Uses source-level checks since the full auto-mode dispatch loop
  * requires the @gsd/pi-coding-agent runtime.
+ *
  */
 
 import test from "node:test";

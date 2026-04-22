@@ -1,5 +1,5 @@
 /**
- * Regression tests for #2883: gsd_complete_slice tool invocation fails with
+ * GSD2 — Regression tests for #2883: gsd_complete_slice tool invocation fails with
  * JSON truncation, causing stuck retry loop.
  *
  * When a GSD tool is invoked with malformed/truncated JSON arguments, the tool
@@ -13,6 +13,7 @@
  * execution ends with isError, the error is recorded. postUnitPreVerification
  * checks this field before retrying — if a tool invocation error occurred, it
  * pauses auto-mode instead of retrying.
+ *
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

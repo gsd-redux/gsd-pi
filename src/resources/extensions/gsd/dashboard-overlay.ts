@@ -1,10 +1,11 @@
 /**
- * GSD Dashboard Overlay
+ * GSD2 — GSD Dashboard Overlay
  *
  * Full-screen overlay showing auto-mode progress: milestone/slice/task
  * breakdown, current unit, completed units, timing, and activity log.
  * Toggled with Ctrl+Alt+G (⌃⌥G on macOS), Ctrl+Shift+G fallback,
  * or opened from /gsd status.
+ *
  */
 
 import type { Theme } from "@gsd/pi-coding-agent";
@@ -47,7 +48,6 @@ function unitLabel(type: string): string {
     default: return type;
   }
 }
-
 
 export class GSDDashboardOverlay {
   private tui: { requestRender: () => void };

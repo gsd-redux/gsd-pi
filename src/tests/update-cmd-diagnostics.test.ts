@@ -1,7 +1,8 @@
 /**
- * Regression test for #3445: gsd update must print both current and latest
+ * GSD2 — Regression test for #3445: gsd update must print both current and latest
  * versions for diagnostics, and bypass npm cache.
  * Regression test for #4145: gsd update must use bun when installed via Bun.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

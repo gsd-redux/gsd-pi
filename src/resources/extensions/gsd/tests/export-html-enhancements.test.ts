@@ -1,3 +1,4 @@
+// GSD2 — Tests for Export Html Enhancements
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateHtmlReport, type HtmlReportOptions } from "../export-html.js";

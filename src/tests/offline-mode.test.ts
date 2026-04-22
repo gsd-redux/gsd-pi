@@ -1,5 +1,5 @@
 /**
- * Offline mode support tests.
+ * GSD2 — Offline mode support tests.
  *
  * Covers:
  * - isLocalModel() detection for local vs cloud URLs
@@ -10,6 +10,7 @@
  * - Web search tool filtered when PI_OFFLINE is set
  *
  * Fixes #2341
+ *
  */
 
 import test from "node:test";

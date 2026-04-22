@@ -1,5 +1,5 @@
 /**
- * worktree-db-respawn-truncation.test.ts — Regression test for #2815.
+ * GSD2 — worktree-db-respawn-truncation.test.ts — Regression test for #2815.
  *
  * Verifies that syncProjectRootToWorktree does NOT delete a non-empty
  * worktree gsd.db. On worker respawn, gsd-migrate populates the DB
@@ -8,9 +8,10 @@
  * it to 0 bytes and causing "no such table: slices" failures.
  *
  * Covers:
- *   - Non-empty worktree gsd.db preserved after sync (#2815)
- *   - Empty (0-byte) worktree gsd.db still deleted (#853 preserved)
- *   - WAL/SHM sidecar files cleaned up when empty DB is deleted
+ * - Non-empty worktree gsd.db preserved after sync (#2815)
+ * - Empty (0-byte) worktree gsd.db still deleted (#853 preserved)
+ * - WAL/SHM sidecar files cleaned up when empty DB is deleted
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, statSync } from 'node:fs';
@@ -20,7 +21,6 @@ import { tmpdir } from 'node:os';
 import { syncProjectRootToWorktree } from '../auto-worktree.ts';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function createBase(name: string): string {
   const base = mkdtempSync(join(tmpdir(), `gsd-wt-respawn-${name}-`));

@@ -1,6 +1,4 @@
-// Unit tests for T02: validator and per-file parsers
-// Tests these independently of the T03 orchestrator (parsePlanningDirectory).
-
+// GSD2 — Unit tests for T02: validator and per-file parsers
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

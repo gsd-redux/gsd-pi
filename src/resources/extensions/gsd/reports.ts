@@ -1,17 +1,18 @@
 /**
- * GSD Reports Registry
+ * GSD2 — GSD Reports Registry
  *
  * Manages .gsd/reports/ — the persistent progression log of HTML snapshots.
  *
  * Layout:
- *   .gsd/reports/
- *     reports.json          lightweight metadata index (never re-parses HTML)
- *     index.html            auto-regenerated on every new snapshot
- *     M001-20260101T120000.html    per-milestone snapshot
- *     final-20260201T090000.html   full-project final snapshot
+ * .gsd/reports/
+ * reports.json          lightweight metadata index (never re-parses HTML)
+ * index.html            auto-regenerated on every new snapshot
+ * M001-20260101T120000.html    per-milestone snapshot
+ * final-20260201T090000.html   full-project final snapshot
  *
  * Auto-triggered: after each milestone completion (when auto_report: true).
  * Manual: /gsd export --html
+ *
  */
 
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -381,7 +382,6 @@ function buildCostSparkline(entries: ReportEntry[]): string {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
 
 function esc(s: string | number | undefined | null): string {
   if (s == null) return '';

@@ -1,6 +1,4 @@
-// GSD Extension — write-intercept unit tests
-// Tests isBlockedStateFile() and BLOCKED_WRITE_ERROR constant.
-
+// GSD2 — Extension — write-intercept unit tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isBlockedStateFile, BLOCKED_WRITE_ERROR } from '../write-intercept.ts';

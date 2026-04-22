@@ -1,7 +1,8 @@
 /**
- * GSD Config — Tool API key management.
+ * GSD2 — GSD Config — Tool API key management.
  *
  * Contains: TOOL_KEYS, loadToolApiKeys, getConfigAuthStorage, handleConfig
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,14 +1,15 @@
 /**
- * Observation masking for GSD auto-mode sessions.
+ * GSD2 — Observation masking for GSD auto-mode sessions.
  *
  * Replaces tool result content older than N turns with a placeholder.
  * Reduces context bloat between compactions with zero LLM overhead.
  * Preserves message ordering, roles, and all assistant/user messages.
  *
  * Operates on the pi-ai Message[] format (post-convertToLlm, pre-provider):
- *   - toolResult messages: { role: "toolResult", content: TextContent[] }
- *   - bash results are already converted to: { role: "user", content: [{type:"text",text:"..."}] }
- *     and start with "Ran `" from bashExecutionToText.
+ * - toolResult messages: { role: "toolResult", content: TextContent[] }
+ * - bash results are already converted to: { role: "user", content: [{type:"text",text:"..."}] }
+ * and start with "Ran `" from bashExecutionToText.
+ *
  */
 
 interface MaskableMessage {

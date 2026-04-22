@@ -1,3 +1,4 @@
+// GSD2 — Tests for Remote Questions
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -173,7 +174,6 @@ test("sanitizeError preserves short safe messages", () => {
   assert.equal(sanitizeError("HTTP 401: Unauthorized"), "HTTP 401: Unauthorized");
   assert.equal(sanitizeError("Connection refused"), "Connection refused");
 });
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Discord Parity Tests

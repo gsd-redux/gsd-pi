@@ -1,8 +1,9 @@
 /**
- * Centralized verdict extraction, normalization, and schema validation.
+ * GSD2 — Centralized verdict extraction, normalization, and schema validation.
  *
  * All verdict-related logic lives here so that normalization rules
  * (e.g. `passed` → `pass`) are applied consistently across the codebase.
+ *
  */
 
 import { extractUatType } from "./files.js";

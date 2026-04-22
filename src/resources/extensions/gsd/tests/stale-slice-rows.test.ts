@@ -1,10 +1,11 @@
 /**
- * stale-slice-rows.test.ts — #3658
+ * GSD2 — stale-slice-rows.test.ts — #3658
  *
  * Verify that state.ts contains slice-level status reconciliation that
  * updates stale DB rows (status "pending") when disk artifacts (SUMMARY)
  * prove the slice is complete. Without this, the dependency resolver builds
  * doneSliceIds from stale DB rows and downstream slices stay blocked.
+ *
  */
 
 import { describe, test } from "node:test";

@@ -1,16 +1,4 @@
-// Regex-hardening tests for S02/T02 — proves all 12 regex/parser sites
-// accept both M001 (classic) and M001-abc123 (unique) milestone ID formats.
-//
-// Sections:
-//   (a) Directory scanning regex — findMilestoneIds pattern
-//   (b) Title-strip regex — milestone title cleanup
-//   (c) SLICE_BRANCH_RE — branch name parsing (with/without worktree prefix)
-//   (d) Milestone detection regex — hasExistingMilestones pattern
-//   (e) MILESTONE_CONTEXT_RE — context write-gate filename match
-//   (f) Prompt dispatch regexes — executeMatch and resumeMatch capture
-//   (g) milestoneIdSort — mixed-format ordering
-//   (h) extractMilestoneSeq — numeric extraction from both formats
-
+// GSD2 — Regex-hardening tests for S02/T02 — proves all 12 regex/parser sites
 import { test } from 'node:test';
 
 import {
@@ -21,7 +9,6 @@ import {
 
 import { SLICE_BRANCH_RE } from '../worktree.ts';
 import { createTestContext } from './test-helpers.ts';
-
 
 const { assertEq, assertTrue, report } = createTestContext();
 // ─── Tests ─────────────────────────────────────────────────────────────────

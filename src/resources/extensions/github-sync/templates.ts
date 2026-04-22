@@ -1,9 +1,10 @@
 /**
- * Markdown formatters for GitHub issue bodies, PR descriptions,
+ * GSD2 — Markdown formatters for GitHub issue bodies, PR descriptions,
  * and summary comments.
  *
  * All functions produce GitHub-flavored markdown strings ready
  * for the `gh` CLI body parameters.
+ *
  */
 
 // ─── Milestone Issue Body ───────────────────────────────────────────────────

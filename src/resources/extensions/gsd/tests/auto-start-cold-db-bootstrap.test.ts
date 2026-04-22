@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Start Cold Db Bootstrap
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

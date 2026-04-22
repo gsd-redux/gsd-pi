@@ -1,6 +1,4 @@
-// GSD State Machine — Comprehensive Phase-by-Phase Walkthrough Tests
-// Verifies all 16 phases, reconciliation, edge cases, and cross-validation.
-
+// GSD2 — State Machine — Comprehensive Phase-by-Phase Walkthrough Tests
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";

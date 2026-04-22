@@ -1,5 +1,4 @@
-// GSD State Machine Regression Tests — Completion Hierarchy & State Derivation (#3161)
-
+// GSD2 — State Machine Regression Tests — Completion Hierarchy & State Derivation (#3161)
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

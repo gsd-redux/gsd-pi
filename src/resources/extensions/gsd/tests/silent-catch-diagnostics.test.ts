@@ -1,11 +1,12 @@
 /**
- * Verify that catch blocks across GSD source files use the centralized
+ * GSD2 — Verify that catch blocks across GSD source files use the centralized
  * workflow-logger (logWarning/logError) instead of raw process.stderr.write,
  * console.error, or being completely empty (#3348, #3345).
  *
  * Two tests:
  * 1. Auto-mode files must have zero empty catch blocks (fully migrated).
  * 2. All GSD files must not use raw stderr/console in catch blocks.
+ *
  */
 
 import { describe, test } from "node:test";

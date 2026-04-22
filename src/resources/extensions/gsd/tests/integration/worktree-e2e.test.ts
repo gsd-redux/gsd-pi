@@ -1,10 +1,11 @@
 /**
- * worktree-e2e.test.ts -- End-to-end tests for worktree-isolated git flow.
+ * GSD2 — worktree-e2e.test.ts -- End-to-end tests for worktree-isolated git flow.
  *
  * Covers cross-cutting groups not tested by individual slice tests:
- *   1. Full lifecycle chain (create -> slice commits -> merge to milestone -> merge to main)
- *   2. Self-heal: abortAndReset cleans up failed merges
- *   3. Doctor detection of orphaned worktrees
+ * 1. Full lifecycle chain (create -> slice commits -> merge to milestone -> merge to main)
+ * 2. Self-heal: abortAndReset cleans up failed merges
+ * 3. Doctor detection of orphaned worktrees
+ *
  */
 
 import {
@@ -24,7 +25,6 @@ import { abortAndReset } from "../../git-self-heal.ts";
 import { runGSDDoctor } from "../../doctor.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // ---- Helpers ----
 

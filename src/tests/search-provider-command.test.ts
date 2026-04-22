@@ -1,5 +1,5 @@
 /**
- * Contract tests for /search-provider slash command.
+ * GSD2 — Contract tests for /search-provider slash command.
  *
  * Covers:
  * - Direct arg application (tavily, brave, auto)
@@ -8,6 +8,7 @@
  * - Invalid arg falls back to interactive select
  * - Tab completion returns filtered AutocompleteItem[]
  * - Notify message includes effective provider from resolveSearchProvider()
+ *
  */
 
 import test from 'node:test'

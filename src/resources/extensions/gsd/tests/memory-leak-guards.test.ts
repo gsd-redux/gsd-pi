@@ -1,8 +1,9 @@
 /**
- * memory-leak-guards.test.ts — Tests for #611 memory leak fixes.
+ * GSD2 — memory-leak-guards.test.ts — Tests for #611 memory leak fixes.
  *
  * Verifies that module-level state accumulators are properly bounded
  * and cleared to prevent OOM during long-running auto-mode sessions.
+ *
  */
 
 import test from "node:test";

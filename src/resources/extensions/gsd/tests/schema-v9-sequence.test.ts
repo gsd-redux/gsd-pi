@@ -1,3 +1,4 @@
+// GSD2 — Tests for Schema V9 Sequence
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';

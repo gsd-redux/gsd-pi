@@ -1,5 +1,5 @@
 /**
- * discuss-tool-scoping.test.ts — Tests for #2949.
+ * GSD2 — discuss-tool-scoping.test.ts — Tests for #2949.
  *
  * xAI/Grok returns "Grammar is too complex" (400) when the combined tool
  * schemas exceed the provider's grammar limit. The GSD discuss flow only
@@ -7,11 +7,12 @@
  * was sending ALL ~30+ tools to the provider.
  *
  * These tests verify:
- *   1. DISCUSS_TOOLS_ALLOWLIST is exported and contains only the tools
- *      needed during discuss flows (no heavy planning/execution/completion tools).
- *   2. Heavy execution tools are NOT in the allowlist.
- *   3. The allowlist includes the tools actually referenced by discuss prompts.
- *   4. dispatchWorkflow scopes tools when unitType is a discuss variant.
+ * 1. DISCUSS_TOOLS_ALLOWLIST is exported and contains only the tools
+ * needed during discuss flows (no heavy planning/execution/completion tools).
+ * 2. Heavy execution tools are NOT in the allowlist.
+ * 3. The allowlist includes the tools actually referenced by discuss prompts.
+ * 4. dispatchWorkflow scopes tools when unitType is a discuss variant.
+ *
  */
 
 import { describe, test } from "node:test";

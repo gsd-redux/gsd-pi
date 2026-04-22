@@ -1,10 +1,11 @@
 /**
- * dashboard-custom-engine.test.ts — Tests that the custom engine path
+ * GSD2 — dashboard-custom-engine.test.ts — Tests that the custom engine path
  * calls updateProgressWidget and that unitLabel handles "custom-step".
  *
  * Uses source-level assertions for the non-exported unitLabel function
  * and the updateProgressWidget call placement. Tests exported helpers
  * (unitVerb, unitPhaseLabel) directly.
+ *
  */
 
 import { describe, it } from "node:test";

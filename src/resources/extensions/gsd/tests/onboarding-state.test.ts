@@ -1,7 +1,4 @@
-// GSD — Onboarding state record tests.
-// Verifies the explicit completion record (onboarding-state.ts) and step-evolution
-// behavior in setup-catalog.ts, including stale-resume fallback and version semantics.
-
+// GSD2 — Onboarding state record tests.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

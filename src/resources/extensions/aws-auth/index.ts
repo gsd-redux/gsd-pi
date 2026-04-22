@@ -1,5 +1,5 @@
 /**
- * AWS Auth Refresh Extension
+ * GSD2 — AWS Auth Refresh Extension
  *
  * Automatically refreshes AWS credentials when Bedrock API requests fail
  * with authentication/token errors, then retries the user's message.
@@ -9,17 +9,17 @@
  * Hooks into `agent_end` to check if the last assistant message failed with
  * an AWS auth error (expired SSO token, missing credentials, etc.). If so:
  *
- *   1. Runs the configured `awsAuthRefresh` command (e.g. `aws sso login`)
- *   2. Streams the SSO auth URL and verification code to the TUI so users
- *      can copy/paste if the browser doesn't auto-open
- *   3. Calls `retryLastTurn()` which removes the failed assistant response
- *      and re-runs the agent from the user's original message
+ * 1. Runs the configured `awsAuthRefresh` command (e.g. `aws sso login`)
+ * 2. Streams the SSO auth URL and verification code to the TUI so users
+ * can copy/paste if the browser doesn't auto-open
+ * 3. Calls `retryLastTurn()` which removes the failed assistant response
+ * and re-runs the agent from the user's original message
  *
  * ## Activation
  *
  * This extension is completely inert unless BOTH conditions are met:
- *   1. A Bedrock API request fails with a recognized AWS auth error
- *   2. `awsAuthRefresh` is configured in settings.json
+ * 1. A Bedrock API request fails with a recognized AWS auth error
+ * 2. `awsAuthRefresh` is configured in settings.json
  *
  * Non-Bedrock users and Bedrock users without `awsAuthRefresh` configured
  * are not affected in any way.
@@ -28,19 +28,20 @@
  *
  * Add to ~/.gsd/agent/settings.json (or project-level .gsd/settings.json):
  *
- *   { "awsAuthRefresh": "aws sso login --profile my-profile" }
+ * { "awsAuthRefresh": "aws sso login --profile my-profile" }
  *
  * ## Matched error patterns
  *
  * The extension recognizes errors from the AWS SDK, Bedrock, and SSO
  * credential providers including:
- *   - ExpiredTokenException / ExpiredToken
- *   - The security token included in the request is expired
- *   - The SSO session associated with this profile has expired or is invalid
- *   - Unable to locate credentials / Could not load credentials
- *   - UnrecognizedClientException
- *   - Error loading SSO Token / Token does not exist
- *   - SSOTokenProviderFailure
+ * - ExpiredTokenException / ExpiredToken
+ * - The security token included in the request is expired
+ * - The SSO session associated with this profile has expired or is invalid
+ * - Unable to locate credentials / Could not load credentials
+ * - UnrecognizedClientException
+ * - Error loading SSO Token / Token does not exist
+ * - SSOTokenProviderFailure
+ *
  */
 
 import { exec } from "node:child_process";

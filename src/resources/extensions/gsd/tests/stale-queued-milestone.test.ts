@@ -1,10 +1,11 @@
 /**
- * Regression test for #3470: DB-backed active milestone selection must not
+ * GSD2 — Regression test for #3470: DB-backed active milestone selection must not
  * prefer a stale queued shell over the real active milestone.
  *
  * Scenario: M068 is a queued placeholder (DB row, no files, no slices).
  * M070 is the real active milestone (context, roadmap, slices, tasks).
  * deriveStateFromDb() must select M070 as active, not M068.
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

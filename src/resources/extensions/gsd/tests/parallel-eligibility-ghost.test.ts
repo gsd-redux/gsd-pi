@@ -1,8 +1,9 @@
 /**
- * Tests for parallel eligibility edge cases:
+ * GSD2 — Tests for parallel eligibility edge cases:
  * - Ghost milestones (no registry entry) must NOT appear eligible (#2501 Bug 2)
  * - Milestones with failed worktree merge (SUMMARY only in worktree, DB still
- *   "active") must NOT appear eligible (#2501 Bug 1 context)
+ * "active") must NOT appear eligible (#2501 Bug 1 context)
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

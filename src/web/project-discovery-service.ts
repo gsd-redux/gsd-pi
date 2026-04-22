@@ -1,3 +1,4 @@
+// GSD2 — Project Discovery Service — types and interfaces
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ProjectDetectionKind, ProjectDetectionSignals } from "./bridge-service.ts";

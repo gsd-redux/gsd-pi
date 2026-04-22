@@ -1,8 +1,9 @@
 /**
- * terminated-transient.test.ts — Regression test for #2309.
+ * GSD2 — terminated-transient.test.ts — Regression test for #2309.
  *
  * classifyError should treat 'terminated' errors (process killed,
  * connection reset) as transient with auto-resume, not permanent.
+ *
  */
 
 import test from "node:test";

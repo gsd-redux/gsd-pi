@@ -1,8 +1,4 @@
-// GSD Extension — Advisory Sync Lock
-// Prevents concurrent worktree syncs from colliding via a simple file lock.
-// Stale locks (mtime > 60s) are auto-overridden. Lock acquisition waits up
-// to 5 seconds then skips non-fatally.
-
+// GSD2 — Extension — Advisory Sync Lock
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync } from "./atomic-write.js";

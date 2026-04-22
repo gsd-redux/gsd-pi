@@ -1,9 +1,10 @@
 /**
- * Collision Diagnostics Contract Tests
+ * GSD2 — Collision Diagnostics Contract Tests
  *
  * Tests that prove:
  * - R010: Collision reporting distinguishes canonical-conflict from shorthand-overlap
  * - R011: Doctor provides actionable advice with canonical name suggestions
+ *
  */
 
 import { describe, it, beforeEach } from 'node:test';

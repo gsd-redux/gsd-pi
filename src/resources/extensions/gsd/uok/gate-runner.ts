@@ -1,3 +1,4 @@
+// GSD2 — Gate Runner — types and interfaces
 import type { FailureClass, GateResult } from "./contracts.js";
 import { insertGateRun } from "../gsd-db.js";
 import { buildAuditEnvelope, emitUokAuditEvent } from "./audit.js";

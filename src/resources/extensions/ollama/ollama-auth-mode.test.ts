@@ -1,6 +1,7 @@
 /**
- * Regression test for #3440: Ollama extension must register with
+ * GSD2 — Regression test for #3440: Ollama extension must register with
  * authMode "apiKey" (not "none") to avoid streamSimple requirement.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

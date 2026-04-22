@@ -1,11 +1,4 @@
-// GSD Extension — workflow-logger wiring regression tests
-//
-// Verifies the plumbing between workflow-logger and the rest of the state
-// system (auto-loop phases, detect-stuck, notification store). Without this
-// wiring, warnings/errors logged during a unit leak across units, never
-// reach the user as a consolidated post-unit alert, and don't enrich
-// stuck-detection reasons.
-
+// GSD2 — Extension — workflow-logger wiring regression tests
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

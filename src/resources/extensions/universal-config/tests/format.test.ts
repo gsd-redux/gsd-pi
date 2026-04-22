@@ -1,6 +1,7 @@
 /**
- * Tests for output formatting.
+ * GSD2 — Tests for output formatting.
  * Runs with: node --experimental-strip-types --test
+ *
  */
 
 import { describe, test } from "node:test";

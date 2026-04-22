@@ -1,10 +1,4 @@
-// Native Git Bridge
-// Provides high-performance git operations backed by libgit2 via the Rust native module.
-// Falls back to execSync/execFileSync git commands when the native module is unavailable.
-//
-// Both READ and WRITE operations are native — push operations remain as
-// execSync calls because git2 credential handling is too complex.
-
+// GSD2 — Native Git Bridge
 import { execSync, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

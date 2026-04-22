@@ -1,6 +1,4 @@
-// GSD Extension — formatShortcut tests
-// Verifies OS-specific keyboard shortcut rendering.
-
+// GSD2 — Extension — formatShortcut tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { formatShortcut } from '../files.ts';

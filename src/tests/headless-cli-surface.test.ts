@@ -1,9 +1,10 @@
 /**
- * Tests for S02 CLI surface — --output-format, exit codes, HeadlessJsonResult, --resume.
+ * GSD2 — Tests for S02 CLI surface — --output-format, exit codes, HeadlessJsonResult, --resume.
  *
  * Uses extracted parsing logic (mirrors headless.ts) and direct imports from
  * headless-types.ts / headless-events.ts to avoid transitive @gsd/native
  * import that breaks in test environment.
+ *
  */
 
 import test from 'node:test'

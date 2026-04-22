@@ -1,8 +1,4 @@
-// Migration command integration test
-// Tests the pipeline functions as the command handler uses them:
-// path resolution, validation gating, full parse→transform→preview→write→deriveState round-trip.
-// Exercises pipeline modules directly — no TUI context dependency.
-
+// GSD2 — Migration command integration test
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';

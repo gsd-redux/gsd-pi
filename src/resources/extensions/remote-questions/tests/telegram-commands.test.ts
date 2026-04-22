@@ -1,24 +1,25 @@
 /**
- * Tests for Telegram command handling.
+ * GSD2 — Tests for Telegram command handling.
  *
  * Framework: node:test + node:assert/strict (CONTRIBUTING.md rules)
  *
  * Run:
- *   npm run test:unit
+ * npm run test:unit
  *
  * Or directly after compiling:
- *   node scripts/compile-tests.mjs && \
- *   node --import ./scripts/dist-test-resolve.mjs \
- *        --experimental-test-isolation=process \
- *        --test "dist-test/src/resources/extensions/remote-questions/tests/*.test.js"
+ * node scripts/compile-tests.mjs && \
+ * node --import ./scripts/dist-test-resolve.mjs \
+ * --experimental-test-isolation=process \
+ * --test "dist-test/src/resources/extensions/remote-questions/tests/*.test.js"
  *
  * Covers:
- *   - Command detection: messages starting with / are commands
- *   - /help returns a list of all commands
- *   - /status returns current GSD state
- *   - /pause writes a stop directive
- *   - Unknown commands return a helpful error + /help hint
- *   - Non-commands are NOT treated as commands (regression guard)
+ * - Command detection: messages starting with / are commands
+ * - /help returns a list of all commands
+ * - /status returns current GSD state
+ * - /pause writes a stop directive
+ * - Unknown commands return a helpful error + /help hint
+ * - Non-commands are NOT treated as commands (regression guard)
+ *
  */
 
 import test from "node:test";

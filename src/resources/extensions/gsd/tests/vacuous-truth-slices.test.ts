@@ -1,11 +1,12 @@
 /**
- * Regression test for #2667: deriveStateFromDb must NOT treat an empty
+ * GSD2 — Regression test for #2667: deriveStateFromDb must NOT treat an empty
  * slice array as "all slices done" due to JavaScript's vacuous-truth
  * behavior of Array.prototype.every on an empty array.
  *
  * [].every(predicate) === true in JavaScript. Without a length > 0 guard,
  * this causes a premature phase transition to validating-milestone when
  * the DB returns 0 slices (e.g. after a worktree DB wipe).
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

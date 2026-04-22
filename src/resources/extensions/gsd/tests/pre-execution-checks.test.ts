@@ -1,11 +1,12 @@
 /**
- * pre-execution-checks.test.ts — Unit tests for pre-execution validation checks.
+ * GSD2 — pre-execution-checks.test.ts — Unit tests for pre-execution validation checks.
  *
  * Tests all 4 check types:
- *   1. Package existence — npm view mocking, timeout handling
- *   2. File path consistency — files exist vs prior expected_output
- *   3. Task ordering — detect impossible read-before-create
- *   4. Interface contracts — contradictory function signatures
+ * 1. Package existence — npm view mocking, timeout handling
+ * 2. File path consistency — files exist vs prior expected_output
+ * 3. Task ordering — detect impossible read-before-create
+ * 4. Interface contracts — contradictory function signatures
+ *
  */
 
 import { describe, test, mock } from "node:test";

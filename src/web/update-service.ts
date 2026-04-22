@@ -1,3 +1,4 @@
+// GSD2 — Update Service — NPM_PACKAGE_NAME constant
 import { spawn } from "node:child_process"
 import { compareSemver } from "../update-check.ts"
 

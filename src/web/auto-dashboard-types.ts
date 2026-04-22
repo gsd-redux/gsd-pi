@@ -1,3 +1,4 @@
+// GSD2 — Auto Dashboard Types
 export interface RtkSessionSavings {
   commands: number;
   inputTokens: number;

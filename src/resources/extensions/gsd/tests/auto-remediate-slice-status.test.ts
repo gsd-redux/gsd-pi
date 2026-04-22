@@ -1,5 +1,5 @@
 /**
- * Regression test for #3673 — auto-remediate stale slice DB status
+ * GSD2 — Regression test for #3673 — auto-remediate stale slice DB status
  *
  * When complete-slice fails after writing SUMMARY.md but before calling
  * updateSliceStatus(), the DB stays stale and the post-unit check
@@ -8,6 +8,7 @@
  *
  * This structural test verifies updateSliceStatus is imported and called
  * in the complete-slice branch of auto-post-unit.ts.
+ *
  */
 
 import { describe, test } from 'node:test';

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Budget
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { getBudgetAlertLevel, getNewBudgetAlertLevel, getBudgetEnforcementAction } from "../resources/extensions/gsd/auto-budget.js";

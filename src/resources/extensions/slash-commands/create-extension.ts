@@ -1,3 +1,4 @@
+// GSD2 — Create Extension
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 

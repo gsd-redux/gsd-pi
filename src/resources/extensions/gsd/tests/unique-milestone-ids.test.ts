@@ -1,15 +1,4 @@
-// Tests for unique milestone ID exports from T01/S01 — covers the S01→S02 boundary contract.
-//
-// Sections:
-//   (a) MILESTONE_ID_RE: regex matching/rejection
-//   (b) extractMilestoneSeq: old/new/invalid → number
-//   (c) parseMilestoneId: old/new/invalid → structured result
-//   (d) milestoneIdSort: ordering of mixed arrays
-//   (e) generateMilestoneSuffix: format, length, uniqueness
-//   (f) nextMilestoneId: uniqueEnabled true/false, mixed arrays
-//   (g) maxMilestoneNum: empty, old, new, mixed, non-matching
-//   (h) Preferences round-trip: validate, merge behavior via renderPreferencesForSystemPrompt
-
+// GSD2 — Tests for unique milestone ID exports from T01/S01 — covers the S01→S02 boundary contract.
 import {
   MILESTONE_ID_RE,
   extractMilestoneSeq,
@@ -24,7 +13,6 @@ import { renderPreferencesForSystemPrompt } from '../preferences.ts';
 import type { GSDPreferences } from '../preferences.ts';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 

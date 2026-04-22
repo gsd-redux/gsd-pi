@@ -1,11 +1,12 @@
 /**
- * Shared test utilities for GSD extension tests.
+ * GSD2 — Shared test utilities for GSD extension tests.
  *
  * Provides cross-platform helpers for creating temporary git repos,
  * safe cleanup, file creation, and shell-free git operations.
  *
  * Usage:
- *   import { git, makeTempRepo, cleanup, createFile } from "./test-utils.ts";
+ * import { git, makeTempRepo, cleanup, createFile } from "./test-utils.ts";
+ *
  */
 
 import { execFileSync } from "node:child_process";

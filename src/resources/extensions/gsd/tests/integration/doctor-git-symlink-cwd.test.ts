@@ -1,3 +1,4 @@
+// GSD2 — Tests for Doctor Git Symlink Cwd
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

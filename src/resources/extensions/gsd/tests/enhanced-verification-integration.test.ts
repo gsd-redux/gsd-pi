@@ -1,13 +1,14 @@
 /**
- * enhanced-verification-integration.test.ts — Integration tests for enhanced verification.
+ * GSD2 — enhanced-verification-integration.test.ts — Integration tests for enhanced verification.
  *
  * Exercises all 7 enhanced verification checks against GSD-2's actual source files.
  * This proves:
- *   - R012: No false positives on production code
- *   - R013: Speed targets met (<2000ms pre-execution, <1000ms post-execution per task)
+ * - R012: No false positives on production code
+ * - R013: Speed targets met (<2000ms pre-execution, <1000ms post-execution per task)
  *
  * The test constructs realistic TaskRow fixtures that reference real GSD source files,
  * then runs both pre-execution and post-execution checks against them.
+ *
  */
 
 import { describe, test } from "node:test";

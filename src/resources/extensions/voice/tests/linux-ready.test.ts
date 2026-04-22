@@ -1,11 +1,12 @@
 /**
- * linux-ready.test.ts — Tests for Linux voice readiness logic (#2403).
+ * GSD2 — linux-ready.test.ts — Tests for Linux voice readiness logic (#2403).
  *
  * Covers:
- *   - diagnoseSounddeviceError branch ordering (ModuleNotFoundError must NOT
- *     match the portaudio branch, even though it contains "sounddevice")
- *   - ensureVoiceVenv auto-creation
- *   - linuxPython venv detection
+ * - diagnoseSounddeviceError branch ordering (ModuleNotFoundError must NOT
+ * match the portaudio branch, even though it contains "sounddevice")
+ * - ensureVoiceVenv auto-creation
+ * - linuxPython venv detection
+ *
  */
 
 import { createTestContext } from "../../gsd/tests/test-helpers.ts";

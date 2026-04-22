@@ -1,11 +1,12 @@
 /**
- * GSD Queue Reorder UI
+ * GSD2 — GSD Queue Reorder UI
  *
  * Interactive TUI overlay for reordering pending milestones.
  * ↑/↓ navigates cursor. Space grabs/releases item for moving.
  * While grabbed, ↑/↓ swaps the item with its neighbor.
  * Enter confirms all changes. Esc cancels.
  * Conflicting depends_on entries are auto-removed on confirm.
+ *
  */
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

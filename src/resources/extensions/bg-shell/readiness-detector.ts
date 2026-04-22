@@ -1,5 +1,6 @@
 /**
- * Readiness detection: port probing, pattern matching, wait-for-ready.
+ * GSD2 — Readiness detection: port probing, pattern matching, wait-for-ready.
+ *
  */
 
 import { createConnection } from "node:net";

@@ -1,9 +1,4 @@
-// GSD Memory Extractor — Background LLM extraction from activity logs
-//
-// After each unit completes, extracts durable knowledge from the session
-// transcript and stores it as memory entries. One extraction at a time
-// (mutex guard). Fire-and-forget — never blocks auto-mode.
-
+// GSD2 — Memory Extractor — Background LLM extraction from activity logs
 import { readFileSync, statSync } from 'node:fs';
 import type { ExtensionContext } from '@gsd/pi-coding-agent';
 import type { Api, AssistantMessage, Model } from '@gsd/pi-ai';

@@ -1,11 +1,12 @@
 /**
- * GSD Health Widget — always-on ambient health signal rendered belowEditor.
+ * GSD2 — GSD Health Widget — always-on ambient health signal rendered belowEditor.
  *
  * Shows a compact 1-2 line summary: progress score, budget, provider key
  * status, and doctor/environment issue count. Refreshes every 60 seconds.
  * Quiet when everything is healthy; turns amber/red when issues arise.
  *
  * Widget key: "gsd-health", placement: "belowEditor"
+ *
  */
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

@@ -1,5 +1,5 @@
 /**
- * Regression tests for #1709: non-extension libraries in extensions/ directory
+ * GSD2 — Regression tests for #1709: non-extension libraries in extensions/ directory
  * must not produce spurious "Extension does not export a valid factory function" errors.
  *
  * These tests verify the defense-in-depth behavior added to the extension loader:
@@ -8,6 +8,7 @@
  *
  * The isNonExtensionLibrary logic is replicated here to test the algorithm
  * independently of the loader's heavy dependency tree.
+ *
  */
 import test, { describe } from 'node:test'
 import assert from 'node:assert/strict'

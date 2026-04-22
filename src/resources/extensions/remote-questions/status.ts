@@ -1,5 +1,6 @@
 /**
- * Remote Questions — status helpers
+ * GSD2 — Remote Questions — status helpers
+ *
  */
 
 import { existsSync, readdirSync } from "node:fs";

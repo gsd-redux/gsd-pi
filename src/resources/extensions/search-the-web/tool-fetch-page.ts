@@ -1,11 +1,12 @@
 /**
- * fetch_page tool — Extract clean markdown from any URL.
+ * GSD2 — fetch_page tool — Extract clean markdown from any URL.
  *
  * v3 improvements:
  * - offset parameter for continuation reading (like file read offsets)
  * - selector parameter for Jina's X-Target-Selector (extract specific sections)
  * - Jina failure diagnostics surfaced in details
  * - Content-type awareness (JSON passthrough, PDF detection)
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

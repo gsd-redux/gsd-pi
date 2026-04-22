@@ -1,12 +1,13 @@
 /**
- * pre-execution-pause-wiring.test.ts — Integration tests for pre-execution check → pauseAuto wiring.
+ * GSD2 — pre-execution-pause-wiring.test.ts — Integration tests for pre-execution check → pauseAuto wiring.
  *
  * Tests that verify the control flow from pre-execution checks through to pauseAuto:
- *   1. When runPreExecutionChecks returns status: "fail" with blocking: true, pauseAuto is called
- *   2. When enhanced_verification_strict: true and status: "warn", pauseAuto is also called
+ * 1. When runPreExecutionChecks returns status: "fail" with blocking: true, pauseAuto is called
+ * 2. When enhanced_verification_strict: true and status: "warn", pauseAuto is also called
  *
  * These are integration-level tests that exercise the actual postUnitPostVerification function
  * with controlled mocks for external dependencies.
+ *
  */
 
 import { describe, test, mock, beforeEach, afterEach } from "node:test";

@@ -1,8 +1,9 @@
 /**
- * GSD Command — /gsd session-report
+ * GSD2 — GSD Command — /gsd session-report
  *
  * Summarizes the current session: tasks completed, cost, tokens,
  * duration, model usage breakdown.
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,6 +1,4 @@
-// GSD Extension — ADR-011 Progressive Planning tests
-// Sketch detection → refining phase, dispatch routing, auto-heal, migration idempotency.
-
+// GSD2 — Extension — ADR-011 Progressive Planning tests
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

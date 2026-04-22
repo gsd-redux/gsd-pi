@@ -1,6 +1,4 @@
-// Tests for GSD visualizer data loader.
-// Verifies the VisualizerData interface shape and source-file contracts.
-
+// GSD2 — Tests for GSD visualizer data loader.
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

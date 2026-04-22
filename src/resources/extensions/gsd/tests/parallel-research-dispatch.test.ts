@@ -1,7 +1,8 @@
 /**
- * Parallel research slices dispatch — structural tests.
+ * GSD2 — Parallel research slices dispatch — structural tests.
  *
  * Verifies the dispatch rule and prompt builder exist with correct structure.
+ *
  */
 
 import test, { afterEach } from "node:test";

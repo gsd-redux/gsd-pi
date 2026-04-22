@@ -1,5 +1,6 @@
 /**
- * Output analysis, digest generation, highlights extraction, and output retrieval.
+ * GSD2 — Output analysis, digest generation, highlights extraction, and output retrieval.
+ *
  */
 
 import {

@@ -1,10 +1,11 @@
 /**
- * Tests for macOS numbered symlink variant cleanup (#2205).
+ * GSD2 — Tests for macOS numbered symlink variant cleanup (#2205).
  *
  * macOS can rename `.gsd` to `.gsd 2`, `.gsd 3`, etc. when a directory
  * already exists at the target path. ensureGsdSymlink() must detect and
  * remove these numbered variants so the real `.gsd` symlink is always
  * the one in use.
+ *
  */
 
 import {
@@ -25,7 +26,6 @@ import { execSync } from "node:child_process";
 import { ensureGsdSymlink, externalGsdRoot } from "../repo-identity.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();

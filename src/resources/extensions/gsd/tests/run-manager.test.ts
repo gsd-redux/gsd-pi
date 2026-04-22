@@ -1,8 +1,9 @@
 /**
- * run-manager.test.ts — Tests for run directory creation and listing.
+ * GSD2 — run-manager.test.ts — Tests for run directory creation and listing.
  *
  * Uses real temp directories with actual definition YAML files and
  * GRAPH.yaml persistence — no mocks.
+ *
  */
 
 import { describe, it, afterEach } from "node:test";

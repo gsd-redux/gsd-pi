@@ -1,3 +1,4 @@
+// GSD2 — Worktree Command Bootstrap — WORKTREE_SUBCOMMANDS constant
 import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 const WORKTREE_SUBCOMMANDS = [

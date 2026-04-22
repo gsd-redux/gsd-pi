@@ -1,9 +1,10 @@
 /**
- * TTSR Rule Loader
+ * GSD2 — TTSR Rule Loader
  *
  * Scans global (~/.gsd/agent/rules/*.md) and project-local (.gsd/rules/*.md)
  * rule files. Parses YAML frontmatter for condition, scope, globs.
  * Project rules override global rules with the same name.
+ *
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";

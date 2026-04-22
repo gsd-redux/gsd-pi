@@ -1,3 +1,4 @@
+// GSD2 — Commands
 export { registerGSDCommand } from "./commands/index.js";
 
 export async function handleGSDCommand(

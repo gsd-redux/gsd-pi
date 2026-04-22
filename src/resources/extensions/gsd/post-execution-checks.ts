@@ -1,16 +1,17 @@
 /**
- * Post-Execution Checks — Validate task output after execution completes.
+ * GSD2 — Post-Execution Checks — Validate task output after execution completes.
  *
  * Runs these checks against a completed task's output:
- *   1. Import resolution — verify relative imports in key_files resolve to existing files
- *   2. Cross-task signatures — detect hallucination cascades (function exists in task output
- *      but doesn't match prior tasks' actual code)
- *   3. Pattern consistency — warn on async style drift, naming convention inconsistencies
+ * 1. Import resolution — verify relative imports in key_files resolve to existing files
+ * 2. Cross-task signatures — detect hallucination cascades (function exists in task output
+ * but doesn't match prior tasks' actual code)
+ * 3. Pattern consistency — warn on async style drift, naming convention inconsistencies
  *
  * Design principles:
- *   - Pure functions taking (taskRow, priorTasks, basePath) for testability
- *   - Import checks are blocking failures; pattern checks are warnings
- *   - No AST parsers — uses regex heuristics
+ * - Pure functions taking (taskRow, priorTasks, basePath) for testability
+ * - Import checks are blocking failures; pattern checks are warnings
+ * - No AST parsers — uses regex heuristics
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

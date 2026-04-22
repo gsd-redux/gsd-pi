@@ -1,6 +1,7 @@
 /**
- * Tests for skill telemetry and skill health (#599).
+ * GSD2 — Tests for skill telemetry and skill health (#599).
  * Tests the pure functions — no file I/O, no extension context.
+ *
  */
 
 import { describe, it } from "node:test";

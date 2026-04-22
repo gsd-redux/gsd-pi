@@ -1,9 +1,10 @@
 /**
- * GSD External State Migration
+ * GSD2 — GSD External State Migration
  *
  * Migrates legacy in-project `.gsd/` directories to the external
  * `~/.gsd/projects/<hash>/` state directory. After migration, a
  * symlink replaces the original directory so all paths remain valid.
+ *
  */
 
 import { execFileSync } from "node:child_process";

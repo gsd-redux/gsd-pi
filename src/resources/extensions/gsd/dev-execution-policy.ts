@@ -1,9 +1,10 @@
 /**
- * dev-execution-policy.ts — DevExecutionPolicy implementation.
+ * GSD2 — dev-execution-policy.ts — DevExecutionPolicy implementation.
  *
  * Stub policy for the dev engine. All methods return safe defaults.
  * Real verification/closeout continues running through phases.ts via LoopDeps.
  * Wiring this policy into the loop is S04's responsibility.
+ *
  */
 
 import type { ExecutionPolicy } from "./execution-policy.js";

@@ -1,5 +1,5 @@
 /**
- * Regression test for #2968: loadPrompt replaceAll expands $' in replacement strings.
+ * GSD2 — Regression test for #2968: loadPrompt replaceAll expands $' in replacement strings.
  *
  * JavaScript's String.replaceAll interprets special replacement patterns ($', $`, $&)
  * in the replacement string. When a template variable value contains $' (common in
@@ -8,6 +8,7 @@
  *
  * The fix: use split/join instead of replaceAll, which has no special pattern
  * interpretation.
+ *
  */
 import test from "node:test";
 import assert from "node:assert/strict";

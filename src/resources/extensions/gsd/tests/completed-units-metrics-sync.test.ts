@@ -1,8 +1,9 @@
 /**
- * completed-units-metrics-sync.test.ts — Regression tests for #2313.
+ * GSD2 — completed-units-metrics-sync.test.ts — Regression tests for #2313.
  *
  * 1. completed-units.json should be archived (not wiped) on milestone transition
  * 2. metrics.json should be in the worktree → project root sync file list
+ *
  */
 
 import test from "node:test";

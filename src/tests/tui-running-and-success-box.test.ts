@@ -1,27 +1,27 @@
 /**
- * Regression tests for two TUI bugs:
+ * GSD2 — Regression tests for two TUI bugs:
  *
- *   1. Tool execution cards stuck in "Running" state after compaction.
- *      When the session is rebuilt from history (post-compaction or session
- *      switch), tool result messages may have been squashed out of context.
- *      ToolExecutionComponent instances created from history without a result
- *      stay in `isPartial = true` forever, rendering the "Running" badge long
- *      after the tool completed. Fix: markHistoricalNoResult() flips them to
- *      a finished, no-result state and renderSessionContext calls it on any
- *      leftover pendingTools before clearing the map.
+ * 1. Tool execution cards stuck in "Running" state after compaction.
+ * When the session is rebuilt from history (post-compaction or session
+ * switch), tool result messages may have been squashed out of context.
+ * ToolExecutionComponent instances created from history without a result
+ * stay in `isPartial = true` forever, rendering the "Running" badge long
+ * after the tool completed. Fix: markHistoricalNoResult() flips them to
+ * a finished, no-result state and renderSessionContext calls it on any
+ * leftover pendingTools before clearing the map.
  *
- *   2. Completion notifications rendered as plain dim text.
- *      `ctx.ui.notify("…", "info")` routed through showStatus which produced
- *      a single-line dim Text component — indistinguishable from chatter.
- *      Completion messages (notify type = "success") now render inside a
- *      green DynamicBorder frame via showSuccess, matching the design of
- *      showNewVersionNotification but in success color.
+ * 2. Completion notifications rendered as plain dim text.
+ * `ctx.ui.notify("…", "info")` routed through showStatus which produced
+ * a single-line dim Text component — indistinguishable from chatter.
+ * Completion messages (notify type = "success") now render inside a
+ * green DynamicBorder frame via showSuccess, matching the design of
+ * showNewVersionNotification but in success color.
  *
  * These tests are source-shape assertions (not runtime exercises) to keep
  * the test cheap — the actual components depend on the TUI runtime stack
  * which isn't easily instantiable in unit tests.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { describe, it } from "node:test";

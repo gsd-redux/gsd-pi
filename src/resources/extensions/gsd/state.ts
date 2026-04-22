@@ -1,7 +1,4 @@
-// GSD Extension — State Derivation
-// DB-primary state derivation with filesystem fallback for unmigrated projects.
-// Pure TypeScript, zero Pi dependencies.
-
+// GSD2 — Extension — State Derivation
 import type {
   GSDState,
   ActiveRef,
@@ -1061,7 +1058,6 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
   };
 }
-
 
 // LEGACY: Filesystem-based state derivation for unmigrated projects.
 // DB-backed projects use deriveStateFromDb() above. Target: extract to

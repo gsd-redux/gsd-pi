@@ -1,9 +1,10 @@
 /**
- * Regression test for #2694: parkMilestone and unparkMilestone must
+ * GSD2 — Regression test for #2694: parkMilestone and unparkMilestone must
  * update the DB milestone status alongside the filesystem marker.
  *
  * Without this, deriveStateFromDb skips unparked milestones because
  * the DB still has status='parked', causing "All milestones complete".
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

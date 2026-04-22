@@ -1,7 +1,4 @@
-// GSD State Machine — Wave 2 Event Log Regression Tests
-// Validates fixes for appendEvent isolation, entity replay handlers,
-// and post-reconcile cache invalidation.
-
+// GSD2 — State Machine — Wave 2 Event Log Regression Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { extractEntityKey } from "../workflow-reconcile.js";

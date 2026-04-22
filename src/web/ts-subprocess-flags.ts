@@ -1,3 +1,4 @@
+// GSD2 — Ts Subprocess Flags
 import { existsSync as defaultExistsSync } from "node:fs"
 import { join } from "node:path"
 

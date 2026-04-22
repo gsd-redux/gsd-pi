@@ -1,9 +1,10 @@
 /**
- * Persistence layer for the GitHub sync mapping.
+ * GSD2 — Persistence layer for the GitHub sync mapping.
  *
  * The mapping lives at `.gsd/github-sync.json` and tracks which GSD
  * entities have been synced to which GitHub entities (issues, PRs,
  * milestones) along with their numbers and sync timestamps.
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

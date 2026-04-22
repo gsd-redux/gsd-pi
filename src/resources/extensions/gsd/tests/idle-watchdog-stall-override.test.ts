@@ -1,5 +1,5 @@
 /**
- * Regression tests for #2527: idle watchdog stalled-tool detection.
+ * GSD2 — Regression tests for #2527: idle watchdog stalled-tool detection.
  *
  * Bug 1: When a tool is stalled longer than idle_timeout, the watchdog
  * notifies but falls through to detectWorkingTreeActivity(), which
@@ -12,6 +12,7 @@
  * These tests verify the auto-timers.ts source contains the structural
  * fixes: the stalledToolDetected flag, clearInFlightTools() call, the
  * filesystem-check guard, and the null guard after recovery.
+ *
  */
 
 import { readFileSync } from "node:fs";

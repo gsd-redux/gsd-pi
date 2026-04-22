@@ -1,5 +1,5 @@
 /**
- * Real-time tool call evidence collector for auto-mode safety harness.
+ * GSD2 — Real-time tool call evidence collector for auto-mode safety harness.
  * Tracks every bash command, file write, and file edit during a unit execution.
  * Evidence is compared against LLM completion claims in evidence-cross-ref.ts.
  *
@@ -9,7 +9,7 @@
  * saveEvidenceToDisk() is called automatically by recordToolCall/recordToolResult.
  *
  * Follows the same module-level Map pattern as auto-tool-tracking.ts.
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import {

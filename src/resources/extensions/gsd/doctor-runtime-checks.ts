@@ -1,3 +1,4 @@
+// GSD2 — Doctor Runtime Checks
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 

@@ -1,8 +1,4 @@
-// GSD Memory Store — CRUD, ranked queries, maintenance, and prompt formatting
-//
-// Storage layer for auto-learned project memories. Follows context-store.ts patterns.
-// All functions degrade gracefully: return empty results when DB unavailable, never throw.
-
+// GSD2 — Memory Store — CRUD, ranked queries, maintenance, and prompt formatting
 import {
   isDbAvailable,
   _getAdapter,

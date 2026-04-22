@@ -1,8 +1,9 @@
 /**
- * Regression test for #3699 — import milestones with all-done slices as complete
+ * GSD2 — Regression test for #3699 — import milestones with all-done slices as complete
  *
  * During DB migration, milestones whose roadmap slices are all marked done
  * should be imported with status "complete" instead of "active".
+ *
  */
 
 import { describe, test } from 'node:test';

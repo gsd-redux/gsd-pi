@@ -1,11 +1,12 @@
 /**
- * GSD Skill Discovery
+ * GSD2 — GSD Skill Discovery
  *
  * Detects skills installed during auto-mode by comparing the current
  * skills directory against a snapshot taken at auto-mode start.
  *
  * New skills are injected into the system prompt via before_agent_start,
  * making them visible to all subsequent units without requiring a reload.
+ *
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";

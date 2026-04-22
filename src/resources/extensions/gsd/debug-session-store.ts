@@ -1,3 +1,4 @@
+// GSD2 — Debug Session Store — types and interfaces
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync, type AtomicWriteSyncOps } from "./atomic-write.js";

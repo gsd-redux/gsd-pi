@@ -1,24 +1,25 @@
 /**
- * integration-proof.test.ts — End-to-end integration proof for M001.
+ * GSD2 — integration-proof.test.ts — End-to-end integration proof for M001.
  *
  * Proves all S01–S06 subsystems compose correctly:
- *   auto-migration → complete_task → complete_slice → deriveState crossval →
- *   doctor zero-fix → rogue detection → DB recovery → undo/reset
+ * auto-migration → complete_task → complete_slice → deriveState crossval →
+ * doctor zero-fix → rogue detection → DB recovery → undo/reset
  *
  * Requirement coverage:
- *   R001 (task completion)      — step 3c
- *   R002 (slice completion)     — step 3e
- *   R003 (auto-migration)       — step 3b
- *   R004 (markdown rendering)   — steps 3d, 3f
- *   R005 (deriveState crossval) — step 3g
- *   R006 (prompt migration)     — deferred to T02 grep
- *   R007 (hierarchy migration)  — step 3b
- *   R008 (rogue detection)      — step 3i
- *   R009 (doctor zero-fix)      — step 3h
- *   R010 (DB recovery)          — step 4
- *   R011 (undo/reset)           — step 5
- *   R012 (shared WAL)           — implicit (file-backed DB uses WAL throughout)
- *   R013 (stale render)         — step 4 stale detection
+ * R001 (task completion)      — step 3c
+ * R002 (slice completion)     — step 3e
+ * R003 (auto-migration)       — step 3b
+ * R004 (markdown rendering)   — steps 3d, 3f
+ * R005 (deriveState crossval) — step 3g
+ * R006 (prompt migration)     — deferred to T02 grep
+ * R007 (hierarchy migration)  — step 3b
+ * R008 (rogue detection)      — step 3i
+ * R009 (doctor zero-fix)      — step 3h
+ * R010 (DB recovery)          — step 4
+ * R011 (undo/reset)           — step 5
+ * R012 (shared WAL)           — implicit (file-backed DB uses WAL throughout)
+ * R013 (stale render)         — step 4 stale detection
+ *
  */
 
 import test from "node:test";

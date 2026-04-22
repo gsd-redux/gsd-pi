@@ -1,3 +1,4 @@
+// GSD2 — Tests for Worktree
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, symlinkSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -21,7 +22,6 @@ import { _resetHasChangesCache } from "../native-git-bridge.ts";
 import { _clearGsdRootCache } from "../paths.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 /**
  * Normalize a path for reliable comparison on Windows CI runners.

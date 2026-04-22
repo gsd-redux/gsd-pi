@@ -1,13 +1,4 @@
-// GSD Exec Sandbox — tool-output sandboxing for sub-sessions.
-//
-// Runs a script in a subprocess and persists stdout/stderr to
-// `.gsd/exec/<id>.{stdout,stderr,meta.json}`. Only a short digest is
-// returned to the calling agent's context, keeping large outputs
-// (e.g. Playwright snapshots, issue dumps) out of the window.
-//
-// Inspired by mksglu/context-mode (Elastic License 2.0). Independent
-// implementation — no upstream code incorporated.
-
+// GSD2 — Exec Sandbox — tool-output sandboxing for sub-sessions.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";

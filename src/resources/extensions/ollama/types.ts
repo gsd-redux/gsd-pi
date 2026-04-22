@@ -1,5 +1,4 @@
 // GSD2 — Ollama API response types
-
 /**
  * Type definitions for the Ollama REST API.
  * Reference: https://github.com/ollama/ollama/blob/main/docs/api.md

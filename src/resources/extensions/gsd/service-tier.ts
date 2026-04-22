@@ -1,11 +1,12 @@
 /**
- * Service Tier — gating, status formatting, icon resolution, and
+ * GSD2 — Service Tier — gating, status formatting, icon resolution, and
  * the /gsd fast command handler.
  *
  * Service tiers (priority/flex) are an OpenAI feature that only applies
  * to gpt-5.4 variants. This module centralizes the model-gating logic
  * so that icons, preferences, and the before_provider_request hook all
  * use a single source of truth.
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,11 +1,12 @@
 /**
- * Regression test for #3696 — prompt step ordering and runtime fixes
+ * GSD2 — Regression test for #3696 — prompt step ordering and runtime fixes
  *
  * 1. complete-milestone.md: gsd_requirement_update (step 9) before
- *    gsd_complete_milestone (step 10)
+ * gsd_complete_milestone (step 10)
  * 2. complete-slice.md: uses gsd_requirement_update
  * 3. register-extension.ts: _gsdEpipeGuard logs instead of re-throwing
  * 4. register-hooks.ts: session_before_compact only checks isAutoActive
+ *
  */
 
 import { describe, test } from 'node:test';

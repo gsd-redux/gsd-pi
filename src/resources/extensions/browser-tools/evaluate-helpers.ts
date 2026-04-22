@@ -1,5 +1,5 @@
 /**
- * browser-tools — browser-side evaluate helpers
+ * GSD2 — browser-tools — browser-side evaluate helpers
  *
  * Exports a single string constant `EVALUATE_HELPERS_SOURCE` containing an IIFE
  * that attaches utility functions to `window.__pi`.  This is injected into every
@@ -11,8 +11,9 @@
  * `computeContentHash` / `computeStructuralSignature` in `core.js`.
  *
  * Functions provided (9):
- *   cssPath, simpleHash, isVisible, isEnabled, inferRole,
- *   accessibleName, isInteractiveEl, domPath, selectorHints
+ * cssPath, simpleHash, isVisible, isEnabled, inferRole,
+ * accessibleName, isInteractiveEl, domPath, selectorHints
+ *
  */
 
 export const EVALUATE_HELPERS_SOURCE = `(function() {

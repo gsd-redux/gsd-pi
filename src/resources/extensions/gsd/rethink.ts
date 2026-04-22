@@ -1,10 +1,11 @@
 /**
- * GSD Rethink — Conversational project reorganization.
+ * GSD2 — GSD Rethink — Conversational project reorganization.
  *
  * Collects a snapshot of all milestones (status, dependencies, slice progress,
  * queue order) and dispatches a prompt that turns Claude into a reorganization
  * assistant. Claude can then reorder, park, unpark, discard, or add milestones
  * through conversation.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

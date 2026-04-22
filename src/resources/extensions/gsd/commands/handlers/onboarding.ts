@@ -1,15 +1,4 @@
-// GSD — /gsd onboarding command handler (re-entry hub)
-//
-// The first-run wizard in src/onboarding.ts uses @clack/prompts and takes over
-// raw stdin. Running it from inside the pi-coding-agent TUI wedges the TUI
-// (clack leaves stdin paused + cooked, pi-tui's data handler then receives no
-// keypresses). So re-entry cannot replay the clack wizard — instead it routes
-// to a setup hub built from ctx.ui.select, which the TUI owns.
-//
-// Clack-only steps (llm/search/remote/tool-keys via the first-run wizard) are
-// surfaced as notifications pointing the user at the canonical per-step
-// commands (/login, /gsd keys, /gsd remote) that are already ctx.ui-safe.
-
+// GSD2 — /gsd onboarding command handler (re-entry hub)
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent"
 import {
   ONBOARDING_STEPS,

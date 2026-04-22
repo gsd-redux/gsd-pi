@@ -1,7 +1,4 @@
-// GSD — projection renderer regression tests
-// Verifies that "done" vs "complete" status mismatch doesn't recur.
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — projection renderer regression tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

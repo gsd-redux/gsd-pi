@@ -1,5 +1,5 @@
 /**
- * PluginImporter Service
+ * GSD2 — PluginImporter Service
  *
  * Composes S01-S04 modules into a staged discover → select → validate → commit pipeline.
  * Each stage is independently testable. The service owns no UI — it produces data structures
@@ -12,6 +12,7 @@
  * 4. getImportManifest(selected) - Produce serializable config structure
  *
  * This service implements R012 (discover/select/import flow) and R013 (canonical name preservation).
+ *
  */
 
 import {

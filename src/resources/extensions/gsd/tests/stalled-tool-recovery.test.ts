@@ -1,5 +1,5 @@
 /**
- * Regression test for #1855: Stalled tool detection crashes with
+ * GSD2 — Regression test for #1855: Stalled tool detection crashes with
  * "The path argument must be of type string. Received undefined"
  *
  * When a tool stalls in-flight for 10+ minutes, the idle watchdog fires
@@ -13,6 +13,7 @@
  * This test calls recoverTimedOutUnit with an empty RecoveryContext (the
  * bug) and verifies it crashes, then calls it with a valid RecoveryContext
  * (the fix) and verifies it does not crash.
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
@@ -21,7 +22,6 @@ import { tmpdir } from "node:os";
 import { recoverTimedOutUnit, type RecoveryContext } from "../auto-timeout-recovery.ts";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // Minimal mock for ExtensionContext — only the fields recoverTimedOutUnit touches.
 function makeMockCtx() {

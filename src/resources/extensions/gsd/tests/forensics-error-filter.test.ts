@@ -1,6 +1,7 @@
 /**
- * Regression test for #2539: extractTrace should not count benign bash
+ * GSD2 — Regression test for #2539: extractTrace should not count benign bash
  * exit-code-1 (grep no-match) or user skips as errors.
+ *
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

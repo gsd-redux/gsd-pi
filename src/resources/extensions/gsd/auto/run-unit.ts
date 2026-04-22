@@ -1,7 +1,8 @@
 /**
- * auto/run-unit.ts — Single unit execution: session create → prompt → await agent_end.
+ * GSD2 — auto/run-unit.ts — Single unit execution: session create → prompt → await agent_end.
  *
  * Imports from: auto/types, auto/resolve
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

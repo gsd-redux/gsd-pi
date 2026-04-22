@@ -1,10 +1,11 @@
 /**
- * phases-merge-error-stops-auto.test.ts — Regression test for #2766.
+ * GSD2 — phases-merge-error-stops-auto.test.ts — Regression test for #2766.
  *
  * When mergeAndExit throws a non-MergeConflictError, the auto loop must
  * stop instead of continuing with unmerged work. This test verifies that
  * all catch blocks in auto/phases.ts that handle mergeAndExit errors
  * call stopAuto and return { action: "break" } for non-conflict errors.
+ *
  */
 
 import { readFileSync } from "node:fs";

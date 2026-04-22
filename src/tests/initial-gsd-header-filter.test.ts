@@ -1,3 +1,4 @@
+// GSD2 — Tests for Initial Gsd Header Filter
 import test from "node:test";
 import assert from "node:assert/strict";
 

@@ -1,7 +1,8 @@
 /**
- * Tests for slice-level parallel eligibility.
+ * GSD2 — Tests for slice-level parallel eligibility.
  * Verifies getEligibleSlices() correctly determines which slices
  * can run in parallel based on dependency satisfaction.
+ *
  */
 
 import { describe, it } from "node:test";

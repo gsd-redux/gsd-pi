@@ -1,10 +1,11 @@
 /**
- * worktree-post-create-hook.test.ts — Tests for #597 worktree post-create hook.
+ * GSD2 — worktree-post-create-hook.test.ts — Tests for #597 worktree post-create hook.
  *
  * Verifies that runWorktreePostCreateHook correctly executes user scripts
  * with SOURCE_DIR and WORKTREE_DIR environment variables.
  *
  * Uses Node.js scripts instead of bash for Windows compatibility.
+ *
  */
 
 import test from "node:test";

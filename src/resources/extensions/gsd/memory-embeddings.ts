@@ -1,12 +1,4 @@
-// GSD Memory Embeddings — provider-agnostic embedding layer
-//
-// Same model-discovery pattern as buildMemoryLLMCall: prefers a dedicated
-// embedding-capable model when available, and returns null when none is
-// found (which is the common case — not every provider exposes embeddings).
-//
-// When embeddings are unavailable, all calls become no-ops and
-// queryMemoriesRanked falls back to keyword-only scoring.
-
+// GSD2 — Memory Embeddings — provider-agnostic embedding layer
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { _getAdapter, isDbAvailable, upsertMemoryEmbedding, deleteMemoryEmbedding } from "./gsd-db.js";

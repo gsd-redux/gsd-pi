@@ -1,11 +1,12 @@
 /**
- * merge-conflict-stops-loop.test.ts — #2330
+ * GSD2 — merge-conflict-stops-loop.test.ts — #2330
  *
  * When a squash merge has real code conflicts (not just .gsd/ files),
  * the merge retries forever because MergeConflictError is caught
  * silently in mergeAndExit. This test verifies that:
  * 1. worktree-resolver re-throws MergeConflictError for code conflicts
  * 2. auto/phases.ts wraps mergeAndExit calls to stop the loop on conflict
+ *
  */
 
 import { readFileSync } from "node:fs";

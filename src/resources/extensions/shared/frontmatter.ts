@@ -1,6 +1,4 @@
-// Shared frontmatter parsing utilities
-// Canonical implementation for splitting and parsing YAML-like frontmatter.
-
+// GSD2 — Shared frontmatter parsing utilities
 /** Strip matching single or double quotes from a string value (standard YAML scalar behavior). */
 function stripQuotes(s: string): string {
   if (s.length >= 2 && ((s[0] === '"' && s[s.length - 1] === '"') || (s[0] === "'" && s[s.length - 1] === "'"))) {

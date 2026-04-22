@@ -1,13 +1,4 @@
-// Integration Lifecycle Test
-//
-// Proves full M001 subsystem composition end-to-end:
-// realistic markdown on disk → migrateFromMarkdown → scoped DB queries →
-// formatted prompt output → token savings validation → re-import after changes →
-// structured tool write-back → DB consistency verification.
-//
-// Crosses ≥4 module boundaries: gsd-db, md-importer, context-store, db-writer.
-// Uses file-backed DB (not :memory:) for WAL fidelity.
-
+// GSD2 — Integration Lifecycle Test
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

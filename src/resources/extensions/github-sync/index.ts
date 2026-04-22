@@ -1,5 +1,5 @@
 /**
- * GitHub Sync extension for GSD.
+ * GSD2 — GitHub Sync extension for GSD.
  *
  * Opt-in extension that syncs GSD lifecycle events to GitHub:
  * milestones → GH Milestones + tracking issues, slices → draft PRs,
@@ -8,6 +8,7 @@
  * Integration happens via a single dynamic import in auto-post-unit.ts.
  * This index registers a `/github-sync` command for manual bootstrap
  * and status display.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

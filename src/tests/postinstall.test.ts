@@ -1,3 +1,4 @@
+// GSD2 — Tests for Postinstall
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

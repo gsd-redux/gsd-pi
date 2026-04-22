@@ -1,18 +1,19 @@
 /**
- * Themed yes/no confirmation dialog.
+ * GSD2 — Themed yes/no confirmation dialog.
  *
  * Uses the shared UI design system for consistent styling.
  * Returns true if confirmed, false if declined.
  *
  * Usage:
  *
- *   import { showConfirm } from "./shared/confirm-ui.js";
+ * import { showConfirm } from "./shared/confirm-ui.js";
  *
- *   const confirmed = await showConfirm(ctx, {
- *     title: "GitHub Action",
- *     message: 'Close issue #42?',
- *   });
- *   if (!confirmed) return textResult("Cancelled.");
+ * const confirmed = await showConfirm(ctx, {
+ * title: "GitHub Action",
+ * message: 'Close issue #42?',
+ * });
+ * if (!confirmed) return textResult("Cancelled.");
+ *
  */
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

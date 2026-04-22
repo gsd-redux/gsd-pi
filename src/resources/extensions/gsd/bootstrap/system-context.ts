@@ -1,3 +1,4 @@
+// GSD2 — System Context — gsdHome constant
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

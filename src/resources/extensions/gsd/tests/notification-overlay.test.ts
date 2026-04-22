@@ -1,8 +1,4 @@
-// GSD Extension — Notification Overlay Tests
-// Tests for message wrapping in the notification panel.
-// Mirrors the private wrapText from notification-overlay.ts so its contract
-// can be exercised without exporting internals.
-
+// GSD2 — Extension — Notification Overlay Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 

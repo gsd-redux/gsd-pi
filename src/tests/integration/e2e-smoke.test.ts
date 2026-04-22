@@ -1,5 +1,5 @@
 /**
- * E2E smoke tests for the GSD CLI binary (dist/loader.js).
+ * GSD2 — E2E smoke tests for the GSD CLI binary (dist/loader.js).
  *
  * These tests exercise the CLI entry point as a black box by spawning child
  * processes and asserting on exit codes and output text.  They do NOT require
@@ -9,9 +9,10 @@
  * Prerequisite: npm run build must be run first.
  *
  * Run with:
- *   node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
- *        --experimental-strip-types --test \
- *        src/tests/integration/e2e-smoke.test.ts
+ * node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+ * --experimental-strip-types --test \
+ * src/tests/integration/e2e-smoke.test.ts
+ *
  */
 
 import test from "node:test";

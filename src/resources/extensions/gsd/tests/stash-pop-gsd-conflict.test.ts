@@ -1,10 +1,11 @@
 /**
- * stash-pop-gsd-conflict.test.ts — Regression test for #2766.
+ * GSD2 — stash-pop-gsd-conflict.test.ts — Regression test for #2766.
  *
  * When a squash merge stash-pops and hits conflicts on .gsd/ state files,
  * the UU entries block every subsequent merge. This test verifies that
  * mergeMilestoneToMain auto-resolves .gsd/ conflicts by accepting HEAD
  * and drops the stash, leaving the repo in a clean state.
+ *
  */
 
 import test from "node:test";

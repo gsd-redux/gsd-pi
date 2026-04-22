@@ -1,5 +1,5 @@
 /**
- * Regression test: invalidateAllCaches() must NOT wipe the artifacts table.
+ * GSD2 — Regression test: invalidateAllCaches() must NOT wipe the artifacts table.
  *
  * Prior to this fix, `cache.ts` bundled `clearArtifacts()` (which runs
  * `DELETE FROM artifacts`) into `invalidateAllCaches()`. That helper fires
@@ -13,7 +13,7 @@
  * The artifacts table is a write-through store, not a read cache. Routine
  * cache invalidation must preserve its contents.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

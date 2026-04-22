@@ -1,17 +1,18 @@
 /**
- * Pre-Execution Checks — Validate task plans before execution begins.
+ * GSD2 — Pre-Execution Checks — Validate task plans before execution begins.
  *
  * Runs these checks against a slice's task plan:
- *   1. Package existence — npm view calls in parallel with timeout
- *   2. File path consistency — verify files exist or are in prior expected_output
- *   3. Task ordering — detect impossible ordering (task reads file created later)
- *   4. Interface contracts — detect contradictory function signatures (warn only)
+ * 1. Package existence — npm view calls in parallel with timeout
+ * 2. File path consistency — verify files exist or are in prior expected_output
+ * 3. Task ordering — detect impossible ordering (task reads file created later)
+ * 4. Interface contracts — detect contradictory function signatures (warn only)
  *
  * Design principles:
- *   - Pure functions taking (tasks: TaskRow[], basePath: string) for testability
- *   - Network failures warn, don't fail (R012 conservative design)
- *   - Total execution <2s target (R013)
- *   - No AST parsers — interface parsing is heuristic (regex on code blocks)
+ * - Pure functions taking (tasks: TaskRow[], basePath: string) for testability
+ * - Network failures warn, don't fail (R012 conservative design)
+ * - Total execution <2s target (R013)
+ * - No AST parsers — interface parsing is heuristic (regex on code blocks)
+ *
  */
 
 import { existsSync } from "node:fs";

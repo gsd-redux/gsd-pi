@@ -1,3 +1,4 @@
+// GSD2 — Tests for Security Overrides
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { SettingsManager, getAllowedCommandPrefixes, SAFE_COMMAND_PREFIXES, setAllowedCommandPrefixes } from "@gsd/pi-coding-agent";

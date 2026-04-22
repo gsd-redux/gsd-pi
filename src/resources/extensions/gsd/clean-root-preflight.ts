@@ -1,5 +1,5 @@
 /**
- * clean-root-preflight.ts — Preflight gate for dirty working trees before milestone merges.
+ * GSD2 — clean-root-preflight.ts — Preflight gate for dirty working trees before milestone merges.
  *
  * #2909: Adds a fast-path git status check before milestone completion merges.
  * When the working tree is dirty the user is warned and changes are auto-stashed
@@ -7,10 +7,11 @@
  * restores the stashed changes.
  *
  * Design constraints (from Trek-e approval):
- *  - Warn the user before stashing (no silent surprises)
- *  - git stash push / git stash pop only — no custom stash management layer
- *  - Stash/pop errors are logged but MUST NOT block the merge
- *  - Fast-path status check — clean trees pay no extra cost
+ * - Warn the user before stashing (no silent surprises)
+ * - git stash push / git stash pop only — no custom stash management layer
+ * - Stash/pop errors are logged but MUST NOT block the merge
+ * - Fast-path status check — clean trees pay no extra cost
+ *
  */
 
 import { execFileSync } from "node:child_process";

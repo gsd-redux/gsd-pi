@@ -1,8 +1,9 @@
 /**
- * GSDNoProjectError — tests for friendly home-directory error handling.
+ * GSD2 — GSDNoProjectError — tests for friendly home-directory error handling.
  *
  * Verifies that GSDNoProjectError is thrown for blocked directories and
  * that the dispatcher catches it with a user-friendly message.
+ *
  */
 
 import test from "node:test";

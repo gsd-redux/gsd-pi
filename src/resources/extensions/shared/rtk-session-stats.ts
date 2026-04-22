@@ -1,3 +1,4 @@
+// GSD2 — Rtk Session Stats — SESSION_BASELINES_FILE constant
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

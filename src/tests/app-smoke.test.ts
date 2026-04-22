@@ -1,5 +1,5 @@
 /**
- * Unit tests for the gsd CLI package.
+ * GSD2 — Unit tests for the gsd CLI package.
  *
  * Tests the glue code that IS the product:
  * - app-paths resolve to ~/.gsd/
@@ -8,6 +8,7 @@
  * - wizard loadStoredEnvKeys hydrates env
  *
  * Integration tests (npm pack, install, launch) are in ./integration/pack-install.test.ts
+ *
  */
 
 import test from "node:test";

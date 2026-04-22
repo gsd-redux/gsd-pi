@@ -1,8 +1,9 @@
 /**
- * Content-block mapping helpers and streaming state tracker.
+ * GSD2 — Content-block mapping helpers and streaming state tracker.
  *
  * Translates the Claude Agent SDK's `BetaRawMessageStreamEvent` sequence
  * into GSD's `AssistantMessageEvent` deltas for incremental TUI rendering.
+ *
  */
 
 import type {

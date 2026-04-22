@@ -1,5 +1,5 @@
 /**
- * Tests for ask-user-questions free-text input behavior.
+ * GSD2 — Tests for ask-user-questions free-text input behavior.
  *
  * Bug #2715: The ask-user-questions UI lacks free-text input and can trap
  * users in a loop when the agent needs an explanation rather than a fixed
@@ -8,6 +8,7 @@
  * These tests exercise the RPC fallback path (ctx.ui.select) in
  * ask-user-questions.ts to ensure that selecting "None of the above"
  * triggers a follow-up free-text input prompt via ctx.ui.input().
+ *
  */
 
 import { describe, it, beforeEach } from "node:test";

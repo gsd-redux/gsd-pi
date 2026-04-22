@@ -1,14 +1,4 @@
 // GSD2 — Ecosystem Extension API wrapper
-// Wraps pi's ExtensionAPI to expose typed GSD context (phase + active unit)
-// to extensions loaded from `./.gsd/extensions/`. The wrapper intercepts only
-// `on("before_agent_start", ...)` so GSD can dispatch ecosystem handlers AFTER
-// refreshing state — fixing the load-order race where third-party
-// `.pi/extensions/` handlers see a stale module-level snapshot (#3338).
-//
-// SINGLE-SESSION INVARIANT: the module-level `_snapshot` is per-process.
-// Worktree or project switches do NOT reload extensions, matching pi's
-// `.pi/extensions/` behavior. Only re-launching the CLI rebinds the snapshot.
-
 import type {
   BeforeAgentStartEvent,
   ExtensionAPI,

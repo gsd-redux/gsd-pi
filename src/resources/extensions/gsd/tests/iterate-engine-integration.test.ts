@@ -1,5 +1,5 @@
 /**
- * iterate-engine-integration.test.ts — Integration tests for iterate/fan-out
+ * GSD2 — iterate-engine-integration.test.ts — Integration tests for iterate/fan-out
  * expansion wired into CustomWorkflowEngine.
  *
  * Proves the full expansion→dispatch→reconcile cycle: the engine reads
@@ -9,6 +9,7 @@
  *
  * Uses real temp directories with actual DEFINITION.yaml, GRAPH.yaml,
  * and source artifact files — no mocks.
+ *
  */
 
 import { describe, it, afterEach } from "node:test";

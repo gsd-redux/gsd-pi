@@ -1,9 +1,10 @@
 /**
- * Tests for hook model resolution (#1720).
+ * GSD2 — Tests for hook model resolution (#1720).
  *
  * Verifies that resolveModelId handles all model ID formats correctly,
  * including OpenRouter-style "org/model" IDs, provider-prefixed IDs,
  * and bare IDs.
+ *
  */
 
 import test from "node:test";

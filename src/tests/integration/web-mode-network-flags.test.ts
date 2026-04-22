@@ -1,3 +1,4 @@
+// GSD2 — Tests for Web Mode Network Flags
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'

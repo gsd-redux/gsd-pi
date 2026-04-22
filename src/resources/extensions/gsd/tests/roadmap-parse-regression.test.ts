@@ -1,15 +1,16 @@
 /**
- * roadmap-parse-regression.test.ts — Regression tests for roadmap parsing.
+ * GSD2 — roadmap-parse-regression.test.ts — Regression tests for roadmap parsing.
  *
  * Exercises parseRoadmapSlices() and the prose fallback parser against
  * every known LLM-generated roadmap variant that has caused production bugs.
  *
  * Regression coverage for:
- *   #807   Prose slice headers not parsed → "No slice eligible" block
- *   #1248  Prose header regex only matched H2 with colon separator
- *   #1243  Same root cause as #1248
+ * #807   Prose slice headers not parsed → "No slice eligible" block
+ * #1248  Prose header regex only matched H2 with colon separator
+ * #1243  Same root cause as #1248
  *
  * Also covers dependency expansion (range syntax) and edge cases.
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -18,7 +19,6 @@ import { parseRoadmapSlices, expandDependencies } from '../roadmap-slices.ts';
   // ═══════════════════════════════════════════════════════════════════════
   // A. Standard machine-readable format (should always work)
   // ═══════════════════════════════════════════════════════════════════════
-
 
 describe('roadmap-parse-regression', () => {
 test('A. Standard checkbox format', () => {

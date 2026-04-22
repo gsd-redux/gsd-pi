@@ -1,5 +1,5 @@
 /**
- * Tests for S02 Enhanced Collection TUI functions:
+ * GSD2 — Tests for S02 Enhanced Collection TUI functions:
  * - collectSecretsFromManifest() orchestrator categorization and flow
  * - showSecretsSummary() render output
  * - collectOneSecret() guidance rendering
@@ -9,6 +9,7 @@
  *
  * Uses dynamic imports so individual tests fail with clear messages
  * instead of the entire file crashing at import time.
+ *
  */
 
 import test from "node:test";

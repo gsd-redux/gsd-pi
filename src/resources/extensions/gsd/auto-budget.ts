@@ -1,6 +1,7 @@
 /**
- * Budget alert level tracking and enforcement for auto-mode.
+ * GSD2 — Budget alert level tracking and enforcement for auto-mode.
  * Pure functions — no module state or side effects.
+ *
  */
 
 import type { BudgetEnforcementMode } from "./types.js";

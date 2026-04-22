@@ -1,9 +1,10 @@
 /**
- * Integration tests: deriveState, indexWorkspace, inlinePriorMilestoneSummary,
+ * GSD2 — Integration tests: deriveState, indexWorkspace, inlinePriorMilestoneSummary,
  * dispatch-guard, and branch operations with unique-format (M001-abc123) and
  * mixed classic+unique milestone directories.
  *
  * Uses real filesystem and git fixtures — no mocking.
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';

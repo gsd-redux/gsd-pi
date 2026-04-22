@@ -1,8 +1,9 @@
 /**
- * API Key Manager — /gsd keys
+ * GSD2 — API Key Manager — /gsd keys
  *
  * Comprehensive CLI for managing API keys: list, add, remove, test, rotate, doctor.
  * Works with AuthStorage from pi-coding-agent — no core package changes needed.
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

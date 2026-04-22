@@ -1,9 +1,4 @@
-// GSD Extension — Hook Engine Facade
-//
-// Thin facade over RuleRegistry. All mutable state and logic lives in the
-// registry instance; these exported functions delegate through getOrCreateRegistry()
-// so existing call-sites and tests work without modification.
-
+// GSD2 — Extension — Hook Engine Facade
 import type {
   HookExecutionState,
   HookDispatchResult,

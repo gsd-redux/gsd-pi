@@ -1,7 +1,4 @@
-// Migration parser test suite
-// Tests for parsing old .planning directories into typed PlanningProject structures.
-// Uses synthetic fixture directories — no real .planning dirs needed.
-
+// GSD2 — Migration parser test suite
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

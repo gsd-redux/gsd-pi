@@ -1,7 +1,8 @@
 /**
- * auto/detect-stuck.ts — Sliding-window stuck detection for the auto-loop.
+ * GSD2 — auto/detect-stuck.ts — Sliding-window stuck detection for the auto-loop.
  *
  * Leaf node in the import DAG.
+ *
  */
 
 import type { WindowEntry } from "./types.js";

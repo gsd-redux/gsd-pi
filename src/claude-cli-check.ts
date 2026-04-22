@@ -1,7 +1,4 @@
 // GSD2 — Claude CLI binary detection for onboarding
-// Lightweight check used at onboarding time (before extensions load).
-// The full readiness check with caching lives in the claude-code-cli extension.
-
 import { execFileSync } from 'node:child_process'
 
 /**

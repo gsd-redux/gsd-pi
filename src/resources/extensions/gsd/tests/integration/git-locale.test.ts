@@ -1,3 +1,4 @@
+// GSD2 — Tests for Git Locale
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 /**
@@ -39,7 +40,6 @@ function createFile(base: string, relPath: string, content: string): void {
 
 describe('git-locale', async () => {
   // ─── GIT_NO_PROMPT_ENV includes LC_ALL=C ─────────────────────────────
-
 
   assert.deepStrictEqual(
     GIT_NO_PROMPT_ENV.LC_ALL,

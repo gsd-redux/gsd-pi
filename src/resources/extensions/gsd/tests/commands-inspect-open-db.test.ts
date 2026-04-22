@@ -1,3 +1,4 @@
+// GSD2 — Tests for Commands Inspect Open  DB
 import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Headless Progress
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { formatProgress, formatThinkingLine, formatCostLine, summarizeToolArgs } from '../headless-ui.js'

@@ -1,15 +1,4 @@
-// GSD-2 — TUI pin-to-bottom regression test
-//
-// When the TUI does a full redraw with clear (`\x1b[2J`), the rendered block
-// must be anchored so its last line lands at the terminal's bottom row. Before
-// this fix the renderer emitted `\x1b[2J\x1b[H`, which homed the cursor to
-// row 1 and left every `belowEditor` widget (health widget, editor, dashboard)
-// floating at the top of an otherwise empty terminal after a chat clear.
-//
-// Trigger condition: a terminal height change forces `fullRender(true)` —
-// exactly the path that fires on compaction/clear events when the chat
-// collapses to a short block.
-
+// GSD2 — GSD-2 — TUI pin-to-bottom regression test
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { TUI, type Component, type Terminal } from "@gsd/pi-tui";

@@ -1,7 +1,8 @@
 /**
- * One-time migration of provider credentials from Pi (~/.pi/agent/auth.json)
+ * GSD2 — One-time migration of provider credentials from Pi (~/.pi/agent/auth.json)
  * into GSD's auth storage. Runs when GSD has no LLM providers configured,
  * so users with an existing Pi install skip re-authentication.
+ *
  */
 
 import { existsSync, readFileSync } from 'node:fs'

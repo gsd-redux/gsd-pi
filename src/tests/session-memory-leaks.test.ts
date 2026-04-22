@@ -1,11 +1,12 @@
 /**
- * Regression tests for CPU/memory leak fixes in long-running sessions.
+ * GSD2 — Regression tests for CPU/memory leak fixes in long-running sessions.
  *
  * Structural tests that verify the fix patterns are present in source —
  * NOT runtime integration tests. This approach is chosen because:
  * - The leaks manifest over hours of real usage, not in unit test timescales
  * - The fixes are defensive guards (caps, disposal, handler cleanup)
  * - Structural verification catches regressions when code is refactored
+ *
  */
 import test from "node:test";
 import assert from "node:assert/strict";

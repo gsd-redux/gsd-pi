@@ -1,10 +1,11 @@
 /**
- * Bug #2807: Web roadmap derives milestone status from slice heuristics
+ * GSD2 — Bug #2807: Web roadmap derives milestone status from slice heuristics
  * instead of authoritative GSD milestone state.
  *
  * getMilestoneStatus() should prefer the authoritative `status` field on
  * WorkspaceMilestoneTarget (populated from the engine registry) rather
  * than inferring status from slice completion flags.
+ *
  */
 import test from "node:test";
 import assert from "node:assert/strict";

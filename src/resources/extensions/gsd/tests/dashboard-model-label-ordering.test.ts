@@ -1,13 +1,14 @@
 /**
- * dashboard-model-label-ordering.test.ts — Regression test for #2899.
+ * GSD2 — dashboard-model-label-ordering.test.ts — Regression test for #2899.
  *
  * The dashboard model label was showing the previous unit's model because
  * updateProgressWidget was called before selectAndApplyModel in phases.ts.
  * This test verifies:
- *   1. updateProgressWidget is called AFTER selectAndApplyModel in phases.ts
- *   2. session.ts has a currentDispatchedModelId field
- *   3. auto.ts exposes getCurrentDispatchedModelId in widgetStateAccessors
- *   4. auto-dashboard.ts reads from a dispatched model accessor, not cmdCtx?.model
+ * 1. updateProgressWidget is called AFTER selectAndApplyModel in phases.ts
+ * 2. session.ts has a currentDispatchedModelId field
+ * 3. auto.ts exposes getCurrentDispatchedModelId in widgetStateAccessors
+ * 4. auto-dashboard.ts reads from a dispatched model accessor, not cmdCtx?.model
+ *
  */
 
 import { readFileSync } from "node:fs";

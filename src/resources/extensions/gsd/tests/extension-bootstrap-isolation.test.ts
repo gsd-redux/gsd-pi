@@ -1,10 +1,4 @@
-// Structural contracts for GSD extension bootstrap isolation.
-//
-// The /gsd command must survive failures in the full extension bootstrap
-// (register-extension.ts). This guards against the regression where a
-// Windows-specific import failure in register-shortcuts.ts silently
-// prevented /gsd from being registered at all (#4168, #4172).
-
+// GSD2 — Structural contracts for GSD extension bootstrap isolation.
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

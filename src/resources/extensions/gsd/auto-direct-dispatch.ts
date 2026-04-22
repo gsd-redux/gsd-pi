@@ -1,6 +1,7 @@
 /**
- * Direct phase dispatch — handles manual /gsd dispatch commands.
+ * GSD2 — Direct phase dispatch — handles manual /gsd dispatch commands.
  * Resolves phase name → unit type + prompt, creates a session, and sends the message.
+ *
  */
 
 import type {

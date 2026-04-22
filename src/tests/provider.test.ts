@@ -1,10 +1,11 @@
 /**
- * Tests for search provider selection, preference persistence, and key helpers.
+ * GSD2 — Tests for search provider selection, preference persistence, and key helpers.
  *
  * Covers:
  * - All 8 resolveSearchProvider() scenarios (keys × preferences)
  * - Preference get/set round-trip via AuthStorage
  * - Key helper functions
+ *
  */
 
 import test from 'node:test'

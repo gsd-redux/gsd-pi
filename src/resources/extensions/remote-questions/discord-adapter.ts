@@ -1,5 +1,6 @@
 /**
- * Remote Questions — Discord adapter
+ * GSD2 — Remote Questions — Discord adapter
+ *
  */
 
 import { type ChannelAdapter, type RemotePrompt, type RemoteDispatchResult, type RemoteAnswer, type RemotePromptRef } from "./types.js";

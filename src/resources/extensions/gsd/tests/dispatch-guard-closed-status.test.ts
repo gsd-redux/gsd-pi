@@ -1,10 +1,11 @@
 /**
- * dispatch-guard-closed-status.test.ts — #3653
+ * GSD2 — dispatch-guard-closed-status.test.ts — #3653
  *
  * Verify that the dispatch guard uses isClosedStatus() instead of a raw
  * `status === "complete"` check when determining whether a slice is done.
  * Reconciled slices may carry statuses like "skipped" or "cancelled" which
  * are also closed — the raw check caused false dispatch blocks.
+ *
  */
 
 import { describe, test } from "node:test";

@@ -1,11 +1,12 @@
 /**
- * milestone-transition-state-rebuild.test.ts — Tests for #1576 fix.
+ * GSD2 — milestone-transition-state-rebuild.test.ts — Tests for #1576 fix.
  *
  * Verifies that:
  * 1. rebuildState() is called after milestone transitions so STATE.md
- *    reflects the new active milestone.
+ * reflects the new active milestone.
  * 2. completed-units.json is reset when the active milestone changes,
- *    preventing stale entries from causing dispatch skips.
+ * preventing stale entries from causing dispatch skips.
+ *
  */
 
 import test from "node:test";

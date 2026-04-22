@@ -1,5 +1,5 @@
 /**
- * GSD Slice Parallel Orchestrator — Engine for parallel slice execution
+ * GSD2 — GSD Slice Parallel Orchestrator — Engine for parallel slice execution
  * within a single milestone.
  *
  * Mirrors the existing parallel-orchestrator.ts pattern at slice scope
@@ -11,6 +11,7 @@
  * - Scope: slices within one milestone, not milestones within a project
  * - Lock env: GSD_SLICE_LOCK (in addition to GSD_MILESTONE_LOCK)
  * - Conflict check: file overlap between slice plans (slice-parallel-conflict.ts)
+ *
  */
 
 import { spawn, type ChildProcess } from "node:child_process";

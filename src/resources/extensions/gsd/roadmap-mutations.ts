@@ -1,8 +1,9 @@
 /**
- * Roadmap Mutations — shared utilities for modifying roadmap checkbox state.
+ * GSD2 — Roadmap Mutations — shared utilities for modifying roadmap checkbox state.
  *
  * Extracts the duplicated "flip slice checkbox" pattern that existed in
  * doctor.ts, mechanical-completion.ts, and auto-recovery.ts.
+ *
  */
 
 import { readFileSync } from "node:fs";

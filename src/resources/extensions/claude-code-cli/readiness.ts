@@ -1,5 +1,5 @@
 /**
- * Readiness check for the Claude Code CLI provider.
+ * GSD2 — Readiness check for the Claude Code CLI provider.
  *
  * Verifies the `claude` binary is installed, responsive, AND authenticated.
  * Results are cached for 30 seconds to avoid shelling out on every
@@ -7,6 +7,7 @@
  *
  * Auth verification follows the T3 Code pattern: run `claude auth status`
  * and check the exit code + output for an authenticated session.
+ *
  */
 
 import { execFileSync } from "node:child_process";

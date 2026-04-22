@@ -1,5 +1,5 @@
 /**
- * Integration tests for npm pack and install.
+ * GSD2 — Integration tests for npm pack and install.
  *
  * These tests spawn child processes (npm pack, node)
  * and are resource-intensive. Run separately from unit tests.
@@ -7,6 +7,7 @@
  * Prerequisite: npm run build must be run first.
  *
  * Run with: npm run build && npm run test:integration
+ *
  */
 
 import test from "node:test";

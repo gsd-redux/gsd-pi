@@ -1,3 +1,4 @@
+// GSD2 — Workflow Tool Executors — types and interfaces
 import { ensureDbOpen } from "../bootstrap/dynamic-tools.js";
 import { sanitizeCompleteMilestoneParams } from "../bootstrap/sanitize-complete-milestone.js";
 import { loadWriteGateSnapshot, shouldBlockContextArtifactSaveInSnapshot } from "../bootstrap/write-gate.js";

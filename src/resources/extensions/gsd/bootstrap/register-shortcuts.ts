@@ -1,3 +1,4 @@
+// GSD2 — Register Shortcuts — overlayOptions constant
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 

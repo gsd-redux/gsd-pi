@@ -1,10 +1,11 @@
 /**
- * Triage dispatch ordering contract tests.
+ * GSD2 — Triage dispatch ordering contract tests.
  *
  * These tests verify structural invariants of the triage integration
  * by inspecting the actual source code of auto-post-unit.ts, auto.ts,
  * and post-unit-hooks.ts. Full behavioral testing requires the
  * @gsd/pi-coding-agent runtime.
+ *
  */
 
 import test from "node:test";

@@ -1,12 +1,13 @@
 /**
- * browser-tools — ref snapshot and resolution
+ * GSD2 — browser-tools — ref snapshot and resolution
  *
  * Builds deterministic element snapshots and resolves ref targets.
  * Uses window.__pi.* utilities injected via addInitScript (from
  * evaluate-helpers.ts) instead of redeclaring functions inline.
  *
  * Functions kept inline (not shared/duplicated):
- *   - matchesMode, computeNearestHeading, computeFormOwnership
+ * - matchesMode, computeNearestHeading, computeFormOwnership
+ *
  */
 
 import type { Frame, Page } from "playwright";

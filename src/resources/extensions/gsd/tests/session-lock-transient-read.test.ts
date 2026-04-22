@@ -1,16 +1,17 @@
 /**
- * session-lock-transient-read.test.ts — Tests for transient lock file unreadability (#2324).
+ * GSD2 — session-lock-transient-read.test.ts — Tests for transient lock file unreadability (#2324).
  *
  * Regression coverage for:
- *   #2324  onCompromised declares lock lost when the lock file is temporarily
- *          unreadable (NFS/CIFS latency, macOS APFS snapshot, concurrent process
- *          briefly holding the file).
+ * #2324  onCompromised declares lock lost when the lock file is temporarily
+ * unreadable (NFS/CIFS latency, macOS APFS snapshot, concurrent process
+ * briefly holding the file).
  *
  * Tests:
- *   - readExistingLockDataWithRetry retries on transient read failure
- *   - readExistingLockDataWithRetry returns data when file becomes readable after retries
- *   - readExistingLockDataWithRetry returns null only when ALL retries exhausted
- *   - onCompromised does not declare compromise when lock file is transiently unreadable
+ * - readExistingLockDataWithRetry retries on transient read failure
+ * - readExistingLockDataWithRetry returns data when file becomes readable after retries
+ * - readExistingLockDataWithRetry returns null only when ALL retries exhausted
+ * - onCompromised does not declare compromise when lock file is transiently unreadable
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, renameSync, unlinkSync, chmodSync } from 'node:fs';

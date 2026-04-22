@@ -1,19 +1,20 @@
 /**
- * uat-stuck-loop-orphaned-worktree.test.ts — Regression tests for #2821.
+ * GSD2 — uat-stuck-loop-orphaned-worktree.test.ts — Regression tests for #2821.
  *
  * Reproduces two cascading bugs:
  *
  * Bug 1 — UAT stuck-loop: syncProjectRootToWorktree uses force:false for
- *   milestone files. When the project root has an ASSESSMENT with a verdict
- *   but the worktree has a stale/empty ASSESSMENT (or none at all after DB
- *   rebuild), the verdict is NOT synced into the worktree. checkNeedsRunUat
- *   finds no verdict → re-dispatches run-uat indefinitely.
+ * milestone files. When the project root has an ASSESSMENT with a verdict
+ * but the worktree has a stale/empty ASSESSMENT (or none at all after DB
+ * rebuild), the verdict is NOT synced into the worktree. checkNeedsRunUat
+ * finds no verdict → re-dispatches run-uat indefinitely.
  *
  * Bug 2 — Orphaned worktree: removeWorktree silently swallows failures when
- *   git worktree remove fails (untracked files, CWD inside worktree, etc.).
- *   The worktree directory and branch persist on disk after teardown.
- *   teardownAutoWorktree has a fallback rmSync but it also fails when the
- *   git internal .git/worktrees/<name> directory holds a lock.
+ * git worktree remove fails (untracked files, CWD inside worktree, etc.).
+ * The worktree directory and branch persist on disk after teardown.
+ * teardownAutoWorktree has a fallback rmSync but it also fails when the
+ * git internal .git/worktrees/<name> directory holds a lock.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

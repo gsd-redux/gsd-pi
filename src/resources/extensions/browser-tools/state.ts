@@ -1,5 +1,5 @@
 /**
- * browser-tools — shared mutable state
+ * GSD2 — browser-tools — shared mutable state
  *
  * All mutable state lives behind accessor functions (get/set) so that
  * jiti-transpiled modules see updates reliably.  ES module live bindings
@@ -7,6 +7,7 @@
  *
  * State is initialized to sensible defaults and can be bulk-reset via
  * `resetAllState()` (called by closeBrowser).
+ *
  */
 
 import type { Browser, BrowserContext, Frame, Page } from "playwright";

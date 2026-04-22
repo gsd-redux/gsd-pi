@@ -1,6 +1,4 @@
-// Tests for GSD visualizer view renderers.
-// Tests the pure view functions with mock data — no file I/O.
-
+// GSD2 — Tests for GSD visualizer view renderers.
 import {
   renderProgressView,
   renderDepsView,
@@ -16,7 +14,6 @@ import {
 import type { VisualizerData } from "../visualizer-data.js";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // ─── Mock theme ─────────────────────────────────────────────────────────────
 

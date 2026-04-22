@@ -1,6 +1,4 @@
-// Tests for GSD visualizer overlay.
-// Verifies filter mode, tab switching, mouse support, page scroll, help overlay, and 10-tab config.
-
+// GSD2 — Tests for GSD visualizer overlay.
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

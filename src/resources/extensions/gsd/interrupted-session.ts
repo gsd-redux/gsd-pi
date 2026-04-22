@@ -1,3 +1,4 @@
+// GSD2 — Interrupted Session — types and interfaces
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,8 +1,9 @@
 /**
- * Remote Questions — shared HTTP client
+ * GSD2 — Remote Questions — shared HTTP client
  *
  * Centralizes timeout, error handling, and JSON serialization logic
  * used by all channel adapters (Discord, Slack, Telegram).
+ *
  */
 
 import { PER_REQUEST_TIMEOUT_MS } from "./types.js";

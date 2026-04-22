@@ -1,3 +1,4 @@
+// GSD2 — Core — summaryLines constant
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { Model } from "@gsd/pi-ai";
 import type { GSDState } from "../../types.js";

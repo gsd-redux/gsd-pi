@@ -1,5 +1,5 @@
 /**
- * inherited-repo-home-dir.test.ts — Regression test for #2393.
+ * GSD2 — inherited-repo-home-dir.test.ts — Regression test for #2393.
  *
  * When the user's home directory IS a git repo (common with dotfile
  * managers like yadm), isInheritedRepo() must not treat ~/.gsd (the
@@ -8,6 +8,7 @@
  * subdirectories because it sees ~/.gsd and concludes the parent repo
  * has already been initialised with GSD — causing the wrong project
  * state to be loaded.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

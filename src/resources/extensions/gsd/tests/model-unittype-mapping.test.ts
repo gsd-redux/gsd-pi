@@ -1,5 +1,5 @@
 /**
- * Model UnitType Mapping — regression tests for #2865.
+ * GSD2 — Model UnitType Mapping — regression tests for #2865.
  *
  * Verifies that all auto-dispatch unitTypes have corresponding entries in:
  * - resolveModelWithFallbacksForUnit (preferences-models.ts)
@@ -10,7 +10,7 @@
  *
  * Uses source-level checks to avoid import resolution issues in dev.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import test from "node:test";

@@ -1,3 +1,4 @@
+// GSD2 — File Lock — _require()
 import { existsSync } from "node:fs";
 
 function _require(name: string) {

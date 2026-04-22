@@ -1,17 +1,18 @@
 /**
- * discuss-queued-milestones.test.ts — Tests for #2307.
+ * GSD2 — discuss-queued-milestones.test.ts — Tests for #2307.
  *
  * /gsd discuss was previously gated on state.activeMilestone, which prevented
  * users from discussing queued (pending) milestones during roadmap grooming.
  *
  * These tests verify:
- *   1. deriveState correctly identifies pending milestones (the set the picker
- *      will show when no active milestone is present)
- *   2. resolveMilestoneFile correctly resolves context artifacts for pending
- *      milestones so the picker can report their discussion state
- *   3. The guided-flow.ts source code no longer hard-exits when no active
- *      milestone exists but pending milestones are present
- *   4. The helper functions for queued discuss exist in the source
+ * 1. deriveState correctly identifies pending milestones (the set the picker
+ * will show when no active milestone is present)
+ * 2. resolveMilestoneFile correctly resolves context artifacts for pending
+ * milestones so the picker can report their discussion state
+ * 3. The guided-flow.ts source code no longer hard-exits when no active
+ * milestone exists but pending milestones are present
+ * 4. The helper functions for queued discuss exist in the source
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

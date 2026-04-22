@@ -1,8 +1,9 @@
 /**
- * {{EXTENSION_NAME}} — {{DESCRIPTION}}
+ * GSD2 — {{EXTENSION_NAME}} — {{DESCRIPTION}}
  *
  * Capabilities:
  * {{CAPABILITIES_LIST}}
+ *
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";

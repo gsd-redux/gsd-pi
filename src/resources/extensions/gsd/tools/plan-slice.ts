@@ -1,3 +1,4 @@
+// GSD2 — Plan Slice — types and interfaces
 import { clearParseCache } from "../files.js";
 import { isClosedStatus, isDeferredStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";

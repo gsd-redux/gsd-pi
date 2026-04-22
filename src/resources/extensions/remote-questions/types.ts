@@ -1,5 +1,6 @@
 /**
- * Remote Questions — shared types
+ * GSD2 — Remote Questions — shared types
+ *
  */
 
 /** Timeout applied to every outbound HTTP request across all channel adapters. */

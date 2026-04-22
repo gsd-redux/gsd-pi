@@ -1,5 +1,5 @@
 /**
- * slice-disk-reconcile.test.ts — #2533
+ * GSD2 — slice-disk-reconcile.test.ts — #2533
  *
  * Slices that exist on disk (in ROADMAP.md) but are missing from the SQLite
  * database cause permanent "No slice eligible — check dependency ordering"
@@ -10,6 +10,7 @@
  * (complete on disk). S03 depends on S01. Only S04 is in the DB (depends on
  * S03). Without slice reconciliation, S01-S03 are invisible and S04 is
  * permanently blocked.
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

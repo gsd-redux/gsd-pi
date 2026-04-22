@@ -1,11 +1,12 @@
 /**
- * Prompt Ordering Optimizer — reorders assembled prompt sections
+ * GSD2 — Prompt Ordering Optimizer — reorders assembled prompt sections
  * to maximize cache prefix stability.
  *
  * Identifies sections by markdown heading patterns and rearranges
  * them so stable content appears first. Anthropic caches the last
  * user message by prefix match, so placing static/semi-static
  * content before dynamic content improves cache hit rates.
+ *
  */
 
 /** Section extracted from a prompt by heading markers */

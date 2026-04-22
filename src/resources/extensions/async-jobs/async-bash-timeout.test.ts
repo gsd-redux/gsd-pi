@@ -1,10 +1,11 @@
 /**
- * async-bash-timeout.test.ts — Tests for async_bash timeout behavior.
+ * GSD2 — async-bash-timeout.test.ts — Tests for async_bash timeout behavior.
  *
  * Reproduces issue #2186: when an async bash job exceeds its timeout and
  * the child process ignores SIGTERM, the promise hangs indefinitely.
  * The fix adds a SIGKILL fallback and a hard deadline that force-resolves
  * the promise so execution can continue.
+ *
  */
 
 import test from "node:test";

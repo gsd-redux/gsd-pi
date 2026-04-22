@@ -1,3 +1,4 @@
+// GSD2 — App Paths
 import { homedir } from 'os'
 import { join } from 'path'
 

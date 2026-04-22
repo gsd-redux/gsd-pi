@@ -1,9 +1,10 @@
 /**
- * Graph-aware context injection for dispatch prompt builders.
+ * GSD2 — Graph-aware context injection for dispatch prompt builders.
  *
  * Reads the pre-built graph.json and returns a formatted context block
  * for injection into prompts. Gracefully returns null when no graph exists
  * or the query yields no results — callers must handle null.
+ *
  */
 
 import { logWarning } from "./workflow-logger.js";

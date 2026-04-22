@@ -1,5 +1,5 @@
 /**
- * cold-resume-db-reopen.test.ts — Regression test for #2940.
+ * GSD2 — cold-resume-db-reopen.test.ts — Regression test for #2940.
  *
  * Validates that the paused-session resume path in auto.ts opens the project
  * database before calling rebuildState() / deriveState(), matching the fresh
@@ -7,6 +7,7 @@
  *
  * Without this, cold resume falls back to markdown parsing which misreads
  * done cells and redispatches wrong slices.
+ *
  */
 
 import { readFileSync } from "node:fs";

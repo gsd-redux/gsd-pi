@@ -1,8 +1,9 @@
 /**
- * agent-end-retry.test.ts — Regression checks for the agent_end model.
+ * GSD2 — agent-end-retry.test.ts — Regression checks for the agent_end model.
  *
  * The per-unit one-shot resolve function lives at module level in auto-loop.ts
  * (_currentResolve). agent_end is handled via resolveAgentEnd().
+ *
  */
 
 import test from "node:test";

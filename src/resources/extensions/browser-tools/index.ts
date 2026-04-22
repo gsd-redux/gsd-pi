@@ -1,4 +1,6 @@
-/** browser-tools — pi extension: full browser interaction via Playwright. */
+/**
+ * GSD2 — Index
+ */
 import { importExtensionModule, type ExtensionAPI } from "@gsd/pi-coding-agent";
 
 let registrationPromise: Promise<void> | null = null;

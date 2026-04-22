@@ -1,5 +1,5 @@
 /**
- * Namespaced Resolver Module
+ * GSD2 — Namespaced Resolver Module
  *
  * Implements context-aware resolution with three-tier lookup precedence:
  * 1. Canonical (fully-qualified names with `:`)
@@ -7,6 +7,7 @@
  * 3. Shorthand (bare name matched across all namespaces)
  *
  * This is the core logic for D003 (same-plugin local-first) and R007/R008 (safe shorthand).
+ *
  */
 
 import type { NamespacedRegistry, NamespacedComponent, ComponentType } from './namespaced-registry.js';

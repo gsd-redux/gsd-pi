@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Tool Tracking
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {

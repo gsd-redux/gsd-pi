@@ -1,5 +1,4 @@
-// Data loader for workflow visualizer overlay — aggregates state + metrics.
-
+// GSD2 — Data loader for workflow visualizer overlay — aggregates state + metrics.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { deriveState } from './state.js';

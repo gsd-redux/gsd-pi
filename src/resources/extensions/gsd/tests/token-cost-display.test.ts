@@ -1,11 +1,12 @@
 /**
- * Tests for the show_token_cost preference (#1515).
+ * GSD2 — Tests for the show_token_cost preference (#1515).
  *
  * Covers:
- *   - Preference recognition and validation
- *   - Cost formatting accuracy (inline re-implementation for test isolation)
- *   - Disabled-by-default behavior
- *   - Preference parsing from markdown frontmatter
+ * - Preference recognition and validation
+ * - Cost formatting accuracy (inline re-implementation for test isolation)
+ * - Disabled-by-default behavior
+ * - Preference parsing from markdown frontmatter
+ *
  */
 
 import test from "node:test";

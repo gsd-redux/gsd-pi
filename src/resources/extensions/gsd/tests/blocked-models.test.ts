@@ -1,5 +1,4 @@
-// GSD — Tests for persistent blocked-models store (issue #4513)
-
+// GSD2 — Tests for persistent blocked-models store (issue #4513)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";

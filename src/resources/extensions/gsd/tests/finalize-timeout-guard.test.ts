@@ -1,5 +1,5 @@
 /**
- * Regression test for #2344: Auto-loop hangs after plan-slice completes
+ * GSD2 — Regression test for #2344: Auto-loop hangs after plan-slice completes
  * because postUnitPostVerification() never resolves.
  *
  * When postUnitPostVerification() hangs (e.g., due to a module import
@@ -14,6 +14,7 @@
  * This test verifies the timeout utility used by the fix, since the
  * full runFinalize function has too many transitive dependencies for
  * isolated unit testing.
+ *
  */
 
 import { createTestContext } from "./test-helpers.ts";

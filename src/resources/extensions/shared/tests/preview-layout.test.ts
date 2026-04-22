@@ -1,3 +1,4 @@
+// GSD2 — Tests for Preview Layout
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { visibleWidth } from "@gsd/pi-tui";

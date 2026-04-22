@@ -1,3 +1,4 @@
+// GSD2 — Tests for Web Subprocess Runner
 import test from "node:test"
 import assert from "node:assert/strict"
 

@@ -1,9 +1,10 @@
 /**
- * Forensics detectStuckLoops tests — #1943
+ * GSD2 — Forensics detectStuckLoops tests — #1943
  *
  * Verifies that detectStuckLoops counts distinct dispatches (unique startedAt
  * values per type/id) instead of raw entry count, which produces false-positive
  * stuck-loop anomalies when idle-watchdog duplicate metrics entries exist.
+ *
  */
 
 import test from "node:test";
@@ -28,7 +29,6 @@ function makeUnit(overrides: Partial<UnitMetrics> = {}): UnitMetrics {
     ...overrides,
   };
 }
-
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

@@ -1,9 +1,10 @@
 /**
- * Tests for read tool offset clamping (#3007).
+ * GSD2 — Tests for read tool offset clamping (#3007).
  *
  * When offset exceeds file length, the read tool should clamp to the
  * last line instead of throwing, preventing downstream JSON parse errors
  * in auto-mode milestone completion.
+ *
  */
 
 import test from "node:test";

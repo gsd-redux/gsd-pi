@@ -1,8 +1,9 @@
 /**
- * worktree-sync-tasks.test.ts — Regression test for #1678.
+ * GSD2 — worktree-sync-tasks.test.ts — Regression test for #1678.
  *
  * Verifies that syncWorktreeStateBack() correctly syncs task summaries
  * from the tasks/ subdirectory within each slice, not just slice-level files.
+ *
  */
 
 import test from "node:test";

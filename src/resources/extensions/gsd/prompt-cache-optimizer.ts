@@ -1,10 +1,11 @@
 /**
- * Prompt Cache Optimizer — separates prompt content into cacheable static
+ * GSD2 — Prompt Cache Optimizer — separates prompt content into cacheable static
  * prefixes and dynamic per-task suffixes to maximize provider cache hit rates.
  *
  * Anthropic caches by prefix match (up to 4 breakpoints, 90% savings).
  * OpenAI auto-caches prompts with 1024+ stable prefix tokens (50% savings).
  * Both benefit from placing static content first and dynamic content last.
+ *
  */
 
 /** Content classification for cache optimization */

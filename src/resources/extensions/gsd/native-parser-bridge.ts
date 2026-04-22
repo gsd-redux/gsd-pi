@@ -1,9 +1,4 @@
-// Native GSD Parser Bridge
-// Provides drop-in replacements for the JS parsing functions in files.ts,
-// backed by the Rust native parser for better performance on large projects.
-//
-// Functions fall back to JS implementations if the native module is unavailable.
-
+// GSD2 — Native GSD Parser Bridge
 import type { Roadmap, BoundaryMapEntry, RoadmapSliceEntry, RiskLevel } from './types.js';
 
 // Issue #453: auto-mode post-turn reconciliation must stay on the stable JS path

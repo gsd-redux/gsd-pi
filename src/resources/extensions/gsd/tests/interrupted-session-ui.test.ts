@@ -1,3 +1,4 @@
+// GSD2 — Tests for Interrupted Session  UI
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

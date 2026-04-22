@@ -1,6 +1,4 @@
-// GSD Extension - Override Tests
-// Tests for parseOverrides, appendOverride, loadActiveOverrides, formatOverridesSection, resolveAllOverrides
-
+// GSD2 — Extension — Override Tests
 import { describe, test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";

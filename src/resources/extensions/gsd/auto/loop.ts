@@ -1,10 +1,11 @@
 /**
- * auto/loop.ts — Main auto-mode execution loop.
+ * GSD2 — auto/loop.ts — Main auto-mode execution loop.
  *
  * Iterates: derive → dispatch → guards → runUnit → finalize → repeat.
  * Exits when s.active becomes false or a terminal condition is reached.
  *
  * Imports from: auto/types, auto/resolve, auto/phases
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

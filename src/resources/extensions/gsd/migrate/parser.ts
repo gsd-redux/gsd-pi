@@ -1,8 +1,4 @@
-// Old .planning directory parser orchestrator
-// Walks a .planning directory tree, delegates to per-file parsers,
-// and assembles the complete typed PlanningProject.
-// Zero Pi dependencies — uses only Node built-ins + local parsers.
-
+// GSD2 — Old .planning directory parser orchestrator
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 

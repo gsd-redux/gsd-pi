@@ -1,10 +1,11 @@
 /**
- * Headless Event Detection — notification classification and command detection
+ * GSD2 — Headless Event Detection — notification classification and command detection
  *
  * Detects terminal notifications, blocked notifications, milestone-ready signals,
  * and classifies commands as quick (single-turn) vs long-running.
  *
  * Also defines exit code constants and the status→exit-code mapping function.
+ *
  */
 
 // ---------------------------------------------------------------------------

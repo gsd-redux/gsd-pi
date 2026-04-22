@@ -1,3 +1,4 @@
+// GSD2 — Extension Discovery — isExtensionFile()
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 

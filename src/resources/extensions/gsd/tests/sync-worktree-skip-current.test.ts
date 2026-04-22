@@ -1,5 +1,5 @@
 /**
- * Regression test for #3641 — syncWorktreeStateBack skips current milestone
+ * GSD2 — Regression test for #3641 — syncWorktreeStateBack skips current milestone
  *
  * When syncing worktree state back to main, the current milestone being
  * merged should be skipped. Its files are already in the milestone branch
@@ -7,6 +7,7 @@
  *
  * The fix adds a `mid === milestoneId` skip guard inside the milestone
  * iteration loop in syncWorktreeStateBack.
+ *
  */
 
 import { describe, it } from 'node:test'

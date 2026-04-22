@@ -1,5 +1,4 @@
-// GSD-2 — Tests for step-mode completion messages in auto-post-unit
-
+// GSD2 — GSD-2 — Tests for step-mode completion messages in auto-post-unit
 import test from "node:test";
 import assert from "node:assert/strict";
 

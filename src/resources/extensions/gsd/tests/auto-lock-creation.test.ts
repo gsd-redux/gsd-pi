@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Lock Creation
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";

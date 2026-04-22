@@ -1,9 +1,10 @@
 /**
- * Tests for headless v2 migration — execution_complete handling,
+ * GSD2 — Tests for headless v2 migration — execution_complete handling,
  * sendUIResponse-based auto-response, and v1 fallback behavior.
  *
  * Uses extracted logic mirrors to avoid importing modules with native
  * dependencies (same pattern as headless-events.test.ts and headless-detection.test.ts).
+ *
  */
 
 import test from 'node:test'

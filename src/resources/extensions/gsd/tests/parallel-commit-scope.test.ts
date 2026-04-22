@@ -1,5 +1,5 @@
 /**
- * parallel-commit-scope.test.ts — Regression test for #1991.
+ * GSD2 — parallel-commit-scope.test.ts — Regression test for #1991.
  *
  * Parallel workers must only commit files belonging to their locked milestone.
  * When GSD_MILESTONE_LOCK is set, smartStage() must exclude .gsd/milestones/<M>/
@@ -7,6 +7,7 @@
  *
  * Without the fix, a worker for M033 can stage and commit fabricated artifacts
  * under .gsd/milestones/M032/, causing cross-milestone pollution.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

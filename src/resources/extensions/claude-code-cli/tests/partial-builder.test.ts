@@ -1,3 +1,4 @@
+// GSD2 — Tests for Partial Builder
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mapContentBlock, parseMcpToolName, PartialMessageBuilder } from "../partial-builder.ts";

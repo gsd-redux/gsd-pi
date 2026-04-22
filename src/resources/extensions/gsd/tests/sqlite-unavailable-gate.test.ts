@@ -1,5 +1,5 @@
 /**
- * sqlite-unavailable-gate.test.ts — #2419
+ * GSD2 — sqlite-unavailable-gate.test.ts — #2419
  *
  * When the SQLite provider fails to open, bootstrapAutoSession must
  * refuse to start auto-mode. Otherwise gsd_task_complete returns
@@ -10,6 +10,7 @@
  * confirming the pattern: after the DB lifecycle block, if the DB
  * file exists on disk but isDbAvailable() still returns false after
  * the open attempt, bootstrap must abort with an error notification.
+ *
  */
 
 import { readFileSync } from "node:fs";

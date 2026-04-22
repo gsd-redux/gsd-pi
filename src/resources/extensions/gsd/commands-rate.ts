@@ -1,6 +1,7 @@
 /**
- * /gsd rate — Submit feedback on the last unit's model tier assignment.
+ * GSD2 — /gsd rate — Submit feedback on the last unit's model tier assignment.
  * Feeds into the adaptive routing history so future dispatches improve.
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Replan Slice
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -505,7 +506,6 @@ console.log('\n=== doctor: no blocker → no blocker_discovered_no_replan issue 
 
 import { resolveExpectedArtifactPath } from '../auto-artifact-paths.ts';
 import { verifyExpectedArtifact } from '../auto-recovery.ts';
-
 
 describe('replan-slice', () => {
 test('artifact: resolveExpectedArtifactPath returns REPLAN.md path for replan-slice', () => {

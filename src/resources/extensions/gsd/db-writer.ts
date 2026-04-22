@@ -1,13 +1,4 @@
-// GSD DB Writer — Markdown generators + DB-first write helpers
-//
-// The missing DB→markdown direction. S03 established markdown→DB (md-importer.ts).
-// This module generates DECISIONS.md and REQUIREMENTS.md from DB state,
-// computes next decision IDs, and provides write helpers that upsert to DB
-// then regenerate the corresponding markdown file.
-//
-// Critical invariant: generated markdown must round-trip through
-// parseDecisionsTable() and parseRequirementsSections() with field fidelity.
-
+// GSD2 — DB Writer — Markdown generators + DB-first write helpers
 import { join, resolve } from 'node:path';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import type { Decision, Requirement } from './types.js';
@@ -447,7 +438,6 @@ export async function saveDecisionToDb(
         source: fields.source ?? 'discussion',
         superseded_by: null,
       });
-
 
       return nextId;
     });

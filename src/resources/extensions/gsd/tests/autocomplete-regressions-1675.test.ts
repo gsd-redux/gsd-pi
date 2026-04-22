@@ -1,3 +1,4 @@
+// GSD2 — Tests for Autocomplete Regressions 1675
 import test from "node:test";
 import assert from "node:assert/strict";
 

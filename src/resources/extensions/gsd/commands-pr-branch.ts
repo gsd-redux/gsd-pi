@@ -1,9 +1,10 @@
 /**
- * GSD Command — /gsd pr-branch
+ * GSD2 — GSD Command — /gsd pr-branch
  *
  * Creates a clean PR branch by cherry-picking commits while stripping
  * any changes to .gsd/, .planning/, and PLAN.md paths. Useful for
  * upstream PRs where planning artifacts should not be included.
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

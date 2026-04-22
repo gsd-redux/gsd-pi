@@ -1,5 +1,5 @@
 /**
- * Regression test for #3628 — restore tool set after discuss flow scoping
+ * GSD2 — Regression test for #3628 — restore tool set after discuss flow scoping
  *
  * The discuss flow narrows the active tool set to avoid "grammar too complex"
  * errors. Without restoring after sendMessage, the narrowed tools leaked into
@@ -7,6 +7,7 @@
  *
  * The fix saves the full tool set before scoping and restores it after
  * sendMessage returns.
+ *
  */
 
 import { describe, it } from 'node:test'

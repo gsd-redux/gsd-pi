@@ -1,5 +1,4 @@
-// GSD State Machine Regression Tests — Stuck Detection Coverage (#3161)
-
+// GSD2 — State Machine Regression Tests — Stuck Detection Coverage (#3161)
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -179,7 +178,6 @@ test("Rule 4: ENOENT paths non-consecutive still triggers", () => {
   assert.equal(result!.stuck, true);
   assert.ok(result!.reason.includes("/missing/skill"), `reason was: ${result!.reason}`);
 });
-
 
 // ─── Gap documentation: 3-unit cycle evades detection ────────────────────────
 

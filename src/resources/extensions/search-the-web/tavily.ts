@@ -1,9 +1,10 @@
 /**
- * Tavily API types and helper functions for normalizing Tavily search results
+ * GSD2 — Tavily API types and helper functions for normalizing Tavily search results
  * into the shared SearchResultFormatted shape.
  *
  * Consumed by: tool-search.ts (S02), search_and_read Tavily path (S03).
  * All exports are pure functions with no side effects.
+ *
  */
 
 import type { SearchResultFormatted } from "./format.js";

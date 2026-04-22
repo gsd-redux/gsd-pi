@@ -1,3 +1,4 @@
+// GSD2 — Project Sessions — safePath constant
 import { join } from "node:path"
 
 import { sessionsDir as defaultSessionsDir } from "./app-paths.js"

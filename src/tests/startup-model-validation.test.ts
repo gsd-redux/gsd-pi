@@ -1,8 +1,9 @@
 /**
- * GSD-2 — Regression tests for startup model validation (#3534)
+ * GSD2 — GSD-2 — Regression tests for startup model validation (#3534)
  *
  * Verifies that validateConfiguredModel() correctly handles extension-provided
  * models and that stale model IDs (e.g. claude-opus-4-6[1m]) trigger fallback.
+ *
  */
 
 import { describe, it, beforeEach } from "node:test";

@@ -1,5 +1,4 @@
-// GSD Extension — Notification Store Tests
-
+// GSD2 — Extension — Notification Store Tests
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";

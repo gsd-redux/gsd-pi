@@ -1,3 +1,4 @@
+// GSD2 — Rtk Test Utils — shellQuote()
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

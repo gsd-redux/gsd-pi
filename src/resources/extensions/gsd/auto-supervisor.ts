@@ -1,7 +1,8 @@
 /**
- * Auto-mode Supervisor — signal handling and working-tree activity detection.
+ * GSD2 — Auto-mode Supervisor — signal handling and working-tree activity detection.
  *
  * Pure functions — no module-level globals or AutoContext dependency.
+ *
  */
 
 import { clearLock } from "./crash-recovery.js";

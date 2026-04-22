@@ -1,5 +1,6 @@
 /**
- * Remote Questions — Telegram adapter
+ * GSD2 — Remote Questions — Telegram adapter
+ *
  */
 
 import { type ChannelAdapter, type RemotePrompt, type RemoteDispatchResult, type RemoteAnswer, type RemotePromptRef } from "./types.js";

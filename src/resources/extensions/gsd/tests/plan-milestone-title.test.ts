@@ -1,10 +1,11 @@
 /**
- * Regression test for #2879: gsd_plan_milestone silently drops milestone title
+ * GSD2 — Regression test for #2879: gsd_plan_milestone silently drops milestone title
  * when the DB row pre-exists from state reconciliation.
  *
  * Scenario: state reconciliation inserts a milestone row with an empty title
  * (INSERT OR IGNORE). When gsd_plan_milestone is called later with a title,
  * the title must be persisted — not silently dropped.
+ *
  */
 
 import test from "node:test";

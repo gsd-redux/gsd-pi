@@ -1,8 +1,9 @@
 /**
- * Tests for verdict-parser.ts — extraction, normalization, and schema validation.
+ * GSD2 — Tests for verdict-parser.ts — extraction, normalization, and schema validation.
  *
  * Regression tests for #2960: extractVerdict() must detect verdicts in both
  * YAML frontmatter and common markdown body patterns (LLM manual writes).
+ *
  */
 
 import { describe, it } from "node:test";

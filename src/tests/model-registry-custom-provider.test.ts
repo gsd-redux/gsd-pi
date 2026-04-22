@@ -1,6 +1,7 @@
 /**
- * Regression test for #3531: models.json custom providers must be registered
+ * GSD2 — Regression test for #3531: models.json custom providers must be registered
  * in registeredProviders so isProviderRequestReady() returns true.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

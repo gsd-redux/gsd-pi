@@ -1,11 +1,11 @@
 /**
- * GSD-2 — Regression tests for merge cwd restore (#2929)
+ * GSD2 — GSD-2 — Regression tests for merge cwd restore (#2929)
  * merge-cwd-restore.test.ts — Regression tests for #2929.
  *
  * Verifies:
- *   1. MergeConflictError restores process.cwd() to the pre-merge directory.
- *   2. autoCommitDirtyState does not run on the integration branch when cwd
- *      leaked there from a prior failed merge (parallel mode).
+ * 1. MergeConflictError restores process.cwd() to the pre-merge directory.
+ * 2. autoCommitDirtyState does not run on the integration branch when cwd
+ * leaked there from a prior failed merge (parallel mode).
  *
  * Bug: PR #2298 added a stash lifecycle around mergeMilestoneToMain but the
  * MergeConflictError throw path omitted the process.chdir(previousCwd) that
@@ -13,6 +13,7 @@
  * merge sequences, this left cwd on the integration branch, causing the next
  * merge's autoCommitDirtyState to commit dirty files from OTHER milestones
  * onto main.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

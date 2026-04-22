@@ -1,3 +1,4 @@
+// GSD2 — Web Mode — DEFAULT_HOST constant
 import { randomBytes } from 'node:crypto'
 import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'

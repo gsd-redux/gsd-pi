@@ -1,7 +1,8 @@
 /**
- * Phase handoff anchors — compact structured summaries written between
+ * GSD2 — Phase handoff anchors — compact structured summaries written between
  * GSD auto-mode phases so downstream agents inherit decisions, blockers,
  * and intent without re-inferring from scratch.
+ *
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

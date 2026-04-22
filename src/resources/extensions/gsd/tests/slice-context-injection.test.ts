@@ -1,9 +1,10 @@
 /**
- * Regression test: S##-CONTEXT.md from slice discussion must be
+ * GSD2 — Regression test: S##-CONTEXT.md from slice discussion must be
  * injected into all 5 downstream prompt builders (#3452).
  *
  * Scans auto-prompts.ts for the 5 builder functions and verifies
  * each one resolves and inlines the slice-level CONTEXT file.
+ *
  */
 
 import { describe, test } from "node:test";

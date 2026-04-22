@@ -1,7 +1,8 @@
 /**
- * In-flight tool call tracking for auto-mode idle detection.
+ * GSD2 — In-flight tool call tracking for auto-mode idle detection.
  * Tracks which tool calls are currently executing so the idle watchdog
  * can distinguish "waiting for tool completion" from "truly idle".
+ *
  */
 
 interface InFlightTool {

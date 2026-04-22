@@ -1,3 +1,4 @@
+// GSD2 — Tests for Register Hooks Depth Verification
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";

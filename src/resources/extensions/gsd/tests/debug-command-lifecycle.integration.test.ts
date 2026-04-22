@@ -1,3 +1,4 @@
+// GSD2 — Tests for Debug Command Lifecycle.integration
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";

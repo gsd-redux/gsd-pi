@@ -1,3 +1,4 @@
+// GSD2 — Parallel
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import {

@@ -1,9 +1,10 @@
 /**
- * Headless UI Handling — auto-response, progress formatting, and supervised stdin
+ * GSD2 — Headless UI Handling — auto-response, progress formatting, and supervised stdin
  *
  * Handles extension UI requests (auto-responding in headless mode),
  * formats progress events for stderr output, and reads orchestrator
  * commands from stdin in supervised mode.
+ *
  */
 
 import type { Readable } from 'node:stream'

@@ -1,5 +1,5 @@
 /**
- * Strict plain-object guard. True only for object literals and
+ * GSD2 — Strict plain-object guard. True only for object literals and
  * `Object.create(null)` — not for `Date`, `URL`, `Map`, `Set`, class instances,
  * or arrays. Used to gate `structuredContent` forwarding so the MCP transport
  * receives only true JSON objects (the protocol contract). See #4477 review.
@@ -7,6 +7,7 @@
  * Mirrored in `packages/mcp-server/src/workflow-tools.ts` for the
  * `adaptExecutorResult` adapter on the workflow path. Keep both copies in
  * sync if the contract definition needs to evolve.
+ *
  */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== 'object') return false

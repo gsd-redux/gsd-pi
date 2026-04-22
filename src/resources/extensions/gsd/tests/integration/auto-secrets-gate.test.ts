@@ -1,14 +1,15 @@
 /**
- * Integration tests for the secrets collection gate in startAuto().
+ * GSD2 — Integration tests for the secrets collection gate in startAuto().
  *
  * Exercises getManifestStatus() → collectSecretsFromManifest() composition
  * end-to-end using real filesystem state. Proves the three gate paths:
- *   1. No manifest exists — gate skips silently
- *   2. Pending keys exist — gate triggers collection
- *   3. No pending keys — gate skips silently
+ * 1. No manifest exists — gate skips silently
+ * 2. Pending keys exist — gate triggers collection
+ * 3. No pending keys — gate skips silently
  *
  * Uses temp directories with real .gsd/milestones/M001/ structure, mirroring
  * the pattern from manifest-status.test.ts.
+ *
  */
 
 import test from 'node:test';

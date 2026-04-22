@@ -1,5 +1,5 @@
 /**
- * GSD Session Lock — OS-level exclusive locking for auto-mode sessions.
+ * GSD2 — GSD Session Lock — OS-level exclusive locking for auto-mode sessions.
  *
  * Prevents multiple GSD processes from running auto-mode concurrently on
  * the same project. Uses proper-lockfile for OS-level file locking (flock/
@@ -11,9 +11,10 @@
  * OS-level lock held via proper-lockfile.
  *
  * Lifecycle:
- *   acquireSessionLock()  — called at the START of bootstrapAutoSession
- *   validateSessionLock() — called periodically during dispatch to detect takeover
- *   releaseSessionLock()  — called on clean stop/pause
+ * acquireSessionLock()  — called at the START of bootstrapAutoSession
+ * validateSessionLock() — called periodically during dispatch to detect takeover
+ * releaseSessionLock()  — called on clean stop/pause
+ *
  */
 
 import { createRequire } from "node:module";

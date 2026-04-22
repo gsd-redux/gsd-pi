@@ -1,14 +1,14 @@
 /**
- * windows-path-normalization.test.ts — Verify Windows backslash paths are
+ * GSD2 — windows-path-normalization.test.ts — Verify Windows backslash paths are
  * normalised to forward slashes before embedding in bash command strings.
  *
  * Regression test for #1436: on Windows, `cd C:\Users\user\project` in bash
  * strips backslashes (escape characters), producing `C:Usersuserproject`.
+ *
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // ─── shellEscape + path normalization ──────────────────────────────────────
 

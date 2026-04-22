@@ -1,9 +1,10 @@
 /**
- * GSD Detection — Project state and ecosystem detection.
+ * GSD2 — GSD Detection — Project state and ecosystem detection.
  *
  * Pure functions, zero UI dependencies, zero side effects.
  * Used by init-wizard.ts and guided-flow.ts to determine what onboarding
  * flow to show when entering a project directory.
+ *
  */
 
 import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from "node:fs";

@@ -1,5 +1,6 @@
 /**
- * Dynamic routing default — verifies routing is enabled by default.
+ * GSD2 — Dynamic routing default — verifies routing is enabled by default.
+ *
  */
 
 import test from "node:test";

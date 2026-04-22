@@ -1,8 +1,9 @@
 /**
- * await_job tool — wait for one or more background jobs to complete.
+ * GSD2 — await_job tool — wait for one or more background jobs to complete.
  *
  * If specific job IDs are provided, waits for those jobs.
  * If omitted, waits for any running job to complete.
+ *
  */
 
 import type { ToolDefinition } from "@gsd/pi-coding-agent";

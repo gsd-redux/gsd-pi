@@ -1,5 +1,5 @@
 /**
- * complete-milestone-false-merge.test.ts — Regression test for #4175.
+ * GSD2 — complete-milestone-false-merge.test.ts — Regression test for #4175.
  *
  * Before the fix, a failed complete-milestone unit could leave a stub
  * SUMMARY blocker placeholder on disk. stopAuto's SUMMARY-presence check
@@ -8,15 +8,16 @@
  * milestone that was never legitimately finished.
  *
  * The fix has three cooperating parts:
- *   1. stopAuto uses DB status (authoritative) instead of SUMMARY presence
- *      when the project DB is available.
- *   2. postUnitPreVerification pauses auto-mode for complete-milestone
- *      after retries are exhausted instead of writing a blocker placeholder.
- *   3. recoverTimedOutUnit pauses for complete-milestone instead of
- *      writing a blocker placeholder.
+ * 1. stopAuto uses DB status (authoritative) instead of SUMMARY presence
+ * when the project DB is available.
+ * 2. postUnitPreVerification pauses auto-mode for complete-milestone
+ * after retries are exhausted instead of writing a blocker placeholder.
+ * 3. recoverTimedOutUnit pauses for complete-milestone instead of
+ * writing a blocker placeholder.
  *
  * This test guards all three via source inspection so a future refactor
  * cannot silently reintroduce the false-merge path.
+ *
  */
 
 import test from "node:test";

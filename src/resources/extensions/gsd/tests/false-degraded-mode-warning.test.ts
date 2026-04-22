@@ -1,5 +1,5 @@
 /**
- * false-degraded-mode-warning.test.ts — Regression tests for #3922.
+ * GSD2 — false-degraded-mode-warning.test.ts — Regression tests for #3922.
  *
  * Before this fix, deriveState() logged a "DB unavailable — degraded mode"
  * warning even when the DB simply hadn't been opened yet (e.g. during
@@ -9,6 +9,7 @@
  * Two aspects:
  * 1. gsd-db: wasDbOpenAttempted() tracks whether openDatabase() was ever called.
  * 2. state: the degraded-mode warning is gated behind wasDbOpenAttempted().
+ *
  */
 
 import { describe, test } from "node:test";

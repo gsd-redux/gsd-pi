@@ -1,3 +1,4 @@
+// GSD2 — Exit Command — StopAutoFn type
 import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 type StopAutoFn = (ctx: ExtensionCommandContext, pi: ExtensionAPI, reason?: string) => Promise<void>;

@@ -1,5 +1,5 @@
 /**
- * Regression test for #2705: Web UI shows "Start auto" even while auto mode is
+ * GSD2 — Regression test for #2705: Web UI shows "Start auto" even while auto mode is
  * already running.
  *
  * Root cause: collectAuthoritativeAutoDashboardData spawns a subprocess that
@@ -9,6 +9,7 @@
  *
  * Fix: after obtaining the subprocess result, reconcile active/paused state
  * with on-disk session lock and paused-session metadata.
+ *
  */
 
 import test from "node:test";

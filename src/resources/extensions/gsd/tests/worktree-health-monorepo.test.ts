@@ -1,9 +1,10 @@
 /**
- * worktree-health-monorepo.test.ts — #2347
+ * GSD2 — worktree-health-monorepo.test.ts — #2347
  *
  * The worktree health check in auto/phases.ts falsely rejects monorepos
  * where package.json (or other project markers) is in a parent directory.
  * This test verifies that the health check walks parent directories.
+ *
  */
 
 import { readFileSync } from "node:fs";

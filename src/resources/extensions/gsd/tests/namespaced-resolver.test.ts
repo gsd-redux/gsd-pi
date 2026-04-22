@@ -1,5 +1,5 @@
 /**
- * Namespaced Resolver Contract Tests
+ * GSD2 — Namespaced Resolver Contract Tests
  *
  * Tests that prove the resolver correctly handles:
  * - R007: Canonical skill lookup
@@ -8,6 +8,7 @@
  * - R009: Shorthand resolution (unambiguous and ambiguous)
  * - Flat component compatibility
  * - Type filtering (skill vs agent)
+ *
  */
 
 import { describe, it, beforeEach } from 'node:test';

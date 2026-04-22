@@ -1,5 +1,6 @@
 /**
- * Unit tests for structured-data-formatter.ts — compact notation for prompt injection.
+ * GSD2 — Unit tests for structured-data-formatter.ts — compact notation for prompt injection.
+ *
  */
 
 import { describe, it } from "node:test";

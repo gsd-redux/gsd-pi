@@ -1,9 +1,10 @@
 /**
- * Tests for parallel milestone orchestration modules:
+ * GSD2 — Tests for parallel milestone orchestration modules:
  * - session-status-io.ts (file-based IPC)
  * - parallel-eligibility.ts (eligibility formatting)
  * - parallel-orchestrator.ts (orchestrator lifecycle)
  * - preferences.ts (parallel config validation)
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";

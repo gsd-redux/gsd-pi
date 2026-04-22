@@ -1,8 +1,9 @@
 /**
- * Universal Config Discovery — main discovery orchestrator
+ * GSD2 — Universal Config Discovery — main discovery orchestrator
  *
  * Runs all tool scanners in parallel and aggregates results into a
  * unified DiscoveryResult.
+ *
  */
 
 import { homedir } from "node:os";

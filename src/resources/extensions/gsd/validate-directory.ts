@@ -1,8 +1,9 @@
 /**
- * GSD Directory Validation — Safeguards against running in dangerous directories.
+ * GSD2 — GSD Directory Validation — Safeguards against running in dangerous directories.
  *
  * Prevents GSD from creating .gsd/ structures in system paths, home directories,
  * or other locations where writing project scaffolding would be harmful.
+ *
  */
 
 import { realpathSync, readdirSync } from "node:fs";

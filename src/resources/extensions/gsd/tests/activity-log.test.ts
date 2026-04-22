@@ -1,7 +1,8 @@
 /**
- * Activity log tests — consolidated from:
- *   - activity-log-prune.test.ts (age-based pruning with highest-seq preservation)
- *   - activity-log-save.test.ts (caching, dedup, collision recovery)
+ * GSD2 — Activity log tests — consolidated from:
+ * - activity-log-prune.test.ts (age-based pruning with highest-seq preservation)
+ * - activity-log-save.test.ts (caching, dedup, collision recovery)
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

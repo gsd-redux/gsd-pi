@@ -1,12 +1,13 @@
 /**
- * worktree-preferences-sync.test.ts — Regression test for #2684.
+ * GSD2 — worktree-preferences-sync.test.ts — Regression test for #2684.
  *
  * Verifies that canonical PREFERENCES.md is seeded into auto-mode worktrees,
  * while legacy lowercase preferences.md remains supported:
  *
- *   1. syncGsdStateToWorktree() forward-syncs PREFERENCES.md (additive only)
- *   2. syncGsdStateToWorktree() still accepts legacy lowercase preferences.md
- *   3. syncWorktreeStateBack() does NOT overwrite project root PREFERENCES.md
+ * 1. syncGsdStateToWorktree() forward-syncs PREFERENCES.md (additive only)
+ * 2. syncGsdStateToWorktree() still accepts legacy lowercase preferences.md
+ * 3. syncWorktreeStateBack() does NOT overwrite project root PREFERENCES.md
+ *
  */
 
 import test from "node:test";

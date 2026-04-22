@@ -1,11 +1,12 @@
 /**
- * GSD Slice Parallel Conflict Detection — File overlap analysis between slices.
+ * GSD2 — GSD Slice Parallel Conflict Detection — File overlap analysis between slices.
  *
  * Reads PLAN.md for each slice and extracts file paths mentioned in task
  * descriptions. If two slices share more than 5 file paths, they are considered
  * conflicting and should not run in parallel.
  *
  * Conservative by default: missing PLAN = block parallel execution.
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

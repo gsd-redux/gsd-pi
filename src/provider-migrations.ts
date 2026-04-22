@@ -1,3 +1,4 @@
+// GSD2 — Provider Migrations — AnthropicMigrationDeps type
 import type { AuthStorage } from "@gsd/pi-coding-agent"
 
 type AnthropicMigrationDeps = {

@@ -1,3 +1,4 @@
+// GSD2 — Commands Debug
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import {

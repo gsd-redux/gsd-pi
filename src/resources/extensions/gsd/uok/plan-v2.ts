@@ -1,3 +1,4 @@
+// GSD2 — Plan V2 — PLAN_V2_CLARIFY_ROUND_LIMIT constant
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

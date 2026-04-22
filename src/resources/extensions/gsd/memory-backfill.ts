@@ -1,20 +1,4 @@
 // GSD2 — Decisions -> memories backfill (ADR-013 step 5)
-//
-// Idempotent one-shot migration that copies every active decisions row into
-// the memories table with category="architecture" and a structured_fields
-// payload preserving the original gsd_save_decision schema (when_context,
-// scope, decision, choice, rationale, made_by, revisable, sourceDecisionId).
-//
-// The backfill exists so the cutover in ADR-013 step 6 can drop the
-// decisions table without losing schema fidelity. Idempotency is enforced
-// by tagging each backfilled memory with structured_fields.sourceDecisionId
-// and skipping any decision whose ID already appears in the memories table.
-//
-// Triggered opportunistically by buildBeforeAgentStartResult so the cost
-// only ever fires once per project. Costs O(N) inserts on first run where
-// N is the active-decisions count; subsequent runs are an O(N) lookup that
-// finds existing markers and exits.
-
 import { isDbAvailable, _getAdapter } from "./gsd-db.js";
 import { createMemory } from "./memory-store.js";
 import { logWarning } from "./workflow-logger.js";

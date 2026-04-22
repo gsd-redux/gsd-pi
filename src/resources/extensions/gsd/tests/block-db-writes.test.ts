@@ -1,9 +1,10 @@
 /**
- * Regression test for #3674 — block direct writes to gsd.db
+ * GSD2 — Regression test for #3674 — block direct writes to gsd.db
  *
  * When gsd_complete_task was unavailable, agents fell back to shell-based
  * sqlite3 writes, corrupting the WAL-backed database. The fix extends
  * write-intercept to block file writes and bash commands targeting gsd.db.
+ *
  */
 
 import { describe, test } from 'node:test';

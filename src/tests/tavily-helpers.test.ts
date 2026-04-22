@@ -1,11 +1,12 @@
 /**
- * Unit tests for Tavily helper functions and classifyError fix.
+ * GSD2 — Unit tests for Tavily helper functions and classifyError fix.
  *
  * Covers:
  * - normalizeTavilyResult: full result, minimal result, empty/untitled result
  * - publishedDateToAge: various time deltas, invalid input
  * - mapFreshnessToTavily: all 4 Brave values, null passthrough
  * - classifyError: 401/403 messages are provider-generic (no "BRAVE_API_KEY")
+ *
  */
 
 import test from "node:test";

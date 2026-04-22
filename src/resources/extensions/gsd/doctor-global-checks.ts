@@ -1,3 +1,4 @@
+// GSD2 — Doctor Global Checks
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 

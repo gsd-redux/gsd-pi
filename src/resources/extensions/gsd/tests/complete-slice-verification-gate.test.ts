@@ -1,10 +1,11 @@
 /**
- * Regression test for #3580 — complete-slice verification gate
+ * GSD2 — Regression test for #3580 — complete-slice verification gate
  *
  * Without the gate, a prompt regression could silently advance a blocked
  * or failed slice to "complete" status. The fix adds a BLOCKED_SIGNALS
  * regex that rejects completion when verification/UAT content clearly
  * indicates blocked or failed state.
+ *
  */
 
 import { describe, it } from 'node:test'

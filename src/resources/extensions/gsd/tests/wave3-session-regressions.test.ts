@@ -1,6 +1,4 @@
-// GSD State Machine — Wave 3 Session Regression Tests
-// Validates tri-state hasImplementationArtifacts and AutoSession.consecutiveCompleteBootstraps.
-
+// GSD2 — State Machine — Wave 3 Session Regression Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { hasImplementationArtifacts } from "../auto-recovery.js";

@@ -1,7 +1,8 @@
 /**
- * Structural tests for slice-level parallel orchestrator.
+ * GSD2 — Structural tests for slice-level parallel orchestrator.
  * Verifies the orchestrator module exists and has the correct shape,
  * env var usage, and preference gating.
+ *
  */
 
 import { describe, it } from "node:test";

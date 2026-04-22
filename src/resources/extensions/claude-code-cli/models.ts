@@ -1,5 +1,5 @@
 /**
- * Model definitions for the Claude Code CLI provider.
+ * GSD2 — Model definitions for the Claude Code CLI provider.
  *
  * Costs are zero because inference is covered by the user's Claude Code
  * subscription. The SDK's `result` message still provides token counts
@@ -7,6 +7,7 @@
  *
  * Context windows and max tokens match the Anthropic API definitions
  * in models.generated.ts.
+ *
  */
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };

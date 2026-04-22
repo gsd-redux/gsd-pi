@@ -1,3 +1,4 @@
+// GSD2 — Write Gate — MILESTONE_CONTEXT_RE constant
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

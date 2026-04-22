@@ -1,15 +1,16 @@
 /**
- * doctor-providers.test.ts — Tests for provider & integration health checks.
+ * GSD2 — doctor-providers.test.ts — Tests for provider & integration health checks.
  *
  * Tests:
- *   - LLM provider key detection from env vars
- *   - LLM provider key detection from auth.json
- *   - Missing required provider → error status
- *   - Backed-off credentials → warning status
- *   - Remote questions channel check (configured vs missing token)
- *   - Optional provider unconfigured status
- *   - formatProviderReport output
- *   - summariseProviderIssues compaction
+ * - LLM provider key detection from env vars
+ * - LLM provider key detection from auth.json
+ * - Missing required provider → error status
+ * - Backed-off credentials → warning status
+ * - Remote questions channel check (configured vs missing token)
+ * - Optional provider unconfigured status
+ * - formatProviderReport output
+ * - summariseProviderIssues compaction
+ *
  */
 
 import test from "node:test";

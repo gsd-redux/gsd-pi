@@ -1,3 +1,4 @@
+// GSD2 — Execution Graph — types and interfaces
 import type { UokGraphNode } from "./contracts.js";
 import type { DerivedTaskNode } from "../types.js";
 import type { SidecarItem } from "../auto/session.js";

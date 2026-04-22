@@ -1,8 +1,9 @@
 /**
- * browser-tools — Node-side utility functions
+ * GSD2 — browser-tools — Node-side utility functions
  *
  * All functions that were helpers in index.ts but run in Node (not browser).
  * They import state accessors from ./state.ts — never raw module-level variables.
+ *
  */
 
 import type { Frame, Page } from "playwright";

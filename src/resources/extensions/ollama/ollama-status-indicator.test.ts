@@ -1,6 +1,7 @@
 /**
- * Regression test: don't show an Ollama footer status unless Ollama is
+ * GSD2 — Regression test: don't show an Ollama footer status unless Ollama is
  * actually usable (running with at least one discovered model).
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

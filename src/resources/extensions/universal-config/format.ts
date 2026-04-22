@@ -1,7 +1,8 @@
 /**
- * Universal Config Discovery — output formatting
+ * GSD2 — Universal Config Discovery — output formatting
  *
  * Formats DiscoveryResult into human-readable and LLM-readable output.
+ *
  */
 
 import type { DiscoveryResult, DiscoveredItem, ToolDiscoveryResult } from "./types.js";

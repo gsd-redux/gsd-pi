@@ -1,6 +1,7 @@
 /**
- * Unit tests for diff-context.ts — diff-aware context module.
+ * GSD2 — Unit tests for diff-context.ts — diff-aware context module.
  * Tests git-based file discovery and relevance ranking.
+ *
  */
 
 import { describe, it } from "node:test";

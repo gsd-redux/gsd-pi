@@ -1,11 +1,12 @@
 /**
- * empty-content-abort-loop.test.ts — Regression test for #2695.
+ * GSD2 — empty-content-abort-loop.test.ts — Regression test for #2695.
  *
  * When the LLM sends an assistant message with empty `content: []` and
  * `stopReason: "aborted"`, this is NOT a fatal abort — it is a non-fatal
  * end-of-turn. The abort handler in agent-end-recovery.ts must distinguish
  * this case and NOT pause auto-mode, allowing the loop to continue via
  * resolveAgentEnd instead of entering a stuck re-dispatch loop.
+ *
  */
 
 import test from "node:test";

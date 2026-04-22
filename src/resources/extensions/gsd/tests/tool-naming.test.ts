@@ -1,13 +1,7 @@
-// tool-naming — Verifies canonical + alias tool registration for GSD DB tools.
-//
-// Each DB tool must register under its canonical gsd_concept_action name
-// AND under a backward-compatible alias name.
-// The alias must share the exact same execute function reference as the canonical tool.
-
+// GSD2 — tool-naming — Verifies canonical + alias tool registration for GSD DB tools.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { registerDbTools } from '../bootstrap/db-tools.ts';
-
 
 // ─── Mock PI ──────────────────────────────────────────────────────────────────
 

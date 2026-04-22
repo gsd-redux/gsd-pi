@@ -1,3 +1,4 @@
+// GSD2 — Json Persistence
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";

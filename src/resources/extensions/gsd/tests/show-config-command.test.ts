@@ -1,8 +1,9 @@
 /**
- * /gsd show-config command — structural tests.
+ * GSD2 — /gsd show-config command — structural tests.
  *
  * Verifies the config overlay class and command handler exist
  * with correct structure.
+ *
  */
 
 import test from "node:test";

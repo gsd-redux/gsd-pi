@@ -1,7 +1,4 @@
-// GSD Extension — Projection Renderers (DB -> Markdown)
-// Renders PLAN.md, ROADMAP.md, SUMMARY.md, and STATE.md from database rows.
-// Projections are read-only views of engine state (Layer 3 of the architecture).
-
+// GSD2 — Extension — Projection Renderers (DB -> Markdown)
 import {
   _getAdapter,
   isDbAvailable,

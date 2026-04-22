@@ -1,10 +1,10 @@
 /**
- * GSD Phase State — cross-extension coordination
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ * GSD2 — GSD Phase State — cross-extension coordination
  *
  * Lightweight module-level state that GSD auto-mode writes to and the
  * subagent tool reads from. Both extensions run in the same process so
  * a module variable is sufficient — no file I/O needed.
+ *
  */
 
 let _active = false;

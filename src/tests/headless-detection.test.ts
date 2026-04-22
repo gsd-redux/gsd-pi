@@ -1,9 +1,10 @@
 /**
- * Tests for headless completion detection.
+ * GSD2 — Tests for headless completion detection.
  *
  * Verifies that isTerminalNotification only matches actual auto-mode stop
  * signals and does not false-positive on progress notifications that
  * happen to contain words like "complete" or "stopped".
+ *
  */
 
 import test from "node:test";

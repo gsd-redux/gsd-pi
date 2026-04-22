@@ -1,6 +1,7 @@
 /**
- * Regression test for #3461: createAutoWorktree must use git.main_branch
+ * GSD2 — Regression test for #3461: createAutoWorktree must use git.main_branch
  * preference when META.json integration branch is absent.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

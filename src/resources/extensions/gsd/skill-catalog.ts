@@ -1,15 +1,16 @@
 /**
- * GSD Skill Catalog — Curated skill packs mapped to tech stacks.
+ * GSD2 — GSD Skill Catalog — Curated skill packs mapped to tech stacks.
  *
  * Each pack maps a detected (or user-chosen) tech stack to a skills.sh
  * repo + specific skill names.  The init wizard uses this catalog to
  * install relevant skills during project onboarding.
  *
  * Installation is delegated entirely to the skills.sh CLI:
- *   npx skills add <repo> --skill <name> --skill <name> -y
+ * npx skills add <repo> --skill <name> --skill <name> -y
  *
  * Skills are installed into ~/.agents/skills/ (the industry-standard
  * ecosystem directory shared across all agents).
+ *
  */
 
 import { execFile } from "node:child_process";

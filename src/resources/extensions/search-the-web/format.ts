@@ -1,6 +1,7 @@
 /**
- * Token-efficient output formatting for search results, page content,
+ * GSD2 — Token-efficient output formatting for search results, page content,
  * and LLM context responses.
+ *
  */
 
 import { extractDomain } from "./url-utils.js";

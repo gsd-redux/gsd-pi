@@ -1,6 +1,4 @@
-// GSD-2 — Unit tests for parseCliArgs (canonical CLI flag parser)
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — GSD-2 — Unit tests for parseCliArgs (canonical CLI flag parser)
 import test, { describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseCliArgs } from '../cli-web-branch.ts'

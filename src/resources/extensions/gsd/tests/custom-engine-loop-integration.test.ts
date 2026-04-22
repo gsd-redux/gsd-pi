@@ -1,9 +1,10 @@
 /**
- * custom-engine-loop-integration.test.ts — Integration test proving that
+ * GSD2 — custom-engine-loop-integration.test.ts — Integration test proving that
  * autoLoop dispatches a 3-step custom workflow through the real pipeline.
  *
  * Creates a real run directory with GRAPH.yaml, mocks LoopDeps minimally,
  * and verifies all 3 steps complete in dependency order.
+ *
  */
 
 import { describe, it, afterEach } from "node:test";

@@ -1,10 +1,11 @@
 /**
- * milestone-report-path.test.ts — Regression test for milestone report path resolution.
+ * GSD2 — milestone-report-path.test.ts — Regression test for milestone report path resolution.
  *
  * When running in a worktree, milestone reports must be written to the
  * original project root (originalBasePath), not the worktree path (basePath).
  *
  * Covers: _resolveReportBasePath from auto/phases.ts
+ *
  */
 
 import { describe, test } from "node:test";

@@ -1,14 +1,15 @@
 /**
- * Post-unit processing for auto-loop — auto-commit, doctor run,
+ * GSD2 — Post-unit processing for auto-loop — auto-commit, doctor run,
  * state rebuild, worktree sync, DB dual-write, hooks, triage, and
  * quick-task dispatch.
  *
  * Split into two functions called sequentially by auto-loop with
  * the verification gate between them:
- *   1. postUnitPreVerification() — commit, doctor, state rebuild, worktree sync, artifact verification
- *   2. postUnitPostVerification() — DB dual-write, hooks, triage, quick-tasks
+ * 1. postUnitPreVerification() — commit, doctor, state rebuild, worktree sync, artifact verification
+ * 2. postUnitPostVerification() — DB dual-write, hooks, triage, quick-tasks
  *
  * Extracted from the pre-loop agent_end handler in auto.ts.
+ *
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
@@ -87,7 +88,6 @@ async function waitForMilestoneDbClose(mid: string): Promise<boolean> {
   }
   return false;
 }
-
 
 /** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
  *  drain via runUnit. Logs the enqueue event and notifies the UI. */

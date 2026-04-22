@@ -1,9 +1,4 @@
-// GSD Extension — Notification Status
-// Always-on ambient notification chip surfaced as an extension status on the
-// footer pwd row. Refreshes on store change + on a 30s timer. Hidden when
-// unread=0. Key sorts late so the chip renders to the right of other
-// extension statuses.
-
+// GSD2 — Extension — Notification Status
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { getUnreadCount, onNotificationStoreChange } from "./notification-store.js";

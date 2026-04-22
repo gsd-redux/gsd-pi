@@ -1,5 +1,4 @@
-// Barrel file — re-exports consumed by external modules
-
+// GSD2 — Barrel file — re-exports consumed by external modules
 export { handleRemote } from "./remote-command.js";
 export { createPromptRecord, writePromptRecord } from "./store.js";
 export { getLatestPromptSummary } from "./status.js";

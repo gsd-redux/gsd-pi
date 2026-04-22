@@ -1,5 +1,5 @@
 /**
- * GSD Session Forensics — Deep analysis of pi session JSONL files
+ * GSD2 — GSD Session Forensics — Deep analysis of pi session JSONL files
  *
  * Pi's SessionManager persists every entry to disk via appendFileSync as it
  * happens. When a crash occurs, the session JSONL on disk contains every tool
@@ -16,6 +16,7 @@
  * Entry format (verified against real pi session files):
  * - Tool calls: { type: "toolCall", name: "bash", id: "toolu_...", arguments: { command: "..." } }
  * - Tool results: { role: "toolResult", toolCallId: "toolu_...", toolName: "bash", isError: bool, content: ... }
+ *
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";

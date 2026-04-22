@@ -1,5 +1,5 @@
 /**
- * Regression test for #2773 — activeMilestone.id guard
+ * GSD2 — Regression test for #2773 — activeMilestone.id guard
  *
  * When activeMilestone is a non-null object with `id: undefined` (corrupted
  * state), the old `!state.activeMilestone` truthiness check passed through,
@@ -7,9 +7,10 @@
  *
  * The fix uses optional chaining (`!state.activeMilestone?.id`) so all three
  * "no usable milestone" shapes are caught:
- *   1. activeMilestone === null
- *   2. activeMilestone === undefined
- *   3. activeMilestone === { id: undefined, title: "..." }
+ * 1. activeMilestone === null
+ * 2. activeMilestone === undefined
+ * 3. activeMilestone === { id: undefined, title: "..." }
+ *
  */
 
 import { describe, it } from 'node:test'

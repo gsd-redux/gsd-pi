@@ -1,11 +1,4 @@
-// GSD — Persistent per-project blocklist of provider/model pairs that the
-// provider has rejected at request time for account entitlement reasons.
-//
-// Lives at `.gsd/runtime/blocked-models.json` so the block survives /gsd auto
-// restarts.  Auto-mode model selection skips blocked entries; agent-end
-// recovery adds entries when a runtime rejection is classified as
-// `unsupported-model`.  See issue #4513.
-
+// GSD2 — Persistent per-project blocklist of provider/model pairs that the
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { gsdRoot } from "./paths.js";

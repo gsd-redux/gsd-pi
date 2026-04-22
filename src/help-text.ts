@@ -1,3 +1,4 @@
+// GSD2 — Help Text — SUBCOMMAND_HELP constant
 const SUBCOMMAND_HELP: Record<string, string> = {
   config: [
     'Usage: gsd config',

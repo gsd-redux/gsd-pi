@@ -1,11 +1,12 @@
 /**
- * Unit tests for GSD Detection — project state and ecosystem detection.
+ * GSD2 — Unit tests for GSD Detection — project state and ecosystem detection.
  *
  * Exercises the pure detection functions in detection.ts:
  * - detectProjectState() with various folder layouts
  * - detectV1Planning() with real and fake .planning/ dirs
  * - detectProjectSignals() with different project types
  * - isFirstEverLaunch() / hasGlobalSetup()
+ *
  */
 
 import test from "node:test";

@@ -1,8 +1,4 @@
-// GSD Extension — Verification Gate
-// Pure functions for discovering and running verification commands.
-// Discovery order (D003): preference → task plan verify → package.json scripts.
-// First non-empty source wins.
-
+// GSD2 — Extension — Verification Gate
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";

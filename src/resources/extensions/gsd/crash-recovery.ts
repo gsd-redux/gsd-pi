@@ -1,5 +1,5 @@
 /**
- * GSD Crash Recovery
+ * GSD2 — GSD Crash Recovery
  *
  * Detects interrupted auto-mode sessions via a lock file.
  * Written on auto-start, updated on each unit dispatch, deleted on clean stop.
@@ -8,6 +8,7 @@
  * The lock records the pi session file path so crash recovery can read the
  * surviving JSONL (pi appends entries incrementally via appendFileSync,
  * so the file on disk reflects every tool call up to the crash point).
+ *
  */
 
 import { readFileSync, unlinkSync, existsSync } from "node:fs";

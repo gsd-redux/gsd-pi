@@ -1,6 +1,4 @@
-// GSD-2 — Regression test for #3615: unstructured "continue" must inject task context
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — GSD-2 — Regression test for #3615: unstructured "continue" must inject task context
 /**
  * Bug #3615: When a user types "continue" (or any bare text) to resume
  * an in-progress session, buildGuidedExecuteContextInjection() only

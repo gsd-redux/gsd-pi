@@ -1,12 +1,4 @@
-// Integration Edge Case Tests
-//
-// Three scenarios that only had per-module coverage before:
-// 1. Empty project — no markdown files → migration finds nothing → queries return empty
-// 2. Partial migration — DECISIONS.md exists but no REQUIREMENTS.md → no crash
-// 3. Fallback mode — _resetProvider → queries degrade → re-open restores
-//
-// Uses real module imports (no mocks), file-backed DBs, temp directories.
-
+// GSD2 — Integration Edge Case Tests
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

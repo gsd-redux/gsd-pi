@@ -1,5 +1,6 @@
 /**
- * Shared git constants used across git-service and native-git-bridge.
+ * GSD2 — Shared git constants used across git-service and native-git-bridge.
+ *
  */
 
 /** Env overlay that suppresses interactive git credential prompts and git-svn noise. */

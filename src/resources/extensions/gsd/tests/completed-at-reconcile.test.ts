@@ -1,12 +1,13 @@
 /**
- * Regression test for #4129: tasks.completed_at stays NULL when status is
+ * GSD2 — Regression test for #4129: tasks.completed_at stays NULL when status is
  * reconciled to 'complete' via the file-existence path in state.ts.
  *
  * Root cause: reconcileSliceTasks called
- *   updateTaskStatus(milestoneId, sliceId, t.id, "complete")
+ * updateTaskStatus(milestoneId, sliceId, t.id, "complete")
  * without a completedAt timestamp, so the column stays NULL.
  *
  * Fix: pass new Date().toISOString() as the 5th argument.
+ *
  */
 
 import { describe, test } from "node:test";

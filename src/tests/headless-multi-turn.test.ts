@@ -1,6 +1,7 @@
 /**
- * Regression test for #3547: discuss and plan must be classified as
+ * GSD2 — Regression test for #3547: discuss and plan must be classified as
  * multi-turn commands in headless mode.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

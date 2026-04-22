@@ -1,10 +1,11 @@
 /**
- * GSD Configuration Overlay
+ * GSD2 — GSD Configuration Overlay
  *
  * Read-only TUI overlay showing the effective GSD configuration:
  * token profile, model assignments, dynamic routing, git settings,
  * budget, workflow toggles, and preference file sources.
  * Opened via `/gsd show-config` or `/gsd config`.
+ *
  */
 
 import type { Theme } from "@gsd/pi-coding-agent";

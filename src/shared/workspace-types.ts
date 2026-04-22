@@ -1,3 +1,4 @@
+// GSD2 — Workspace Types — types and interfaces
 export type RiskLevel = "low" | "medium" | "high";
 
 export interface WorkspaceTaskTarget {

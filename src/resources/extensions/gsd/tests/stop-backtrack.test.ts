@@ -1,5 +1,5 @@
 /**
- * Unit tests for stop/backtrack capture classifications and milestone regression (#3487).
+ * GSD2 — Unit tests for stop/backtrack capture classifications and milestone regression (#3487).
  *
  * Tests:
  * - "stop" and "backtrack" are valid classification types
@@ -8,6 +8,7 @@
  * - revertExecutorResolvedCaptures reverts silenced captures
  * - executeBacktrack writes trigger and regression markers
  * - readBacktrackTrigger parses trigger file
+ *
  */
 
 import test from "node:test";

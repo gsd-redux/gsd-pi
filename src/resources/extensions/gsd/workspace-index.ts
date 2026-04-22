@@ -1,3 +1,4 @@
+// GSD2 — Workspace Index — types and interfaces
 import { join } from "node:path";
 
 import { loadFile } from "./files.js";

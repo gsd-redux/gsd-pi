@@ -1,8 +1,4 @@
-// Migration writer integration test
-// Writes a complete .gsd tree to a temp dir, verifies file existence,
-// parses key files, and asserts deriveState() returns coherent state.
-// Also tests generatePreview() for correct counts.
-
+// GSD2 — Migration writer integration test
 import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

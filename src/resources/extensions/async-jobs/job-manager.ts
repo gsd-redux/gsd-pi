@@ -1,8 +1,9 @@
 /**
- * AsyncJobManager — manages background tool call jobs.
+ * GSD2 — AsyncJobManager — manages background tool call jobs.
  *
  * Each job runs asynchronously and delivers its result via a callback
  * when complete. Jobs are evicted after a configurable TTL.
+ *
  */
 
 import { randomUUID } from "node:crypto";

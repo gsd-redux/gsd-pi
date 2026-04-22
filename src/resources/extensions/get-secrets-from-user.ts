@@ -1,9 +1,10 @@
 /**
- * get-secrets-from-user — paged secure env var collection + apply
+ * GSD2 — get-secrets-from-user — paged secure env var collection + apply
  *
  * Collects secrets one-per-page via masked TUI input, then writes them
  * to .env (local), Vercel, or Convex. No ctx.callTool, no external deps.
  * Uses Node fs/promises for file I/O and pi.exec() for CLI sinks.
+ *
  */
 
 import { readFile, writeFile } from "node:fs/promises";

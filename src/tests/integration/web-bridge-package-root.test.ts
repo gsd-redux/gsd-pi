@@ -1,5 +1,5 @@
 /**
- * Regression tests for the default package root fallback in bridge-service.
+ * GSD2 — Regression tests for the default package root fallback in bridge-service.
  *
  * Issue: gsd-build/gsd-2#1881
  * The standalone Next.js bundle bakes import.meta.url at build time with the
@@ -8,6 +8,7 @@
  *
  * The fix makes the fallback lazy and catch-guarded so the module loads safely
  * on any OS regardless of what import.meta.url resolved to at build time.
+ *
  */
 
 import test from "node:test";

@@ -1,6 +1,7 @@
 /**
- * Sanitize error messages by redacting token-like strings before surfacing.
+ * GSD2 — Sanitize error messages by redacting token-like strings before surfacing.
  * Also provides maskEditorLine for masking sensitive TUI editor input.
+ *
  */
 
 import { CURSOR_MARKER } from "@gsd/pi-tui";

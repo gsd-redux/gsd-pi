@@ -1,3 +1,4 @@
+// GSD2 — Plan Task
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";

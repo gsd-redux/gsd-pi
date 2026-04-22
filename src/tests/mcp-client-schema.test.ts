@@ -1,3 +1,4 @@
+// GSD2 — Tests for Mcp Client Schema
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Type } from "@sinclair/typebox";

@@ -1,5 +1,5 @@
 /**
- * Regression test for #2473: Pre-flight CONTEXT-DRAFT warning should skip
+ * GSD2 — Regression test for #2473: Pre-flight CONTEXT-DRAFT warning should skip
  * completed and parked milestones.
  *
  * The pre-flight loop in auto-start.ts warns about CONTEXT-DRAFT.md files
@@ -9,6 +9,7 @@
  *
  * This test exercises the filtering logic directly: given a set of milestones
  * with CONTEXT-DRAFT files, only active/pending ones should produce warnings.
+ *
  */
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

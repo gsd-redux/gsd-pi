@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Recovery
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, chmodSync } from "node:fs";

@@ -1,13 +1,14 @@
 /**
- * session-lock-regression.test.ts — Regression tests for session lock lifecycle.
+ * GSD2 — session-lock-regression.test.ts — Regression tests for session lock lifecycle.
  *
  * Regression coverage for:
- *   #1257  False-positive "Session lock lost" during auto-mode
- *   #1245  Stranded .gsd.lock/ directory preventing new sessions
- *   #1251  Same root cause as #1245
+ * #1257  False-positive "Session lock lost" during auto-mode
+ * #1245  Stranded .gsd.lock/ directory preventing new sessions
+ * #1251  Same root cause as #1245
  *
  * Tests the acquire → validate → release lifecycle and edge cases
  * without requiring concurrent processes.
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';

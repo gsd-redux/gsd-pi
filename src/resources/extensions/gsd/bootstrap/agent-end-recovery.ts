@@ -1,3 +1,4 @@
+// GSD2 — Agent End Recovery
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";

@@ -1,7 +1,4 @@
-// migrate-hierarchy.test.ts — Tests for migrateHierarchyToDb()
-// Verifies that the markdown → DB hierarchy migration populates
-// milestones, slices, and tasks tables correctly.
-
+// GSD2 — migrate-hierarchy.test.ts — Tests for migrateHierarchyToDb()
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

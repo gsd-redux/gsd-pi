@@ -1,3 +1,4 @@
+// GSD2 — Tests for Hook Key Parsing
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

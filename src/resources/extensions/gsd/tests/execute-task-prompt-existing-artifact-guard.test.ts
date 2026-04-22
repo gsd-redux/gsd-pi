@@ -1,3 +1,4 @@
+// GSD2 — Tests for Execute Task Prompt Existing Artifact Guard
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

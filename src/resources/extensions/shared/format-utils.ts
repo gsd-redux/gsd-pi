@@ -1,10 +1,11 @@
 /**
- * Shared pure formatting utilities — no @gsd/pi-tui dependency.
+ * GSD2 — Shared pure formatting utilities — no @gsd/pi-tui dependency.
  *
  * ANSI-aware layout helpers (padRight, joinColumns, centerLine, fitColumns)
  * live in layout-utils.ts to avoid pulling @gsd/pi-tui into modules that
  * run outside jiti's alias resolution (e.g. HTML report generation via
  * dynamic import in auto-loop).
+ *
  */
 
 // ─── Duration Formatting ──────────────────────────────────────────────────────

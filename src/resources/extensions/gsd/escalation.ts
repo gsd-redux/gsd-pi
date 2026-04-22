@@ -1,9 +1,4 @@
-// GSD Extension — ADR-011 Phase 2 Mid-Execution Escalation
-//
-// A single module that owns: escalation artifact I/O, detection, resolution,
-// carry-forward injection lookup, and audit-event emission. Scoped to
-// execute-task only (refine-slice escalation is deferred per ADR-011).
-
+// GSD2 — Extension — ADR-011 Phase 2 Mid-Execution Escalation
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

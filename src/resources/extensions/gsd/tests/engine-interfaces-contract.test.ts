@@ -1,5 +1,5 @@
 /**
- * engine-interfaces-contract.test.ts — Source-level contract tests for the
+ * GSD2 — engine-interfaces-contract.test.ts — Source-level contract tests for the
  * engine abstraction layer (S01).
  *
  * TypeScript interfaces are erased by --experimental-strip-types, so these
@@ -7,6 +7,7 @@
  * Runtime assertions cover AutoSession.activeEngineId and resolveEngine().
  *
  * Follows the same conventions as auto-session-encapsulation.test.ts.
+ *
  */
 
 import test, { describe } from "node:test";

@@ -1,9 +1,10 @@
 /**
- * GSD Error Types — Typed error hierarchy for diagnostics and crash recovery.
+ * GSD2 — GSD Error Types — Typed error hierarchy for diagnostics and crash recovery.
  *
  * All GSD-specific errors extend GSDError, which carries a stable `code`
  * string suitable for programmatic matching. Error codes are defined as
  * constants so callers can switch on them without string-matching.
+ *
  */
 
 // ─── Error Codes ──────────────────────────────────────────────────────────────

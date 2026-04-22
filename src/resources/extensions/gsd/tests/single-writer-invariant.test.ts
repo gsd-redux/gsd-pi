@@ -1,22 +1,4 @@
-// Structural invariant: gsd-db.ts is the single writer for .gsd/gsd.db.
-//
-// No file under src/resources/extensions/gsd/ may issue raw write SQL
-// (INSERT/UPDATE/DELETE/REPLACE) or raw transaction control (BEGIN/COMMIT/
-// ROLLBACK via `.exec(...)`) against the engine database. Every bypass must
-// route through a typed wrapper exported from gsd-db.ts.
-//
-// Allowlist:
-// - gsd-db.ts itself — the single writer
-// - unit-ownership.ts — manages a separate .gsd/unit-claims.db for
-//   cross-worktree claim races; intentionally outside this invariant
-// - tests/** — fixtures and direct DB inspection are fair game
-//
-// When this test fails, do not add a new suppression. Instead:
-// 1. Add a typed wrapper to gsd-db.ts that captures the SQL
-// 2. Switch the flagged site to call the wrapper
-//
-// See `.claude/plans/joyful-doodling-pony.md` for the full rationale.
-
+// GSD2 — Structural invariant: gsd-db.ts is the single writer for .gsd/gsd.db.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

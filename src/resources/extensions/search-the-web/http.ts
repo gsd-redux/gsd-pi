@@ -1,5 +1,6 @@
 /**
- * HTTP utilities: retry with backoff, abort signal merging, error types, timing.
+ * GSD2 — HTTP utilities: retry with backoff, abort signal merging, error types, timing.
+ *
  */
 
 // =============================================================================

@@ -1,17 +1,18 @@
 /**
- * Unit tests for the verification evidence module — JSON persistence and markdown table formatting.
+ * GSD2 — Unit tests for the verification evidence module — JSON persistence and markdown table formatting.
  *
  * Tests cover:
- *   1. writeVerificationJSON writes correct JSON shape (schemaVersion, taskId, timestamp, passed, discoverySource, checks)
- *   2. writeVerificationJSON creates directory if it doesn't exist
- *   3. writeVerificationJSON maps exitCode to verdict correctly (0 = pass, non-zero = fail)
- *   4. writeVerificationJSON excludes stdout/stderr from output
- *   5. writeVerificationJSON handles empty checks array
- *   6. writeVerificationJSON accepts optional unitId
- *   7. formatEvidenceTable returns markdown table with correct columns for checks
- *   8. formatEvidenceTable returns "no checks" message for empty checks
- *   9. formatEvidenceTable formats duration as seconds with 1 decimal
- *  10. formatEvidenceTable uses ✅/❌ emoji for pass/fail verdict
+ * 1. writeVerificationJSON writes correct JSON shape (schemaVersion, taskId, timestamp, passed, discoverySource, checks)
+ * 2. writeVerificationJSON creates directory if it doesn't exist
+ * 3. writeVerificationJSON maps exitCode to verdict correctly (0 = pass, non-zero = fail)
+ * 4. writeVerificationJSON excludes stdout/stderr from output
+ * 5. writeVerificationJSON handles empty checks array
+ * 6. writeVerificationJSON accepts optional unitId
+ * 7. formatEvidenceTable returns markdown table with correct columns for checks
+ * 8. formatEvidenceTable returns "no checks" message for empty checks
+ * 9. formatEvidenceTable formats duration as seconds with 1 decimal
+ * 10. formatEvidenceTable uses ✅/❌ emoji for pass/fail verdict
+ *
  */
 
 import test from "node:test";

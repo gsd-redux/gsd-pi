@@ -1,11 +1,12 @@
 /**
- * dispatch-complete-milestone-guard.test.ts — #4324
+ * GSD2 — dispatch-complete-milestone-guard.test.ts — #4324
  *
  * Verify that the completing-milestone dispatch rule has a defense-in-depth
  * DB status guard. When the DB marks a milestone as closed, the rule must
  * return skip instead of dispatching a redundant complete-milestone unit.
  * This prevents silent data loss when the legacy filesystem state-derivation
  * path produces a stale completing-milestone phase.
+ *
  */
 
 import { describe, test } from "node:test";

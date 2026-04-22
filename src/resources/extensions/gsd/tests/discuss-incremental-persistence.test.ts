@@ -1,7 +1,8 @@
 /**
- * Regression test for discuss phase incremental persistence (#2152).
+ * GSD2 — Regression test for discuss phase incremental persistence (#2152).
  * Verifies both milestone and slice discuss prompts instruct agents to
  * save CONTEXT-DRAFT incrementally during question rounds.
+ *
  */
 
 import { describe, test } from "node:test";

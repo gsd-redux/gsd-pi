@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Stale Lock Self Kill
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";

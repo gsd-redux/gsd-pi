@@ -1,10 +1,4 @@
-// prompt-tool-names — Ensures prompt files reference correct tool names.
-//
-// The registered GSD tool is `search-the-web`, not `web_search`.
-// `web_search` is an Anthropic API implementation detail that should
-// never appear in GSD prompts or agent frontmatter.
-// See: https://github.com/gsd-build/gsd-2/issues/2920
-
+// GSD2 — prompt-tool-names — Ensures prompt files reference correct tool names.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";

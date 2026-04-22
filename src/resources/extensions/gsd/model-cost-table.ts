@@ -1,10 +1,4 @@
-// GSD Extension — Model Cost Table
-// Static cost reference for known models, used by the dynamic router
-// for cross-provider cost comparison.
-//
-// Costs are approximate per-1K-token rates in USD (input tokens).
-// Updated with GSD releases. Users can override via preferences.
-
+// GSD2 — Extension — Model Cost Table
 export interface ModelCostEntry {
   /** Model ID (bare, without provider prefix) */
   id: string;

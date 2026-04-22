@@ -1,13 +1,14 @@
 /**
- * GSD Worktree Command — /worktree
+ * GSD2 — GSD Worktree Command — /worktree
  *
  * Create, list, merge, and remove git worktrees under .gsd/worktrees/.
  *
  * Usage:
- *   /worktree <name>        — create a new worktree
- *   /worktree list          — list existing worktrees
- *   /worktree merge [name] [target] — start LLM-guided merge (auto-detects when inside a worktree)
- *   /worktree remove <name> — remove a worktree and its branch
+ * /worktree <name>        — create a new worktree
+ * /worktree list          — list existing worktrees
+ * /worktree merge [name] [target] — start LLM-guided merge (auto-detects when inside a worktree)
+ * /worktree remove <name> — remove a worktree and its branch
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

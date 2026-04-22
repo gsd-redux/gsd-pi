@@ -1,3 +1,4 @@
+// GSD2 — Wait
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { StringEnum } from "@gsd/pi-ai";

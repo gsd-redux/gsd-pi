@@ -1,7 +1,8 @@
 /**
- * auto/types.ts — Constants and types shared across auto-loop modules.
+ * GSD2 — auto/types.ts — Constants and types shared across auto-loop modules.
  *
  * Leaf node in the import DAG — no imports from auto/.
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

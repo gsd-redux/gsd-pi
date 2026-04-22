@@ -1,5 +1,5 @@
 /**
- * Regression test for #3598 — projectRoot ENOENT crash on deleted cwd
+ * GSD2 — Regression test for #3598 — projectRoot ENOENT crash on deleted cwd
  *
  * When the working directory is deleted (e.g. worktree teardown), process.cwd()
  * throws ENOENT. The fix wraps process.cwd() in a try/catch and falls back to
@@ -9,6 +9,7 @@
  * in auto-worktree.ts to prevent merge failures with stale preferences.
  *
  * Structural verification test — reads source to confirm the guards exist.
+ *
  */
 
 import { describe, test } from 'node:test';

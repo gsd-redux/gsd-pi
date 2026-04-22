@@ -1,9 +1,10 @@
 /**
- * Shared JSONL parsing utilities.
+ * GSD2 — Shared JSONL parsing utilities.
  *
  * Both forensics.ts and session-forensics.ts need to parse JSONL activity logs
  * with an upper byte limit to prevent V8 OOM on bloated files. This module
  * provides the single canonical implementation and constant.
+ *
  */
 
 /** Max bytes to parse from a JSONL source. Prevents V8 OOM on bloated activity logs. */

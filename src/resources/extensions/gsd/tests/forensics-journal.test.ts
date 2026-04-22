@@ -1,3 +1,4 @@
+// GSD2 — Tests for Forensics Journal
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

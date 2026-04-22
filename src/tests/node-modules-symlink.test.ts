@@ -1,6 +1,7 @@
 /**
- * Tests for ensureNodeModulesSymlink — covers symlink reconciliation for
+ * GSD2 — Tests for ensureNodeModulesSymlink — covers symlink reconciliation for
  * source installs (#3529) and pnpm-style merged node_modules (#3564).
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

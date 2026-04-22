@@ -1,5 +1,5 @@
 /**
- * Regression test for issue #4591: SCHEMA_VERSION gap — v21 migration
+ * GSD2 — Regression test for issue #4591: SCHEMA_VERSION gap — v21 migration
  * existed but the constant was never bumped from 20.
  *
  * Root cause: PR #4496 added the v21 migration block but left
@@ -11,6 +11,7 @@
  * This file verifies the correct behaviour: opening a v20 DB must result
  * in the structured_fields column being present and schema_version
  * recording version 21.
+ *
  */
 
 import test from 'node:test';

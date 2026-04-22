@@ -1,6 +1,4 @@
-// GSD-2 — Regression test for #3616: discuss tool scoping must not leak into subsequent sessions
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — GSD-2 — Regression test for #3616: discuss tool scoping must not leak into subsequent sessions
 /**
  * Bug #3616: After a discuss session narrows the active tool set via
  * setActiveTools(), the narrowed list persisted into the next auto-mode

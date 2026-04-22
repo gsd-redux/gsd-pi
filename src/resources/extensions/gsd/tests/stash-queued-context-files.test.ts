@@ -1,5 +1,5 @@
 /**
- * stash-queued-context-files.test.ts — Regression test for #2505.
+ * GSD2 — stash-queued-context-files.test.ts — Regression test for #2505.
  *
  * When mergeMilestoneToMain runs `git stash push --include-untracked`,
  * untracked `.gsd/milestones/M<queued>/` directories created by `/gsd queue`
@@ -9,6 +9,7 @@
  * The fix: drop `--include-untracked` from the stash push, since the stash
  * only needs to handle tracked dirty files. Untracked `.gsd/` files are
  * already handled separately by clearProjectRootStateFiles.
+ *
  */
 
 import test from "node:test";

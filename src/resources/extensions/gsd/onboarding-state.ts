@@ -1,9 +1,4 @@
-// GSD — Onboarding completion record (~/.gsd/agent/onboarding.json)
-//
-// First-class state for the onboarding wizard so re-entry, resume, and the
-// web boot probe all read the same source of truth. Replaces the implicit
-// "settings.defaultProvider exists" heuristic.
-
+// GSD2 — Onboarding completion record (~/.gsd/agent/onboarding.json)
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"

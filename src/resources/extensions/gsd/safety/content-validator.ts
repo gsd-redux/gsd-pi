@@ -1,8 +1,8 @@
 /**
- * Lightweight content validator for auto-mode safety harness.
+ * GSD2 — Lightweight content validator for auto-mode safety harness.
  * Validates that high-value unit outputs contain minimum expected content.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

@@ -1,12 +1,12 @@
 /**
- * GSD Quick Mode — /gsd quick <task>
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ * GSD2 — GSD Quick Mode — /gsd quick <task>
  *
  * Lightweight task execution with GSD guarantees (atomic commits, state
  * tracking) but without the full milestone/slice ceremony.
  *
  * Quick tasks live in `.gsd/quick/` and are tracked in STATE.md's
  * "Quick Tasks Completed" table.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

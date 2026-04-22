@@ -1,8 +1,9 @@
 /**
- * Prompt budget enforcement tests — verifies that budget-aware prompt builders
+ * GSD2 — Prompt budget enforcement tests — verifies that budget-aware prompt builders
  * truncate content at section boundaries, that plan-slice includes executor
  * context constraints, and that prompt builders thread the real executor
  * context window through to the budget engine (issue #4142).
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";

@@ -1,5 +1,5 @@
 /**
- * Test: RPC bridge TUI render loop must not burn CPU on non-TTY stdout.
+ * GSD2 — Test: RPC bridge TUI render loop must not burn CPU on non-TTY stdout.
  *
  * When gsd is spawned as an RPC bridge child process, stdout is a pipe
  * (process.stdout.isTTY === undefined). The TUI render loop must not
@@ -7,6 +7,7 @@
  * consuming 500%+ CPU doing nothing useful.
  *
  * Regression test for: https://github.com/gsd-build/gsd-2/issues/3095
+ *
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";

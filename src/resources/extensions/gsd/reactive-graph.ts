@@ -1,5 +1,5 @@
 /**
- * Reactive Task Graph — derives dependency edges from task plan IO signatures.
+ * GSD2 — Reactive Task Graph — derives dependency edges from task plan IO signatures.
  *
  * Pure functions that build a DAG from task IO intersections and resolve
  * which tasks are currently ready for parallel dispatch. Used by the
@@ -7,6 +7,7 @@
  *
  * Graph derivation and resolution functions are pure (no filesystem access).
  * The `loadSliceTaskIO` loader at the bottom is the only async/IO function.
+ *
  */
 
 import type { TaskIO, DerivedTaskNode, ReactiveExecutionState } from "./types.js";

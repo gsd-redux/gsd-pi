@@ -1,6 +1,4 @@
-// Regression test for #4181:
-// When assistant messages include both thinking + text, cap visible thinking
-// lines so question/chat text remains visible without toggling thinking off.
+// GSD2 — Regression test for #4181:
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

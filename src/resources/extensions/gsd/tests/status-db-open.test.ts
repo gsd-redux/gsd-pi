@@ -1,11 +1,12 @@
 /**
- * Regression test for #3691 — /gsd status opens DB before deriveState
+ * GSD2 — Regression test for #3691 — /gsd status opens DB before deriveState
  *
  * In cold sessions the DB was not opened before deriveState, causing
  * status to fall back to filesystem-only state.  The fix adds an
  * ensureDbOpen() call before deriveState in handleStatus.
  *
  * Also verifies that quick.ts checks getIsolationMode before branching.
+ *
  */
 
 import { describe, test } from 'node:test';

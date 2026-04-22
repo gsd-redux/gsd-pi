@@ -1,15 +1,16 @@
 /**
- * cache-staleness-regression.test.ts — Regression tests for stale cache bugs.
+ * GSD2 — cache-staleness-regression.test.ts — Regression tests for stale cache bugs.
  *
  * The GSD parser caches are critical for performance but have caused multiple
  * production bugs when not invalidated at the right time.
  *
  * Regression coverage for:
- *   #1249  Stale caches in discuss loop → slice appears "not discussed"
- *   #1240  Stale caches after milestone creation → "No roadmap yet"
- *   #1236  Same root cause as #1240
+ * #1249  Stale caches in discuss loop → slice appears "not discussed"
+ * #1240  Stale caches after milestone creation → "No roadmap yet"
+ * #1236  Same root cause as #1240
  *
  * Pattern: derive state → write file → invalidate cache → derive again → verify update
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

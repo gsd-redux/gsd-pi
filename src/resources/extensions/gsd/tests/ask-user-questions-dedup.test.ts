@@ -1,14 +1,4 @@
-// ask-user-questions-dedup — Regression tests for per-turn deduplication
-//
-// Verifies that duplicate ask_user_questions calls within a single turn
-// return cached results instead of re-dispatching (especially to remote
-// channels like Discord). Also verifies the strict loop guard threshold
-// for interactive tools.
-//
-// Regression: duplicate questions were sent to Discord when the LLM called
-// ask_user_questions multiple times with the same question set in one turn,
-// causing user confusion and tool failure cascading to plain text fallback.
-
+// GSD2 — ask-user-questions-dedup — Regression tests for per-turn deduplication
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {

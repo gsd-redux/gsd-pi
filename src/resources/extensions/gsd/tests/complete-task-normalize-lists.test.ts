@@ -1,10 +1,11 @@
 /**
- * Regression test for #3692 — normalizeListParam in complete-task
+ * GSD2 — Regression test for #3692 — normalizeListParam in complete-task
  *
  * Agents sometimes pass keyFiles/keyDecisions as comma-separated strings
  * instead of arrays.  normalizeListParam coerces both forms to string[].
  *
  * Also verifies roadmap-slices.ts detects dependency column from header.
+ *
  */
 
 import { describe, test } from 'node:test';

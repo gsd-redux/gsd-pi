@@ -1,3 +1,4 @@
+// GSD2 — Tests for Journal Query Tool
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync } from "node:fs";

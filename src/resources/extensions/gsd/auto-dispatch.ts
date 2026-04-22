@@ -1,5 +1,5 @@
 /**
- * Auto-mode Dispatch Table — declarative phase → unit mapping.
+ * GSD2 — Auto-mode Dispatch Table — declarative phase → unit mapping.
  *
  * Each rule maps a GSD state to the unit type, unit ID, and prompt builder
  * that should be dispatched. Rules are evaluated in order; the first match wins.
@@ -7,6 +7,7 @@
  * This replaces the 130-line if-else chain in dispatchNextUnit with a
  * data structure that is inspectable, testable per-rule, and extensible
  * without modifying orchestration code.
+ *
  */
 
 import type { GSDState } from "./types.js";

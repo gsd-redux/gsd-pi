@@ -1,13 +1,13 @@
 /**
- * parallel-worker-lock-contention.test.ts — Regression tests for #2184.
+ * GSD2 — parallel-worker-lock-contention.test.ts — Regression tests for #2184.
  *
  * Covers all four bugs from the parallel worker contention issue:
- *   Bug 1: Session lock contention — per-milestone lock isolation
- *   Bug 2: Budget ceiling scoped to current session for parallel workers
- *   Bug 3: syncProjectRootToWorktree skips when source === destination (symlinks)
- *   Bug 4: createMilestoneWorktree copies planning artifacts
+ * Bug 1: Session lock contention — per-milestone lock isolation
+ * Bug 2: Budget ceiling scoped to current session for parallel workers
+ * Bug 3: syncProjectRootToWorktree skips when source === destination (symlinks)
+ * Bug 4: createMilestoneWorktree copies planning artifacts
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import {

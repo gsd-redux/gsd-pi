@@ -1,5 +1,5 @@
 /**
- * Regression test for #2322: recoveryAttempts persists across re-dispatches,
+ * GSD2 — Regression test for #2322: recoveryAttempts persists across re-dispatches,
  * causing instant task skip.
  *
  * When a unit hits recovery limits and is later re-dispatched, the
@@ -10,6 +10,7 @@
  *
  * The fix: include `recoveryAttempts: 0` in the dispatch-time runtime
  * record write in runUnitPhase.
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";

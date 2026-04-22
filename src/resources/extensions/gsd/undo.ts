@@ -1,8 +1,4 @@
-// GSD Extension — Undo Last Unit + Targeted State Reset
-// handleUndo: Rollback the most recent completed unit (revert git, remove state, uncheck plans).
-// handleUndoTask: Reset a single task's DB status to "pending" and re-render markdown.
-// handleResetSlice: Reset a slice and all its tasks, re-rendering plan + roadmap.
-
+// GSD2 — Extension — Undo Last Unit + Targeted State Reset
 import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";

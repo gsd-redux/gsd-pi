@@ -1,9 +1,10 @@
 /**
- * GSD Init Wizard — Per-project onboarding.
+ * GSD2 — GSD Init Wizard — Per-project onboarding.
  *
  * Guides users through project setup when entering a directory without .gsd/.
  * Detects project ecosystem, offers v1 migration, configures project preferences,
  * bootstraps .gsd/ structure, and transitions to the first milestone discussion.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

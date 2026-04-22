@@ -1,3 +1,4 @@
+// GSD2 — Provider Error Pause
 export type ProviderErrorPauseUI = {
   notify(message: string, level?: "info" | "warning" | "error" | "success"): void;
 };

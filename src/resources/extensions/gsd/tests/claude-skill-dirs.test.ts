@@ -1,8 +1,9 @@
 /**
- * Tests for Claude Code skill directory support in getSkillSearchDirs().
+ * GSD2 — Tests for Claude Code skill directory support in getSkillSearchDirs().
  *
  * Verifies that ~/.claude/skills/ and .claude/skills/ are included in
  * the skill search path alongside ~/.agents/skills/ and .agents/skills/.
+ *
  */
 
 import { describe, test } from "node:test";

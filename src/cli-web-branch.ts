@@ -1,3 +1,4 @@
+// GSD2 — Cli Web Branch — types and interfaces
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { agentDir as defaultAgentDir, sessionsDir as defaultSessionsDir, webPreferencesPath as defaultWebPreferencesPath } from './app-paths.js'

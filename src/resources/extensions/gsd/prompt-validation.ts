@@ -1,5 +1,5 @@
 /**
- * GSD Prompt Validation — Validates enhanced context and turn output
+ * GSD2 — GSD Prompt Validation — Validates enhanced context and turn output
  * artifacts before writing.
  *
  * Implements R109 validation requirement: CONTEXT.md must have required
@@ -7,6 +7,7 @@
  * check that artifacts produced by gate-owning turns contain the gate
  * sections declared in gate-registry.ts, so a malformed summary/validation
  * markdown file cannot silently drop a quality gate.
+ *
  */
 
 import { getGatesForTurn, type OwnerTurn } from "./gate-registry.js";

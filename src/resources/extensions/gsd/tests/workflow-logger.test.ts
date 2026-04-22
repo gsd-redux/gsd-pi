@@ -1,6 +1,4 @@
-// GSD Extension — Workflow Logger Tests
-// Tests for the centralized warning/error accumulator.
-
+// GSD2 — Extension — Workflow Logger Tests
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";

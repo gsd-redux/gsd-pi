@@ -1,7 +1,8 @@
 /**
- * Regression tests for issue #4540:
- *   Bug 1 — Invalid quality_gates migration bricks gsd.db
- *   Bug 2 — Artifact retries emit no journal event, look like stuck loops
+ * GSD2 — Regression tests for issue #4540:
+ * Bug 1 — Invalid quality_gates migration bricks gsd.db
+ * Bug 2 — Artifact retries emit no journal event, look like stuck loops
+ *
  */
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

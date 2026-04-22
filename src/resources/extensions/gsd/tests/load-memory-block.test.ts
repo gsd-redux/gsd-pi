@@ -1,4 +1,4 @@
-// GSD-2 — loadMemoryBlock tests (ADR-013 step 4 auto-injection parity)
+// GSD2 — GSD-2 — loadMemoryBlock tests (ADR-013 step 4 auto-injection parity)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 

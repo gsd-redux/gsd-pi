@@ -1,11 +1,12 @@
 /**
- * Worktree Integration Tests
+ * GSD2 — Worktree Integration Tests
  *
  * Tests the full lifecycle of GSD operations inside a worktree:
  * - Branch namespacing (gsd/<wt>/<M>/<S> instead of gsd/<M>/<S>)
  * - getMainBranch returns worktree/<name> inside a worktree
  * - Parallel worktrees don't conflict on branch names
  * - State derivation works correctly inside worktrees
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";

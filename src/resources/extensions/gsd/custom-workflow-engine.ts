@@ -1,5 +1,5 @@
 /**
- * custom-workflow-engine.ts — WorkflowEngine implementation for custom workflows.
+ * GSD2 — custom-workflow-engine.ts — WorkflowEngine implementation for custom workflows.
  *
  * Drives the auto-loop using GRAPH.yaml step state from a run directory.
  * Each iteration: deriveState reads the graph, resolveDispatch picks the
@@ -10,6 +10,7 @@
  * - `resolveDispatch` returns unitType "custom-step" with unitId "<name>/<stepId>".
  * - `getDisplayMetadata` provides step N/M progress for dashboard rendering.
  * - Phase transitions are derivable from GRAPH.yaml step statuses.
+ *
  */
 
 import type { WorkflowEngine } from "./workflow-engine.js";

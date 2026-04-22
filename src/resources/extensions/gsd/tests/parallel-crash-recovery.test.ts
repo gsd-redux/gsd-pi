@@ -1,8 +1,9 @@
 /**
- * Tests for parallel orchestrator crash recovery.
+ * GSD2 — Tests for parallel orchestrator crash recovery.
  *
  * Validates that orchestrator state is persisted to disk and can be
  * restored after a coordinator crash, with PID liveness filtering.
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -54,7 +55,6 @@ function makePersistedState(overrides: Partial<PersistedState> = {}): PersistedS
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
-
 
 describe('parallel-crash-recovery', () => {
 test('Test 1: persistState writes valid JSON', () => {

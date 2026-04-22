@@ -1,5 +1,6 @@
 /**
- * Agent discovery and configuration
+ * GSD2 — Agent discovery and configuration
+ *
  */
 
 import * as fs from "node:fs";

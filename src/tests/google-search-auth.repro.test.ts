@@ -1,3 +1,4 @@
+// GSD2 — Tests for Google Search Auth.repro
 import test from "node:test";
 import assert from "node:assert/strict";
 import googleSearchExtension from "../resources/extensions/google-search/index.js";

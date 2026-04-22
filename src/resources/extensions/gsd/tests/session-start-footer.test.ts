@@ -1,17 +1,18 @@
 /**
- * session-start-footer.test.ts
+ * GSD2 — session-start-footer.test.ts
  *
  * Verifies that register-hooks.ts suppresses the gsd-health widget (not the
  * built-in footer) when isAutoActive() is true, and that setFooter is never
  * called by the extension in either session_start or session_switch.
  *
  * Testing strategy:
- *   1. Source-code regression guards: structural checks on register-hooks.ts.
- *   2. Behavioral integration test: fires the live session_start handler with a
- *      fake ctx when isAutoActive() is false (default) and confirms neither
- *      setFooter nor setWidget("gsd-health") is called.
+ * 1. Source-code regression guards: structural checks on register-hooks.ts.
+ * 2. Behavioral integration test: fires the live session_start handler with a
+ * fake ctx when isAutoActive() is false (default) and confirms neither
+ * setFooter nor setWidget("gsd-health") is called.
  *
  * Relates to #4314.
+ *
  */
 
 import test from "node:test";

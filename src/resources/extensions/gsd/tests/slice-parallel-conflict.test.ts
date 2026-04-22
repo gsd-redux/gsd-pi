@@ -1,7 +1,8 @@
 /**
- * Tests for slice-level parallel conflict detection.
+ * GSD2 — Tests for slice-level parallel conflict detection.
  * Verifies hasFileConflict() correctly identifies when two slices
  * touch too many of the same files to safely run in parallel.
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";

@@ -1,10 +1,11 @@
 /**
- * auto/phases.ts — Pipeline phases for the auto-loop.
+ * GSD2 — auto/phases.ts — Pipeline phases for the auto-loop.
  *
  * Contains: runPreDispatch, runDispatch, runGuards, runUnitPhase, runFinalize,
  * plus internal helpers generateMilestoneReport and closeoutAndStop.
  *
  * Imports from: auto/types, auto/detect-stuck, auto/run-unit, auto/loop-deps
+ *
  */
 
 import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from "@gsd/pi-coding-agent";

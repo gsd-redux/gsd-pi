@@ -1,16 +1,17 @@
 /**
- * workflow-plugins.ts — Unified discovery for workflow plugins.
+ * GSD2 — workflow-plugins.ts — Unified discovery for workflow plugins.
  *
  * Discovers workflow definitions from three tiers (project > global > bundled)
  * in both YAML and markdown formats. Each plugin declares an execution mode
  * that controls how `/gsd workflow <name>` dispatches it:
  *
- *   oneshot         — prompt-only, no state or scaffolding
- *   yaml-step       — CustomWorkflowEngine run with GRAPH.yaml
- *   markdown-phase  — STATE.json + phase gates (current md template behavior)
- *   auto-milestone  — hooks into /gsd auto pipeline (full-project only)
+ * oneshot         — prompt-only, no state or scaffolding
+ * yaml-step       — CustomWorkflowEngine run with GRAPH.yaml
+ * markdown-phase  — STATE.json + phase gates (current md template behavior)
+ * auto-milestone  — hooks into /gsd auto pipeline (full-project only)
  *
  * Precedence: project > global > bundled. Same-named file wins.
+ *
  */
 
 import {

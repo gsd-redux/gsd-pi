@@ -1,3 +1,4 @@
+// GSD2 — Web Mode Runtime Harness — projectRoot constant
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Agents Conflicts
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parseConflictsWith } from "../agents.js";

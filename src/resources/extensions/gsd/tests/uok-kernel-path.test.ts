@@ -1,3 +1,4 @@
+// GSD2 — Tests for Uok Kernel Path
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

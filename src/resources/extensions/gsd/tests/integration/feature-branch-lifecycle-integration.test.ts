@@ -1,3 +1,4 @@
+// GSD2 — Tests for Feature Branch Lifecycle Integration
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 /**

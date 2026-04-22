@@ -1,10 +1,11 @@
 /**
- * Regression test for #3764: TUI input clears and jumps up after PR #3744.
+ * GSD2 — Regression test for #3764: TUI input clears and jumps up after PR #3744.
  *
  * PR #3744 introduced contentCursorRow which diverged from the actual terminal
  * cursor position, causing computeLineDiff to compute wrong movement deltas.
  * The fix reverts to using hardwareCursorRow (actual cursor position) as the
  * baseline for all cursor movement calculations.
+ *
  */
 
 import { describe, it } from "node:test";

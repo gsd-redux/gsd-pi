@@ -1,3 +1,4 @@
+// GSD2 — Tests for Doctor Heal Fixable Warnings
 import test from "node:test";
 import assert from "node:assert/strict";
 import { isDoctorHealActionable } from "../commands-handlers.js";

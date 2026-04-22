@@ -1,13 +1,14 @@
 /**
- * GSD Progress Score — Traffic Light Status Indicator (#1221)
+ * GSD2 — GSD Progress Score — Traffic Light Status Indicator (#1221)
  *
  * Combines existing health signals into a single at-a-glance status:
- *   - Green: progressing well
- *   - Yellow: struggling (retries, warnings)
- *   - Red: stuck (loops, persistent errors, no activity)
+ * - Green: progressing well
+ * - Yellow: struggling (retries, warnings)
+ * - Red: stuck (loops, persistent errors, no activity)
  *
  * Purely derived — no stored state. Reads from doctor-proactive health
  * tracking, stuck detection counters, and working-tree activity.
+ *
  */
 
 import {

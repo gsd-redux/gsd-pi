@@ -1,5 +1,6 @@
 /**
- * URL normalization, query utilities, and SSRF protection.
+ * GSD2 — URL normalization, query utilities, and SSRF protection.
+ *
  */
 
 const BLOCKED_HOSTNAMES = new Set([

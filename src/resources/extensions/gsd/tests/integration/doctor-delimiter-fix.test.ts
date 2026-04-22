@@ -1,8 +1,9 @@
 /**
- * Test: Doctor auto-fix for delimiter_in_title
+ * GSD2 — Test: Doctor auto-fix for delimiter_in_title
  *
  * Verifies that `runGSDDoctor({ fix: true })` sanitizes em/en dashes
  * in milestone H1 titles by replacing them with ASCII hyphens.
+ *
  */
 
 import test from "node:test";

@@ -1,3 +1,4 @@
+// GSD2 — Model Policy — types and interfaces
 import type { TaskMetadata } from "../complexity-classifier.js";
 import { computeTaskRequirements, filterToolsForProvider } from "../model-router.js";
 import { buildAuditEnvelope, emitUokAuditEvent } from "./audit.js";

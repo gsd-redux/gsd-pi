@@ -1,10 +1,11 @@
 /**
- * GSD Slice Parallel Eligibility — Pure function to determine which slices
+ * GSD2 — GSD Slice Parallel Eligibility — Pure function to determine which slices
  * within a milestone can run in parallel based on dependency satisfaction.
  *
  * This is the slice-level equivalent of parallel-eligibility.ts (which operates
  * at milestone scope). The key difference is the positional fallback: slices
  * without explicit dependencies use sequential ordering as an implicit constraint.
+ *
  */
 
 // ─── Types ────────────────────────────────────────────────────────────────────

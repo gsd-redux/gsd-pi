@@ -1,5 +1,6 @@
 /**
- * Utility functions for the bg-shell extension.
+ * GSD2 — Utility functions for the bg-shell extension.
+ *
  */
 
 import { createRequire } from "node:module";

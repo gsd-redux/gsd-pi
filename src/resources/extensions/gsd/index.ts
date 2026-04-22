@@ -1,3 +1,4 @@
+// GSD2 — Index
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
 export {

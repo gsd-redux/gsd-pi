@@ -1,5 +1,5 @@
 /**
- * summary-render-parity.test.ts — Regression test for #2720
+ * GSD2 — summary-render-parity.test.ts — Regression test for #2720
  *
  * Asserts that the SUMMARY.md produced at task-completion time
  * (renderSummaryMarkdown in complete-task.ts) is structurally identical
@@ -9,6 +9,7 @@
  * Both render paths receive equivalent data (CompleteTaskParams vs TaskRow)
  * and must produce the same output. If they diverge, projection regeneration
  * silently replaces richer content with a stripped-down version.
+ *
  */
 
 import { createTestContext } from './test-helpers.ts';

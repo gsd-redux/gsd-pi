@@ -1,6 +1,7 @@
 /**
- * Tests for ArtifactManager: sequential ID allocation, save/retrieve,
+ * GSD2 — Tests for ArtifactManager: sequential ID allocation, save/retrieve,
  * and session resume (ID continuity).
+ *
  */
 
 import test from 'node:test'

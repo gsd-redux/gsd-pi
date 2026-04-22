@@ -1,5 +1,5 @@
 /**
- * Shared interview round UI widget.
+ * GSD2 — Shared interview round UI widget.
  *
  * Used by /interview-me and /gsd-new-project.
  *
@@ -12,17 +12,18 @@
  * - focusNotes dimming: checked/committed items stay visible, others dim
  *
  * Navigation:
- *   ←/→          move between questions
- *   ↑/↓          move cursor within a question's options
- *   Enter/Space  commit selection and advance
- *   Tab          open/close notes field
- *   Esc          exit confirmation overlay (keep-going is default)
+ * ←/→          move between questions
+ * ↑/↓          move cursor within a question's options
+ * Enter/Space  commit selection and advance
+ * Tab          open/close notes field
+ * Esc          exit confirmation overlay (keep-going is default)
  *
  * On last question, Enter advances to a review screen instead of submitting directly.
  * From the review screen:
- *   ←            back to last question
- *   Enter / →    submit all answers
- *   Esc          exit confirmation
+ * ←            back to last question
+ * Enter / →    submit all answers
+ * Esc          exit confirmation
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,8 +1,4 @@
-// GSD — regression tests for issue #2630
-// Milestone/slice artifact rendering must not corrupt existing markdown.
-// Three bugs: (A) milestone title double-prefix, (B) full_uat_md demo fallback,
-// (C) STATE.md title double-prefix.
-
+// GSD2 — regression tests for issue #2630
 import test from 'node:test';
 import assert from 'node:assert/strict';
 

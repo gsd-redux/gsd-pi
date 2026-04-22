@@ -1,5 +1,5 @@
 /**
- * Contract tests for Tavily search integration in tool-search.ts.
+ * GSD2 — Contract tests for Tavily search integration in tool-search.ts.
  *
  * Covers:
  * - executeTavilySearch: POST request construction, response mapping, deduplication
@@ -9,6 +9,7 @@
  * - Tavily answer mapping: answer field flows through as summary text
  * - Freshness mapping: Brave freshness → Tavily time_range in request body
  * - Domain mapping: domain → include_domains (not site: prefix)
+ *
  */
 
 import test from "node:test";

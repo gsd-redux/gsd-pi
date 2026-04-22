@@ -1,8 +1,9 @@
 /**
- * Skill-related preferences: resolution, discovery, and formatting.
+ * GSD2 — Skill-related preferences: resolution, discovery, and formatting.
  *
  * Contains all logic for resolving skill references from preferences
  * to absolute filesystem paths, plus skill discovery and staleness config.
+ *
  */
 
 import { existsSync, readdirSync } from "node:fs";

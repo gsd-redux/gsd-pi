@@ -1,5 +1,5 @@
 /**
- * Tests that doctor's fixLevel option correctly separates task-level
+ * GSD2 — Tests that doctor's fixLevel option correctly separates task-level
  * bookkeeping from completion state transitions.
  *
  * With reconciliation codes removed (S06), doctor no longer creates
@@ -7,6 +7,7 @@
  * the fix infrastructure still works for remaining fixable codes
  * (e.g. delimiter_in_title, missing_tasks_dir) and that removed
  * reconciliation codes are truly absent.
+ *
  */
 
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";

@@ -1,10 +1,4 @@
-// GSD-2 auto-start regression test: cleanStaleRuntimeUnits is DB-gated (#4663)
-//
-// Source-level structural check that the stale-runtime-cleanup predicate in
-// auto-start.ts consults DB status when available instead of treating a
-// SUMMARY-file on disk as proof of milestone completion. Pairs with #4658 /
-// PR #4660 fix in auto-dispatch + auto-recovery.
-
+// GSD2 — GSD-2 auto-start regression test: cleanStaleRuntimeUnits is DB-gated (#4663)
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

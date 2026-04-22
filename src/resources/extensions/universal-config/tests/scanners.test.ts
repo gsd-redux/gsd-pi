@@ -1,8 +1,9 @@
 /**
- * Tests for universal config discovery scanners.
+ * GSD2 — Tests for universal config discovery scanners.
  *
  * Uses temporary directories to simulate config layouts from each tool.
  * Runs with: node --experimental-strip-types --test
+ *
  */
 
 import { describe, test } from "node:test";

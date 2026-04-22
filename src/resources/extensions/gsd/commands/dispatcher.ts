@@ -1,3 +1,4 @@
+// GSD2 — Dispatcher
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { GSDNoProjectError } from "./context.js";

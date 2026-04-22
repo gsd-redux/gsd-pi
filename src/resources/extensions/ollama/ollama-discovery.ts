@@ -1,5 +1,4 @@
 // GSD2 — Ollama model discovery and capability detection
-
 /**
  * Discovers locally available Ollama models and enriches them with
  * capability metadata (context window, vision, reasoning) from the

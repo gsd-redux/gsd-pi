@@ -1,10 +1,11 @@
 /**
- * worktree-health-dispatch.test.ts — Regression tests for the worktree health
+ * GSD2 — worktree-health-dispatch.test.ts — Regression tests for the worktree health
  * check in auto/phases.ts (#1833, #1843).
  *
  * Verifies that the pre-dispatch health check recognises non-JS project types
  * (Rust, Go, Python, etc.) via the shared PROJECT_FILES list from detection.ts,
  * rather than hard-coding package.json / src/ only.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

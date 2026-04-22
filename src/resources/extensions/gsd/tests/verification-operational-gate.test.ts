@@ -1,7 +1,8 @@
 /**
- * Regression test for #2931: completing-milestone gate should treat
+ * GSD2 — Regression test for #2931: completing-milestone gate should treat
  * "None required", "N/A", "Not applicable", etc. as equivalent to "none"
  * and skip the operational verification content check entirely.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

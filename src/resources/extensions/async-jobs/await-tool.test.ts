@@ -1,5 +1,6 @@
 /**
- * await-tool.test.ts — Tests for await_job timeout behavior.
+ * GSD2 — await-tool.test.ts — Tests for await_job timeout behavior.
+ *
  */
 
 import test from "node:test";

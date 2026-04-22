@@ -1,4 +1,4 @@
-// GSD-2 + src/tests/workspace-manifest.test.ts — regression tests for the linkable-packages single source of truth
+// GSD2 — GSD-2 + src/tests/workspace-manifest.test.ts — regression tests for the linkable-packages single source of truth
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

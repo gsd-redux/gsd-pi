@@ -1,8 +1,9 @@
 /**
- * browser-teardown.test.ts — Verifies browser cleanup at unit boundaries (#1733).
+ * GSD2 — browser-teardown.test.ts — Verifies browser cleanup at unit boundaries (#1733).
  *
  * Tests that the browser-tools lifecycle module is correctly called to tear
  * down Chrome/Playwright processes during stopAuto() and between units.
+ *
  */
 
 import test from "node:test";

@@ -1,5 +1,5 @@
 /**
- * Safety Harness — central module for LLM damage control during auto-mode.
+ * GSD2 — Safety Harness — central module for LLM damage control during auto-mode.
  * Provides types, preference resolution, and orchestration for all safety components.
  *
  * Components:
@@ -10,7 +10,7 @@
  * - git-checkpoint.ts: Pre-unit checkpoints + rollback
  * - content-validator.ts: Output quality validation
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 // ─── Types ──────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 /**
- * Regression test for #3477: gsd_skip_slice tool must rebuild STATE.md
+ * GSD2 — Regression test for #3477: gsd_skip_slice tool must rebuild STATE.md
  * after updating the DB so auto-mode reads the correct state.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

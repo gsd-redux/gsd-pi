@@ -1,5 +1,4 @@
-// gsd-2 — Regression tests for workflow-install path containment and ext fallback.
-
+// GSD2 — gsd-2 — Regression tests for workflow-install path containment and ext fallback.
 import { describe, it, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";

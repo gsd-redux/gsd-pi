@@ -1,3 +1,4 @@
+// GSD2 — Tests for Bg Shell Persistence Cwd
 import test from "node:test";
 import assert from "node:assert/strict";
 

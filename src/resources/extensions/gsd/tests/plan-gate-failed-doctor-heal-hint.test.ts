@@ -1,8 +1,9 @@
 /**
- * Regression test for #4620.
+ * GSD2 — Regression test for #4620.
  *
  * Ensures plan gate failed-closed errors include a self-heal hint
  * directing users to /gsd doctor heal.
+ *
  */
 
 import test from "node:test";

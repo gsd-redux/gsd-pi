@@ -1,10 +1,11 @@
 /**
- * Auto-mode Recovery — artifact resolution, verification, blocker placeholders,
+ * GSD2 — Auto-mode Recovery — artifact resolution, verification, blocker placeholders,
  * skip artifacts, merge state reconciliation,
  * self-heal runtime records, and loop remediation steps.
  *
  * Pure functions that receive all needed state as parameters — no module-level
  * globals or AutoContext dependency.
+ *
  */
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

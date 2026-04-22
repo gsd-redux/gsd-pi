@@ -1,5 +1,5 @@
 /**
- * parallel-budget-atomicity.test.ts — Budget enforcement tests for parallel orchestration (G6).
+ * GSD2 — parallel-budget-atomicity.test.ts — Budget enforcement tests for parallel orchestration (G6).
  *
  * Verifies that the budget ceiling cannot be exceeded through race conditions
  * or incorrect cost aggregation. Tests the single-writer architecture:
@@ -7,11 +7,12 @@
  * sequentially via refreshWorkerStatuses().
  *
  * Covers:
- *   - Ceiling enforcement: isBudgetExceeded returns true above ceiling
- *   - Cost aggregation: sum across all workers is correct
- *   - No double-counting: multiple refreshes don't accumulate
- *   - Budget reset: totalCost clears after resetOrchestrator
- *   - No budget ceiling: isBudgetExceeded returns false when ceiling unset
+ * - Ceiling enforcement: isBudgetExceeded returns true above ceiling
+ * - Cost aggregation: sum across all workers is correct
+ * - No double-counting: multiple refreshes don't accumulate
+ * - Budget reset: totalCost clears after resetOrchestrator
+ * - No budget ceiling: isBudgetExceeded returns false when ceiling unset
+ *
  */
 
 import test from "node:test";

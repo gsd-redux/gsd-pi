@@ -1,3 +1,4 @@
+// GSD2 — Tests for Resource Loader Conflicts
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { join, resolve, relative, sep } from "node:path";

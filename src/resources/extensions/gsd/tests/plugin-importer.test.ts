@@ -1,5 +1,5 @@
 /**
- * PluginImporter Contract Tests
+ * GSD2 — PluginImporter Contract Tests
  *
  * Tests that prove R012 (discover/select/import flow) and R013 (canonical name preservation).
  *
@@ -8,6 +8,7 @@
  * - Selective filtering: filter function correctly selects components
  * - Diagnostic gating: errors block, warnings pass
  * - Config manifest format: canonical identity preserved
+ *
  */
 
 import { describe, it, beforeEach, mock } from 'node:test';

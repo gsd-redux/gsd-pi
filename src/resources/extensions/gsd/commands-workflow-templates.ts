@@ -1,8 +1,9 @@
 /**
- * GSD Workflow Template Commands — /gsd start, /gsd templates
+ * GSD2 — GSD Workflow Template Commands — /gsd start, /gsd templates
  *
  * Handles the `/gsd start [template] [description]` and `/gsd templates` commands.
  * Resolves templates by name or auto-detection, then dispatches the workflow prompt.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

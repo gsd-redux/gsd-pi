@@ -1,3 +1,4 @@
+// GSD2 — Tests for Commit Linking
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskCommitMessage } from "../../gsd/git-service.ts";

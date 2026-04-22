@@ -1,3 +1,4 @@
+// GSD2 — Tests for Doctor Scope Db Unavailable
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { closeDatabase } from "../gsd-db.ts";

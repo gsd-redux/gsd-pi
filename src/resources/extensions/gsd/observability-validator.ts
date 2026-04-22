@@ -1,3 +1,4 @@
+// GSD2 — Observability Validator
 import { loadFile } from "./files.js";
 import { resolveSliceFile, resolveTaskFile, resolveTasksDir, resolveTaskFiles } from "./paths.js";
 

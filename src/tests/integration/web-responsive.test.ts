@@ -1,8 +1,9 @@
 /**
- * Structural tests verifying mobile-responsive CSS classes exist in key web UI components.
+ * GSD2 — Structural tests verifying mobile-responsive CSS classes exist in key web UI components.
  *
  * These tests read the source files and assert that responsive Tailwind classes
  * (md:, sm:, lg:, xl:) and mobile-specific markup are present where expected.
+ *
  */
 
 import test from 'node:test'

@@ -1,9 +1,10 @@
 /**
- * clean-root-preflight.test.ts — Regression tests for #2909.
+ * GSD2 — clean-root-preflight.test.ts — Regression tests for #2909.
  *
  * Tests that preflightCleanRoot warns + stashes on dirty trees,
  * is a no-op on clean trees, and that postflightPopStash restores
  * stashed changes after a merge.
+ *
  */
 
 import test from "node:test";

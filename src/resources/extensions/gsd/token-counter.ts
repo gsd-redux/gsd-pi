@@ -1,3 +1,4 @@
+// GSD2 — Token Counter — CHARS_PER_TOKEN_BY_PROVIDER constant
 export type TokenProvider = "anthropic" | "openai" | "google" | "mistral" | "bedrock" | "unknown";
 
 const CHARS_PER_TOKEN_BY_PROVIDER: Record<TokenProvider, number> = {

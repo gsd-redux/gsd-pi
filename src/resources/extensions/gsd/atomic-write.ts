@@ -1,3 +1,4 @@
+// GSD2 — Atomic Write — TRANSIENT_LOCK_ERROR_CODES constant
 import { writeFileSync, renameSync, unlinkSync, mkdirSync, promises as fs } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";

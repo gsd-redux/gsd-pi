@@ -1,10 +1,4 @@
-// GSD Memory Relations — knowledge-graph edges between memories
-//
-// Phase 4 companion to memory-store.ts. Edges live in the `memory_relations`
-// table and are created by (a) explicit LINK actions emitted by the memory
-// extractor, or (b) future `/gsd memory link` CLI commands. All writes go
-// through the single-writer gate in `gsd-db.ts`.
-
+// GSD2 — Memory Relations — knowledge-graph edges between memories
 import {
   _getAdapter,
   deleteMemoryRelationsFor,

@@ -1,6 +1,7 @@
 /**
- * Regression test for #3869: normal post-unit flow should rebuild STATE.md
+ * GSD2 — Regression test for #3869: normal post-unit flow should rebuild STATE.md
  * before syncing worktree state back to the project root.
+ *
  */
 
 import test from "node:test";

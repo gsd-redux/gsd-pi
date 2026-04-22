@@ -1,9 +1,9 @@
 /**
- * Evidence cross-reference for auto-mode safety harness.
+ * GSD2 — Evidence cross-reference for auto-mode safety harness.
  * Compares the LLM's claimed verification evidence (command + exitCode)
  * against actual bash tool calls recorded by the evidence collector.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import type { BashEvidence, EvidenceEntry } from "./evidence-collector.js";

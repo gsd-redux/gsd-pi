@@ -1,5 +1,5 @@
 /**
- * Extension Smoke Tests
+ * GSD2 — Extension Smoke Tests
  *
  * Verifies every bundled extension can be imported without throwing.
  * Catches missing imports, circular dependencies, bad top-level code,
@@ -9,6 +9,7 @@
  * This test dynamically discovers all extension entry points using the
  * same discovery logic as the loader, so new extensions are automatically
  * covered without updating this file.
+ *
  */
 
 import test from "node:test";

@@ -1,9 +1,10 @@
 /**
- * sidecar-queue.test.ts — Source-level contract tests for the sidecar queue pattern (S03).
+ * GSD2 — sidecar-queue.test.ts — Source-level contract tests for the sidecar queue pattern (S03).
  *
  * Verifies the structural invariants of the sidecar queue: the SidecarItem type,
  * AutoSession sidecarQueue field, enqueue patterns in postUnitPostVerification,
  * and dequeue logic in autoLoop. These are source-reading tests — no runtime required.
+ *
  */
 
 import test from "node:test";

@@ -1,10 +1,11 @@
 /**
- * custom-verification.test.ts — Tests for runCustomVerification().
+ * GSD2 — custom-verification.test.ts — Tests for runCustomVerification().
  *
  * Tests all four verification policies (content-heuristic, shell-command,
  * prompt-verify, human-review) plus edge cases (no policy, missing file).
  * Each test creates a temp run directory with a DEFINITION.yaml and
  * optional test artifacts.
+ *
  */
 
 import { describe, it } from "node:test";

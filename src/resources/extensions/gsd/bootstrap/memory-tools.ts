@@ -1,9 +1,4 @@
 // GSD2 — Memory tool registration
-//
-// Exposes the memory-layer tools (capture_thought, memory_query, gsd_graph)
-// to the LLM over MCP. All three degrade gracefully when the GSD database
-// is unavailable.
-
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 

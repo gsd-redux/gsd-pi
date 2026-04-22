@@ -1,7 +1,8 @@
 /**
- * auto/loop-deps.ts — LoopDeps interface for dependency injection into autoLoop.
+ * GSD2 — auto/loop-deps.ts — LoopDeps interface for dependency injection into autoLoop.
  *
  * Leaf node in the import DAG (type-only).
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

@@ -1,5 +1,5 @@
 /**
- * Request User Input — LLM tool for asking the user questions
+ * GSD2 — Request User Input — LLM tool for asking the user questions
  *
  * Thin wrapper around the shared interview-ui. The LLM presents 1-3
  * questions with 2-3 options each. Each question can be single-select (default)
@@ -7,6 +7,7 @@
  * is added automatically to single-select questions.
  *
  * Based on: https://github.com/openai/codex (codex-rs/core/src/tools/handlers/ask_user_questions.rs)
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

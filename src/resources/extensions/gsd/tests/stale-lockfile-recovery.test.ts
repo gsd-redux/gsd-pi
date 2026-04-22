@@ -1,9 +1,10 @@
 /**
- * stale-lockfile-recovery.test.ts — #3668
+ * GSD2 — stale-lockfile-recovery.test.ts — #3668
  *
  * Verify that session-lock.ts contains pre-flight stale lock cleanup logic
  * that removes orphaned lock directories when the owning PID is dead,
  * preventing the 30-min stale window from blocking /gsd after crashes.
+ *
  */
 
 import { describe, test } from "node:test";

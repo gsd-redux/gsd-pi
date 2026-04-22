@@ -1,3 +1,4 @@
+// GSD2 — Web Mode Runtime Fixtures
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"

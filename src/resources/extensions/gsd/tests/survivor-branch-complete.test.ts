@@ -1,5 +1,5 @@
 /**
- * Regression test for #2358: Survivor branch recovery skipped in phase=complete.
+ * GSD2 — Regression test for #2358: Survivor branch recovery skipped in phase=complete.
  *
  * When bootstrapAutoSession finds a survivor milestone branch and the derived
  * state phase is "complete", recovery/finalization is skipped entirely because
@@ -10,6 +10,7 @@
  * The fix broadens the survivor branch detection to also check phase === "complete",
  * and adds a finalization path that runs mergeAndExit before falling through to
  * the normal "complete" handling.
+ *
  */
 
 import { createTestContext } from "./test-helpers.ts";

@@ -1,6 +1,4 @@
-// GSD Extension — workflow-manifest unit tests
-// Tests writeManifest, readManifest, snapshotState, bootstrapFromManifest.
-
+// GSD2 — Extension — workflow-manifest unit tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

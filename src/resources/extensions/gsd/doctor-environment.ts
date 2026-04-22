@@ -1,5 +1,5 @@
 /**
- * GSD Doctor — Environment Health Checks (#1221)
+ * GSD2 — GSD Doctor — Environment Health Checks (#1221)
  *
  * Deterministic checks for environment readiness that prevent the model
  * from spinning its wheels on missing tools, port conflicts, stale
@@ -7,6 +7,7 @@
  *
  * These checks complement the existing git/runtime health checks and
  * integrate into the doctor pipeline via checkEnvironmentHealth().
+ *
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";

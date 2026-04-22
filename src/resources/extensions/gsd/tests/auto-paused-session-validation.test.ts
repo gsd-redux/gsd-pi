@@ -1,12 +1,13 @@
 /**
- * auto-paused-session-validation.test.ts — Validates milestone existence
+ * GSD2 — auto-paused-session-validation.test.ts — Validates milestone existence
  * before restoring from paused-session.json (#1664).
  *
  * Two layers:
  * 1. Source-code regression: ensures auto.ts validates the milestone before
- *    trusting paused-session.json (guards against accidental removal).
+ * trusting paused-session.json (guards against accidental removal).
  * 2. Filesystem unit: confirms resolveMilestonePath / resolveMilestoneFile
- *    correctly detect missing and completed milestones.
+ * correctly detect missing and completed milestones.
+ *
  */
 
 import test from "node:test";

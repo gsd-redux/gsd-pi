@@ -1,5 +1,5 @@
 /**
- * worktree-teardown-safety.test.ts — Regression test for #2365.
+ * GSD2 — worktree-teardown-safety.test.ts — Regression test for #2365.
  *
  * Ensures that removeWorktree() and teardownAutoWorktree() never delete
  * directories outside .gsd/worktrees/.  The bug: removeWorktree overrides
@@ -10,6 +10,7 @@
  *
  * The fix adds path validation so rmSync / nativeWorktreeRemove only operate
  * on paths that are actually under .gsd/worktrees/.
+ *
  */
 
 import {

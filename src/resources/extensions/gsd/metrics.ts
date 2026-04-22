@@ -1,16 +1,17 @@
 /**
- * GSD Metrics — Token & Cost Tracking
+ * GSD2 — GSD Metrics — Token & Cost Tracking
  *
  * Accumulates per-unit usage data across auto-mode sessions.
  * Data is extracted from session entries before each context wipe,
  * written to .gsd/metrics.json, and surfaced in the dashboard.
  *
  * Data flow:
- *   1. Before newSession() wipes context, snapshotUnitMetrics() scans
- *      session entries for AssistantMessage usage data
- *   2. The unit record is appended to the in-memory ledger and flushed to disk
- *   3. The dashboard overlay and progress widget read from the in-memory ledger
- *   4. On crash recovery or fresh start, the ledger is loaded from disk
+ * 1. Before newSession() wipes context, snapshotUnitMetrics() scans
+ * session entries for AssistantMessage usage data
+ * 2. The unit record is appended to the in-memory ledger and flushed to disk
+ * 3. The dashboard overlay and progress widget read from the in-memory ledger
+ * 4. On crash recovery or fresh start, the ledger is loaded from disk
+ *
  */
 
 import { join } from "node:path";
@@ -550,7 +551,6 @@ export function formatCostProjection(
 
   return result;
 }
-
 
 // ─── Disk I/O ─────────────────────────────────────────────────────────────────
 

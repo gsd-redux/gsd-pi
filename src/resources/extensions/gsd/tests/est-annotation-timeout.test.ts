@@ -1,9 +1,10 @@
 /**
- * est-annotation-timeout.test.ts — Regression tests for #2243.
+ * GSD2 — est-annotation-timeout.test.ts — Regression tests for #2243.
  *
  * Tasks with `est: 30m` or `est: 2h` annotations should get extended
  * supervision timeouts. The parseEstimateMinutes helper should parse
  * estimate strings, and startUnitSupervision should use them.
+ *
  */
 
 import test from "node:test";

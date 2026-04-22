@@ -1,10 +1,4 @@
-// prompt-db: Tests for DB-aware inline helpers (inlineDecisionsFromDb, inlineRequirementsFromDb, inlineProjectFromDb)
-//
-// Validates:
-// (a) DB-aware helpers return scoped content when DB has data
-// (b) Helpers fall back to non-null output when DB unavailable
-// (c) Scoped filtering actually reduces content
-
+// GSD2 — prompt-db: Tests for DB-aware inline helpers (inlineDecisionsFromDb, inlineRequirementsFromDb, inlineProjectFromDb)
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -320,7 +314,6 @@ import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { migrateFromMarkdown } from '../md-importer.ts';
-
 
 describe('prompt-db', () => {
 test('prompt-db: re-import updates DB when source markdown changes', () => {

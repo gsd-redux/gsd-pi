@@ -1,3 +1,4 @@
+// GSD2 — Resource Loader — packageRoot constant
 import { DefaultResourceLoader, sortExtensionPaths } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
@@ -155,7 +156,6 @@ function collectFileEntries(dir: string, root: string, out: string[]): void {
     }
   }
 }
-
 
 export function getNewerManagedResourceVersion(agentDir: string, currentVersion: string): string | null {
   const managedVersion = readManagedResourceVersion(agentDir)

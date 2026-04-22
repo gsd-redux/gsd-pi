@@ -1,11 +1,12 @@
 /**
- * Unit tests for GSD Directory Validation — safeguards against dangerous directories.
+ * GSD2 — Unit tests for GSD Directory Validation — safeguards against dangerous directories.
  *
  * Exercises validateDirectory() and assertSafeDirectory() with:
  * - Blocked system paths (/, /usr, /etc, $HOME, C:\Windows)
  * - Temp directory root
  * - Normal project directories (should pass)
  * - Directories with many entries (warning heuristic)
+ *
  */
 
 import test from "node:test";

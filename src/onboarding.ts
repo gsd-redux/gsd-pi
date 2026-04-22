@@ -1,13 +1,14 @@
 /**
- * Unified first-run onboarding wizard.
+ * GSD2 — Unified first-run onboarding wizard.
  *
  * Replaces the raw API-key-only wizard with a branded, clack-based experience
  * that guides users through LLM provider authentication before the TUI launches.
  *
  * Flow: logo -> choose LLM provider -> authenticate (OAuth or API key) ->
- *       optional tool keys -> summary -> TUI launches.
+ * optional tool keys -> summary -> TUI launches.
  *
  * All steps are skippable. All errors are recoverable. Never crashes boot.
+ *
  */
 
 import { execFile } from 'node:child_process'

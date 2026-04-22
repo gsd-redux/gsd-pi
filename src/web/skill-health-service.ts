@@ -1,3 +1,4 @@
+// GSD2 — Skill Health Service — SKILL_HEALTH_MAX_BUFFER constant
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"

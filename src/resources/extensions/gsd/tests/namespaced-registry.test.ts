@@ -1,5 +1,5 @@
 /**
- * Namespaced Registry Contract Tests
+ * GSD2 — Namespaced Registry Contract Tests
  *
  * Tests that prove the namespaced registry correctly handles:
  * - Canonical identity (R004)
@@ -9,6 +9,7 @@
  * - Collision detection
  * - Namespace listing
  * - Integration with S01 discovery types
+ *
  */
 
 import { describe, it, beforeEach } from 'node:test';

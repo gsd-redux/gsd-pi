@@ -1,9 +1,10 @@
 /**
- * Regression tests for #4406 — remote-channel answers must be normalized to
+ * GSD2 — Regression tests for #4406 — remote-channel answers must be normalized to
  * the RoundResult shape { selected, notes } so the depth-verification gate
  * hook in gsd/bootstrap/register-hooks.ts recognizes them. Before the fix,
  * Telegram/Slack/Discord answers arrived as { answers: string[], user_note }
  * and `answer.selected` was always undefined, leaving the gate locked.
+ *
  */
 
 import test from "node:test";

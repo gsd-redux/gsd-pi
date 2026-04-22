@@ -1,12 +1,13 @@
 /**
- * Verification Evidence — JSON persistence and markdown table formatting.
+ * GSD2 — Verification Evidence — JSON persistence and markdown table formatting.
  *
  * Two pure-ish functions:
- *   - writeVerificationJSON: persists a machine-readable T##-VERIFY.json artifact
- *   - formatEvidenceTable:   returns a markdown evidence table string
+ * - writeVerificationJSON: persists a machine-readable T##-VERIFY.json artifact
+ * - formatEvidenceTable:   returns a markdown evidence table string
  *
  * JSON schema uses schemaVersion: 1 for forward-compatibility.
  * stdout/stderr are intentionally excluded from the JSON to avoid unbounded file sizes.
+ *
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";

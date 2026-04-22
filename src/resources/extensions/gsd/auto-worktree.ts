@@ -1,9 +1,10 @@
 /**
- * GSD Auto-Worktree -- lifecycle management for auto-mode worktrees.
+ * GSD2 — GSD Auto-Worktree -- lifecycle management for auto-mode worktrees.
  *
  * Auto-mode creates worktrees with `milestone/<MID>` branches (distinct from
  * manual `/worktree` which uses `worktree/<name>` branches). This module
  * manages create, enter, detect, and teardown for auto-mode worktrees.
+ *
  */
 
 import {

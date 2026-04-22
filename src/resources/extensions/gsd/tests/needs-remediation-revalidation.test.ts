@@ -1,5 +1,5 @@
 /**
- * Regression test for #3670 — needs-remediation verdict forces re-validation
+ * GSD2 — Regression test for #3670 — needs-remediation verdict forces re-validation
  *
  * When validation returns needs-remediation, the state machine must route
  * back to validating-milestone instead of completing-milestone. Without this,
@@ -8,6 +8,7 @@
  *
  * This structural test verifies the verdict === 'needs-remediation' guard
  * exists at all three derivation paths in state.ts.
+ *
  */
 
 import { describe, test } from 'node:test';

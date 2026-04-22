@@ -1,5 +1,4 @@
 // GSD2 — HTTP client for Ollama REST API
-
 /**
  * Low-level HTTP client for the Ollama REST API.
  * Respects the OLLAMA_HOST environment variable for non-default endpoints.

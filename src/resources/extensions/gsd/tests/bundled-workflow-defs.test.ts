@@ -1,11 +1,12 @@
 /**
- * Bundled workflow definition validation tests.
+ * GSD2 — Bundled workflow definition validation tests.
  *
  * Verifies that every example YAML in src/resources/skills/create-workflow/templates/
  * passes validateDefinition() from definition-loader.ts with { valid: true, errors: [] }.
  *
  * Also validates scaffold template and structural properties of each example
  * (step counts, feature usage) to guard against accidental regressions.
+ *
  */
 
 import test from "node:test";

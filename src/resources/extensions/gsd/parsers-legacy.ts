@@ -1,11 +1,4 @@
-// GSD Extension - Legacy Parsers
-// parseRoadmap() and parsePlan() extracted from files.ts.
-// Used only by: md-importer.ts (migration), state.ts (pre-migration fallback),
-// markdown-renderer.ts (detectStaleRenders disk-vs-DB comparison),
-// commands-maintenance.ts (cold-path branch cleanup), and tests.
-//
-// NOT used in the dispatch loop or any hot-path runtime code.
-
+// GSD2 — Extension — Legacy Parsers
 import { extractSection, parseBullets, extractBoldField, extractAllSections, registerCacheClearCallback } from './files.js';
 import { splitFrontmatter } from '../shared/frontmatter.js';
 import { nativeParseRoadmap, nativeParsePlanFile } from './native-parser-bridge.js';

@@ -1,9 +1,10 @@
 /**
- * Budget Prediction — unit tests for M004/S04.
+ * GSD2 — Budget Prediction — unit tests for M004/S04.
  *
  * Tests prediction math, auto-downgrade logic, and dashboard integration.
  * Uses extracted pure functions (avoiding module import chain) and
  * source-level structural checks for dashboard/auto.ts integration.
+ *
  */
 
 import test from "node:test";

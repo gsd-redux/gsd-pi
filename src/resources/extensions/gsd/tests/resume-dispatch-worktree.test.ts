@@ -1,5 +1,5 @@
 /**
- * Tests for fix of #3723: auto-mode resume/crash-recovery dispatches
+ * GSD2 — Tests for fix of #3723: auto-mode resume/crash-recovery dispatches
  * from project root instead of milestone worktree.
  *
  * During resume, the paused-session metadata may record `worktreePath` that
@@ -10,6 +10,7 @@
  * The fix adds an early worktree-path resolution step in the paused-session
  * resume block of auto.ts — immediately after `s.basePath = base` — so that
  * the correct dispatch directory is used before the dispatch loop runs.
+ *
  */
 
 import test from "node:test";

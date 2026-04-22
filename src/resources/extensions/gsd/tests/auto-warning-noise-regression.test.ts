@@ -1,26 +1,4 @@
-// GSD Extension — Regression tests for auto-mode warning noise (PR #4294)
-//
-// Three independent bug fixes, three regression tests:
-//
-//   1. auto-model-selection.ts — buildFlatRateContext detached
-//      getProviderAuthMode from its receiver, losing `this` and throwing
-//      "Cannot read properties of undefined (reading 'registeredProviders')".
-//      Runtime test: pass a registry whose method actually uses `this` and
-//      verify the returned authMode survives (proves the method is called
-//      with correct binding).
-//
-//   2. auto-worktree.ts — isSamePath logged every error as a warning,
-//      including ENOENT when a worktree's .gsd dir hadn't been created yet.
-//      Source-check test: the catch block must short-circuit on ENOENT
-//      before hitting logWarning. Follows the same style as
-//      copy-planning-artifacts-samepath.test.ts.
-//
-//   3. guided-flow.ts — checkAutoStartAfterDiscuss unconditionally tried
-//      to unlink DISCUSSION-MANIFEST.json and warned on ENOENT even when
-//      the milestone never had a discussion phase. Source-check test:
-//      the unlink must be guarded with existsSync, matching the
-//      CONTEXT-DRAFT.md cleanup pattern two lines above.
-
+// GSD2 — Extension — Regression tests for auto-mode warning noise (PR #4294)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -1,14 +1,15 @@
 /**
- * custom-execution-policy.ts — ExecutionPolicy for custom workflows.
+ * GSD2 — custom-execution-policy.ts — ExecutionPolicy for custom workflows.
  *
  * Delegates verification to the step-level verification module which reads
  * the frozen DEFINITION.yaml and dispatches to the appropriate policy handler.
  *
  * Observability:
  * - verify() returns the outcome from runCustomVerification() — four policies
- *   are supported: content-heuristic, shell-command, prompt-verify, human-review.
+ * are supported: content-heuristic, shell-command, prompt-verify, human-review.
  * - selectModel() returns null — defers to loop defaults.
  * - recover() returns retry — simple default recovery strategy.
+ *
  */
 
 import type { ExecutionPolicy } from "./execution-policy.js";

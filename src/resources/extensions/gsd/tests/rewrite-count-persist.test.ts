@@ -1,5 +1,5 @@
 /**
- * Regression tests for #2203: rewrite-docs circuit breaker must persist
+ * GSD2 — Regression tests for #2203: rewrite-docs circuit breaker must persist
  * across session restarts.
  *
  * The rewrite attempt counter was stored in-memory on the session object,
@@ -8,6 +8,7 @@
  * circuit breaker.
  *
  * The fix persists the counter to `.gsd/runtime/rewrite-count.json`.
+ *
  */
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

@@ -1,11 +1,12 @@
 /**
- * GSD Changelog — Fetch and display categorized release notes from GitHub
+ * GSD2 — GSD Changelog — Fetch and display categorized release notes from GitHub
  *
  * Fetches releases from the gsd-build/gsd-2 GitHub repository,
  * prompts the user for a version filter, and sends raw release notes
  * into the conversation for the LLM to summarize.
  *
  * Entry point: handleChangelog() called from commands.ts
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

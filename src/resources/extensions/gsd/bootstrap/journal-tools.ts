@@ -1,3 +1,4 @@
+// GSD2 — Journal Tools
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 

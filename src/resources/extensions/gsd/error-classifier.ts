@@ -1,13 +1,14 @@
 /**
- * Unified error classifier for provider/network/server errors.
+ * GSD2 — Unified error classifier for provider/network/server errors.
  *
  * Consolidates patterns from:
- *  - isTransientNetworkError()  in preferences-models.ts
- *  - classifyProviderError()    in provider-error-pause.ts
+ * - isTransientNetworkError()  in preferences-models.ts
+ * - classifyProviderError()    in provider-error-pause.ts
  *
  * Single entry point: classifyError(errorMsg, retryAfterMs?)
  *
  * @see https://github.com/gsd-build/gsd/issues/2577
+ *
  */
 
 // ── ErrorClass discriminated union ──────────────────────────────────────────

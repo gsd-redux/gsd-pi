@@ -1,3 +1,4 @@
+// GSD2 — Reassess Roadmap
 import { join } from "node:path";
 import { existsSync, unlinkSync } from "node:fs";
 import { clearParseCache } from "../files.js";
@@ -51,7 +52,6 @@ export interface ReassessRoadmapResult {
   assessmentPath: string;
   roadmapPath: string;
 }
-
 
 function validateParams(params: ReassessRoadmapParams): ReassessRoadmapParams {
   if (!isNonEmptyString(params?.milestoneId)) throw new Error("milestoneId is required");

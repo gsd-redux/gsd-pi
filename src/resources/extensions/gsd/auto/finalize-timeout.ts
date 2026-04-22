@@ -1,10 +1,11 @@
 /**
- * auto/finalize-timeout.ts — Timeout guard for post-unit finalization.
+ * GSD2 — auto/finalize-timeout.ts — Timeout guard for post-unit finalization.
  *
  * Prevents the auto-loop from hanging indefinitely when
  * postUnitPostVerification() never resolves (#2344).
  *
  * Leaf module — no imports from auto/ to avoid circular dependencies.
+ *
  */
 
 /** Timeout for postUnitPreVerification in runFinalize (ms). */

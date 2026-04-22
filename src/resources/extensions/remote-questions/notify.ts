@@ -1,10 +1,11 @@
 /**
- * Remote Notifications — one-way alert delivery to configured channels.
+ * GSD2 — Remote Notifications — one-way alert delivery to configured channels.
  *
  * Sends informational messages to Slack/Discord/Telegram without expecting
  * a reply. Used for auto-mode events like secrets-required pauses where
  * the user needs to be notified but should NOT send sensitive data back
  * through the channel.
+ *
  */
 
 import { resolveRemoteConfig } from "./config.js";

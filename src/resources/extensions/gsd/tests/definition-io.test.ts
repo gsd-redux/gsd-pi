@@ -1,5 +1,6 @@
 /**
- * definition-io.ts — unit tests for readFrozenDefinition.
+ * GSD2 — definition-io.ts — unit tests for readFrozenDefinition.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

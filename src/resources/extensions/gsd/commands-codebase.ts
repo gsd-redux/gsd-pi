@@ -1,8 +1,9 @@
 /**
- * GSD Command — /gsd codebase
+ * GSD2 — GSD Command — /gsd codebase
  *
  * Generate and manage the codebase map (.gsd/CODEBASE.md).
  * Subcommands: generate, update, stats, help
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

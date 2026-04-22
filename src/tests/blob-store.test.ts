@@ -1,6 +1,7 @@
 /**
- * Tests for BlobStore: content-addressed storage, path traversal protection,
+ * GSD2 — Tests for BlobStore: content-addressed storage, path traversal protection,
  * and blob ref parsing/externalization.
+ *
  */
 
 import test from 'node:test'

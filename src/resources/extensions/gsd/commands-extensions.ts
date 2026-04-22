@@ -1,9 +1,10 @@
 /**
- * GSD Extensions Command — /gsd extensions
+ * GSD2 — GSD Extensions Command — /gsd extensions
  *
  * Manage the extension registry: list, enable, disable, info.
  * Self-contained — no imports outside the extensions tree (extensions are loaded
  * via jiti at runtime from ~/.gsd/agent/, not compiled by tsc).
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,10 +1,11 @@
 /**
- * cli-provider-rate-limit.test.ts — Verify rate-limit backoff capping
+ * GSD2 — cli-provider-rate-limit.test.ts — Verify rate-limit backoff capping
  * for CLI-style providers (openai-codex, google-gemini-cli). (#2922)
  *
  * These providers use per-user quotas with shorter windows, so the
  * default 60s backoff should be capped at 30s to avoid leaving users
  * stuck in an apparent permanent "rate limit" state.
+ *
  */
 
 import test from "node:test";

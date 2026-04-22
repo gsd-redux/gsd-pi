@@ -1,3 +1,4 @@
+// GSD2 — Tests for Terminal Cmux
 import test from "node:test";
 import assert from "node:assert/strict";
 import { detectCapabilities, resetCapabilitiesCache } from "../../packages/pi-tui/src/terminal-image.ts";

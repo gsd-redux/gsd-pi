@@ -1,3 +1,4 @@
+// GSD2 — Tests for Plan Quality Validator
 import { validateTaskPlanContent, validateSlicePlanContent } from '../observability-validator.ts';
 import { createTestContext } from './test-helpers.ts';
 

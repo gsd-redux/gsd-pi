@@ -1,5 +1,5 @@
 /**
- * Auto-mode bootstrap — fresh-start initialization path.
+ * GSD2 — Auto-mode bootstrap — fresh-start initialization path.
  *
  * Git/state bootstrap, crash lock detection, debug init, worktree recovery,
  * guided flow gate, session init, worktree lifecycle, DB lifecycle,
@@ -7,6 +7,7 @@
  *
  * Extracted from startAuto() in auto.ts. The resume path (s.paused)
  * remains in auto.ts — this module handles only the fresh-start path.
+ *
  */
 
 import type {

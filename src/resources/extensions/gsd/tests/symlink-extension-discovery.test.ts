@@ -1,12 +1,4 @@
-// Regression test for: discoverManifests() skips symlinked extension directories
-//
-// The bug: Dirent.isDirectory() returns false for symlinks, so extensions installed
-// as directory symlinks under ~/.gsd/agent/extensions/ were invisible to all
-// management commands (list, enable, disable, info).
-//
-// The fix: check `entry.isDirectory() || entry.isSymbolicLink()`, matching the
-// pattern already used in loader.ts discoverExtensionsInDir().
-
+// GSD2 — Regression test for: discoverManifests() skips symlinked extension directories
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {

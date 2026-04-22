@@ -1,6 +1,4 @@
-// GSD Extension — Unit ID Parsing
-// Centralizes the milestone/slice/task decomposition of unit ID strings.
-
+// GSD2 — Extension — Unit ID Parsing
 export interface ParsedUnitId {
   milestone: string;
   slice?: string;

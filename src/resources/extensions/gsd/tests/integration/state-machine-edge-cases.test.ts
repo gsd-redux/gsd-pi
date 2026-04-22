@@ -1,18 +1,19 @@
 /**
- * state-machine-edge-cases.test.ts — Gap-filling tests for the GSD state
+ * GSD2 — state-machine-edge-cases.test.ts — Gap-filling tests for the GSD state
  * machine covering failure modes, boundary conditions, and edge cases NOT
  * covered by the existing state-machine-live-validation.test.ts suite.
  *
  * Coverage gaps filled:
  * 1. State derivation failures (file deletion races, partial DB, cache staleness,
- *    corrupt files, 0-slice ROADMAP)
+ * corrupt files, 0-slice ROADMAP)
  * 2. Transition boundary failures (mid-transition mutation, cascading blockers,
- *    multi-level milestone deps, blocked→unblocked recovery)
+ * multi-level milestone deps, blocked→unblocked recovery)
  * 3. Dispatch failures (null activeSlice, evaluating-gates without config,
- *    unhandled phase, missing task plan recovery)
+ * unhandled phase, missing task plan recovery)
  * 4. Completion & verification failures (unparseable verdict, needs-remediation
- *    blocks completion, missing SUMMARY blocks validation, UAT verdict gate,
- *    replan loop cap)
+ * blocks completion, missing SUMMARY blocks validation, UAT verdict gate,
+ * replan loop cap)
+ *
  */
 
 // GSD State Machine Edge Case Tests

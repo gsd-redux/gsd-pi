@@ -1,11 +1,4 @@
-// GSD Extension — Unified Rule Registry
-//
-// Holds all dispatch rules and hooks as a flat list of UnifiedRule objects.
-// Provides evaluation methods for each phase (dispatch, post-unit, pre-dispatch)
-// and encapsulates mutable hook state as instance fields.
-//
-// A module-level singleton accessor allows existing code to migrate incrementally.
-
+// GSD2 — Extension — Unified Rule Registry
 import { logWarning } from "./workflow-logger.js";
 import type { UnifiedRule, RulePhase } from "./rule-types.js";
 import type { DispatchAction, DispatchContext, DispatchRule } from "./auto-dispatch.js";

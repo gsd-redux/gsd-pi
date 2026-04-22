@@ -1,17 +1,18 @@
 /**
- * Headless Query — `gsd headless query`
+ * GSD2 — Headless Query — `gsd headless query`
  *
  * Single read-only command that returns the full project snapshot as JSON
  * to stdout, without spawning an LLM session. Instant (~50ms).
  *
  * Output: { state, next, cost }
- *   state — deriveState() output (phase, milestones, progress, blockers)
- *   next  — dry-run dispatch preview (what auto-mode would do next)
- *   cost  — aggregated parallel worker costs
+ * state — deriveState() output (phase, milestones, progress, blockers)
+ * next  — dry-run dispatch preview (what auto-mode would do next)
+ * cost  — aggregated parallel worker costs
  *
  * Note: Extension modules are .ts files loaded via jiti (not compiled to .js).
  * We use createJiti() here because this module is imported directly from cli.ts,
  * bypassing the extension loader's jiti setup (#1137).
+ *
  */
 
 import { createJiti } from '@mariozechner/jiti'

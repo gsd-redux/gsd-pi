@@ -1,6 +1,4 @@
-// Structural contract: shared/mod.ts must never import @gsd/pi-tui.
-// TUI-dependent exports live in shared/tui.ts instead.
-
+// GSD2 — Structural contract: shared/mod.ts must never import @gsd/pi-tui.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

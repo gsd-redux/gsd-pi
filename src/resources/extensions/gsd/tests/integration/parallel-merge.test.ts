@@ -1,15 +1,16 @@
 /**
- * parallel-merge.test.ts — Tests for parallel merge reconciliation (G5).
+ * GSD2 — parallel-merge.test.ts — Tests for parallel merge reconciliation (G5).
  *
  * Covers:
- *   - determineMergeOrder: sequential vs by-completion ordering, filtering
- *   - formatMergeResults: success, conflict, empty, mixed output formatting
- *   - mergeCompletedMilestone: clean merge with session cleanup, missing roadmap,
- *     conflict detection with structured error
- *   - mergeAllCompleted: stop-on-first-conflict, sequential execution order
+ * - determineMergeOrder: sequential vs by-completion ordering, filtering
+ * - formatMergeResults: success, conflict, empty, mixed output formatting
+ * - mergeCompletedMilestone: clean merge with session cleanup, missing roadmap,
+ * conflict detection with structured error
+ * - mergeAllCompleted: stop-on-first-conflict, sequential execution order
  *
  * Pure-function tests need no git. Integration tests use temp repos with real
  * git operations (same pattern as auto-worktree-milestone-merge.test.ts).
+ *
  */
 
 import test from "node:test";

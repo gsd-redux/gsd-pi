@@ -1,5 +1,5 @@
 /**
- * GSD Milestone Actions — Park, Unpark, and Discard operations.
+ * GSD2 — GSD Milestone Actions — Park, Unpark, and Discard operations.
  *
  * Park: Creates a PARKED.md marker file. deriveState() skips parked milestones
  * when finding the active milestone, but keeps them in the registry.
@@ -9,6 +9,7 @@
  *
  * Discard: Permanently removes the milestone directory. Also prunes
  * QUEUE-ORDER.json if the discarded milestone was in it.
+ *
  */
 
 import { existsSync, rmSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";

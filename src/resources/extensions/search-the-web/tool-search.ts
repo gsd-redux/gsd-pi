@@ -1,5 +1,5 @@
 /**
- * search-the-web tool — Rich web search with full Brave API support.
+ * GSD2 — search-the-web tool — Rich web search with full Brave API support.
  *
  * v3 improvements:
  * - Structured error taxonomy (auth_error, rate_limited, network_error, etc.)
@@ -8,6 +8,7 @@
  * - more_results_available from Brave response
  * - Adaptive snippet budget (fewer results = more snippets each)
  * - Rate limit info in details
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

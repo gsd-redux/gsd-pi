@@ -1,11 +1,12 @@
 /**
- * GSD Captures — Fire-and-forget thought capture with triage classification
+ * GSD2 — GSD Captures — Fire-and-forget thought capture with triage classification
  *
  * Append-only capture file at `.gsd/CAPTURES.md`. Each capture is an H3 section
  * with bold metadata fields, parseable by the same patterns used in files.ts.
  *
  * Worktree-aware: captures always resolve to the original project root's
  * `.gsd/CAPTURES.md`, not the worktree's local `.gsd/`.
+ *
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";

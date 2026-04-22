@@ -1,9 +1,10 @@
 /**
- * GSD Guided Flow — Smart Entry Wizard
+ * GSD2 — GSD Guided Flow — Smart Entry Wizard
  *
  * One function: showSmartEntry(). Reads state from disk, shows a contextual
  * wizard via showNextAction(), and dispatches through GSD-WORKFLOW.md.
  * No execution state, no hooks, no tools — the LLM does the rest.
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@gsd/pi-coding-agent";
@@ -828,7 +829,6 @@ export async function showHeadlessMilestoneCreation(
   // Dispatch — headless milestone creation is a planning activity
   await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "plan-milestone");
 }
-
 
 // ─── Discuss Flow ─────────────────────────────────────────────────────────────
 

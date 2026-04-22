@@ -1,3 +1,4 @@
+// GSD2 — Index — DEFAULT_SOCKET_PATH constant
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";

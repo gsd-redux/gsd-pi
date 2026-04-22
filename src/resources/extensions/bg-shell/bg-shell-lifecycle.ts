@@ -1,6 +1,7 @@
 /**
- * bg_shell lifecycle hook registration — session events, compaction awareness,
+ * GSD2 — bg_shell lifecycle hook registration — session events, compaction awareness,
  * context injection, process discovery, footer widget, and periodic maintenance.
+ *
  */
 
 import type {

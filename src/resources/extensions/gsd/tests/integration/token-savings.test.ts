@@ -1,11 +1,4 @@
-// Token Savings Validation Test
-//
-// Proves ≥30% character savings when using DB-scoped content vs full-markdown
-// for planning/research prompt types. Uses realistic fixture data:
-// 24 decisions across 3 milestones, 21 requirements across 5 slices in 2 milestones.
-//
-// Retires R016 (≥30% savings target) and provides evidence for R019 (no quality regression).
-
+// GSD2 — Token Savings Validation Test
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -20,7 +13,6 @@ import {
 } from '../../context-store.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 // ─── Fixture Generators ────────────────────────────────────────────────────
 

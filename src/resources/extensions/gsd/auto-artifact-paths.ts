@@ -1,9 +1,4 @@
-// GSD Auto-mode — Artifact Path Resolution
-//
-// resolveExpectedArtifactPath and diagnoseExpectedArtifact moved here from
-// auto-recovery.ts (Phase 5 dead-code cleanup). The artifact verification
-// function was removed entirely — callers now query WorkflowEngine directly.
-
+// GSD2 — Auto — mode — Artifact Path Resolution
 import {
   resolveMilestonePath,
   resolveSlicePath,

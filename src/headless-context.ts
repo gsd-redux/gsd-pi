@@ -1,8 +1,9 @@
 /**
- * Headless Context Loading — stdin reading, file context, and project bootstrapping
+ * GSD2 — Headless Context Loading — stdin reading, file context, and project bootstrapping
  *
  * Handles loading context from files or stdin for headless new-milestone,
  * and bootstraps the .gsd/ directory structure when needed.
+ *
  */
 
 import { readFileSync, mkdirSync } from 'node:fs'

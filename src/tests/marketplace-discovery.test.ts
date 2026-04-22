@@ -1,13 +1,14 @@
 /**
- * Marketplace Discovery Contract Tests
- * 
+ * GSD2 — Marketplace Discovery Contract Tests
+ *
  * Contract tests that exercise discoverMarketplace against real marketplace repos
  * (../claude_skills and ../claude-plugins-official). These tests validate:
  * - R001: marketplace parsing
- * - R002: path resolution  
+ * - R002: path resolution
  * - R003: manifest inspection
- * 
+ *
  * Tests run against real data, not synthetic fixtures.
+ *
  */
 
 import { describe, it } from 'node:test';

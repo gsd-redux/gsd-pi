@@ -1,8 +1,9 @@
 /**
- * GSD Workflow Templates — Registry & Resolution
+ * GSD2 — GSD Workflow Templates — Registry & Resolution
  *
  * Loads the workflow template registry and resolves templates by name,
  * alias, or trigger-keyword matching against user input.
+ *
  */
 
 import { readFileSync, existsSync } from "node:fs";

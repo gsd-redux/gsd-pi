@@ -1,6 +1,4 @@
-// GSD Watch — Header renderer: ASCII logo, session info, MCP status, remote questions
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — Watch — Header renderer: ASCII logo, session info, MCP status, remote questions
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";

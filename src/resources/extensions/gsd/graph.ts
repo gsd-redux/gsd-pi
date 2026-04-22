@@ -1,5 +1,5 @@
 /**
- * graph.ts — Pure data module for GRAPH.yaml workflow step tracking.
+ * GSD2 — graph.ts — Pure data module for GRAPH.yaml workflow step tracking.
  *
  * Provides types and functions for reading, writing, and querying the
  * step graph that drives CustomWorkflowEngine. Zero engine dependencies.
@@ -9,10 +9,11 @@
  *
  * Observability:
  * - readGraph/writeGraph use YAML on disk — human-readable, diffable,
- *   inspectable with `cat` or any YAML viewer.
+ * inspectable with `cat` or any YAML viewer.
  * - Each GraphStep has status, startedAt, finishedAt fields visible in GRAPH.yaml.
  * - writeGraph uses atomic write (tmp + rename) for crash safety.
  * - All operations are immutable — callers always get a new graph object.
+ *
  */
 
 import { parse, stringify } from "yaml";

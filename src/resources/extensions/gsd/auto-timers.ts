@@ -1,9 +1,10 @@
 /**
- * Unit supervision timers — soft timeout warning, idle watchdog,
+ * GSD2 — Unit supervision timers — soft timeout warning, idle watchdog,
  * hard timeout, and context-pressure monitor.
  *
  * Originally extracted from dispatchNextUnit() in auto.ts (now deleted — replaced by autoLoop).
  * via startUnitSupervision() and torn down by the caller via clearUnitTimeout().
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

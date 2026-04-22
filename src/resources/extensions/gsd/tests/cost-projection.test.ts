@@ -1,10 +1,11 @@
 /**
- * Contract tests for `formatCostProjection`.
+ * GSD2 — Contract tests for `formatCostProjection`.
  * Tests the pure function — no file I/O, no extension context.
  *
  * This test intentionally fails at import time (or on first assertion)
  * because `formatCostProjection` does not yet exist in metrics.ts.
  * That failure confirms the test runs against real code. (T01 state)
+ *
  */
 
 import { describe, test } from "node:test";

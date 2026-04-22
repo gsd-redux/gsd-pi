@@ -1,9 +1,10 @@
 /**
- * Type definitions, constants, and configuration shapes for GSD preferences.
+ * GSD2 — Type definitions, constants, and configuration shapes for GSD preferences.
  *
  * All interfaces, type aliases, and static lookup tables live here so that
  * both the validation and runtime modules can import them without pulling
  * in filesystem or loading logic.
+ *
  */
 
 import type { GitPreferences } from "./git-service.js";
@@ -159,7 +160,6 @@ export const KNOWN_UNIT_TYPES = [
   "discuss-milestone", "discuss-slice", "worktree-merge",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
-
 
 export const SKILL_ACTIONS = new Set(["use", "prefer", "avoid"]);
 
@@ -401,7 +401,6 @@ export interface GSDPreferences {
      */
     file_change_allowlist?: string[];
   };
-
 
   // ─── Enhanced Verification ──────────────────────────────────────────────────
   /**

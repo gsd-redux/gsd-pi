@@ -1,7 +1,4 @@
-// GSD Workflow Templates — Unit Tests
-//
-// Tests registry loading, template resolution, auto-detection, and listing.
-
+// GSD2 — Workflow Templates — Unit Tests
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -12,7 +9,6 @@ import {
   getTemplateInfo,
   loadWorkflowTemplate,
 } from '../workflow-templates.ts';
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Registry Loading

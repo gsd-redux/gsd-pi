@@ -1,5 +1,5 @@
 /**
- * Test: auto-mode prompts must prohibit ask_user_questions / secure_env_collect
+ * GSD2 — Test: auto-mode prompts must prohibit ask_user_questions / secure_env_collect
  *
  * Bug #2936: When the LLM calls ask_user_questions during auto-mode units
  * (plan-slice, execute-task, complete-slice), the interactive tool queues a
@@ -10,6 +10,7 @@
  *
  * Fix: Each auto-mode prompt must contain an "Autonomous execution" guard
  * that explicitly prohibits ask_user_questions and secure_env_collect.
+ *
  */
 
 import test from "node:test";

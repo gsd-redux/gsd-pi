@@ -1,11 +1,12 @@
 /**
- * Regression tests for zombie worker cleanup (#2736).
+ * GSD2 — Regression tests for zombie worker cleanup (#2736).
  *
  * Verifies that:
  * 1. refreshWorkerStatuses() deactivates the orchestrator when all workers
- *    are in terminal states (error/stopped).
+ * are in terminal states (error/stopped).
  * 2. restoreRuntimeState() (via getWorkerStatuses) returns empty when the
- *    cached state has only dead workers.
+ * cached state has only dead workers.
+ *
  */
 
 import test from "node:test";

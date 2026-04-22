@@ -1,5 +1,5 @@
 /**
- * Structured Data Formatter — compact notation for prompt injection.
+ * GSD2 — Structured Data Formatter — compact notation for prompt injection.
  *
  * Converts GSD data structures into a token-efficient format that removes
  * markdown table overhead, redundant labels, and formatting while remaining
@@ -11,6 +11,7 @@
  * - Omit field names when the pattern is clear from a header
  * - Use single-line entries for simple records
  * - Use multi-line with indentation for complex records
+ *
  */
 
 // ---------------------------------------------------------------------------

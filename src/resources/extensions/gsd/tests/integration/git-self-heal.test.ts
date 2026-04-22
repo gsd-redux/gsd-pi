@@ -1,8 +1,9 @@
 /**
- * git-self-heal.test.ts — Integration tests for git self-healing utilities.
+ * GSD2 — git-self-heal.test.ts — Integration tests for git self-healing utilities.
  *
  * Uses real temporary git repos with deliberately broken state.
  * No mocks — exercises actual git operations.
+ *
  */
 
 import { execSync } from "node:child_process";

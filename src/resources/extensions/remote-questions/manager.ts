@@ -1,5 +1,6 @@
 /**
- * Remote Questions — orchestration manager
+ * GSD2 — Remote Questions — orchestration manager
+ *
  */
 
 import { randomUUID } from "node:crypto";

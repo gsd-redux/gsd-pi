@@ -1,21 +1,22 @@
 /**
- * remote-notification-from-desktop.test.ts
+ * GSD2 — remote-notification-from-desktop.test.ts
  *
  * Regression guard: sendDesktopNotification must fire sendRemoteNotification
  * as a fire-and-forget side-effect so that Telegram/Slack/Discord channels
  * receive the same events as native desktop notifications.
  *
  * Testing strategy (structural analysis):
- *   node:test does not support mock.module without --experimental-test-module-mocks,
- *   so we use the same source-code structural approach established in this codebase
- *   (see session-start-footer.test.ts). We read notifications.ts and assert that:
- *     1. It imports sendRemoteNotification from the remote-questions/notify module.
- *     2. The sendDesktopNotification function body calls sendRemoteNotification
- *        with title and message as arguments.
- *     3. The call uses the void fire-and-forget pattern with a .catch(() => {})
- *        suppressor so that async failures never break the synchronous caller.
+ * node:test does not support mock.module without --experimental-test-module-mocks,
+ * so we use the same source-code structural approach established in this codebase
+ * (see session-start-footer.test.ts). We read notifications.ts and assert that:
+ * 1. It imports sendRemoteNotification from the remote-questions/notify module.
+ * 2. The sendDesktopNotification function body calls sendRemoteNotification
+ * with title and message as arguments.
+ * 3. The call uses the void fire-and-forget pattern with a .catch(() => {})
+ * suppressor so that async failures never break the synchronous caller.
  *
  * Relates to #4341.
+ *
  */
 
 import test from "node:test";

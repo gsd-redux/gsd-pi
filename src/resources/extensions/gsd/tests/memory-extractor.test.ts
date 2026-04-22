@@ -1,3 +1,4 @@
+// GSD2 — Tests for Memory Extractor
 import { parseMemoryResponse, _resetExtractionState, buildMemoryLLMCall } from '../memory-extractor.ts';
 import {
   openDatabase,

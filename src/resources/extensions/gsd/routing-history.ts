@@ -1,7 +1,4 @@
-// GSD Extension — Routing History (Adaptive Learning)
-// Tracks success/failure per tier per unit-type pattern to improve
-// classification accuracy over time.
-
+// GSD2 — Extension — Routing History (Adaptive Learning)
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import type { ComplexityTier } from "./types.js";

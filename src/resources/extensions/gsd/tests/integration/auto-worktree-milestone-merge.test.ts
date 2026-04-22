@@ -1,5 +1,5 @@
 /**
- * auto-worktree-milestone-merge.test.ts — Integration tests for mergeMilestoneToMain.
+ * GSD2 — auto-worktree-milestone-merge.test.ts — Integration tests for mergeMilestoneToMain.
  *
  * Covers: squash-merge topology (one commit on main), rich commit message with
  * slice titles, worktree cleanup, nothing-to-commit edge case, auto-push with
@@ -8,6 +8,7 @@
  * Note: execSync is used intentionally in these tests for git operations with
  * controlled, hardcoded inputs (no user input). This is safe and necessary for
  * testing real git behavior.
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

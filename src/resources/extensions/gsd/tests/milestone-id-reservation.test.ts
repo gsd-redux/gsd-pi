@@ -1,9 +1,4 @@
-// milestone-id-reservation — Verifies that preview IDs from guided-flow
-// match the IDs claimed by gsd_milestone_generate_id via the shared
-// reservation mechanism in milestone-ids.ts.
-//
-// Regression test for #1569.
-
+// GSD2 — milestone-id-reservation — Verifies that preview IDs from guided-flow
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 

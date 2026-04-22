@@ -1,10 +1,11 @@
 /**
- * Regression test for #3698 — allow milestone completion when validation
+ * GSD2 — Regression test for #3698 — allow milestone completion when validation
  * was skipped by preference
  *
  * When validation is skipped due to user preference (e.g. budget profile),
  * auto-dispatch should recognize the "skipped by preference" pattern and
  * allow completion instead of treating it as a missing validation.
+ *
  */
 
 import { describe, test } from 'node:test';

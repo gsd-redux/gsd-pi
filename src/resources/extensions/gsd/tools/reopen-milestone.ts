@@ -1,5 +1,4 @@
-// GSD — reopen-milestone tool handler
-
+// GSD2 — reopen-milestone tool handler
 /**
  * reopen-milestone handler — the core operation behind gsd_milestone_reopen.
  *

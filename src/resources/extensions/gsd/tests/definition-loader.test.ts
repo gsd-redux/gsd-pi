@@ -1,10 +1,11 @@
 /**
- * Unit tests for definition-loader.ts.
+ * GSD2 — Unit tests for definition-loader.ts.
  *
  * Covers V1 YAML schema validation (valid + various rejection cases),
  * filesystem loading, snake_case → camelCase conversion, forward
  * compatibility with unknown fields, parameter substitution, and the
  * four gap validations (duplicate IDs, dangling deps, self-deps, cycles).
+ *
  */
 
 import test from "node:test";

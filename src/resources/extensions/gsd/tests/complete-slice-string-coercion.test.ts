@@ -1,5 +1,4 @@
-// GSD Extension — String coercion regression tests for complete-slice/task tools
-
+// GSD2 — Extension — String coercion regression tests for complete-slice/task tools
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

@@ -1,3 +1,4 @@
+// GSD2 — Doctor Types — types and interfaces
 export type DoctorSeverity = "info" | "warning" | "error";
 export type DoctorIssueCode =
   | "invalid_preferences"

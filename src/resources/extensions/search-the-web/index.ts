@@ -1,8 +1,9 @@
 /**
- * Web Search Extension v4
+ * GSD2 — Web Search Extension v4
  *
  * Native Anthropic hooks stay eager. Heavy tool registration is deferred in
  * interactive mode so startup is not blocked on the full search tool stack.
+ *
  */
 
 import { importExtensionModule, type ExtensionAPI } from "@gsd/pi-coding-agent";

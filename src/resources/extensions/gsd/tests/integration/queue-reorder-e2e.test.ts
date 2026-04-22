@@ -1,5 +1,5 @@
 /**
- * End-to-end integration tests for the Queue Reorder feature.
+ * GSD2 — End-to-end integration tests for the Queue Reorder feature.
  *
  * Verifies the full chain: QUEUE-ORDER.json + findMilestoneIds() + deriveState()
  * + depends_on removal from CONTEXT.md files.
@@ -9,6 +9,7 @@
  * 2. depends_on is removed from CONTEXT.md frontmatter
  * 3. deriveState() picks the correct milestone as active
  * 4. A fresh deriveState() call (simulating new session) also works
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -67,7 +68,6 @@ function readContextFile(base: string, mid: string): string {
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: Queue order changes milestone activation
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 describe('queue-reorder-e2e', () => {
 test('E2E: queue-order changes active milestone', async () => {

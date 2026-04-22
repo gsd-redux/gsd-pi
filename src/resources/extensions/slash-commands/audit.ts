@@ -1,3 +1,4 @@
+// GSD2 — Audit
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { mkdirSync } from "node:fs";
 

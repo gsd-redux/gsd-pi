@@ -1,3 +1,4 @@
+// GSD2 — Cli Entry
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";

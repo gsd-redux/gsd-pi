@@ -1,11 +1,12 @@
 /**
- * GSD Activity Log — Save raw chat sessions to .gsd/activity/
+ * GSD2 — GSD Activity Log — Save raw chat sessions to .gsd/activity/
  *
  * Before each context wipe in auto-mode, dumps the full session
  * as JSONL. No formatting, no truncation, no information loss.
  * These are debug artifacts — only read when summaries aren't enough.
  *
  * Diagnostic extraction is handled by session-forensics.ts.
+ *
  */
 
 import { writeFileSync, writeSync, mkdirSync, readdirSync, unlinkSync, statSync, openSync, closeSync, constants } from "node:fs";

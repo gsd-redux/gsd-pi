@@ -1,5 +1,6 @@
 /**
- * Remote Questions — configuration resolution and validation
+ * GSD2 — Remote Questions — configuration resolution and validation
+ *
  */
 
 import { AuthStorage } from "@gsd/pi-coding-agent";

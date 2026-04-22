@@ -1,5 +1,5 @@
 /**
- * auto-start-bootstrap-await-3420.test.ts — Regression test for #3420.
+ * GSD2 — auto-start-bootstrap-await-3420.test.ts — Regression test for #3420.
  *
  * Bug: In bootstrapAutoSession, when state.phase === "pre-planning" and no
  * context file exists, showSmartEntry is called to dispatch a discuss workflow.
@@ -11,7 +11,7 @@
  * immediately calls invalidateAllCaches() + deriveState() + checks postState.
  * Since the discussion hasn't run yet, postState.phase is still "pre-planning"
  * and the context check fails, producing the warning:
- *   "Discussion completed but milestone context is still missing. Run /gsd to try again."
+ * "Discussion completed but milestone context is still missing. Run /gsd to try again."
  *
  * The discussion never ran — the warning fires immediately.
  *
@@ -22,6 +22,7 @@
  * This test verifies the fix by asserting that the pre-planning !hasContext block
  * does NOT contain a postState phase check after showSmartEntry — it must
  * return false immediately to let the async dispatch complete.
+ *
  */
 
 import test from "node:test";

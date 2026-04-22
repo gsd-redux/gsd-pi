@@ -1,10 +1,4 @@
-// decision-scope-cascade: Tests for R005 fallback cascade and scope derivation
-//
-// Validates:
-// (a) inlineDecisionsFromDb cascade: milestone + scope → milestone only → null
-// (b) deriveSliceScope extracts meaningful scope keywords from slice titles
-// (c) deriveSliceScope returns undefined for generic titles
-
+// GSD2 — decision-scope-cascade: Tests for R005 fallback cascade and scope derivation
 import { describe, test, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {

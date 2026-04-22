@@ -1,15 +1,16 @@
 /**
- * mac-tools — pi extension
+ * GSD2 — mac-tools — pi extension
  *
  * Gives the agent macOS automation capabilities via a Swift CLI that interfaces
  * with Accessibility APIs, NSWorkspace, and CGWindowList.
  *
  * Architecture:
- *  - Swift CLI (`swift-cli/`) handles all macOS API calls
- *  - JSON protocol: stdin `{ command, params }` → stdout `{ success, data?, error? }`
- *  - TS extension invokes CLI per-command via execFileSync
- *  - Mtime-based compilation caching: recompiles only when source files change
- *  - All Swift debug output goes to stderr; only JSON on stdout
+ * - Swift CLI (`swift-cli/`) handles all macOS API calls
+ * - JSON protocol: stdin `{ command, params }` → stdout `{ success, data?, error? }`
+ * - TS extension invokes CLI per-command via execFileSync
+ * - Mtime-based compilation caching: recompiles only when source files change
+ * - All Swift debug output goes to stderr; only JSON on stdout
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

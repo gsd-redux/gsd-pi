@@ -1,7 +1,8 @@
 /**
- * Timeout recovery logic for auto-mode units.
+ * GSD2 — Timeout recovery logic for auto-mode units.
  * Handles idle and hard timeout recovery with escalation, steering messages,
  * and blocker placeholder generation.
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

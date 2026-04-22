@@ -1,7 +1,8 @@
 /**
- * {{EXTENSION_NAME}} — Stateful tool with persistence
+ * GSD2 — {{EXTENSION_NAME}} — Stateful tool with persistence
  *
  * State is stored in tool result details for proper branching support.
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";

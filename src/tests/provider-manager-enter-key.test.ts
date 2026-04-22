@@ -1,5 +1,5 @@
 /**
- * Regression test for #3579 — Enter key initiates auth setup in provider manager
+ * GSD2 — Regression test for #3579 — Enter key initiates auth setup in provider manager
  *
  * The provider manager component did not handle the Enter key, leaving users
  * unable to initiate auth setup without knowing the 'd' keyboard shortcut.
@@ -7,6 +7,7 @@
  *
  * Structural verification test — reads source to confirm selectConfirm handler
  * and onSetupAuth callback exist in provider-manager.ts.
+ *
  */
 
 import { describe, test } from 'node:test';

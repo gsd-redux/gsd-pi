@@ -1,7 +1,4 @@
 // GSD2 — Tests for the ecosystem extension wrapper (#3338)
-// Covers: AUTO_LOOP_PHASE_MAP behavior, before_agent_start interception,
-// snapshot reads, and a key-drift guard against pi's ExtensionAPI surface.
-
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 

@@ -1,9 +1,10 @@
 /**
- * Tests for secure_env_collect utility functions:
+ * GSD2 — Tests for secure_env_collect utility functions:
  * - checkExistingEnvKeys: detects keys already present in .env file or process.env
  * - detectDestination: infers write destination from project files
  *
  * Uses temp directories for filesystem isolation.
+ *
  */
 
 import test from "node:test";

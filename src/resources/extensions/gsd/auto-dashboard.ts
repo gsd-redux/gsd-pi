@@ -1,9 +1,10 @@
 /**
- * Auto-mode Dashboard — progress widget rendering, elapsed time formatting,
+ * GSD2 — Auto-mode Dashboard — progress widget rendering, elapsed time formatting,
  * unit description helpers, and slice progress caching.
  *
  * Pure functions that accept specific parameters — no module-level globals
  * or AutoContext dependency. State accessors are passed as callbacks.
+ *
  */
 
 import type {

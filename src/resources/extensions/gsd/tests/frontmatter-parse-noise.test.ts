@@ -1,8 +1,9 @@
 /**
- * Regression test for #3693 — suppress repeated frontmatter parse warnings
+ * GSD2 — Regression test for #3693 — suppress repeated frontmatter parse warnings
  *
  * parseFrontmatterBlock was logging a YAML parse warning on every call.
  * The fix adds a _warnedFrontmatterParse flag so the warning only fires once.
+ *
  */
 
 import { describe, test } from 'node:test';

@@ -1,44 +1,45 @@
 /**
- * Shared next-action prompt for GSD extensions.
+ * GSD2 — Shared next-action prompt for GSD extensions.
  *
  * Renders a consistent "step complete" UI at the end of every GSD stage:
  *
- *   ─────────────────────────────────────────
- *   ✓  Phase 1 research complete
+ * ─────────────────────────────────────────
+ * ✓  Phase 1 research complete
  *
- *      [caller summary lines]
+ * [caller summary lines]
  *
- *      [optional extra content block]
+ * [optional extra content block]
  *
- *   Files written:
- *      .gsd/phases/01-foo/01-RESEARCH.md
+ * Files written:
+ * .gsd/phases/01-foo/01-RESEARCH.md
  *
- *   › 1. Plan phase 1           ← recommended, pre-selected
- *        Create PLAN.md files for execution
+ * › 1. Plan phase 1           ← recommended, pre-selected
+ * Create PLAN.md files for execution
  *
- *     2. Not yet
- *        Run /gsd-plan-phase 1 when ready.
- *   ─────────────────────────────────────────
+ * 2. Not yet
+ * Run /gsd-plan-phase 1 when ready.
+ * ─────────────────────────────────────────
  *
  * Usage:
  *
- *   const choice = await showNextAction(ctx, {
- *     title: "Phase 1 research complete",
- *     summary: ["6 libraries evaluated", "Stack: Phaser 3 + TypeScript"],
- *     files: ["/abs/path/to/01-RESEARCH.md"],
- *     extra: ["Wave 1: 01-01, 01-02  (parallel)", "Wave 2: 01-03"],
- *     actions: [
- *       { id: "plan",  label: "Plan phase 1",   description: "Create PLAN.md files for execution", recommended: true },
- *       { id: "later", label: "Discuss first",  description: "Capture constraints before planning" },
- *     ],
- *     notYetMessage: "Run /gsd-plan-phase 1 when ready.",
- *   });
+ * const choice = await showNextAction(ctx, {
+ * title: "Phase 1 research complete",
+ * summary: ["6 libraries evaluated", "Stack: Phaser 3 + TypeScript"],
+ * files: ["/abs/path/to/01-RESEARCH.md"],
+ * extra: ["Wave 1: 01-01, 01-02  (parallel)", "Wave 2: 01-03"],
+ * actions: [
+ * { id: "plan",  label: "Plan phase 1",   description: "Create PLAN.md files for execution", recommended: true },
+ * { id: "later", label: "Discuss first",  description: "Capture constraints before planning" },
+ * ],
+ * notYetMessage: "Run /gsd-plan-phase 1 when ready.",
+ * });
  *
- *   // choice is one of the action ids, or "not_yet"
- *   if (choice === "plan") { ... }
+ * // choice is one of the action ids, or "not_yet"
+ * if (choice === "plan") { ... }
  *
  * "Not yet" is always appended automatically as the last option.
  * Pressing Escape also resolves as "not_yet".
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

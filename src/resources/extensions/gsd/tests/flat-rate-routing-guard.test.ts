@@ -1,7 +1,8 @@
 /**
- * Regression test for #3453: dynamic model routing must be disabled for
+ * GSD2 — Regression test for #3453: dynamic model routing must be disabled for
  * flat-rate providers like GitHub Copilot where all models cost the same
  * per request — routing only degrades quality with no cost benefit.
+ *
  */
 
 import { describe, test } from "node:test";

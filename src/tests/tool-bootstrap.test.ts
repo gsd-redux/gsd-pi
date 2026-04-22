@@ -1,3 +1,4 @@
+// GSD2 — Tests for Tool Bootstrap
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";

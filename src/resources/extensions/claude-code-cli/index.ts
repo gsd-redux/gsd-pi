@@ -1,5 +1,5 @@
 /**
- * Claude Code CLI Provider Extension
+ * GSD2 — Claude Code CLI Provider Extension
  *
  * Registers a model provider that delegates inference to the user's
  * locally-installed Claude Code CLI via the official Agent SDK.
@@ -9,6 +9,7 @@
  *
  * TOS-compliant: uses Anthropic's official `@anthropic-ai/claude-agent-sdk`,
  * never touches credentials, never offers a login flow.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

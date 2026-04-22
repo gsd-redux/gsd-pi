@@ -1,13 +1,14 @@
 /**
- * Unit tests for the milestone completion validation gate pattern matching.
+ * GSD2 — Unit tests for the milestone completion validation gate pattern matching.
  *
  * The gate in auto-dispatch accepts two evidence formats:
- *   1. Structured template: content contains "Operational" AND ("MET" or "N/A")
- *   2. Prose evidence: matches /[Oo]perational[\s:][^\n]*(?:pass|verified|...)/i
+ * 1. Structured template: content contains "Operational" AND ("MET" or "N/A")
+ * 2. Prose evidence: matches /[Oo]perational[\s:][^\n]*(?:pass|verified|...)/i
  *
  * These tests exercise the exact same expressions used in auto-dispatch.ts
  * to ensure both formats are correctly recognized, and that content without
  * operational evidence is properly rejected.
+ *
  */
 
 import test from "node:test";

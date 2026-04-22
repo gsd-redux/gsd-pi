@@ -1,17 +1,4 @@
-// GSD Extension — Unit Ownership
-// Opt-in per-unit ownership claims for multi-agent safety.
-//
-// An agent can claim a unit (task, slice) before working on it.
-// complete-task and complete-slice enforce ownership when claims exist.
-// Claims are stored in SQLite (.gsd/unit-claims.db) for atomic
-// first-writer-wins semantics via INSERT OR IGNORE.
-//
-// Unit key format:
-//   task:  "<milestoneId>/<sliceId>/<taskId>"
-//   slice: "<milestoneId>/<sliceId>"
-//
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — Extension — Unit Ownership
 import { createRequire } from "node:module";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";

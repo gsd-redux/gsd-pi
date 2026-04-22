@@ -1,8 +1,4 @@
-// planning-crossval.test.ts — Cross-validation: DB→render→parse round-trip parity
-// Proves R014: DB state matches rendered-then-parsed state during the transition window.
-// Each test seeds planning data into DB via insert functions, renders markdown via
-// renderers, parses back via existing parsers, and asserts field-by-field parity.
-
+// GSD2 — planning-crossval.test.ts — Cross-validation: DB→render→parse round-trip parity
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

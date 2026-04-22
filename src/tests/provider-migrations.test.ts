@@ -1,3 +1,4 @@
+// GSD2 — Tests for Provider Migrations
 import test from "node:test"
 import assert from "node:assert/strict"
 import { hasDirectAnthropicApiKey, shouldMigrateAnthropicToClaudeCode } from "../provider-migrations.ts"

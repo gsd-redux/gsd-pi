@@ -1,11 +1,11 @@
 /**
- * Guided-flow dynamic routing — regression test for #2958.
+ * GSD2 — Guided-flow dynamic routing — regression test for #2958.
  *
  * Verifies that dispatchWorkflow() routes through the dynamic routing pipeline
  * (selectAndApplyModel from auto-model-selection.ts) instead of bypassing it
  * with a direct call to resolveModelWithFallbacksForUnit.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import test from "node:test";

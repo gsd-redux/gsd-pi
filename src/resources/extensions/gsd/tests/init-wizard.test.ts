@@ -1,8 +1,9 @@
 /**
- * Unit tests for GSD Init Wizard — project onboarding flow.
+ * GSD2 — Unit tests for GSD Init Wizard — project onboarding flow.
  *
  * Tests the bootstrap logic and preferences file generation
  * without requiring interactive UI (tests the pure functions).
+ *
  */
 
 import test from "node:test";

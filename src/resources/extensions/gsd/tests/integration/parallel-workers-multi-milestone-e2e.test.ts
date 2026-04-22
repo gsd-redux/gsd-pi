@@ -1,16 +1,17 @@
 /**
- * E2E test: Parallel workers across multiple milestones.
+ * GSD2 — E2E test: Parallel workers across multiple milestones.
  *
  * Validates the full lifecycle of the worker registry + metrics + budget
  * alerting across multiple milestone contexts. Uses real filesystem fixtures
  * and the actual metrics/worker-registry modules (no mocking).
  *
  * Covers:
- *  - Worker registry tracking across parallel batches
- *  - Metrics ledger accumulation across milestones
- *  - Budget alert level transitions including the 80% threshold
- *  - Dashboard data aggregation with parallel worker context
- *  - Cost projection with budget ceiling awareness
+ * - Worker registry tracking across parallel batches
+ * - Metrics ledger accumulation across milestones
+ * - Budget alert level transitions including the 80% threshold
+ * - Dashboard data aggregation with parallel worker context
+ * - Cost projection with budget ceiling awareness
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -81,7 +82,6 @@ function cleanup(base: string): void {
 }
 
 // ─── E2E: Parallel workers across M001 and M002 ──────────────────────────────
-
 
 describe('parallel-workers-multi-milestone-e2e', () => {
 test('E2E: Parallel workers across milestones', () => {

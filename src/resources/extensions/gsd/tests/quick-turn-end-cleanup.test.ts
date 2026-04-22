@@ -1,5 +1,5 @@
 /**
- * Tests that cleanupQuickBranch is called on turn_end to squash-merge the
+ * GSD2 — Tests that cleanupQuickBranch is called on turn_end to squash-merge the
  * quick branch back to the original branch after the agent completes.
  *
  * Relates to #2668: /gsd quick does not squash-merge branch back after agent
@@ -8,6 +8,7 @@
  * The fix registers a turn_end hook in register-hooks.ts that calls
  * cleanupQuickBranch() after each turn, which is a no-op when no quick-task
  * state is pending.
+ *
  */
 
 import { describe, it } from "node:test";

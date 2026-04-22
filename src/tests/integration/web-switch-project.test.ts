@@ -1,3 +1,4 @@
+// GSD2 — Tests for Web Switch Project
 import test, { after, describe } from "node:test";
 import assert from "node:assert/strict";
 import {

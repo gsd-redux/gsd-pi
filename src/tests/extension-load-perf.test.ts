@@ -1,5 +1,5 @@
 /**
- * Extension loading performance test
+ * GSD2 — Extension loading performance test
  *
  * Regression test for https://github.com/gsd-build/gsd-2/issues/2108
  *
@@ -10,6 +10,7 @@
  *
  * Uses the built dist/ (not raw TS source) because pi-coding-agent uses
  * TypeScript features unsupported by --experimental-strip-types.
+ *
  */
 
 import test from "node:test";

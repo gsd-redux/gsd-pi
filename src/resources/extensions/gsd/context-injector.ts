@@ -1,5 +1,5 @@
 /**
- * context-injector.ts — Inject prior step artifacts as context into step prompts.
+ * GSD2 — context-injector.ts — Inject prior step artifacts as context into step prompts.
  *
  * Reads the frozen DEFINITION.yaml from a run directory, finds the current step's
  * `contextFrom` references, locates each referenced step's `produces` artifacts
@@ -11,6 +11,7 @@
  * - Missing artifact files are skipped silently (the step may not have produced them yet).
  * - Unknown step IDs in contextFrom produce a console.warn for diagnosis.
  * - The frozen DEFINITION.yaml on disk is the single source of truth for contextFrom config.
+ *
  */
 
 import { readFileSync, existsSync } from "node:fs";

@@ -1,5 +1,6 @@
 /**
- * TUI: Background Process Manager Overlay.
+ * GSD2 — TUI: Background Process Manager Overlay.
+ *
  */
 
 import type { Theme } from "@gsd/pi-coding-agent";

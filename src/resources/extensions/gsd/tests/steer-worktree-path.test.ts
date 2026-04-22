@@ -1,7 +1,4 @@
-// GSD Extension - Steer Worktree Path Resolution Test
-// Regression test for #3476: /gsd steer must write overrides to the worktree .gsd/,
-// not the project root .gsd/, when a worktree is active.
-
+// GSD2 — Extension — Steer Worktree Path Resolution Test
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync } from "node:fs";

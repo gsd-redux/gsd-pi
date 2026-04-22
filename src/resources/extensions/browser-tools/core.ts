@@ -1,7 +1,8 @@
 /**
- * Runtime-neutral helper logic for browser-tools.
+ * GSD2 — Runtime-neutral helper logic for browser-tools.
  *
  * Kept free of pi-specific imports so it can be exercised with node:test.
+ *
  */
 
 // ---------------------------------------------------------------------------

@@ -1,9 +1,4 @@
-// GSD Extension — Core Type Definitions
-// Types consumed by state derivation, file parsing, and status display.
-// Pure interfaces — no logic, no runtime dependencies.
-
-// ─── Enums & Literal Unions ────────────────────────────────────────────────
-
+// GSD2 — Extension — Core Type Definitions
 export type RiskLevel = "low" | "medium" | "high";
 export type Phase =
   | "pre-planning"

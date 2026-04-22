@@ -1,3 +1,4 @@
+// GSD2 — Doctor Git Checks
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 

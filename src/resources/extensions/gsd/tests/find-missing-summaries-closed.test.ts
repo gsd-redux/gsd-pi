@@ -1,5 +1,5 @@
 /**
- * Regression test for #3669 — findMissingSummaries skips closed slices
+ * GSD2 — Regression test for #3669 — findMissingSummaries skips closed slices
  *
  * When a slice has status "skipped", "complete", or "done", it should be
  * excluded from the missing-summary check because closed slices intentionally
@@ -7,6 +7,7 @@
  *
  * This is a structural verification test — it reads the source to confirm the
  * CLOSED_STATUSES guard exists at the filter site.
+ *
  */
 
 import { describe, test } from 'node:test';

@@ -1,10 +1,11 @@
 /**
- * Regression test for #1919: --fix flag not stripped before positional parse.
+ * GSD2 — Regression test for #1919: --fix flag not stripped before positional parse.
  *
  * parseDoctorArgs("--fix") must:
- *   1. Set fixFlag = true
- *   2. Not leak "--fix" into requestedScope
- *   3. Keep mode as "doctor" (the flag is not a positional subcommand)
+ * 1. Set fixFlag = true
+ * 2. Not leak "--fix" into requestedScope
+ * 3. Keep mode as "doctor" (the flag is not a positional subcommand)
+ *
  */
 
 import { parseDoctorArgs } from "../commands-handlers.js";

@@ -1,5 +1,5 @@
 /**
- * worktree-nested-git-safety.test.ts — #2616
+ * GSD2 — worktree-nested-git-safety.test.ts — #2616
  *
  * When scaffolding tools (create-next-app, cargo init, etc.) run inside a
  * worktree, they create nested .git directories. Git treats these as gitlinks
@@ -9,6 +9,7 @@
  * This test verifies that removeWorktree detects nested .git directories
  * (orphaned gitlinks) and absorbs or removes them before cleanup so files
  * are tracked as regular content instead of unreachable gitlink pointers.
+ *
  */
 
 import { readFileSync } from "node:fs";

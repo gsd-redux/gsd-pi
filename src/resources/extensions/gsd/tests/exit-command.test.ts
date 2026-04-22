@@ -1,3 +1,4 @@
+// GSD2 — Tests for Exit Command
 import test from "node:test";
 import assert from "node:assert/strict";
 

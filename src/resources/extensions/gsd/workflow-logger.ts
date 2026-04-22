@@ -1,21 +1,4 @@
-// GSD Extension — Workflow Logger
-// Centralized warning/error accumulator for the workflow engine pipeline.
-// Captures structured entries that the auto-loop can drain after each unit
-// to surface root causes for stuck loops, silent degradation, and blocked writes.
-// Error-severity entries are persisted to .gsd/audit-log.jsonl (sanitized) for
-// post-mortem analysis. Warnings are ephemeral (stderr + buffer only) to avoid
-// log amplification from expected-control-flow catch paths.
-//
-// Stderr policy: every logWarning/logError call writes immediately to stderr
-// for terminal visibility. This is intentional — unlike debug-logger (which is
-// opt-in and zero-overhead when disabled), workflow-logger covers operational
-// warnings/errors that should always be visible. There is no disable flag.
-//
-// Singleton safety: _buffer is module-level and shared across all calls within
-// a process. The auto-loop must call _resetLogs() (or drainAndSummarize()) at
-// the start of each unit to prevent log bleed between units running in the same
-// Node process.
-
+// GSD2 — Extension — Workflow Logger
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 

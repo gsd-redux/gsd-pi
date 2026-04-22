@@ -1,13 +1,14 @@
 /**
- * Regression test for #2826: detectMissingArtifacts must parse hook/
+ * GSD2 — Regression test for #2826: detectMissingArtifacts must parse hook/
  * compound unit types correctly, not just the first slash segment.
  *
  * Keys like "hook/telegram-progress/M007/S01" must yield:
- *   unitType = "hook/telegram-progress"  (not "hook")
- *   unitId   = "M007/S01"               (not "telegram-progress/M007/S01")
+ * unitType = "hook/telegram-progress"  (not "hook")
+ * unitId   = "M007/S01"               (not "telegram-progress/M007/S01")
  *
  * The fix extracts a shared splitCompletedKey() helper used by both
  * forensics.ts and doctor-runtime-checks.ts.
+ *
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";

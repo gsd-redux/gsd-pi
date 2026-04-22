@@ -1,5 +1,5 @@
 /**
- * Tool-call loop guard.
+ * GSD2 — Tool-call loop guard.
  *
  * Detects when a model calls the same tool with identical arguments
  * repeatedly within a single agent turn. Works in both auto-mode and
@@ -10,6 +10,7 @@
  * and blocks when the same signature appears more than MAX_CONSECUTIVE
  * times in a row. Resets on each agent turn (session_start, agent_end)
  * and when a different tool call breaks the streak.
+ *
  */
 
 import { createHash } from "node:crypto";

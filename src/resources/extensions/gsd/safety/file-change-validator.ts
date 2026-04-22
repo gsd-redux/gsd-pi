@@ -1,5 +1,5 @@
 /**
- * Post-unit file change validator for auto-mode safety harness.
+ * GSD2 — Post-unit file change validator for auto-mode safety harness.
  * Compares actual git diff against the task plan's expected output files.
  *
  * Uses tasks.expected_output (DB column, populated from per-task ## Expected Output)
@@ -8,7 +8,7 @@
  * Using diff-tree --root handles initial commits, shallow clones, and merge commits correctly
  * (Bug #4385 — git diff HEAD~1 failed on initial commits).
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { createRequire } from "node:module";

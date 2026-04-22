@@ -1,3 +1,4 @@
+// GSD2 — Tests for Key Manager
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AuthStorage } from "@gsd/pi-coding-agent";

@@ -1,3 +1,4 @@
+// GSD2 — Doctor Service — DOCTOR_MAX_BUFFER constant
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"

@@ -1,5 +1,4 @@
 // GSD2 — Known model capability table for Ollama models
-
 /**
  * Maps well-known Ollama model families to their capabilities.
  * Used to enrich auto-discovered models with accurate context windows,

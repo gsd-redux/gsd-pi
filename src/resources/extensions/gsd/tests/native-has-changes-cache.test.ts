@@ -1,10 +1,11 @@
 /**
- * Unit tests for the nativeHasChanges() fallback cache (10s TTL).
+ * GSD2 — Unit tests for the nativeHasChanges() fallback cache (10s TTL).
  *
  * Verifies:
- *   1. Cached result is returned within the TTL window
- *   2. Cache invalidates after TTL expires
- *   3. Cache invalidates when basePath changes
+ * 1. Cached result is returned within the TTL window
+ * 2. Cache invalidates after TTL expires
+ * 3. Cache invalidates when basePath changes
+ *
  */
 
 import test from 'node:test';

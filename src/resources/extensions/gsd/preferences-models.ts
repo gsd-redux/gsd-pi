@@ -1,9 +1,10 @@
 /**
- * Model-related preferences: resolution, fallbacks, profile defaults, and routing.
+ * GSD2 — Model-related preferences: resolution, fallbacks, profile defaults, and routing.
  *
  * Contains all logic for resolving model configurations from preferences,
  * including per-phase model selection, fallback chains, token profiles,
  * and dynamic routing configuration.
+ *
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

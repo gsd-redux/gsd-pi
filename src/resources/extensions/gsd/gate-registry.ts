@@ -1,5 +1,5 @@
 /**
- * GSD Gate Registry — single source of truth for quality-gate ownership.
+ * GSD2 — GSD Gate Registry — single source of truth for quality-gate ownership.
  *
  * Each gate declares which workflow turn owns it, the scope at which it is
  * persisted in the `quality_gates` table, and the question/guidance text used
@@ -10,13 +10,14 @@
  * silently dropped.
  *
  * Design notes:
- *   - `GATE_REGISTRY` is exhaustiveness-checked against `GateId` via
- *     `satisfies Record<GateId, GateDefinition>`, so adding a new GateId
- *     without a registry entry is a compile error.
- *   - `getGatesForTurn(turn)` returns the definitions a turn owns.
- *   - `assertGateCoverage(pending, turn)` throws a GSDError if the pending
- *     list for a turn contains unknown gates, or if any gate owned by the
- *     turn is missing from the pending list.
+ * - `GATE_REGISTRY` is exhaustiveness-checked against `GateId` via
+ * `satisfies Record<GateId, GateDefinition>`, so adding a new GateId
+ * without a registry entry is a compile error.
+ * - `getGatesForTurn(turn)` returns the definitions a turn owns.
+ * - `assertGateCoverage(pending, turn)` throws a GSDError if the pending
+ * list for a turn contains unknown gates, or if any gate owned by the
+ * turn is missing from the pending list.
+ *
  */
 
 import { GSDError, GSD_PARSE_ERROR } from "./errors.js";

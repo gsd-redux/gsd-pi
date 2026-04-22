@@ -1,3 +1,4 @@
+// GSD2 — Claude Import — types and interfaces
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { SettingsManager, getAgentDir } from "@gsd/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -502,7 +503,6 @@ function persistManifestToSettings(
   // For now, marketplace agents remain discoverable via the import manifest and
   // canonical metadata, but are not persisted into package sources.
 }
-
 
 export async function runClaudeImportFlow(
   ctx: ExtensionCommandContext,

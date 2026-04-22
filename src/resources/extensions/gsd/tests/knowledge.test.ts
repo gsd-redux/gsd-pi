@@ -1,5 +1,5 @@
 /**
- * Unit tests for KNOWLEDGE.md integration.
+ * GSD2 — Unit tests for KNOWLEDGE.md integration.
  *
  * Tests:
  * - KNOWLEDGE is registered in GSD_ROOT_FILES
@@ -7,6 +7,7 @@
  * - inlineGsdRootFile works with the KNOWLEDGE key
  * - before_agent_start hook includes/omits knowledge block appropriately
  * - loadKnowledgeBlock merges global and project knowledge correctly
+ *
  */
 
 import test from 'node:test';

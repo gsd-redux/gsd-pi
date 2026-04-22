@@ -1,8 +1,9 @@
 /**
- * Terminal capability detection for keyboard shortcut support.
+ * GSD2 — Terminal capability detection for keyboard shortcut support.
  *
  * Ctrl+Alt shortcuts require the Kitty keyboard protocol or modifyOtherKeys.
  * Terminals that lack this support silently swallow the key combos.
+ *
  */
 
 const UNSUPPORTED_TERMS = ["apple_terminal", "warpterm"];

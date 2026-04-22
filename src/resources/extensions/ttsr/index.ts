@@ -1,16 +1,17 @@
 /**
- * TTSR Extension — Time Traveling Stream Rules
+ * GSD2 — TTSR Extension — Time Traveling Stream Rules
  *
  * Zero-context-cost guardrails that monitor streaming output against regex
  * patterns. On match: abort stream, inject rule as system reminder, retry.
  * Rules cost nothing until they fire.
  *
  * Hooks:
- *   session_start  → load rules, populate manager
- *   turn_start     → reset buffers
- *   message_update → check delta against rules, abort on match
- *   turn_end       → increment message count
- *   agent_end      → if pending violation, inject rule via sendMessage
+ * session_start  → load rules, populate manager
+ * turn_start     → reset buffers
+ * message_update → check delta against rules, abort on match
+ * turn_end       → increment message count
+ * agent_end      → if pending violation, inject rule via sendMessage
+ *
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";

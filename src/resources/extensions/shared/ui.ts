@@ -1,31 +1,32 @@
 /**
- * Shared UI design system for GSD/interview TUI components.
+ * GSD2 — Shared UI design system for GSD/interview TUI components.
  *
  * Centralises all colours, glyphs, spacing, and layout helpers so every
  * screen looks consistent and can be restyled from one place.
  *
  * Usage:
  *
- *   import { makeUI } from "./shared/ui.js";
+ * import { makeUI } from "./shared/ui.js";
  *
- *   // Inside ctx.ui.custom((tui, theme, _kb, done) => { ... }):
- *   const ui = makeUI(theme, width);
+ * // Inside ctx.ui.custom((tui, theme, _kb, done) => { ... }):
+ * const ui = makeUI(theme, width);
  *
- *   // Then in render(width):
- *   const ui = makeUI(theme, width);
- *   lines.push(...ui.bar());
- *   lines.push(...ui.header("New Project"));
- *   lines.push(...ui.blank());
- *   lines.push(...ui.question("What do you want to build?"));
- *   lines.push(...ui.optionSelected(1, "Describe it now", "Type what you want."));
- *   lines.push(...ui.optionUnselected(2, "Provide a file", "Point to an existing doc."));
- *   lines.push(...ui.blank());
- *   lines.push(...ui.hints(["↑/↓ to move", "enter to select"]));
- *   lines.push(...ui.bar());
+ * // Then in render(width):
+ * const ui = makeUI(theme, width);
+ * lines.push(...ui.bar());
+ * lines.push(...ui.header("New Project"));
+ * lines.push(...ui.blank());
+ * lines.push(...ui.question("What do you want to build?"));
+ * lines.push(...ui.optionSelected(1, "Describe it now", "Type what you want."));
+ * lines.push(...ui.optionUnselected(2, "Provide a file", "Point to an existing doc."));
+ * lines.push(...ui.blank());
+ * lines.push(...ui.hints(["↑/↓ to move", "enter to select"]));
+ * lines.push(...ui.bar());
  *
  * Every method returns string[] (one or more lines) so you can spread
  * directly into your lines array. Width is passed once to makeUI so
  * individual methods don't need it.
+ *
  */
 
 import { type Theme } from "@gsd/pi-coding-agent";
@@ -200,7 +201,6 @@ export interface UI {
  */
 export function makeUI(theme: Theme, width: number): UI {
 	// ── Internal helpers ───────────────────────────────────────────────────────
-
 
 	const add = (s: string): string => truncateToWidth(s, width);
 	const wrap = (s: string): string[] => wrapTextWithAnsi(s, width);

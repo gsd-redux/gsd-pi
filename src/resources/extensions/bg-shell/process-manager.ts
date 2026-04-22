@@ -1,6 +1,7 @@
 /**
- * Process lifecycle management: start, stop, restart, signal, state tracking,
+ * GSD2 — Process lifecycle management: start, stop, restart, signal, state tracking,
  * process registry, and persistence.
+ *
  */
 
 import { spawn, spawnSync } from "node:child_process";

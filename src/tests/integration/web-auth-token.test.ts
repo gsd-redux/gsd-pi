@@ -1,8 +1,9 @@
 /**
- * Tests for the web auth token flow (web/lib/auth.ts).
+ * GSD2 — Tests for the web auth token flow (web/lib/auth.ts).
  *
  * The auth module runs in the browser, so we verify the source code contains
  * the expected patterns for token extraction, persistence, and transmission.
+ *
  */
 
 import test from 'node:test'

@@ -1,9 +1,10 @@
 /**
- * Regression test for #3695 — insertMilestone defaults status to "queued"
+ * GSD2 — Regression test for #3695 — insertMilestone defaults status to "queued"
  *
  * Milestones were being auto-created with status "active", causing phantom
  * milestones to appear as active work.  The fix defaults to "queued" so
  * new milestones must be explicitly activated.
+ *
  */
 
 import { describe, test } from 'node:test';

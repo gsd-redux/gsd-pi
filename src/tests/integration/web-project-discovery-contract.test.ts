@@ -1,9 +1,9 @@
+// GSD2 — Tests for Web Project Discovery Contract
 import test, { after, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-
 
 import { discoverProjects } from "../../web/project-discovery-service.ts";
 import { detectMonorepo } from "../../web/bridge-service.ts";

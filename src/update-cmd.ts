@@ -1,3 +1,4 @@
+// GSD2 — Update Cmd — NPM_PACKAGE constant
 import { execSync } from 'node:child_process'
 import { compareSemver, fetchLatestVersionFromRegistry, resolveInstallCommand } from './update-check.js'
 

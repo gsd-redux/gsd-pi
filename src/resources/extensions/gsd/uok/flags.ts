@@ -1,3 +1,4 @@
+// GSD2 — Flags — types and interfaces
 import type { GSDPreferences } from "../preferences.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 

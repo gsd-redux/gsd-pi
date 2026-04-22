@@ -1,11 +1,12 @@
 /**
- * discuss-empty-db-fallback.test.ts — Tests for #2892.
+ * GSD2 — discuss-empty-db-fallback.test.ts — Tests for #2892.
  *
  * When the DB is open but empty (e.g., after crash/truncation),
  * getMilestoneSlices() returns [] and showDiscuss() incorrectly declares
  * "All slices are complete." The fix adds a roadmap fallback: when the DB
  * returns zero slices but a ROADMAP file exists, parse slices from the
  * roadmap instead of treating zero slices as "all complete."
+ *
  */
 
 import { describe, test } from "node:test";

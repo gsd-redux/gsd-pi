@@ -1,11 +1,12 @@
 /**
- * Core GitHub sync engine.
+ * GSD2 — Core GitHub sync engine.
  *
  * Entry point: `runGitHubSync()` — called from the GSD post-unit pipeline.
  * Routes to per-event sync functions based on the unit type, reads GSD
  * files to build GitHub entities, and persists the sync mapping.
  *
  * All errors are caught internally — sync failures never block execution.
+ *
  */
 
 import { existsSync, readdirSync } from "node:fs";

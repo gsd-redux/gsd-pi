@@ -1,11 +1,12 @@
 /**
- * /search-provider slash command.
+ * GSD2 — /search-provider slash command.
  *
  * Lets users switch between tavily, brave, and auto search backends.
  * Supports direct arg (`/search-provider tavily`) or interactive select UI.
  * Tab completion provides the three valid options with key status.
  *
  * All provider logic lives in provider.ts (S01) — this is pure UI wiring.
+ *
  */
 
 import { supportsNativeWebSearch } from './native-search.js'

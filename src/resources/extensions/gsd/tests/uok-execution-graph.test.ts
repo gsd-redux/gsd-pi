@@ -1,3 +1,4 @@
+// GSD2 — Tests for Uok Execution Graph
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { SidecarItem } from "../auto/session.ts";

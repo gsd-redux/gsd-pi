@@ -1,5 +1,5 @@
 /**
- * GSD Session Status I/O
+ * GSD2 — GSD Session Status I/O
  *
  * File-based IPC protocol for coordinator-worker communication in
  * parallel milestone orchestration. Each worker writes its status to a
@@ -8,6 +8,7 @@
  * Atomic writes (write to .tmp, then rename) prevent partial reads.
  * Signal files let the coordinator send pause/resume/stop/rebase to workers.
  * Stale detection combines PID liveness checks with heartbeat timeouts.
+ *
  */
 
 import {

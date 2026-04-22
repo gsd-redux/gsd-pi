@@ -1,3 +1,4 @@
+// GSD2 — Tests for Package Mcp Server Elicitation
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'

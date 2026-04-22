@@ -1,14 +1,15 @@
 /**
- * Tests for MCP client OAuth auth provider support on HTTP transport.
+ * GSD2 — Tests for MCP client OAuth auth provider support on HTTP transport.
  *
  * Verifies that:
- *  1. HTTP server configs with `headers` pass them to the transport via requestInit
- *  2. HTTP server configs with `oauth` config construct an OAuthClientProvider
- *  3. Servers without auth still connect without an auth provider
- *  4. Environment variable references in headers are resolved
+ * 1. HTTP server configs with `headers` pass them to the transport via requestInit
+ * 2. HTTP server configs with `oauth` config construct an OAuthClientProvider
+ * 3. Servers without auth still connect without an auth provider
+ * 4. Environment variable references in headers are resolved
  *
  * Reproduces issue #2160 — MCP HTTP transport lacks OAuth auth provider,
  * causing 401 errors when connecting to remote MCP servers (Sentry, Linear, etc.)
+ *
  */
 import test from "node:test";
 import assert from "node:assert/strict";

@@ -1,3 +1,4 @@
+// GSD2 — Safe Fs
 import { existsSync, mkdirSync, cpSync, type CopySyncOptions } from "node:fs"
 import { dirname } from "node:path"
 import { logWarning } from "./workflow-logger.js"

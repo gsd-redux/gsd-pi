@@ -1,5 +1,6 @@
 /**
- * Expect-style interactions: send_and_wait, run on session, query shell environment.
+ * GSD2 — Expect-style interactions: send_and_wait, run on session, query shell environment.
+ *
  */
 
 import { randomUUID } from "node:crypto";

@@ -1,25 +1,4 @@
-// GSD Database Abstraction Layer
-// Provides a SQLite database with provider fallback chain:
-//   node:sqlite (built-in) → better-sqlite3 (npm) → null (unavailable)
-//
-// Exposes a unified sync API for decisions and requirements storage.
-// Schema is initialized on first open with WAL mode for file-backed DBs.
-//
-// ─── Single-writer invariant ─────────────────────────────────────────────
-// This file is the ONLY place in the codebase that issues write SQL
-// (INSERT / UPDATE / DELETE / REPLACE / BEGIN-COMMIT transactions) against
-// the engine database at `.gsd/gsd.db`. All other modules must call the
-// typed wrappers exported here. The structural test
-// `tests/single-writer-invariant.test.ts` fails CI if a new bypass appears.
-//
-// `_getAdapter()` is retained for read-only SELECTs in query modules
-// (context-store, memory-store queries, doctor checks, projections).
-// Do NOT use it for writes — add a wrapper here instead.
-//
-// The separate `.gsd/unit-claims.db` managed by `unit-ownership.ts` is an
-// intentionally independent store for cross-worktree claim races and is
-// excluded from this invariant.
-
+// GSD2 — Database Abstraction Layer
 import { createRequire } from "node:module";
 import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";

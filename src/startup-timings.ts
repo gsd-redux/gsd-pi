@@ -1,3 +1,4 @@
+// GSD2 — Startup Timings — flag constant
 const flag = (process.env.GSD_STARTUP_TIMING ?? process.env.PI_TIMING ?? "").toLowerCase();
 const ENABLED = flag === "1" || flag === "true" || flag === "yes";
 

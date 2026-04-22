@@ -1,13 +1,14 @@
 /**
- * session-lock-multipath.test.ts — Tests for multi-path lock cleanup (#1578).
+ * GSD2 — session-lock-multipath.test.ts — Tests for multi-path lock cleanup (#1578).
  *
  * Regression coverage for:
- *   #1578  Session lock false positive loop from lock files at multiple paths
+ * #1578  Session lock false positive loop from lock files at multiple paths
  *
  * Tests:
- *   - Multi-path cleanup: exit/release cleans all registered lock dirs
- *   - onCompromised PID-ownership check prevents false positives
- *   - Stale locks at secondary paths are cleaned
+ * - Multi-path cleanup: exit/release cleans all registered lock dirs
+ * - onCompromised PID-ownership check prevents false positives
+ * - Stale locks at secondary paths are cleaned
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
@@ -22,7 +23,6 @@ import {
 import { gsdRoot } from '../paths.ts';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 describe('session-lock-multipath', async () => {
 

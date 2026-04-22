@@ -1,13 +1,14 @@
 /**
- * /gsd logs — Browse activity logs, debug logs, and metrics.
+ * GSD2 — /gsd logs — Browse activity logs, debug logs, and metrics.
  *
  * Subcommands:
- *   /gsd logs              — List recent activity + debug logs
- *   /gsd logs <N>          — Show summary of activity log #N
- *   /gsd logs debug        — List debug log files
- *   /gsd logs debug <N>    — Show debug log summary #N
- *   /gsd logs tail [N]     — Show last N activity log entries (default 5)
- *   /gsd logs clear        — Remove old activity and debug logs
+ * /gsd logs              — List recent activity + debug logs
+ * /gsd logs <N>          — Show summary of activity log #N
+ * /gsd logs debug        — List debug log files
+ * /gsd logs debug <N>    — Show debug log summary #N
+ * /gsd logs tail [N]     — Show last N activity log entries (default 5)
+ * /gsd logs clear        — Remove old activity and debug logs
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

@@ -1,7 +1,8 @@
 /**
- * Rogue file detection tests — verifies that detectRogueFileWrites()
+ * GSD2 — Rogue file detection tests — verifies that detectRogueFileWrites()
  * correctly identifies summary files written directly to disk without
  * a corresponding DB completion record.
+ *
  */
 
 import test from "node:test";
@@ -56,7 +57,6 @@ function createSlicePlanOnDisk(basePath: string, mid: string, sid: string): stri
   writeFileSync(planFile, `# ${sid}: Test Plan\n`, "utf-8");
   return planFile;
 }
-
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

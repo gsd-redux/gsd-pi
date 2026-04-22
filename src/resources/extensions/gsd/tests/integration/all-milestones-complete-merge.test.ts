@@ -1,5 +1,5 @@
 /**
- * all-milestones-complete-merge.test.ts — Tests for #962 fix.
+ * GSD2 — all-milestones-complete-merge.test.ts — Tests for #962 fix.
  *
  * Verifies that when the final milestone completes and there are no queued
  * follow-up milestones, the worktree is squash-merged to main before
@@ -8,6 +8,7 @@
  *
  * Uses both source-level checks (verifying the code path exists in auto.ts)
  * and real git integration tests (verifying merge behavior).
+ *
  */
 
 import test from "node:test";

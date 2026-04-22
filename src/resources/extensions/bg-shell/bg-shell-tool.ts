@@ -1,5 +1,6 @@
 /**
- * bg_shell tool registration — the core tool that agents use to manage background processes.
+ * GSD2 — bg_shell tool registration — the core tool that agents use to manage background processes.
+ *
  */
 
 import { StringEnum } from "@gsd/pi-ai";

@@ -1,9 +1,10 @@
 /**
- * post-exec-retry-bypass.test.ts — Tests for post-execution blocking failure retry bypass.
+ * GSD2 — post-exec-retry-bypass.test.ts — Tests for post-execution blocking failure retry bypass.
  *
  * Verifies that when post-execution checks fail (postExecBlockingFailure is true),
  * the retry system is bypassed and auto-mode pauses immediately. Post-execution
  * failures are cross-task consistency issues — retrying the same task won't fix them.
+ *
  */
 
 import { describe, test, mock, beforeEach, afterEach } from "node:test";

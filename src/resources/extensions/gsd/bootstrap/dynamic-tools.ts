@@ -1,3 +1,4 @@
+// GSD2 — Dynamic Tools
 import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 
@@ -70,7 +71,6 @@ export function resolveProjectRootDbPath(basePath: string): string {
       return join(projectRoot, ".gsd", "gsd.db");
     }
   }
-
 
   return join(basePath, ".gsd", "gsd.db");
 }

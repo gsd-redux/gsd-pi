@@ -1,9 +1,10 @@
 /**
- * GSD Preferences Wizard — TUI wizard for configuring GSD preferences.
+ * GSD2 — GSD Preferences Wizard — TUI wizard for configuring GSD preferences.
  *
  * Contains: handlePrefsWizard, buildCategorySummaries, all configure* functions,
  * serializePreferencesToFrontmatter, yamlSafeString, ensurePreferencesFile,
  * handlePrefsMode, handleImportClaude, handlePrefs
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

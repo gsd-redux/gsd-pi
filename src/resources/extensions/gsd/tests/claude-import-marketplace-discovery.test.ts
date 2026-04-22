@@ -1,5 +1,5 @@
 /**
- * Portable tests for marketplace discovery in claude-import.
+ * GSD2 — Portable tests for marketplace discovery in claude-import.
  *
  * Validates that categorizePluginRoots correctly discovers marketplace repos
  * nested inside container directories (the Claude Code convention), and that
@@ -9,6 +9,7 @@
  * Uses temp-dir fixtures — no real marketplace repos required.
  *
  * Fixes: https://github.com/gsd-build/gsd-2/issues/2717
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";

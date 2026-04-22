@@ -1,3 +1,4 @@
+// GSD2 — Tests for Cli
 import test, { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { ghIsAvailable, _resetGhCache } from "../cli.ts";

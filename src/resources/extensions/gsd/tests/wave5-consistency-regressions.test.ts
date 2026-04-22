@@ -1,7 +1,4 @@
-// GSD State Machine — Wave 5 Consistency Regression Tests
-// Validates isClosedStatus usage in projections, upsertDecision seq preservation,
-// event schema versioning, and replay round-trip with mixed cmd formats.
-
+// GSD2 — State Machine — Wave 5 Consistency Regression Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

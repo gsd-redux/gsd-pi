@@ -1,11 +1,12 @@
 /**
- * Test isolation utilities for integration tests.
+ * GSD2 — Test isolation utilities for integration tests.
  *
  * Integration tests often call `mergeMilestoneToMain` and other functions that
  * load preferences. If the user's global ~/.gsd/preferences.md has
  * `git.main_branch: master`, tests fail because test repos use `main`.
  *
  * These utilities isolate tests from the user's global environment.
+ *
  */
 
 import { mkdtempSync, rmSync, realpathSync } from "node:fs";

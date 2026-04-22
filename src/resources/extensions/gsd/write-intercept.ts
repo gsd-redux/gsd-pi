@@ -1,7 +1,4 @@
-// GSD Extension — Write Intercept for Agent State File Blocks
-// Detects agent attempts to write authoritative state files and returns
-// an error directing the agent to use the engine tool API instead.
-
+// GSD2 — Extension — Write Intercept for Agent State File Blocks
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 

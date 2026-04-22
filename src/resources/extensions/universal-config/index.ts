@@ -1,5 +1,5 @@
 /**
- * Universal Config Discovery Extension
+ * GSD2 — Universal Config Discovery Extension
  *
  * Auto-detects and displays configuration from 8 AI coding tools:
  * Claude Code, Cursor, Windsurf, Gemini CLI, Codex, Cline,
@@ -10,8 +10,9 @@
  * Read-only: never modifies other tools' config files.
  *
  * Provides:
- *   - discover_configs tool (LLM-callable)
- *   - /configs command (slash command)
+ * - discover_configs tool (LLM-callable)
+ * - /configs command (slash command)
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

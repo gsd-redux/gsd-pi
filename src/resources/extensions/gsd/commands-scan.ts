@@ -1,17 +1,18 @@
 /**
- * GSD Command — /gsd scan
+ * GSD2 — GSD Command — /gsd scan
  *
  * Rapid codebase assessment — lightweight alternative to /gsd map-codebase.
  * Spawns one focused AI analysis pass and writes structured documents to
  * .gsd/codebase/ for use by planning and execution phases.
  *
  * Usage:
- *   /gsd scan                   — tech+arch focus (default)
- *   /gsd scan --focus tech      — technology stack + integrations only
- *   /gsd scan --focus arch      — architecture + structure only
- *   /gsd scan --focus quality   — conventions + testing patterns only
- *   /gsd scan --focus concerns  — technical debt + concerns only
- *   /gsd scan --focus tech+arch — explicit default (same as no flag)
+ * /gsd scan                   — tech+arch focus (default)
+ * /gsd scan --focus tech      — technology stack + integrations only
+ * /gsd scan --focus arch      — architecture + structure only
+ * /gsd scan --focus quality   — conventions + testing patterns only
+ * /gsd scan --focus concerns  — technical debt + concerns only
+ * /gsd scan --focus tech+arch — explicit default (same as no flag)
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

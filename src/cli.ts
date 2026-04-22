@@ -1,3 +1,4 @@
+// GSD2 — Cli
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -305,7 +306,6 @@ if (cliFlags.web || (cliFlags.messages[0] === 'web' && cliFlags.messages[1] !== 
     process.exit(webBranch.exitCode)
   }
 }
-
 
 // `gsd sessions` — list past sessions and pick one to resume
 if (cliFlags.messages[0] === 'sessions') {

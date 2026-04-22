@@ -1,11 +1,12 @@
 /**
- * unborn-branch.test.ts — Regression test for #1771.
+ * GSD2 — unborn-branch.test.ts — Regression test for #1771.
  *
  * Verifies that nativeBranchExists returns true for the current branch
  * in a repo with zero commits (unborn branch). Previously, show-ref
  * would fail for unborn branches, causing a dispatch deadlock when
  * the branch was recorded as integration branch but could never be
  * verified.
+ *
  */
 
 import test from "node:test";

@@ -1,10 +1,11 @@
 /**
- * Regression tests for three false-positive sources in the safety harness.
+ * GSD2 — Regression tests for three false-positive sources in the safety harness.
  * Issue #4385
  *
  * Bug 1: Hardcoded BASH_READ_ONLY_RE — new legitimate commands blocked
  * Bug 2: Non-persisted evidence — session restart causes false positive on resume
  * Bug 3: git diff HEAD~1 scope check — fails on initial commits / shallow clones
+ *
  */
 
 import test from "node:test";

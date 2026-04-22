@@ -1,10 +1,11 @@
 /**
- * post-execution-checks.test.ts — Unit tests for post-execution validation checks.
+ * GSD2 — post-execution-checks.test.ts — Unit tests for post-execution validation checks.
  *
  * Tests all 3 check types:
- *   1. Import resolution — verify relative imports resolve to existing files
- *   2. Cross-task signatures — detect signature drift and hallucination cascades
- *   3. Pattern consistency — async style drift, naming convention warnings
+ * 1. Import resolution — verify relative imports resolve to existing files
+ * 2. Cross-task signatures — detect signature drift and hallucination cascades
+ * 3. Pattern consistency — async style drift, naming convention warnings
+ *
  */
 
 import { describe, test } from "node:test";

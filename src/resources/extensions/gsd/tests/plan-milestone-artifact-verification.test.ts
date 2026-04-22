@@ -1,3 +1,4 @@
+// GSD2 — Tests for Plan Milestone Artifact Verification
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

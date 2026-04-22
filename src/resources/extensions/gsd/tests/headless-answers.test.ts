@@ -1,9 +1,10 @@
 /**
- * Tests for the headless-answers module.
+ * GSD2 — Tests for the headless-answers module.
  *
  * Covers loadAndValidateAnswerFile (file loading + schema validation) and
  * AnswerInjector (event observation, answer matching, deferred resolution,
  * secrets, stats, and unused warnings).
+ *
  */
 
 import test from 'node:test';

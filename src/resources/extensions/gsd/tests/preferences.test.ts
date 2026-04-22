@@ -1,11 +1,12 @@
 /**
- * Preferences tests — consolidated from:
- *   - preferences-git.test.ts (git.isolation, git.merge_to_main)
- *   - preferences-hooks.test.ts (post-unit + pre-dispatch hook config)
- *   - preferences-mode.test.ts (solo/team mode defaults, overrides)
- *   - preferences-models.test.ts (model config parsing, OpenRouter, CRLF)
- *   - preferences-schema-validation.test.ts (unknown keys, invalid types)
- *   - preferences-wizard-fields.test.ts (budget, notifications, git, uat)
+ * GSD2 — Preferences tests — consolidated from:
+ * - preferences-git.test.ts (git.isolation, git.merge_to_main)
+ * - preferences-hooks.test.ts (post-unit + pre-dispatch hook config)
+ * - preferences-mode.test.ts (solo/team mode defaults, overrides)
+ * - preferences-models.test.ts (model config parsing, OpenRouter, CRLF)
+ * - preferences-schema-validation.test.ts (unknown keys, invalid types)
+ * - preferences-wizard-fields.test.ts (budget, notifications, git, uat)
+ *
  */
 
 import test from "node:test";
@@ -50,7 +51,6 @@ test("git.merge_to_main produces deprecation warning", () => {
     assert.ok(warnings[0].includes("deprecated"));
   }
 });
-
 
 test("getIsolationMode defaults to none when preferences have no isolation setting", () => {
   // Validate the default via validatePreferences: when no isolation is set,

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Zombie Gsd State
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 

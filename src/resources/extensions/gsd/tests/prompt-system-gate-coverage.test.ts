@@ -1,19 +1,20 @@
 /**
- * Prompt-system gate coverage tests.
+ * GSD2 — Prompt-system gate coverage tests.
  *
  * These tests pin the invariants the plan file documents:
- *   1. Every pending slice-scoped gate is routed to exactly one owner turn.
- *      Q8 (owned by complete-slice) MUST NOT leak into gate-evaluate and
- *      get silently dropped the way it used to before the registry landed.
- *   2. getPendingGatesForTurn filters by the registry's owner turn, not
- *      just the DB scope column.
- *   3. Output validators recognize artifacts that contain the required
- *      gate section headings, and flag ones that don't.
- *   4. Prompt output produced by the validators reflects MV01-MV04.
+ * 1. Every pending slice-scoped gate is routed to exactly one owner turn.
+ * Q8 (owned by complete-slice) MUST NOT leak into gate-evaluate and
+ * get silently dropped the way it used to before the registry landed.
+ * 2. getPendingGatesForTurn filters by the registry's owner turn, not
+ * just the DB scope column.
+ * 3. Output validators recognize artifacts that contain the required
+ * gate section headings, and flag ones that don't.
+ * 4. Prompt output produced by the validators reflects MV01-MV04.
  *
  * They also assert the VALIDATION.md renderer still produces headings
  * matching the registry's promptSection strings, so future renderer
  * edits that drift from the registry fail the suite loudly.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

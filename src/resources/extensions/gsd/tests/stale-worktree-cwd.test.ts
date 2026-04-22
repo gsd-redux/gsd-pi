@@ -1,8 +1,9 @@
 /**
- * stale-worktree-cwd.test.ts — Tests for #608 fix.
+ * GSD2 — stale-worktree-cwd.test.ts — Tests for #608 fix.
  *
  * Verifies that when process.cwd() is inside a stale .gsd/worktrees/ path,
  * startAuto escapes back to the project root before proceeding.
+ *
  */
 
 import test from "node:test";

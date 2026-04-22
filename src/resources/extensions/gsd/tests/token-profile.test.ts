@@ -1,5 +1,5 @@
 /**
- * Token Profile — unit tests for M004/S01.
+ * GSD2 — Token Profile — unit tests for M004/S01.
  *
  * Tests profile resolution, preference merging, phase skip defaults,
  * subagent model routing, default-to-balanced behavior, and dispatch
@@ -7,6 +7,7 @@
  *
  * Uses source-level checks (readFileSync + string matching) to avoid
  * @gsd/pi-coding-agent import resolution issues in dev environments.
+ *
  */
 
 import test from "node:test";

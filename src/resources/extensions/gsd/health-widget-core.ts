@@ -1,8 +1,9 @@
 /**
- * Pure GSD health widget logic.
+ * GSD2 — Pure GSD health widget logic.
  *
  * Separates project-state detection and line rendering from the widget's
  * runtime integrations so the regressions can be tested directly.
+ *
  */
 
 import { existsSync } from "node:fs";

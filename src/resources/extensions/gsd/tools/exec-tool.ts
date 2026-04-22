@@ -1,9 +1,4 @@
-// GSD Exec Tool — executor for the gsd_exec MCP tool.
-//
-// Thin wrapper around exec-sandbox.ts that reads effective options from
-// the project preferences (context_mode block) and formats the result
-// for MCP return.
-
+// GSD2 — Exec Tool — executor for the gsd_exec MCP tool.
 import {
   EXEC_DEFAULTS,
   runExecSandbox,

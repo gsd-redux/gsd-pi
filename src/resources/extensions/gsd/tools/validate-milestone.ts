@@ -1,5 +1,5 @@
 /**
- * validate-milestone handler — the core operation behind gsd_validate_milestone.
+ * GSD2 — validate-milestone handler — the core operation behind gsd_validate_milestone.
  *
  * Persists milestone validation results to the assessments table and
  * quality_gates table, renders VALIDATION.md to disk, and invalidates caches.
@@ -7,6 +7,7 @@
  * #2945 Bug 4: Previously only wrote to assessments — quality_gates records
  * were never persisted, causing M002+ milestones to have zero gate records
  * despite passing validation.
+ *
  */
 
 import { join } from "node:path";

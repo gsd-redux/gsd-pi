@@ -1,5 +1,5 @@
 /**
- * Collision Diagnostics Module
+ * GSD2 — Collision Diagnostics Module
  *
  * Bridges NamespacedRegistry collision data and NamespacedResolver ambiguous
  * resolution into a classified diagnostic taxonomy. Provides two functions:
@@ -8,6 +8,7 @@
  *
  * This module implements R010 (collision reporting) and R011 (doctor advice) for the
  * namespaced component system.
+ *
  */
 
 import type { NamespacedRegistry, RegistryDiagnostic } from './namespaced-registry.js';

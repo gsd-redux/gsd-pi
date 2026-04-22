@@ -1,5 +1,5 @@
 /**
- * tool-param-optionality — Verifies that enrichment/metadata parameters on
+ * GSD2 — tool-param-optionality — Verifies that enrichment/metadata parameters on
  * planning and completion tools are optional, not required.
  *
  * Models with limited tool-calling capability (e.g. kimi-k2.5, glm-5-turbo)
@@ -9,6 +9,7 @@
  * are optional — so any model can call the tool successfully.
  *
  * See: https://github.com/gsd-build/gsd-2/issues/2771
+ *
  */
 
 import { test } from "node:test";

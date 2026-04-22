@@ -1,11 +1,8 @@
-// Tests for critical path algorithm.
-// Tests computeCriticalPath with known DAG structures.
-
+// GSD2 — Tests for critical path algorithm.
 import { computeCriticalPath } from "../visualizer-data.js";
 import type { VisualizerMilestone } from "../visualizer-data.js";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function makeMs(id: string, status: "complete" | "active" | "pending", dependsOn: string[], slices: any[] = []): VisualizerMilestone {
   return { id, title: id, status, dependsOn, slices };

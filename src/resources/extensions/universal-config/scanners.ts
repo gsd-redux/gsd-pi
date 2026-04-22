@@ -1,10 +1,11 @@
 /**
- * Universal Config Discovery — per-tool scanners
+ * GSD2 — Universal Config Discovery — per-tool scanners
  *
  * Each scanner reads config files for a specific AI coding tool and
  * normalizes them to DiscoveredItem[]. Read-only: never modifies files.
  *
  * Config path sources verified against Oh My Pi's discovery module.
+ *
  */
 
 import { readFile, readdir, stat } from "node:fs/promises";

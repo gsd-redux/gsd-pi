@@ -1,9 +1,10 @@
 /**
- * dev-engine-wrapper.test.ts — Contract tests for the dev engine wrapper layer (S02).
+ * GSD2 — dev-engine-wrapper.test.ts — Contract tests for the dev engine wrapper layer (S02).
  *
  * Tests bridgeDispatchAction mapping, DevWorkflowEngine delegation,
  * DevExecutionPolicy stubs, resolver routing, kill switch, and
  * auto.ts engine ID accessors.
+ *
  */
 
 import test, { describe, before, after } from "node:test";

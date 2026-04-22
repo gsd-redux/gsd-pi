@@ -1,5 +1,6 @@
 /**
- * cancel_job tool — cancel a running background job.
+ * GSD2 — cancel_job tool — cancel a running background job.
+ *
  */
 
 import type { ToolDefinition } from "@gsd/pi-coding-agent";

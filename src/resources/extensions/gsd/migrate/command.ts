@@ -1,5 +1,5 @@
 /**
- * /gsd migrate — one-shot migration from .planning to .gsd
+ * GSD2 — /gsd migrate — one-shot migration from .planning to .gsd
  *
  * Thin UX orchestrator: resolves paths, runs the validate → parse → transform →
  * preview → write pipeline, and shows confirmation UI via showNextAction.
@@ -7,6 +7,7 @@
  *
  * After a successful write, offers an agent-driven review that audits the
  * output for GSD-2 standards compliance.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

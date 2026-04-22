@@ -1,9 +1,10 @@
 /**
- * GSD branch naming patterns — single source of truth.
+ * GSD2 — GSD branch naming patterns — single source of truth.
  *
  * gsd/<worktree>/<milestone>/<slice>  → SLICE_BRANCH_RE
  * gsd/quick/<id>-<slug>               → QUICK_BRANCH_RE
  * gsd/<workflow>/<...>                 → WORKFLOW_BRANCH_RE (non-milestone gsd/ branches)
+ *
  */
 
 /** Matches gsd/ slice branches: gsd/[worktree/]M001[-hash]/S01 */

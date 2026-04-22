@@ -1,11 +1,12 @@
 /**
- * Tests for getManifestStatus() — the S01→S02 boundary contract.
+ * GSD2 — Tests for getManifestStatus() — the S01→S02 boundary contract.
  *
  * Verifies that manifest entries are correctly categorized into
  * pending, collected, skipped, and existing arrays based on
  * manifest status and environment presence.
  *
  * Uses temp directories with real .gsd/milestones/M001/ structure.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from 'node:test';

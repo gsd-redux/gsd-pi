@@ -1,9 +1,10 @@
 /**
- * Tests for `gsd auto` routing — verifies that `auto` is recognized as a
+ * GSD2 — Tests for `gsd auto` routing — verifies that `auto` is recognized as a
  * subcommand alias for `headless auto` so it doesn't fall through to the
  * interactive TUI, which hangs when stdin/stdout are piped.
  *
  * Regression test for #2732.
+ *
  */
 
 import test from 'node:test'

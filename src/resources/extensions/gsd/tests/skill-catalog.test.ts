@@ -1,8 +1,9 @@
 /**
- * Unit tests for GSD Skill Catalog — pack matching logic.
+ * GSD2 — Unit tests for GSD Skill Catalog — pack matching logic.
  *
  * Exercises matchPacksForProject() to verify that project signals
  * correctly map to skill packs.
+ *
  */
 
 import test from "node:test";

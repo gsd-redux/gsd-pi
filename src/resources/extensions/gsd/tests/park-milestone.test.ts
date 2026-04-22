@@ -1,3 +1,4 @@
+// GSD2 — Tests for Park Milestone
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
@@ -19,8 +20,6 @@ import {
   openDatabase,
 } from "../gsd-db.ts";
 import { createWorktree } from "../worktree-manager.ts";
-
-
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 

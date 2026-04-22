@@ -1,13 +1,14 @@
 /**
- * Tests: Parallel Worker NDJSON Monitoring + Budget Enforcement
+ * GSD2 — Tests: Parallel Worker NDJSON Monitoring + Budget Enforcement
  *
  * Verifies:
- *   1. NDJSON line parsing extracts cost from message_end events
- *   2. Malformed JSON lines are silently skipped
- *   3. Cost aggregation across workers sums correctly
- *   4. Budget ceiling blocks new spawns when exceeded
- *   5. Session status files are updated with live cost data
- *   6. completedUnits counter increments on assistant message_end
+ * 1. NDJSON line parsing extracts cost from message_end events
+ * 2. Malformed JSON lines are silently skipped
+ * 3. Cost aggregation across workers sums correctly
+ * 4. Budget ceiling blocks new spawns when exceeded
+ * 5. Session status files are updated with live cost data
+ * 6. completedUnits counter increments on assistant message_end
+ *
  */
 
 import assert from 'node:assert/strict';

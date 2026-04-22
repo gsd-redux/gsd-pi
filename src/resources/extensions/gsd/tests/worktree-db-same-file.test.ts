@@ -1,5 +1,5 @@
 /**
- * worktree-db-same-file.test.ts — Regression test for #2823.
+ * GSD2 — worktree-db-same-file.test.ts — Regression test for #2823.
  *
  * Verifies that reconcileWorktreeDb() does not ATTACH a WAL-mode DB file
  * to itself when the worktree DB path resolves to the same physical file
@@ -7,6 +7,7 @@
  *
  * Also verifies that the auto-loop classifies "database disk image is
  * malformed" as an infrastructure error to prevent wasting retries.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

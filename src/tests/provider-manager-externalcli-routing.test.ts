@@ -1,15 +1,16 @@
 /**
- * Regression test for #4548 — Bug 2: Provider Manager routes Enter into the
+ * GSD2 — Regression test for #4548 — Bug 2: Provider Manager routes Enter into the
  * OAuth login dialog for ALL providers, including externalCli providers like
  * claude-code. This produces:
  *
- *   "Failed to login to claude-code: Unknown OAuth provider: claude-code"
+ * "Failed to login to claude-code: Unknown OAuth provider: claude-code"
  *
  * The fix adds a guard in the onSetupAuth callback inside showProviderManager:
  * if the provider is not in the OAuth provider registry, show a "ready" status
  * message instead of opening the login dialog.
  *
  * This test verifies the guard exists in interactive-mode.ts source.
+ *
  */
 
 import test, { describe } from "node:test";

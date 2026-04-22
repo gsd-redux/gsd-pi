@@ -1,8 +1,9 @@
 /**
- * definition-io.ts — Read frozen DEFINITION.yaml from a run directory.
+ * GSD2 — definition-io.ts — Read frozen DEFINITION.yaml from a run directory.
  *
  * Extracted from custom-workflow-engine.ts to break the circular dependency
  * between context-injector.ts and custom-workflow-engine.ts.
+ *
  */
 
 import { readFileSync } from "node:fs";

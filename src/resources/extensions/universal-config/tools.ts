@@ -1,9 +1,10 @@
 /**
- * Universal Config Discovery — tool registry
+ * GSD2 — Universal Config Discovery — tool registry
  *
  * Known AI coding tools with their config directory locations.
  * Based on research of Oh My Pi's discovery system and direct config
  * file inspection of each tool.
+ *
  */
 
 import type { ToolInfo } from "./types.js";

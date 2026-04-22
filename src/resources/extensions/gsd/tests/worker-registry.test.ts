@@ -1,8 +1,9 @@
 /**
- * Tests for the parallel worker registry used by the dashboard overlay.
+ * GSD2 — Tests for the parallel worker registry used by the dashboard overlay.
  *
  * Verifies worker lifecycle (register → update → cleanup), batch grouping,
  * and the hasActiveWorkers() status check.
+ *
  */
 
 import { test } from 'node:test';
@@ -15,7 +16,6 @@ import {
   hasActiveWorkers,
   resetWorkerRegistry,
 } from '../../subagent/worker-registry.ts';
-
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 

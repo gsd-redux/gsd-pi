@@ -1,8 +1,9 @@
 /**
- * GSD Command — /gsd add-tests
+ * GSD2 — GSD Command — /gsd add-tests
  *
  * Generates tests for a completed slice by dispatching an LLM prompt
  * with implementation context (summaries, changed files, test patterns).
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

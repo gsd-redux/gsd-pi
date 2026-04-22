@@ -1,12 +1,4 @@
-// Tests for ci_monitor.cjs — cross-platform CI monitoring tool
-//
-// Sections:
-//   (a) Script exists and is executable
-//   (b) --help shows all commands
-//   (c) list-workflows finds workflow files
-//   (d) check-actions parses actions from workflow
-//   (e) Commands validate required arguments
-
+// GSD2 — Tests for ci_monitor.cjs — cross-platform CI monitoring tool
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';

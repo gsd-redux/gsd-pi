@@ -1,6 +1,4 @@
 // GSD2 — Verify autoStartTime is persisted in paused-session.json and restored on resume
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
 /**
  * auto-start-time-persistence.test.ts — Ensures autoStartTime survives
  * cross-session resume via paused-session.json (#3585).

@@ -1,18 +1,19 @@
 /**
- * Unit tests for the verification gate — command discovery and execution.
+ * GSD2 — Unit tests for the verification gate — command discovery and execution.
  *
  * Tests cover:
- *   1. Discovery from explicit preference commands
- *   2. Discovery from task plan verify field
- *   3. Discovery from package.json typecheck/lint/test scripts
- *   4. First-non-empty-wins precedence
- *   5. All commands pass → gate passes
- *   6. One command fails → gate fails with exit code + stderr
- *   7. Missing package.json → 0 checks → pass
- *   8. Empty scripts → 0 checks → pass
- *   9. Preference validation for verification keys
- *  10. spawnSync error (command not found) → failure with exit code 127
- *  11. Dependency audit — git diff detection, npm audit parsing, graceful failures
+ * 1. Discovery from explicit preference commands
+ * 2. Discovery from task plan verify field
+ * 3. Discovery from package.json typecheck/lint/test scripts
+ * 4. First-non-empty-wins precedence
+ * 5. All commands pass → gate passes
+ * 6. One command fails → gate fails with exit code + stderr
+ * 7. Missing package.json → 0 checks → pass
+ * 8. Empty scripts → 0 checks → pass
+ * 9. Preference validation for verification keys
+ * 10. spawnSync error (command not found) → failure with exit code 127
+ * 11. Dependency audit — git diff detection, npm audit parsing, graceful failures
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

@@ -1,9 +1,10 @@
 /**
- * workflow-plugins.test.ts — Tests for the unified plugin discovery & resolution.
+ * GSD2 — workflow-plugins.test.ts — Tests for the unified plugin discovery & resolution.
  *
  * Verifies precedence (project > global > bundled), both YAML and markdown
  * formats, mode defaults, invalid-file handling, and legacy compat with
  * `.gsd/workflow-defs/`.
+ *
  */
 
 import { describe, it, afterEach, beforeEach } from "node:test";

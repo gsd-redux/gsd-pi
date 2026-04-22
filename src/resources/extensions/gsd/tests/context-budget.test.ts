@@ -1,7 +1,8 @@
 /**
- * Unit tests for context-budget.ts — the budget engine.
+ * GSD2 — Unit tests for context-budget.ts — the budget engine.
  * Tests pure functions with dependency-injected fakes.
  * No I/O, no extension context, no global state.
+ *
  */
 
 import { describe, it } from "node:test";

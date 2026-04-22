@@ -1,5 +1,5 @@
 /**
- * Regression test for #2626: Extension-provided models silently overwritten on startup.
+ * GSD2 — Regression test for #2626: Extension-provided models silently overwritten on startup.
  *
  * The startup model-validation logic must run AFTER extensions register their
  * models in the ModelRegistry.  When validation runs before extensions load,
@@ -9,8 +9,9 @@
  *
  * This test exercises `validateConfiguredModel()` directly (once extracted) to
  * verify that:
- *   (a) extension models present in the registry are preserved,
- *   (b) genuinely missing models still trigger fallback selection.
+ * (a) extension models present in the registry are preserved,
+ * (b) genuinely missing models still trigger fallback selection.
+ *
  */
 
 import test from "node:test";

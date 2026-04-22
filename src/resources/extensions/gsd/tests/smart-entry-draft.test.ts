@@ -1,3 +1,4 @@
+// GSD2 — Tests for Smart Entry Draft
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

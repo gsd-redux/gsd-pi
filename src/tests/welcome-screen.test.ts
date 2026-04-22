@@ -1,5 +1,6 @@
 /**
- * Welcome screen unit tests.
+ * GSD2 — Welcome screen unit tests.
+ *
  */
 
 import test from 'node:test'

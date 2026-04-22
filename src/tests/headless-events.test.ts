@@ -1,11 +1,12 @@
 /**
- * Tests for `--events` flag — JSONL event stream filtering.
+ * GSD2 — Tests for `--events` flag — JSONL event stream filtering.
  *
  * Validates argument parsing and the event filter logic used by
  * the headless orchestrator to reduce stdout noise for orchestrators.
  *
  * Uses extracted parsing logic (mirrors headless.ts) to avoid
  * transitive @gsd/native import that breaks in test environment.
+ *
  */
 
 import test from 'node:test'

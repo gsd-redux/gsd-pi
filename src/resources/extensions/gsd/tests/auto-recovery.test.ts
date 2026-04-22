@@ -1,3 +1,4 @@
+// GSD2 — Tests for Auto Recovery
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -392,7 +393,6 @@ test("verifyExpectedArtifact rejects complete-slice when roadmap checkbox is sti
     cleanup(base);
   }
 });
-
 
 // ─── verifyExpectedArtifact: plan-slice task plan check (#739) ────────────
 

@@ -1,10 +1,11 @@
 /**
- * engine-resolver.ts — Route sessions to engine/policy pairs.
+ * GSD2 — engine-resolver.ts — Route sessions to engine/policy pairs.
  *
  * Routes `null` and `"dev"` engine IDs to the DevWorkflowEngine/DevExecutionPolicy
  * pair. Any other non-null engine ID is treated as a custom workflow engine that
  * reads its state from an `activeRunDir`. Respects `GSD_ENGINE_BYPASS=1` kill
  * switch to skip the engine layer entirely.
+ *
  */
 
 import type { WorkflowEngine } from "./workflow-engine.js";

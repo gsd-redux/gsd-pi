@@ -1,9 +1,10 @@
 /**
- * Validation logic for GSD preferences.
+ * GSD2 — Validation logic for GSD preferences.
  *
  * Pure validation -- no filesystem access, no loading, no merging.
  * Accepts a raw GSDPreferences object and returns a sanitized copy
  * together with any errors and warnings.
+ *
  */
 
 import type { GitPreferences } from "./git-service.js";

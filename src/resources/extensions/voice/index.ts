@@ -1,3 +1,4 @@
+// GSD2 — Index — __extensionDir constant
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { shortcutDesc } from "../shared/mod.js";
 import type { AssistantMessage } from "@gsd/pi-ai";

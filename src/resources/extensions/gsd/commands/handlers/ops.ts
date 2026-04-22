@@ -1,3 +1,4 @@
+// GSD2 — Ops
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { enableDebug } from "../../debug-logger.js";

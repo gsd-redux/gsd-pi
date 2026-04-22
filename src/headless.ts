@@ -1,15 +1,16 @@
 /**
- * Headless Orchestrator — `gsd headless`
+ * GSD2 — Headless Orchestrator — `gsd headless`
  *
  * Runs any /gsd subcommand without a TUI by spawning a child process in
  * RPC mode, auto-responding to extension UI requests, and streaming
  * progress to stderr.
  *
  * Exit codes:
- *   0  — complete (command finished successfully)
- *   1  — error or timeout
- *   10 — blocked (command reported a blocker)
- *   11 — cancelled (SIGINT/SIGTERM received)
+ * 0  — complete (command finished successfully)
+ * 1  — error or timeout
+ * 10 — blocked (command reported a blocker)
+ * 11 — cancelled (SIGINT/SIGTERM received)
+ *
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'

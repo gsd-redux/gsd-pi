@@ -1,5 +1,5 @@
 /**
- * GSD Worktree Utilities
+ * GSD2 — GSD Worktree Utilities
  *
  * Pure utility functions for worktree name detection, legacy branch name
  * parsing, and integration branch capture.
@@ -10,6 +10,7 @@
  * Branchless architecture: all work commits sequentially on the milestone branch.
  * Pure utility functions (detectWorktreeName, getSliceBranchName, parseSliceBranch,
  * SLICE_BRANCH_RE) remain for backwards compatibility with legacy branches.
+ *
  */
 
 import { existsSync, readFileSync, realpathSync, utimesSync } from "node:fs";

@@ -1,6 +1,4 @@
-// Migration transformer — converts parsed PlanningProject into GSDProject.
-// Pure function: no I/O, no side effects, no imports outside migrate/.
-
+// GSD2 — Migration transformer — converts parsed PlanningProject into GSDProject.
 import type {
   PlanningProject,
   PlanningPhase,

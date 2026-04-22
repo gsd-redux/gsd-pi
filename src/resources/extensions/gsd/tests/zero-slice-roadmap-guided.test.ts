@@ -1,6 +1,7 @@
 /**
- * Regression test for #3441: guided flow must treat a roadmap with zero
+ * GSD2 — Regression test for #3441: guided flow must treat a roadmap with zero
  * parseable slices the same as no roadmap — offer "Create roadmap" not "Go auto".
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -1,5 +1,5 @@
 /**
- * GSD Worktree Manager
+ * GSD2 — GSD Worktree Manager
  *
  * Creates and manages git worktrees under .gsd/worktrees/<name>/.
  * Each worktree gets its own branch (worktree/<name>) and a full
@@ -9,10 +9,11 @@
  * the main branch, then dispatches an LLM-guided merge flow.
  *
  * Flow:
- *   1. create()  — git worktree add .gsd/worktrees/<name> -b worktree/<name>
- *   2. user works in the worktree (new plans, milestones, etc.)
- *   3. merge()   — LLM-guided reconciliation of .gsd/ artifacts back to main
- *   4. remove()  — git worktree remove + branch cleanup
+ * 1. create()  — git worktree add .gsd/worktrees/<name> -b worktree/<name>
+ * 2. user works in the worktree (new plans, milestones, etc.)
+ * 3. merge()   — LLM-guided reconciliation of .gsd/ artifacts back to main
+ * 4. remove()  — git worktree remove + branch cleanup
+ *
  */
 
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";

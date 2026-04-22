@@ -1,15 +1,16 @@
 /**
- * worktree-db-integration.test.ts
+ * GSD2 — worktree-db-integration.test.ts
  *
  * Integration tests for the worktree DB copy and reconcile hooks.
  * Uses real temp git repos and real SQLite databases.
  *
  * Test cases:
- *   1. Copy: createAutoWorktree seeds .gsd/gsd.db into the worktree when main has one
- *   2. Copy-skip: createAutoWorktree silently skips when main has no gsd.db
- *   3. Reconcile: reconcileWorktreeDb merges worktree rows into main DB
- *   4. Reconcile-skip: reconcileWorktreeDb is non-fatal when both paths are nonexistent
- *   5. Failure path: reconcileWorktreeDb emits to stderr on open failure (observable)
+ * 1. Copy: createAutoWorktree seeds .gsd/gsd.db into the worktree when main has one
+ * 2. Copy-skip: createAutoWorktree silently skips when main has no gsd.db
+ * 3. Reconcile: reconcileWorktreeDb merges worktree rows into main DB
+ * 4. Reconcile-skip: reconcileWorktreeDb is non-fatal when both paths are nonexistent
+ * 5. Failure path: reconcileWorktreeDb emits to stderr on open failure (observable)
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
@@ -31,7 +32,6 @@ import {
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();

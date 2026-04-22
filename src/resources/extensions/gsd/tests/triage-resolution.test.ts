@@ -1,5 +1,6 @@
 /**
- * Unit tests for GSD Triage Resolution — resolution execution and file overlap detection.
+ * GSD2 — Unit tests for GSD Triage Resolution — resolution execution and file overlap detection.
+ *
  */
 
 import test from "node:test";

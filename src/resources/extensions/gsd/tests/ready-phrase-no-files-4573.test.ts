@@ -1,11 +1,12 @@
 /**
- * GSD-2 / guided-flow — regression tests for #4573
+ * GSD2 — GSD-2 / guided-flow — regression tests for #4573
  *
  * Covers two recovery paths:
- *   - maybeHandleReadyPhraseWithoutFiles: nudge when LLM emits
- *     "Milestone M001 ready." without writing CONTEXT.md / ROADMAP.md
- *   - maybeHandleEmptyIntentTurn: nudge when LLM narrates intent but
- *     emits no tool-use blocks
+ * - maybeHandleReadyPhraseWithoutFiles: nudge when LLM emits
+ * "Milestone M001 ready." without writing CONTEXT.md / ROADMAP.md
+ * - maybeHandleEmptyIntentTurn: nudge when LLM narrates intent but
+ * emits no tool-use blocks
+ *
  */
 
 import { describe, test, beforeEach } from "node:test";

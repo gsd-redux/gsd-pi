@@ -1,11 +1,12 @@
 /**
- * GSD Codebase Map Generator
+ * GSD2 — GSD Codebase Map Generator
  *
  * Produces .gsd/CODEBASE.md — a structural table of contents for the project.
  * Gives fresh agent contexts instant orientation without filesystem exploration.
  *
  * Generation: walk `git ls-files`, group by directory, output with descriptions.
  * Maintenance: agent updates descriptions as it works; incremental update preserves them.
+ *
  */
 
 import { createHash } from "node:crypto";

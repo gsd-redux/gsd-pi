@@ -1,5 +1,6 @@
 /**
- * /bg slash command registration — interactive process manager overlay and CLI subcommands.
+ * GSD2 — /bg slash command registration — interactive process manager overlay and CLI subcommands.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

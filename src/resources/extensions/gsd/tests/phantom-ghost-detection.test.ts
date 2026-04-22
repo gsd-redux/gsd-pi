@@ -1,5 +1,5 @@
 /**
- * Regression test for #3671 — isGhostMilestone detects phantom queued rows
+ * GSD2 — Regression test for #3671 — isGhostMilestone detects phantom queued rows
  *
  * gsd_milestone_generate_id inserts a DB row with status "queued" as a side
  * effect. If the milestone is never planned, isGhostMilestone previously
@@ -9,6 +9,7 @@
  * artifacts (CONTEXT, ROADMAP, SUMMARY) as a ghost.
  *
  * This structural test verifies the dbRow.status === 'queued' guard exists.
+ *
  */
 
 import { describe, test } from 'node:test';

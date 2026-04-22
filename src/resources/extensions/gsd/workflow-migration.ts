@@ -1,8 +1,4 @@
-// GSD Extension — Legacy Markdown to Engine Migration
-// Converts legacy markdown-only projects to engine state by parsing
-// existing ROADMAP.md, *-PLAN.md, and *-SUMMARY.md files.
-// Populates data into the already-existing v10 schema tables.
-
+// GSD2 — Extension — Legacy Markdown to Engine Migration
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { _getAdapter, bulkInsertLegacyHierarchy } from "./gsd-db.js";

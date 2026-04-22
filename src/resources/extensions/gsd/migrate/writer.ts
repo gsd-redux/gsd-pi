@@ -1,8 +1,4 @@
-// GSD Directory Writer — Format Functions & Directory Orchestrator
-// Format functions: pure string-returning functions that serialize GSD types into the exact markdown
-// format that GSD-2's parsers expect (parseRoadmap, parsePlan, parseSummary, parseRequirementCounts).
-// writeGSDDirectory: orchestrator that writes a complete .gsd directory tree from a GSDProject.
-
+// GSD2 — Directory Writer — Format Functions & Directory Orchestrator
 import { join } from 'node:path';
 import { saveFile } from '../files.js';
 import { gsdRoot } from '../paths.js';

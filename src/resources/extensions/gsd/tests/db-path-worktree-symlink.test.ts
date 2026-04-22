@@ -1,11 +1,11 @@
 /**
- * db-path-worktree-symlink.test.ts — #2517
+ * GSD2 — db-path-worktree-symlink.test.ts — #2517
  *
  * Regression test for the db_unavailable loop in worktree/symlink layouts.
  *
  * The path resolver must handle BOTH worktree path families:
- *   - /.gsd/worktrees/<MID>/...           (direct layout)
- *   - /.gsd/projects/<hash>/worktrees/<MID>/...  (symlink-resolved layout)
+ * - /.gsd/worktrees/<MID>/...           (direct layout)
+ * - /.gsd/projects/<hash>/worktrees/<MID>/...  (symlink-resolved layout)
  *
  * When the second layout is not recognised, ensureDbOpen derives a wrong DB
  * path, the open fails silently, and every completion tool call returns
@@ -14,6 +14,7 @@
  * Additionally, the post-unit artifact retry path must NOT retry when the
  * completion tool failed due to db_unavailable (infra failure), because
  * retrying can never succeed and causes cost spikes.
+ *
  */
 
 import { readFileSync } from "node:fs";

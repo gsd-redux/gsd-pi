@@ -1,14 +1,15 @@
 /**
- * GSD Skill Telemetry — Track which skills are loaded per unit (#599)
+ * GSD2 — GSD Skill Telemetry — Track which skills are loaded per unit (#599)
  *
  * Captures skill names at dispatch time for inclusion in UnitMetrics.
  * Distinguishes between "available" skills (in system prompt) and
  * "actively loaded" skills (read via tool calls during execution).
  *
  * Data flow:
- *   1. At dispatch, captureAvailableSkills() records skills from the system prompt
- *   2. During execution, recordSkillRead() tracks explicit SKILL.md reads
- *   3. At unit completion, getAndClearSkills() returns the loaded list for metrics
+ * 1. At dispatch, captureAvailableSkills() records skills from the system prompt
+ * 2. During execution, recordSkillRead() tracks explicit SKILL.md reads
+ * 3. At unit completion, getAndClearSkills() returns the loaded list for metrics
+ *
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";

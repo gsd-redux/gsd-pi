@@ -1,8 +1,9 @@
 /**
- * commands-workflow-custom.test.ts — Tests for `/gsd workflow` subcommands
+ * GSD2 — commands-workflow-custom.test.ts — Tests for `/gsd workflow` subcommands
  * and catalog completions.
  *
  * Uses real temp directories with actual definition YAML files.
+ *
  */
 
 import { describe, it, afterEach, before } from "node:test";

@@ -1,11 +1,12 @@
 /**
- * Regression tests for #2684 plus uppercase-preference normalization:
+ * GSD2 — Regression tests for #2684 plus uppercase-preference normalization:
  * preferences files are handled explicitly
  * outside ROOT_STATE_FILES and prefer canonical PREFERENCES.md over the
  * legacy lowercase fallback.
  *
  * Without this, post_unit_hooks and all preference-driven config silently
  * stop working inside auto-mode worktrees.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

@@ -1,7 +1,4 @@
-// Old .planning format per-file parsers
-// Pure functions that take file content (string) and return typed data.
-// Zero Pi dependencies — uses only exported helpers from files.ts.
-
+// GSD2 — Old .planning format per-file parsers
 import { splitFrontmatter, parseFrontmatterMap, extractBoldField } from '../files.js';
 import { normalizeStringArray } from '../../shared/format-utils.js';
 

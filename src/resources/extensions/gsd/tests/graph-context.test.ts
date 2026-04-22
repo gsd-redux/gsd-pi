@@ -1,23 +1,24 @@
 /**
- * graph-context.test.ts — Unit tests for inlineGraphSubgraph().
+ * GSD2 — graph-context.test.ts — Unit tests for inlineGraphSubgraph().
  *
  * Covers:
- *   Group 1: Null-return paths (empty term, zero nodes, missing graph.json)
- *   Group 2: Correct output formatting (nodes, edges, stale annotation)
- *   Group 3: Node formatting (description, confidence, no-description)
+ * Group 1: Null-return paths (empty term, zero nodes, missing graph.json)
+ * Group 2: Correct output formatting (nodes, edges, stale annotation)
+ * Group 3: Node formatting (description, confidence, no-description)
  *
  * Testing strategy:
- *   @gsd-build/mcp-server is dynamically imported inside inlineGraphSubgraph().
- *   Because node:test (v22) does not support mock.module() without the
- *   --experimental-test-module-mocks flag (not enabled in test:unit), we
- *   exercise the real graphQuery/graphStatus functions by controlling the
- *   on-disk graph.json that those functions read. This is a clean, deterministic
- *   approach that avoids all module-level mocking.
+ * @gsd-build/mcp-server is dynamically imported inside inlineGraphSubgraph().
+ * Because node:test (v22) does not support mock.module() without the
+ * --experimental-test-module-mocks flag (not enabled in test:unit), we
+ * exercise the real graphQuery/graphStatus functions by controlling the
+ * on-disk graph.json that those functions read. This is a clean, deterministic
+ * approach that avoids all module-level mocking.
  *
- *   Fixture layout per test:
- *     <tmpDir>/.gsd/graphs/graph.json
+ * Fixture layout per test:
+ * <tmpDir>/.gsd/graphs/graph.json
  *
- *   builtAt controls staleness: old timestamp → stale, recent → fresh.
+ * builtAt controls staleness: old timestamp → stale, recent → fresh.
+ *
  */
 
 import { describe, it } from "node:test";

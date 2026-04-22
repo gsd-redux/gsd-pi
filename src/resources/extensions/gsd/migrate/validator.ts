@@ -1,7 +1,4 @@
-// Old .planning directory validator
-// Pre-flight checks for minimum viable .planning directory.
-// Pure functions, zero Pi dependencies — uses only Node built-ins + exported helpers.
-
+// GSD2 — Old .planning directory validator
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 

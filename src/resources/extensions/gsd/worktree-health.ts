@@ -1,10 +1,11 @@
 /**
- * Worktree Health — lifecycle status helpers for GSD-managed worktrees.
+ * GSD2 — Worktree Health — lifecycle status helpers for GSD-managed worktrees.
  *
  * Used by doctor-checks.ts for health audits and by worktree-command.ts
  * for the enhanced `/worktree list` display.
  *
  * Only inspects worktrees under .gsd/worktrees/ — GSD owns what GSD creates.
+ *
  */
 
 import { existsSync } from "node:fs";

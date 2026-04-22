@@ -1,5 +1,5 @@
 /**
- * Regression test for #3578 — note captures marked as executed
+ * GSD2 — Regression test for #3578 — note captures marked as executed
  *
  * Note-classified captures were stuck in "resolved but not executed" limbo
  * because executeTriageResolutions only handled inject/replan/defer. The fix
@@ -8,6 +8,7 @@
  *
  * Structural verification test — reads source to confirm the note filter
  * and markCaptureExecuted call exist.
+ *
  */
 
 import { describe, test } from 'node:test';

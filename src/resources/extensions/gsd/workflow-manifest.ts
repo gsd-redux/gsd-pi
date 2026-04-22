@@ -1,3 +1,4 @@
+// GSD2 — Workflow Manifest — types and interfaces
 import {
   _getAdapter,
   readTransaction,

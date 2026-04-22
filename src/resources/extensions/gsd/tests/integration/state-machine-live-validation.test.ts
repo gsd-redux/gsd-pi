@@ -1,5 +1,5 @@
 /**
- * state-machine-live-validation.test.ts — Live operational validation of the
+ * GSD2 — state-machine-live-validation.test.ts — Live operational validation of the
  * GSD state machine with real handlers, real DB, and real filesystem.
  *
  * Exercises every phase transition, completion guard, edge case, and reopen
@@ -7,11 +7,10 @@
  * against a real temp directory with a real SQLite database.
  *
  * Findings reference: #3161 (state machine validation report)
+ *
  */
 
 // GSD State Machine Live Validation (#3161)
-
-
 
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";

@@ -1,6 +1,4 @@
-// GSD-2 — Regression tests for #3512: gsd-auto-wrapup mid-turn interruption
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — GSD-2 — Regression tests for #3512: gsd-auto-wrapup mid-turn interruption
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

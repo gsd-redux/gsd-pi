@@ -1,3 +1,4 @@
+// GSD2 — Doctor Format — matchesScope()
 import type { DoctorIssue, DoctorIssueCode, DoctorReport, DoctorSummary } from "./doctor-types.js";
 
 function matchesScope(unitId: string, scope?: string): boolean {

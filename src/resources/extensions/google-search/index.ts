@@ -1,5 +1,5 @@
 /**
- * Google Search Extension
+ * GSD2 — Google Search Extension
  *
  * Provides a `google_search` tool that performs web searches via Gemini's
  * Google Search grounding feature. Uses the user's existing GEMINI_API_KEY
@@ -8,6 +8,7 @@
  * The tool sends queries to Gemini Flash with `googleSearch: {}` enabled.
  * Gemini internally performs Google searches, synthesizes an answer, and
  * returns it with source URLs from grounding metadata.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

@@ -1,5 +1,6 @@
 /**
- * Remote Questions — payload formatting and parsing helpers
+ * GSD2 — Remote Questions — payload formatting and parsing helpers
+ *
  */
 
 import type { RemotePrompt, RemoteQuestion, RemoteAnswer } from "./types.js";

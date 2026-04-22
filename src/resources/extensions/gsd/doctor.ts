@@ -1,3 +1,4 @@
+// GSD2 — Doctor — types and interfaces
 import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,6 +1,4 @@
 // GSD2 — Regression test: Ollama streaming must not drop content on done:true chunks (#3576)
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 

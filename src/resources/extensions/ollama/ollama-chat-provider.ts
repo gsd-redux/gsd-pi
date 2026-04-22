@@ -1,5 +1,4 @@
 // GSD2 — Ollama Extension: Native /api/chat stream provider
-
 /**
  * Implements the "ollama-chat" API provider, streaming responses directly
  * from Ollama's native /api/chat endpoint instead of the OpenAI compatibility

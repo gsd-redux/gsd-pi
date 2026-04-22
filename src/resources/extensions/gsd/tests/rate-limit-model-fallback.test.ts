@@ -1,8 +1,9 @@
 /**
- * rate-limit-model-fallback.test.ts — Regression test for #2770.
+ * GSD2 — rate-limit-model-fallback.test.ts — Regression test for #2770.
  *
  * Rate-limit errors enter the model fallback path before falling through
  * to pause. This verifies the structural contract in agent-end-recovery.ts.
+ *
  */
 
 import test from "node:test";

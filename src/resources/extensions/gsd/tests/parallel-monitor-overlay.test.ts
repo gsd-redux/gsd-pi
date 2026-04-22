@@ -1,3 +1,4 @@
+// GSD2 — Tests for Parallel Monitor Overlay
 import { describe, it } from "node:test";
 import assert from "node:assert";
 

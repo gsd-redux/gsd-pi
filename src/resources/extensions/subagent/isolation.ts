@@ -1,9 +1,10 @@
 /**
- * Task isolation backends for subagent execution.
+ * GSD2 — Task isolation backends for subagent execution.
  *
  * Provides filesystem isolation via git worktrees or FUSE overlays
  * so concurrent subagents don't stomp on each other's files.
  * Changes are captured as patches and merged back to the main repo.
+ *
  */
 
 import { execFile as execFileCb } from "node:child_process";

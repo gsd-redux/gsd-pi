@@ -1,6 +1,7 @@
 /**
- * Regression test for #3542: defer and milestone captures must be stamped
+ * GSD2 — Regression test for #3542: defer and milestone captures must be stamped
  * as executed after triage resolution, regardless of directory state.
+ *
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

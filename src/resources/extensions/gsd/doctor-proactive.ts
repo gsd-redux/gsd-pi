@@ -1,17 +1,18 @@
 /**
- * GSD Doctor — Proactive Healing Layer
+ * GSD2 — GSD Doctor — Proactive Healing Layer
  *
  * Three mechanisms for automatic health monitoring during auto-mode:
  *
  * 1. Pre-dispatch health gate: lightweight check before each unit dispatch.
- *    Returns blocking issues that should pause auto-mode rather than
- *    dispatching into a broken state.
+ * Returns blocking issues that should pause auto-mode rather than
+ * dispatching into a broken state.
  *
  * 2. Health score tracking: tracks issue counts over time to detect
- *    degradation trends. If health is declining, surfaces a warning.
+ * degradation trends. If health is declining, surfaces a warning.
  *
  * 3. Auto-heal escalation: if deterministic fix can't resolve issues
- *    after N units, escalates to LLM-assisted heal dispatch.
+ * after N units, escalates to LLM-assisted heal dispatch.
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

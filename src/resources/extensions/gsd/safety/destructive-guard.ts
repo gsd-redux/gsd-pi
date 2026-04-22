@@ -1,9 +1,9 @@
 /**
- * Destructive command classifier for auto-mode safety harness.
+ * GSD2 — Destructive command classifier for auto-mode safety harness.
  * Classifies bash commands and warns on potentially destructive operations.
  * Does NOT block — only classifies for logging/notification.
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 // ─── Pattern Definitions ────────────────────────────────────────────────────

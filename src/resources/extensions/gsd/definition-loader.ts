@@ -1,5 +1,5 @@
 /**
- * definition-loader.ts — Parse and validate V1 YAML workflow definitions.
+ * GSD2 — definition-loader.ts — Parse and validate V1 YAML workflow definitions.
  *
  * Loads definition YAML files from `.gsd/workflow-defs/`, validates the
  * V1 schema shape, and returns typed TypeScript objects. Pure functions
@@ -11,6 +11,7 @@
  * Observability: All validation errors are collected into a string[] — callers
  * can log, surface in dashboards, or return to agents for self-repair.
  * substituteParams errors include the offending key name for traceability.
+ *
  */
 
 import { parse } from "yaml";

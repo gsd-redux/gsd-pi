@@ -1,9 +1,10 @@
 /**
- * GSD Queue Management — showQueue, reorder, add, and context builder.
+ * GSD2 — GSD Queue Management — showQueue, reorder, add, and context builder.
  *
  * Self-contained queue UI extracted from guided-flow.ts.
  * Safe to run while auto-mode is executing — only writes to future milestone
  * directories (which auto-mode won't touch until it reaches them).
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

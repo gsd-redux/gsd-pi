@@ -1,5 +1,5 @@
 /**
- * Tests for the continue-here context-pressure monitor.
+ * GSD2 — Tests for the continue-here context-pressure monitor.
  *
  * Verifies:
  * - Threshold comparison: fires when percent >= continueThresholdPercent
@@ -7,6 +7,7 @@
  * - One-shot guard: fires exactly once even if percent stays high
  * - Cleanup: interval is cleared after fire and in clearUnitTimeout()
  * - End-to-end pipeline: different model sizes produce correct budgets
+ *
  */
 
 import { describe, it } from "node:test";

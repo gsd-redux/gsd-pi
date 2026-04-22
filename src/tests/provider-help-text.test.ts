@@ -1,3 +1,4 @@
+// GSD2 — Tests for Provider Help Text
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 

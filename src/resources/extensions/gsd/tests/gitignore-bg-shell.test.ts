@@ -1,5 +1,5 @@
 /**
- * Regression test — .bg-shell/ added to BASELINE_PATTERNS in gitignore.ts
+ * GSD2 — Regression test — .bg-shell/ added to BASELINE_PATTERNS in gitignore.ts
  *
  * The bg-shell background process directory was not included in the
  * baseline gitignore patterns, causing it to appear as untracked in
@@ -7,6 +7,7 @@
  *
  * Structural verification test — reads source to confirm .bg-shell/
  * is in BASELINE_PATTERNS.
+ *
  */
 
 import { describe, test } from 'node:test';

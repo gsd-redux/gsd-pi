@@ -1,8 +1,4 @@
-// Migration transformer test suite
-// Tests for transforming parsed PlanningProject into GSDProject structures.
-// Uses synthetic in-memory fixtures — no filesystem needed.
-// Transformer is pure: PlanningProject → GSDProject.
-
+// GSD2 — Migration transformer test suite
 import { transformToGSD } from '../migrate/transformer.ts';
 import type {
   PlanningProject,

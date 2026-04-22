@@ -1,5 +1,4 @@
-// GSD Extension — Hook Engine Tests (Post-Unit, Pre-Dispatch, State Persistence)
-
+// GSD2 — Extension — Hook Engine Tests (Post-Unit, Pre-Dispatch, State Persistence)
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
@@ -34,7 +33,6 @@ function createFixtureBase(): string {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ─── resolveHookArtifactPath ───────────────────────────────────────────────
-
 
 describe('post-unit-hooks', () => {
 test('resolveHookArtifactPath', () => {

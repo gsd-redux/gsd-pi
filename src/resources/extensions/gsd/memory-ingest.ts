@@ -1,15 +1,4 @@
-// GSD Memory Ingest — turn raw content into memories
-//
-// Provides four entry points: ingestNote (inline text), ingestFile (local
-// path), ingestUrl (HTTP resource), and ingestArtifact (a named .gsd/ artifact
-// for a given milestone). Each one inserts a row into `memory_sources` and,
-// if an LLM call is available, fires the extractor against the content with
-// source-specific scope/tags.
-//
-// All four functions are safe to call without an LLM — they still persist the
-// source. This means ingestion is decoupled from extraction; a later
-// `/gsd memory rebuild` can re-extract from persisted sources.
-
+// GSD2 — Memory Ingest — turn raw content into memories
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { ExtensionContext } from "@gsd/pi-coding-agent";

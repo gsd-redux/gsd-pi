@@ -1,9 +1,4 @@
-// GSD Context Store — Query Layer & Formatters
-//
-// Typed query functions for decisions and requirements from the DB views,
-// with optional filtering. Format functions produce prompt-injectable markdown.
-// All functions degrade gracefully: return empty results when DB unavailable, never throw.
-
+// GSD2 — Context Store — Query Layer & Formatters
 import { isDbAvailable, _getAdapter } from './gsd-db.js';
 import type { Decision, Requirement } from './types.js';
 

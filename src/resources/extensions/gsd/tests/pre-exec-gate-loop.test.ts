@@ -1,15 +1,16 @@
 /**
- * pre-exec-gate-loop.test.ts — Regression tests for #4551.
+ * GSD2 — pre-exec-gate-loop.test.ts — Regression tests for #4551.
  *
  * Verifies that when a pre-execution gate fails on a plan-slice unit:
- *   1. `s.lastPreExecFailure` is populated on the AutoSession with the blocking
- *      findings and a verdict excerpt.
- *   2. The `planning → plan-slice` dispatch rule reads that field and injects a
- *      "Fix these specific issues" section into the prompt.
- *   3. The field is cleared (consumed) after the prompt is built so that stale
- *      context does not bleed into an unrelated future plan-slice run.
- *   4. When the failure belongs to a *different* unit ID, the dispatch rule
- *      does NOT inject the stale context into the prompt.
+ * 1. `s.lastPreExecFailure` is populated on the AutoSession with the blocking
+ * findings and a verdict excerpt.
+ * 2. The `planning → plan-slice` dispatch rule reads that field and injects a
+ * "Fix these specific issues" section into the prompt.
+ * 3. The field is cleared (consumed) after the prompt is built so that stale
+ * context does not bleed into an unrelated future plan-slice run.
+ * 4. When the failure belongs to a *different* unit ID, the dispatch rule
+ * does NOT inject the stale context into the prompt.
+ *
  */
 
 import test from "node:test";

@@ -1,8 +1,9 @@
 /**
- * Worker Registry — Tracks active subagent sessions for dashboard visibility.
+ * GSD2 — Worker Registry — Tracks active subagent sessions for dashboard visibility.
  *
  * Provides a global registry of currently-running parallel workers so the
  * GSD dashboard overlay can display real-time worker status.
+ *
  */
 
 export interface WorkerEntry {

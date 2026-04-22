@@ -1,9 +1,10 @@
 /**
- * browser-tools — browser lifecycle management
+ * GSD2 — browser-tools — browser lifecycle management
  *
  * Manages the shared Browser + BrowserContext + Page singleton.
  * Injects EVALUATE_HELPERS_SOURCE via context.addInitScript() so that
  * page.evaluate() callbacks can reference window.__pi.* utilities.
+ *
  */
 
 import type { Browser, BrowserContext, Frame, Page } from "playwright";

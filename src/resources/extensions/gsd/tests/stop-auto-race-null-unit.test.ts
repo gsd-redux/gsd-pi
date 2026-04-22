@@ -1,5 +1,5 @@
 /**
- * stop-auto-race-null-unit.test.ts — Regression test for #2939.
+ * GSD2 — stop-auto-race-null-unit.test.ts — Regression test for #2939.
  *
  * When the user stops auto-mode while a unit is executing, stopAuto()
  * calls s.reset() which sets s.currentUnit = null. The resumed
@@ -9,6 +9,7 @@
  * The fix adds null guards (matching the existing pattern at lines 136
  * and 344) so that closeout and subsequent accesses are skipped when
  * s.currentUnit has been nulled by a concurrent stopAuto().
+ *
  */
 
 import { readFileSync } from "node:fs";

@@ -1,3 +1,4 @@
+// GSD2 — Bridge Service — types and interfaces
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";

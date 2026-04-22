@@ -1,12 +1,4 @@
-// GSD Extension — Layer 2 Event Emitter Bridge
-//
-// Holds a module-scoped reference to the ExtensionAPI so deeply-nested code
-// (auto-loop, git-service callers, verification, budget) can emit Layer 2
-// events without having to thread `pi` through every function signature.
-//
-// Set once from `registerGsdExtension`. All emitters are best-effort — a
-// missing `pi` (e.g. in standalone unit tests) silently becomes a no-op.
-
+// GSD2 — Extension — Layer 2 Event Emitter Bridge
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import type {
   BeforeCommitEventResult,

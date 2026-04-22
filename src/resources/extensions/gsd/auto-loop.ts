@@ -1,10 +1,11 @@
 /**
- * auto-loop.ts — Barrel re-export for the auto-loop pipeline modules.
+ * GSD2 — auto-loop.ts — Barrel re-export for the auto-loop pipeline modules.
  *
  * The implementation has been split into focused modules under auto/.
  * This file preserves the original public API so external consumers
  * (auto.ts, auto-timeout-recovery.ts, agent-end-recovery.ts, tests)
  * continue to work without changes.
+ *
  */
 
 export { autoLoop, runUokKernelLoop, runLegacyAutoLoop } from "./auto/loop.js";

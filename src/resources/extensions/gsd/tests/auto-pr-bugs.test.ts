@@ -1,10 +1,11 @@
 /**
- * auto-pr-bugs.test.ts — Regression tests for #2302.
+ * GSD2 — auto-pr-bugs.test.ts — Regression tests for #2302.
  *
  * Three interacting bugs prevented auto_pr from ever creating a PR:
  * 1. auto_pr was gated on `pushed` (which requires auto_push)
  * 2. Milestone branch was not pushed to remote before PR creation
  * 3. createDraftPR in git-service.ts lacked --head/--base parameters
+ *
  */
 
 import test from "node:test";

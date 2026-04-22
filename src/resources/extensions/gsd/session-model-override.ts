@@ -1,3 +1,4 @@
+// GSD2 — Session Model Override
 export interface SessionModelOverride {
   provider: string;
   id: string;

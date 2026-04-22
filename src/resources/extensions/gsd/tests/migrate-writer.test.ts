@@ -1,8 +1,4 @@
-// Migration writer format round-trip test suite
-// Tests that format functions produce output that parses back correctly
-// through parseRoadmap(), parsePlan(), parseSummary(), and parseRequirementCounts().
-// Pure in-memory tests — no filesystem needed.
-
+// GSD2 — Migration writer format round-trip test suite
 import {
   formatRoadmap,
   formatPlan,

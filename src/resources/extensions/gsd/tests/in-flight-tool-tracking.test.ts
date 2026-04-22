@@ -1,3 +1,4 @@
+// GSD2 — Tests for In Flight Tool Tracking
 import test from "node:test";
 import assert from "node:assert/strict";
 import { markToolStart, markToolEnd, isAutoActive, getOldestInFlightToolAgeMs } from "../auto.ts";

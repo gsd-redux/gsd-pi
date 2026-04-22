@@ -1,12 +1,13 @@
 /**
- * Regression test for #3626 / #3649 — pre-execution-checks false positives
+ * GSD2 — Regression test for #3626 / #3649 — pre-execution-checks false positives
  *
  * Two sources of false positives were fixed:
- *   1. normalizeFilePath did not strip backtick wrapping from LLM-generated
- *      paths like `src/foo.ts`, causing file-existence checks to fail (#3649).
- *   2. checkFilePathConsistency checked both task.files and task.inputs, but
- *      task.files ("files likely touched") intentionally includes files that
- *      will be created by the task, so they don't need to pre-exist (#3626).
+ * 1. normalizeFilePath did not strip backtick wrapping from LLM-generated
+ * paths like `src/foo.ts`, causing file-existence checks to fail (#3649).
+ * 2. checkFilePathConsistency checked both task.files and task.inputs, but
+ * task.files ("files likely touched") intentionally includes files that
+ * will be created by the task, so they don't need to pre-exist (#3626).
+ *
  */
 
 import { describe, it } from 'node:test'

@@ -1,10 +1,11 @@
 /**
- * Regression test for #4375: gsd_skip_slice must cascade "skipped" status to
+ * GSD2 — Regression test for #4375: gsd_skip_slice must cascade "skipped" status to
  * all non-closed tasks in the slice.
  *
  * Without the cascade, executeCompleteMilestone's deep-task check finds
  * pending tasks inside a skipped slice and refuses to complete the milestone,
  * causing auto-mode to loop on complete-milestone until stuck-recovery aborts.
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

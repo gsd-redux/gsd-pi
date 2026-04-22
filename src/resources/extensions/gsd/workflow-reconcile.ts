@@ -1,3 +1,4 @@
+// GSD2 — Workflow Reconcile — types and interfaces
 import { join } from "node:path";
 import { mkdirSync, existsSync, readFileSync, unlinkSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";

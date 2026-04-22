@@ -1,8 +1,9 @@
 /**
- * pre-execution-fail-closed.test.ts — Tests for pre-execution check fail-closed behavior.
+ * GSD2 — pre-execution-fail-closed.test.ts — Tests for pre-execution check fail-closed behavior.
  *
  * Verifies that when runPreExecutionChecks throws an exception, auto-mode pauses
  * instead of silently continuing. This is the "fail-closed" security pattern.
+ *
  */
 
 import { describe, test, mock, beforeEach, afterEach } from "node:test";

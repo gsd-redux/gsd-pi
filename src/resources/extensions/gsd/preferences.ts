@@ -1,5 +1,5 @@
 /**
- * GSD Preferences -- loading, merging, and rendering.
+ * GSD2 — GSD Preferences -- loading, merging, and rendering.
  *
  * This module is the primary entry point for preference operations.
  * Type definitions live in ./preferences-types.js, validation in
@@ -8,6 +8,7 @@
  *
  * All symbols are re-exported here so that existing `import { ... } from "./preferences.js"`
  * statements continue to work without modification.
+ *
  */
 
 import { existsSync, readFileSync } from "node:fs";

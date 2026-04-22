@@ -1,14 +1,14 @@
 /**
- * Regression tests for PR #4288 — auto-retry bug, .mcp.json churn, and MCP
+ * GSD2 — Regression tests for PR #4288 — auto-retry bug, .mcp.json churn, and MCP
  * worktree routing fixes.
  *
  * Covers four source-file changes:
- *   1. src/resources/extensions/gsd/safety/evidence-collector.ts (functional)
- *   2. src/resources/extensions/gsd/bootstrap/register-hooks.ts (source shape)
- *   3. src/resources/extensions/gsd/auto-recovery.ts (source shape)
- *   4. packages/mcp-server/src/workflow-tools.ts (source shape)
+ * 1. src/resources/extensions/gsd/safety/evidence-collector.ts (functional)
+ * 2. src/resources/extensions/gsd/bootstrap/register-hooks.ts (source shape)
+ * 3. src/resources/extensions/gsd/auto-recovery.ts (source shape)
+ * 4. packages/mcp-server/src/workflow-tools.ts (source shape)
  *
- * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+ *
  */
 
 import { describe, it, beforeEach } from "node:test";

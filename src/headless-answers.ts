@@ -1,9 +1,10 @@
 /**
- * Answer Injector — pre-supply answers to headless mode questions.
+ * GSD2 — Answer Injector — pre-supply answers to headless mode questions.
  *
  * Loads a JSON answer file and intercepts extension_ui_request events
  * to automatically respond with pre-configured answers, bypassing the
  * default auto-responder or supervised mode.
+ *
  */
 
 import { readFileSync } from 'node:fs'

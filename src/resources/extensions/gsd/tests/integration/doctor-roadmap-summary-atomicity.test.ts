@@ -1,10 +1,11 @@
 /**
- * Regression test for #1910: Doctor marks roadmap checkbox at fixLevel="task"
+ * GSD2 — Regression test for #1910: Doctor marks roadmap checkbox at fixLevel="task"
  * without summary on disk.
  *
  * With reconciliation codes removed (S06), doctor no longer marks roadmap
  * checkboxes at all. These tests verify the reconciliation is truly gone:
  * no checkbox toggling, no stub creation.
+ *
  */
 
 import { mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from "node:fs";

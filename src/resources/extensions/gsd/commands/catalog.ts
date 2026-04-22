@@ -1,3 +1,4 @@
+// GSD2 — Catalog — gsdHome constant
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

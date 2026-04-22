@@ -1,14 +1,15 @@
 /**
- * MCP Client Extension — Native MCP server integration for pi
+ * GSD2 — MCP Client Extension — Native MCP server integration for pi
  *
  * Provides on-demand access to MCP servers configured in project files
  * (.mcp.json, .gsd/mcp.json) using the @modelcontextprotocol/sdk Client
  * directly — no external CLI dependency required.
  *
  * Three tools:
- *   mcp_servers   — List available MCP servers from config files
- *   mcp_discover  — Get tool signatures for a specific server (lazy connect)
- *   mcp_call      — Call a tool on an MCP server (lazy connect)
+ * mcp_servers   — List available MCP servers from config files
+ * mcp_discover  — Get tool signatures for a specific server (lazy connect)
+ * mcp_call      — Call a tool on an MCP server (lazy connect)
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

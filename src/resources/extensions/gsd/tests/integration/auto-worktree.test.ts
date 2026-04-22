@@ -1,8 +1,9 @@
 /**
- * auto-worktree.test.ts — Tests for auto-worktree lifecycle.
+ * GSD2 — auto-worktree.test.ts — Tests for auto-worktree lifecycle.
  *
  * Covers: create → detect → teardown, re-entry, path helpers.
  * Runs in a real temp git repo.
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

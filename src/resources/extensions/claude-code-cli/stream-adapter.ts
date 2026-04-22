@@ -1,10 +1,11 @@
 /**
- * Stream adapter: bridges the Claude Agent SDK into GSD's streamSimple contract.
+ * GSD2 — Stream adapter: bridges the Claude Agent SDK into GSD's streamSimple contract.
  *
  * The SDK runs the full agentic loop (multi-turn, tool execution, compaction)
  * in one call. This adapter translates the SDK's streaming output into
  * AssistantMessageEvents for TUI rendering, then strips tool-call blocks from
  * the final AssistantMessage so GSD's agent loop doesn't try to dispatch them.
+ *
  */
 
 import type {

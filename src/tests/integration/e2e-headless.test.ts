@@ -1,5 +1,5 @@
 /**
- * E2E integration tests for `gsd headless` runtime behavior.
+ * GSD2 — E2E integration tests for `gsd headless` runtime behavior.
  *
  * Spawns real `gsd headless` child processes and asserts on
  * stdout/stderr/exit-code for: JSON batch mode, SIGINT exit code,
@@ -11,9 +11,10 @@
  * Prerequisite: npm run build must be run first.
  *
  * Run with:
- *   node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
- *        --experimental-strip-types --test \
- *        src/tests/integration/e2e-headless.test.ts
+ * node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+ * --experimental-strip-types --test \
+ * src/tests/integration/e2e-headless.test.ts
+ *
  */
 
 import test from "node:test";

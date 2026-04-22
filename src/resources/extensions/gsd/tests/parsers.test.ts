@@ -1,3 +1,4 @@
+// GSD2 — Tests for Parsers
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseRoadmap, parsePlan } from '../parsers-legacy.ts';
@@ -5,7 +6,6 @@ import { parseTaskPlanFile, parseSummary, parseContinue, parseRequirementCounts,
 // ═══════════════════════════════════════════════════════════════════════════
 // parseRoadmap tests
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 describe('parsers', () => {
 test('parseRoadmap: full roadmap', () => {
@@ -1781,40 +1781,27 @@ test('LLM round-trip: extra blank lines', () => {
   // LLMs sometimes insert excessive blank lines between sections
   const blanky = `# Secrets Manifest
 
-
 **Milestone:** M012
 **Generated:** 2025-07-03T14:00:00Z
 
-
-
 ### API_KEY_ONE
-
 
 **Service:** ServiceOne
 **Dashboard:** https://one.example.com
-
 
 **Format hint:** key_...
 **Status:** pending
 **Destination:** dotenv
 
-
-
 1. Go to settings
-
 
 2. Generate key
 
-
-
 ### API_KEY_TWO
-
-
 
 **Service:** ServiceTwo
 **Status:** skipped
 **Destination:** dotenv
-
 
 1. Not needed
 `;

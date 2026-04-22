@@ -1,9 +1,10 @@
 /**
- * GSD Command — /gsd backlog
+ * GSD2 — GSD Command — /gsd backlog
  *
  * Structured backlog management with 999.x numbering.
  * Items stored in .gsd/BACKLOG.md as markdown checklist.
  * Items can be promoted to active slices via add-slice.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

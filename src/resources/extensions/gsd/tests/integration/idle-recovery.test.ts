@@ -1,3 +1,4 @@
+// GSD2 — Tests for Idle Recovery
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -293,7 +294,6 @@ test('verifyExpectedArtifact: hook types always return true', () => {
     rmSync(base, { recursive: true, force: true });
   }
 });
-
 
 test('writeBlockerPlaceholder: updates DB task status for execute-task (#2531)', async () => {
   const base = createFixtureBase();

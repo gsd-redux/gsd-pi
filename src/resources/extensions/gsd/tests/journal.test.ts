@@ -1,3 +1,4 @@
+// GSD2 — Tests for Journal
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {

@@ -1,11 +1,12 @@
 /**
- * Regression tests for issue #2945: State corruption in milestone/slice completion workflow.
+ * GSD2 — Regression tests for issue #2945: State corruption in milestone/slice completion workflow.
  *
  * Covers all 4 sub-bugs:
- *   Bug 1: ROADMAP corrupted by inline UAT content in table rows
- *   Bug 2: complete-milestone event replay bypasses task validation
- *   Bug 3: Worktree directory not cleaned up after mergeAndExit
- *   Bug 4: Quality gate records not written by validate-milestone
+ * Bug 1: ROADMAP corrupted by inline UAT content in table rows
+ * Bug 2: complete-milestone event replay bypasses task validation
+ * Bug 3: Worktree directory not cleaned up after mergeAndExit
+ * Bug 4: Quality gate records not written by validate-milestone
+ *
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";

@@ -1,5 +1,5 @@
 /**
- * GSD Triage Resolution — Execute triage classifications
+ * GSD2 — GSD Triage Resolution — Execute triage classifications
  *
  * Provides resolution executors for each capture classification type:
  *
@@ -8,6 +8,7 @@
  * - defer/note: query helpers for loading deferred/replan captures
  *
  * Also provides detectFileOverlap() for surfacing downstream impact on quick tasks.
+ *
  */
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";

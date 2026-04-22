@@ -1,14 +1,14 @@
 /**
- * reopen-task handler — the core operation behind gsd_task_reopen.
+ * GSD2 — reopen-task handler — the core operation behind gsd_task_reopen.
  *
  * Resets a completed task back to "pending" so it can be re-done
  * without manual SQL surgery. The parent slice and milestone must
  * still be open (not complete) — you cannot reopen tasks inside a
  * closed slice.
+ *
  */
 
 // GSD — reopen-task tool handler
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import {
   getMilestone,

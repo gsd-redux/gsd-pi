@@ -1,8 +1,4 @@
-// GSD Extension — Interactive Routing Bypass Tests
-// Verifies that dynamic routing is skipped for interactive (guided-flow) dispatches
-// and that model downgrade notifications always fire (#3962).
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-
+// GSD2 — Extension — Interactive Routing Bypass Tests
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -1,8 +1,4 @@
-// GSD Extension - File Parsing and I/O
-// Parsers for roadmap, plan, summary, and continue files.
-// Used by state derivation and the status widget.
-// Pure functions, zero Pi dependencies - uses only Node built-ins.
-
+// GSD2 — Extension — File Parsing and I/O
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { atomicWriteAsync } from './atomic-write.js';

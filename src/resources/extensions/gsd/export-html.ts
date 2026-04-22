@@ -1,23 +1,24 @@
 /**
- * GSD HTML Report Generator
+ * GSD2 — GSD HTML Report Generator
  *
  * Produces a single self-contained HTML file with:
- *   - Branding header (project name, path, GSD version, generated timestamp)
- *   - Project summary & overall progress
- *   - Progress tree (milestones → slices → tasks, with critical path)
- *   - Execution timeline (chronological unit history)
- *   - Slice dependency graph (SVG DAG per milestone)
- *   - Cost & token metrics (bar charts, phase/slice/model/tier breakdowns)
- *   - Health & configuration overview
- *   - Changelog (completed slice summaries + file modifications)
- *   - Knowledge base (rules, patterns, lessons)
- *   - Captures log
- *   - Artifacts & milestone planning / discussion state
+ * - Branding header (project name, path, GSD version, generated timestamp)
+ * - Project summary & overall progress
+ * - Progress tree (milestones → slices → tasks, with critical path)
+ * - Execution timeline (chronological unit history)
+ * - Slice dependency graph (SVG DAG per milestone)
+ * - Cost & token metrics (bar charts, phase/slice/model/tier breakdowns)
+ * - Health & configuration overview
+ * - Changelog (completed slice summaries + file modifications)
+ * - Knowledge base (rules, patterns, lessons)
+ * - Captures log
+ * - Artifacts & milestone planning / discussion state
  *
  * No external dependencies — all CSS and JS is inlined.
  * Printable to PDF from any browser.
  *
  * Design: Linear-inspired — restrained palette, geometric status, no emoji.
+ *
  */
 
 import type {
@@ -1045,7 +1046,6 @@ function formatDateLong(iso: string): string {
     return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
   } catch { return iso; }
 }
-
 
 function esc(s: string | undefined | null): string {
   if (s == null) return '';

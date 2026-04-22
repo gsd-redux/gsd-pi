@@ -1,3 +1,4 @@
+// GSD2 — Doctor Engine Checks
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 

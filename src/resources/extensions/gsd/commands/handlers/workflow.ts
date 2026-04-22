@@ -1,3 +1,4 @@
+// GSD2 — Workflow
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { existsSync, readFileSync, unlinkSync } from "node:fs";

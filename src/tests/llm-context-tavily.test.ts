@@ -1,13 +1,14 @@
 /**
- * Contract tests for Tavily integration in search_and_read (tool-llm-context.ts).
+ * GSD2 — Contract tests for Tavily integration in search_and_read (tool-llm-context.ts).
  *
  * Covers:
  * - budgetContent: token distribution, truncation, null raw_content fallback,
- *   score filtering, empty input handling
+ * score filtering, empty input handling
  * - Mapping/format: age field shape, publishedDateToAge flow, missing dates
  * - Threshold-to-score: strict/balanced/lenient cutoffs, sub-threshold filtering
  * - Infrastructure: cache key isolation (|p:tavily vs |p:brave), no-key error
- *   message, Tavily request body shape (POST, Bearer auth, advanced depth)
+ * message, Tavily request body shape (POST, Bearer auth, advanced depth)
+ *
  */
 
 import test from "node:test";

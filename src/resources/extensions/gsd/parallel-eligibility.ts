@@ -1,8 +1,9 @@
 /**
- * GSD Parallel Eligibility — Milestone parallelism analysis.
+ * GSD2 — GSD Parallel Eligibility — Milestone parallelism analysis.
  *
  * Analyzes which milestones can safely run in parallel by checking
  * dependency satisfaction and file overlap across slice plans.
+ *
  */
 
 import { deriveState } from "./state.js";

@@ -1,3 +1,4 @@
+// GSD2 — Commands Bootstrap — TOP_LEVEL_SUBCOMMANDS constant
 import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 const TOP_LEVEL_SUBCOMMANDS = [

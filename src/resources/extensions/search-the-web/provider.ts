@@ -1,5 +1,5 @@
 /**
- * Search provider selection and preference management.
+ * GSD2 — Search provider selection and preference management.
  *
  * Single source of truth for which search backend (Tavily vs Brave) to use.
  * Reads API keys from process.env at call time (not module load time) so
@@ -7,6 +7,7 @@
  * synthetic provider key `search_provider` as { type: "api_key", key: "tavily" | "brave" | "auto" }.
  *
  * @see S01-RESEARCH.md for the storage decision rationale (D002).
+ *
  */
 
 import { AuthStorage } from '@gsd/pi-coding-agent'

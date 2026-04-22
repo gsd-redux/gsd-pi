@@ -1,17 +1,18 @@
 /**
- * Marketplace Discovery Module
- * 
+ * GSD2 — Marketplace Discovery Module
+ *
  * Reads marketplace.json from Claude marketplace repos, resolves plugin source paths,
  * parses plugin.json manifests, and inventories available components (skills, agents, commands, MCP servers, LSP servers, hooks).
- * 
+ *
  * Marketplace roots should reflect the Claude Code model documented by Anthropic:
  * users add a marketplace source with `/plugin marketplace add ...`, Claude stores
  * marketplace sources under `~/.claude/plugins/marketplaces/`, and installed plugin
  * payloads are copied into `~/.claude/plugins/cache/`.
- * 
+ *
  * Handles two marketplace catalog shapes observed in the wild:
  * 1. jamie-style: marketplace.json has {name, source} entries; plugins have .claude-plugin/plugin.json
  * 2. official-style: marketplace.json entries contain inline metadata
+ *
  */
 
 import * as fs from 'node:fs';

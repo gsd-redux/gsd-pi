@@ -1,5 +1,6 @@
 /**
- * Remote Questions — durable prompt store
+ * GSD2 — Remote Questions — durable prompt store
+ *
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

@@ -1,15 +1,15 @@
 /**
- * GSD Command — /gsd extract-learnings
+ * GSD2 — GSD Command — /gsd extract-learnings
  *
  * Analyses completed milestone artefacts and dispatches an LLM turn that
  * extracts structured knowledge into 4 categories (Decisions · Lessons ·
  * Patterns · Surprises), writes a LEARNINGS.md audit trail, and persists
  * the durable subset into the GSD memory store via capture_thought:
  *
- *   - Patterns  → capture_thought(category="pattern")
- *   - Lessons   → capture_thought(category="gotcha" | "convention")
- *   - Decisions → capture_thought(category="architecture", structuredFields=...)
- *   - Surprises → stay only in LEARNINGS.md (milestone-local context).
+ * - Patterns  → capture_thought(category="pattern")
+ * - Lessons   → capture_thought(category="gotcha" | "convention")
+ * - Decisions → capture_thought(category="architecture", structuredFields=...)
+ * - Surprises → stay only in LEARNINGS.md (milestone-local context).
  *
  * Per ADR-013 step 6 (cutover), the memories table is the single source of
  * truth for cross-session durable knowledge. The legacy KNOWLEDGE.md table
@@ -18,6 +18,7 @@
  *
  * The same extraction steps are reused by the complete-milestone prompt
  * via buildExtractionStepsBlock — single source of truth.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

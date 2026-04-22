@@ -1,5 +1,5 @@
 /**
- * search_and_read tool — web search + content extraction for AI agents.
+ * GSD2 — search_and_read tool — web search + content extraction for AI agents.
  *
  * Single-call web search + page content extraction optimized for AI agents.
  * Unlike search-the-web → fetch_page (two steps), this returns pre-extracted,
@@ -13,6 +13,7 @@
  *
  * Best for: "I need to know about X" — when you want content, not just links.
  * Use search-the-web when you want links/URLs to browse selectively.
+ *
  */
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

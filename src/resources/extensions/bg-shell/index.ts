@@ -1,8 +1,9 @@
 /**
- * Background Shell Extension v2
+ * GSD2 — Background Shell Extension v2
  *
  * Command/tool registration is deferred in interactive mode so startup does not
  * block on the full background-process stack before the TUI paints.
+ *
  */
 
 import { importExtensionModule, type ExtensionAPI, type ExtensionContext } from "@gsd/pi-coding-agent";

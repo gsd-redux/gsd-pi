@@ -1,8 +1,9 @@
 /**
- * Tests for model config isolation between concurrent instances (#650, #1065),
+ * GSD2 — Tests for model config isolation between concurrent instances (#650, #1065),
  * session-scoped model precedence behavior including manual session override,
  * GSD preferences override of settings.json defaults (#3517), and custom
  * provider precedence over PREFERENCES.md when set via `/gsd model` (#4122).
+ *
  */
 
 import { describe, it, beforeEach, afterEach } from "node:test";

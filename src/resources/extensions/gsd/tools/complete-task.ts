@@ -1,10 +1,11 @@
 /**
- * complete-task handler — the core operation behind gsd_complete_task.
+ * GSD2 — complete-task handler — the core operation behind gsd_complete_task.
  *
  * Validates inputs, writes task row to DB in a transaction, then (outside
  * the transaction) renders SUMMARY.md to disk, toggles the plan checkbox,
  * stores the rendered markdown in the DB for D004 recovery, and invalidates
  * caches.
+ *
  */
 
 import { join } from "node:path";

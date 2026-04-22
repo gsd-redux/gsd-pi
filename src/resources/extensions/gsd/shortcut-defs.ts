@@ -1,5 +1,4 @@
-// Canonical GSD shortcut definitions used by registration, help text, and overlays.
-
+// GSD2 — Canonical GSD shortcut definitions used by registration, help text, and overlays.
 import { formatShortcut } from "./files.js";
 
 export type GSDShortcutId = "dashboard" | "notifications" | "parallel";

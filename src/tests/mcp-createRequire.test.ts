@@ -1,5 +1,5 @@
 /**
- * Regression test for #3603 / #3914 — MCP server subpath imports.
+ * GSD2 — Regression test for #3603 / #3914 — MCP server subpath imports.
  *
  * @modelcontextprotocol/sdk's package.json exports map uses a wildcard
  * `./*` → `./dist/cjs/*` with no `.js` suffix, so bare subpath specifiers
@@ -12,6 +12,7 @@
  * is to write the `.js` suffix explicitly on every subpath import. This
  * test locks that convention in so regressions can't silently reintroduce
  * the bare subpath form or the broken createRequire-based resolution.
+ *
  */
 
 import { describe, test } from 'node:test';

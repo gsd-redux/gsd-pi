@@ -1,5 +1,6 @@
 /**
- * Shared types, constants, and pattern databases for the bg-shell extension.
+ * GSD2 — Shared types, constants, and pattern databases for the bg-shell extension.
+ *
  */
 
 // ── Types ──────────────────────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 /**
- * linux-ready.ts — Linux voice readiness logic (extracted for testability).
+ * GSD2 — linux-ready.ts — Linux voice readiness logic (extracted for testability).
  *
  * Handles:
- *   - Detecting system vs venv python3
- *   - Diagnosing sounddevice import errors (portaudio vs missing module)
- *   - Auto-creating venv on PEP 668 systems
+ * - Detecting system vs venv python3
+ * - Diagnosing sounddevice import errors (portaudio vs missing module)
+ * - Auto-creating venv on PEP 668 systems
+ *
  */
 
 import { execFileSync } from "node:child_process";

@@ -1,9 +1,10 @@
 /**
- * dev-workflow-engine.ts — DevWorkflowEngine implementation.
+ * GSD2 — dev-workflow-engine.ts — DevWorkflowEngine implementation.
  *
  * Implements WorkflowEngine by delegating to existing GSD state derivation
  * and dispatch logic. This is the "dev" engine — it wraps the current GSD
  * auto-mode behavior behind the engine-polymorphic interface.
+ *
  */
 
 import type { WorkflowEngine } from "./workflow-engine.js";

@@ -1,5 +1,5 @@
 /**
- * worktree-sync-milestones.test.ts — Regression tests for #1311 and #1678.
+ * GSD2 — worktree-sync-milestones.test.ts — Regression tests for #1311 and #1678.
  *
  * Verifies that syncProjectRootToWorktree copies milestone artifacts
  * from the main repo's .gsd/ into the worktree's .gsd/ for the
@@ -9,18 +9,19 @@
  * so task-level summaries are not dropped on milestone teardown (#1678).
  *
  * Covers:
- *   - Milestone directory synced from main to worktree
- *   - Missing slices within a milestone are synced
- *   - gsd.db deleted in worktree after sync
- *   - No-op when paths are equal
- *   - No-op when milestoneId is null
- *   - Non-existent directories handled gracefully
- *   - syncWorktreeStateBack recurses into tasks/ subdirectory (#1678)
- *   - syncWorktreeStateBack syncs root-level .gsd/ files (REQUIREMENTS, PROJECT, etc.)
- *   - syncWorktreeStateBack syncs ALL milestone directories, not just the current one
- *   - syncWorktreeStateBack handles next-milestone artifacts created during completion
- *   - syncGsdStateToWorktree syncs non-standard milestone dir names (#1547)
- *   - syncWorktreeStateBack syncs non-standard milestone dir names (#1547)
+ * - Milestone directory synced from main to worktree
+ * - Missing slices within a milestone are synced
+ * - gsd.db deleted in worktree after sync
+ * - No-op when paths are equal
+ * - No-op when milestoneId is null
+ * - Non-existent directories handled gracefully
+ * - syncWorktreeStateBack recurses into tasks/ subdirectory (#1678)
+ * - syncWorktreeStateBack syncs root-level .gsd/ files (REQUIREMENTS, PROJECT, etc.)
+ * - syncWorktreeStateBack syncs ALL milestone directories, not just the current one
+ * - syncWorktreeStateBack handles next-milestone artifacts created during completion
+ * - syncGsdStateToWorktree syncs non-standard milestone dir names (#1547)
+ * - syncWorktreeStateBack syncs non-standard milestone dir names (#1547)
+ *
  */
 
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -31,7 +32,6 @@ import { syncProjectRootToWorktree } from '../auto-worktree.ts';
 import { syncGsdStateToWorktree, syncWorktreeStateBack } from '../auto-worktree.ts';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-
 
 function createBase(name: string): string {
   const base = mkdtempSync(join(tmpdir(), `gsd-wt-sync-${name}-`));

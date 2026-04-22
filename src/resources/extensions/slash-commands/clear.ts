@@ -1,3 +1,4 @@
+// GSD2 — Clear
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 export default function clearCommand(pi: ExtensionAPI) {

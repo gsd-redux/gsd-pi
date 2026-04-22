@@ -1,10 +1,11 @@
 /**
- * derive-state-db-disk-reconcile.test.ts — #2416
+ * GSD2 — derive-state-db-disk-reconcile.test.ts — #2416
  *
  * After migration to DB-backed state, milestones that exist on disk
  * (in .gsd/milestones/) but were never imported into the DB become
  * invisible to deriveStateFromDb(). This test verifies that
  * deriveStateFromDb reconciles disk milestones with DB milestones.
+ *
  */
 
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

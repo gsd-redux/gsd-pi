@@ -1,3 +1,4 @@
+// GSD2 — Contracts — types and interfaces
 export type FailureClass =
   | "none"
   | "policy"

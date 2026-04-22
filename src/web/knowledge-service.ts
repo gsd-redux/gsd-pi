@@ -1,3 +1,4 @@
+// GSD2 — Knowledge Service
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 

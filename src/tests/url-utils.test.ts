@@ -1,3 +1,4 @@
+// GSD2 — Tests for Url Utils
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { isBlockedUrl, setFetchAllowedUrls, getFetchAllowedUrls } from "../resources/extensions/search-the-web/url-utils.ts";

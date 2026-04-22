@@ -1,8 +1,9 @@
 /**
- * Regression test for #3697 — set slice sequence on insert
+ * GSD2 — Regression test for #3697 — set slice sequence on insert
  *
  * All three insertSlice call sites must pass a sequence value so slices
  * are ordered correctly instead of defaulting to 0.
+ *
  */
 
 import { describe, test } from 'node:test';

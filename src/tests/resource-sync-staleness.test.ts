@@ -1,3 +1,4 @@
+// GSD2 — Tests for Resource Sync Staleness
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

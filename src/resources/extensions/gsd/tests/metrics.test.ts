@@ -1,7 +1,8 @@
 /**
- * Metrics tests — consolidated from:
- *   - metrics.test.ts (pure aggregation functions, formatting)
- *   - metrics-io.test.ts (disk I/O, init, snapshot, persistence)
+ * GSD2 — Metrics tests — consolidated from:
+ * - metrics.test.ts (pure aggregation functions, formatting)
+ * - metrics-io.test.ts (disk I/O, init, snapshot, persistence)
+ *
  */
 
 import test from "node:test";

@@ -1,9 +1,10 @@
 /**
- * GSD bootstrappers for .gitignore and PREFERENCES.md
+ * GSD2 — GSD bootstrappers for .gitignore and PREFERENCES.md
  *
  * Ensures baseline .gitignore exists with universally-correct patterns.
  * Creates an empty PREFERENCES.md template if it doesn't exist.
  * Both idempotent — non-destructive if already present.
+ *
  */
 
 import { join } from "node:path";

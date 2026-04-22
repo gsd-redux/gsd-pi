@@ -1,10 +1,11 @@
 /**
- * Regression test for #2488: Stale milestone ID reservations inflate next ID
+ * GSD2 — Regression test for #2488: Stale milestone ID reservations inflate next ID
  * after cancelled /gsd sessions.
  *
  * The module-level `reservedMilestoneIds` Set persists across /gsd invocations
  * within the same Node process. Without clearReservedMilestoneIds() at session
  * start, each cancelled session permanently bumps the counter by 1.
+ *
  */
 import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert/strict";

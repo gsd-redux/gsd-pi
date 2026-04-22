@@ -1,5 +1,5 @@
 /**
- * WorktreeResolver — encapsulates worktree path state and merge/exit lifecycle.
+ * GSD2 — WorktreeResolver — encapsulates worktree path state and merge/exit lifecycle.
  *
  * Replaces scattered `s.basePath`/`s.originalBasePath` mutation and 3 duplicated
  * merge-or-teardown blocks in auto-loop.ts with single method calls. All
@@ -11,6 +11,7 @@
  *
  * Key invariant: `createAutoWorktree()` and `enterAutoWorktree()` call
  * `process.chdir()` internally — this class MUST NOT double-chdir.
+ *
  */
 
 import { existsSync, unlinkSync } from "node:fs";

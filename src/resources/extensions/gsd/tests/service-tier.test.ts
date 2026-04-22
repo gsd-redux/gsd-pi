@@ -1,3 +1,4 @@
+// GSD2 — Tests for Service Tier
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 

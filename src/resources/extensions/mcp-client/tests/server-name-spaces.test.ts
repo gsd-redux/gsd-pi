@@ -1,12 +1,13 @@
 /**
- * Regression test for #3029 — mcp_discover fails for server names with spaces.
+ * GSD2 — Regression test for #3029 — mcp_discover fails for server names with spaces.
  *
  * The getServerConfig lookup must handle:
- *   1. Exact match (already works)
- *   2. Names with leading/trailing whitespace (trimming)
- *   3. Case-insensitive matching (e.g. "Langgraph code" vs "langgraph Code")
+ * 1. Exact match (already works)
+ * 2. Names with leading/trailing whitespace (trimming)
+ * 3. Case-insensitive matching (e.g. "Langgraph code" vs "langgraph Code")
  *
  * We test at the source level since getServerConfig is not exported.
+ *
  */
 
 import test from "node:test";

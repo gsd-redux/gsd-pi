@@ -1,3 +1,4 @@
+// GSD2 — Tests for Ensure Workspace Builds
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, statSync } from "node:fs";

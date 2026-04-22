@@ -1,13 +1,13 @@
 /**
- * GSD Worktree CLI — standalone subcommand and -w flag handling.
+ * GSD2 — GSD Worktree CLI — standalone subcommand and -w flag handling.
  *
  * Manages the full worktree lifecycle from the command line:
- *   gsd -w                    Create auto-named worktree, start interactive session
- *   gsd -w my-feature         Create/resume named worktree
- *   gsd worktree list         List worktrees with status
- *   gsd worktree merge [name] Squash-merge a worktree into main
- *   gsd worktree clean        Remove all merged/empty worktrees
- *   gsd worktree remove <n>   Remove a specific worktree
+ * gsd -w                    Create auto-named worktree, start interactive session
+ * gsd -w my-feature         Create/resume named worktree
+ * gsd worktree list         List worktrees with status
+ * gsd worktree merge [name] Squash-merge a worktree into main
+ * gsd worktree clean        Remove all merged/empty worktrees
+ * gsd worktree remove <n>   Remove a specific worktree
  *
  * On session exit (via session_shutdown event), auto-commits dirty work
  * so nothing is lost. The GSD extension reads GSD_CLI_WORKTREE to know
@@ -16,6 +16,7 @@
  * Note: Extension modules are .ts files loaded via jiti (not compiled to .js).
  * We use createJiti() here because this module is compiled by tsc but imports
  * from resources/extensions/gsd/ which are shipped as raw .ts (#1283).
+ *
  */
 
 import chalk from 'chalk'

@@ -1,8 +1,4 @@
-// Guard test — every key in KNOWN_PREFERENCE_KEYS must be reachable from the
-// /gsd prefs wizard.  Without this guard, a new preference can be added to the
-// schema without anyone wiring it into the TUI, silently re-creating the gap
-// this test exists to prevent.
-
+// GSD2 — Guard test — every key in KNOWN_PREFERENCE_KEYS must be reachable from the
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

@@ -1,5 +1,5 @@
 /**
- * Cross-platform path display for LLM-visible text.
+ * GSD2 — Cross-platform path display for LLM-visible text.
  *
  * Paths injected into prompts, tool results, or extension messages must use
  * forward slashes. Windows backslash paths cause bash failures when the model
@@ -8,6 +8,7 @@
  * Use this ONLY for paths entering text the LLM or shell sees.
  * Filesystem operations (fs.readFile, path.join, spawn cwd) handle native
  * separators correctly and should NOT be normalized.
+ *
  */
 
 /**

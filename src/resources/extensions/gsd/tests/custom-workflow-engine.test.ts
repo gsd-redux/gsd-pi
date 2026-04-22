@@ -1,8 +1,9 @@
 /**
- * custom-workflow-engine.test.ts — Tests for CustomWorkflowEngine and CustomExecutionPolicy.
+ * GSD2 — custom-workflow-engine.test.ts — Tests for CustomWorkflowEngine and CustomExecutionPolicy.
  *
  * Uses real temp directories with actual GRAPH.yaml files — no mocks.
  * Tests the full engine lifecycle: deriveState → resolveDispatch → reconcile.
+ *
  */
 
 import { describe, it, afterEach } from "node:test";

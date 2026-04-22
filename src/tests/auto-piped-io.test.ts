@@ -1,5 +1,5 @@
 /**
- * Tests for auto-mode piped I/O detection (#2732).
+ * GSD2 — Tests for auto-mode piped I/O detection (#2732).
  *
  * When `gsd auto` is run with piped stdout (e.g. `gsd auto | cat`),
  * the CLI should detect the non-TTY stdout and redirect to headless
@@ -9,6 +9,7 @@
  * Also verifies the stdout TTY gate at the interactive mode entry point:
  * when stdout is piped, interactive mode must not be entered regardless
  * of the subcommand.
+ *
  */
 
 import test from "node:test";

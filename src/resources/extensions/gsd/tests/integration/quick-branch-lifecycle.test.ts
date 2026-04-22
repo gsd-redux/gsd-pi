@@ -1,10 +1,11 @@
 /**
- * Tests for quick-task branch lifecycle:
+ * GSD2 — Tests for quick-task branch lifecycle:
  * - Branch creation → merge-back → cleanup
  * - Cross-session recovery via disk-persisted state
  * - captureIntegrationBranch guard against quick-task branches
  *
  * Relates to #1269, #1293.
+ *
  */
 
 import { describe, test } from 'node:test';
@@ -37,7 +38,6 @@ function createTestRepo(): string {
   // ═══════════════════════════════════════════════════════════════════════
   // QUICK_BRANCH_RE
   // ═══════════════════════════════════════════════════════════════════════
-
 
 describe('quick-branch-lifecycle', () => {
 test('QUICK_BRANCH_RE: matches quick-task branches', () => {

@@ -1,8 +1,9 @@
 /**
- * GSD Command — /gsd do
+ * GSD2 — GSD Command — /gsd do
  *
  * Routes freeform natural language to the correct /gsd subcommand
  * using keyword matching. Falls back to /gsd quick for task-like input.
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

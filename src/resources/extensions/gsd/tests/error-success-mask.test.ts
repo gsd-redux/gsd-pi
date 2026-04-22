@@ -1,9 +1,10 @@
 /**
- * error-success-mask.test.ts — #3664
+ * GSD2 — error-success-mask.test.ts — #3664
  *
  * Verify that the agent-end-recovery error handler detects when errorMessage
  * is uninformative (e.g. "success", "ok", "unknown") and falls back to
  * extracting the real error from the assistant message text content.
+ *
  */
 
 import { describe, test } from "node:test";

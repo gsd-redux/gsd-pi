@@ -1,3 +1,4 @@
+// GSD2 — Index
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import createSlashCommand from "./create-slash-command.js";
 import createExtension from "./create-extension.js";

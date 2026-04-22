@@ -1,3 +1,4 @@
+// GSD2 — Workflow Mcp
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";

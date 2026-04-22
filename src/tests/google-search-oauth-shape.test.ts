@@ -1,5 +1,5 @@
 /**
- * google-search-oauth-shape.test.ts — Regression test for #2963.
+ * GSD2 — google-search-oauth-shape.test.ts — Regression test for #2963.
  *
  * The OAuth fallback in google_search manually POSTs to the Cloud Code Assist
  * endpoint.  The original implementation sent a request body that did not match
@@ -8,6 +8,7 @@
  * This test captures the fetch call and asserts that the URL and body conform
  * to the Cloud Code Assist wire format used by the working provider in
  * packages/pi-ai/src/providers/google-gemini-cli.ts.
+ *
  */
 
 import test from "node:test";

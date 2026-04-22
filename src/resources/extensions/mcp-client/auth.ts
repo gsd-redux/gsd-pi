@@ -1,11 +1,12 @@
 /**
- * MCP Client OAuth / Auth helpers
+ * GSD2 — MCP Client OAuth / Auth helpers
  *
  * Builds transport options (headers, OAuthClientProvider) from MCP server
  * config entries so that HTTP transports can authenticate with remote
  * servers (Sentry, Linear, etc.).
  *
  * Fixes #2160 — MCP HTTP transport lacked an OAuth auth provider.
+ *
  */
 
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";

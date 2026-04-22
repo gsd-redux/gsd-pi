@@ -1,9 +1,10 @@
 /**
- * auto/infra-errors.ts — Infrastructure error detection.
+ * GSD2 — auto/infra-errors.ts — Infrastructure error detection.
  *
  * Leaf module with zero transitive dependencies. Used by the auto-loop catch
  * block to distinguish unrecoverable OS/filesystem errors from transient
  * failures that merit retry.
+ *
  */
 
 /**

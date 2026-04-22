@@ -1,5 +1,5 @@
 /**
- * Regression tests for #2195: formatTraceSummary (used by getDeepDiagnostic →
+ * GSD2 — Regression tests for #2195: formatTraceSummary (used by getDeepDiagnostic →
  * retry prompts) must NOT include lastReasoning from prior assistant text.
  *
  * Including prior assistant free-text in retry diagnostics causes hallucination
@@ -7,6 +7,7 @@
  *
  * The crash recovery path (formatCrashRecoveryBriefing) has its own safe handling
  * of lastReasoning and is NOT affected by this change.
+ *
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";

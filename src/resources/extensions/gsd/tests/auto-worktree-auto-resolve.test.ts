@@ -1,8 +1,9 @@
 /**
- * auto-worktree-auto-resolve.test.ts — Unit tests for isSafeToAutoResolve.
+ * GSD2 — auto-worktree-auto-resolve.test.ts — Unit tests for isSafeToAutoResolve.
  *
  * Covers: .gsd/ state files, build artifacts (.tsbuildinfo, .pyc, __pycache__,
  * .DS_Store, .map), and rejection of real source files.
+ *
  */
 
 import { describe, test } from "node:test";

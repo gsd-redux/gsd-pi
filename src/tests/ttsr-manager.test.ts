@@ -1,6 +1,7 @@
 /**
- * Tests for TtsrManager: rule matching, scope filtering, buffer management,
+ * GSD2 — Tests for TtsrManager: rule matching, scope filtering, buffer management,
  * repeat gating, and buffer size caps.
+ *
  */
 
 import test from 'node:test'

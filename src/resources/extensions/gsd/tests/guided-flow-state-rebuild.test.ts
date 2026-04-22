@@ -1,10 +1,11 @@
 /**
- * Regression test for #3475: guided-flow must rebuild STATE.md from derived
+ * GSD2 — Regression test for #3475: guided-flow must rebuild STATE.md from derived
  * state before dispatching workflows.
  *
  * Verifies that buildStateMarkdown() produces content matching the derived
  * state (not a stale on-disk cache), and that the rebuild helper is wired
  * correctly from doctor.ts.
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

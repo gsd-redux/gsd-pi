@@ -1,7 +1,8 @@
 /**
- * GSD Maintenance — cleanup, skip, dry-run, and recover handlers.
+ * GSD2 — GSD Maintenance — cleanup, skip, dry-run, and recover handlers.
  *
  * Contains: handleCleanupBranches, handleCleanupSnapshots, handleCleanupWorktrees, handleSkip, handleDryRun, handleRecover
+ *
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";

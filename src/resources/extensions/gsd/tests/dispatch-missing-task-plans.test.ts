@@ -1,5 +1,5 @@
 /**
- * Regression test for issue #909.
+ * GSD2 — Regression test for issue #909.
  *
  * When S##-PLAN.md exists (causing deriveState → phase:'executing') but the
  * individual task plan files (tasks/T01-PLAN.md, etc.) are absent, the dispatch
@@ -7,6 +7,7 @@
  *
  * Prior behaviour: action:"stop" → infinite loop on restart.
  * Fixed behaviour: action:"dispatch" unitType:"plan-slice".
+ *
  */
 
 import test from "node:test";

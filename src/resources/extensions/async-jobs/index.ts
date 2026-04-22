@@ -1,17 +1,18 @@
 /**
- * Async Jobs Extension
+ * GSD2 — Async Jobs Extension
  *
  * Allows bash commands to run in the background. The agent gets a job ID
  * immediately and can continue working. Results are delivered via follow-up
  * messages when jobs complete.
  *
  * Tools:
- *   async_bash — run a command in the background, get a job ID
- *   await_job  — wait for background jobs to complete, get results
- *   cancel_job — cancel a running background job
+ * async_bash — run a command in the background, get a job ID
+ * await_job  — wait for background jobs to complete, get results
+ * cancel_job — cancel a running background job
  *
  * Commands:
- *   /jobs — show running and recent background jobs
+ * /jobs — show running and recent background jobs
+ *
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";

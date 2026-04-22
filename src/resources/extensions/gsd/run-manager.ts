@@ -1,5 +1,5 @@
 /**
- * run-manager.ts — Create and list isolated workflow run directories.
+ * GSD2 — run-manager.ts — Create and list isolated workflow run directories.
  *
  * Each run lives under `.gsd/workflow-runs/<name>/<timestamp>/` and contains:
  * - DEFINITION.yaml — frozen snapshot of the workflow definition at run-creation time
@@ -11,6 +11,7 @@
  * - `listRuns()` returns structured metadata including step counts and overall status.
  * - Timestamp directory names are filesystem-safe (ISO with hyphens replacing colons).
  * - Errors include the full path context for diagnosis.
+ *
  */
 
 import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";

@@ -1,10 +1,11 @@
 /**
- * journal-integration.test.ts — Integration tests proving that phase functions
+ * GSD2 — journal-integration.test.ts — Integration tests proving that phase functions
  * emit correct journal event sequences with flowId threading, rule provenance,
  * and causedBy references.
  *
  * These tests call the real runDispatch / runUnitPhase / runPreDispatch
  * functions with mock LoopDeps that capture emitJournalEvent calls.
+ *
  */
 
 import test from "node:test";

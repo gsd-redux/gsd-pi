@@ -1,3 +1,4 @@
+// GSD2 — Tests for Complete Task Rollback Evidence
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";

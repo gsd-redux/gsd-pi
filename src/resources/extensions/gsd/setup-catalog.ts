@@ -1,12 +1,4 @@
-// GSD — Setup catalog (single source of truth for onboarding steps + provider sub-views)
-//
-// Re-exports filtered views over PROVIDER_REGISTRY (key-manager.ts) and owns the
-// canonical ONBOARDING_STEPS list. Consumers (CLI wizard, /gsd setup hub,
-// onboarding handler, web alignment) all read from here so adding a step or
-// provider lands in one place. Keep this module thin: no behavior beyond
-// filters + lookup helpers, so it stays cycle-safe even though it depends on
-// key-manager for the provider catalog.
-
+// GSD2 — Setup catalog (single source of truth for onboarding steps + provider sub-views)
 import { PROVIDER_REGISTRY, type ProviderInfo } from "./key-manager.js"
 
 export type OnboardingStepId =

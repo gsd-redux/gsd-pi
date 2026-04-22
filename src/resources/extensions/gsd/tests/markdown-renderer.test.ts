@@ -1,3 +1,4 @@
+// GSD2 — Tests for Markdown Renderer
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -548,7 +549,6 @@ test('── markdown-renderer: renderTaskPlanFromDb throws for missing task ─
     cleanupDir(tmpDir);
   }
 });
-
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Task Summary Rendering

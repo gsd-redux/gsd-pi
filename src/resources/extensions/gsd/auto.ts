@@ -1,5 +1,5 @@
 /**
- * GSD Auto Mode — Fresh Session Per Unit
+ * GSD2 — GSD Auto Mode — Fresh Session Per Unit
  *
  * State machine driven by .gsd/ files on disk. Each "unit" of work
  * (plan slice, execute task, complete slice) gets a fresh session via
@@ -8,6 +8,7 @@
  * The extension reads disk state after each agent_end, determines the
  * next unit type, creates a fresh session, and injects a focused prompt
  * telling the LLM which files to read and what to do.
+ *
  */
 
 import type {

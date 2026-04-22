@@ -1,9 +1,10 @@
 /**
- * Regression test for #4548 — Bug 1: claude.exe installs missed on Windows.
+ * GSD2 — Regression test for #4548 — Bug 1: claude.exe installs missed on Windows.
  *
  * readiness.ts must probe `claude.exe` in addition to `claude.cmd` so that
  * direct-binary Windows installs are detected. claude-cli-check.ts must do
  * the same.
+ *
  */
 
 import test, { describe } from "node:test";

@@ -1,9 +1,10 @@
 /**
- * crash-log.ts — Write crash diagnostics to ~/.gsd/crash/<timestamp>.log
+ * GSD2 — crash-log.ts — Write crash diagnostics to ~/.gsd/crash/<timestamp>.log
  *
  * Zero cross-dependencies: only uses Node.js built-ins so it can be imported
  * safely from uncaughtException / unhandledRejection handlers and from tests
  * without pulling in the full extension dependency tree.
+ *
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";

@@ -1,3 +1,4 @@
+// GSD2 — Tests for Workflow Mcp
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

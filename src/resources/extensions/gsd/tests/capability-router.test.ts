@@ -1,6 +1,4 @@
-// GSD Extension — Capability-Aware Router Tests
-// Tests for new capability scoring functions and data tables (Plan 01-01)
-
+// GSD2 — Extension — Capability-Aware Router Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 

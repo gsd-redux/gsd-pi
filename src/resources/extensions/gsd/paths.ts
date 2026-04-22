@@ -1,5 +1,5 @@
 /**
- * GSD Paths — ID-based path resolution
+ * GSD2 — GSD Paths — ID-based path resolution
  *
  * Directories use bare IDs: M001/, S01/, etc.
  * Files use ID-SUFFIX: M001-ROADMAP.md, S01-PLAN.md, T01-PLAN.md
@@ -7,6 +7,7 @@
  * Resolvers still handle legacy descriptor-suffixed names
  * (e.g. M001-FLIGHT-SIMULATOR/, T03-INSTALL-PACKAGES-PLAN.md)
  * via prefix matching, so existing projects work without migration.
+ *
  */
 
 import { readdirSync, existsSync, realpathSync, Dirent } from "node:fs";

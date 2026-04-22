@@ -1,3 +1,4 @@
+// GSD2 — Tests for Repo Identity Worktree
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, lstatSync, realpathSync, mkdirSync, symlinkSync, renameSync } from "node:fs";

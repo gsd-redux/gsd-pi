@@ -1,25 +1,26 @@
 /**
- * auto-start-needs-discussion.test.ts — Regression tests for #1726.
+ * GSD2 — auto-start-needs-discussion.test.ts — Regression tests for #1726.
  *
  * When a milestone has only CONTEXT-DRAFT.md (phase: needs-discussion),
  * bootstrapAutoSession had two bugs:
  *
- *   1. The survivor branch check included needs-discussion, so a branch
- *      created by a prior failed bootstrap caused hasSurvivorBranch = true,
- *      skipping all showSmartEntry calls.
+ * 1. The survivor branch check included needs-discussion, so a branch
+ * created by a prior failed bootstrap caused hasSurvivorBranch = true,
+ * skipping all showSmartEntry calls.
  *
- *   2. No needs-discussion handler existed in the !hasSurvivorBranch block,
- *      so the phase fell through to auto-mode which immediately stopped
- *      with "needs its own discussion before planning."
+ * 2. No needs-discussion handler existed in the !hasSurvivorBranch block,
+ * so the phase fell through to auto-mode which immediately stopped
+ * with "needs its own discussion before planning."
  *
  * Together these created an infinite loop: /gsd creates worktree + branch,
  * stops immediately, next run detects the branch and skips entry, auto-mode
  * dispatches needs-discussion → stop, repeat.
  *
  * These tests verify:
- *   - deriveState correctly identifies needs-discussion phase
- *   - The survivor branch filter in auto-start.ts excludes needs-discussion
- *   - The !hasSurvivorBranch block has a needs-discussion handler
+ * - deriveState correctly identifies needs-discussion phase
+ * - The survivor branch filter in auto-start.ts excludes needs-discussion
+ * - The !hasSurvivorBranch block has a needs-discussion handler
+ *
  */
 
 import { describe, test, afterEach } from "node:test";

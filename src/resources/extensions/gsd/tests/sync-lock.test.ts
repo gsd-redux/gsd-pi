@@ -1,6 +1,4 @@
-// GSD Extension — sync-lock unit tests
-// Tests acquireSyncLock() and releaseSyncLock().
-
+// GSD2 — Extension — sync-lock unit tests
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';

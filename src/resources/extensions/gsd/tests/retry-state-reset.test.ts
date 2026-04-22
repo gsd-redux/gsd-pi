@@ -1,9 +1,4 @@
-// GSD Extension — Regression tests for #1714: retry_on signal state reset
-//
-// Verifies that when a post_unit_hook writes a retry_on artifact, the
-// consuming code properly resets all completion state so deriveState
-// re-derives the task on the next loop iteration.
-
+// GSD2 — Extension — Regression tests for #1714: retry_on signal state reset
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, unlinkSync } from "node:fs";
@@ -64,7 +59,6 @@ function createRetryFixture(): { base: string; cleanup: () => void } {
 // ═══════════════════════════════════════════════════════════════════════════
 // Test: consumeRetryTrigger returns retryArtifact field
 // ═══════════════════════════════════════════════════════════════════════════
-
 
 describe('retry-state-reset', () => {
 test('consumeRetryTrigger: returns null when no retry pending', () => {

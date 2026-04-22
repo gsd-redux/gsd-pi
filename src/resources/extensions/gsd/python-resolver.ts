@@ -1,5 +1,5 @@
 /**
- * Cross-platform Python interpreter resolver.
+ * GSD2 — Cross-platform Python interpreter resolver.
  *
  * Provides utilities to detect the available Python interpreter on the current
  * system and to normalize shell commands that reference `python`/`python3` so
@@ -11,6 +11,7 @@
  * commands accordingly.
  *
  * @module python-resolver
+ *
  */
 
 import { spawnSync } from "node:child_process";

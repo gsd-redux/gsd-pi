@@ -1,5 +1,6 @@
 /**
- * Unit tests for prompt-cache-optimizer.ts — cache-aware prompt reordering.
+ * GSD2 — Unit tests for prompt-cache-optimizer.ts — cache-aware prompt reordering.
+ *
  */
 
 import { describe, it } from "node:test";

@@ -1,5 +1,5 @@
 /**
- * GSD Prompt Loader
+ * GSD2 — GSD Prompt Loader
  *
  * Reads .md prompt templates from the prompts/ directory and substitutes
  * {{variable}} placeholders with provided values.
@@ -15,6 +15,7 @@
  * causing a "template declares {{X}} but no value was provided" crash
  * mid-session — especially for late-loading templates like complete-milestone
  * that aren't read until the end of a long auto-mode run.
+ *
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";

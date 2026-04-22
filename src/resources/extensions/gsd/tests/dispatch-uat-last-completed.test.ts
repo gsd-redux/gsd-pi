@@ -1,7 +1,4 @@
-// Regression test for #1693 — /gsd dispatch uat targets the last completed
-// slice from the roadmap instead of state.activeSlice (which has already
-// advanced to the next incomplete slice).
-
+// GSD2 — Regression test for #1693 — /gsd dispatch uat targets the last completed
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

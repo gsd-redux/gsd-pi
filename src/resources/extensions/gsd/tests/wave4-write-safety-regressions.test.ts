@@ -1,6 +1,4 @@
-// GSD State Machine — Wave 4 Write Safety Regression Tests
-// Validates randomized tmp suffix in json-persistence and atomic writes.
-
+// GSD2 — State Machine — Wave 4 Write Safety Regression Tests
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";

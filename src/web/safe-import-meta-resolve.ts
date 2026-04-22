@@ -1,3 +1,4 @@
+// GSD2 — Safe Import Meta Resolve
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

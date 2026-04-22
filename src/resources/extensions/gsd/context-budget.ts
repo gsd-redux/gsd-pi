@@ -1,11 +1,12 @@
 /**
- * Context budget engine — proportional allocation, section-boundary truncation,
+ * GSD2 — Context budget engine — proportional allocation, section-boundary truncation,
  * and executor context window resolution.
  *
  * All functions are pure or near-pure (dependency-injected). No global state, no I/O.
  * Budget ratios are module-level constants for easy tuning.
  *
  * @see D001 (module location), D002 (200K fallback), D003 (section-boundary truncation)
+ *
  */
 
 import { type TokenProvider, getCharsPerToken } from "./token-counter.js";

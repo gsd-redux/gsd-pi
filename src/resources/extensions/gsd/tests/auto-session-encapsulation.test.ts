@@ -1,5 +1,5 @@
 /**
- * auto-session-encapsulation.test.ts — Guards the AutoSession encapsulation invariant.
+ * GSD2 — auto-session-encapsulation.test.ts — Guards the AutoSession encapsulation invariant.
  *
  * All mutable auto-mode state must live in AutoSession (auto/session.ts).
  * auto.ts must not declare module-level `let` or `var` variables.
@@ -7,6 +7,7 @@
  * These tests parse auto.ts source to detect violations, so they fail at
  * test time — before a PR merges — when someone accidentally adds mutable
  * module-level state to auto.ts instead of AutoSession.
+ *
  */
 
 import test from "node:test";

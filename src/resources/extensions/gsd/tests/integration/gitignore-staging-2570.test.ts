@@ -1,5 +1,5 @@
 /**
- * gitignore-staging-2570.test.ts — Regression tests for #2570.
+ * GSD2 — gitignore-staging-2570.test.ts — Regression tests for #2570.
  *
  * Verifies that:
  * 1. isGsdGitignored() detects when .gsd is covered by .gitignore
@@ -7,6 +7,7 @@
  * 3. rethink.ts passes the correct commitInstruction based on gitignore state
  *
  * Uses real temporary git repos — no mocks.
+ *
  */
 
 import test from "node:test";
