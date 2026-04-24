@@ -78,15 +78,19 @@ test("#4782 phase 3: buildRunUatPrompt inlines slice UAT, slice summary, project
 
   seed(base, "M001");
 
-  // Write UAT + SUMMARY files for the slice
+  // Write UAT + SUMMARY files. Deliberately diverge the on-disk UAT body
+  // from the in-memory uatContent the caller passes — if the resolver
+  // ever re-reads disk (the bug fixed in fcf3bfbe), this test fails
+  // because the prompt would contain "stale on-disk body" instead of
+  // "fresh in-memory snapshot" (#4925 follow-up review).
   const uatRel = ".gsd/milestones/M001/slices/S01/S01-UAT.md";
-  writeFileSync(join(base, uatRel), "# S01 UAT\n\n- Check X\n- Check Y\n");
+  writeFileSync(join(base, uatRel), "# S01 UAT\n\n- stale on-disk body\n");
   writeFileSync(
     join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md"),
     "---\nid: S01\nparent: M001\n---\n# S01 Summary\n**One-liner**\n\n## What Happened\nShip.\n",
   );
 
-  const uatContent = "# S01 UAT\n\n- Check X\n- Check Y\n";
+  const uatContent = "# S01 UAT\n\n- Check X\n- Check Y\n  (fresh in-memory snapshot)\n";
   const prompt = await buildRunUatPrompt("M001", "S01", uatRel, uatContent, base);
 
   // Context wrapper present
@@ -105,8 +109,10 @@ test("#4782 phase 3: buildRunUatPrompt inlines slice UAT, slice summary, project
     `manifest order violated: uat (${uatIdx}) < summary (${summaryIdx}) < project (${projectIdx})`,
   );
 
-  // UAT body content inlined
-  assert.match(prompt, /Check X[\s\S]*Check Y/);
+  // In-memory uatContent inlined — drift assertion: stale disk content
+  // must NOT appear, fresh snapshot MUST appear (#4925 follow-up review).
+  assert.match(prompt, /fresh in-memory snapshot/);
+  assert.ok(!prompt.includes("stale on-disk body"), "resolver re-read disk instead of using uatContent snapshot");
 
   // Summary body content inlined
   assert.match(prompt, /What Happened[\s\S]*Ship/);
