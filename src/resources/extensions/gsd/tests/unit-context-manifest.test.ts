@@ -155,6 +155,38 @@ test("#4782 phase 1: complete-milestone manifest declares slice-summary as excer
   );
 });
 
+// ─── v2 contract invariants (#4924) ──────────────────────────────────────
+
+test("#4924: computed + prepend ids (when declared) are non-empty strings", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const ids: string[] = [
+      ...((manifest.artifacts as { computed?: readonly string[] }).computed ?? []),
+      ...((manifest as { prepend?: readonly string[] }).prepend ?? []),
+    ];
+    for (const id of ids) {
+      assert.ok(
+        typeof id === "string" && id.length > 0,
+        `manifest "${unitType}" has an empty/invalid computed/prepend id: ${JSON.stringify(id)}`,
+      );
+    }
+  }
+});
+
+test("#4924: no computed id appears in both artifacts.computed AND prepend (mutually exclusive position)", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const inlineComputed = new Set<string>(
+      ((manifest.artifacts as { computed?: readonly string[] }).computed ?? []),
+    );
+    const clashes = ((manifest as { prepend?: readonly string[] }).prepend ?? [])
+      .filter(id => inlineComputed.has(id));
+    assert.deepEqual(
+      clashes,
+      [],
+      `manifest "${unitType}" places computed id(s) in both prepend and inline-computed: ${clashes.join(", ")}. Pick one position.`,
+    );
+  }
+});
+
 // ─── Budget floor: run-uat + gate-evaluate hit the smallest budget tier ──
 
 test("#4782 phase 2: run-uat and gate-evaluate use the smallest budget tier", () => {

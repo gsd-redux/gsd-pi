@@ -90,6 +90,79 @@ export type MemoryPolicy = "none" | "critical-only" | "prompt-relevant";
 /** Preferences block policy. */
 export type PreferencesPolicy = "none" | "active-only" | "full";
 
+// ─── Computed-artifact registry (#4924 v2 contract) ───────────────────────
+
+/**
+ * Typed registry of computed-artifact ids → their per-call input shape.
+ *
+ * **This is the core anti-`extra: Record<string, unknown>` surface.** Each
+ * computed block a unit may emit is registered here with an explicit input
+ * type. Adding a new computed block requires extending this interface — a
+ * deliberate, reviewable change rather than a silent ad-hoc field.
+ *
+ * Consumers extend via module augmentation if a downstream package needs to
+ * register new computed ids (rare in-tree; no public API today). The repo's
+ * own computed blocks are declared inline below.
+ *
+ * Invariant: the value type for each id MUST be a plain serializable shape.
+ * No closures, no class instances, no `any`. If a builder needs framework
+ * state, declare the specific fields it needs — don't smuggle objects.
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+export interface ComputedArtifactInputs {
+  // Phase 3.5 (v2 contract PR — #4924): no computed ids are registered yet.
+  // Each follow-up batch (slice prompt, replan-slice, gate-evaluate, etc.)
+  // adds the ids it needs as part of its migration commit.
+  //
+  // Example shape an upcoming batch will register:
+  //   "slice-handoff-anchors": { sliceId: string; phase: string };
+  //   "roadmap-excerpt":       { milestoneId: string; aroundSlice: string };
+  //   "graph-subgraph":        { rootArtifact: ArtifactKey };
+  //   "blocker-task-summary":  { sliceId: string };
+  //   "overrides-banner":      { /* basePath via BaseResolverContext */ };
+}
+
+/** Stable string ids for registered computed artifacts. */
+export type ComputedArtifactId = keyof ComputedArtifactInputs & string;
+
+/**
+ * Always-present context the composer hands every computed-artifact builder.
+ * Carries unit-shape fields that don't belong in per-id input types because
+ * every builder needs them (path resolution, dispatch identity).
+ */
+export interface BaseResolverContext {
+  readonly unitType: string;
+  readonly basePath: string;
+  readonly milestoneId?: string;
+  readonly sliceId?: string;
+  readonly taskId?: string;
+}
+
+/**
+ * Builder signature for one computed artifact id. Returns the rendered
+ * block body (joined into the composed prompt at the manifest-declared
+ * position) or `null` to omit the block entirely.
+ */
+export type ComputedArtifactBuilder<K extends ComputedArtifactId> = (
+  inputs: ComputedArtifactInputs[K],
+  base: BaseResolverContext,
+) => Promise<string | null>;
+
+/**
+ * Per-call registry: for each computed id the manifest declares, the
+ * caller supplies the matching builder + the input value for this call.
+ *
+ * Runtime shape: `{ [id]: { build, inputs } }`. Type narrowing per key is
+ * handled inside the composer via the `ComputedArtifactInputs` map — calls
+ * stay type-safe across the registration boundary.
+ */
+export type ComputedArtifactRegistry = {
+  readonly [K in ComputedArtifactId]?: {
+    readonly build: ComputedArtifactBuilder<K>;
+    readonly inputs: ComputedArtifactInputs[K];
+  };
+};
+
 // ─── Manifest ─────────────────────────────────────────────────────────────
 
 export interface UnitContextManifest {
@@ -108,7 +181,21 @@ export interface UnitContextManifest {
     readonly inline: readonly ArtifactKey[];
     readonly excerpt: readonly ArtifactKey[];
     readonly onDemand: readonly ArtifactKey[];
+    /**
+     * Ordered list of computed-block ids emitted in the inline position
+     * (interleaved with `inline` in declared order — see composer for the
+     * exact merge rule). v2 contract addition (#4924). Unknown ids fail
+     * the manifest validator; absent registry entries are skipped silently.
+     */
+    readonly computed?: readonly ComputedArtifactId[];
   };
+  /**
+   * Ordered list of computed-block ids emitted ABOVE the main inlined
+   * context block. Models the existing pattern of overrides / banners
+   * that some builders prepend with `inlined.unshift(...)`. v2 contract
+   * addition (#4924).
+   */
+  readonly prepend?: readonly ComputedArtifactId[];
   /**
    * Nominal upper bound for composer-generated system prompt size, in
    * characters. Phase 2 composer logs telemetry when a unit exceeds its

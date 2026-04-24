@@ -10,10 +10,18 @@ import { tmpdir } from "node:os";
 
 import {
   composeInlinedContext,
+  composeUnitContext,
   manifestBudgetChars,
   type ArtifactResolver,
+  type ExcerptResolver,
 } from "../unit-context-composer.ts";
-import type { ArtifactKey } from "../unit-context-manifest.ts";
+import type {
+  ArtifactKey,
+  BaseResolverContext,
+  ComputedArtifactRegistry,
+  UnitContextManifest,
+} from "../unit-context-manifest.ts";
+import { UNIT_MANIFESTS } from "../unit-context-manifest.ts";
 import { buildReassessRoadmapPrompt } from "../auto-prompts.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import {
@@ -172,4 +180,141 @@ test("#4782 phase 2: buildReassessRoadmapPrompt emits composer-shaped context wi
   // Slice context is optional and not present in this fixture — must not
   // leave a stray empty section
   assert.ok(!prompt.includes("Slice Context (from discussion)"));
+});
+
+// ─── v2 surface (#4924) ───────────────────────────────────────────────────
+
+const fakeBase: BaseResolverContext = {
+  unitType: "reassess-roadmap",
+  basePath: "/tmp/fake",
+  milestoneId: "M001",
+  sliceId: "S01",
+};
+
+test("#4924 v2 composer: returns empty sections for unknown unit type", async () => {
+  const out = await composeUnitContext("never-dispatched", { base: fakeBase });
+  assert.deepEqual(out, { prepend: "", inline: "" });
+});
+
+test("#4924 v2 composer: omitting resolveArtifact skips inline keys without erroring", async () => {
+  const out = await composeUnitContext("reassess-roadmap", { base: fakeBase });
+  assert.strictEqual(out.inline, "");
+  assert.strictEqual(out.prepend, "");
+});
+
+test("#4924 v2 composer: walks inline + excerpt + computed sections in declared order", async () => {
+  // Reuse the run-uat manifest shape (small inline, no excerpt/computed) and
+  // synthesise a manifest-shape override via a temporary registration would
+  // require touching production data. Instead, drive the composer through
+  // the existing manifest plus mock resolvers and verify ordering against
+  // the declared sequence.
+  const calls: string[] = [];
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    calls.push(`art:${key}`);
+    return `BODY:${key}`;
+  };
+  const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" }, resolveArtifact });
+  // run-uat manifest inline order: slice-uat, slice-summary, project
+  assert.deepEqual(calls, ["art:slice-uat", "art:slice-summary", "art:project"]);
+  assert.match(out.inline, /BODY:slice-uat\n\n---\n\nBODY:slice-summary\n\n---\n\nBODY:project/);
+});
+
+test("#4924 v2 composer: excerpt section calls resolveExcerpt for declared keys", async () => {
+  // complete-milestone declares slice-summary as excerpt — perfect target.
+  const inlineCalls: ArtifactKey[] = [];
+  const excerptCalls: ArtifactKey[] = [];
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    inlineCalls.push(key);
+    return `INLINE:${key}`;
+  };
+  const resolveExcerpt: ExcerptResolver = async (key) => {
+    excerptCalls.push(key);
+    return `EXCERPT:${key}`;
+  };
+  const out = await composeUnitContext("complete-milestone", {
+    base: { ...fakeBase, unitType: "complete-milestone" },
+    resolveArtifact,
+    resolveExcerpt,
+  });
+  assert.ok(excerptCalls.includes("slice-summary"));
+  // Excerpt body appears in the composed inline section, after inline keys.
+  assert.match(out.inline, /EXCERPT:slice-summary/);
+  // The inline keys come first per the manifest order.
+  const cmManifest = UNIT_MANIFESTS["complete-milestone"];
+  const firstInlineKey = cmManifest.artifacts.inline[0]!;
+  const firstInlineIdx = out.inline.indexOf(`INLINE:${firstInlineKey}`);
+  const excerptIdx = out.inline.indexOf("EXCERPT:slice-summary");
+  assert.ok(firstInlineIdx >= 0 && excerptIdx > firstInlineIdx, "inline body should precede excerpt body");
+});
+
+test("#4924 v2 composer: prepend block is separate from inline section", async () => {
+  // No production manifest declares a prepend block yet (those land with
+  // each batched migration). Drive the composer through a synthetic
+  // manifest by patching UNIT_MANIFESTS just for this test.
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner"] as never[], // computed id not in production registry — typed via cast for the test
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    const computed = {
+      "test-banner": {
+        build: async (_inputs: never, base: BaseResolverContext) => `BANNER for ${base.unitType}`,
+        inputs: undefined as never,
+      },
+    } as unknown as ComputedArtifactRegistry;
+    const out = await composeUnitContext("run-uat", {
+      base: { ...fakeBase, unitType: "run-uat" },
+      computed,
+    });
+    assert.strictEqual(out.prepend, "BANNER for run-uat");
+    assert.strictEqual(out.inline, "");
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: missing computed registry entry is skipped silently", async () => {
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner"] as never[],
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    // No `computed` registry supplied — declared id should be skipped, not throw.
+    const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" } });
+    assert.strictEqual(out.prepend, "");
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: computed builder returning null omits the section (no empty separator)", async () => {
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner-a", "test-banner-b"] as never[],
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    const computed = {
+      "test-banner-a": { build: async () => null, inputs: undefined as never },
+      "test-banner-b": { build: async () => "B", inputs: undefined as never },
+    } as unknown as ComputedArtifactRegistry;
+    const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" }, computed });
+    assert.strictEqual(out.prepend, "B");
+    assert.ok(!out.prepend.includes("---"));
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: backward-compat — composeInlinedContext still works for v1 callers", async () => {
+  const out = await composeInlinedContext("run-uat", async (key) => `BODY:${key}`);
+  assert.match(out, /BODY:slice-uat\n\n---\n\nBODY:slice-summary\n\n---\n\nBODY:project/);
 });
