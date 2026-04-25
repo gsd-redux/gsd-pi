@@ -190,9 +190,22 @@ describe("Windows pre-merge DB release (#4704)", () => {
       src.includes('"stash", "list", "--format=%gd%x00%s"'),
       "stash lookup reads ref and message together",
     );
-    assert.ok(!src.includes('"rev-parse", "refs/stash"'), "refs/stash is not used for identity");
-    assert.ok(!src.includes('["stash", "pop"]'), "stash pop is never unqualified");
-    assert.ok(!src.includes('["stash", "drop"]'), "stash drop is never unqualified");
+    assert.ok(
+      !/["']rev-parse["']\s*,\s*["']refs\/stash["']/.test(src),
+      "refs/stash is not used for identity",
+    );
+    assert.ok(
+      !/\[\s*["']stash["']\s*,\s*["']pop["']\s*\]/.test(src),
+      "stash pop is never unqualified",
+    );
+    assert.ok(
+      !/\[\s*["']stash["']\s*,\s*["']drop["']\s*\]/.test(src),
+      "stash drop is never unqualified",
+    );
+    assert.ok(
+      !/["']stash@\{0\}["']/.test(src),
+      "implementation should not regress to stash@{0} fallback targeting",
+    );
   });
 
   it("stash drop after pop failure requires auto-resolved .gsd conflicts", () => {

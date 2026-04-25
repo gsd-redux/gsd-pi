@@ -2064,7 +2064,10 @@ export function mergeMilestoneToMain(
       stashRefForDrop = popStashByRef(originalBasePath_, stashMarker);
     } catch (e) {
       stashRefForDrop = stashRefFromError(e);
-      logWarning("worktree", `git stash pop failed, attempting conflict resolution: ${(e as Error).message}`);
+      logWarning(
+        "worktree",
+        `git stash pop failed, attempting conflict resolution: ${e instanceof Error ? e.message : String(e)}`,
+      );
       // Stash pop after squash merge can conflict on .gsd/ state files that
       // diverged between branches.  Left unresolved, these UU entries block
       // every subsequent merge.  Auto-resolve them the same way we handle

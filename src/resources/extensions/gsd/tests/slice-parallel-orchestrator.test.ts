@@ -120,8 +120,9 @@ describe("slice-parallel-orchestrator structural tests", () => {
   it("recovery preserves terminal workers for coordinator-side collection", () => {
     const source = readFileSync(join(gsdDir, "slice-parallel-orchestrator.ts"), "utf-8");
     assert.ok(
-      source.includes('} else if (w.state === "running")') &&
-        source.includes("survivors.push(w);"),
+      source.includes('if (w.state !== "running")') &&
+        source.includes('if (status === "dead") dead.push(w);') &&
+        source.includes("else survivors.push(w);"),
       "Recovery must only prune dead running workers, not stopped/error workers",
     );
   });
@@ -129,9 +130,9 @@ describe("slice-parallel-orchestrator structural tests", () => {
   it("recovered PID-only workers are validated before signaling", () => {
     const source = readFileSync(join(gsdDir, "slice-parallel-orchestrator.ts"), "utf-8");
     assert.ok(
-      source.includes("isRecoveredSliceWorkerAlive(worker)") &&
+      source.includes('getRecoveredSliceWorkerStatus(worker) !== "dead"') &&
         source.includes('process.kill(worker.pid, "SIGTERM")'),
-      "stopSliceParallel must validate recovered worker identity before signaling a PID",
+      "stopSliceParallel must avoid signaling only definitively dead recovered workers",
     );
   });
 
@@ -156,12 +157,18 @@ describe("slice-parallel-orchestrator structural tests", () => {
 });
 
 describe("slice-parallel-orchestrator recovery identity", () => {
-  it("rejects a live PID when the process start fingerprint does not match", () => {
+  it("rejects a live PID when the process start fingerprint does not match", (t) => {
     const basePath = makeTempProject();
     try {
+      const fingerprint = readProcessStartFingerprint(process.pid);
+      if (!fingerprint) {
+        t.skip(`process start fingerprint unavailable for pid ${process.pid}`);
+        return;
+      }
+
       writeSliceOrchestratorState(basePath, {
         pid: process.pid,
-        processStartFingerprint: "mismatched-fingerprint",
+        processStartFingerprint: `${fingerprint}:mismatch`,
       });
 
       const restored = restoreSliceState(basePath);
@@ -176,7 +183,24 @@ describe("slice-parallel-orchestrator recovery identity", () => {
     }
   });
 
-  it("keeps a recovered worker when PID, token, and process start fingerprint match", async () => {
+  it("keeps a recovered worker when process fingerprint is unavailable", () => {
+    const basePath = makeTempProject();
+    try {
+      writeSliceOrchestratorState(basePath, {
+        pid: process.pid,
+        processStartFingerprint: null,
+      });
+
+      const restored = restoreSliceState(basePath);
+      assert.ok(restored, "unverifiable live worker is preserved");
+      assert.equal(restored.workers.length, 1);
+      assert.equal(restored.workers[0].pid, process.pid);
+    } finally {
+      rmSync(basePath, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a recovered worker when PID, token, and process start fingerprint match", async (t) => {
     const basePath = makeTempProject();
     const token = `test-token-${Date.now()}`;
     const child = spawn(
@@ -192,7 +216,10 @@ describe("slice-parallel-orchestrator recovery identity", () => {
       assert.ok(child.pid, "child process has a pid");
       await new Promise((resolve) => setTimeout(resolve, 50));
       const fingerprint = readProcessStartFingerprint(child.pid!);
-      if (!fingerprint) return;
+      if (!fingerprint) {
+        t.skip(`process start fingerprint unavailable for pid ${child.pid}`);
+        return;
+      }
 
       writeSliceOrchestratorState(basePath, {
         pid: child.pid!,

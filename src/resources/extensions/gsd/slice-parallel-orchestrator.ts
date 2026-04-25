@@ -164,18 +164,19 @@ function createWorkerToken(milestoneId: string, sliceId: string): string {
   return `slice:${milestoneId}:${sliceId}:${Date.now()}:${randomUUID()}`;
 }
 
-function isRecoveredSliceWorkerAlive(worker: {
+type RecoveredWorkerStatus = "alive" | "dead" | "unknown";
+
+function getRecoveredSliceWorkerStatus(worker: {
   pid: number;
   workerToken?: string;
   processStartFingerprint?: string | null;
-}): boolean {
-  if (!isPidAlive(worker.pid)) return false;
-  if (!worker.processStartFingerprint) return false;
+}): RecoveredWorkerStatus {
+  if (!isPidAlive(worker.pid)) return "dead";
+  if (!worker.processStartFingerprint) return "unknown";
 
   const currentFingerprint = readProcessStartFingerprint(worker.pid);
-  if (!currentFingerprint || currentFingerprint !== worker.processStartFingerprint) {
-    return false;
-  }
+  if (!currentFingerprint) return "unknown";
+  if (currentFingerprint !== worker.processStartFingerprint) return "dead";
 
   if (worker.workerToken) {
     const envMatches = linuxProcessEnvContains(
@@ -183,10 +184,11 @@ function isRecoveredSliceWorkerAlive(worker: {
       "GSD_SLICE_WORKER_TOKEN",
       worker.workerToken,
     );
-    if (envMatches === false) return false;
+    if (envMatches === false) return "dead";
+    if (envMatches === null) return "unknown";
   }
 
-  return true;
+  return "alive";
 }
 
 /**
@@ -270,13 +272,14 @@ export function restoreSliceState(basePath: string): PersistedSliceState | null 
     const survivors: PersistedSliceWorker[] = [];
     const dead: PersistedSliceWorker[] = [];
     for (const w of persisted.workers) {
-      if (w.state === "running" && isRecoveredSliceWorkerAlive(w)) {
+      if (w.state !== "running") {
         survivors.push(w);
-      } else if (w.state === "running") {
-        dead.push(w);
-      } else {
-        survivors.push(w);
+        continue;
       }
+
+      const status = getRecoveredSliceWorkerStatus(w);
+      if (status === "dead") dead.push(w);
+      else survivors.push(w);
     }
 
     // Best-effort cleanup of orphaned worktrees from dead workers.
@@ -430,12 +433,14 @@ export async function startSliceParallel(
       const spawned = spawnSliceWorker(basePath, milestoneId, slice.id);
       if (spawned) {
         started.push(slice.id);
+        persistSliceState();
       } else {
         errors.push({ sid: slice.id, error: "Failed to spawn worker process" });
         sliceState.workers.delete(slice.id);
         try {
           removeWorktree(basePath, wtName, { deleteBranch: true, force: true });
         } catch { /* ignore cleanup failures */ }
+        persistSliceState();
       }
     } catch (err) {
       errors.push({ sid: slice.id, error: getErrorMessage(err) });
@@ -445,6 +450,7 @@ export async function startSliceParallel(
       try {
         removeWorktree(basePath, wtName, { deleteBranch: true, force: true });
       } catch { /* ignore cleanup failures */ }
+      persistSliceState();
     }
   }
 
@@ -471,7 +477,7 @@ export function stopSliceParallel(): void {
     try {
       if (worker.process) {
         worker.process.kill("SIGTERM");
-      } else if (worker.state === "running" && isRecoveredSliceWorkerAlive(worker)) {
+      } else if (worker.state === "running" && getRecoveredSliceWorkerStatus(worker) !== "dead") {
         process.kill(worker.pid, "SIGTERM");
       }
     } catch { /* already dead */ }

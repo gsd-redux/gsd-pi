@@ -151,8 +151,9 @@ export const DETERMINISTIC_POLICY_ERROR_STRINGS = [
  */
 export function isDeterministicPolicyError(errorMsg: string): boolean {
   if (!errorMsg) return false;
+  const normalized = errorMsg.toLowerCase();
   return (
     DETERMINISTIC_POLICY_ERROR_RE.test(errorMsg) ||
-    DETERMINISTIC_POLICY_ERROR_STRINGS.some(s => errorMsg.includes(s))
+    DETERMINISTIC_POLICY_ERROR_STRINGS.some((s) => normalized.includes(s.toLowerCase()))
   );
 }
