@@ -1067,7 +1067,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Safety guard (#1703): verify the milestone produced implementation
       // artifacts (non-.gsd/ files). A milestone with only plan files and
       // zero implementation code should not be marked complete.
-      const artifactCheck = hasImplementationArtifacts(basePath);
+      const artifactCheck = hasImplementationArtifacts(basePath, mid);
       if (artifactCheck === "absent") {
         return {
           action: "stop",
