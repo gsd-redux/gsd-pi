@@ -6,8 +6,12 @@
  * model-availability check.
  *
  * Auth verification runs `claude auth status --json` and inspects the
- * `loggedIn` field, falling back to a text heuristic when the JSON shape
- * is unavailable (older Claude CLI builds).
+ * `loggedIn` field, falling back to plain `claude auth status` and a text
+ * heuristic when the JSON shape is unavailable (older Claude CLI builds).
+ *
+ * Set GSD_CLAUDE_DEBUG=1 to print the probe's binary selection and auth
+ * outputs to stderr — useful when diagnosing platform-specific detection
+ * failures (Issue #4997).
  */
 
 import { execFileSync } from "node:child_process";
@@ -28,13 +32,6 @@ const CLAUDE_COMMAND = process.platform === "win32" ? "claude.cmd" : "claude";
  */
 const CLAUDE_COMMAND_CANDIDATES = process.platform === "win32" ? [CLAUDE_COMMAND, "claude.exe", "claude"] : [CLAUDE_COMMAND];
 
-// Codes treated as "this candidate didn't run — try the next one" rather than
-// fatal failures. ENOENT/EINVAL cover the original Windows .cmd shim cases.
-// ETIMEDOUT and EAGAIN cover slow-spawn cases where cmd.exe wrapping plus
-// the Claude CLI startup path together exceed the per-attempt timeout
-// (Issue #4997 regression on Windows + Node 25).
-const SOFT_FAIL_CODES = new Set(["ENOENT", "EINVAL", "ETIMEDOUT", "EAGAIN"]);
-
 // Keep the version probe snappy — `claude --version` is a quick path.
 const VERSION_TIMEOUT_MS = 5_000;
 // Auth status can be much slower on Windows because the spawn goes through
@@ -42,29 +39,39 @@ const VERSION_TIMEOUT_MS = 5_000;
 // without making startup feel hung when the CLI is genuinely missing.
 const AUTH_TIMEOUT_MS = 15_000;
 
+function debugLog(...parts: unknown[]): void {
+	if (process.env.GSD_CLAUDE_DEBUG) {
+		process.stderr.write(`[claude-readiness] ${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`);
+	}
+}
+
 /**
- * Run the requested Claude CLI command against each supported executable name.
- * Returns the first successful output buffer and rethrows hard failures.
+ * Find the first candidate that responds to `--version`. Returns the
+ * candidate name on success, null if none worked.
+ *
+ * On Windows with `shell: true`, a missing candidate surfaces as a
+ * non-zero exit from cmd.exe rather than ENOENT — so we cannot rely on
+ * the error code to decide "try next". Treat any failure as "try next"
+ * for the version probe; the only thing that matters for binary
+ * detection is whether *some* candidate produces a `claude --version`
+ * line.
  */
-function execClaude(args: string[], timeoutMs: number): Buffer {
-	let lastError: unknown;
+function findWorkingCommand(): string | null {
 	for (const command of CLAUDE_COMMAND_CANDIDATES) {
 		try {
-			return execFileSync(command, args, {
-				timeout: timeoutMs,
+			execFileSync(command, ["--version"], {
+				timeout: VERSION_TIMEOUT_MS,
 				stdio: "pipe",
 				shell: process.platform === "win32",
 			});
+			debugLog("version probe ok via", command);
+			return command;
 		} catch (error) {
-			lastError = error;
-			const code = (error as NodeJS.ErrnoException | undefined)?.code;
-			if (code && SOFT_FAIL_CODES.has(code)) {
-				continue;
-			}
-			throw error;
+			debugLog("version probe failed for", command, "code=", (error as NodeJS.ErrnoException | undefined)?.code);
+			continue;
 		}
 	}
-	throw lastError ?? new Error(`Claude CLI executable not found (tried: ${CLAUDE_COMMAND_CANDIDATES.join(", ")})`);
+	return null;
 }
 
 /**
@@ -75,8 +82,10 @@ function execClaude(args: string[], timeoutMs: number): Buffer {
  * back to a text heuristic. Note: the text heuristic only covers English
  * phrasing — the JSON path is the durable signal.
  */
-function parseAuthStatus(output: string): boolean {
+function parseAuthStatus(output: string): boolean | null {
 	const trimmed = output.trim();
+	if (!trimmed) return null;
+
 	if (trimmed.startsWith("{")) {
 		try {
 			const parsed = JSON.parse(trimmed) as { loggedIn?: unknown };
@@ -92,8 +101,40 @@ function parseAuthStatus(output: string): boolean {
 	if (/not logged in|no credentials|unauthenticated|not authenticated/.test(lower)) {
 		return false;
 	}
-	// Exit-0 with non-error output and no negative markers — treat as authed.
-	return true;
+	if (/logged in|authenticated|signed in|email|subscription/.test(lower)) {
+		return true;
+	}
+	return null;
+}
+
+function probeAuth(command: string): boolean | null {
+	// Try --json first (newer CLIs).
+	try {
+		const out = execFileSync(command, ["auth", "status", "--json"], {
+			timeout: AUTH_TIMEOUT_MS,
+			stdio: "pipe",
+			shell: process.platform === "win32",
+		}).toString();
+		debugLog("auth status --json output:", out.slice(0, 200));
+		const parsed = parseAuthStatus(out);
+		if (parsed !== null) return parsed;
+	} catch (error) {
+		debugLog("auth status --json threw:", (error as Error).message?.slice(0, 200));
+	}
+
+	// Fallback: plain `auth status` (older CLIs that don't accept --json).
+	try {
+		const out = execFileSync(command, ["auth", "status"], {
+			timeout: AUTH_TIMEOUT_MS,
+			stdio: "pipe",
+			shell: process.platform === "win32",
+		}).toString();
+		debugLog("auth status output:", out.slice(0, 200));
+		return parseAuthStatus(out);
+	} catch (error) {
+		debugLog("auth status threw:", (error as Error).message?.slice(0, 200));
+		return null;
+	}
 }
 
 let cachedBinaryPresent: boolean | null = null;
@@ -114,32 +155,23 @@ function refreshCache(): void {
 	// Set timestamp first to prevent re-entrant checks during the same window
 	lastCheckMs = now;
 
-	// Check binary presence
-	try {
-		execClaude(["--version"], VERSION_TIMEOUT_MS);
-		cachedBinaryPresent = true;
-	} catch {
+	const command = findWorkingCommand();
+	if (!command) {
 		cachedBinaryPresent = false;
 		cachedAuthed = false;
 		return;
 	}
+	cachedBinaryPresent = true;
 
-	// Request JSON explicitly so older CLI builds that defaulted to text and
-	// newer builds that default to JSON produce a consistent shape.
-	try {
-		const output = execClaude(["auth", "status", "--json"], AUTH_TIMEOUT_MS).toString();
-		cachedAuthed = parseAuthStatus(output);
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException | undefined)?.code;
-		// Spawn-shape failures (timeout, transient) shouldn't be treated as
-		// "definitely not authed" — leave the previous value if we have one,
-		// otherwise default to false. The version probe already established
-		// the binary works, so a flaky auth probe is more likely transient.
-		if (code && SOFT_FAIL_CODES.has(code) && cachedAuthed !== null) {
-			return;
-		}
-		cachedAuthed = false;
+	const authed = probeAuth(command);
+	if (authed === null) {
+		// Couldn't determine auth state from CLI output. Don't clobber a
+		// previously known-good cache; otherwise default to false so we don't
+		// silently route requests to an unauthenticated CLI.
+		if (cachedAuthed === null) cachedAuthed = false;
+		return;
 	}
+	cachedAuthed = authed;
 }
 
 /**
