@@ -7,9 +7,12 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { cleanStaleRuntimeUnits } from "../auto-worktree.ts";
 import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -60,5 +63,26 @@ describe("auto-start cleanStaleRuntimeUnits DB gating (#4663)", () => {
       /resolveMilestoneFile\(base,\s*mid,\s*["']SUMMARY["']\)/,
       "legacy FS-fallback branch should still use SUMMARY file presence",
     );
+  });
+
+  test("cleanStaleRuntimeUnits removes legacy pseudo discuss-milestone runtime files", () => {
+    const base = join(tmpdir(), `gsd-clean-runtime-${randomUUID()}`);
+    const gsdRoot = join(base, ".gsd");
+    const unitsDir = join(gsdRoot, "runtime", "units");
+    try {
+      mkdirSync(unitsDir, { recursive: true });
+      const stale = join(unitsDir, "discuss-milestone-PROJECT.json");
+      const valid = join(unitsDir, "discuss-milestone-M001.json");
+      writeFileSync(stale, "{}\n", "utf-8");
+      writeFileSync(valid, "{}\n", "utf-8");
+
+      const cleaned = cleanStaleRuntimeUnits(gsdRoot, () => false);
+
+      assert.equal(cleaned, 1);
+      assert.equal(existsSync(stale), false);
+      assert.equal(existsSync(valid), true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

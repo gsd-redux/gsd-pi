@@ -62,6 +62,7 @@ test("detectWorkflowMcpLaunchConfig prefers explicit env override", () => {
   });
   assert.equal(launch?.env?.FOO, "bar");
   assert.equal(launch?.env?.GSD_CLI_PATH, "/tmp/gsd");
+  assert.equal(launch?.env?.GSD_BIN_PATH, "/tmp/gsd");
   assert.equal(launch?.env?.GSD_PERSIST_WRITE_GATE_STATE, "1");
   assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
@@ -135,6 +136,7 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server from GSD_BIN_PAT
     env: launch?.env,
   });
   assert.equal(launch?.env?.GSD_CLI_PATH, devCliPath);
+  assert.equal(launch?.env?.GSD_BIN_PATH, devCliPath);
   assert.equal(launch?.env?.GSD_PERSIST_WRITE_GATE_STATE, "1");
   assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, worktreeRoot);
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
@@ -149,6 +151,7 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the 
   assert.equal(launch?.command, process.execPath);
   assert.equal(launch?.cwd, "/tmp/project");
   assert.equal(launch?.env?.GSD_CLI_PATH, "/tmp/gsd-loader.js");
+  assert.equal(launch?.env?.GSD_BIN_PATH, "/tmp/gsd-loader.js");
   assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
@@ -166,6 +169,7 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the 
   assert.equal(launch?.command, process.execPath);
   assert.equal(launch?.cwd, "/tmp/project");
   assert.equal(launch?.env?.GSD_CLI_PATH, undefined);
+  assert.equal(launch?.env?.GSD_BIN_PATH, undefined);
   assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);

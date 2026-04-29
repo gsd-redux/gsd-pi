@@ -207,7 +207,7 @@ function buildWorkflowLaunchEnv(
 
   return {
     ...(explicitEnv ?? {}),
-    ...(gsdCliPath ? { GSD_CLI_PATH: gsdCliPath } : {}),
+    ...(gsdCliPath ? { GSD_CLI_PATH: gsdCliPath, GSD_BIN_PATH: gsdCliPath } : {}),
     ...(executorModulePath ? { GSD_WORKFLOW_EXECUTORS_MODULE: executorModulePath } : {}),
     ...(writeGateModulePath ? { GSD_WORKFLOW_WRITE_GATE_MODULE: writeGateModulePath } : {}),
     ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}),

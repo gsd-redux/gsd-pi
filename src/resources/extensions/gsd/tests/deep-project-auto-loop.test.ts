@@ -333,6 +333,54 @@ test("deep project setup: pre-dispatch takes precedence over an existing draft m
   }
 });
 
+test("deep project setup: pending setup bypasses plan-v2 execution gate", async () => {
+  const base = makeBase();
+  try {
+    const s = new AutoSession();
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.resourceVersionOnStart = "test";
+
+    let paused = false;
+    const deps = {
+      checkResourcesStale: () => null,
+      invalidateAllCaches: () => {},
+      preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
+      syncProjectRootToWorktree: () => {},
+      deriveState: async () => makeExecutingState(),
+      syncCmuxSidebar: () => {},
+      stopAuto: async () => {},
+      pauseAuto: async () => { paused = true; },
+      setActiveMilestoneId: () => { throw new Error("must not activate milestone before deep project setup"); },
+    } as any;
+
+    let seq = 0;
+    const result = await runPreDispatch(
+      {
+        ctx: makeCtx() as any,
+        pi: {} as any,
+        s,
+        deps,
+        prefs: { planning_depth: "deep", uok: { plan_v2: { enabled: true } } } as GSDPreferences,
+        iteration: 1,
+        flowId: "test-flow",
+        nextSeq: () => ++seq,
+      },
+      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+    );
+
+    assert.equal(paused, false);
+    assert.equal(result.action, "next");
+    if (result.action === "next") {
+      assert.equal(result.data.mid, "PROJECT");
+      assert.equal(result.data.state.phase, "pre-planning");
+      assert.equal(result.data.state.activeMilestone, null);
+    }
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("deep project setup: pre-dispatch does not rewrite execution state to PROJECT", async () => {
   const base = makeBase();
   try {

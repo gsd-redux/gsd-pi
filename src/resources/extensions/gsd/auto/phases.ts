@@ -414,6 +414,34 @@ export async function runPreDispatch(
 
   // Derive state
   let state = await deps.deriveState(s.basePath);
+  const { getDeepStageGate } = await import("../auto-dispatch.js");
+  const deepStageGate = getDeepStageGate(prefs, s.basePath);
+  if (
+    (deepStageGate.status === "pending" || deepStageGate.status === "blocked")
+  ) {
+    debugLog("autoLoop", {
+      phase: "deep-project-stage-gate",
+      stage: deepStageGate.stage,
+      status: deepStageGate.status,
+      reason: deepStageGate.reason,
+    });
+    return {
+      action: "next",
+      data: {
+        state: {
+          ...state,
+          phase: "pre-planning",
+          activeMilestone: null,
+          activeSlice: null,
+          activeTask: null,
+          nextAction: deepStageGate.reason,
+        },
+        mid: "PROJECT",
+        midTitle: "Project setup",
+      },
+    };
+  }
+
   if (prefs?.uok?.plan_v2?.enabled && shouldRunPlanV2Gate(state.phase)) {
     const compiled = ensurePlanV2Graph(s.basePath, state);
     if (!compiled.ok) {
@@ -652,34 +680,6 @@ export async function runPreDispatch(
     } catch (e) {
       logWarning("engine", "STATE.md rebuild failed after milestone transition", { error: String(e) });
     }
-  }
-
-  const { getDeepStageGate } = await import("../auto-dispatch.js");
-  const deepStageGate = getDeepStageGate(prefs, s.basePath);
-  if (
-    (deepStageGate.status === "pending" || deepStageGate.status === "blocked")
-  ) {
-    debugLog("autoLoop", {
-      phase: "deep-project-stage-gate",
-      stage: deepStageGate.stage,
-      status: deepStageGate.status,
-      reason: deepStageGate.reason,
-    });
-    return {
-      action: "next",
-      data: {
-        state: {
-          ...state,
-          phase: "pre-planning",
-          activeMilestone: null,
-          activeSlice: null,
-          activeTask: null,
-          nextAction: deepStageGate.reason,
-        },
-        mid: "PROJECT",
-        midTitle: "Project setup",
-      },
-    };
   }
 
   if (mid) {

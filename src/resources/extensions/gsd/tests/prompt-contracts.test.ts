@@ -123,6 +123,8 @@ test("project research prompt dispatches scout agents allowed by planning-dispat
   const prompt = readPrompt("guided-research-project");
   assert.match(prompt, /agent:\s*"scout"/);
   assert.match(prompt, /Do not use `agent: "researcher"`/);
+  assert.match(prompt, /runtime clears the dispatch marker/i);
+  assert.doesNotMatch(prompt, /Delete `\.gsd\/runtime\/research-project-inflight`/);
 });
 
 test("slice planning prompts name scout for external research dispatch", () => {

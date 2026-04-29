@@ -205,3 +205,25 @@ test("plan-v2 ensure rejects empty executable graph", () => {
   assert.equal(compiled.ok, false);
   assert.match(compiled.reason ?? "", /compiled graph is empty/i);
 });
+
+test("plan-v2 allows empty graph for milestone terminal phases", () => {
+  const basePath = createBasePath();
+  writeMilestoneFile(basePath, "CONTEXT", "Finalized context.");
+
+  insertMilestone({ id: MILESTONE_ID, title: "Milestone", status: "active" });
+  insertSlice({
+    id: SLICE_ID,
+    milestoneId: MILESTONE_ID,
+    title: "Slice",
+    status: "complete",
+    sequence: 1,
+  });
+
+  const validating = ensurePlanV2Graph(basePath, buildState("validating-milestone"));
+  assert.equal(validating.ok, true);
+  assert.equal(validating.nodeCount, 0);
+
+  const completing = ensurePlanV2Graph(basePath, buildState("completing-milestone"));
+  assert.equal(completing.ok, true);
+  assert.equal(completing.nodeCount, 0);
+});

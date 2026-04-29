@@ -105,9 +105,8 @@ Prompt:
 Once all 4 tasks return:
 
 1. Verify all 4 files exist: `STACK.md`, `FEATURES.md`, `ARCHITECTURE.md`, `PITFALLS.md` in `.gsd/research/`. If any are missing, retry that task once.
-2. Delete `.gsd/runtime/research-project-inflight` if it exists — this releases the dispatch-idempotency marker so `/gsd auto` can advance after research completes.
-3. Print a concise summary in chat: one sentence per dimension, what each found.
-4. Say exactly: `"Project research complete."` — nothing else.
+2. Print a concise summary in chat: one sentence per dimension, what each found or why it was blocked. The runtime clears the dispatch marker after this unit exits.
+3. Say exactly: `"Project research complete."` — nothing else.
 
 ---
 
@@ -118,4 +117,4 @@ Once all 4 tasks return:
 - **Research is informational, not prescriptive** — it surfaces options; the user / requirements stage already chose what to build.
 - **Stay within scope** — don't research milestones or slices. That's a different stage.
 - **Budget:** ~3–5 web searches per dimension. Prefer `resolve_library` / `get_library_docs` for library questions.
-- If any task fails twice, write a placeholder `.gsd/research/{DIMENSION}-BLOCKER.md` with the failure reason and continue. Do not block project progress on research failures.
+- If any task fails twice, write a placeholder `.gsd/research/{DIMENSION}-BLOCKER.md` with the failure reason and continue. If all four dimensions are blockers, the runtime will stop before milestone planning because no usable research exists.

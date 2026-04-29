@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { verifyExpectedArtifact } from "./auto-recovery.js";
@@ -9,6 +9,7 @@ import {
   type LockData,
 } from "./crash-recovery.js";
 import { gsdRoot } from "./paths.js";
+import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import {
   synthesizeCrashRecovery,
   type RecoveryBriefing,
@@ -50,6 +51,13 @@ export interface InterruptedSessionAssessment {
   isBootstrapCrash: boolean;
 }
 
+function isStalePseudoMilestonePause(meta: PausedSessionMetadata): boolean {
+  if (meta.activeEngineId && meta.activeEngineId !== "dev") return false;
+  return meta.unitType === "discuss-milestone"
+    && typeof meta.unitId === "string"
+    && !MILESTONE_ID_RE.test(meta.unitId);
+}
+
 export function readPausedSessionMetadata(
   basePath: string,
 ): PausedSessionMetadata | null {
@@ -57,7 +65,12 @@ export function readPausedSessionMetadata(
   if (!existsSync(pausedPath)) return null;
 
   try {
-    return JSON.parse(readFileSync(pausedPath, "utf-8")) as PausedSessionMetadata;
+    const meta = JSON.parse(readFileSync(pausedPath, "utf-8")) as PausedSessionMetadata;
+    if (isStalePseudoMilestonePause(meta)) {
+      try { unlinkSync(pausedPath); } catch { /* non-fatal */ }
+      return null;
+    }
+    return meta;
   } catch {
     return null;
   }

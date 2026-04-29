@@ -55,6 +55,7 @@ import { MergeConflictError, readIntegrationBranch, RUNTIME_EXCLUSION_PATHS } fr
 import { debugLog } from "./debug-logger.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import {
   nativeGetCurrentBranch,
   nativeDetectMainBranch,
@@ -578,6 +579,17 @@ export function cleanStaleRuntimeUnits(
   try {
     for (const file of readdirSync(runtimeUnitsDir)) {
       if (!file.endsWith(".json")) continue;
+      const staleDiscussMatch = file.match(/^discuss-milestone-(.+)\.json$/);
+      if (staleDiscussMatch && !MILESTONE_ID_RE.test(staleDiscussMatch[1])) {
+        try {
+          unlinkSync(join(runtimeUnitsDir, file));
+          cleaned++;
+        } catch (err) {
+          /* non-fatal */
+          logWarning("worktree", `stale runtime unit unlink failed (${file}): ${err instanceof Error ? err.message : String(err)}`);
+        }
+        continue;
+      }
       const midMatch = file.match(/(M\d+(?:-[a-z0-9]{6})?)/);
       if (!midMatch) continue;
       if (hasMilestoneSummary(midMatch[1])) {

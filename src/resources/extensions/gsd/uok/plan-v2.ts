@@ -181,6 +181,9 @@ export function ensurePlanV2Graph(basePath: string, state: GSDState): PlanV2Comp
   const compiled = compileUnitGraphFromState(basePath, state);
   if (!compiled.ok) return compiled;
   if ((compiled.nodeCount ?? 0) <= 0) {
+    if (state.phase === "validating-milestone" || state.phase === "completing-milestone") {
+      return compiled;
+    }
     return { ok: false, reason: "compiled graph is empty" };
   }
   return compiled;
