@@ -640,7 +640,7 @@ export async function runPreDispatch(
     midTitle = state.activeMilestone?.title;
 
     if (mid) {
-      if (deps.getIsolationMode() !== "none") {
+      if (deps.getIsolationMode(s.basePath) !== "none") {
         deps.captureIntegrationBranch(s.basePath, mid);
       }
       deps.resolver.enterMilestone(mid, ctx.ui);

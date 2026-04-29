@@ -11,7 +11,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -22,7 +21,7 @@ import type { DynamicRoutingConfig } from "./model-router.js";
 import { normalizeStringArray } from "../shared/format-utils.js";
 import { logWarning } from "./workflow-logger.js";
 import { resolveProfileDefaults as _resolveProfileDefaults } from "./preferences-models.js";
-import { nativeIsRepo } from "./native-git-bridge.js";
+import { nativeHasCommittedHead, nativeIsRepo } from "./native-git-bridge.js";
 
 import {
   KNOWN_PREFERENCE_KEYS,
@@ -623,23 +622,11 @@ export function resolvePreDispatchHooks(): PreDispatchHookConfig[] {
 export function getIsolationMode(basePath?: string): "none" | "worktree" | "branch" {
   const prefs = loadEffectiveGSDPreferences(basePath)?.preferences?.git;
   if (prefs?.isolation === "worktree") {
-    if (basePath && nativeIsRepo(basePath) && !hasCommittedHead(basePath)) return "none";
+    if (basePath && nativeIsRepo(basePath) && !nativeHasCommittedHead(basePath)) return "none";
     return "worktree";
   }
   if (prefs?.isolation === "branch") return "branch";
   return "none"; // default — no isolation, work on current branch
-}
-
-function hasCommittedHead(basePath: string): boolean {
-  try {
-    execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
-      cwd: basePath,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function resolveParallelConfig(prefs: GSDPreferences | undefined): import("./types.js").ParallelConfig {

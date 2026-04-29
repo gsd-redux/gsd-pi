@@ -34,7 +34,7 @@ import {
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { readSessionLockData, isSessionLockProcessAlive } from "./session-lock.js";
-import { nativeIsRepo, nativeInit } from "./native-git-bridge.js";
+import { nativeAddAll, nativeCommit, nativeHasCommittedHead, nativeIsRepo, nativeInit } from "./native-git-bridge.js";
 import { isInheritedRepo } from "./repo-identity.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
@@ -1770,6 +1770,19 @@ export async function showSmartEntry(
   // ── Ensure .gitignore has baseline patterns ──────────────────────────
   ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
+
+  // Deep setup can pre-create .gsd/PREFERENCES.md before the normal init
+  // wizard path runs. If that path also initialized git, make HEAD reachable
+  // now so later worktree/git-log operations do not run on an unborn branch.
+  if (nativeIsRepo(basePath) && !nativeHasCommittedHead(basePath)) {
+    try {
+      nativeAddAll(basePath);
+      nativeCommit(basePath, "chore: init project");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logWarning("guided", `initial git commit failed; worktree isolation will remain disabled until HEAD exists: ${message}`);
+    }
+  }
 
   {
     const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");

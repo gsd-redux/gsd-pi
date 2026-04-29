@@ -40,6 +40,17 @@ function makeCommandBase(): string {
   return base;
 }
 
+function makeUnbornCommandRepo(): string {
+  const base = join(tmpdir(), `gsd-deep-project-unborn-${randomUUID()}`);
+  mkdirSync(base, { recursive: true });
+  execFileSync("git", ["init"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/main"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: base });
+  writeFileSync(join(base, "package.json"), '{"name":"gsd-unborn-command-test"}\n');
+  return base;
+}
+
 function makeEmptyState(): GSDState {
   return {
     phase: "pre-planning",
@@ -535,6 +546,27 @@ test("deep project setup: new-project command only writes planning_depth with --
     clearPendingDeepProjectSetup(deepBase);
     rmSync(lightBase, { recursive: true, force: true });
     rmSync(deepBase, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: new-project --deep creates a reachable HEAD in unborn repos", async () => {
+  const base = makeUnbornCommandRepo();
+  try {
+    const messages = await runNewProjectCommand(base, "new-project --deep");
+
+    const subject = execFileSync("git", ["log", "-1", "--format=%s"], {
+      cwd: base,
+      encoding: "utf-8",
+    }).trim();
+    assert.equal(subject, "chore: init project");
+
+    const deepPrefs = readFileSync(join(base, ".gsd", "PREFERENCES.md"), "utf-8");
+    assert.match(deepPrefs, /planning_depth:\s*deep/);
+    assert.equal(messages.length, 1, "deep new-project should still dispatch foreground setup");
+    assert.match(String((messages[0] as any).content), /Foreground Deep Setup Question Policy/);
+  } finally {
+    clearPendingDeepProjectSetup(base);
+    rmSync(base, { recursive: true, force: true });
   }
 });
 
