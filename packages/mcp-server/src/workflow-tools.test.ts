@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { symlinkSync, realpathSync } from "node:fs";
 
 import { _getAdapter, closeDatabase } from "../../../src/resources/extensions/gsd/gsd-db.ts";
-import { registerWorkflowTools, WORKFLOW_TOOL_NAMES, validateProjectDir } from "./workflow-tools.ts";
+import { _buildImportCandidates, registerWorkflowTools, WORKFLOW_TOOL_NAMES, validateProjectDir } from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-mcp-workflow-${randomUUID()}`);
@@ -78,6 +78,18 @@ describe("workflow MCP tools", () => {
     assert.deepEqual(server.tools.map((t) => t.name), [...WORKFLOW_TOOL_NAMES]);
   });
 
+  it("prefers source TypeScript before compiled dist fallbacks", () => {
+    assert.deepEqual(
+      _buildImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
+      [
+        "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js",
+        "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts",
+        "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.js",
+        "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.ts",
+      ],
+    );
+  });
+
   it("gsd_summary_save writes artifact through the shared executor", async () => {
     const base = makeTmpBase();
     try {
@@ -138,6 +150,56 @@ describe("workflow MCP tools", () => {
         readFileSync(join(base, ".gsd", "PROJECT.md"), "utf-8"),
         "# Project\n\nRoot artifact",
       );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_summary_save renders root REQUIREMENTS from DB rows, not provided markdown", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const requirementTool = server.tools.find((t) => t.name === "gsd_requirement_save");
+      const summaryTool = server.tools.find((t) => t.name === "gsd_summary_save");
+      assert.ok(requirementTool, "requirement tool should be registered");
+      assert.ok(summaryTool, "summary tool should be registered");
+
+      await requirementTool!.handler({
+        projectDir: base,
+        class: "primary-user-loop",
+        description: "MCP user can add a task",
+        why: "Core loop",
+        source: "user",
+        status: "active",
+        primary_owner: "M001/none yet",
+        supporting_slices: "none",
+        validation: "unmapped",
+      });
+
+      const result = await summaryTool!.handler({
+        projectDir: base,
+        artifact_type: "REQUIREMENTS",
+        content: "# Requirements\n\n## Active\n\n### R999 — Wrong markdown source\n\n- Description: This content must not become canonical.\n",
+      });
+
+      const text = (result as any).content[0].text as string;
+      assert.match(text, /Saved REQUIREMENTS artifact/);
+
+      const requirementsPath = join(base, ".gsd", "REQUIREMENTS.md");
+      const markdown = readFileSync(requirementsPath, "utf-8");
+      assert.match(markdown, /MCP user can add a task/);
+      assert.doesNotMatch(markdown, /R999|Wrong markdown source|This content must not become canonical/);
+
+      const row = _getAdapter()!
+        .prepare("SELECT id, description FROM requirements WHERE description = ?")
+        .get("MCP user can add a task") as Record<string, unknown> | undefined;
+      assert.ok(row, "requirement row should remain the canonical source");
+
+      const artifact = _getAdapter()!
+        .prepare("SELECT full_content FROM artifacts WHERE path = ?")
+        .get("REQUIREMENTS.md") as Record<string, unknown> | undefined;
+      assert.equal(artifact?.full_content, markdown);
     } finally {
       cleanup(base);
     }

@@ -428,6 +428,28 @@ function getSupportedSummaryArtifactTypes(executors: WorkflowToolExecutors): rea
   return executors.SUPPORTED_SUMMARY_ARTIFACT_TYPES;
 }
 
+function buildImportCandidates(relativePath: string): string[] {
+  const candidates: string[] = [relativePath];
+  const sourceTs = relativePath.endsWith(".js")
+    ? relativePath.replace(/\.js$/, ".ts")
+    : null;
+  if (sourceTs) candidates.push(sourceTs);
+
+  const swapped = relativePath.includes("/src/")
+    ? relativePath.replace("/src/", "/dist/")
+    : relativePath.includes("/dist/")
+      ? relativePath.replace("/dist/", "/src/")
+      : null;
+  if (swapped) {
+    candidates.push(swapped);
+    if (swapped.endsWith(".js")) {
+      candidates.push(swapped.replace(/\.js$/, ".ts"));
+    }
+  }
+
+  return [...new Set(candidates)];
+}
+
 function getWriteGateModuleCandidates(): string[] {
   const candidates: string[] = [];
   const explicitModule = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE?.trim();
@@ -439,9 +461,8 @@ function getWriteGateModuleCandidates(): string[] {
   }
 
   candidates.push(
-    new URL("../../../src/resources/extensions/gsd/bootstrap/write-gate.js", import.meta.url).href,
-    new URL("../../../dist/resources/extensions/gsd/bootstrap/write-gate.js", import.meta.url).href,
-    new URL("../../../src/resources/extensions/gsd/bootstrap/write-gate.ts", import.meta.url).href,
+    ...buildImportCandidates("../../../src/resources/extensions/gsd/bootstrap/write-gate.js")
+      .map((p) => new URL(p, import.meta.url).href),
   );
 
   return [...new Set(candidates)];
@@ -453,22 +474,10 @@ function toFileUrl(modulePath: string): string {
 
 /** @internal — exported for testing only */
 export function _buildImportCandidates(relativePath: string): string[] {
-  // Build candidate paths: try the given path first, then swap src/<->dist/
-  // and try .ts extension. This handles both dev (tsx from src/) and prod
-  // (compiled from dist/) execution contexts.
-  const candidates: string[] = [relativePath];
-  const swapped = relativePath.includes("/src/")
-    ? relativePath.replace("/src/", "/dist/")
-    : relativePath.includes("/dist/")
-      ? relativePath.replace("/dist/", "/src/")
-      : null;
-  if (swapped) candidates.push(swapped);
-  // Also try .ts variants for dev-mode tsx execution
-  if (relativePath.endsWith(".js")) {
-    candidates.push(relativePath.replace(/\.js$/, ".ts"));
-    if (swapped) candidates.push(swapped.replace(/\.js$/, ".ts"));
-  }
-  return candidates;
+  // Build candidate paths: prefer source first, including the .ts source
+  // variant, before falling back to compiled dist. In source/dev execution a
+  // stale dist/resources tree must not silently override edited source files.
+  return buildImportCandidates(relativePath);
 }
 
 async function importLocalModule<T>(relativePath: string): Promise<T> {
@@ -497,9 +506,8 @@ function getWorkflowExecutorModuleCandidates(env: NodeJS.ProcessEnv = process.en
   }
 
   candidates.push(
-    new URL("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js", import.meta.url).href,
-    new URL("../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.js", import.meta.url).href,
-    new URL("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts", import.meta.url).href,
+    ...buildImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js")
+      .map((p) => new URL(p, import.meta.url).href),
   );
 
   return [...new Set(candidates)];
