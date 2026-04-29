@@ -1072,6 +1072,21 @@ test("deep project setup: opening interview question does not trigger approval a
   assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
 });
 
+test("deep project setup: grounding interview question with requirements context does not trigger approval abort", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        "I will use this to draft requirements.",
+        "Grounding question: is this purely local/offline, or do you want tasks to persist across browser sessions/devices (local storage vs. a backend)?",
+      ].join("\n"),
+    },
+  ];
+
+  assert.equal(isAwaitingUserInput(messages), true);
+  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+});
+
 test("deep project setup: requirements preview question from screenshot is treated as waiting", () => {
   const messages = [
     {

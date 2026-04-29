@@ -11,8 +11,8 @@ const REMOTE_QUESTION_FAILURE_RE =
 const APPROVAL_WAIT_RE =
   /\bwait(?:ing)?\s+for\s+(?:your\s+)?(?:confirmation|approval|input|response|answer)\b/i;
 
-const APPROVAL_QUESTION_RE =
-  /(?=[\s\S]*\?)(?=[\s\S]*\b(?:confirm|confirmation|approve|approval|requirements|capture|captured|correctly|right|adjust|clarify|scope|write|proceed|reclassify|research|skip)\b)/i;
+const APPROVAL_QUESTION_KEYWORD_RE =
+  /\b(?:confirm|confirmation|approve|approval|approved|captured|correct|correctly|right|adjust|write|save|proceed|reclassify|research|skip)\b/i;
 
 function extractTextFromMessage(msg: unknown): string {
   if (!msg || typeof msg !== "object") return "";
@@ -37,6 +37,21 @@ function lastAssistantText(messages: unknown[] | undefined): string {
     if (text) return text;
   }
   return "";
+}
+
+function hasApprovalQuestion(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "?") continue;
+    const previousBreak = Math.max(
+      text.lastIndexOf("\n", i),
+      text.lastIndexOf(".", i),
+      text.lastIndexOf("!", i),
+      text.lastIndexOf("?", i - 1),
+    );
+    const fragment = text.slice(previousBreak + 1, i + 1);
+    if (APPROVAL_QUESTION_KEYWORD_RE.test(fragment)) return true;
+  }
+  return false;
 }
 
 export function approvalGateIdForUnit(
@@ -86,7 +101,7 @@ export function isAwaitingUserInput(messages: unknown[] | undefined): boolean {
   if (APPROVAL_WAIT_RE.test(text)) return true;
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   if (lines.some((line) => line.endsWith("?"))) return true;
-  return APPROVAL_QUESTION_RE.test(text);
+  return hasApprovalQuestion(text);
 }
 
 export function isAwaitingApprovalBoundary(messages: unknown[] | undefined): boolean {
@@ -95,7 +110,7 @@ export function isAwaitingApprovalBoundary(messages: unknown[] | undefined): boo
   if (/ask_user_questions was cancelled before receiving a response/i.test(text)) return true;
   if (REMOTE_QUESTION_FAILURE_RE.test(text)) return true;
   if (APPROVAL_WAIT_RE.test(text)) return true;
-  return APPROVAL_QUESTION_RE.test(text);
+  return hasApprovalQuestion(text);
 }
 
 export function shouldPauseForUserApprovalQuestion(
