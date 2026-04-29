@@ -45,12 +45,13 @@ Apply the defaults:
    - Write `{{workingDirectory}}/.gsd/runtime/research-decision.json`:
      ```json
      {
-       "decision": "research",
+       "decision": "skip",
        "decided_at": "<ISO 8601 timestamp>",
-       "source": "workflow-preferences"
+       "source": "workflow-preferences",
+       "reason": "deterministic-default"
      }
      ```
-   Use `"research"` unless an existing valid `{{workingDirectory}}/.gsd/runtime/research-decision.json` already says `"skip"`.
+   Use `"skip"` unless an existing valid `{{workingDirectory}}/.gsd/runtime/research-decision.json` explicitly says `"research"` with `"source": "research-decision"` or `"source": "user"`.
 6. Print a concise summary in chat: each key on its own line, format `key: value`. Include `commit_policy`, `branch_model`, `uat_dispatch`, `models.executor_class`, and `research`.
 7. Say exactly: `"Workflow preferences saved."` — nothing else.
 

@@ -69,6 +69,7 @@ import { EXECUTION_ENTRY_PHASES, hasFinalizedMilestoneContext } from "./uok/plan
 import { isAutoActive } from "./auto.js";
 import { markDepthVerified } from "./bootstrap/write-gate.js";
 import { ensureWorkflowPreferencesCaptured } from "./planning-depth.js";
+import { MILESTONE_ID_RE } from "./milestone-ids.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -131,6 +132,19 @@ export interface DispatchRule {
 const PROJECT_RESEARCH_DIMENSIONS = ["STACK", "FEATURES", "ARCHITECTURE", "PITFALLS"] as const;
 const PROJECT_RESEARCH_BLOCKER = "PROJECT-RESEARCH-BLOCKER.md";
 
+export type DeepProjectStage =
+  | "workflow-preferences"
+  | "project"
+  | "requirements"
+  | "research-decision"
+  | "project-research";
+
+export type DeepStageGate =
+  | { status: "not-applicable"; stage: null; reason: string }
+  | { status: "complete"; stage: null; reason: string }
+  | { status: "pending"; stage: DeepProjectStage; reason: string }
+  | { status: "blocked"; stage: DeepProjectStage; reason: string };
+
 function isProjectResearchDimensionSatisfied(researchDir: string, name: string): boolean {
   return (
     existsSync(join(researchDir, `${name}.md`)) ||
@@ -138,11 +152,37 @@ function isProjectResearchDimensionSatisfied(researchDir: string, name: string):
   );
 }
 
-function isProjectResearchComplete(researchDir: string): boolean {
-  if (existsSync(join(researchDir, PROJECT_RESEARCH_BLOCKER))) return true;
-  return PROJECT_RESEARCH_DIMENSIONS.every((name) =>
+function getProjectResearchStatus(researchDir: string): {
+  complete: boolean;
+  blocked: boolean;
+  allDimensionBlockers: boolean;
+  globalBlocker: boolean;
+  missingDimensions: string[];
+} {
+  const globalBlocker = existsSync(join(researchDir, PROJECT_RESEARCH_BLOCKER));
+
+  let completedDimensions = 0;
+  let blockerDimensions = 0;
+  const missingDimensions: string[] = [];
+  for (const name of PROJECT_RESEARCH_DIMENSIONS) {
+    if (existsSync(join(researchDir, `${name}.md`))) completedDimensions += 1;
+    else if (existsSync(join(researchDir, `${name}-BLOCKER.md`))) blockerDimensions += 1;
+    else missingDimensions.push(name);
+  }
+
+  const allSatisfied = PROJECT_RESEARCH_DIMENSIONS.every((name) =>
     isProjectResearchDimensionSatisfied(researchDir, name),
   );
+  const allDimensionBlockers = allSatisfied && completedDimensions === 0 && blockerDimensions === PROJECT_RESEARCH_DIMENSIONS.length;
+  const blocked = globalBlocker || allDimensionBlockers;
+
+  return {
+    complete: allSatisfied && !blocked,
+    blocked,
+    allDimensionBlockers,
+    globalBlocker,
+    missingDimensions,
+  };
 }
 
 async function readUatGateVerdict(
@@ -200,6 +240,23 @@ function isWorkflowPrefsCaptured(basePath: string): boolean {
   return /^workflow_prefs_captured:\s*true\s*$/m.test(match[1]);
 }
 
+function writeWorkflowDefaultResearchSkipDecision(basePath: string, previousSource?: string): void {
+  const runtimeDir = join(gsdRoot(basePath), "runtime");
+  mkdirSync(runtimeDir, { recursive: true });
+  const payload: Record<string, unknown> = {
+    decision: "skip",
+    decided_at: new Date().toISOString(),
+    source: "workflow-preferences",
+    reason: "legacy-workflow-research-default",
+  };
+  if (previousSource) payload.previous_source = previousSource;
+  writeFileSync(
+    join(runtimeDir, "research-decision.json"),
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
 /**
  * Deep planning mode: check whether any project-level stage gate
  * (workflow-preferences, discuss-project, discuss-requirements,
@@ -210,22 +267,64 @@ function isWorkflowPrefsCaptured(basePath: string): boolean {
  * Returns false in light mode (or when prefs absent) so the milestone
  * rules behave exactly as before.
  */
-export function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath: string): boolean {
-  if (prefs?.planning_depth !== "deep") return false;
+export function getDeepStageGate(prefs: GSDPreferences | undefined, basePath: string): DeepStageGate {
+  if (prefs?.planning_depth !== "deep") {
+    return {
+      status: "not-applicable",
+      stage: null,
+      reason: "Deep planning mode is not enabled.",
+    };
+  }
   const root = gsdRoot(basePath);
   // 1. workflow-preferences captured (explicit marker in PREFERENCES.md frontmatter).
-  if (!isWorkflowPrefsCaptured(basePath)) return true;
+  if (!isWorkflowPrefsCaptured(basePath)) {
+    return {
+      status: "pending",
+      stage: "workflow-preferences",
+      reason: ".gsd/PREFERENCES.md is missing workflow_prefs_captured: true.",
+    };
+  }
   // 2. PROJECT.md exists and passes validation.
   const projectPath = join(root, "PROJECT.md");
-  if (!existsSync(projectPath)) return true;
-  if (!validateArtifact(projectPath, "project").ok) return true;
+  if (!existsSync(projectPath)) {
+    return {
+      status: "pending",
+      stage: "project",
+      reason: ".gsd/PROJECT.md is missing.",
+    };
+  }
+  if (!validateArtifact(projectPath, "project").ok) {
+    return {
+      status: "pending",
+      stage: "project",
+      reason: ".gsd/PROJECT.md is invalid.",
+    };
+  }
   // 3. REQUIREMENTS.md exists and passes validation.
   const requirementsPath = join(root, "REQUIREMENTS.md");
-  if (!existsSync(requirementsPath)) return true;
-  if (!validateArtifact(requirementsPath, "requirements").ok) return true;
+  if (!existsSync(requirementsPath)) {
+    return {
+      status: "pending",
+      stage: "requirements",
+      reason: ".gsd/REQUIREMENTS.md is missing.",
+    };
+  }
+  if (!validateArtifact(requirementsPath, "requirements").ok) {
+    return {
+      status: "pending",
+      stage: "requirements",
+      reason: ".gsd/REQUIREMENTS.md is invalid.",
+    };
+  }
   // 4. research-decision marker exists.
   const decisionPath = join(root, "runtime", "research-decision.json");
-  if (!existsSync(decisionPath)) return true;
+  if (!existsSync(decisionPath)) {
+    return {
+      status: "pending",
+      stage: "research-decision",
+      reason: ".gsd/runtime/research-decision.json is missing.",
+    };
+  }
   // 5. Decision must be one of the recognized values; if not, the
   // research-decision rule will re-ask. Any value other than "research" or
   // "skip" — including a missing field, malformed JSON, or "garbage" — must
@@ -234,15 +333,68 @@ export function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath:
   try {
     const cfg = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
     const decision = typeof cfg.decision === "string" ? cfg.decision : undefined;
-    if (decision !== "research" && decision !== "skip") return true;
+    const decisionSource = typeof cfg.source === "string" ? cfg.source : undefined;
+    if (decision !== "research" && decision !== "skip") {
+      return {
+        status: "pending",
+        stage: "research-decision",
+        reason: ".gsd/runtime/research-decision.json has no valid research|skip decision.",
+      };
+    }
     if (decision === "research") {
+      if (decisionSource === "workflow-preferences") {
+        writeWorkflowDefaultResearchSkipDecision(basePath, decisionSource);
+        return {
+          status: "complete",
+          stage: null,
+          reason: "Legacy workflow-defaulted project research was normalized to skip.",
+        };
+      }
       const researchDir = join(root, "research");
-      if (!isProjectResearchComplete(researchDir)) return true;
+      const researchStatus = getProjectResearchStatus(researchDir);
+      if (researchStatus.globalBlocker) {
+        return {
+          status: "blocked",
+          stage: "project-research",
+          reason:
+            "Project research wrote PROJECT-RESEARCH-BLOCKER.md, so no verified research exists. Fix the blocker cause, delete the blocker, and rerun auto.",
+        };
+      }
+      if (researchStatus.allDimensionBlockers) {
+        return {
+          status: "blocked",
+          stage: "project-research",
+          reason:
+            "Project research produced only dimension blocker files, so no usable research exists. Fix the blocker cause, delete the dimension blocker files in `.gsd/research/`, and rerun auto.",
+        };
+      }
+      if (!researchStatus.complete) {
+        return {
+          status: "pending",
+          stage: "project-research",
+          reason: researchStatus.missingDimensions.length > 0
+            ? `Project research is missing dimensions: ${researchStatus.missingDimensions.join(", ")}.`
+            : "Project research has not produced a verified research set.",
+        };
+      }
     }
   } catch {
-    return true; // malformed — research-decision rule will re-ask
+    return {
+      status: "pending",
+      stage: "research-decision",
+      reason: ".gsd/runtime/research-decision.json is malformed.",
+    };
   }
-  return false;
+  return {
+    status: "complete",
+    stage: null,
+    reason: "All deep project setup gates are complete.",
+  };
+}
+
+export function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath: string): boolean {
+  const gate = getDeepStageGate(prefs, basePath);
+  return gate.status === "pending" || gate.status === "blocked";
 }
 
 function missingSliceStop(mid: string, phase: string): DispatchAction {
@@ -408,6 +560,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
     name: "execution-entry phase (no context) → discuss-milestone",
     match: async ({ state, mid, midTitle, basePath, structuredQuestionsAvailable }) => {
       if (!EXECUTION_ENTRY_PHASES.has(state.phase)) return null;
+      if (!MILESTONE_ID_RE.test(mid)) return null;
       // Align with the plan-v2 gate's lookup semantics: whitespace-only counts
       // as missing, and an auto worktree may fall back to GSD_PROJECT_ROOT.
       if (hasFinalizedMilestoneContext(basePath, mid)) return null;
@@ -687,16 +840,34 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const decisionPath = join(gsdRoot(basePath), "runtime", "research-decision.json");
       if (!existsSync(decisionPath)) return null; // research-decision rule handles
       let decision: string | undefined;
+      let decisionSource: string | undefined;
       try {
         const cfg = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
         decision = typeof cfg.decision === "string" ? cfg.decision : undefined;
+        decisionSource = typeof cfg.source === "string" ? cfg.source : undefined;
       } catch (err) {
         logWarning("dispatch", `malformed research-decision.json — leaving for research-decision rule to re-ask: ${err instanceof Error ? err.message : String(err)}`);
         return null;
       }
       if (decision !== "research") return null; // user picked "skip" — fall through
+      if (decisionSource === "workflow-preferences") {
+        writeWorkflowDefaultResearchSkipDecision(basePath, decisionSource);
+        return null;
+      }
       const researchDir = join(gsdRoot(basePath), "research");
-      if (isProjectResearchComplete(researchDir)) return null; // already done — fall through
+      const researchStatus = getProjectResearchStatus(researchDir);
+      if (researchStatus.blocked) {
+        const blockerReason = researchStatus.globalBlocker
+          ? "Project research wrote PROJECT-RESEARCH-BLOCKER.md, so no verified research exists."
+          : "Project research produced only blocker files, so no usable research exists.";
+        return {
+          action: "stop" as const,
+          reason:
+            `${blockerReason} Fix the blocker cause, delete the blocker files in \`.gsd/research/\`, and rerun auto.`,
+          level: "warning" as const,
+        };
+      }
+      if (researchStatus.complete) return null; // already done — fall through
       // Idempotency guard: one orchestrator owns the project research fan-out
       // until guided-research-project.md deletes this marker during closeout.
       const runtimeDir = join(gsdRoot(basePath), "runtime");
@@ -1474,6 +1645,17 @@ import { getRegistry } from "./rule-registry.js";
 export async function resolveDispatch(
   ctx: DispatchContext,
 ): Promise<DispatchAction> {
+  const activeMid = ctx.state.activeMilestone?.id;
+  if (activeMid && ctx.mid !== activeMid) {
+    return {
+      action: "stop",
+      reason:
+        `Dispatch milestone mismatch: context mid "${ctx.mid}" does not match active milestone "${activeMid}". ` +
+        "This usually means a project-level deep setup pseudo-id leaked into milestone dispatch; rerun /gsd auto after setup state is reconciled.",
+      level: "warning",
+    };
+  }
+
   // Delegate to registry when available
   try {
     const registry = getRegistry();

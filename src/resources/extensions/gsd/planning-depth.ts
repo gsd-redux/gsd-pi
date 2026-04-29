@@ -119,13 +119,14 @@ function applyDeepWorkflowPreferenceDefaults(frontmatter: Record<string, unknown
 function ensureResearchDecisionDefault(basePath: string): void {
   const runtimeDir = join(dirname(getProjectGSDPreferencesPath(basePath)), "runtime");
   const decisionPath = join(runtimeDir, "research-decision.json");
-  let decision = "research";
+  let decision = "skip";
 
   if (existsSync(decisionPath)) {
     try {
       const parsed = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
-      if (parsed.decision === "skip") {
-        decision = "skip";
+      const source = typeof parsed.source === "string" ? parsed.source : undefined;
+      if (parsed.decision === "research" && (source === "research-decision" || source === "user")) {
+        return;
       }
     } catch {
       // Invalid runtime marker is replaced with the default decision.
@@ -139,6 +140,7 @@ function ensureResearchDecisionDefault(basePath: string): void {
       decision,
       decided_at: new Date().toISOString(),
       source: "workflow-preferences",
+      reason: "deterministic-default",
     }, null, 2)}\n`,
     "utf-8",
   );
