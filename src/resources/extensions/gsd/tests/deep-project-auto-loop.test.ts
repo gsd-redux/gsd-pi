@@ -15,7 +15,7 @@ import { resolveDispatch, setResearchProjectPromptBuilderForTest } from "../auto
 import { resolveExpectedArtifactPath, verifyExpectedArtifact, writeBlockerPlaceholder } from "../auto-recovery.ts";
 import { finalizeProjectResearchTimeout } from "../project-research-policy.ts";
 import { resetRegistry } from "../rule-registry.ts";
-import { approvalGateIdForUnit, isAwaitingUserInput, isExplicitApprovalResponse } from "../user-input-boundary.ts";
+import { approvalGateIdForUnit, isAwaitingUserInput, isExplicitApprovalResponse, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.ts";
 import {
   clearPendingAutoStart,
   checkDeepProjectSetupAfterTurn,
@@ -1060,20 +1060,44 @@ test("deep project setup: plain-text approval wait is treated as waiting for use
   );
 });
 
+test("deep project setup: opening interview question does not trigger approval abort", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: "What do you want to build?",
+    },
+  ];
+
+  assert.equal(isAwaitingUserInput(messages), true);
+  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+});
+
 test("deep project setup: requirements preview question from screenshot is treated as waiting", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        "Proposed requirements:",
+        "",
+        "| ID | Title | Class | Status | Owner | Source |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| R001 | User can add a task | primary-user-loop | active | M001/none yet | user |",
+        "",
+        "Does this look right? Anything to add, remove, or reclassify?",
+      ].join("\n"),
+    },
+  ];
+
+  assert.equal(isAwaitingUserInput(messages), true);
+  assert.equal(shouldPauseForUserApprovalQuestion("discuss-requirements", messages), true);
+});
+
+test("deep project setup: research decision question triggers approval boundary pause", () => {
   assert.equal(
-    isAwaitingUserInput([
+    shouldPauseForUserApprovalQuestion("research-decision", [
       {
         role: "assistant",
-        content: [
-          "Proposed requirements:",
-          "",
-          "| ID | Title | Class | Status | Owner | Source |",
-          "| --- | --- | --- | --- | --- | --- |",
-          "| R001 | User can add a task | primary-user-loop | active | M001/none yet | user |",
-          "",
-          "Does this look right? Anything to add, remove, or reclassify?",
-        ].join("\n"),
+        content: "Run domain research now? (y/n)",
       },
     ]),
     true,

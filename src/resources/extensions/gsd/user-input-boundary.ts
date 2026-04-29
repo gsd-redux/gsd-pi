@@ -12,7 +12,7 @@ const APPROVAL_WAIT_RE =
   /\bwait(?:ing)?\s+for\s+(?:your\s+)?(?:confirmation|approval|input|response|answer)\b/i;
 
 const APPROVAL_QUESTION_RE =
-  /\?(?=[\s\S]*\b(?:confirm|confirmation|approve|approval|requirements|capture|captured|correctly|right|adjust|clarify|scope|write|proceed|reclassify)\b)/i;
+  /(?=[\s\S]*\?)(?=[\s\S]*\b(?:confirm|confirmation|approve|approval|requirements|capture|captured|correctly|right|adjust|clarify|scope|write|proceed|reclassify|research|skip)\b)/i;
 
 function extractTextFromMessage(msg: unknown): string {
   if (!msg || typeof msg !== "object") return "";
@@ -89,9 +89,18 @@ export function isAwaitingUserInput(messages: unknown[] | undefined): boolean {
   return APPROVAL_QUESTION_RE.test(text);
 }
 
+export function isAwaitingApprovalBoundary(messages: unknown[] | undefined): boolean {
+  const text = lastAssistantText(messages);
+  if (!text) return false;
+  if (/ask_user_questions was cancelled before receiving a response/i.test(text)) return true;
+  if (REMOTE_QUESTION_FAILURE_RE.test(text)) return true;
+  if (APPROVAL_WAIT_RE.test(text)) return true;
+  return APPROVAL_QUESTION_RE.test(text);
+}
+
 export function shouldPauseForUserApprovalQuestion(
   unitType: string | undefined,
   messages: unknown[] | undefined,
 ): boolean {
-  return !!unitType && USER_APPROVAL_UNIT_TYPES.has(unitType) && isAwaitingUserInput(messages);
+  return !!unitType && USER_APPROVAL_UNIT_TYPES.has(unitType) && isAwaitingApprovalBoundary(messages);
 }
