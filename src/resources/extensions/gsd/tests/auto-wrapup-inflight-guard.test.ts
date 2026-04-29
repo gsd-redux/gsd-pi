@@ -193,7 +193,7 @@ describe("#4365: tool_execution_start hook must pass toolName to markToolStart",
 });
 
 describe("deep setup approval questions pause immediately", () => {
-  test("register-hooks enables the approval write gate and can abort external CLI turns", () => {
+  test("register-hooks enables the approval write gate without aborting the stream", () => {
     const startMarker = 'pi.on("message_update"';
     const endMarker = 'pi.on("session_shutdown"';
     const messageUpdateSection = registerHooksSrc.slice(
@@ -218,8 +218,8 @@ describe("deep setup approval questions pause immediately", () => {
       "foreground milestone discussion questions must also set the durable write gate",
     );
     assert.ok(
-      messageUpdateSection.includes("shouldAbortApprovalQuestionTurn") && messageUpdateSection.includes("ctx.abort()"),
-      "message_update must abort local external-CLI turns because their tool calls bypass in-process gates",
+      !messageUpdateSection.includes("ctx.abort()"),
+      "message_update must NOT abort the stream — aborting eats the model's question text on external CLI providers; the pending gate set above blocks subsequent tool calls instead",
     );
   });
 });

@@ -30,16 +30,6 @@ import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserAp
 let isFirstSession = true;
 let approvalQuestionPauseInFlight = false;
 
-function shouldAbortApprovalQuestionTurn(ctx: ExtensionContext): boolean {
-  const provider = ctx.model?.provider;
-  const authMode = provider && typeof ctx.modelRegistry?.getProviderAuthMode === "function"
-    ? ctx.modelRegistry.getProviderAuthMode(provider)
-    : undefined;
-  return authMode === "externalCli" &&
-    typeof ctx.model?.baseUrl === "string" &&
-    ctx.model.baseUrl.startsWith("local://");
-}
-
 async function deriveGsdState(basePath: string) {
   const { deriveState } = await import("../state.js");
   return deriveState(basePath);
@@ -363,9 +353,11 @@ export function registerHooks(
       `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - write gate enabled.`,
       "info",
     );
-    if (shouldAbortApprovalQuestionTurn(ctx)) {
-      ctx.abort();
-    }
+    // The pending gate set above blocks subsequent non-read-only tool calls
+    // via the tool_call hook below, so we do not abort the in-flight stream.
+    // Aborting mid-stream eats the model's question text on external CLI
+    // providers (Claude Code SDK) because lastTextContent isn't populated
+    // from in-flight builder state.
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {

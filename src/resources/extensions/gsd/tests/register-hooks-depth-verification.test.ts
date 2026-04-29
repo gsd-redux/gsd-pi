@@ -320,8 +320,8 @@ test("register-hooks gates MCP ask_user_questions cancellation before requiremen
   assert.match(requirementBlock?.reason ?? "", /has not been confirmed/);
 });
 
-test("register-hooks aborts local external-cli turn at plain-text approval boundary", async (t) => {
-  const dir = makeTempDir("plain-chat-abort");
+test("register-hooks sets pending gate at plain-text approval boundary without aborting", async (t) => {
+  const dir = makeTempDir("plain-chat-gate");
   const originalCwd = process.cwd();
   process.chdir(dir);
   resetWriteGateState();
@@ -381,6 +381,6 @@ test("register-hooks aborts local external-cli turn at plain-text approval bound
   }
 
   assert.equal(getPendingGate(), "depth_verification_M001_confirm");
-  assert.equal(abortCount, 1, "local external-cli turn must abort before more Claude Code tools run");
+  assert.equal(abortCount, 0, "stream must not be aborted — the pending gate blocks subsequent tool calls instead, preserving the model's question text on external CLI providers");
   assert.match(notifications[0] ?? "", /waiting for your approval/);
 });
