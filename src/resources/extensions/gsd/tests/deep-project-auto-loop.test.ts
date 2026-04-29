@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { runPreDispatch } from "../auto/phases.ts";
+import { runDispatch, runPreDispatch } from "../auto/phases.ts";
 import { AutoSession } from "../auto/session.ts";
 import { resolveUnitSupervisionTimeouts } from "../auto-timers.ts";
 import { bootstrapAutoSession } from "../auto-start.ts";
@@ -645,6 +645,74 @@ test("deep project setup: new-project asks interview stages in foreground", asyn
       process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
     }
     rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep auto dispatch forces milestone checkpoints into plain chat", async (t) => {
+  const base = makeBase();
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const s = new AutoSession();
+  s.basePath = base;
+  s.originalBasePath = base;
+
+  let capturedStructured: string | undefined;
+  const deps = {
+    resolveDispatch: async (dispatchCtx: any) => {
+      capturedStructured = dispatchCtx.structuredQuestionsAvailable;
+      return {
+        action: "dispatch" as const,
+        unitType: "discuss-milestone",
+        unitId: "M001",
+        prompt: `Structured questions available: ${dispatchCtx.structuredQuestionsAvailable}`,
+        matchedRule: "test",
+      };
+    },
+    emitJournalEvent: () => {},
+    runPreDispatchHooks: () => ({ firedHooks: [], action: "proceed" }),
+    getPriorSliceCompletionBlocker: () => null,
+    getMainBranch: () => "main",
+    invalidateAllCaches: () => {},
+    stopAuto: async () => {},
+    pauseAuto: async () => {},
+  };
+
+  const result = await runDispatch(
+    {
+      ctx: makeCtx() as any,
+      pi: makePi([]) as any,
+      s,
+      deps: deps as any,
+      prefs: { planning_depth: "deep" } as any,
+      iteration: 1,
+      flowId: "flow-test",
+      nextSeq: () => 1,
+    },
+    {
+      state: {
+        phase: "pre-planning",
+        activeMilestone: { id: "M001", title: "Plain Chat Gate" },
+        activeSlice: null,
+        activeTask: null,
+        recentDecisions: [],
+        blockers: [],
+        nextAction: "",
+        registry: [],
+      },
+      mid: "M001",
+      midTitle: "Plain Chat Gate",
+    },
+    {
+      recentUnits: [],
+      stuckRecoveryAttempts: 0,
+      consecutiveFinalizeTimeouts: 0,
+    },
+  );
+
+  assert.equal(result.action, "next");
+  assert.equal(capturedStructured, "false");
+  if (result.action === "next") {
+    assert.match(result.data.prompt, /Structured questions available: false/);
   }
 });
 

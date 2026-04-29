@@ -162,3 +162,64 @@ test("register-hooks clears depth gate when remote (Telegram/Slack/Discord) answ
     "remote confirmation must unlock the matching milestone context write",
   );
 });
+
+test("register-hooks returns hard blocker when depth question is cancelled", async (t) => {
+  const dir = makeTempDir("cancelled");
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  resetWriteGateState();
+
+  t.after(() => {
+    resetWriteGateState();
+    process.chdir(originalCwd);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  const questionId = "depth_verification_M003_confirm";
+  const questions = [
+    {
+      id: questionId,
+      question: "Did I capture this correctly?",
+      options: [
+        { label: "Yes, you got it (Recommended)" },
+        { label: "Needs adjustment" },
+      ],
+    },
+  ];
+
+  for (const handler of handlers.get("tool_call") ?? []) {
+    await handler({ toolName: "ask_user_questions", input: { questions } });
+  }
+  assert.equal(getPendingGate(), questionId);
+
+  let patch: any;
+  for (const handler of handlers.get("tool_result") ?? []) {
+    const result = await handler({
+      toolName: "ask_user_questions",
+      input: { questions },
+      details: { cancelled: true, response: null },
+    });
+    if (result) patch = result;
+  }
+
+  assert.equal(getPendingGate(), questionId, "cancelled question must leave gate pending");
+  assert.match(
+    patch?.content?.[0]?.text ?? "",
+    /HARD BLOCK: approval gate "depth_verification_M003_confirm" is still pending/,
+  );
+  assert.match(
+    patch?.content?.[0]?.text ?? "",
+    /Do not infer approval from earlier or prior messages/,
+  );
+});

@@ -936,10 +936,16 @@ export async function runDispatch(
     ? ctx.modelRegistry.getProviderAuthMode(provider)
     : undefined;
   const activeTools = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
-  const structuredQuestionsAvailable = supportsStructuredQuestions(activeTools, {
-    authMode,
-    baseUrl: ctx.model?.baseUrl,
-  }) ? "true" : "false";
+  // Deep planning intentionally keeps human checkpoints in plain chat. In
+  // Claude Code/local MCP transports, structured question requests can be
+  // cancelled outside the normal chat flow, which made approval gates easy to
+  // skip or bury under tool output.
+  const structuredQuestionsAvailable = prefs?.planning_depth === "deep"
+    ? "false"
+    : supportsStructuredQuestions(activeTools, {
+        authMode,
+        baseUrl: ctx.model?.baseUrl,
+      }) ? "true" : "false";
 
   debugLog("autoLoop", { phase: "dispatch-resolve", iteration: ic.iteration });
   const dispatchResult = await deps.resolveDispatch({

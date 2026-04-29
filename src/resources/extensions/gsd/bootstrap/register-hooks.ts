@@ -560,8 +560,20 @@ export function registerHooks(
     const currentPendingGate = getPendingGate();
     if (currentPendingGate) {
       if (details?.cancelled || !details?.response) {
-        // Gate stays pending — model will be blocked from non-read-only tools
-        // until it re-asks and gets a valid response
+        // Gate stays pending. Return a hard instruction as the tool result so
+        // the model cannot reinterpret a cancelled prompt as prior approval.
+        return {
+          content: [{
+            type: "text" as const,
+            text: [
+              `HARD BLOCK: approval gate "${currentPendingGate}" is still pending.`,
+              "No user response was received for the confirmation question.",
+              "Do not infer approval from earlier or prior messages.",
+              "Do not proceed, write files, save artifacts, or call more tools.",
+              "Ask the user to confirm in plain chat, then stop and wait for their next message.",
+            ].join(" "),
+          }],
+        };
       } else {
         const pendingQuestion = questions.find((question) => question?.id === currentPendingGate);
         if (pendingQuestion) {
