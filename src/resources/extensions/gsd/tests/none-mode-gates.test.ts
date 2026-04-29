@@ -11,9 +11,10 @@
  * prefs to the runner's cwd .gsd/PREFERENCES.md and clean up in finally.
  */
 
-import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import { shouldUseWorktreeIsolation } from "../auto.ts";
 import { getIsolationMode } from "../preferences.ts";
@@ -68,6 +69,25 @@ try {
   removeRunnerPreferences();
   invalidateAllCaches();
 }
+});
+
+test('shouldUseWorktreeIsolation returns false for worktree prefs before first commit', () => {
+  const repo = mkdtempSync(join(tmpdir(), "gsd-unborn-worktree-"));
+  try {
+    execFileSync("git", ["init"], { cwd: repo, stdio: ["ignore", "ignore", "ignore"] });
+    mkdirSync(join(repo, ".gsd"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "PREFERENCES.md"), `---\ngit:\n  isolation: "worktree"\n---\n`);
+    invalidateAllCaches();
+
+    assert.deepStrictEqual(
+      shouldUseWorktreeIsolation(repo),
+      false,
+      "worktree isolation should wait until the repo has a committed HEAD",
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    invalidateAllCaches();
+  }
 });
 
 // Test 4: shouldUseWorktreeIsolation returns false for no prefs (default: none)
@@ -149,4 +169,3 @@ test('Test 7: System prompt worktree block absent without active worktree', () =
   const ctx = getActiveAutoWorktreeContext();
   assert.ok(ctx === null, "getActiveAutoWorktreeContext() null confirms system prompt worktree block will not be injected");
 });
-

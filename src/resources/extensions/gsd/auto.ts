@@ -132,6 +132,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { atomicWriteSync } from "./atomic-write.js";
 import {
   autoCommitCurrentBranch,
@@ -374,9 +375,24 @@ export function startAutoDetached(
 /** Returns true if the project is configured for `isolation:worktree` mode. */
 export function shouldUseWorktreeIsolation(basePath?: string): boolean {
   const prefs = loadEffectiveGSDPreferences(basePath)?.preferences?.git;
-  if (prefs?.isolation === "worktree") return true;
+  if (prefs?.isolation === "worktree") {
+    if (basePath && !hasCommittedHead(basePath)) return false;
+    return true;
+  }
   // Default is false — worktree isolation requires explicit opt-in
   return false;
+}
+
+function hasCommittedHead(basePath: string): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd: basePath,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Crash recovery prompt — set by startAuto, consumed by the main loop */
