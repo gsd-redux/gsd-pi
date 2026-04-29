@@ -201,36 +201,8 @@ function isRootCanonicalArtifact(opts: SaveArtifactOpts): boolean {
   if (opts.milestone_id || opts.slice_id || opts.task_id) return false;
   return (
     opts.artifact_type === 'PROJECT' ||
-    opts.artifact_type === 'PROJECT-DRAFT' ||
-    opts.artifact_type === 'REQUIREMENTS' ||
-    opts.artifact_type === 'REQUIREMENTS-DRAFT'
+    opts.artifact_type === 'REQUIREMENTS'
   );
-}
-
-function isFinalRequirementsArtifact(opts: SaveArtifactOpts): boolean {
-  return !opts.milestone_id &&
-    !opts.slice_id &&
-    !opts.task_id &&
-    opts.artifact_type === 'REQUIREMENTS' &&
-    opts.path === 'REQUIREMENTS.md';
-}
-
-async function parseFinalRequirementsForReconcile(opts: SaveArtifactOpts): Promise<Requirement[] | null> {
-  if (!isFinalRequirementsArtifact(opts)) return null;
-  const { parseRequirementsSections } = await import('./md-importer.js');
-  return parseRequirementsSections(opts.content);
-}
-
-async function replaceRequirementsTableFromArtifact(requirements: Requirement[]): Promise<void> {
-  const db = await import('./gsd-db.js');
-  db.transaction(() => {
-    const adapter = db._getAdapter();
-    if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-    adapter.prepare('DELETE FROM requirements').run();
-    for (const requirement of requirements) {
-      db.upsertRequirement(requirement);
-    }
-  });
 }
 
 // ─── Next Decision ID ─────────────────────────────────────────────────────
@@ -802,14 +774,12 @@ export async function saveArtifactToDb(
     if (!fullPath.startsWith(gsdDir)) {
       throw new GSDError(GSD_IO_ERROR, `saveArtifactToDb: path escapes .gsd/ directory: ${opts.path}`);
     }
-    const parsedRequirements = await parseFinalRequirementsForReconcile(opts);
-
     // Shrinkage guard: if the file already exists and the new content is
     // significantly smaller (<50%), preserve the richer file on disk and
     // store its content in the DB instead of the abbreviated version. Root
-    // canonical artifacts are exempt: PROJECT/REQUIREMENTS saves are the user's
-    // explicit final contract, and cleanup/consolidation is often intentionally
-    // much smaller than a malformed accumulated file.
+    // canonical artifacts are exempt because their content is rendered from
+    // canonical DB state, and cleanup/consolidation is often intentionally much
+    // smaller than a malformed accumulated file.
     let dbContent = opts.content;
     let skipDiskWrite = false;
     if (!isRootCanonicalArtifact(opts) && existsSync(fullPath)) {
@@ -840,9 +810,6 @@ export async function saveArtifactToDb(
         db.deleteArtifactByPath(opts.path);
         throw diskErr;
       }
-    }
-    if (parsedRequirements !== null) {
-      await replaceRequirementsTableFromArtifact(parsedRequirements);
     }
     // Invalidate file-read caches so deriveState() sees the updated markdown.
     // Do NOT clear the artifacts table — we just wrote to it intentionally.

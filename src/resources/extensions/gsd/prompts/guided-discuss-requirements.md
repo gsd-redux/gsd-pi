@@ -114,7 +114,7 @@ Once the user confirms:
 
 1. Use the **Requirements** output template (inlined above) to render the final markdown in working memory.
 2. Every entry must conform to the `R###` format with all listed fields. Use `gsd_requirement_save` (NOT plain file edit) for each requirement so DB state is saved first.
-3. After all `gsd_requirement_save` calls complete, call `gsd_summary_save` with `artifact_type: "REQUIREMENTS"` and the full rendered markdown as `content`; omit `milestone_id`. This writes `.gsd/REQUIREMENTS.md` and persists the final requirements artifact.
+3. After all `gsd_requirement_save` calls complete, call `gsd_summary_save` with `artifact_type: "REQUIREMENTS"`; omit `milestone_id`. The requirements table is the source of truth, and this tool renders `.gsd/REQUIREMENTS.md` from DB state. Pass the rendered markdown as `content` for audit context only; do not rely on markdown to update DB rows.
 4. The file MUST contain all required sections: `## Active`, `## Validated`, `## Deferred`, `## Out of Scope`, `## Traceability`, `## Coverage Summary`. Empty sections are OK; missing sections are not.
 5. Print the final coverage summary in chat: `Active: N | Validated: N | Deferred: N | Out of Scope: N | Mapped to slices: N | Unmapped active: N`.
 6. Do NOT use `artifact_type: "CONTEXT"` and do NOT pass `milestone_id: "REQUIREMENTS"`; that creates a fake milestone instead of `.gsd/REQUIREMENTS.md`.

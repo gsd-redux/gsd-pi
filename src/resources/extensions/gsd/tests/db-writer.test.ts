@@ -679,7 +679,7 @@ describe('db-writer', () => {
     }
   });
 
-  test('saveArtifactToDb — final REQUIREMENTS overwrites smaller canonical content and reconciles DB', async () => {
+  test('saveArtifactToDb — final REQUIREMENTS overwrites smaller projection without reconciling DB rows', async () => {
     const tmpDir = makeTmpDir();
     const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
     openDatabase(dbPath);
@@ -787,8 +787,8 @@ describe('db-writer', () => {
         .all() as Array<Record<string, unknown>>;
       assert.deepStrictEqual(
         reqRows.map((row) => [row['id'], row['description']]),
-        [['R001', 'User can add a task']],
-        'requirements table is reconciled to the canonical artifact',
+        [['R999', 'Stale duplicate requirement']],
+        'artifact save does not parse markdown back into the requirements table',
       );
 
       const artifact = adapter!
