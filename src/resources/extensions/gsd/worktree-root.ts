@@ -69,7 +69,9 @@ export function resolveWorktreeProjectRoot(
 function resolveProjectRootFromPath(path: string): string {
   const normalizedPath = path.replaceAll("\\", "/");
   const segment = findWorktreeSegment(normalizedPath);
-  if (!segment) return resolveGitWorkingTreeRoot(path) ?? path;
+  if (!segment) {
+    return resolveNearestBootstrappedGsdRoot(path) ?? resolveGitWorkingTreeRoot(path) ?? path;
+  }
 
   const sepChar = path.includes("\\") ? "\\" : "/";
   const gsdMarker = `${sepChar}.gsd${sepChar}`;
@@ -87,6 +89,35 @@ function resolveProjectRootFromPath(path: string): string {
   }
 
   return candidate;
+}
+
+function resolveNearestBootstrappedGsdRoot(path: string): string | null {
+  try {
+    let dir = existsSync(path) && !statSync(path).isDirectory()
+      ? resolve(path, "..")
+      : path;
+
+    for (let i = 0; i < 30; i++) {
+      if (hasGsdBootstrapArtifacts(join(dir, ".gsd"))) return dir;
+
+      const gitPath = join(dir, ".git");
+      if (existsSync(gitPath)) return null;
+
+      const parent = resolve(dir, "..");
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Non-fatal: callers fall back to git root resolution.
+  }
+  return null;
+}
+
+function hasGsdBootstrapArtifacts(gsdPath: string): boolean {
+  return existsSync(gsdPath) &&
+    (existsSync(join(gsdPath, "PREFERENCES.md")) ||
+      existsSync(join(gsdPath, "preferences.md")) ||
+      existsSync(join(gsdPath, "milestones")));
 }
 
 function resolveGitWorkingTreeRoot(path: string): string | null {
