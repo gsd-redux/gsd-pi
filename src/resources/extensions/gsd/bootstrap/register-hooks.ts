@@ -30,6 +30,16 @@ import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserAp
 let isFirstSession = true;
 let approvalQuestionPauseInFlight = false;
 
+function shouldAbortApprovalQuestionTurn(ctx: ExtensionContext): boolean {
+  const provider = ctx.model?.provider;
+  const authMode = provider && typeof ctx.modelRegistry?.getProviderAuthMode === "function"
+    ? ctx.modelRegistry.getProviderAuthMode(provider)
+    : undefined;
+  return authMode === "externalCli" &&
+    typeof ctx.model?.baseUrl === "string" &&
+    ctx.model.baseUrl.startsWith("local://");
+}
+
 async function deriveGsdState(basePath: string) {
   const { deriveState } = await import("../state.js");
   return deriveState(basePath);
@@ -353,6 +363,9 @@ export function registerHooks(
       `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - write gate enabled.`,
       "info",
     );
+    if (shouldAbortApprovalQuestionTurn(ctx)) {
+      ctx.abort();
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {

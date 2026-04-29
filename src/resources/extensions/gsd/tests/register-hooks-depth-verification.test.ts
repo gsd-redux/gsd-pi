@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { registerHooks } from "../bootstrap/register-hooks.ts";
+import { autoSession } from "../auto-runtime-state.ts";
 import {
   getPendingGate,
   resetWriteGateState,
@@ -317,4 +318,69 @@ test("register-hooks gates MCP ask_user_questions cancellation before requiremen
 
   assert.equal(requirementBlock?.block, true, "requirement save must be blocked while gate is pending");
   assert.match(requirementBlock?.reason ?? "", /has not been confirmed/);
+});
+
+test("register-hooks aborts local external-cli turn at plain-text approval boundary", async (t) => {
+  const dir = makeTempDir("plain-chat-abort");
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  resetWriteGateState();
+
+  const previousUnit = autoSession.currentUnit;
+  autoSession.currentUnit = { type: "discuss-milestone", id: "M001", startedAt: Date.now() };
+
+  t.after(() => {
+    autoSession.currentUnit = previousUnit;
+    resetWriteGateState();
+    process.chdir(originalCwd);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  let abortCount = 0;
+  const notifications: string[] = [];
+  const ctx = {
+    ui: {
+      notify: (message: string) => { notifications.push(message); },
+      setStatus: () => {},
+      setWidget: () => {},
+    },
+    model: { provider: "claude-code", baseUrl: "local://claude-code" },
+    modelRegistry: {
+      getProviderAuthMode: () => "externalCli",
+    },
+    abort: () => { abortCount += 1; },
+  } as any;
+
+  for (const handler of handlers.get("message_update") ?? []) {
+    await handler({
+      message: {
+        role: "assistant",
+        content: [
+          "Requirements preview (based on prior confirmed requirements):",
+          "",
+          "| ID | Title | Status | Owner | Source |",
+          "| --- | --- | --- | --- | --- |",
+          "| R001 | User can add a task | active | M001/none yet | user |",
+          "",
+          "Confirm, adjust, or add?",
+        ].join("\n"),
+      },
+      assistantMessageEvent: {},
+    }, ctx);
+  }
+
+  assert.equal(getPendingGate(), "depth_verification_M001_confirm");
+  assert.equal(abortCount, 1, "local external-cli turn must abort before more Claude Code tools run");
+  assert.match(notifications[0] ?? "", /waiting for your approval/);
 });
