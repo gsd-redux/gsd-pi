@@ -40,6 +40,20 @@ export function projectRoot(): string {
   return root;
 }
 
+export function currentDirectoryRoot(): string {
+  let cwd: string;
+  try {
+    cwd = process.cwd();
+  } catch {
+    cwd = process.env.HOME ?? "/";
+  }
+  const result = validateDirectory(cwd);
+  if (result.severity === "blocked") {
+    throw new GSDNoProjectError(result.reason ?? "GSD must be run inside a project directory.");
+  }
+  return cwd;
+}
+
 export async function guardRemoteSession(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -122,4 +136,3 @@ export async function guardRemoteSession(
 
   return choice === "force";
 }
-

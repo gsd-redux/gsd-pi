@@ -14,7 +14,7 @@ import { loadEffectiveGSDPreferences } from "../../preferences.js";
 import { setPlanningDepth } from "../../planning-depth.js";
 import { nextMilestoneId } from "../../milestone-ids.js";
 import { findMilestoneIds } from "../../guided-flow.js";
-import { projectRoot } from "../context.js";
+import { currentDirectoryRoot, projectRoot } from "../context.js";
 import { createRun, listRuns } from "../../run-manager.js";
 import {
   setActiveEngineId,
@@ -550,7 +550,7 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
     // Routes through showSmartEntry (same as new-milestone for first project),
     // but accepts --deep to opt into staged project-level discovery (deep mode).
     if (requireNotAutoActive("/gsd new-project", ctx)) return true;
-    const basePath = projectRoot();
+    const basePath = currentDirectoryRoot();
     const args = trimmed.replace(/^new-project\s*/, "").trim();
     if (/(^|\s)--deep(\s|$)/.test(args)) {
       setPlanningDepth(basePath, "deep");

@@ -283,7 +283,8 @@ function _getPendingDeepProjectSetupForContext(
   basePath?: string,
 ): PendingDeepProjectSetupEntry | null {
   if (basePath) {
-    return pendingDeepProjectSetupMap.get(basePath) ?? null;
+    const direct = pendingDeepProjectSetupMap.get(basePath);
+    if (direct) return direct;
   }
   if (!ctx) return _getPendingDeepProjectSetup();
 

@@ -570,6 +570,75 @@ test("deep project setup: new-project --deep creates a reachable HEAD in unborn 
   }
 });
 
+test("deep project setup: new-project --deep uses cwd when nested inside a parent git repo", async () => {
+  const parent = join(tmpdir(), `gsd-deep-project-parent-${randomUUID()}`);
+  const child = join(parent, "nested-app");
+  const previousCwd = process.cwd();
+  const previousGsdHome = process.env.GSD_HOME;
+  const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const previousProjectRoot = process.env.GSD_PROJECT_ROOT;
+
+  mkdirSync(child, { recursive: true });
+  execFileSync("git", ["init"], { cwd: parent, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: parent });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: parent });
+  writeFileSync(join(child, "package.json"), '{"name":"nested-app"}\n');
+  writeFileSync(join(child, "GSD-WORKFLOW.md"), "# Test Workflow\n");
+
+  try {
+    process.env.GSD_HOME = join(child, ".test-gsd-home");
+    process.env.GSD_WORKFLOW_PATH = join(child, "GSD-WORKFLOW.md");
+    delete process.env.GSD_PROJECT_ROOT;
+    process.chdir(child);
+
+    const messages: unknown[] = [];
+    const ctx = makeCtx(`nested-${randomUUID()}`) as any;
+    const pi = makePi(messages) as any;
+    const { handleWorkflowCommand } = await import("../commands/handlers/workflow.ts");
+    await handleWorkflowCommand("new-project --deep", ctx, pi);
+
+    const childPrefs = readFileSync(join(child, ".gsd", "PREFERENCES.md"), "utf-8");
+    assert.match(childPrefs, /planning_depth:\s*deep/);
+    assert.equal(
+      existsSync(join(parent, ".gsd", "PREFERENCES.md")),
+      false,
+      "new-project must not write deep prefs to the parent git root",
+    );
+    assert.equal(messages.length, 1);
+
+    const validProject = readFileSync(
+      new URL("../schemas/__fixtures__/valid-project.md", import.meta.url),
+      "utf-8",
+    );
+    writeFileSync(join(child, ".gsd", "PROJECT.md"), validProject);
+
+    const advanced = await checkDeepProjectSetupAfterTurn(
+      { messages: [{ role: "assistant", content: "Project context written." }] },
+      ctx,
+      parent,
+    );
+
+    assert.equal(advanced, true);
+    assert.equal(messages.length, 2);
+    assert.match(String((messages[1] as any).content), /REQUIREMENTS\.md/);
+  } finally {
+    process.chdir(previousCwd);
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
+    if (previousWorkflowPath === undefined) delete process.env.GSD_WORKFLOW_PATH;
+    else process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
+    if (previousProjectRoot === undefined) delete process.env.GSD_PROJECT_ROOT;
+    else process.env.GSD_PROJECT_ROOT = previousProjectRoot;
+
+    clearPendingDeepProjectSetup(child);
+    rmSync(parent, { recursive: true, force: true });
+    try {
+      const { closeDatabase } = await import("../gsd-db.ts");
+      closeDatabase();
+    } catch {}
+  }
+});
+
 test("deep project setup: new-project asks interview stages in foreground", async () => {
   const base = makeBase();
   const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
