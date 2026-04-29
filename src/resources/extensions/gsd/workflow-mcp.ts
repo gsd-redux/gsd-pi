@@ -374,11 +374,32 @@ export function usesWorkflowMcpTransport(
   return authMode === "externalCli" && typeof baseUrl === "string" && baseUrl.startsWith("local://");
 }
 
+function hasAskUserQuestionsTool(activeTools: string[]): boolean {
+  return activeTools.some((toolName) => {
+    if (toolName === "ask_user_questions") return true;
+    if (!toolName.startsWith("mcp__")) return false;
+    const toolSeparator = toolName.indexOf("__", "mcp__".length);
+    return toolSeparator >= 0 && toolName.slice(toolSeparator + 2) === "ask_user_questions";
+  });
+}
+
+function workflowMcpStructuredQuestionsOptIn(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.GSD_WORKFLOW_MCP_STRUCTURED_QUESTIONS;
+  return value === "1" || value === "true";
+}
+
 export function supportsStructuredQuestions(
   activeTools: string[],
-  options: Pick<WorkflowCapabilityOptions, "authMode" | "baseUrl"> = {},
+  options: Pick<WorkflowCapabilityOptions, "authMode" | "baseUrl" | "env"> = {},
 ): boolean {
-  if (!activeTools.includes("ask_user_questions")) return false;
+  if (!hasAskUserQuestionsTool(activeTools)) return false;
+  if (usesWorkflowMcpTransport(options.authMode, options.baseUrl)) {
+    // Claude Code local workflow-MCP exposes ask_user_questions, but form
+    // elicitation can return an immediate cancel outside GSD's chat turn. Keep
+    // checkpoints in plain chat unless a caller deliberately opts into testing
+    // that transport.
+    return workflowMcpStructuredQuestionsOptIn(options.env);
+  }
 
   return true;
 }

@@ -7,7 +7,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { canonicalToolName, clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -373,8 +373,9 @@ export function registerHooks(
 
   pi.on("tool_call", async (event) => {
     const discussionBasePath = process.cwd();
+    const toolName = canonicalToolName(event.toolName);
     // ── Loop guard: block repeated identical tool calls ──
-    const loopCheck = checkToolCallLoop(event.toolName, event.input as Record<string, unknown>);
+    const loopCheck = checkToolCallLoop(toolName, event.input as Record<string, unknown>);
     if (loopCheck.block) {
       return { block: true, reason: loopCheck.reason };
     }
@@ -382,7 +383,7 @@ export function registerHooks(
     // ── Discussion gate enforcement: track pending gate questions ─────────
     // Only gate-shaped ask_user_questions calls should block execution.
     // The gate stays pending until the user selects the approval option.
-    if (event.toolName === "ask_user_questions") {
+    if (toolName === "ask_user_questions") {
       const questions: any[] = (event.input as any)?.questions ?? [];
       const questionId = questions.find((question) => typeof question?.id === "string" && isGateQuestionId(question.id))?.id;
       if (typeof questionId === "string") {
@@ -404,7 +405,7 @@ export function registerHooks(
         if (bashGuard.block) return bashGuard;
       } else {
         const gateGuard = shouldBlockPendingGate(
-          event.toolName,
+          toolName,
           milestoneId,
           isQueuePhaseActive(),
         );
@@ -425,7 +426,7 @@ export function registerHooks(
       } else if (isToolCallEventType("bash", event)) {
         queueInput = event.input.command;
       }
-      const queueGuard = shouldBlockQueueExecution(event.toolName, queueInput, true);
+      const queueGuard = shouldBlockQueueExecution(toolName, queueInput, true);
       if (queueGuard.block) return queueGuard;
     }
 
@@ -546,7 +547,8 @@ export function registerHooks(
       // errors and deterministic policy rejections are handled consistently.
       recordToolInvocationError(event.toolName, errorText);
     }
-    if (event.toolName !== "ask_user_questions") return;
+    const toolName = canonicalToolName(event.toolName);
+    if (toolName !== "ask_user_questions") return;
     const milestoneId = await getDiscussionMilestoneIdFor(process.cwd());
     const queueActive = isQueuePhaseActive();
 

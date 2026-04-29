@@ -511,11 +511,20 @@ test("usesWorkflowMcpTransport matches local externalCli providers", () => {
   assert.equal(usesWorkflowMcpTransport("oauth", "local://custom"), false);
 });
 
-test("supportsStructuredQuestions stays enabled on workflow MCP transports when ask_user_questions is available", () => {
+test("supportsStructuredQuestions disables local workflow MCP questions unless explicitly enabled", () => {
   assert.equal(
     supportsStructuredQuestions(["ask_user_questions"], {
       authMode: "externalCli",
       baseUrl: "local://claude-code",
+      env: {},
+    }),
+    false,
+  );
+  assert.equal(
+    supportsStructuredQuestions(["mcp__gsd-workflow__ask_user_questions"], {
+      authMode: "externalCli",
+      baseUrl: "local://claude-code",
+      env: { GSD_WORKFLOW_MCP_STRUCTURED_QUESTIONS: "1" } as NodeJS.ProcessEnv,
     }),
     true,
   );

@@ -95,6 +95,12 @@ const GATE_SAFE_TOOLS = new Set([
   "ask_user_questions",
 ]);
 
+export function canonicalToolName(toolName: string): string {
+  if (!toolName.startsWith("mcp__")) return toolName;
+  const toolSeparator = toolName.indexOf("__", "mcp__".length);
+  return toolSeparator >= 0 ? toolName.slice(toolSeparator + 2) : toolName;
+}
+
 export interface WriteGateSnapshot {
   verifiedDepthMilestones: string[];
   verifiedApprovalGates?: string[];
@@ -332,7 +338,7 @@ export function shouldBlockPendingGateInSnapshot(
 ): { block: boolean; reason?: string } {
   if (!snapshot.pendingGateId) return { block: false };
 
-  if (GATE_SAFE_TOOLS.has(toolName)) return { block: false };
+  if (GATE_SAFE_TOOLS.has(canonicalToolName(toolName))) return { block: false };
 
   return {
     block: true,
