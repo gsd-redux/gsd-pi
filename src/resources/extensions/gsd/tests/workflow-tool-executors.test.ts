@@ -11,7 +11,7 @@ import {
   _getAdapter,
   insertGateRow,
 } from "../gsd-db.ts";
-import { markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
+import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
   executePlanMilestone,
@@ -744,6 +744,41 @@ test("executeSummarySave blocks final root artifacts while approval gate is pend
     }, base));
     assert.equal(draft.isError, undefined);
     assert.ok(existsSync(join(base, ".gsd", "REQUIREMENTS-DRAFT.md")));
+  } finally {
+    clearDiscussionFlowState();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave requires verified root approval in deep mode", async () => {
+  const base = makeTmpBase();
+  try {
+    writeFileSync(join(base, ".gsd", "PREFERENCES.md"), "---\nplanning_depth: deep\n---\n");
+    openTestDb(base);
+
+    const blocked = await inProjectDir(base, () => executeSummarySave({
+      artifact_type: "PROJECT",
+      content: "# Project\n\n## What This Is\n\nA root project artifact.",
+    }, base));
+
+    assert.equal(blocked.isError, true);
+    assert.equal(blocked.details.error, "root_artifact_write_blocked");
+    assert.match(blocked.content[0].text, /fail-closed/);
+    assert.equal(existsSync(join(base, ".gsd", "PROJECT.md")), false);
+
+    await inProjectDir(base, async () => {
+      markApprovalGateVerified("depth_verification_project_confirm", base);
+    });
+
+    const unblocked = await inProjectDir(base, () => executeSummarySave({
+      artifact_type: "PROJECT",
+      content: "# Project\n\n## What This Is\n\nA root project artifact.",
+    }, base));
+
+    assert.equal(unblocked.isError, undefined);
+    assert.equal(unblocked.details.path, "PROJECT.md");
+    assert.ok(existsSync(join(base, ".gsd", "PROJECT.md")));
   } finally {
     clearDiscussionFlowState();
     closeDatabase();

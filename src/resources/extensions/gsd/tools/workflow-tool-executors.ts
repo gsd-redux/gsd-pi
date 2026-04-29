@@ -29,6 +29,7 @@ import type { ValidateMilestoneParams } from "./validate-milestone.js";
 import { handleValidateMilestone } from "./validate-milestone.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
 
 export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = [
   "SUMMARY",
@@ -96,9 +97,11 @@ export async function executeSummarySave(
     };
   }
   const writeGateSnapshot = loadWriteGateSnapshot(basePath);
+  const prefs = loadEffectiveGSDPreferences(basePath)?.preferences;
   const rootArtifactGuard = shouldBlockRootArtifactSaveInSnapshot(
     writeGateSnapshot,
     params.artifact_type,
+    { requireVerifiedApproval: prefs?.planning_depth === "deep" },
   );
   if (rootArtifactGuard.block) {
     return {

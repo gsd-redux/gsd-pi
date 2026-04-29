@@ -114,6 +114,10 @@ type ResearchProjectPromptBuilder = typeof buildResearchProjectPrompt;
 let reassessmentChecker: ReassessmentChecker = checkNeedsReassessment;
 let researchProjectPromptBuilder: ResearchProjectPromptBuilder = buildResearchProjectPrompt;
 
+function shouldBypassMilestoneDepthGateInAuto(prefs: GSDPreferences | undefined): boolean {
+  return isAutoActive() && prefs?.planning_depth !== "deep";
+}
+
 export function setReassessmentCheckerForTest(checker: ReassessmentChecker): () => void {
   const previous = reassessmentChecker;
   reassessmentChecker = checker;
@@ -358,20 +362,17 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // Fire BEFORE the execution-entry phase rules so we redispatch to
     // `discuss-milestone` instead of hitting the plan-v2 gate.
     name: "execution-entry phase (no context) → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, structuredQuestionsAvailable }) => {
       if (!EXECUTION_ENTRY_PHASES.has(state.phase)) return null;
       if (!MILESTONE_ID_RE.test(mid)) return null;
       // Align with the plan-v2 gate's lookup semantics: whitespace-only counts
       // as missing, and an auto worktree may fall back to GSD_PROJECT_ROOT.
       if (hasFinalizedMilestoneContext(basePath, mid)) return null;
-      // H6 fix (#4973): In auto-mode there is no human to answer the
-      // depth-verification ask_user_questions, so the write-gate deadlocks.
-      // Pre-mark the milestone as depth-verified so gsd_summary_save({artifact_type:"CONTEXT"})
-      // is not blocked. Safe ordering: session_switch fires clearDiscussionFlowState()
-      // (register-hooks.ts:106) before before_agent_start, which fires before resolveDispatch
-      // reaches this match fn — so this call always happens after any session-switch reset.
-      // Interactive sessions (isAutoActive()===false) are unaffected.
-      if (isAutoActive()) {
+      // H6 fix (#4973): non-deep auto-mode has no human to answer the
+      // depth-verification question, so pre-marking avoids a write-gate
+      // deadlock. Deep planning is still user-driven even inside auto-mode,
+      // so it must wait for explicit approval instead of taking this bypass.
+      if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
         markDepthVerified(mid, basePath);
       }
       return {
@@ -516,10 +517,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // work pending. Without this guard, the milestone discuss rule wins
       // before the deep rules ever get a chance to fire.
       if (hasPendingDeepStage(prefs, basePath)) return null;
-      // H6 fix (#4973): auto-mark depth-verified so the write-gate does not
-      // deadlock in non-interactive (auto-mode) runs. See ordering note at
-      // "execution-entry phase (no context) → discuss-milestone" above.
-      if (isAutoActive()) {
+      // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
+      // pre-verify deep planning's user-facing milestone approval gate.
+      if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
         markDepthVerified(mid, basePath);
       }
       return {
@@ -677,15 +677,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "pre-planning (no context) → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, structuredQuestionsAvailable }) => {
       if (state.phase !== "pre-planning") return null;
       const contextFile = resolveMilestoneFile(basePath, mid, "CONTEXT");
       const hasContext = !!(contextFile && (await loadFile(contextFile)));
       if (hasContext) return null; // fall through to next rule
-      // H6 fix (#4973): auto-mark depth-verified so the write-gate does not
-      // deadlock in non-interactive (auto-mode) runs. See ordering note at
-      // "execution-entry phase (no context) → discuss-milestone" above.
-      if (isAutoActive()) {
+      // H6 fix (#4973): keep the non-deep auto-mode bypass, but do not
+      // pre-verify deep planning's user-facing milestone approval gate.
+      if (shouldBypassMilestoneDepthGateInAuto(prefs)) {
         markDepthVerified(mid, basePath);
       }
       return {

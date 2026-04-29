@@ -64,6 +64,7 @@ const QUEUE_SAFE_TOOLS = new Set([
 const BASH_READ_ONLY_RE = /^\s*(cat|head|tail|less|more|wc|file|stat|du|df|which|type|echo|printf|ls|find|grep|rg|awk|sed\b(?!.*-i)|sort|uniq|diff|comm|tr|cut|tee\s+-a\s+\/dev\/null|git\s+(log|show|diff|status|branch|tag|remote|rev-parse|ls-files|blame|shortlog|describe|stash\s+list|config\s+--get|cat-file)|gh\s+(issue|pr|api|repo|release)\s+(view|list|diff|status|checks)|mkdir\s+-p\s+\.gsd|rtk\s|npm\s+run\s+(test|test:\w+|lint|lint:\w+|typecheck|type-check|type-check:\w+|check|verify|audit|outdated|format:check|ci|validate)\b|npm\s+(ls|list|info|view|show|outdated|audit|explain|doctor|ping|--version|-v)\b|npx\s|tsx\s|node\s+(--print|--version|-v\b)|python[23]?\s+(-c\s+'[^']*'|--version|-V\b|-m\s+(pip\s+show|pip\s+list|site))|pip[23]?\s+(show|list|freeze|check|index\s+versions)\b|jq\s|yq\s|curl\s+(-s\b|--silent\b)(?!\s+[^|>]*\s-[oO]\b)(?!\s+[^|>]*\s--output\b)[^|>]*$|openssl\s+(version|x509|s_client)|env\b|printenv\b|true\b|false\b)/;
 
 const verifiedDepthMilestones = new Set<string>();
+const verifiedApprovalGates = new Set<string>();
 let activeQueuePhase = false;
 
 /**
@@ -96,6 +97,7 @@ const GATE_SAFE_TOOLS = new Set([
 
 export interface WriteGateSnapshot {
   verifiedDepthMilestones: string[];
+  verifiedApprovalGates?: string[];
   activeQueuePhase: boolean;
   pendingGateId: string | null;
 }
@@ -118,6 +120,7 @@ function writeGateSnapshotPath(basePath: string = process.cwd()): string {
 function currentWriteGateSnapshot(): WriteGateSnapshot {
   return {
     verifiedDepthMilestones: [...verifiedDepthMilestones].sort(),
+    verifiedApprovalGates: [...verifiedApprovalGates].sort(),
     activeQueuePhase,
     pendingGateId,
   };
@@ -158,8 +161,12 @@ function normalizeWriteGateSnapshot(value: unknown): WriteGateSnapshot {
   const verified = Array.isArray(record.verifiedDepthMilestones)
     ? record.verifiedDepthMilestones.filter((item): item is string => typeof item === "string")
     : [];
+  const verifiedGates = Array.isArray(record.verifiedApprovalGates)
+    ? record.verifiedApprovalGates.filter((item): item is string => typeof item === "string")
+    : [];
   return {
     verifiedDepthMilestones: [...new Set(verified)].sort(),
+    verifiedApprovalGates: [...new Set(verifiedGates)].sort(),
     activeQueuePhase: record.activeQueuePhase === true,
     pendingGateId: typeof record.pendingGateId === "string" ? record.pendingGateId : null,
   };
@@ -167,6 +174,7 @@ function normalizeWriteGateSnapshot(value: unknown): WriteGateSnapshot {
 
 const EMPTY_SNAPSHOT: WriteGateSnapshot = {
   verifiedDepthMilestones: [],
+  verifiedApprovalGates: [],
   activeQueuePhase: false,
   pendingGateId: null,
 };
@@ -218,12 +226,14 @@ export function setQueuePhaseActive(active: boolean): void {
 
 export function resetWriteGateState(): void {
   verifiedDepthMilestones.clear();
+  verifiedApprovalGates.clear();
   pendingGateId = null;
   persistWriteGateSnapshot();
 }
 
 export function clearDiscussionFlowState(): void {
   verifiedDepthMilestones.clear();
+  verifiedApprovalGates.clear();
   activeQueuePhase = false;
   pendingGateId = null;
   clearPersistedWriteGateSnapshot();
@@ -233,6 +243,20 @@ export function markDepthVerified(milestoneId?: string | null, basePath: string 
   if (!milestoneId) return;
   verifiedDepthMilestones.add(milestoneId);
   persistWriteGateSnapshot(basePath);
+}
+
+export function markApprovalGateVerified(gateId?: string | null, basePath: string = process.cwd()): void {
+  if (!gateId) return;
+  verifiedApprovalGates.add(gateId);
+  persistWriteGateSnapshot(basePath);
+}
+
+export function isApprovalGateVerifiedInSnapshot(
+  snapshot: WriteGateSnapshot,
+  gateId?: string | null,
+): boolean {
+  if (!gateId) return false;
+  return (snapshot.verifiedApprovalGates ?? []).includes(gateId);
 }
 
 /**
@@ -264,6 +288,9 @@ function extractContextMilestoneId(inputPath: string): string | null {
  */
 export function setPendingGate(gateId: string): void {
   pendingGateId = gateId;
+  verifiedApprovalGates.delete(gateId);
+  const milestoneId = extractDepthVerificationMilestoneId(gateId);
+  if (milestoneId) verifiedDepthMilestones.delete(milestoneId);
   persistWriteGateSnapshot();
 }
 
@@ -461,26 +488,52 @@ export function shouldBlockContextArtifactSaveInSnapshot(
 
 const FINAL_ROOT_ARTIFACTS = new Set(["PROJECT", "REQUIREMENTS"]);
 
+function requiredRootApprovalGateForArtifact(artifactType: string): string | null {
+  if (artifactType === "PROJECT") return "depth_verification_project_confirm";
+  if (artifactType === "REQUIREMENTS") return "depth_verification_requirements_confirm";
+  return null;
+}
+
 /**
  * Final root project artifacts are the output of the project/requirements
  * approval gates. Drafts remain writable so the agent can prepare previews,
- * but PROJECT.md and REQUIREMENTS.md must wait for the pending gate to clear.
+ * but PROJECT.md and REQUIREMENTS.md must wait for explicit approval. Deep
+ * mode can additionally require a positive verified gate, not just no pending
+ * gate, so missed detectors fail closed.
  */
 export function shouldBlockRootArtifactSaveInSnapshot(
   snapshot: WriteGateSnapshot,
   artifactType: string,
+  opts: { requireVerifiedApproval?: boolean } = {},
 ): { block: boolean; reason?: string } {
   if (!FINAL_ROOT_ARTIFACTS.has(artifactType)) return { block: false };
-  if (!snapshot.pendingGateId) return { block: false };
 
-  return {
-    block: true,
-    reason: [
-      `HARD BLOCK: Cannot save ${artifactType}.md because discussion gate "${snapshot.pendingGateId}" has not been confirmed by the user.`,
-      `This is a mechanical gate — wait for explicit user approval before writing final project setup artifacts.`,
-      `If approval was requested in plain text, the user must reply with explicit approval before this write is allowed.`,
-    ].join(" "),
-  };
+  if (snapshot.pendingGateId) {
+    return {
+      block: true,
+      reason: [
+        `HARD BLOCK: Cannot save ${artifactType}.md because discussion gate "${snapshot.pendingGateId}" has not been confirmed by the user.`,
+        `This is a mechanical gate — wait for explicit user approval before writing final project setup artifacts.`,
+        `If approval was requested in plain text, the user must reply with explicit approval before this write is allowed.`,
+      ].join(" "),
+    };
+  }
+
+  if (opts.requireVerifiedApproval) {
+    const requiredGate = requiredRootApprovalGateForArtifact(artifactType);
+    if (requiredGate && !isApprovalGateVerifiedInSnapshot(snapshot, requiredGate)) {
+      return {
+        block: true,
+        reason: [
+          `HARD BLOCK: Cannot save ${artifactType}.md before explicit approval gate "${requiredGate}" is verified.`,
+          `Deep planning root artifacts are fail-closed: absence of a pending gate is not approval.`,
+          `Ask the user to confirm the ${artifactType}.md preview and wait for an explicit approval response.`,
+        ].join(" "),
+      };
+    }
+  }
+
+  return { block: false };
 }
 
 /**

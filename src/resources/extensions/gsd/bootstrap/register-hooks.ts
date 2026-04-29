@@ -7,7 +7,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -157,6 +157,7 @@ export function registerHooks(
 
     const pendingApprovalGate = getPendingGate();
     if (pendingApprovalGate && isExplicitApprovalResponse(event.prompt, pendingApprovalGate)) {
+      markApprovalGateVerified(pendingApprovalGate);
       const milestoneId = extractDepthVerificationMilestoneId(pendingApprovalGate);
       if (milestoneId) markDepthVerified(milestoneId);
       clearPendingGate();
@@ -579,6 +580,9 @@ export function registerHooks(
         if (pendingQuestion) {
           const answer = details.response?.answers?.[currentPendingGate];
           if (isDepthConfirmationAnswer(answer?.selected, pendingQuestion.options)) {
+            markApprovalGateVerified(currentPendingGate);
+            const milestoneIdFromGate = extractDepthVerificationMilestoneId(currentPendingGate);
+            if (milestoneIdFromGate) markDepthVerified(milestoneIdFromGate);
             clearPendingGate();
           }
         }
@@ -594,6 +598,8 @@ export function registerHooks(
         const answer = details.response?.answers?.[question.id];
         const inferredMilestoneId = extractDepthVerificationMilestoneId(question.id) ?? milestoneId;
         if (isDepthConfirmationAnswer(answer?.selected, question.options)) {
+          if (currentPendingGate && question.id !== currentPendingGate) break;
+          markApprovalGateVerified(question.id);
           markDepthVerified(inferredMilestoneId);
           clearPendingGate();
         }

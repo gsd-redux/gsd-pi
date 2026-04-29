@@ -23,6 +23,7 @@ import {
 import {
   markDepthVerified,
   isMilestoneDepthVerified,
+  markApprovalGateVerified,
   shouldBlockContextArtifactSave,
   shouldBlockContextArtifactSaveInSnapshot,
   shouldBlockRootArtifactSaveInSnapshot,
@@ -224,6 +225,7 @@ test('write-gate: gsd_summary_save only blocks final milestone CONTEXT writes', 
 test('write-gate: root PROJECT/REQUIREMENTS final saves block behind pending approval gate', () => {
   const snapshot = {
     verifiedDepthMilestones: [],
+    verifiedApprovalGates: [],
     activeQueuePhase: false,
     pendingGateId: 'depth_verification_requirements_confirm',
   };
@@ -248,6 +250,82 @@ test('write-gate: root PROJECT/REQUIREMENTS final saves block behind pending app
     false,
     'no pending approval gate means final root artifacts can save',
   );
+});
+
+test('write-gate: deep root PROJECT/REQUIREMENTS final saves require verified approval', () => {
+  const snapshot = {
+    verifiedDepthMilestones: [],
+    verifiedApprovalGates: [],
+    activeQueuePhase: false,
+    pendingGateId: null,
+  };
+
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      snapshot,
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    true,
+    'deep PROJECT save is fail-closed without verified project approval',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_project_confirm'] },
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    false,
+    'verified project approval unlocks PROJECT',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_project_confirm'] },
+      'REQUIREMENTS',
+      { requireVerifiedApproval: true },
+    ).block,
+    true,
+    'project approval does not unlock REQUIREMENTS',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_requirements_confirm'] },
+      'REQUIREMENTS',
+      { requireVerifiedApproval: true },
+    ).block,
+    false,
+    'verified requirements approval unlocks REQUIREMENTS',
+  );
+});
+
+test('write-gate: reopening a gate revokes its previous verified approval', () => {
+  clearDiscussionFlowState();
+
+  markApprovalGateVerified('depth_verification_project_confirm');
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      loadWriteGateSnapshot(),
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    false,
+    'precondition: verified approval unlocks the final project artifact',
+  );
+
+  setPendingGate('depth_verification_project_confirm');
+  clearPendingGate();
+
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      loadWriteGateSnapshot(),
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    true,
+    'a re-asked gate must require a fresh approval',
+  );
+
+  clearDiscussionFlowState();
 });
 
 // ═══════════════════════════════════════════════════════════════════════
