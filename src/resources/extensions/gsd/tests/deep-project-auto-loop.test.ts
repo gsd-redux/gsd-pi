@@ -1087,6 +1087,25 @@ test("deep project setup: grounding interview question with requirements context
   assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
 });
 
+test("deep project setup: persistence and anti-goals interview prompt does not trigger approval abort", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [
+        "Greenfield, personal, plain HTML/CSS/JS, core value is create and check off tasks.",
+        "",
+        "A couple more:",
+        "",
+        "1. Persistence? Should tasks survive a page refresh (localStorage), or is it fine if they reset on reload?",
+        "2. Anti-goals - what would you explicitly not want? (e.g., no user accounts, no backend, no categories/tags, no due dates - or something else)",
+      ].join("\n"),
+    },
+  ];
+
+  assert.equal(isAwaitingUserInput(messages), true);
+  assert.equal(shouldPauseForUserApprovalQuestion("discuss-project", messages), false);
+});
+
 test("deep project setup: requirements preview question from screenshot is treated as waiting", () => {
   const messages = [
     {

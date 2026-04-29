@@ -28,7 +28,7 @@ import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserAp
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
 let isFirstSession = true;
-let approvalQuestionAbortInFlight = false;
+let approvalQuestionPauseInFlight = false;
 
 async function deriveGsdState(basePath: string) {
   const { deriveState } = await import("../state.js");
@@ -78,7 +78,7 @@ export function registerHooks(
     }
     resetWriteGateState();
     resetToolCallLoopGuard();
-    approvalQuestionAbortInFlight = false;
+    approvalQuestionPauseInFlight = false;
     await resetAskUserQuestionsTurnCache();
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
@@ -207,7 +207,7 @@ export function registerHooks(
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
-    approvalQuestionAbortInFlight = false;
+    approvalQuestionPauseInFlight = false;
     resetToolCallLoopGuard();
     await resetAskUserQuestionsTurnCache();
     const { handleAgentEnd } = await import("./agent-end-recovery.js");
@@ -317,7 +317,7 @@ export function registerHooks(
   });
 
   pi.on("message_update", async (event, ctx: ExtensionContext) => {
-    if (approvalQuestionAbortInFlight) return;
+    if (approvalQuestionPauseInFlight) return;
 
     const dash = getAutoRuntimeSnapshot();
     let unitType = dash.currentUnit?.type;
@@ -339,12 +339,11 @@ export function registerHooks(
     const gateId = approvalGateIdForUnit(unitType, unitId);
     if (gateId) setPendingGate(gateId);
 
-    approvalQuestionAbortInFlight = true;
+    approvalQuestionPauseInFlight = true;
     ctx.ui.notify(
-      `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - pausing before more tool calls run.`,
+      `${unitType}${unitId ? ` ${unitId}` : ""} is waiting for your approval - write gate enabled.`,
       "info",
     );
-    ctx.abort();
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {

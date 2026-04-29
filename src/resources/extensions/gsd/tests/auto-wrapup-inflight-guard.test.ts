@@ -193,7 +193,7 @@ describe("#4365: tool_execution_start hook must pass toolName to markToolStart",
 });
 
 describe("deep setup approval questions pause immediately", () => {
-  test("register-hooks aborts active question turns during message_update", () => {
+  test("register-hooks enables the approval write gate without aborting the stream", () => {
     const startMarker = 'pi.on("message_update"';
     const endMarker = 'pi.on("session_shutdown"';
     const messageUpdateSection = registerHooksSrc.slice(
@@ -211,11 +211,11 @@ describe("deep setup approval questions pause immediately", () => {
     );
     assert.ok(
       messageUpdateSection.includes("approvalGateIdForUnit") && messageUpdateSection.includes("setPendingGate"),
-      "plain-text approval questions must set the durable write gate before aborting",
+      "plain-text approval questions must set the durable write gate",
     );
     assert.ok(
-      messageUpdateSection.includes("ctx.abort()"),
-      "message_update must abort the current turn before more tool calls run",
+      !messageUpdateSection.includes("ctx.abort()"),
+      "message_update must not abort the provider stream; pending write gates block later mutating tool calls",
     );
   });
 });
