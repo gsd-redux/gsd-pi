@@ -52,7 +52,7 @@ Ask **1–3 questions per round**. Each round targets one of:
 
 **Plain-text default:** Project discovery is open-ended. Ask question rounds in plain text unless you are presenting 2–3 concrete alternatives with clear tradeoffs.
 
-**If `{{structuredQuestionsAvailable}}` is `true` and you use `ask_user_questions`:** ask 1–3 questions per call. Every question object MUST include a stable lowercase `id`. Keep option labels short (3–5 words). Always include a freeform "Other / let me explain" option. Wait for each tool result before asking the next round.
+**If `{{structuredQuestionsAvailable}}` is `true` and you use `ask_user_questions`:** ask 1–3 questions per call. Every question object MUST include a stable lowercase `id`. Keep option labels short (3–5 words). Do not add a separate "Other" option; the question UI provides a freeform path automatically. Wait for each tool result before asking the next round.
 
 **If `{{structuredQuestionsAvailable}}` is `false`:** ask questions in plain text. Keep each round to 1–3 focused questions.
 
@@ -116,7 +116,7 @@ If they clarify, absorb the correction and re-verify.
 
 The depth verification is the only required confirmation gate. Do not add a second "ready to proceed?" gate after it.
 
-**CRITICAL — Non-bypassable gate:** The system mechanically blocks PROJECT.md writes until the user selects the "(Recommended)" option (structured path) or explicitly confirms (plain-text path). If the user declines, cancels, does not respond, or the tool fails, you MUST re-ask — never rationalize past the block.
+**CRITICAL — Confirmation gate:** Do not write final PROJECT.md until the user selects the "(Recommended)" option (structured path) or explicitly confirms (plain-text path). If the user declines, cancels, does not respond, or the tool fails, you MUST re-ask — never rationalize past the block.
 
 ---
 

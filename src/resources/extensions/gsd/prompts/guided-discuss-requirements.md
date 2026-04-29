@@ -104,7 +104,7 @@ Before the wrap-up gate, verify:
 
 If they adjust, absorb and re-verify.
 
-**CRITICAL — Non-bypassable gate:** The system blocks REQUIREMENTS.md writes until explicit confirmation. Never rationalize past it.
+**CRITICAL — Confirmation gate:** Do not write final REQUIREMENTS.md until explicit confirmation. Never rationalize past it.
 
 ---
 

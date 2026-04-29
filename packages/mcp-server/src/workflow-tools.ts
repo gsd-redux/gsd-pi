@@ -1222,7 +1222,7 @@ const requirementUpdateSchema = z.object(requirementUpdateParams);
 
 const requirementSaveParams = {
   projectDir: projectDirParam,
-  class: z.string().describe("Requirement class"),
+  class: z.string().describe("Requirement class: core-capability, primary-user-loop, launchability, continuity, failure-visibility, integration, quality-attribute, operability, admin/support, compliance/security, differentiator, constraint, or anti-feature"),
   description: z.string().describe("Short description of the requirement"),
   why: z.string().describe("Why this requirement matters"),
   source: z.string().describe("Origin of the requirement"),

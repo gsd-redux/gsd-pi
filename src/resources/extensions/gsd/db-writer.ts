@@ -124,9 +124,9 @@ const STATUS_SECTION_MAP: Array<{ status: string; heading: string }> = [
 /**
  * Generate full REQUIREMENTS.md content from an array of Requirement objects.
  * Groups requirements by status into sections (## Active, ## Validated, etc.),
- * each containing ### RXXX — Description headings with bullet fields.
- * Only emits sections that have content. Appends Traceability table and
- * Coverage Summary at the bottom.
+ * each containing ### RXXX — Description headings with bullet fields. Empty
+ * status sections are emitted too because the deep-mode validator treats their
+ * presence as part of the canonical contract.
  */
 export function generateRequirementsMd(requirements: Requirement[]): string {
   const lines: string[] = [];
@@ -147,12 +147,10 @@ export function generateRequirementsMd(requirements: Requirement[]): string {
   // Emit sections in canonical order
   for (const { status, heading } of STATUS_SECTION_MAP) {
     const reqs = byStatus.get(status);
-    if (!reqs || reqs.length === 0) continue;
-
     lines.push(`## ${heading}`);
     lines.push('');
 
-    for (const r of reqs) {
+    for (const r of reqs ?? []) {
       lines.push(`### ${r.id} — ${r.description || 'Untitled'}`);
 
       // Emit bullet fields — only those with content
@@ -197,6 +195,42 @@ export function generateRequirementsMd(requirements: Requirement[]): string {
   lines.push(`- Unmapped active requirements: 0`);
 
   return lines.join('\n') + '\n';
+}
+
+function isRootCanonicalArtifact(opts: SaveArtifactOpts): boolean {
+  if (opts.milestone_id || opts.slice_id || opts.task_id) return false;
+  return (
+    opts.artifact_type === 'PROJECT' ||
+    opts.artifact_type === 'PROJECT-DRAFT' ||
+    opts.artifact_type === 'REQUIREMENTS' ||
+    opts.artifact_type === 'REQUIREMENTS-DRAFT'
+  );
+}
+
+function isFinalRequirementsArtifact(opts: SaveArtifactOpts): boolean {
+  return !opts.milestone_id &&
+    !opts.slice_id &&
+    !opts.task_id &&
+    opts.artifact_type === 'REQUIREMENTS' &&
+    opts.path === 'REQUIREMENTS.md';
+}
+
+async function parseFinalRequirementsForReconcile(opts: SaveArtifactOpts): Promise<Requirement[] | null> {
+  if (!isFinalRequirementsArtifact(opts)) return null;
+  const { parseRequirementsSections } = await import('./md-importer.js');
+  return parseRequirementsSections(opts.content);
+}
+
+async function replaceRequirementsTableFromArtifact(requirements: Requirement[]): Promise<void> {
+  const db = await import('./gsd-db.js');
+  db.transaction(() => {
+    const adapter = db._getAdapter();
+    if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+    adapter.prepare('DELETE FROM requirements').run();
+    for (const requirement of requirements) {
+      db.upsertRequirement(requirement);
+    }
+  });
 }
 
 // ─── Next Decision ID ─────────────────────────────────────────────────────
@@ -302,27 +336,39 @@ export async function saveRequirementToDb(
       const adapter = db._getAdapter();
       if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
 
+      const existingRow = adapter
+        .prepare(
+          `SELECT * FROM requirements
+           WHERE LOWER(TRIM(description)) = LOWER(TRIM(:description))
+             AND superseded_by IS NULL
+           ORDER BY id
+           LIMIT 1`,
+        )
+        .get({ ':description': fields.description });
+
       const row = adapter
         .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM requirements')
         .get();
       const maxNum = row ? (row['max_num'] as number | null) : null;
-      const nextId = (maxNum == null || isNaN(maxNum))
+      const nextId = existingRow
+        ? String(existingRow['id'])
+        : (maxNum == null || isNaN(maxNum))
         ? 'R001'
         : `R${String(maxNum + 1).padStart(3, '0')}`;
 
       const requirement: Requirement = {
         id: nextId,
-        class: fields.class,
-        status: fields.status ?? 'active',
+        class: fields.class || (existingRow?.['class'] as string | undefined) || '',
+        status: fields.status ?? (existingRow?.['status'] as string | undefined) ?? 'active',
         description: fields.description,
         why: fields.why,
         source: fields.source,
-        primary_owner: fields.primary_owner ?? '',
-        supporting_slices: fields.supporting_slices ?? '',
-        validation: fields.validation ?? '',
-        notes: fields.notes ?? '',
-        full_content: '',
-        superseded_by: null,
+        primary_owner: fields.primary_owner ?? (existingRow?.['primary_owner'] as string | undefined) ?? '',
+        supporting_slices: fields.supporting_slices ?? (existingRow?.['supporting_slices'] as string | undefined) ?? '',
+        validation: fields.validation ?? (existingRow?.['validation'] as string | undefined) ?? '',
+        notes: fields.notes ?? (existingRow?.['notes'] as string | undefined) ?? '',
+        full_content: (existingRow?.['full_content'] as string | undefined) ?? '',
+        superseded_by: (existingRow?.['superseded_by'] as string | null | undefined) ?? null,
       };
 
       db.upsertRequirement(requirement);
@@ -756,13 +802,17 @@ export async function saveArtifactToDb(
     if (!fullPath.startsWith(gsdDir)) {
       throw new GSDError(GSD_IO_ERROR, `saveArtifactToDb: path escapes .gsd/ directory: ${opts.path}`);
     }
+    const parsedRequirements = await parseFinalRequirementsForReconcile(opts);
 
     // Shrinkage guard: if the file already exists and the new content is
     // significantly smaller (<50%), preserve the richer file on disk and
-    // store its content in the DB instead of the abbreviated version.
+    // store its content in the DB instead of the abbreviated version. Root
+    // canonical artifacts are exempt: PROJECT/REQUIREMENTS saves are the user's
+    // explicit final contract, and cleanup/consolidation is often intentionally
+    // much smaller than a malformed accumulated file.
     let dbContent = opts.content;
     let skipDiskWrite = false;
-    if (existsSync(fullPath)) {
+    if (!isRootCanonicalArtifact(opts) && existsSync(fullPath)) {
       const existingSize = statSync(fullPath).size;
       const newSize = Buffer.byteLength(opts.content, 'utf-8');
       if (existingSize > 0 && newSize < existingSize * 0.5) {
@@ -790,6 +840,9 @@ export async function saveArtifactToDb(
         db.deleteArtifactByPath(opts.path);
         throw diskErr;
       }
+    }
+    if (parsedRequirements !== null) {
+      await replaceRequirementsTableFromArtifact(parsedRequirements);
     }
     // Invalidate file-read caches so deriveState() sees the updated markdown.
     // Do NOT clear the artifacts table — we just wrote to it intentionally.

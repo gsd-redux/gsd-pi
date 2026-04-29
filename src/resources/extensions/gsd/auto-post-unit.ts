@@ -73,6 +73,7 @@ import { writeTurnGitTransaction } from "./uok/gitops.js";
 import { isClosedStatus } from "./status-guards.js";
 import { detectAbandonMilestone } from "./abandon-detect.js";
 import { isDeterministicPolicyError } from "./auto-tool-tracking.js";
+import { validateArtifact } from "./schemas/validate.js";
 
 /** Maximum verification retry attempts before escalating to blocker placeholder (#2653). */
 const MAX_VERIFICATION_RETRIES = 3;
@@ -307,6 +308,38 @@ export const USER_DRIVEN_DEEP_UNITS = new Set([
   "discuss-requirements",
   "research-decision",
 ]);
+
+function artifactValidationKind(unitType: string): "project" | "requirements" | null {
+  if (unitType === "discuss-project") return "project";
+  if (unitType === "discuss-requirements") return "requirements";
+  return null;
+}
+
+function describeArtifactVerificationFailure(unitType: string, unitId: string, basePath: string): string {
+  const artifactPath = resolveExpectedArtifactPath(unitType, unitId, basePath);
+  if (!artifactPath) {
+    return `Artifact verification failed: ${unitType} "${unitId}" has no resolvable artifact path.`;
+  }
+  const relPath = relative(basePath, artifactPath);
+  if (!existsSync(artifactPath)) {
+    return `Artifact verification failed: ${relPath} was not found on disk after unit execution.`;
+  }
+
+  const validationKind = artifactValidationKind(unitType);
+  if (validationKind) {
+    const result = validateArtifact(artifactPath, validationKind);
+    if (!result.ok) {
+      const errors = result.errors
+        .slice(0, MAX_NOTIFICATION_DETAILS)
+        .map((error) => `${error.code}: ${error.message}`)
+        .join("; ");
+      return `Artifact verification failed: ${relPath} exists but is invalid${errors ? ` (${errors})` : ""}.`;
+    }
+  }
+
+  const expected = diagnoseExpectedArtifact(unitType, unitId, basePath);
+  return `Artifact verification failed: ${relPath} exists but did not satisfy the ${unitType} completion contract${expected ? ` (${expected})` : ""}.`;
+}
 
 function extractTextFromMessage(msg: unknown): string {
   if (!msg || typeof msg !== "object") return "";
@@ -1029,11 +1062,16 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         if (hasExpectedArtifact) {
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
+          const failureDetails = describeArtifactVerificationFailure(
+            s.currentUnit.type,
+            s.currentUnit.id,
+            s.basePath,
+          );
           if (attempt > MAX_ARTIFACT_VERIFICATION_RETRIES) {
             s.verificationRetryCount.delete(retryKey);
             debugLog("postUnit", { phase: "artifact-verify-exhausted", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
             ctx.ui.notify(
-              `Artifact still missing for ${s.currentUnit.type} ${s.currentUnit.id} after ${MAX_ARTIFACT_VERIFICATION_RETRIES} retries — pausing auto-mode`,
+              `${failureDetails} Pausing auto-mode after ${MAX_ARTIFACT_VERIFICATION_RETRIES} retries.`,
               "error",
             );
             await pauseAuto(ctx, pi);
@@ -1042,12 +1080,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           s.verificationRetryCount.set(retryKey, attempt);
           s.pendingVerificationRetry = {
             unitId: s.currentUnit.id,
-            failureContext: `Artifact verification failed: expected artifact for ${s.currentUnit.type} "${s.currentUnit.id}" was not found on disk after unit execution (attempt ${attempt}/${MAX_ARTIFACT_VERIFICATION_RETRIES}).`,
+            failureContext: `${failureDetails} (attempt ${attempt}/${MAX_ARTIFACT_VERIFICATION_RETRIES}).`,
             attempt,
           };
           debugLog("postUnit", { phase: "artifact-verify-retry", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
           ctx.ui.notify(
-            `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — retrying (attempt ${attempt}/${MAX_ARTIFACT_VERIFICATION_RETRIES})`,
+            `${failureDetails} Retrying (attempt ${attempt}/${MAX_ARTIFACT_VERIFICATION_RETRIES}).`,
             "warning",
           );
           return "retry";

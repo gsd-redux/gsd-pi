@@ -253,13 +253,14 @@ export function registerDbTools(pi: ExtensionAPI): void {
       "Requirement IDs are auto-assigned — never provide an ID manually.",
     promptSnippet: "Record a new GSD requirement to the database (auto-assigns ID, regenerates REQUIREMENTS.md)",
     promptGuidelines: [
-      "Use gsd_requirement_save when recording a new functional, non-functional, or operational requirement.",
+      "Use gsd_requirement_save when recording a new capability, quality attribute, constraint, or anti-feature requirement.",
+      "Use one of these classes: core-capability, primary-user-loop, launchability, continuity, failure-visibility, integration, quality-attribute, operability, admin/support, compliance/security, differentiator, constraint, anti-feature.",
       "Requirement IDs are auto-assigned (R001, R002, ...) — never guess or provide an ID.",
       "class, description, why, and source are required. All other fields are optional.",
       "The tool writes to the DB and regenerates .gsd/REQUIREMENTS.md automatically.",
     ],
     parameters: Type.Object({
-      class: Type.String({ description: "Requirement class (e.g. 'functional', 'non-functional', 'operational')" }),
+      class: Type.String({ description: "Requirement class: core-capability, primary-user-loop, launchability, continuity, failure-visibility, integration, quality-attribute, operability, admin/support, compliance/security, differentiator, constraint, or anti-feature" }),
       description: Type.String({ description: "Short description of the requirement" }),
       why: Type.String({ description: "Why this requirement matters" }),
       source: Type.String({ description: "Origin of the requirement (e.g. 'user-research', 'design', 'M001')" }),
