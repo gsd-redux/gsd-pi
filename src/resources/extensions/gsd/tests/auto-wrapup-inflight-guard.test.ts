@@ -214,8 +214,12 @@ describe("deep setup approval questions pause immediately", () => {
       "plain-text approval questions must set the durable write gate",
     );
     assert.ok(
+      messageUpdateSection.includes("getDiscussionMilestoneIdFor") && messageUpdateSection.includes('"discuss-milestone"'),
+      "foreground milestone discussion questions must also set the durable write gate",
+    );
+    assert.ok(
       !messageUpdateSection.includes("ctx.abort()"),
-      "message_update must not abort the provider stream; pending write gates block later mutating tool calls",
+      "message_update must not abort the provider stream; pending write gates block later tool calls",
     );
   });
 });

@@ -316,19 +316,19 @@ test('write-gate: shouldBlockPendingGate blocks write/edit during pending gate',
   clearDiscussionFlowState();
 });
 
-// ─── Scenario 22: shouldBlockPendingGate allows safe tools when gate is pending ──
+// ─── Scenario 22: shouldBlockPendingGate allows only re-asking when gate is pending ──
 
-test('write-gate: shouldBlockPendingGate allows read-only and ask_user_questions during pending gate', () => {
+test('write-gate: shouldBlockPendingGate blocks read-only tools and allows ask_user_questions during pending gate', () => {
   clearDiscussionFlowState();
   setPendingGate('depth_verification');
 
   // ask_user_questions is always safe (model needs to re-ask)
   assert.strictEqual(shouldBlockPendingGate('ask_user_questions', 'M001').block, false);
-  // read-only tools are safe
-  assert.strictEqual(shouldBlockPendingGate('read', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGate('grep', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGate('glob', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGate('ls', 'M001').block, false);
+  // read-only tools are blocked so the user-facing question remains visible
+  assert.strictEqual(shouldBlockPendingGate('read', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('grep', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('glob', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('ls', 'M001').block, true);
 
   clearDiscussionFlowState();
 });
@@ -359,16 +359,16 @@ test('write-gate: shouldBlockPendingGate blocks in queue mode when gate is pendi
   clearDiscussionFlowState();
 });
 
-// ─── Scenario 25: shouldBlockPendingGateBash allows read-only commands ──
+// ─── Scenario 25: shouldBlockPendingGateBash blocks read-only commands ──
 
-test('write-gate: shouldBlockPendingGateBash allows read-only commands during pending gate', () => {
+test('write-gate: shouldBlockPendingGateBash blocks read-only commands during pending gate', () => {
   clearDiscussionFlowState();
   setPendingGate('depth_verification');
 
-  assert.strictEqual(shouldBlockPendingGateBash('cat file.txt', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGateBash('git log --oneline', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGateBash('grep -r pattern .', 'M001').block, false);
-  assert.strictEqual(shouldBlockPendingGateBash('ls -la', 'M001').block, false);
+  assert.strictEqual(shouldBlockPendingGateBash('cat file.txt', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('git log --oneline', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('grep -r pattern .', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('ls -la', 'M001').block, true);
 
   clearDiscussionFlowState();
 });

@@ -87,13 +87,11 @@ const GATE_QUESTION_PATTERNS = [
 
 /**
  * Tools that are safe to call while a gate is pending.
- * Includes read-only tools and ask_user_questions itself (so the model can re-ask).
+ * Only ask_user_questions may run: once the assistant asks for confirmation,
+ * further reads/searches bury the actual question in tool output.
  */
 const GATE_SAFE_TOOLS = new Set([
   "ask_user_questions",
-  "read", "grep", "find", "ls", "glob",
-  "search-the-web", "resolve_library", "get_library_docs", "fetch_page",
-  "search_and_read",
 ]);
 
 export interface WriteGateSnapshot {
@@ -289,7 +287,7 @@ export function getPendingGate(): string | null {
  * is pending (ask_user_questions was called but not confirmed).
  *
  * Returns { block: true, reason } if the tool should be blocked.
- * Read-only tools and ask_user_questions itself are always allowed.
+ * ask_user_questions itself is allowed so the model can re-ask the gate.
  */
 export function shouldBlockPendingGate(
   toolName: string,
@@ -309,14 +307,12 @@ export function shouldBlockPendingGateInSnapshot(
 
   if (GATE_SAFE_TOOLS.has(toolName)) return { block: false };
 
-  // Bash read-only commands are also safe
-  if (toolName === "bash") return { block: false }; // bash is checked separately below
-
   return {
     block: true,
     reason: [
       `HARD BLOCK: Discussion gate "${snapshot.pendingGateId}" has not been confirmed by the user.`,
-      `You MUST re-call ask_user_questions with the gate question before making any other tool calls.`,
+      `The assistant already asked for user confirmation, so do not call more tools.`,
+      `Wait for the user's answer, or re-call ask_user_questions with the gate question if the question was not delivered.`,
       `If the previous ask_user_questions call failed, errored, was cancelled, or the user's response`,
       `did not match a provided option, you MUST re-ask — never rationalize past the block.`,
       `Do NOT proceed, do NOT use alternative approaches, do NOT skip the gate.`,
@@ -326,7 +322,7 @@ export function shouldBlockPendingGateInSnapshot(
 
 /**
  * Check whether a bash command should be blocked because a discussion gate is pending.
- * Read-only bash commands are allowed; mutating commands are blocked.
+ * All bash is blocked while waiting for confirmation so the question stays visible.
  */
 export function shouldBlockPendingGateBash(
   command: string,
@@ -344,14 +340,12 @@ export function shouldBlockPendingGateBashInSnapshot(
 ): { block: boolean; reason?: string } {
   if (!snapshot.pendingGateId) return { block: false };
 
-  // Allow read-only bash commands
-  if (BASH_READ_ONLY_RE.test(command)) return { block: false };
-
   return {
     block: true,
     reason: [
       `HARD BLOCK: Discussion gate "${snapshot.pendingGateId}" has not been confirmed by the user.`,
-      `You MUST re-call ask_user_questions with the gate question before running mutating commands.`,
+      `The assistant already asked for user confirmation, so do not run bash commands.`,
+      `Wait for the user's answer, or re-call ask_user_questions with the gate question if the question was not delivered.`,
       `If the previous ask_user_questions call failed, errored, was cancelled, or the user's response`,
       `did not match a provided option, you MUST re-ask — never rationalize past the block.`,
     ].join(" "),

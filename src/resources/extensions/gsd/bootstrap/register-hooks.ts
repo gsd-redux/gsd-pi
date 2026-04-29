@@ -334,6 +334,14 @@ export function registerHooks(
       }
     }
 
+    if (!unitType) {
+      const milestoneId = await getDiscussionMilestoneIdFor(process.cwd());
+      if (milestoneId) {
+        unitType = "discuss-milestone";
+        unitId = milestoneId;
+      }
+    }
+
     if (!shouldPauseForUserApprovalQuestion(unitType, [event.message])) return;
 
     const gateId = approvalGateIdForUnit(unitType, unitId);
