@@ -500,28 +500,29 @@ export async function bootstrapSync(basePath: string): Promise<{
 
 // ─── Config Loading ─────────────────────────────────────────────────────────
 
-let _cachedConfig: GitHubSyncConfig | null | undefined;
+const _cachedConfigByBasePath = new Map<string, GitHubSyncConfig | null>();
 
-function loadGitHubSyncConfig(_basePath: string): GitHubSyncConfig | null {
-  if (_cachedConfig !== undefined) return _cachedConfig;
+function loadGitHubSyncConfig(basePath: string): GitHubSyncConfig | null {
+  if (_cachedConfigByBasePath.has(basePath)) return _cachedConfigByBasePath.get(basePath)!;
   try {
-    const prefs = loadEffectiveGSDPreferences();
+    const prefs = loadEffectiveGSDPreferences(basePath);
     const github = (prefs?.preferences as Record<string, unknown>)?.github;
     if (!github || typeof github !== "object") {
-      _cachedConfig = null;
+      _cachedConfigByBasePath.set(basePath, null);
       return null;
     }
-    _cachedConfig = github as GitHubSyncConfig;
-    return _cachedConfig;
+    const config = github as GitHubSyncConfig;
+    _cachedConfigByBasePath.set(basePath, config);
+    return config;
   } catch {
-    _cachedConfig = null;
+    _cachedConfigByBasePath.set(basePath, null);
     return null;
   }
 }
 
 /** Reset config cache (for testing). */
 export function _resetConfigCache(): void {
-  _cachedConfig = undefined;
+  _cachedConfigByBasePath.clear();
 }
 
 function resolveRepo(basePath: string): string | null {
