@@ -24,9 +24,10 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { GSDError, GSD_GIT_ERROR } from "./errors.js";
-import { MergeConflictError } from "./git-service.js";
+import { MergeConflictError, readIntegrationBranch } from "./git-service.js";
 import {
   nativeBranchForceReset,
+  nativeBranchExists,
   nativeCheckoutBranch,
   nativeCommit,
   nativeCommitCountBetween,
@@ -37,6 +38,7 @@ import {
 import { resolveGitDir } from "./worktree-manager.js";
 import { logWarning } from "./workflow-logger.js";
 import { emitSliceMerged, emitMilestoneResquash } from "./worktree-telemetry.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 /**
  * Auto-worktree milestone branch name. Must match autoWorktreeBranch() in
@@ -44,6 +46,17 @@ import { emitSliceMerged, emitMilestoneResquash } from "./worktree-telemetry.js"
  */
 function milestoneBranchName(milestoneId: string): string {
   return `milestone/${milestoneId}`;
+}
+
+function resolveIntegrationBranch(projectRoot: string, milestoneId: string): string {
+  const recorded = readIntegrationBranch(projectRoot, milestoneId);
+  if (recorded && nativeBranchExists(projectRoot, recorded)) return recorded;
+
+  const prefs = loadEffectiveGSDPreferences(projectRoot)?.preferences?.git ?? {};
+  const configured = prefs.main_branch;
+  if (configured && nativeBranchExists(projectRoot, configured)) return configured;
+
+  return nativeDetectMainBranch(projectRoot);
 }
 
 function cleanupMergeArtifacts(projectRoot: string): void {
@@ -91,7 +104,14 @@ export function mergeSliceToMain(
   const started = Date.now();
   const worktreeCwd = process.cwd();
   const milestoneBranch = milestoneBranchName(milestoneId);
-  const mainBranch = nativeDetectMainBranch(projectRoot);
+  const mainBranch = resolveIntegrationBranch(projectRoot, milestoneId);
+
+  if (mainBranch === milestoneBranch) {
+    throw new GSDError(
+      GSD_GIT_ERROR,
+      `slice-cadence resolved integration branch "${mainBranch}" to the milestone branch; refusing to self-merge.`,
+    );
+  }
 
   // Fast path: if the milestone branch has no commits ahead of main, there
   // is nothing to merge. Return a skip result instead of no-op'ing silently
@@ -211,7 +231,7 @@ export function resquashMilestoneOnMain(
   milestoneId: string,
   startSha: string,
 ): { resquashed: boolean; newSha: string | null } {
-  const mainBranch = nativeDetectMainBranch(projectRoot);
+  const mainBranch = resolveIntegrationBranch(projectRoot, milestoneId);
   const worktreeCwd = process.cwd();
 
   process.chdir(projectRoot);

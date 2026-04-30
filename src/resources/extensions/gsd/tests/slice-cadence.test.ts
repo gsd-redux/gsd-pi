@@ -109,6 +109,26 @@ describe("mergeSliceToMain", () => {
     assert.equal(summary.sliceMergeConflicts, 0);
   });
 
+  test("merges slices to the recorded integration branch", () => {
+    git(["checkout", "-b", "develop"], dir);
+    mkdirSync(join(dir, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(
+      join(dir, ".gsd", "milestones", "M001", "M001-META.json"),
+      JSON.stringify({ integrationBranch: "develop" }, null, 2) + "\n",
+    );
+
+    enterMilestoneBranch(dir, "M001");
+    commitFile(dir, "develop-only.txt", "slice 1 work\n", "feat: S01 work");
+
+    process.chdir(dir);
+    const result = mergeSliceToMain(dir, "M001", "S01");
+
+    assert.equal(result.mainBranch, "develop");
+    assert.equal(readFileSync(join(dir, "develop-only.txt"), "utf-8"), "slice 1 work\n");
+    assert.equal(git(["rev-parse", "develop"], dir), git(["rev-parse", "milestone/M001"], dir));
+    assert.notEqual(git(["rev-parse", "develop"], dir), git(["rev-parse", "main"], dir));
+  });
+
   test("handles sequential slice merges cleanly", () => {
     enterMilestoneBranch(dir, "M001");
     commitFile(dir, "a.txt", "slice 1\n", "feat: S01");
