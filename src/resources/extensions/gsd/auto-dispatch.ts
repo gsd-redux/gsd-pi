@@ -262,7 +262,7 @@ export function setRewriteCount(basePath: string, count: number): void {
 // ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
 // Caps run-uat dispatches to prevent infinite replay when verification
 // commands fail before writing a verdict (#3624).
-const MAX_UAT_ATTEMPTS = 3;
+export const MAX_UAT_ATTEMPTS = 3;
 
 function uatCountPath(basePath: string, mid: string, sid: string): string {
   return join(gsdRoot(basePath), "runtime", `uat-count-${mid}-${sid}.json`);

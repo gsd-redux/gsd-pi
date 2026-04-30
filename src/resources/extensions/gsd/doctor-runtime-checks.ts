@@ -13,8 +13,7 @@ import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./s
 import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
-
-const MAX_UAT_ATTEMPTS = 3;
+import { MAX_UAT_ATTEMPTS } from "./auto-dispatch.js";
 
 function hasAssessmentVerdict(basePath: string, mid: string, sid: string): boolean {
   const assessmentPath = join(gsdRoot(basePath), "milestones", mid, "slices", sid, `${sid}-ASSESSMENT.md`);
