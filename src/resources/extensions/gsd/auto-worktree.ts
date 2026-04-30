@@ -1289,7 +1289,14 @@ export function createAutoWorktree(
     const integrationBranch =
       readIntegrationBranch(basePath, milestoneId) ?? undefined;
     const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
-    const startPoint = integrationBranch ?? gitPrefs?.main_branch ?? undefined;
+    const validatedPrefBranch =
+      gitPrefs?.main_branch &&
+      typeof gitPrefs.main_branch === "string" &&
+      gitPrefs.main_branch.length > 0 &&
+      nativeBranchExists(basePath, gitPrefs.main_branch)
+        ? gitPrefs.main_branch
+        : undefined;
+    const startPoint = integrationBranch ?? validatedPrefBranch ?? undefined;
     info = createWorktree(basePath, milestoneId, {
       branch,
       startPoint,
