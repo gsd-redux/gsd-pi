@@ -112,12 +112,22 @@ function isExplicitResearchDecision(decision: {
  * decide whether a missing `workflow_prefs_captured: true` flag is genuine
  * incomplete setup or post-setup drift that should be self-healed.
  */
+function safeValidate(path: string, kind: "project" | "requirements"): boolean {
+  // validateArtifact can throw on malformed schemas / IO failures; treat any
+  // throw as "not valid" so a corrupt artifact never crashes the setup gate.
+  try {
+    return validateArtifact(path, kind).ok;
+  } catch {
+    return false;
+  }
+}
+
 function downstreamSetupArtifactsValid(root: string, basePath: string): boolean {
   const projectPath = join(root, "PROJECT.md");
-  if (!existsSync(projectPath) || !validateArtifact(projectPath, "project").ok) return false;
+  if (!existsSync(projectPath) || !safeValidate(projectPath, "project")) return false;
 
   const requirementsPath = join(root, "REQUIREMENTS.md");
-  if (!existsSync(requirementsPath) || !validateArtifact(requirementsPath, "requirements").ok) return false;
+  if (!existsSync(requirementsPath) || !safeValidate(requirementsPath, "requirements")) return false;
 
   const marker = readDecision(basePath);
   if (!marker.exists || !marker.valid) return false;
