@@ -753,14 +753,18 @@ export function registerDbTools(pi: ExtensionAPI): void {
       deviations: Type.Optional(Type.String({ description: "Deviations from the slice plan, or 'None.'" })),
       knownLimitations: Type.Optional(Type.String({ description: "Known limitations or gaps, or 'None.'" })),
       followUps: Type.Optional(Type.String({ description: "Follow-up work discovered during execution, or 'None.'" })),
-      keyFiles: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Key files created or modified" })),
-      keyDecisions: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Key decisions made during this slice" })),
-      patternsEstablished: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Patterns established by this slice" })),
-      observabilitySurfaces: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Observability surfaces added" })),
-      provides: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "What this slice provides to downstream slices" })),
-      requirementsSurfaced: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "New requirements surfaced" })),
-      drillDownPaths: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Paths to task summaries for drill-down" })),
-      affects: Type.Optional(Type.Union([Type.Array(Type.String()), Type.String()], { description: "Downstream slices affected" })),
+      // Plain Type.Array (no Union with String) — Union emits anyOf, which
+      // Gemini's function-calling schema validator does not accept. Runtime
+      // coercion via wrapArray() in executeSliceComplete still accepts a
+      // single string from older callers.
+      keyFiles: Type.Optional(Type.Array(Type.String(), { description: "Key files created or modified" })),
+      keyDecisions: Type.Optional(Type.Array(Type.String(), { description: "Key decisions made during this slice" })),
+      patternsEstablished: Type.Optional(Type.Array(Type.String(), { description: "Patterns established by this slice" })),
+      observabilitySurfaces: Type.Optional(Type.Array(Type.String(), { description: "Observability surfaces added" })),
+      provides: Type.Optional(Type.Array(Type.String(), { description: "What this slice provides to downstream slices" })),
+      requirementsSurfaced: Type.Optional(Type.Array(Type.String(), { description: "New requirements surfaced" })),
+      drillDownPaths: Type.Optional(Type.Array(Type.String(), { description: "Paths to task summaries for drill-down" })),
+      affects: Type.Optional(Type.Array(Type.String(), { description: "Downstream slices affected" })),
       requirementsAdvanced: Type.Optional(Type.Array(
         Type.Union([
           Type.Object({
