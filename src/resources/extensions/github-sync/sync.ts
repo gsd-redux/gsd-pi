@@ -352,6 +352,7 @@ async function syncTaskComplete(
   if (!taskRecord || taskRecord.state === "closed") return;
 
   // Load task summary
+  let commentOk = true;
   const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
   if (summaryPath) {
     const content = await loadFile(summaryPath);
@@ -362,12 +363,20 @@ async function syncTaskComplete(
         body: summary.whatHappened,
         frontmatter: summary.frontmatter as unknown as Record<string, unknown>,
       });
-      ghAddComment(basePath, mapping.repo, taskRecord.issueNumber, comment);
+      const commentResult = ghAddComment(basePath, mapping.repo, taskRecord.issueNumber, comment);
+      commentOk = commentResult.ok;
+      if (!commentResult.ok) {
+        debugLog("github-sync", { phase: "task-comment-failed", mid, sid, tid, error: commentResult.error });
+      }
     }
   }
 
   // Close the task issue
-  ghCloseIssue(basePath, mapping.repo, taskRecord.issueNumber);
+  const closeResult = ghCloseIssue(basePath, mapping.repo, taskRecord.issueNumber);
+  if (!closeResult.ok) {
+    debugLog("github-sync", { phase: "task-close-failed", mid, sid, tid, error: closeResult.error });
+  }
+  if (!commentOk || !closeResult.ok) return;
 
   taskRecord.state = "closed";
   taskRecord.lastSyncedAt = new Date().toISOString();
