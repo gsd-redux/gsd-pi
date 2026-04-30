@@ -566,17 +566,14 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           }
 
           const failureMsg = `Git ${turnAction} failed: ${(gitResult.error ?? "unknown error").split("\n")[0]}`;
-          if (uokFlags.gitops) {
-            ctx.ui.notify(failureMsg, "error");
-            await pauseAuto(ctx, pi);
-            return "dispatched";
-          }
-          ctx.ui.notify(failureMsg, "warning");
+          ctx.ui.notify(failureMsg, "error");
           debugLog("postUnit", {
-            phase: "git-action-failed-nonblocking",
+            phase: "git-action-failed-blocking",
             action: turnAction,
             error: gitResult.error ?? "unknown error",
           });
+          await pauseAuto(ctx, pi);
+          return "dispatched";
         }
 
         s.lastGitActionStatus = "ok";
