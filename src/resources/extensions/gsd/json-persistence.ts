@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
-import { dirname } from "node:path";
-import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+
+import { atomicWriteSync } from "./atomic-write.js";
 
 /**
  * Load a JSON file with validation, returning a default on failure.
@@ -51,12 +51,7 @@ export function loadJsonFileOrNull<T>(
  */
 export function saveJsonFile<T>(filePath: string, data: T): void {
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    // Use randomized tmp suffix to prevent concurrent-write data loss
-    const tmp = `${filePath}.tmp.${randomBytes(4).toString("hex")}`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-    renameSync(tmp, filePath);
-    // No cleanup needed — renameSync atomically removes tmp on success
+    atomicWriteSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
   } catch {
     // Non-fatal — don't let persistence failures break operation
   }
@@ -68,10 +63,7 @@ export function saveJsonFile<T>(filePath: string, data: T): void {
  */
 export function writeJsonFileAtomic<T>(filePath: string, data: T): void {
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp.${randomBytes(4).toString("hex")}`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-    renameSync(tmp, filePath);
+    atomicWriteSync(filePath, JSON.stringify(data, null, 2), "utf-8");
   } catch {
     // Non-fatal — don't let persistence failures break operation
   }
