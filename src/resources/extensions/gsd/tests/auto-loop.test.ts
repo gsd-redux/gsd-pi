@@ -7,17 +7,16 @@ import { join } from "node:path";
 import {
   resolveAgentEnd,
   resolveAgentEndCancelled,
-  runUnit,
-  autoLoop,
-  detectStuck,
   _resetPendingResolve,
   _hasPendingResolveForTest,
   _setActiveSession,
   isSessionSwitchInFlight,
-  type UnitResult,
-  type AgentEndEvent,
-  type LoopDeps,
-} from "../auto-loop.js";
+} from "../auto/resolve.js";
+import { runUnit } from "../auto/run-unit.js";
+import { autoLoop } from "../auto/loop.js";
+import { detectStuck } from "../auto/detect-stuck.js";
+import type { UnitResult, AgentEndEvent } from "../auto/types.js";
+import type { LoopDeps } from "../auto/loop-deps.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
@@ -554,27 +553,6 @@ test("late-resolving newSession() after timeout receives aborted signal so tool 
   } finally {
     mock.timers.reset();
   }
-});
-
-// ─── Structural assertions ───────────────────────────────────────────────────
-
-test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {
-  const mod = await import("../auto-loop.js");
-  assert.equal(
-    typeof mod.autoLoop,
-    "function",
-    "autoLoop should be exported as a function",
-  );
-  assert.equal(
-    typeof mod.runUnit,
-    "function",
-    "runUnit should be exported as a function",
-  );
-  assert.equal(
-    typeof mod.resolveAgentEnd,
-    "function",
-    "resolveAgentEnd should be exported as a function",
-  );
 });
 
 // NOTE: the "while keyword", "one-shot null-before-resolve", and

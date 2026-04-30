@@ -216,7 +216,10 @@ import {
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { initHealthWidget } from "./health-widget.js";
-import { runLegacyAutoLoop, runUokKernelLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+import { runLegacyAutoLoop, runUokKernelLoop } from "./auto/loop.js";
+import { resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight } from "./auto/resolve.js";
+import type { LoopDeps } from "./auto/loop-deps.js";
+import type { ErrorContext } from "./auto/types.js";
 import { runAutoLoopWithUok } from "./uok/kernel.js";
 import { resolveUokFlags } from "./uok/flags.js";
 // Slice-level parallelism (#2340)

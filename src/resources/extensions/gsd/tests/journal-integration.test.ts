@@ -410,7 +410,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   // Instead, we test that unit-start is emitted at the right point by examining
   // the event immediately after calling runUnitPhase with a session where
   // newSession resolves quickly, and we resolve the agent_end externally.
-  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture);
@@ -464,7 +464,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
 
 test("runUnitPhase increments unitDispatchCount for repeated artifact-missing retries", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture);
@@ -499,7 +499,7 @@ test("runUnitPhase increments unitDispatchCount for repeated artifact-missing re
 
 test("all events from a mock iteration have monotonically increasing seq and same flowId", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture, {
@@ -856,7 +856,7 @@ test("milestone-transition event is emitted when milestone changes", async () =>
 
 test("unit-end event contains errorContext when unit is cancelled with structured error", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   let pauseCalls = 0;
@@ -911,7 +911,7 @@ test("unit-end event contains errorContext when unit is cancelled with structure
 
 test("session-failed cancellations close out and emit unit-end before hard stop", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   let closeoutCalls = 0;
@@ -1023,7 +1023,7 @@ test("runFinalize pauses and emits unit-end when pre-verification times out", as
 
 test("transient session-failed cancellations pause instead of hard-stopping", async () => {
   const capture = createEventCapture();
-  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto-loop.js");
+  const { resolveAgentEndCancelled, _resetPendingResolve } = await import("../auto/resolve.js");
   _resetPendingResolve();
 
   const deps = makeMockDeps(capture);

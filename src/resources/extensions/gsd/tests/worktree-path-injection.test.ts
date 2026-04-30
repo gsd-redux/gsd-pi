@@ -28,7 +28,8 @@ const {
   buildRewriteDocsPrompt,
 } = await import("../auto-prompts.ts");
 const { invalidateStateCache } = await import("../state.ts");
-const { resolveAgentEnd, runUnit, _resetPendingResolve } = await import("../auto-loop.ts");
+const { resolveAgentEnd, _resetPendingResolve } = await import("../auto/resolve.ts");
+const { runUnit } = await import("../auto/run-unit.ts");
 
 function writeMilestone(base: string, mid = "M001", title = "Worktree Path Injection"): void {
   const milestoneDir = join(base, ".gsd", "milestones", mid);
