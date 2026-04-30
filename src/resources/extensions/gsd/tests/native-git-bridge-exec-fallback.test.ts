@@ -12,7 +12,7 @@
 
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -69,6 +69,19 @@ describe("native-git-bridge #4180: fallback runtime behaviour", () => {
 
     const subject = git(["log", "-1", "--format=%s"], repo);
     assert.equal(subject, "test: regression commit #4180");
+  });
+
+  test("nativeCommit runs commit hooks", () => {
+    const hookPath = join(repo, ".git", "hooks", "commit-msg");
+    const marker = join(repo, "hook-ran.txt");
+    writeFileSync(hookPath, `#!/bin/sh\nprintf ran > "${marker}"\n`, "utf-8");
+    chmodSync(hookPath, 0o755);
+
+    writeFileSync(join(repo, "file.txt"), "hooked\n");
+    git(["add", "."], repo);
+    nativeCommit(repo, "test: hook execution");
+
+    assert.equal(readFileSync(marker, "utf-8"), "ran");
   });
 
   test("nativeCommit returns null when nothing is staged", () => {
