@@ -39,6 +39,7 @@ import { resolveGitDir } from "./worktree-manager.js";
 import { logWarning } from "./workflow-logger.js";
 import { emitSliceMerged, emitMilestoneResquash } from "./worktree-telemetry.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 /**
  * Auto-worktree milestone branch name. Must match autoWorktreeBranch() in
@@ -69,6 +70,49 @@ function cleanupMergeArtifacts(projectRoot: string): void {
   } catch (err) {
     logWarning("worktree", `merge artifact cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
+
+function advanceMilestoneBranch(
+  projectRoot: string,
+  worktreeCwd: string,
+  milestoneBranch: string,
+  mainBranch: string,
+): void {
+  let worktreeBranch: string | null = null;
+  try {
+    worktreeBranch = execFileSync("git", ["branch", "--show-current"], {
+      cwd: worktreeCwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
+    }).trim();
+  } catch {
+    worktreeBranch = null;
+  }
+
+  if (worktreeCwd !== projectRoot && worktreeBranch === milestoneBranch) {
+    const status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: worktreeCwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
+    }).trim();
+    if (status) {
+      throw new GSDError(
+        GSD_GIT_ERROR,
+        `slice-cadence cannot advance ${milestoneBranch}: worktree has uncommitted changes. Status:\n${status}`,
+      );
+    }
+    execFileSync("git", ["reset", "--hard", mainBranch], {
+      cwd: worktreeCwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
+    });
+    return;
+  }
+
+  nativeBranchForceReset(projectRoot, milestoneBranch, mainBranch);
 }
 
 export interface SliceMergeResult {
@@ -187,9 +231,10 @@ export function mergeSliceToMain(
     );
 
     // Advance the milestone branch to main so the next slice's commits start
-    // from a clean base. Force-reset is safe because we just merged this
-    // branch's entire delta.
-    nativeBranchForceReset(projectRoot, milestoneBranch, mainBranch);
+    // from a clean base. When the milestone branch is checked out in an auto
+    // worktree, Git refuses a project-root branch -f; reset from inside the
+    // checked-out worktree instead.
+    advanceMilestoneBranch(projectRoot, worktreeCwd, milestoneBranch, mainBranch);
 
     const durationMs = Date.now() - started;
     try {
