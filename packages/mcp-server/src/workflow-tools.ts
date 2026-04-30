@@ -482,7 +482,10 @@ export function _buildImportCandidates(relativePath: string): string[] {
 }
 
 async function importLocalModule<T>(relativePath: string): Promise<T> {
-  const candidates = _buildImportCandidates(relativePath)
+  const rawCandidates = _buildImportCandidates(relativePath);
+  const candidates = (import.meta.url.includes("/dist-test/") || import.meta.url.includes("\\dist-test\\")
+    ? [...rawCandidates].sort((a, b) => Number(a.endsWith(".ts")) - Number(b.endsWith(".ts")))
+    : rawCandidates)
     .map((p) => new URL(p, import.meta.url).href);
 
   let lastErr: unknown;
