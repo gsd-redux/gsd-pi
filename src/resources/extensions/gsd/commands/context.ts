@@ -6,6 +6,7 @@ import { resolveProjectRoot } from "../worktree.js";
 import { showNextAction } from "../../shared/tui.js";
 import { handleStatus } from "./handlers/core.js";
 import { homedir } from "node:os";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface GsdDispatchContext {
   ctx: ExtensionCommandContext;
@@ -24,22 +25,25 @@ export class GSDNoProjectError extends Error {
   }
 }
 
-let commandCwdOverride: string | null = null;
+// Per-call cwd override stored in AsyncLocalStorage so concurrent /gsd
+// invocations with overlapping awaits cannot trample each other's override.
+// A previous module-level singleton lost isolation when two top-level
+// withCommandCwd calls interleaved across an await boundary.
+const commandCwdStorage = new AsyncLocalStorage<string | null>();
+
+function commandCwdOverride(): string | null {
+  return commandCwdStorage.getStore() ?? null;
+}
 
 export async function withCommandCwd<T>(cwd: string | undefined, fn: () => Promise<T>): Promise<T> {
-  const previous = commandCwdOverride;
-  commandCwdOverride = cwd || null;
-  try {
-    return await fn();
-  } finally {
-    commandCwdOverride = previous;
-  }
+  return commandCwdStorage.run(cwd || null, fn);
 }
 
 export function projectRoot(): string {
+  const override = commandCwdOverride();
   let cwd: string;
-  if (commandCwdOverride) {
-    cwd = commandCwdOverride;
+  if (override) {
+    cwd = override;
   } else {
     try {
       cwd = process.cwd();
@@ -58,9 +62,10 @@ export function projectRoot(): string {
 }
 
 export function currentDirectoryRoot(): string {
+  const override = commandCwdOverride();
   let cwd: string;
-  if (commandCwdOverride) {
-    cwd = commandCwdOverride;
+  if (override) {
+    cwd = override;
   } else {
     try {
       cwd = process.cwd();
