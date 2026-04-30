@@ -117,7 +117,7 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     return true;
   }
   if (trimmed === "triage") {
-    await handleTriage(ctx, pi, process.cwd());
+    await handleTriage(ctx, pi, projectRoot());
     return true;
   }
   if (trimmed === "config") {
