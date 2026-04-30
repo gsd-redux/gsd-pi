@@ -160,6 +160,7 @@ describe("#4573 maybeHandleReadyPhraseWithoutFiles", () => {
     const base = mkBase();
     try {
       writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# ctx");
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# roadmap");
       const cap = mkCapture();
       setPendingAutoStart(base, {
         basePath: base,
@@ -172,6 +173,53 @@ describe("#4573 maybeHandleReadyPhraseWithoutFiles", () => {
       });
       assert.equal(handled, false);
       assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
+  test("only ROADMAP present, CONTEXT missing → nudge fires (asymmetric case)", () => {
+    const base = mkBase();
+    try {
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# roadmap");
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleReadyPhraseWithoutFiles({
+        messages: [assistantMsg("Milestone M001 ready.")],
+      });
+      assert.equal(handled, true);
+      assert.equal(cap.messages.length, 1);
+      const nudgeText = cap.messages[0].payload.content as string;
+      assert.ok(/CONTEXT/.test(nudgeText), "nudge names the missing CONTEXT artifact");
+      assert.ok(!/ROADMAP/.test(nudgeText.split("on disk")[0]), "nudge does not list the present ROADMAP as missing");
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
+  test("only CONTEXT present, ROADMAP missing → nudge fires (asymmetric case)", () => {
+    const base = mkBase();
+    try {
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# ctx");
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleReadyPhraseWithoutFiles({
+        messages: [assistantMsg("Milestone M001 ready.")],
+      });
+      assert.equal(handled, true);
+      assert.equal(cap.messages.length, 1);
+      const nudgeText = cap.messages[0].payload.content as string;
+      assert.ok(/ROADMAP/.test(nudgeText), "nudge names the missing ROADMAP artifact");
     } finally {
       clearPendingAutoStart();
     }
