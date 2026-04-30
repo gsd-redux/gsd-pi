@@ -1621,7 +1621,10 @@ function autoCommitDirtyState(cwd: string): boolean {
     return result !== null;
   } catch (e) {
     debugLog("autoCommitDirtyState", { error: String(e) });
-    return false;
+    throw new GSDError(
+      GSD_GIT_ERROR,
+      `Failed to auto-commit dirty worktree state before milestone merge: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 }
 
@@ -2339,9 +2342,10 @@ export function mergeMilestoneToMain(
   //     through when the code is genuinely already on the integration branch.
 
   // 11a. Pre-teardown safety net (#1853): if the worktree still has uncommitted
-  // changes (e.g. nativeHasChanges cache returned stale false, or auto-commit
-  // silently failed), force one final commit so code is not destroyed by
-  // `git worktree remove --force`.
+  // changes (e.g. nativeHasChanges cache returned stale false), abort teardown.
+  // Committing here would be too late: the squash merge to the integration
+  // branch already happened, so a new milestone-branch commit would not be
+  // included and branch deletion could drop the only ref to that work.
   //
   // Guard: only run when worktreeCwd is on the milestone branch (#2929).
   // In parallel mode or branch-mode merges, worktreeCwd may be the project
@@ -2360,17 +2364,17 @@ export function mergeMilestoneToMain(
       try {
         const dirtyCheck = nativeWorkingTreeStatus(worktreeCwd);
         if (dirtyCheck) {
-          debugLog("mergeMilestoneToMain", {
-            phase: "pre-teardown-dirty",
-            worktreeCwd,
-            status: dirtyCheck.slice(0, 200),
-          });
-          nativeAddAllWithExclusions(worktreeCwd, RUNTIME_EXCLUSION_PATHS);
-          nativeCommit(worktreeCwd, "chore: pre-teardown auto-commit of uncommitted worktree changes");
+          process.chdir(previousCwd);
+          throw new GSDError(
+            GSD_GIT_ERROR,
+            `Milestone worktree still has uncommitted changes after squash merge. ` +
+              `Aborting teardown to preserve ${milestoneBranch}. Status:\n${dirtyCheck}`,
+          );
         }
       } catch (e) {
+        if (e instanceof GSDError) throw e;
         debugLog("mergeMilestoneToMain", {
-          phase: "pre-teardown-commit-error",
+          phase: "pre-teardown-dirty-check-error",
           error: String(e),
         });
       }
