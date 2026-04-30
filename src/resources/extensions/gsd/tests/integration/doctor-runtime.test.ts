@@ -132,7 +132,9 @@ describe('doctor-runtime', async () => {
       const runtimeDir = join(dir, ".gsd", "runtime");
       mkdirSync(runtimeDir, { recursive: true });
       const counterPath = join(runtimeDir, "uat-count-M001-S01.json");
-      writeFileSync(counterPath, JSON.stringify({ count: 7, updatedAt: "2026-04-30T00:00:00.000Z" }));
+      // updatedAt > 5min ago so the quiescence guard treats this as truly stuck.
+      const staleTs = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      writeFileSync(counterPath, JSON.stringify({ count: 7, updatedAt: staleTs }));
 
       const detect = await runGSDDoctor(dir);
       const uatIssues = detect.issues.filter(i => i.code === "uat_retry_exhausted");
@@ -162,6 +164,28 @@ describe('doctor-runtime', async () => {
       const detect = await runGSDDoctor(dir);
       const uatIssues = detect.issues.filter(i => i.code === "uat_retry_exhausted");
       assert.deepStrictEqual(uatIssues.length, 0, "does not flag stale counter when ASSESSMENT already has a verdict");
+    });
+
+    test('uat_retry_exhausted — recent counter is not flagged (quiescence guard)', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      const runtimeDir = join(dir, ".gsd", "runtime");
+      mkdirSync(runtimeDir, { recursive: true });
+      // Counter is over the cap but updatedAt is fresh — a slow-but-active
+      // retry loop should not be flagged as stuck.
+      writeFileSync(
+        join(runtimeDir, "uat-count-M001-S01.json"),
+        JSON.stringify({ count: 7, updatedAt: new Date().toISOString() }),
+      );
+
+      const detect = await runGSDDoctor(dir);
+      const uatIssues = detect.issues.filter(i => i.code === "uat_retry_exhausted");
+      assert.deepStrictEqual(
+        uatIssues.length,
+        0,
+        "recent counter is not flagged — only quiescent counters are stuck",
+      );
     });
 
     // ─── Test 4: Activity log bloat detection ─────────────────────────

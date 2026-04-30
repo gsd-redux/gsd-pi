@@ -203,6 +203,13 @@ export async function checkRuntimeHealth(
   }
 
   // ── Exhausted run-uat retry counters ──────────────────────────────────
+  // Quiescence guard: a live retry loop keeps writing `updatedAt` on each
+  // increment, so a counter that just crossed the cap is indistinguishable
+  // from a slow-but-active loop on count alone. Only flag a counter as
+  // exhausted when it has not been updated for at least UAT_QUIESCENCE_MS;
+  // otherwise the next dispatch will hit the in-flight cap on its own and
+  // surface a proper STOP without doctor noise.
+  const UAT_QUIESCENCE_MS = 5 * 60 * 1000;
   try {
     const runtimeDir = join(root, "runtime");
     if (existsSync(runtimeDir)) {
@@ -215,13 +222,29 @@ export async function checkRuntimeHealth(
 
         const filePath = join(runtimeDir, fileName);
         let count = 0;
+        let updatedAtMs: number | null = null;
         try {
           const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
           count = typeof parsed.count === "number" ? parsed.count : 0;
+          if (typeof parsed.updatedAt === "string") {
+            const parsedMs = Date.parse(parsed.updatedAt);
+            if (!Number.isNaN(parsedMs)) updatedAtMs = parsedMs;
+          }
         } catch {
+          // Malformed JSON — treat as exhausted; mtime fallback below.
           count = MAX_UAT_ATTEMPTS + 1;
         }
         if (count <= MAX_UAT_ATTEMPTS) continue;
+
+        if (updatedAtMs === null) {
+          try {
+            updatedAtMs = statSync(filePath).mtimeMs;
+          } catch {
+            updatedAtMs = 0;
+          }
+        }
+        const ageMs = Date.now() - updatedAtMs;
+        if (ageMs < UAT_QUIESCENCE_MS) continue;
 
         issues.push({
           severity: "warning",
