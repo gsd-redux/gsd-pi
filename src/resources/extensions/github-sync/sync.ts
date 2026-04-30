@@ -206,8 +206,10 @@ async function syncSlicePlan(
   mid: string,
   sid: string,
 ): Promise<void> {
-  // Skip if already synced
-  if (getSliceRecord(mapping, mid, sid)) return;
+  // Skip only when the slice has a usable sync record. A prior failed PR
+  // creation may have left prNumber=0; keep that retryable.
+  const existingSlice = getSliceRecord(mapping, mid, sid);
+  if (existingSlice && (config.slice_prs === false || existingSlice.prNumber > 0)) return;
 
   // Ensure milestone is synced first
   if (!getMilestoneRecord(mapping, mid)) {
@@ -294,6 +296,7 @@ async function syncSlicePlan(
   const pushResult = ghPushBranch(basePath, sliceBranch);
   if (!pushResult.ok) {
     debugLog("github-sync", { phase: "push-slice-branch", error: pushResult.error });
+    return;
   }
 
   // Create draft PR
@@ -315,14 +318,14 @@ async function syncSlicePlan(
     draft: true,
   });
 
-  const prNumber = prResult.ok ? prResult.data! : 0;
   if (!prResult.ok) {
     debugLog("github-sync", { phase: "create-slice-pr", error: prResult.error });
+    return;
   }
 
   setSliceRecord(mapping, mid, sid, {
     issueNumber: 0, // Slice doesn't get its own issue — tracked via PR
-    prNumber,
+    prNumber: prResult.data!,
     branch: sliceBranch,
     lastSyncedAt: new Date().toISOString(),
     state: "open",
@@ -332,7 +335,7 @@ async function syncSlicePlan(
     phase: "slice-synced",
     mid,
     sid,
-    pr: prNumber,
+    pr: prResult.data!,
     taskIssues: taskIssueNumbers.filter(t => t.issueNumber).length,
   });
 }
@@ -380,8 +383,17 @@ async function syncSliceComplete(
   mid: string,
   sid: string,
 ): Promise<void> {
-  const sliceRecord = getSliceRecord(mapping, mid, sid);
+  let sliceRecord = getSliceRecord(mapping, mid, sid);
+  if (!sliceRecord) {
+    await syncSlicePlan(basePath, mapping, config, mid, sid);
+    sliceRecord = getSliceRecord(mapping, mid, sid);
+  }
   if (!sliceRecord || sliceRecord.state === "closed") return;
+  if (!sliceRecord.prNumber && config.slice_prs !== false) {
+    await syncSlicePlan(basePath, mapping, config, mid, sid);
+    sliceRecord = getSliceRecord(mapping, mid, sid);
+    if (!sliceRecord || !sliceRecord.prNumber) return;
+  }
 
   // Post slice summary as PR comment
   const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
