@@ -581,11 +581,12 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
   const text = extractAssistantText(lastMsg);
   if (!READY_PHRASE_RE.test(text)) return false;
 
-  // Gate: artifacts must still be missing — if they exist, the happy path
-  // already fired and we have nothing to do.
+  // Gate: at least one required artifact must still be missing. Both must be
+  // present for the happy path to fire; if only one exists (e.g., LLM wrote
+  // ROADMAP but not CONTEXT), the session stalls and we still need to nudge.
   const contextFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT");
   const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-  if (contextFile || roadmapFile) return false;
+  if (contextFile && roadmapFile) return false;
 
   entry.readyRejectCount = (entry.readyRejectCount ?? 0) + 1;
 
@@ -603,14 +604,18 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
 
   const contextRel = relMilestoneFile(basePath, milestoneId, "CONTEXT");
   const roadmapRel = relMilestoneFile(basePath, milestoneId, "ROADMAP");
+  const missing: string[] = [];
+  if (!contextFile) missing.push(contextRel);
+  if (!roadmapFile) missing.push(roadmapRel);
+  const missingList = missing.join(" and ");
+  const missingPhrase = missing.length > 1 ? "are missing" : "is missing";
   ctx.ui.notify(
-    `Milestone ${milestoneId}: "ready" signal rejected — ${contextRel} and ${roadmapRel} are missing. Asking the LLM to complete the writes.`,
+    `Milestone ${milestoneId}: "ready" signal rejected — ${missingList} ${missingPhrase}. Asking the LLM to complete the writes.`,
     "warning",
   );
 
   const nudge =
-    `You emitted "Milestone ${milestoneId} ready." but neither ` +
-    `${contextRel} nor ${roadmapRel} exists on disk. ` +
+    `You emitted "Milestone ${milestoneId} ready." but ${missingList} ${missingPhrase} on disk. ` +
     `The ready phrase is a POST-WRITE signal and has been rejected. ` +
     `In this turn: (1) write PROJECT.md, REQUIREMENTS.md, and the milestone ` +
     `CONTEXT.md, (2) call gsd_plan_milestone, then (3) emit the ready phrase. ` +
