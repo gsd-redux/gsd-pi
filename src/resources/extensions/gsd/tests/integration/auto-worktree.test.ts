@@ -123,6 +123,7 @@ describe("auto-worktree lifecycle", () => {
 
     // Manually chdir out (simulates pause/crash)
     process.chdir(tempDir);
+    assert.ok(isInAutoWorktree(wtPath2), "isInAutoWorktree honors explicit worktree path when cwd is root");
 
     // enterAutoWorktree should re-enter
     const entered = enterAutoWorktree(tempDir, "M003");

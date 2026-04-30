@@ -1476,20 +1476,20 @@ export function teardownAutoWorktree(
  * still works after process restart when module state has been reset.
  */
 export function isInAutoWorktree(basePath: string): boolean {
-  const cwd = process.cwd();
-  if (!isGsdWorktreePath(cwd)) return false;
+  const targetPath = isGsdWorktreePath(basePath) ? basePath : process.cwd();
+  if (!isGsdWorktreePath(targetPath)) return false;
 
   const projectRoot = resolveWorktreeProjectRoot(basePath, originalBase);
-  const cwdProjectRoot = resolveWorktreeProjectRoot(cwd, originalBase);
+  const targetProjectRoot = resolveWorktreeProjectRoot(targetPath, originalBase);
   if (
     normalizeWorktreePathForCompare(projectRoot) !==
-    normalizeWorktreePathForCompare(cwdProjectRoot)
+    normalizeWorktreePathForCompare(targetProjectRoot)
   ) {
     return false;
   }
 
   try {
-    const branch = nativeGetCurrentBranch(cwd);
+    const branch = nativeGetCurrentBranch(targetPath);
     return branch.startsWith("milestone/");
   } catch {
     return false;
