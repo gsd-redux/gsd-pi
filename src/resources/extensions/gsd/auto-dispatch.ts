@@ -32,6 +32,7 @@ import {
 import { parseRoadmap } from "./parsers-legacy.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { atomicWriteSync } from "./atomic-write.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { join } from "node:path";
 import { hasImplementationArtifacts } from "./auto-recovery.js";
@@ -255,8 +256,7 @@ export function getRewriteCount(basePath: string): number {
 
 export function setRewriteCount(basePath: string, count: number): void {
   const filePath = rewriteCountPath(basePath);
-  mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
-  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  atomicWriteSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
 }
 
 // ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
@@ -280,8 +280,7 @@ export function getUatCount(basePath: string, mid: string, sid: string): number 
 export function incrementUatCount(basePath: string, mid: string, sid: string): number {
   const count = getUatCount(basePath, mid, sid) + 1;
   const filePath = uatCountPath(basePath, mid, sid);
-  mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
-  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  atomicWriteSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
   return count;
 }
 
