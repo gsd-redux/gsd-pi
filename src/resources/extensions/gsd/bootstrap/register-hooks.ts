@@ -7,7 +7,7 @@ import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-exten
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { canonicalToolName, clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { canonicalToolName, clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markApprovalGateVerified, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeWrite, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
@@ -468,6 +468,48 @@ export function registerHooks(
           agentClasses,
         );
         if (planningGuard.block) return planningGuard;
+      }
+    }
+
+    // ── Worktree-isolation contract enforcement (#5199) ──────────────
+    // When `git.isolation: worktree` is set, the commit pipeline only runs
+    // inside the auto-mode loop and only when cwd is inside the milestone
+    // worktree. Writes at the project root outside that loop are silently
+    // lost (no commit hook). Block them here so the contract is loud.
+    {
+      const writeTool = canonicalToolName(event.toolName);
+      let writeTarget = "";
+      if (isToolCallEventType("write", event)) writeTarget = event.input.path;
+      else if (isToolCallEventType("edit", event)) writeTarget = event.input.path;
+      else if (writeTool === "multi_edit" || writeTool === "notebook_edit") {
+        writeTarget = String((event.input as { path?: unknown })?.path ?? "");
+      }
+      if (writeTarget) {
+        const { resolveWorktreeProjectRoot } = await import("../worktree-root.js");
+        const { getIsolationMode } = await import("../preferences.js");
+        const fs = await import("node:fs");
+        const effectiveBasePath = resolveWorktreeProjectRoot(dash.basePath || discussionBasePath);
+        let hasMilestones = false;
+        try {
+          const milestonesDir = join(effectiveBasePath, ".gsd", "milestones");
+          if (fs.existsSync(milestonesDir)) {
+            hasMilestones = fs.readdirSync(milestonesDir).some((entry) =>
+              /^M\d+(?:-[a-z0-9]{6})?$/.test(entry),
+            );
+          }
+        } catch {
+          hasMilestones = false;
+        }
+        const worktreeGuard = shouldBlockWorktreeWrite({
+          toolName: writeTool,
+          targetPath: writeTarget,
+          effectiveBasePath,
+          isolationMode: getIsolationMode(effectiveBasePath),
+          isAutoLive: isAutoActive(),
+          hasMilestones,
+          envBypass: process.env.GSD_DISABLE_WORKTREE_WRITE_GUARD === "1",
+        });
+        if (worktreeGuard.block) return worktreeGuard;
       }
     }
 

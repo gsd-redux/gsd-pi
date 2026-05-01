@@ -1,10 +1,11 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { minimatch } from "minimatch";
 
 import type { ToolsPolicy } from "../unit-context-manifest.js";
 import { logWarning } from "../workflow-logger.js";
+import { detectWorktreeName } from "../worktree.js";
 
 /**
  * Regex matching milestone CONTEXT.md file names in both legacy M001
@@ -852,4 +853,120 @@ export function shouldBlockPlanningUnit(
   // CONTEXT.md write) catch known mutating shapes; defaulting to allow here
   // avoids breaking gsd_* MCP tools or future safe additions.
   return { block: false };
+}
+
+// ─── Worktree-isolation contract enforcement (#5199) ───────────────────────
+//
+// When `git.isolation: worktree` is configured, GSD2's commit pipeline
+// (auto-post-unit.ts:512 → runTurnGitAction) only runs inside the auto-mode
+// loop, and only when cwd is inside the milestone worktree. Writes that
+// happen at the project root outside that loop are silently lost — they
+// are never committed and never surface in turn_git_transactions.
+//
+// This predicate enforces the contract at the tool-call gate: under
+// worktree isolation, Write/Edit calls are blocked unless the target is
+// (a) inside `.gsd/`, (b) inside a worktree, or (c) auto-mode is live and
+// cwd is inside a worktree.
+//
+// Sibling guards (queue mode, planning-unit policy, state-file writes)
+// already use the same `pi.on("tool_call")` hook surface and the same
+// `{ block, reason }` return shape.
+/**
+ * Realpath-resolve `target` for prefix-containment comparisons.
+ *
+ * When the target file does not yet exist (the common case for an
+ * incoming Write/Edit call), walking up to the nearest existing ancestor
+ * and realpath'ing THAT — then re-appending the missing tail — preserves
+ * symlink resolution. Naive `resolve()` fallback is wrong on macOS where
+ * /tmp -> /private/tmp: a real ancestor resolves to /private/tmp/... while
+ * a non-existent target resolves to /tmp/..., and prefix containment
+ * silently fails.
+ */
+function realpathForCompare(target: string): string {
+  const abs = isAbsolute(target) ? target : resolve(target);
+  if (existsSync(abs)) return realpathSync(abs);
+  let cursor = abs;
+  const tail: string[] = [];
+  while (cursor && cursor !== sep && !existsSync(cursor)) {
+    const parent = resolve(cursor, "..");
+    if (parent === cursor) break;
+    tail.unshift(cursor.slice(parent.length + 1));
+    cursor = parent;
+  }
+  if (existsSync(cursor)) return resolve(realpathSync(cursor), ...tail);
+  return abs;
+}
+
+function isPathRealpathUnder(target: string, container: string): boolean {
+  const realContainer = existsSync(container) ? realpathSync(container) : resolve(container);
+  const realTarget = realpathForCompare(target);
+  return realTarget === realContainer || realTarget.startsWith(realContainer + sep);
+}
+
+export interface WorktreeWriteGuardInputs {
+  toolName: string;
+  targetPath: string;
+  effectiveBasePath: string;
+  isolationMode: "none" | "worktree" | "branch";
+  isAutoLive: boolean;
+  /**
+   * True when at least one milestone exists on disk under `.gsd/milestones/`.
+   * When false, the project is in pre-bootstrap and root scaffolding is
+   * legitimate (init scenario). Caller computes this synchronously.
+   */
+  hasMilestones: boolean;
+  /** Set when `GSD_DISABLE_WORKTREE_WRITE_GUARD=1` (self-hosting carve-out). */
+  envBypass: boolean;
+}
+
+/**
+ * Block Write/Edit/MultiEdit/NotebookEdit calls that would land at the
+ * project root while worktree isolation is configured but the commit
+ * pipeline cannot observe them.
+ *
+ * Pure function — all state is supplied by the caller. Tests live in
+ * `tests/worktree-write-gate.test.ts`.
+ */
+export function shouldBlockWorktreeWrite(
+  args: WorktreeWriteGuardInputs,
+): { block: boolean; reason?: string } {
+  if (!PLANNING_WRITE_TOOLS.has(args.toolName)) return { block: false };
+  if (args.envBypass) return { block: false };
+  if (args.isolationMode !== "worktree") return { block: false };
+  if (!args.hasMilestones) return { block: false };
+
+  const target = args.targetPath?.trim();
+  if (!target) return { block: false };
+  const absTarget = isAbsolute(target) ? target : resolve(args.effectiveBasePath, target);
+
+  // Allow writes under .gsd/ — planning artifacts are managed externally
+  // and are not part of the commit-pipeline contract.
+  if (isPathRealpathUnder(absTarget, join(args.effectiveBasePath, ".gsd"))) {
+    return { block: false };
+  }
+
+  // Allow writes inside any worktree under .gsd/worktrees/<name>/. The
+  // realpath-aware containment defeats the ".gsd/worktrees-extra/..."
+  // prefix trick (separator guard inside isPathRealpathUnder).
+  if (isPathRealpathUnder(absTarget, join(args.effectiveBasePath, ".gsd", "worktrees"))) {
+    return { block: false };
+  }
+
+  // Allow when auto-mode is live AND the effective cwd is inside a
+  // worktree. This is the happy path: the post-unit commit hook will
+  // pick the write up via runTurnGitAction.
+  if (args.isAutoLive && detectWorktreeName(args.effectiveBasePath)) {
+    return { block: false };
+  }
+
+  return {
+    block: true,
+    reason:
+      `HARD BLOCK: worktree isolation is configured (git.isolation: worktree) but ` +
+      `auto-mode is not running and you are not inside .gsd/worktrees/<MID>/. ` +
+      `Code edits at "${target}" would be lost — there is no commit hook outside ` +
+      `the auto-mode loop. Start auto-mode with /gsd to create the milestone ` +
+      `worktree, then write inside it. Set GSD_DISABLE_WORKTREE_WRITE_GUARD=1 ` +
+      `to override (gsd-2 self-hosting only).`,
+  };
 }
