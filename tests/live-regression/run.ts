@@ -133,18 +133,18 @@ function buildTaskSummary(id: string): string {
 
 // Recover DB hierarchy from on-disk markdown projections. DB is authoritative
 // at runtime, so live-regression fixtures that exist only as markdown must be
-// imported via `gsd recover` before `headless query` can derive their state.
-// `handleRecover` exits 0 even when DB init silently fails, so also assert the
-// success-path marker on stderr (commands-maintenance.ts:535).
+// imported via `gsd headless recover` before `headless query` can derive
+// their state. The interactive `gsd recover` command requires a TTY; the
+// headless subcommand is the non-interactive parallel.
 function recover(dir: string): void {
-  const result = gsd(["recover"], dir);
+  const result = gsd(["headless", "recover"], dir);
   assert(
     result.code === 0,
-    `gsd recover should succeed for fixture, got ${result.code}: ${result.stderr}`,
+    `gsd headless recover should succeed for fixture, got ${result.code}: ${result.stderr}`,
   );
   assert(
     result.stderr.includes("gsd-recover: recovered"),
-    `gsd recover should reach success path, got stderr: ${result.stderr}`,
+    `gsd headless recover should reach success path, got stderr: ${result.stderr}`,
   );
 }
 

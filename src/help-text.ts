@@ -164,6 +164,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  gsd headless --answers answers.json auto              With pre-supplied answers',
     '  gsd headless --events agent_end,extension_ui_request auto   Filtered event stream',
     '  gsd headless query                              Instant JSON state snapshot',
+    '  gsd headless recover                            Rebuild DB hierarchy from markdown (mutating)',
     '',
     'Exit codes: 0 = success, 1 = error/timeout, 10 = blocked, 11 = cancelled',
   ].join('\n'),
