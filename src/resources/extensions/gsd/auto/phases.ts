@@ -959,6 +959,7 @@ export async function runDispatch(
   const structuredQuestionsAvailable = prefs?.planning_depth === "deep"
     ? "false"
     : supportsStructuredQuestions(activeTools, {
+        provider,
         authMode,
         baseUrl: ctx.model?.baseUrl,
       }) ? "true" : "false";

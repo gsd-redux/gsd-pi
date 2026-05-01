@@ -317,6 +317,10 @@ Directories use bare IDs. Files use ID-SUFFIX format. Titles live inside file co
 - Milestone files: `{{milestoneId}}-CONTEXT.md`, `{{milestoneId}}-ROADMAP.md`
 - Slice dirs: `S01/`, `S02/`, etc.
 
+### Direct Write Guard
+
+When writing `.gsd` artifacts directly, first check whether the target file already exists. If it exists, read it before overwriting it. If it already contains the intended complete content, do not rewrite it; continue to the next missing step. This prevents duplicate writes and satisfies providers that require a file to be read before overwrite.
+
 ### Single Milestone
 
 Once the user is satisfied, in a single pass:

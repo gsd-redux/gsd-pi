@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { prepareWorkflowMcpForProject, shouldAutoPrepareWorkflowMcp } from "../workflow-mcp-auto-prep.ts";
 
-test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport", () => {
+test("shouldAutoPrepareWorkflowMcp enables prep for active Claude Code externalCli local transport", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "claude-code", baseUrl: "local://claude-code" },
     modelRegistry: {
@@ -15,7 +15,7 @@ test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport"
   assert.equal(result, true);
 });
 
-test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is ready", () => {
+test("shouldAutoPrepareWorkflowMcp stays disabled for non-Claude active provider even when claude-code provider is ready", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "openai", baseUrl: "https://api.openai.com" },
     modelRegistry: {
@@ -24,12 +24,24 @@ test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is rea
     },
   });
 
-  assert.equal(result, true);
+  assert.equal(result, false);
 });
 
-test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is registered", () => {
+test("shouldAutoPrepareWorkflowMcp stays disabled for non-Claude active provider even when claude-code provider is registered", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "openai", baseUrl: "https://api.openai.com" },
+    modelRegistry: {
+      getProviderAuthMode: (provider: string) => provider === "claude-code" ? "externalCli" : "apiKey",
+      isProviderRequestReady: () => false,
+    },
+  });
+
+  assert.equal(result, false);
+});
+
+test("shouldAutoPrepareWorkflowMcp enables prep for active claude-code provider when registered", () => {
+  const result = shouldAutoPrepareWorkflowMcp({
+    model: { provider: "claude-code", baseUrl: "local://claude-code" },
     modelRegistry: {
       getProviderAuthMode: (provider: string) => provider === "claude-code" ? "externalCli" : "apiKey",
       isProviderRequestReady: () => false,

@@ -505,15 +505,18 @@ test("workflow MCP ask_user_questions uses stdio elicitation round-trip", async 
   }
 });
 
-test("usesWorkflowMcpTransport matches local externalCli providers", () => {
-  assert.equal(usesWorkflowMcpTransport("externalCli", "local://claude-code"), true);
-  assert.equal(usesWorkflowMcpTransport("externalCli", "https://api.example.com"), false);
-  assert.equal(usesWorkflowMcpTransport("oauth", "local://custom"), false);
+test("usesWorkflowMcpTransport is scoped to the active Claude Code CLI provider", () => {
+  assert.equal(usesWorkflowMcpTransport("externalCli", "local://claude-code", "claude-code"), true);
+  assert.equal(usesWorkflowMcpTransport("externalCli", "local://claude-code", "openai"), false);
+  assert.equal(usesWorkflowMcpTransport("externalCli", "local://custom", "custom-cli"), false);
+  assert.equal(usesWorkflowMcpTransport("externalCli", "https://api.example.com", "claude-code"), false);
+  assert.equal(usesWorkflowMcpTransport("oauth", "local://claude-code", "claude-code"), false);
 });
 
 test("supportsStructuredQuestions disables local workflow MCP questions unless explicitly enabled", () => {
   assert.equal(
     supportsStructuredQuestions(["ask_user_questions"], {
+      provider: "claude-code",
       authMode: "externalCli",
       baseUrl: "local://claude-code",
       env: {},
@@ -522,6 +525,7 @@ test("supportsStructuredQuestions disables local workflow MCP questions unless e
   );
   assert.equal(
     supportsStructuredQuestions(["mcp__gsd-workflow__ask_user_questions"], {
+      provider: "claude-code",
       authMode: "externalCli",
       baseUrl: "local://claude-code",
       env: { GSD_WORKFLOW_MCP_STRUCTURED_QUESTIONS: "1" } as NodeJS.ProcessEnv,
@@ -530,6 +534,15 @@ test("supportsStructuredQuestions disables local workflow MCP questions unless e
   );
   assert.equal(
     supportsStructuredQuestions(["ask_user_questions"], {
+      provider: "openai",
+      authMode: "externalCli",
+      baseUrl: "local://custom-provider",
+    }),
+    true,
+  );
+  assert.equal(
+    supportsStructuredQuestions(["ask_user_questions"], {
+      provider: "anthropic",
       authMode: "oauth",
       baseUrl: "https://api.anthropic.com",
     }),
@@ -537,6 +550,7 @@ test("supportsStructuredQuestions disables local workflow MCP questions unless e
   );
   assert.equal(
     supportsStructuredQuestions([], {
+      provider: "anthropic",
       authMode: "oauth",
       baseUrl: "https://api.anthropic.com",
     }),

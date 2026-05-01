@@ -16,6 +16,7 @@ export interface WorkflowCapabilityOptions {
   env?: NodeJS.ProcessEnv;
   surface?: string;
   unitType?: string;
+  provider?: string;
   authMode?: "apiKey" | "oauth" | "externalCli" | "none";
   baseUrl?: string;
 }
@@ -370,8 +371,12 @@ export function getRequiredWorkflowToolsForAutoUnit(unitType: string): string[] 
 export function usesWorkflowMcpTransport(
   authMode: WorkflowCapabilityOptions["authMode"],
   baseUrl: string | undefined,
+  provider?: string,
 ): boolean {
-  return authMode === "externalCli" && typeof baseUrl === "string" && baseUrl.startsWith("local://");
+  return provider === "claude-code" &&
+    authMode === "externalCli" &&
+    typeof baseUrl === "string" &&
+    baseUrl.startsWith("local://claude-code");
 }
 
 function hasAskUserQuestionsTool(activeTools: string[]): boolean {
@@ -390,10 +395,10 @@ function workflowMcpStructuredQuestionsOptIn(env: NodeJS.ProcessEnv = process.en
 
 export function supportsStructuredQuestions(
   activeTools: string[],
-  options: Pick<WorkflowCapabilityOptions, "authMode" | "baseUrl" | "env"> = {},
+  options: Pick<WorkflowCapabilityOptions, "provider" | "authMode" | "baseUrl" | "env"> = {},
 ): boolean {
   if (!hasAskUserQuestionsTool(activeTools)) return false;
-  if (usesWorkflowMcpTransport(options.authMode, options.baseUrl)) {
+  if (usesWorkflowMcpTransport(options.authMode, options.baseUrl, options.provider)) {
     // Claude Code local workflow-MCP exposes ask_user_questions, but form
     // elicitation can return an immediate cancel outside GSD's chat turn. Keep
     // checkpoints in plain chat unless a caller deliberately opts into testing
@@ -410,7 +415,7 @@ export function getWorkflowTransportSupportError(
   options: WorkflowCapabilityOptions = {},
 ): string | null {
   if (!provider || requiredTools.length === 0) return null;
-  if (!usesWorkflowMcpTransport(options.authMode, options.baseUrl)) return null;
+  if (!usesWorkflowMcpTransport(options.authMode, options.baseUrl, provider)) return null;
 
   const projectRoot = options.projectRoot ?? process.cwd();
   const env = options.env ?? process.env;

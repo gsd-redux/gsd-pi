@@ -875,6 +875,7 @@ function getStructuredQuestionsAvailability(
   const provider = ctx.model?.provider;
   const authMode = provider ? ctx.modelRegistry.getProviderAuthMode(provider) : undefined;
   return supportsStructuredQuestions(pi.getActiveTools(), {
+    provider,
     authMode,
     baseUrl: ctx.model?.baseUrl,
   }) ? "true" : "false";

@@ -24,6 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const GUIDED_FLOW_PATH = join(__dirname, "..", "guided-flow.ts");
 const DISCUSS_HEADLESS_PATH = join(__dirname, "..", "prompts", "discuss-headless.md");
+const DISCUSS_PATH = join(__dirname, "..", "prompts", "discuss.md");
 
 function getGuidedFlowSource(): string {
   return readFileSync(GUIDED_FLOW_PATH, "utf-8");
@@ -31,6 +32,10 @@ function getGuidedFlowSource(): string {
 
 function getHeadlessPromptSource(): string {
   return readFileSync(DISCUSS_HEADLESS_PATH, "utf-8");
+}
+
+function getDiscussPromptSource(): string {
+  return readFileSync(DISCUSS_PATH, "utf-8");
 }
 
 describe("headless milestone bootstrap — parity with interactive flow", () => {
@@ -113,5 +118,16 @@ describe("headless milestone bootstrap — parity with interactive flow", () => 
       /gates_completed === total/.test(multiSection),
       "multi-milestone pre-condition must still enforce gates_completed === total",
     );
+  });
+
+  test("direct-write discuss prompts require reading existing .gsd artifacts before overwrite", () => {
+    for (const [name, source] of [
+      ["discuss-headless.md", getHeadlessPromptSource()],
+      ["discuss.md", getDiscussPromptSource()],
+    ] as const) {
+      assert.match(source, /### Direct Write Guard/, `${name} should include direct write guard`);
+      assert.match(source, /read it before overwriting it/i, `${name} should require read-before-overwrite`);
+      assert.match(source, /already contains the intended complete content/i, `${name} should skip duplicate writes`);
+    }
   });
 });

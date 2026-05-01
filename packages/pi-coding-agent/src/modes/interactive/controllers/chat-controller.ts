@@ -338,6 +338,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							details: externalToolResult.details,
 							isError: externalToolResult.isError,
 						});
+						if (!externalToolResult.isError) {
+							host.pendingTools.delete(externalToolResult.toolCallId);
+						}
 					}
 				}
 

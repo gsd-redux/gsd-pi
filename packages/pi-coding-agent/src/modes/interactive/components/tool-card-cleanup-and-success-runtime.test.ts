@@ -124,6 +124,36 @@ describe("ToolExecutionComponent post-compaction cleanup", () => {
 			"markHistoricalNoResult must NOT mutate state when a real result is already present",
 		);
 	});
+
+	it("completeWithError does not relabel an already completed success card", () => {
+		// Claude Code MCP can attach a successful external result before the
+		// assistant sub-turn closes. If that sub-turn later reports an abort/error,
+		// the cleanup path must not repaint the completed tool card as failed.
+		const ui = makeMockTUI();
+		const c = new ToolExecutionComponent(
+			"mcp__gsd-workflow__gsd_milestone_generate_id",
+			{},
+			{},
+			undefined,
+			ui as never,
+		);
+
+		c.updateResult(
+			{
+				content: [{ type: "text", text: "M001" }],
+				isError: false,
+			},
+			false,
+		);
+		const before = c.render(60).map(stripAnsi).join("\n");
+		assert.ok(before.includes("Done"), "completed card starts as Done");
+		assert.ok(!before.includes("Error"), "completed card starts without Error");
+
+		c.completeWithError("Claude Code stream aborted by caller");
+
+		const after = c.render(60).map(stripAnsi).join("\n");
+		assert.equal(after, before, "late stream abort must not mutate successful tool result");
+	});
 });
 
 // ─── Bug 2: success notifications render as a green bordered box ────────
