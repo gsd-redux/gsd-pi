@@ -291,12 +291,21 @@ function extractContextMilestoneId(inputPath: string): string | null {
 
 /**
  * Mark a gate as pending (called when ask_user_questions is invoked with a gate ID).
+ *
+ * Important: this is intentionally non-destructive for `verifiedDepthMilestones`.
+ * The pending gate alone is sufficient to block subsequent tool calls
+ * (`shouldBlockPendingGate` returns block:true while `pendingGateId` is set);
+ * tearing down the milestone's verified state would also block follow-up
+ * CONTEXT.md edits and any path that reads `isMilestoneDepthVerified` —
+ * which creates a permanent disk/DB divergence when the model legitimately
+ * re-asks the gate after artifacts are already written. The approval-gate
+ * verification IS reset here because the gate itself is being asked again
+ * and must be freshly confirmed; that is independent of whether the
+ * underlying milestone has been previously depth-verified.
  */
 export function setPendingGate(gateId: string): void {
   pendingGateId = gateId;
   verifiedApprovalGates.delete(gateId);
-  const milestoneId = extractDepthVerificationMilestoneId(gateId);
-  if (milestoneId) verifiedDepthMilestones.delete(milestoneId);
   persistWriteGateSnapshot();
 }
 

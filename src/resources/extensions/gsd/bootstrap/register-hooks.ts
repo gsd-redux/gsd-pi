@@ -592,7 +592,21 @@ export function registerHooks(
             const milestoneIdFromGate = extractDepthVerificationMilestoneId(currentPendingGate);
             if (milestoneIdFromGate) markDepthVerified(milestoneIdFromGate);
             clearPendingGate();
+          } else {
+            // User engaged but did not pick the confirmation option (e.g. "needs
+            // adjustment", "decline"). Clear the pending gate so the model is
+            // not permanently locked — the prompt is responsible for re-asking
+            // deeper questions on the next turn. Do NOT mark approval/depth
+            // verified: that requires the explicit confirmation answer.
+            clearPendingGate();
           }
+        } else {
+          // The gate question wasn't in this ask_user_questions batch (model
+          // asked unrelated questions while a gate was pending). The user
+          // still engaged with the call, so the pending gate should not
+          // outlive this turn — the model must re-ask the gate explicitly
+          // if it still needs confirmation.
+          clearPendingGate();
         }
       }
     }
