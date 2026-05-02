@@ -13,8 +13,6 @@ import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./s
 import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
-import { getMilestone, isDbAvailable } from "./gsd-db.js";
-import { resolveMilestoneFile } from "./paths.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -685,38 +683,6 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — orphan milestone directory check failed
-  }
-
-  // ── Orphan milestone artifacts (disk has CONTEXT.md/ROADMAP.md, DB has no row) ─
-  // Distinct from orphan_milestone_dir: that catches *empty* stub dirs. This
-  // catches dirs with real planning artifacts but a missing or queued-only DB
-  // row — the result of gsd_plan_milestone being HARD BLOCKED by the depth
-  // gate after CONTEXT.md is already written. Recovery is via
-  // /gsd (interactive recover prompt) or `migrateHierarchyToDb` directly.
-  // Not auto-fixable — the user must choose recover-vs-discard explicitly.
-  try {
-    if (isDbAvailable()) {
-      const milestoneIds = findMilestoneIds(basePath);
-      for (const mid of milestoneIds) {
-        const hasContext = !!resolveMilestoneFile(basePath, mid, "CONTEXT");
-        const hasRoadmap = !!resolveMilestoneFile(basePath, mid, "ROADMAP");
-        if (!hasContext && !hasRoadmap) continue;
-        const row = getMilestone(mid);
-        if (!row || row.status === "queued") {
-          issues.push({
-            severity: "warning",
-            code: "orphan_milestone_artifacts",
-            scope: "milestone",
-            unitId: mid,
-            message: `Milestone ${mid} has planning artifacts on disk (CONTEXT.md/ROADMAP.md) but ${!row ? "no DB row" : "DB row is still queued"}. Likely cause: gsd_plan_milestone was blocked by the depth gate. Run /gsd to choose recover or discard.`,
-            file: `.gsd/milestones/${mid}`,
-            fixable: false,
-          });
-        }
-      }
-    }
-  } catch {
-    // Non-fatal — orphan milestone artifacts check failed
   }
 }
 

@@ -417,30 +417,6 @@ async function dispatchNextDeepProjectSetupStage(entry: PendingDeepProjectSetupE
   return true;
 }
 
-/**
- * Find milestones with planning artifacts on disk but no useful DB row —
- * M###-CONTEXT.md (or ROADMAP.md) exists, but the DB has no row OR only a
- * queued seed row from `gsd_milestone_generate_id`. Caused when planning is
- * blocked after the discuss phase already wrote artifacts.
- *
- * Returns [] when isDbAvailable() is false (the markdown-fallback path
- * cannot distinguish orphans from valid state without the DB).
- */
-export function findOrphanedMilestones(basePath: string, milestoneIds: string[]): string[] {
-  if (!isDbAvailable()) return [];
-  const orphans: string[] = [];
-  for (const mid of milestoneIds) {
-    const hasContext = !!resolveMilestoneFile(basePath, mid, "CONTEXT");
-    const hasRoadmap = !!resolveMilestoneFile(basePath, mid, "ROADMAP");
-    if (!hasContext && !hasRoadmap) continue;
-    const row = getMilestone(mid);
-    if (!row || row.status === "queued") {
-      orphans.push(mid);
-    }
-  }
-  return orphans;
-}
-
 /** Called from agent_end to check if auto-mode should start after discuss */
 export function checkAutoStartAfterDiscuss(): boolean {
   const entry = _getPendingAutoStart();
@@ -470,8 +446,7 @@ export function checkAutoStartAfterDiscuss(): boolean {
         "guided",
         `checkAutoStartAfterDiscuss: ${milestoneId} has disk artifacts but ` +
         `${!row ? "no DB row" : "DB row is still queued"} — blocking auto-start. ` +
-        `Likely cause: gsd_plan_milestone was blocked or never ran. ` +
-        `Recovery: re-run /gsd to surface the orphaned-milestone prompt.`,
+        `Likely cause: gsd_plan_milestone was blocked or never ran.`,
       );
       return false;
     }
@@ -2028,97 +2003,19 @@ export async function showSmartEntry(
         basePath
       ), "gsd-run", ctx, "discuss-milestone");
     } else {
-      // Detect orphaned milestones: M### dir on disk has CONTEXT.md but DB has
-      // no row (or only a queued seed from gsd_milestone_generate_id). This
-      // happens when gsd_plan_milestone is HARD BLOCKED by the depth gate after
-      // CONTEXT.md is already on disk — the result is a partial planning state
-      // the user cannot otherwise escape.
-      const orphanedMilestones = findOrphanedMilestones(basePath, milestoneIds);
-      if (orphanedMilestones.length > 0) {
-        const orphanList = orphanedMilestones.join(", ");
-        const choice = await showNextAction(ctx, {
-          title: "GSD — Orphaned Milestone Detected",
-          summary: [
-            `${orphanList} ${orphanedMilestones.length === 1 ? "has" : "have"} planning artifacts on disk but no DB record.`,
-            `Likely cause: gsd_plan_milestone was blocked or never finished.`,
-          ],
-          actions: [
-            {
-              id: "recover",
-              label: `Recover ${orphanList}`,
-              description: "Rebuild DB rows from on-disk CONTEXT.md / ROADMAP.md.",
-              recommended: true,
-            },
-            {
-              id: "discard",
-              label: `Discard ${orphanList}`,
-              description: "Delete the on-disk milestone directory and start fresh.",
-            },
-            {
-              id: "new_milestone",
-              label: `Skip — create ${nextId} instead`,
-              description: "Leave the orphaned milestone in place and create a new one.",
-            },
-          ],
-          notYetMessage: "Run /gsd when ready.",
-        });
-
-        if (choice === "recover") {
-          try {
-            const { migrateHierarchyToDb } = await import("./md-importer.js");
-            const counts = migrateHierarchyToDb(basePath);
-            invalidateAllCaches();
-            ctx.ui.notify(
-              `Recovered ${counts.milestones} milestone(s), ${counts.slices} slice(s) from disk. Re-run /gsd to continue.`,
-              "success",
-            );
-          } catch (err) {
-            ctx.ui.notify(
-              `Recovery failed: ${(err as Error).message}. Try /gsd doctor.`,
-              "error",
-            );
-          }
-          return;
-        }
-
-        if (choice === "discard") {
-          let discarded = 0;
-          for (const mid of orphanedMilestones) {
-            try {
-              if (discardMilestone(basePath, mid)) discarded++;
-            } catch (err) {
-              logWarning("guided", `discardMilestone(${mid}) failed: ${(err as Error).message}`);
-            }
-          }
-          invalidateAllCaches();
-          ctx.ui.notify(
-            `Discarded ${discarded} orphaned milestone(s). Re-run /gsd to create a new one.`,
-            "success",
-          );
-          return;
-        }
-
-        // choice === "new_milestone" or null/undefined — fall through to the
-        // standard "Create next milestone" path below using nextId (which
-        // already advances past the orphaned IDs via nextMilestoneIdReserved).
-        if (choice !== "new_milestone") return;
-      }
-
-      const choice = orphanedMilestones.length > 0
-        ? "new_milestone" // already chose above; reuse to avoid double-prompt
-        : await showNextAction(ctx, {
-          title: "GSD — Get Shit Done",
-          summary: ["No active milestone."],
-          actions: [
-            {
-              id: "new_milestone",
-              label: "Create next milestone",
-              description: "Define what to build next.",
-              recommended: true,
-            },
-          ],
-          notYetMessage: "Run /gsd when ready.",
-        });
+      const choice = await showNextAction(ctx, {
+        title: "GSD — Get Shit Done",
+        summary: ["No active milestone."],
+        actions: [
+          {
+            id: "new_milestone",
+            label: "Create next milestone",
+            description: "Define what to build next.",
+            recommended: true,
+          },
+        ],
+        notYetMessage: "Run /gsd when ready.",
+      });
 
       if (choice === "new_milestone") {
         pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });
