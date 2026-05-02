@@ -10,7 +10,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@g
 import type { GSDState } from "./types.js";
 import { showNextAction } from "../shared/tui.js";
 import { loadFile, saveFile } from "./files.js";
-import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, getMilestoneSlices } from "./gsd-db.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
 import {
@@ -36,7 +36,7 @@ import { gsdHome } from "./gsd-home.js";
 import {
   gsdRoot, milestonesDir, resolveMilestoneFile, resolveMilestonePath,
   resolveSliceFile, resolveSlicePath, resolveGsdRootFile, relGsdRootFile,
-  relMilestoneFile, relSliceFile,
+  relMilestoneFile, relSliceFile, resolveGsdPathContract,
 } from "./paths.js";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
@@ -417,6 +417,30 @@ async function dispatchNextDeepProjectSetupStage(entry: PendingDeepProjectSetupE
   return true;
 }
 
+/**
+ * Find milestones with planning artifacts on disk but no useful DB row —
+ * M###-CONTEXT.md (or ROADMAP.md) exists, but the DB has no row OR only a
+ * queued seed row from `gsd_milestone_generate_id`. Caused when planning is
+ * blocked after the discuss phase already wrote artifacts.
+ *
+ * Returns [] when isDbAvailable() is false (the markdown-fallback path
+ * cannot distinguish orphans from valid state without the DB).
+ */
+export function findOrphanedMilestones(basePath: string, milestoneIds: string[]): string[] {
+  if (!isDbAvailable()) return [];
+  const orphans: string[] = [];
+  for (const mid of milestoneIds) {
+    const hasContext = !!resolveMilestoneFile(basePath, mid, "CONTEXT");
+    const hasRoadmap = !!resolveMilestoneFile(basePath, mid, "ROADMAP");
+    if (!hasContext && !hasRoadmap) continue;
+    const row = getMilestone(mid);
+    if (!row || row.status === "queued") {
+      orphans.push(mid);
+    }
+  }
+  return orphans;
+}
+
 /** Called from agent_end to check if auto-mode should start after discuss */
 export function checkAutoStartAfterDiscuss(): boolean {
   const entry = _getPendingAutoStart();
@@ -429,6 +453,29 @@ export function checkAutoStartAfterDiscuss(): boolean {
   const contextFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT");
   const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
   if (!contextFile && !roadmapFile) return false; // neither artifact yet — keep waiting
+
+  // Gate 1b: DB row must exist with non-queued status. Disk artifacts alone are
+  // not enough — `gsd_plan_milestone` can be HARD BLOCKED by the depth-verification
+  // gate after `M###-CONTEXT.md` has already been written, leaving disk populated
+  // but DB empty. Without this check, the "ready" notify below fires and the
+  // next /gsd reads the empty DB and lands on "No active milestone".
+  // `gsd_milestone_generate_id` inserts a `queued` row before planning, so a
+  // queued row alone is also insufficient — require a row that has progressed
+  // beyond queued. Skipped when isDbAvailable() is false to preserve the
+  // markdown-fallback path for environments without a working DB.
+  if (isDbAvailable()) {
+    const row = getMilestone(milestoneId);
+    if (!row || row.status === "queued") {
+      logWarning(
+        "guided",
+        `checkAutoStartAfterDiscuss: ${milestoneId} has disk artifacts but ` +
+        `${!row ? "no DB row" : "DB row is still queued"} — blocking auto-start. ` +
+        `Likely cause: gsd_plan_milestone was blocked or never ran. ` +
+        `Recovery: re-run /gsd to surface the orphaned-milestone prompt.`,
+      );
+      return false;
+    }
+  }
 
   // Gate 2: STATE.md must exist — written as the last step in the discuss
   // output phase. This prevents auto-start from firing during Phase 3
@@ -598,17 +645,48 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
   // the canonical paths with uncached existsSync so we can tell whether the
   // recovery is firing on real-missing files or a path-resolution miss
   // (basePath/symlink mismatch, stale cache despite agent-end-recovery flush,
-  // legacy descriptor dir not matching, etc.).
+  // legacy descriptor dir not matching, etc.). The "direct-*" fields are
+  // computed independently of resolveMilestonePath / paths.ts caches so we can
+  // distinguish "files genuinely missing" from "resolver/cache mismatch".
   try {
+    const root = gsdRoot(basePath);
+    const contract = resolveGsdPathContract(basePath);
+    const mParent = milestonesDir(basePath);
+    const mParentExists = existsSync(mParent);
+    let mParentEntries = "n/a";
+    if (mParentExists) {
+      try {
+        const names = readdirSync(mParent);
+        mParentEntries = names.length ? names.join(",") : "(empty)";
+      } catch (e) {
+        mParentEntries = `<readdir-failed: ${(e as Error).message}>`;
+      }
+    }
+    // Probe the contract-projectGsd path too — this is the writer's view,
+    // which can diverge from gsdRoot() when global-mode is active.
+    const projectMParent = join(contract.projectGsd, "milestones");
+    const projectDirectDir = join(projectMParent, milestoneId);
+    const projectDirectCtx = join(projectDirectDir, `${milestoneId}-CONTEXT.md`);
+    const projectDirectRoadmap = join(projectDirectDir, `${milestoneId}-ROADMAP.md`);
     const mDir = resolveMilestonePath(basePath, milestoneId);
     const canonicalCtx = mDir ? join(mDir, `${milestoneId}-CONTEXT.md`) : null;
     const canonicalRoadmap = mDir ? join(mDir, `${milestoneId}-ROADMAP.md`) : null;
+    const directDir = join(mParent, milestoneId);
+    const directCtx = join(directDir, `${milestoneId}-CONTEXT.md`);
+    const directRoadmap = join(directDir, `${milestoneId}-ROADMAP.md`);
     logWarning(
       "guided",
-      `ready-phrase-reject diagnostic mid=${milestoneId} basePath=${basePath} ` +
+      `ready-phrase-reject diagnostic mid=${milestoneId} basePath=${basePath} cwd=${process.cwd()} ` +
+      `gsdRoot=${root} projectGsd=${contract.projectGsd} workRoot=${contract.workRoot} ` +
+      `worktreeGsd=${contract.worktreeGsd ?? "null"} isWorktree=${contract.isWorktree} ` +
+      `mParent=${mParent} mParent-exists=${mParentExists} mParent-entries=[${mParentEntries}] ` +
       `mDir=${mDir ?? "null"} ` +
       `canonical-ctx=${canonicalCtx ?? "null"} ctx-exists=${canonicalCtx ? existsSync(canonicalCtx) : "n/a"} ` +
-      `canonical-roadmap=${canonicalRoadmap ?? "null"} roadmap-exists=${canonicalRoadmap ? existsSync(canonicalRoadmap) : "n/a"}`,
+      `canonical-roadmap=${canonicalRoadmap ?? "null"} roadmap-exists=${canonicalRoadmap ? existsSync(canonicalRoadmap) : "n/a"} ` +
+      `direct-dir=${directDir} direct-dir-exists=${existsSync(directDir)} ` +
+      `direct-ctx-exists=${existsSync(directCtx)} direct-roadmap-exists=${existsSync(directRoadmap)} ` +
+      `project-direct-dir=${projectDirectDir} project-direct-dir-exists=${existsSync(projectDirectDir)} ` +
+      `project-direct-ctx-exists=${existsSync(projectDirectCtx)} project-direct-roadmap-exists=${existsSync(projectDirectRoadmap)}`,
     );
   } catch (e) {
     logWarning("guided", `ready-phrase-reject diagnostic failed: ${(e as Error).message}`);
@@ -1950,19 +2028,97 @@ export async function showSmartEntry(
         basePath
       ), "gsd-run", ctx, "discuss-milestone");
     } else {
-      const choice = await showNextAction(ctx, {
-        title: "GSD — Get Shit Done",
-        summary: ["No active milestone."],
-        actions: [
-          {
-            id: "new_milestone",
-            label: "Create next milestone",
-            description: "Define what to build next.",
-            recommended: true,
-          },
-        ],
-        notYetMessage: "Run /gsd when ready.",
-      });
+      // Detect orphaned milestones: M### dir on disk has CONTEXT.md but DB has
+      // no row (or only a queued seed from gsd_milestone_generate_id). This
+      // happens when gsd_plan_milestone is HARD BLOCKED by the depth gate after
+      // CONTEXT.md is already on disk — the result is a partial planning state
+      // the user cannot otherwise escape.
+      const orphanedMilestones = findOrphanedMilestones(basePath, milestoneIds);
+      if (orphanedMilestones.length > 0) {
+        const orphanList = orphanedMilestones.join(", ");
+        const choice = await showNextAction(ctx, {
+          title: "GSD — Orphaned Milestone Detected",
+          summary: [
+            `${orphanList} ${orphanedMilestones.length === 1 ? "has" : "have"} planning artifacts on disk but no DB record.`,
+            `Likely cause: gsd_plan_milestone was blocked or never finished.`,
+          ],
+          actions: [
+            {
+              id: "recover",
+              label: `Recover ${orphanList}`,
+              description: "Rebuild DB rows from on-disk CONTEXT.md / ROADMAP.md.",
+              recommended: true,
+            },
+            {
+              id: "discard",
+              label: `Discard ${orphanList}`,
+              description: "Delete the on-disk milestone directory and start fresh.",
+            },
+            {
+              id: "new_milestone",
+              label: `Skip — create ${nextId} instead`,
+              description: "Leave the orphaned milestone in place and create a new one.",
+            },
+          ],
+          notYetMessage: "Run /gsd when ready.",
+        });
+
+        if (choice === "recover") {
+          try {
+            const { migrateHierarchyToDb } = await import("./md-importer.js");
+            const counts = migrateHierarchyToDb(basePath);
+            invalidateAllCaches();
+            ctx.ui.notify(
+              `Recovered ${counts.milestones} milestone(s), ${counts.slices} slice(s) from disk. Re-run /gsd to continue.`,
+              "success",
+            );
+          } catch (err) {
+            ctx.ui.notify(
+              `Recovery failed: ${(err as Error).message}. Try /gsd doctor.`,
+              "error",
+            );
+          }
+          return;
+        }
+
+        if (choice === "discard") {
+          let discarded = 0;
+          for (const mid of orphanedMilestones) {
+            try {
+              if (discardMilestone(basePath, mid)) discarded++;
+            } catch (err) {
+              logWarning("guided", `discardMilestone(${mid}) failed: ${(err as Error).message}`);
+            }
+          }
+          invalidateAllCaches();
+          ctx.ui.notify(
+            `Discarded ${discarded} orphaned milestone(s). Re-run /gsd to create a new one.`,
+            "success",
+          );
+          return;
+        }
+
+        // choice === "new_milestone" or null/undefined — fall through to the
+        // standard "Create next milestone" path below using nextId (which
+        // already advances past the orphaned IDs via nextMilestoneIdReserved).
+        if (choice !== "new_milestone") return;
+      }
+
+      const choice = orphanedMilestones.length > 0
+        ? "new_milestone" // already chose above; reuse to avoid double-prompt
+        : await showNextAction(ctx, {
+          title: "GSD — Get Shit Done",
+          summary: ["No active milestone."],
+          actions: [
+            {
+              id: "new_milestone",
+              label: "Create next milestone",
+              description: "Define what to build next.",
+              recommended: true,
+            },
+          ],
+          notYetMessage: "Run /gsd when ready.",
+        });
 
       if (choice === "new_milestone") {
         pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, step: stepMode, createdAt: Date.now() });

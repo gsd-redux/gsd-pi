@@ -83,7 +83,10 @@ export type DoctorIssueCode =
   | "db_unavailable"
   | "projection_drift"
   // Milestone filesystem/DB drift (#4996)
-  | "orphan_milestone_dir";
+  | "orphan_milestone_dir"
+  // Milestone has on-disk planning artifacts but no DB row (or queued-only seed).
+  // Caused when gsd_plan_milestone is HARD BLOCKED after CONTEXT.md is written.
+  | "orphan_milestone_artifacts";
 
 /**
  * Issue codes that represent global or completion-critical state.
