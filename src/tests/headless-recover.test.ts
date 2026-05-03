@@ -33,6 +33,7 @@ import {
   getAllMilestones,
   getMilestoneSlices,
   getSliceTasks,
+  insertGateRow,
 } from "../resources/extensions/gsd/gsd-db.ts";
 import { migrateHierarchyToDb } from "../resources/extensions/gsd/md-importer.ts";
 import { invalidateStateCache } from "../resources/extensions/gsd/state.ts";
@@ -137,4 +138,32 @@ test("headless recover: idempotent when run twice on the same fixture", async (t
   );
   assert.equal(getAllMilestones().length, 1, "DB has exactly one milestone after the second pass");
   assert.equal(getSliceTasks("M001", "S01").length, 1, "DB has exactly one task after the second pass");
+});
+
+test("headless recover: clears gate rows before rebuilding hierarchy", async (t) => {
+  const base = makeMarkdownFixture();
+  t.after(() => {
+    try { closeDatabase(); } catch { /* may not be open */ }
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  await ensureDbOpen(base);
+
+  transaction(() => {
+    clearEngineHierarchy();
+    return migrateHierarchyToDb(base);
+  });
+  invalidateStateCache();
+
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", scope: "slice" });
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q5", scope: "task", taskId: "T01" });
+
+  const recovered = transaction(() => {
+    clearEngineHierarchy();
+    return migrateHierarchyToDb(base);
+  });
+  invalidateStateCache();
+
+  assert.deepEqual(recovered, { milestones: 1, slices: 1, tasks: 1 });
+  assert.equal(getSliceTasks("M001", "S01").length, 1, "DB has the imported task after gate-backed recovery");
 });

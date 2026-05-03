@@ -3723,12 +3723,17 @@ export function deleteArtifactByPath(path: string): void {
 }
 
 /**
- * Drop all rows from tasks/slices/milestones in dependency order inside a
- * transaction. Used by `gsd recover` to rebuild engine state from markdown.
+ * Drop hierarchy rows in dependency order inside a transaction. Used by
+ * `gsd recover` to rebuild engine state from markdown.
  */
 export function clearEngineHierarchy(): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   transaction(() => {
+    currentDb!.exec("DELETE FROM verification_evidence");
+    currentDb!.exec("DELETE FROM quality_gates");
+    currentDb!.exec("DELETE FROM slice_dependencies");
+    currentDb!.exec("DELETE FROM assessments");
+    currentDb!.exec("DELETE FROM replan_history");
     currentDb!.exec("DELETE FROM tasks");
     currentDb!.exec("DELETE FROM slices");
     currentDb!.exec("DELETE FROM milestones");

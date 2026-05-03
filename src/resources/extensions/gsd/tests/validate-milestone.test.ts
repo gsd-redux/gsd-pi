@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { deriveState, isValidationTerminal } from "../state.ts";
+import { deriveState, invalidateStateCache, isValidationTerminal } from "../state.ts";
 import { resolveExpectedArtifactPath, diagnoseExpectedArtifact } from "../auto-artifact-paths.ts";
 import { verifyExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
@@ -24,6 +24,7 @@ function makeTmpBase(): string {
 }
 
 function cleanup(base: string): void {
+  invalidateStateCache();
   clearPathCache();
   clearParseCache();
   closeDatabase();
@@ -389,6 +390,45 @@ test("dispatch rule skips when skip_milestone_validation preference is set", asy
     // Verify the VALIDATION file was written
     const validationPath = join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
     assert.ok(existsSync(validationPath), "VALIDATION file should be written on skip");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("skip write immediately advances deriveState out of validating-milestone", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" } as any);
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" } as any);
+
+    writeContext(base, "M001");
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone.");
+
+    invalidateStateCache();
+    clearPathCache();
+    clearParseCache();
+
+    const before = await deriveState(base);
+    assert.equal(before.phase, "validating-milestone", "precondition: missing VALIDATION keeps phase in validation");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state: before,
+      prefs: { phases: { skip_milestone_validation: true } },
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "skip");
+
+    const after = await deriveState(base);
+    assert.equal(
+      after.phase,
+      "completing-milestone",
+      "post-skip deriveState should see the new VALIDATION file without manual cache invalidation",
+    );
   } finally {
     cleanup(base);
   }

@@ -14,7 +14,7 @@ import type { GSDPreferences } from "./preferences.js";
 import type { UatType } from "./files.js";
 import type { MinimalModelRegistry } from "./context-budget.js";
 import { loadFile, extractUatType, loadActiveOverrides } from "./files.js";
-import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted, getMilestone } from "./gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted, getMilestone, insertAssessment } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 
@@ -78,6 +78,8 @@ import {
   type DeepProjectSetupStage,
 } from "./deep-project-setup-policy.js";
 import { annotateBackgroundable } from "./delegation-policy.js";
+import { invalidateAllCaches } from "./cache.js";
+import { insertMilestoneValidationGates } from "./milestone-validation-gates.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -1214,6 +1216,29 @@ export const DISPATCH_RULES: DispatchRule[] = [
             `Milestone validation was skipped via ${skipSource}.`,
           ].join("\n");
           writeFileSync(validationPath, content, "utf-8");
+          // DB-backed state derivation keys off assessments, not only the file
+          // projection. Persist the skipped validation there too so the next
+          // loop iteration advances to completing-milestone instead of
+          // re-entering validating-milestone.
+          if (isDbAvailable()) {
+            insertAssessment({
+              path: validationPath,
+              milestoneId: mid,
+              sliceId: null,
+              taskId: null,
+              status: "pass",
+              scope: "milestone-validation",
+              fullContent: content,
+            });
+            const gateSliceId = getMilestoneSlices(mid)[0]?.id ?? "_milestone";
+            insertMilestoneValidationGates(
+              mid,
+              gateSliceId,
+              "pass",
+              new Date().toISOString(),
+            );
+          }
+          invalidateAllCaches();
         }
         return { action: "skip" };
       }
