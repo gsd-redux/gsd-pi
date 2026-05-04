@@ -18,7 +18,7 @@ import {
   statSync,
   lstatSync as lstatSyncFn,
 } from "node:fs";
-import { isAbsolute, join, sep as pathSep } from "node:path";
+import { isAbsolute, join, relative, sep as pathSep } from "node:path";
 import { GSDError, GSD_IO_ERROR, GSD_GIT_ERROR } from "./errors.js";
 import {
   reconcileWorktreeDb,
@@ -266,6 +266,38 @@ function getActiveWorkspace(): GsdWorkspace | null {
   return activeWorkspace;
 }
 
+function gitPathspecForWorktreePath(basePath: string, targetPath: string): string | null {
+  let base = basePath;
+  let target = targetPath;
+  try {
+    base = realpathSync.native(basePath);
+  } catch {
+    /* keep original */
+  }
+  try {
+    target = realpathSync.native(targetPath);
+  } catch {
+    /* keep original */
+  }
+
+  const rel = relative(base, target);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  return rel.replaceAll("\\", "/");
+}
+
+function gitRemoteExists(basePath: string, remote: string): boolean {
+  try {
+    execFileSync("git", ["remote", "get-url", remote], {
+      cwd: basePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function clearProjectRootStateFiles(basePath: string, milestoneId: string): void {
   const gsdDir = gsdRoot(basePath);
   // Phase C pt 2: auto.lock removed from this list — the file is gone
@@ -301,11 +333,14 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
   for (const dir of syncedDirs) {
     try {
       if (existsSync(dir)) {
+        const pathspec = gitPathspecForWorktreePath(basePath, dir);
+        if (!pathspec) continue;
+
         // Only remove files that are untracked by git — tracked files are
         // managed by the branch checkout and should not be deleted.
         const untrackedOutput = execFileSync(
           "git",
-          ["ls-files", "--others", "--exclude-standard", dir],
+          ["ls-files", "--others", "--exclude-standard", pathspec],
           { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
         ).trim();
         if (untrackedOutput) {
@@ -2187,16 +2222,18 @@ export function mergeMilestoneToMain(
   let pushed = false;
   if (prefs.auto_push === true && prefs.auto_pr !== true && !nothingToCommit) {
     const remote = prefs.remote ?? "origin";
-    try {
-      execFileSync("git", ["push", remote, mainBranch], {
-        cwd: originalBasePath_,
-        stdio: ["ignore", "pipe", "pipe"],
-        encoding: "utf-8",
-      });
-      pushed = true;
-    } catch (err) {
-      // Push failure is non-fatal
-      logWarning("worktree", `git push failed: ${err instanceof Error ? err.message : String(err)}`);
+    if (gitRemoteExists(originalBasePath_, remote)) {
+      try {
+        execFileSync("git", ["push", remote, mainBranch], {
+          cwd: originalBasePath_,
+          stdio: ["ignore", "pipe", "pipe"],
+          encoding: "utf-8",
+        });
+        pushed = true;
+      } catch (err) {
+        // Push failure is non-fatal
+        logWarning("worktree", `git push failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 

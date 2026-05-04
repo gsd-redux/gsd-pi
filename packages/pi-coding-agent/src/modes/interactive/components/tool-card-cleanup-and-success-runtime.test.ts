@@ -17,6 +17,7 @@ import { Container, Text } from "@gsd/pi-tui";
 import stripAnsi from "strip-ansi";
 
 import { initTheme, theme } from "../theme/theme.js";
+import { shouldRenderExtensionNotifyInChat } from "../interactive-mode.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 
@@ -24,6 +25,16 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 // Initialize once before any test that exercises themed rendering.
 before(() => {
 	initTheme("dark");
+});
+
+describe("Extension warning notifications", () => {
+	it("do not render into chat output", () => {
+		assert.equal(shouldRenderExtensionNotifyInChat("warning"), false);
+		assert.equal(shouldRenderExtensionNotifyInChat("error"), true);
+		assert.equal(shouldRenderExtensionNotifyInChat("success"), true);
+		assert.equal(shouldRenderExtensionNotifyInChat("info"), true);
+		assert.equal(shouldRenderExtensionNotifyInChat(undefined), true);
+	});
 });
 
 interface MockTui {

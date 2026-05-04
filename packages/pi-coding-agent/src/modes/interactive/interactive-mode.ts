@@ -170,6 +170,12 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
+export type ExtensionNotifyType = "info" | "warning" | "error" | "success" | undefined;
+
+export function shouldRenderExtensionNotifyInChat(type: ExtensionNotifyType): boolean {
+	return type !== "warning";
+}
+
 /**
  * Options for InteractiveMode initialization.
  */
@@ -1834,10 +1840,11 @@ export class InteractiveMode {
 	 * Show a notification for extensions.
 	 */
 	private showExtensionNotify(message: string, type?: "info" | "warning" | "error" | "success"): void {
+		if (!shouldRenderExtensionNotifyInChat(type)) {
+			return;
+		}
 		if (type === "error") {
 			this.showError(message);
-		} else if (type === "warning") {
-			this.showWarning(message);
 		} else if (type === "success") {
 			this.showSuccess(message);
 		} else {

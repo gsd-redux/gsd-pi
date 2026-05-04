@@ -22,6 +22,7 @@ import { logWarning as safetyLogWarning } from "../workflow-logger.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
 import { initNotificationWidget } from "../notification-widget.js";
+import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { extractSubagentAgentClasses } from "./subagent-input.js";
 import { approvalGateIdForUnit, isExplicitApprovalResponse, shouldPauseForUserApprovalQuestion } from "../user-input-boundary.js";
 
@@ -64,6 +65,16 @@ async function applyDisabledModelProviderPolicy(ctx: ExtensionContext): Promise<
   }
 }
 
+export function resolveNotificationStoreBasePath(cwd: string = process.cwd()): string {
+  return resolveWorktreeProjectRoot(cwd);
+}
+
+function initSessionNotifications(ctx: ExtensionContext): void {
+  initNotificationStore(resolveNotificationStoreBasePath());
+  installNotifyInterceptor(ctx);
+  initNotificationWidget(ctx);
+}
+
 async function writeContextModeCompactionSnapshot(basePath: string): Promise<void> {
   try {
     const { loadEffectiveGSDPreferences } = await import("../preferences.js");
@@ -101,9 +112,7 @@ export function registerHooks(
   ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
 ): void {
   pi.on("session_start", async (_event, ctx) => {
-    initNotificationStore(process.cwd());
-    installNotifyInterceptor(ctx);
-    initNotificationWidget(ctx);
+    initSessionNotifications(ctx);
     if (!isAutoActive()) {
       const { initHealthWidget } = await import("../health-widget.js");
       initHealthWidget(ctx);
@@ -156,8 +165,7 @@ export function registerHooks(
   });
 
   pi.on("session_switch", async (_event, ctx) => {
-    initNotificationStore(process.cwd());
-    installNotifyInterceptor(ctx);
+    initSessionNotifications(ctx);
     resetWriteGateState(process.cwd());
     resetToolCallLoopGuard();
     await resetAskUserQuestionsTurnCache();

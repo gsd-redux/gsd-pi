@@ -1,3 +1,4 @@
+// GSD2 complete-milestone tool handler
 /**
  * complete-milestone handler — the core operation behind gsd_complete_milestone.
  *
@@ -57,6 +58,7 @@ export interface CompleteMilestoneResult {
   milestoneId: string;
   summaryPath: string;
   stale?: boolean;
+  duplicate?: boolean;
 }
 
 function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams): string {
@@ -143,6 +145,7 @@ export async function handleCompleteMilestone(
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
+  let duplicateComplete = false;
 
   transaction(() => {
     // State machine preconditions (inside txn for atomicity)
@@ -152,7 +155,7 @@ export async function handleCompleteMilestone(
       return;
     }
     if (isClosedStatus(milestone.status)) {
-      guardError = `milestone ${params.milestoneId} is already complete`;
+      duplicateComplete = true;
       return;
     }
 
@@ -184,6 +187,20 @@ export async function handleCompleteMilestone(
     // All guards passed — perform write
     updateMilestoneStatus(params.milestoneId, 'complete', completedAt);
   });
+
+  if (duplicateComplete) {
+    const milestoneDir = resolveMilestonePath(basePath, params.milestoneId);
+    const summaryPath = milestoneDir
+      ? join(milestoneDir, `${params.milestoneId}-SUMMARY.md`)
+      : join(basePath, ".gsd", "milestones", params.milestoneId, `${params.milestoneId}-SUMMARY.md`);
+
+    return {
+      milestoneId: params.milestoneId,
+      summaryPath,
+      duplicate: true,
+      stale: true,
+    };
+  }
 
   if (guardError) {
     return { error: guardError };
