@@ -5,9 +5,9 @@ import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, open
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
-import { discoverExtensionEntryPaths } from './extension-discovery.js'
-import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegistryEntries } from './extension-registry.js'
-import { resolveBundledResourcesDirFromPackageRoot } from './bundled-resource-path.js'
+import { discoverExtensionEntryPaths } from './extension-runtime/extension-discovery.js'
+import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegistryEntries } from './extension-runtime/extension-registry.js'
+import { resolveBundledResourcesDirFromPackageRoot } from './extension-runtime/bundled-resource-path.js'
 
 type PiCodingAgentModule = typeof import('@gsd/pi-coding-agent')
 
@@ -51,7 +51,7 @@ interface ManagedResourceManifest {
   installedExtensionDirs?: string[]
 }
 
-export { discoverExtensionEntryPaths } from './extension-discovery.js'
+export { discoverExtensionEntryPaths } from './extension-runtime/extension-discovery.js'
 
 export function getExtensionKey(entryPath: string, extensionsDir: string): string {
   const relPath = relative(extensionsDir, entryPath)

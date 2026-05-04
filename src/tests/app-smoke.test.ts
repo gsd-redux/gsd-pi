@@ -97,7 +97,7 @@ test("loader sets all 4 GSD_ env vars and PI_PACKAGE_DIR", async (t) => {
 
   // Verify that the env var is populated at runtime by checking the actual
   // extensions directory has discoverable entry points
-  const { discoverExtensionEntryPaths } = await import("../extension-discovery.ts");
+  const { discoverExtensionEntryPaths } = await import("../extension-runtime/extension-discovery.ts");
   const bundledExtensionsDir = join(projectRoot, existsSync(join(projectRoot, "dist", "resources"))
   ? "dist" : "src", "resources", "extensions");
   const discovered = discoverExtensionEntryPaths(bundledExtensionsDir);

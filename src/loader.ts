@@ -70,10 +70,10 @@ if (firstArg === '--help' || firstArg === '-h') {
 
 import { agentDir, appRoot } from './app-paths.js'
 import { applyRtkProcessEnv } from './rtk-shared.js'
-import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
-import { resolveBundledResourcesDirFromPackageRoot } from './bundled-resource-path.js'
-import { discoverExtensionEntryPaths } from './extension-discovery.js'
-import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'
+import { serializeBundledExtensionPaths } from './extension-runtime/bundled-extension-paths.js'
+import { resolveBundledResourcesDirFromPackageRoot } from './extension-runtime/bundled-resource-path.js'
+import { discoverExtensionEntryPaths } from './extension-runtime/extension-discovery.js'
+import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-runtime/extension-registry.js'
 import { renderLogo } from './logo.js'
 
 // pkg/ is a shim directory: contains gsd's piConfig (package.json) and pi's

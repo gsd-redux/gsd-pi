@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { GSDState } from './resources/extensions/gsd/types.js'
-import { resolveBundledGsdExtensionModule } from './bundled-resource-path.js'
+import { resolveBundledGsdExtensionModule } from './extension-runtime/bundled-resource-path.js'
 
 const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, debug: false })
 const { existsSync } = await import('node:fs')

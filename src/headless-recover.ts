@@ -22,7 +22,7 @@
 import { createJiti } from '@mariozechner/jiti'
 import { fileURLToPath } from 'node:url'
 import { resolveGsdAgentExtensionsDir, shouldUseAgentExtensionsDir } from './headless-query.js'
-import { resolveBundledGsdExtensionModule } from './bundled-resource-path.js'
+import { resolveBundledGsdExtensionModule } from './extension-runtime/bundled-resource-path.js'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 
