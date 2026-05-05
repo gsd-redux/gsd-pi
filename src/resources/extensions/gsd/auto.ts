@@ -420,6 +420,17 @@ export function _synthesizePausedSessionRecoveryForTest(
   return synthesizePausedSessionRecovery(basePath, unitType, unitId, sessionFile);
 }
 
+const DETACHED_AUTO_KEEPALIVE_INTERVAL_MS = 30_000;
+
+function withDetachedAutoKeepalive<T>(run: Promise<T>): Promise<T> {
+  const keepAlive = setInterval(() => {}, DETACHED_AUTO_KEEPALIVE_INTERVAL_MS);
+  return run.finally(() => {
+    clearInterval(keepAlive);
+  });
+}
+
+export const _withDetachedAutoKeepaliveForTest = withDetachedAutoKeepalive;
+
 export function startAutoDetached(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -431,7 +442,7 @@ export function startAutoDetached(
     milestoneLock?: string | null;
   },
 ): void {
-  void startAuto(ctx, pi, base, verboseMode, options).catch((err) => {
+  void withDetachedAutoKeepalive(startAuto(ctx, pi, base, verboseMode, options)).catch((err) => {
     const message = getErrorMessage(err);
     ctx.ui.notify(`Auto-start failed: ${message}`, "error");
     logWarning("engine", `auto start error: ${message}`, { file: "auto.ts" });

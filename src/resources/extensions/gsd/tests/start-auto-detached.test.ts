@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { _withDetachedAutoKeepaliveForTest } from "../auto.ts";
+
 const gsdDir = resolve(import.meta.dirname, "..");
 
 function readGsdFile(relativePath: string): string {
@@ -102,13 +104,55 @@ test("startAutoDetached reports failures asynchronously (#3733)", () => {
     "auto.ts should export startAutoDetached",
   );
   assert.ok(
-    autoSrc.includes("void startAuto(ctx, pi, base, verboseMode, options).catch"),
-    "startAutoDetached should launch startAuto without awaiting it",
+    autoSrc.includes("void withDetachedAutoKeepalive(startAuto(ctx, pi, base, verboseMode, options)).catch"),
+    "startAutoDetached should launch startAuto without awaiting it and keep the process alive",
   );
   assert.ok(
     autoSrc.includes("ctx.ui.notify(`Auto-start failed: ${message}`, \"error\")"),
     "startAutoDetached should surface async startup failures to the user",
   );
+});
+
+test("detached auto-start keeps a ref'ed handle until the run settles", async () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let intervalCreated = false;
+  let intervalCleared = false;
+  let createdHandle: NodeJS.Timeout | undefined;
+  let resolveRun!: () => void;
+  const run = new Promise<void>((resolve) => {
+    resolveRun = resolve;
+  });
+
+  globalThis.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    intervalCreated = true;
+    assert.equal(timeout, 30_000);
+    void handler;
+    void args;
+    createdHandle = originalSetInterval(() => {}, 1_000_000);
+    assert.equal(createdHandle.hasRef(), true, "detached auto keepalive must be ref'ed");
+    return createdHandle;
+  }) as unknown as typeof setInterval;
+
+  globalThis.clearInterval = ((handle?: NodeJS.Timeout | number | string) => {
+    if (handle === createdHandle) intervalCleared = true;
+    return originalClearInterval(handle);
+  }) as unknown as typeof clearInterval;
+
+  try {
+    const heldRun = _withDetachedAutoKeepaliveForTest(run);
+    assert.equal(intervalCreated, true, "keepalive interval should start immediately");
+    assert.equal(intervalCleared, false, "keepalive should remain active while auto-mode is running");
+
+    resolveRun();
+    await heldRun;
+
+    assert.equal(intervalCleared, true, "keepalive interval should clear when auto-mode settles");
+  } finally {
+    if (createdHandle) originalClearInterval(createdHandle);
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 });
 
 test("detached auto-start preserves milestone lock across pause/stop cleanup (#3733)", () => {
