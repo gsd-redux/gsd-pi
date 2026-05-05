@@ -61,6 +61,29 @@ describe("workspace manifest (live project)", () => {
 		}
 	});
 
+	test("groups the upstream Pi runtime boundary separately from GSD runtime packages", () => {
+		const manifest = require(manifestModulePath);
+		const upstreamPi = manifest.getUpstreamPiPackages()
+			.map((p: { packageName: string }) => p.packageName)
+			.sort();
+		assert.deepEqual(upstreamPi, [
+			"@gsd/native",
+			"@gsd/pi-agent-core",
+			"@gsd/pi-ai",
+			"@gsd/pi-coding-agent",
+			"@gsd/pi-tui",
+		]);
+
+		const gsdRuntime = manifest.getGsdRuntimePackages()
+			.map((p: { packageName: string }) => p.packageName)
+			.sort();
+		assert.deepEqual(gsdRuntime, [
+			"@gsd-build/contracts",
+			"@gsd-build/mcp-server",
+			"@gsd-build/rpc-client",
+		]);
+	});
+
 	test("every linkable package's package.json 'name' matches its gsd.scope/gsd.name", () => {
 		const manifest = require(manifestModulePath);
 		for (const pkg of manifest.getLinkablePackages()) {

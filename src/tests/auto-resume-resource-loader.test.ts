@@ -5,23 +5,33 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPiCompatibilityEnv } from "../pi-compat.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const autoTsPath = join(__dirname, "..", "resources", "extensions", "gsd", "auto.ts");
-const loaderTsPath = join(__dirname, "..", "loader.ts");
 const devCliJsPath = join(__dirname, "..", "..", "scripts", "dev-cli.js");
 
-test("loader.ts sets GSD_PKG_ROOT env var", () => {
-  const loaderSrc = readFileSync(loaderTsPath, "utf-8");
-  assert.ok(
-    loaderSrc.includes("process.env.GSD_PKG_ROOT"),
-    "loader.ts must set GSD_PKG_ROOT so deployed extensions can locate package-root modules",
+test("Pi compatibility env sets GSD_PKG_ROOT", () => {
+  const pkgRoot = resolve(__dirname, "..", "..");
+  const env = buildPiCompatibilityEnv({
+    gsdRoot: pkgRoot,
+    agentDir: join(pkgRoot, "agent"),
+    gsdVersion: "0.0.0",
+    invokedBinPath: join(pkgRoot, "dist", "loader.js"),
+  });
+
+  assert.equal(
+    env.GSD_PKG_ROOT,
+    pkgRoot,
+    "compatibility env must set GSD_PKG_ROOT so deployed extensions can locate package-root modules",
   );
 });
 
 test("source dev CLI remains the child-process GSD_BIN_PATH", () => {
-  const loaderSrc = readFileSync(loaderTsPath, "utf-8");
   const devCliSrc = readFileSync(devCliJsPath, "utf-8");
+  const pkgRoot = resolve(__dirname, "..", "..");
+  const sourceLoaderPath = join(pkgRoot, "src", "loader.ts");
+  const devCliPath = join(pkgRoot, "scripts", "dev-cli.js");
 
   assert.ok(
     devCliSrc.includes("GSD_DEV_CLI_PATH: devCliPath") &&
@@ -29,11 +39,18 @@ test("source dev CLI remains the child-process GSD_BIN_PATH", () => {
     devCliSrc.includes("GSD_BIN_PATH: devCliPath"),
     "scripts/dev-cli.js must pass itself as the CLI entrypoint for child GSD processes",
   );
-  assert.ok(
-    loaderSrc.includes("GSD_DEV_CLI_PATH") &&
-    /const\s+explicitCliPath\s*=\s*process\.env\.GSD_CLI_PATH\?\.trim\(\)\s*\|\|\s*process\.env\.GSD_BIN_PATH\?\.trim\(\)/.test(loaderSrc) &&
-    /isSourceLoader\s*&&\s*existsSync\(devCliPath\)\s*\?\s*devCliPath\s*:\s*invokedBinPath/.test(loaderSrc),
-    "loader.ts must preserve the dev CLI wrapper instead of exposing src/loader.ts to subagents",
+  const env = buildPiCompatibilityEnv({
+    gsdRoot: pkgRoot,
+    agentDir: join(pkgRoot, "agent"),
+    gsdVersion: "0.0.0",
+    invokedBinPath: sourceLoaderPath,
+    sourceLoaderPath,
+    devCliPath,
+  });
+  assert.equal(
+    env.GSD_BIN_PATH,
+    devCliPath,
+    "compatibility env must preserve the dev CLI wrapper instead of exposing src/loader.ts to subagents",
   );
 });
 

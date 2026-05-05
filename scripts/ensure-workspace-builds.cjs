@@ -91,14 +91,21 @@ if (require.main === module) {
 
   // Workspace packages that need dist/index.js at runtime.
   // Order matters: dependencies must build before dependents.
-  const WORKSPACE_PACKAGES = [
+  const UPSTREAM_PI_PACKAGES = [
     'native',
     'pi-tui',
     'pi-ai',
     'pi-agent-core',
     'pi-coding-agent',
+  ]
+  const GSD_RUNTIME_PACKAGES = [
+    'contracts',
     'rpc-client',
     'mcp-server',
+  ]
+  const WORKSPACE_PACKAGES = [
+    ...UPSTREAM_PI_PACKAGES,
+    ...GSD_RUNTIME_PACKAGES,
   ]
 
   const stale = detectStalePackages(root, WORKSPACE_PACKAGES)

@@ -41,10 +41,24 @@ function assertContractsBefore(scriptName: string, laterCommand: string): void {
 	);
 }
 
+function assertCommandBefore(scriptName: string, earlierCommand: string, laterCommand: string): void {
+	const script = scripts[scriptName];
+	assert.ok(script, `${scriptName} script must exist`);
+	const earlierIndex = script.indexOf(earlierCommand);
+	const laterIndex = script.indexOf(laterCommand);
+	assert.ok(earlierIndex >= 0, `${scriptName} must include ${earlierCommand}`);
+	assert.ok(laterIndex >= 0, `${scriptName} must include ${laterCommand}`);
+	assert.ok(
+		earlierIndex < laterIndex,
+		`${scriptName} must run ${earlierCommand} before ${laterCommand}`,
+	);
+}
+
 test("pi build scripts compile contracts before pi-coding-agent", () => {
-	assertContractsBefore("build:pi", "npm run build:pi-coding-agent");
+	assert.equal(scripts["build:pi"], "npm run build:upstream-pi");
+	assertContractsBefore("build:upstream-pi", "npm run build:pi-coding-agent");
 	assertContractsBefore("build:pi-coding-agent", "npm run build -w @gsd/pi-coding-agent");
-	assertContractsBefore("gsd:web", "npm run copy-resources");
+	assertCommandBefore("gsd:web", "npm run build:upstream-pi", "npm run copy-resources");
 });
 
 test("contracts build emits dist even when incremental metadata is stale", () => {

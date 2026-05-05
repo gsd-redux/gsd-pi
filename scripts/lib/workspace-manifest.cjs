@@ -78,9 +78,22 @@ function getCorePackages() {
 	return getLinkablePackages().filter((p) => p.scope === '@gsd')
 }
 
+/** Returns packages currently built as the upstream Pi runtime boundary. */
+function getUpstreamPiPackages() {
+	return getLinkablePackages().filter((p) => p.packageName === '@gsd/native' || p.packageName.startsWith('@gsd/pi-'))
+}
+
+/** Returns linkable packages owned by the GSD runtime outside the upstream Pi boundary. */
+function getGsdRuntimePackages() {
+	const upstreamPi = new Set(getUpstreamPiPackages().map((p) => p.packageName))
+	return getLinkablePackages().filter((p) => !upstreamPi.has(p.packageName))
+}
+
 module.exports = {
 	REPO_ROOT,
 	PACKAGES_DIR,
 	getLinkablePackages,
 	getCorePackages,
+	getUpstreamPiPackages,
+	getGsdRuntimePackages,
 }

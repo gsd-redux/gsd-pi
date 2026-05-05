@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // GSD Startup Loader
 import { fileURLToPath } from 'url'
-import { dirname, resolve, join, relative, delimiter } from 'path'
+import { dirname, resolve, join } from 'path'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, symlinkSync, cpSync } from 'fs'
 
 // Fast-path: handle --version/-v and --help/-h before importing any heavy
@@ -72,21 +72,16 @@ import { agentDir, appRoot } from './app-paths.js'
 import { applyRtkProcessEnv } from './rtk-shared.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { resolveBundledResourcesDirFromPackageRoot } from './bundled-resource-path.js'
-import { discoverExtensionEntryPaths } from './extension-discovery.js'
-import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'
+import { loadRegistry, isExtensionEnabled } from './extension-registry.js'
 import { renderLogo } from './logo.js'
+import { buildPiCompatibilityEnv } from './pi-compat.js'
+import { resolvePiExtensionEntries } from './pi-extension-host.js'
 
 // pkg/ is a shim directory: contains gsd's piConfig (package.json) and pi's
 // theme assets (dist/modes/interactive/theme/) without a src/ directory.
 // This allows config.js to:
 //   1. Read piConfig.name → "gsd" (branding)
 //   2. Resolve themes via dist/ (no src/ present → uses dist path)
-const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'pkg')
-
-// MUST be set before any dynamic import of pi SDK fires — this is what config.js
-// reads to determine APP_NAME and CONFIG_DIR_NAME
-process.env.PI_PACKAGE_DIR = pkgDir
-process.env.PI_SKIP_VERSION_CHECK = '1'  // GSD runs its own update check in cli.ts — suppress pi's
 process.title = 'gsd'
 
 // Print branded banner on first launch (before ~/.gsd/ exists).
@@ -106,50 +101,34 @@ if (!existsSync(appRoot)) {
   process.env.GSD_FIRST_RUN_BANNER = '1'
 }
 
-// GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/ instead of ~/.gsd/agent/
-process.env.GSD_CODING_AGENT_DIR = agentDir
-
-// GSD_PKG_ROOT — absolute path to gsd-pi package root. Used by deployed extensions
-// (e.g. auto.ts resume path) to import modules like resource-loader.js that live
-// in the package tree, not in the deployed ~/.gsd/agent/ tree.
-process.env.GSD_PKG_ROOT = gsdRoot
-
 // RTK environment — make ~/.gsd/agent/bin visible to all child-process paths,
 // not just the bash tool, and force-disable RTK telemetry for GSD-managed use.
 applyRtkProcessEnv(process.env)
 
-// NODE_PATH — make gsd's own node_modules available to extensions loaded via jiti.
-// Without this, extensions (e.g. browser-tools) can't resolve dependencies like
-// `playwright` because jiti resolves modules from pi-coding-agent's location, not gsd's.
-// Prepending gsd's node_modules to NODE_PATH fixes this for all extensions.
+const invokedBinPath = process.argv[1]
+const sourceLoaderPath = join(gsdRoot, 'src', 'loader.ts')
+const devCliPath = process.env.GSD_DEV_CLI_PATH?.trim() || join(gsdRoot, 'scripts', 'dev-cli.js')
+const explicitCliPath = process.env.GSD_CLI_PATH?.trim() || process.env.GSD_BIN_PATH?.trim()
+const piCompatibilityEnv = buildPiCompatibilityEnv({
+  gsdRoot,
+  agentDir,
+  gsdVersion,
+  invokedBinPath,
+  sourceLoaderPath,
+  devCliPath,
+  explicitCliPath,
+  existingNodePath: process.env.NODE_PATH,
+})
+for (const [key, value] of Object.entries(piCompatibilityEnv)) {
+  if (value !== undefined) process.env[key] = value
+}
+
 const gsdNodeModules = join(gsdRoot, 'node_modules')
-process.env.NODE_PATH = [gsdNodeModules, process.env.NODE_PATH]
-  .filter(Boolean)
-  .join(delimiter)
 // Force Node to re-evaluate module search paths with the updated NODE_PATH.
 // Must happen synchronously before cli.js imports → extension loading.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { Module } = await import('module');
 (Module as any)._initPaths?.()
-
-// GSD_VERSION — expose package version so extensions can display it
-process.env.GSD_VERSION = gsdVersion
-
-// GSD_BIN_PATH — absolute path to the CLI entrypoint, used by patched
-// subagent/parallel workers to spawn gsd instead of pi when dispatching
-// workflow tasks. In source-dev mode this must remain scripts/dev-cli.js, not
-// src/loader.ts, because child processes need the --import resolve-ts wrapper.
-const invokedBinPath = process.argv[1]
-const sourceLoaderPath = join(gsdRoot, 'src', 'loader.ts')
-const devCliPath = process.env.GSD_DEV_CLI_PATH?.trim() || join(gsdRoot, 'scripts', 'dev-cli.js')
-const explicitCliPath = process.env.GSD_CLI_PATH?.trim() || process.env.GSD_BIN_PATH?.trim()
-const isSourceLoader = invokedBinPath && resolve(invokedBinPath) === sourceLoaderPath
-const rawGsdBinPath = explicitCliPath || (isSourceLoader && existsSync(devCliPath) ? devCliPath : invokedBinPath)
-const resolvedGsdBinPath = rawGsdBinPath ? resolve(rawGsdBinPath) : undefined
-process.env.GSD_BIN_PATH = resolvedGsdBinPath
-if (!process.env.GSD_CLI_PATH) {
-  process.env.GSD_CLI_PATH = resolvedGsdBinPath
-}
 
 // GSD_WORKFLOW_PATH — absolute path to bundled GSD-WORKFLOW.md, used by patched gsd extension
 // when dispatching workflow prompts. Prefers dist/resources/ (stable, set at build time)
@@ -157,20 +136,12 @@ if (!process.env.GSD_CLI_PATH) {
 const resourcesDir = resolveBundledResourcesDirFromPackageRoot(gsdRoot)
 process.env.GSD_WORKFLOW_PATH = join(resourcesDir, 'GSD-WORKFLOW.md')
 
-// GSD_BUNDLED_EXTENSION_PATHS — dynamically discovered bundled extension entry points.
-// Uses the shared discoverExtensionEntryPaths() to scan the bundled resources
-// directory, then remaps discovered paths to agentDir (~/.gsd/agent/extensions/)
-// where initResources() will sync them.
-const bundledExtDir = join(resourcesDir, 'extensions')
-const agentExtDir = join(agentDir, 'extensions')
 const registry = loadRegistry()
-const discoveredExtensionPaths = discoverExtensionEntryPaths(bundledExtDir)
-  .map((entryPath) => join(agentExtDir, relative(bundledExtDir, entryPath)))
-  .filter((entryPath) => {
-    const manifest = readManifestFromEntryPath(entryPath)
-    if (!manifest) return true  // no manifest = always load
-    return isExtensionEnabled(registry, manifest.id)
-  })
+const discoveredExtensionPaths = resolvePiExtensionEntries({
+  resourcesDir,
+  agentDir,
+  isBundledExtensionEnabled: (id) => isExtensionEnabled(registry, id),
+})
 
 process.env.GSD_BUNDLED_EXTENSION_PATHS = serializeBundledExtensionPaths(discoveredExtensionPaths)
 

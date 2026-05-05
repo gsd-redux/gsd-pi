@@ -108,3 +108,9 @@ The entry point must be `index.ts` and must use a default export that receives `
 | Bundled | `src/resources/extensions/` | Ships with GSD-2 (core extensions) |
 
 Extensions are discovered at startup. Global and project-local extensions load alongside bundled ones. See [Manifest Spec](manifest-spec.md) for how load order and tiers work.
+
+---
+
+## Compatibility Promise
+
+GSD extensions should import public types and utilities from `@gsd/pi-coding-agent`, `@gsd/pi-ai`, and `@gsd/pi-tui`. Extensions must not import from `packages/pi-*/src/*` or GSD internal files unless they are bundled extensions maintained in this repository. The Pi extension host boundary lets GSD update upstream Pi packages while preserving the public extension API.
