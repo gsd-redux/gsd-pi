@@ -245,20 +245,6 @@ import {
   type WorktreeResolverDeps,
 } from "./worktree-resolver.js";
 import { reorderForCaching } from "./prompt-ordering.js";
-import { initTokenCounter } from "./token-counter.js";
-
-// Warm the tiktoken encoder at extension startup so context-budget computations
-// can use accurate token counts via countTokensSync without paying the load
-// cost mid-prompt-build. Fire-and-forget — failure falls back to the
-// provider-aware char-ratio estimator already used by getCharsPerToken().
-// Catch rejections explicitly: an unhandled rejection at module-import time
-// can destabilize startup before the engine logger is configured.
-void initTokenCounter().catch((err) => {
-  logWarning(
-    "engine",
-    `token counter warm-up failed: ${err instanceof Error ? err.message : String(err)}`,
-  );
-});
 
 // ─── Session State ─────────────────────────────────────────────────────────
 
@@ -1034,8 +1020,6 @@ export async function stopAuto(
       if (s.workerId) {
         markWorkerStopping(s.workerId);
       }
-      s.workerId = null;
-      s.milestoneLeaseToken = null;
     } catch (e) {
       debugLog("stop-cleanup-coordination", { error: e instanceof Error ? e.message : String(e) });
     }
@@ -2054,10 +2038,6 @@ export async function startAuto(
       : new URL("../../../resource-loader.js", import.meta.url).href;
     const { initResources } = await import(resourceLoaderPath);
     initResources(agentDir);
-    // initResources() uses synchronous fs APIs, so the prompt-template cache
-    // can be primed immediately — no need for the legacy 1s setTimeout deferral.
-    const { primeCache } = await import("./prompt-loader.js");
-    primeCache();
     // Open the project DB before rebuild/derive so resume uses DB-backed
     // state instead of falling back to stale markdown parsing (#2940).
     await openProjectDbIfPresent(s.basePath);
