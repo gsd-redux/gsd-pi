@@ -43,7 +43,7 @@ export function handleRecoverableExtensionProcessError(err: Error): boolean {
   return false;
 }
 
-function installEpipeGuard(): void {
+export function installEpipeGuard(): void {
   if (!process.listeners("uncaughtException").some((listener) => listener.name === "_gsdEpipeGuard")) {
     const _gsdEpipeGuard = (err: Error): void => {
       if (handleRecoverableExtensionProcessError(err)) return;

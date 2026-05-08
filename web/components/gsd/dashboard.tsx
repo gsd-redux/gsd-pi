@@ -33,6 +33,7 @@ import {
 import { getTaskStatus, type ItemStatus } from "@/lib/workspace-status"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { executeWorkflowActionInPowerMode } from "@/lib/workflow-action-execution"
+import { deriveDashboardRtkMetric } from "@/lib/dashboard-metrics"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   CurrentSliceCardSkeleton,
@@ -155,8 +156,6 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const elapsed = projectTotals?.duration ?? auto?.elapsed ?? 0
   const totalCost = projectTotals?.cost ?? auto?.totalCost ?? 0
   const totalTokens = projectTotals?.tokens.total ?? auto?.totalTokens ?? 0
-  const rtkSavings = auto?.rtkSavings ?? null
-  const rtkEnabled = auto?.rtkEnabled === true
 
   const currentSlice = getCurrentSlice(workspace)
   const doneTasks = currentSlice?.tasks.filter((t) => t.done).length ?? 0
@@ -194,12 +193,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
 
-  const rtkValue = isConnecting ? null : formatTokens(rtkSavings?.savedTokens ?? 0)
-  const rtkSubtext = isConnecting
-    ? null
-    : rtkSavings && rtkSavings.commands > 0
-      ? `${Math.round(rtkSavings.savingsPct)}% saved • ${rtkSavings.commands} cmd${rtkSavings.commands === 1 ? "" : "s"}`
-      : "Waiting for shell usage"
+  const rtkMetric = deriveDashboardRtkMetric(auto, isConnecting, formatTokens)
 
   // ─── Project Welcome Gate ───────────────────────────────────────────
   // Show welcome screen for projects that aren't initialized with GSD yet
@@ -306,11 +300,11 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
             value={isConnecting ? null : formatTokens(totalTokens)}
             icon={<Zap className="h-5 w-5" />}
           />
-          {rtkEnabled && (
+          {rtkMetric.enabled && (
             <MetricCard
-              label="RTK Saved"
-              value={rtkValue}
-              subtext={rtkSubtext}
+              label={rtkMetric.label}
+              value={rtkMetric.value}
+              subtext={rtkMetric.subtext}
               icon={<TrendingDown className="h-5 w-5" />}
             />
           )}

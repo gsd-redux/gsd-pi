@@ -72,6 +72,10 @@ import { verifyExpectedArtifact } from "./auto-recovery.js";
 import { createWorkspace, scopeMilestone, type MilestoneScope } from "./workspace.js";
 import { getPendingGate, extractDepthVerificationMilestoneId } from "./bootstrap/write-gate.js";
 
+export function shouldSkipGitBootstrapAfterInit(result: { gitEnabled?: boolean }): boolean {
+  return result.gitEnabled === false;
+}
+
 // ─── Re-exports (preserve public API for existing importers) ────────────────
 export {
   MILESTONE_ID_RE, generateMilestoneSuffix, nextMilestoneId,
@@ -205,6 +209,16 @@ function runPlanV2Gate(
   return "pass";
 }
 
+export const _needsPlanV2GateForTest = needsPlanV2Gate;
+export const _runPlanV2GateForTest = runPlanV2Gate;
+
+export function _roadmapHasParseableSlicesForTest(
+  roadmapContent: string | null | undefined,
+): boolean {
+  if (!roadmapContent) return false;
+  return parseRoadmapSlices(roadmapContent).length > 0;
+}
+
 // ─── Commit Instruction Helpers ──────────────────────────────────────────────
 
 /** Build commit instruction for planning prompts. .gsd/ is managed externally and always gitignored. */
@@ -266,7 +280,7 @@ const USER_DRIVEN_DEEP_SETUP_UNITS = new Set([
   "discuss-requirements",
   "research-decision",
 ]);
-const FOREGROUND_DEEP_SETUP_RULE_NAMES = new Set([
+export const FOREGROUND_DEEP_SETUP_RULE_NAMES = new Set([
   "deep: pre-planning (no workflow prefs) → workflow-preferences",
   "deep: pre-planning (no PROJECT) → discuss-project",
   "deep: pre-planning (no REQUIREMENTS) → discuss-requirements",
@@ -1121,6 +1135,8 @@ async function dispatchWorkflow(
     restoreGsdWorkflowTools(pi, savedTools);
   }
 }
+
+export const _dispatchWorkflowForTest = dispatchWorkflow;
 
 function getStructuredQuestionsAvailability(
   pi: ExtensionAPI,
@@ -2022,7 +2038,7 @@ export async function showSmartEntry(
     // No .gsd/ or zombie .gsd/ — run the project init wizard
     const result = await showProjectInit(ctx, pi, basePath, detection);
     if (!result.completed) return; // User cancelled
-    skipGitBootstrap = result.gitEnabled === false;
+    skipGitBootstrap = shouldSkipGitBootstrapAfterInit(result);
 
     // Init wizard bootstrapped .gsd/ — fall through to the normal flow below
     // which will detect "no milestones" and start the discuss prompt
@@ -2381,8 +2397,7 @@ export async function showSmartEntry(
     if (hasRoadmap) {
       const roadmapContent = await loadFile(roadmapFile!);
       if (roadmapContent) {
-        const parsed = parseRoadmapSlices(roadmapContent);
-        roadmapHasSlices = parsed.length > 0;
+        roadmapHasSlices = _roadmapHasParseableSlicesForTest(roadmapContent);
       }
     }
 

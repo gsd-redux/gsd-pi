@@ -2,9 +2,6 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   ARTIFACT_KEYS,
@@ -17,6 +14,10 @@ import {
   type UnitContextManifest,
 } from "../unit-context-manifest.ts";
 import { ALLOWED_PLANNING_DISPATCH_AGENTS } from "../bootstrap/write-gate.ts";
+import {
+  getRequiredWorkflowToolsForAutoUnit,
+  getRequiredWorkflowToolsForGuidedUnit,
+} from "../workflow-mcp.ts";
 
 // ─── Coverage: every known unit type has a manifest ──────────────────────
 
@@ -41,29 +42,11 @@ test("#4782 phase 1: every UNIT_MANIFESTS entry corresponds to a known unit type
 
 // ─── Coverage: every unitType stringly-typed in auto-dispatch.ts is known ─
 
-test("#4782 phase 1: every unitType string in auto-dispatch.ts has a manifest", () => {
-  // Source-only coverage check — read the dispatcher and enumerate its
-  // unitType literals. This is a CI guard against manifest drift: if a
-  // new dispatch rule is added without a corresponding manifest entry,
-  // this test fails loudly. Read-only check of source text; the cheapest
-  // way to enumerate declared unit types without running the dispatcher.
-  // allow-source-grep: enumerate unitType literals for CI coverage guard
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const dispatchSrc = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
-  const matches = Array.from(dispatchSrc.matchAll(/unitType:\s*"([^"]+)"/g));
-  const seen = new Set<string>();
-  for (const m of matches) {
-    const t = m[1];
-    if (!t) continue;
-    seen.add(t);
+test("#4782 phase 1: workflow tool policy maps are defined for every known unit type", () => {
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    assert.ok(Array.isArray(getRequiredWorkflowToolsForAutoUnit(unitType)));
+    assert.ok(Array.isArray(getRequiredWorkflowToolsForGuidedUnit(unitType)));
   }
-  const missing: string[] = [];
-  for (const t of seen) {
-    if (!UNIT_MANIFESTS[t as keyof typeof UNIT_MANIFESTS]) {
-      missing.push(t);
-    }
-  }
-  assert.deepEqual(missing, [], `unit types dispatched in auto-dispatch.ts but missing from UNIT_MANIFESTS: ${missing.join(", ")}`);
 });
 
 // ─── Shape: every manifest conforms to the schema invariants ──────────────

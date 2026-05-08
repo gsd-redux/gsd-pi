@@ -76,6 +76,18 @@ export function isUserInitiatedAbortMessage(message: string | undefined | null):
   return /\b(?:claude code process aborted by user|request aborted by user|process aborted by user)\b/i.test(message);
 }
 
+export function resolveAgentEndErrorDisplay(
+  rawErrorMsg: string,
+  content: unknown,
+): string {
+  const isUseless = !rawErrorMsg || /^(success|ok|true|error|unknown)$/i.test(rawErrorMsg.trim());
+  if (isUseless && Array.isArray(content)) {
+    const textBlock = content.find((b: any) => b.type === "text" && b.text);
+    if (textBlock) return (textBlock as any).text.slice(0, 300);
+  }
+  return rawErrorMsg;
+}
+
 async function pauseTransientWithBackoff(
   cls: ErrorClass,
   pi: ExtensionAPI,
@@ -215,15 +227,13 @@ export async function handleAgentEnd(
       });
       return;
     }
-    const isUseless = !rawErrorMsg || /^(success|ok|true|error|unknown)$/i.test(rawErrorMsg.trim());
     // #3588: When errorMessage is uninformative, extract the real error from
     // the assistant message text content for display purposes only.
     // Classification still uses rawErrorMsg to avoid false positives from prose.
-    let displayMsg = rawErrorMsg;
-    if (isUseless && "content" in lastMsg && Array.isArray(lastMsg.content)) {
-      const textBlock = lastMsg.content.find((b: any) => b.type === "text" && b.text);
-      if (textBlock) displayMsg = (textBlock as any).text.slice(0, 300);
-    }
+    const displayMsg = resolveAgentEndErrorDisplay(
+      rawErrorMsg,
+      "content" in lastMsg ? lastMsg.content : undefined,
+    );
     const errorDetail = displayMsg ? `: ${displayMsg}` : "";
     const explicitRetryAfterMs = ("retryAfterMs" in lastMsg && typeof lastMsg.retryAfterMs === "number") ? lastMsg.retryAfterMs : undefined;
 

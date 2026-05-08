@@ -1,13 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { resolve } from "node:path"
 
 const { BUILTIN_SLASH_COMMANDS } = await import("../../../packages/pi-coding-agent/src/core/slash-commands.ts")
 const {
   dispatchBrowserSlashCommand,
   getBrowserSlashCommandTerminalNotice,
 } = await import("../../../web/lib/browser-slash-command-dispatch.ts")
+const {
+  GSDWorkspaceStore,
+} = await import("../../../web/lib/gsd-workspace-store.tsx")
 const {
   applyCommandSurfaceActionResult,
   createInitialCommandSurfaceState,
@@ -692,18 +693,16 @@ test("surface action state keeps compaction summaries inspectable", () => {
   assert.equal(succeeded.lastCompaction?.summary, "Summary of the kept work")
 })
 
-test("command-surface session affordances use the shared store action path", () => {
-  const commandSurfacePath = resolve(import.meta.dirname, "../../../web/components/gsd/command-surface.tsx")
-  const commandSurfaceSource = readFileSync(commandSurfacePath, "utf-8")
+test("shared store session actions keep command-surface mutation state inspectable", async () => {
+  const store = new GSDWorkspaceStore("/tmp/project")
 
-  assert.match(
-    commandSurfaceSource,
-    /void switchSessionFromSurface\(selectedResumeTarget\.sessionPath\)/,
-    "command-surface resume apply button should reuse the shared session-switch store action",
-  )
-  assert.match(
-    commandSurfaceSource,
-    /void renameSessionFromSurface\(selectedNameTarget\.sessionPath, selectedNameTarget\.name\)/,
-    "command-surface rename apply button should reuse the shared session-rename store action",
-  )
+  assert.equal(typeof store.switchSessionFromSurface, "function")
+  assert.equal(typeof store.renameSessionFromSurface, "function")
+
+  await store.renameSessionFromSurface("/tmp/sessions/current.jsonl", "   ")
+
+  const state = store.getSnapshot().commandSurface
+  assert.equal(state.renameRequest.pending, false)
+  assert.equal(state.renameRequest.sessionPath, "/tmp/sessions/current.jsonl")
+  assert.equal(state.renameRequest.error, "Session name cannot be empty")
 })

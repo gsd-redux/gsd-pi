@@ -5,31 +5,45 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { AutoSession } from "../auto/session.ts";
+import { postUnitPreVerification } from "../auto-post-unit.ts";
 
-const source = readFileSync(join(import.meta.dirname, "..", "auto-post-unit.ts"), "utf-8");
+test("postUnitPreVerification rebuilds STATE.md after a completed unit", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-post-unit-state-"));
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      "# Roadmap\n\n## Slices\n\n- [ ] **S01: Discussed slice** `risk:low` `depends:[]`\n",
+    );
+    writeFileSync(join(sliceDir, "S01-CONTEXT.md"), "# Slice Context\n\nReady.\n");
 
-test("auto-post-unit imports rebuildState", () => {
-  assert.ok(
-    source.includes('import { rebuildState } from "./doctor.js";'),
-    "auto-post-unit.ts should import rebuildState from doctor.ts",
-  );
-});
+    const s = new AutoSession();
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.currentMilestoneId = "M001";
+    s.currentUnit = { type: "discuss-slice", id: "M001/S01", startedAt: Date.now() };
 
-test("postUnitPreVerification rebuilds STATE.md before worktree sync", () => {
-  const fnStart = source.indexOf("export async function postUnitPreVerification");
-  assert.ok(fnStart > 0, "postUnitPreVerification should exist");
+    const result = await postUnitPreVerification({
+      s,
+      ctx: { ui: { notify() {} } } as any,
+      pi: {} as any,
+      buildSnapshotOpts: () => ({}),
+      lockBase: () => base,
+      stopAuto: async () => {},
+      pauseAuto: async () => {},
+      updateProgressWidget: () => {},
+    }, { skipSettleDelay: true, skipWorktreeSync: true });
 
-  const fnEnd = source.indexOf("export async function postUnitPostVerification", fnStart);
-  const section = source.slice(fnStart, fnEnd > fnStart ? fnEnd : undefined);
-  const rebuildIdx = section.indexOf('await runSafely("postUnit", "state-rebuild"');
-  const syncIdx = section.indexOf('await runSafely("postUnit", "worktree-sync"');
-
-  assert.ok(rebuildIdx > 0, "postUnitPreVerification should rebuild STATE.md after unit completion");
-  assert.ok(syncIdx > 0, "postUnitPreVerification should sync worktree state back to the project root");
-  assert.ok(
-    rebuildIdx < syncIdx,
-    "STATE.md rebuild should happen before worktree sync so synced state is fresh",
-  );
+    assert.equal(result, "continue");
+    const statePath = join(base, ".gsd", "STATE.md");
+    assert.equal(existsSync(statePath), true);
+    assert.ok(readFileSync(statePath, "utf-8").includes("M001"));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });

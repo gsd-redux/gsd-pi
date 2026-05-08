@@ -1073,7 +1073,7 @@ export function createDraftPR(
   milestoneId: string,
   title: string,
   body: string,
-  opts?: { head?: string; base?: string },
+  opts?: { head?: string; base?: string; env?: NodeJS.ProcessEnv },
 ): string | null {
   try {
     const args = [
@@ -1083,7 +1083,12 @@ export function createDraftPR(
     ];
     if (opts?.head) args.push("--head", opts.head);
     if (opts?.base) args.push("--base", opts.base);
-    const result = execFileSync("gh", args, { cwd: basePath, encoding: "utf8", timeout: 30000, env: GIT_NO_PROMPT_ENV });
+    const result = execFileSync("gh", args, {
+      cwd: basePath,
+      encoding: "utf8",
+      timeout: 30000,
+      env: opts?.env ?? GIT_NO_PROMPT_ENV,
+    });
     return result.trim();
   } catch {
     return null;

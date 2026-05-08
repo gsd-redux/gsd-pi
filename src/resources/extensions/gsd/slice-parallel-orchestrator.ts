@@ -84,6 +84,27 @@ const SLICE_ORCHESTRATOR_STATE_FILE = "slice-orchestrator.json";
 const TMP_SUFFIX = ".tmp";
 export const SLICE_WORKER_AUTO_ARGS = ["headless", "--json", "auto"] as const;
 
+export function _resolveSliceParallelMaxWorkersForTest(maxWorkers?: number): number {
+  return maxWorkers ?? 2;
+}
+
+export function _buildSliceWorkerEnvForTest(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  workerToken: string,
+  sourceEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...sourceEnv,
+    GSD_SLICE_LOCK: sliceId,
+    GSD_MILESTONE_LOCK: milestoneId,
+    GSD_PROJECT_ROOT: basePath,
+    GSD_PARALLEL_WORKER: "1",
+    GSD_SLICE_WORKER_TOKEN: workerToken,
+  };
+}
+
 interface PersistedSliceWorker {
   milestoneId: string;
   sliceId: string;
@@ -371,7 +392,7 @@ export async function startSliceParallel(
     return { started: [], errors: [{ sid: "all", error: "Cannot start slice-parallel from within a parallel worker" }] };
   }
 
-  const maxWorkers = opts.maxWorkers ?? 2;
+  const maxWorkers = _resolveSliceParallelMaxWorkersForTest(opts.maxWorkers);
   const budgetCeiling = opts.budgetCeiling;
 
   // Initialize orchestrator state
@@ -624,14 +645,7 @@ function spawnSliceWorker(
   try {
     child = spawn(process.execPath, [binPath, ...SLICE_WORKER_AUTO_ARGS], {
       cwd: worker.worktreePath,
-      env: {
-        ...process.env,
-        GSD_SLICE_LOCK: sliceId,
-        GSD_MILESTONE_LOCK: milestoneId,
-        GSD_PROJECT_ROOT: basePath,
-        GSD_PARALLEL_WORKER: "1",
-        GSD_SLICE_WORKER_TOKEN: worker.workerToken,
-      },
+      env: _buildSliceWorkerEnvForTest(basePath, milestoneId, sliceId, worker.workerToken),
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });

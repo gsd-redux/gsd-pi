@@ -29,7 +29,7 @@ import { computeProgressScore, formatProgressLine } from "./progress-score.js";
 import { runEnvironmentChecks, type EnvironmentCheckResult } from "./doctor-environment.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 
-function unitLabel(type: string): string {
+export function unitLabel(type: string): string {
   switch (type) {
     case "discuss-milestone":
     case "discuss-slice": return "Discuss";

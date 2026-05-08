@@ -1,19 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
+import { FooterComponent } from "../../packages/pi-coding-agent/src/modes/interactive/components/footer.ts";
+import { initTheme } from "../../packages/pi-coding-agent/src/modes/interactive/theme/theme.ts";
 
-const footerSource = readFileSync(
-  join(process.cwd(), "packages", "pi-coding-agent", "src", "modes", "interactive", "components", "footer.ts"),
-  "utf-8",
-);
+initTheme("dark", false);
 
 test("FooterComponent dims the pwd row including right-aligned extension statuses", () => {
-  // Extension statuses now render on the right side of the pwd line instead
-  // of a dedicated row. The whole line is wrapped in a single dim() call.
-  assert.match(
-    footerSource,
-    /theme\.fg\("dim", pwd \+ padding \+ extStatusText\)/,
-    "pwd row with merged extension statuses should be wrapped in the dim footer color",
+  const footer = new FooterComponent(
+    {
+      state: {
+        model: { id: "test-model", provider: "test", contextWindow: 1000 },
+      },
+      sessionManager: {
+        getUsageTotals: () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }),
+        getSessionName: () => undefined,
+      },
+      getContextUsage: () => ({ percent: 12.5, contextWindow: 1000 }),
+      getLastTurnCost: () => 0,
+      modelRegistry: {
+        isUsingOAuth: () => false,
+        getProviderAuthMode: () => "apiKey",
+      },
+    } as any,
+    {
+      getGitBranch: () => "main",
+      getExtensionStatuses: () => new Map([["one", "ready"], ["two", "synced"]]),
+      getAvailableProviderCount: () => 1,
+    } as any,
   );
+
+  const lines = footer.render(100).map((line) => stripVTControlCharacters(line));
+
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /\(main\)/);
+  assert.match(lines[0], /ready synced$/);
+  assert.doesNotMatch(lines[1], /ready synced/);
 });

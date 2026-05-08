@@ -1,27 +1,44 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { autoSession } from "../auto-runtime-state.ts";
+import { _cleanupAfterLoopExitForTest } from "../auto.ts";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const autoSource = readFileSync(join(__dirname, "..", "auto.ts"), "utf-8");
+test.afterEach(() => {
+  autoSession.reset();
+});
 
 test("#3370: cleanupAfterLoopExit preserves paused auto badge after provider pause", () => {
-  const cleanupIdx = autoSource.indexOf("function cleanupAfterLoopExit");
-  assert.ok(cleanupIdx > -1, "auto.ts should define cleanupAfterLoopExit");
+  const statusCalls: unknown[] = [];
+  const widgetCalls: unknown[] = [];
+  autoSession.active = true;
+  autoSession.paused = true;
 
-  const dispatchIdx = autoSource.indexOf("export async function dispatchHookUnit", cleanupIdx);
-  assert.ok(dispatchIdx > cleanupIdx, "cleanupAfterLoopExit body should be bounded by the next export");
+  _cleanupAfterLoopExitForTest({
+    ui: {
+      setStatus: (...args: unknown[]) => statusCalls.push(args),
+      setWidget: (...args: unknown[]) => widgetCalls.push(args),
+    },
+  } as any);
 
-  const cleanupBody = autoSource.slice(cleanupIdx, dispatchIdx);
-  const pausedGuardIdx = cleanupBody.indexOf("if (!s.paused) {");
-  const clearStatusIdx = cleanupBody.indexOf('ctx.ui.setStatus("gsd-auto", undefined);');
+  assert.deepEqual(statusCalls, []);
+  assert.deepEqual(widgetCalls, []);
+  assert.equal(autoSession.active, false);
+  assert.equal(autoSession.paused, true);
+});
 
-  assert.ok(pausedGuardIdx > -1, "loop-exit cleanup must guard UI clearing when auto is paused");
-  assert.ok(clearStatusIdx > pausedGuardIdx, "status clearing must live behind the paused guard");
-  assert.ok(
-    autoSource.includes('ctx?.ui.setStatus("gsd-auto", "paused");'),
-    "pauseAuto must still set the paused badge for transient provider pauses",
-  );
+test("#3370: cleanupAfterLoopExit clears status and widget when auto is not paused", () => {
+  const statusCalls: unknown[] = [];
+  const widgetCalls: unknown[] = [];
+  autoSession.active = true;
+  autoSession.paused = false;
+
+  _cleanupAfterLoopExitForTest({
+    ui: {
+      setStatus: (...args: unknown[]) => statusCalls.push(args),
+      setWidget: (...args: unknown[]) => widgetCalls.push(args),
+    },
+  } as any);
+
+  assert.deepEqual(statusCalls, [["gsd-auto", undefined]]);
+  assert.deepEqual(widgetCalls, [["gsd-progress", undefined]]);
 });

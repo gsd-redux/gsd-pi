@@ -353,6 +353,14 @@ function restoreProjectRootEnv(): void {
   s.projectRootEnvCaptured = false;
 }
 
+export function _captureProjectRootEnvForTest(projectRoot: string): void {
+  captureProjectRootEnv(projectRoot);
+}
+
+export function _restoreProjectRootEnvForTest(): void {
+  restoreProjectRootEnv();
+}
+
 function captureMilestoneLockEnv(milestoneId: string | null): void {
   if (!s.milestoneLockEnvCaptured) {
     s.hadMilestoneLockEnv = Object.prototype.hasOwnProperty.call(process.env, "GSD_MILESTONE_LOCK");
@@ -439,6 +447,16 @@ export function _synthesizePausedSessionRecoveryForTest(
   sessionFile: string,
 ): ReturnType<typeof synthesizeCrashRecovery> {
   return synthesizePausedSessionRecovery(basePath, unitType, unitId, sessionFile);
+}
+
+export function _resolvePausedResumeBasePathForTest(
+  basePath: string,
+  pausedWorktreePath: string | null | undefined,
+  pathExists: (path: string) => boolean = existsSync,
+): string {
+  return pausedWorktreePath && pathExists(pausedWorktreePath)
+    ? pausedWorktreePath
+    : basePath;
 }
 
 const DETACHED_AUTO_KEEPALIVE_INTERVAL_MS = 30_000;
@@ -670,6 +688,30 @@ export function _warnIfWorktreeMissingForTest(
 
 export function isAutoPaused(): boolean {
   return s.paused;
+}
+
+export interface ResumeResourceRefreshDeps {
+  env?: NodeJS.ProcessEnv;
+  importModule?: (specifier: string) => Promise<any>;
+  openProjectDb?: (basePath: string) => Promise<void>;
+}
+
+export async function refreshResumeResourcesAndDb(
+  basePath: string,
+  deps: ResumeResourceRefreshDeps = {},
+): Promise<void> {
+  const env = deps.env ?? process.env;
+  const importModule = deps.importModule ?? ((specifier: string) => import(specifier));
+  const agentDir = env.GSD_CODING_AGENT_DIR || join(gsdHome(), "agent");
+  const pkgRoot = env.GSD_PKG_ROOT;
+  const resourceLoaderPath = pkgRoot
+    ? pathToFileURL(join(pkgRoot, "dist", "resource-loader.js")).href
+    : new URL("../../../resource-loader.js", import.meta.url).href;
+  const { initResources } = await importModule(resourceLoaderPath);
+  initResources(agentDir);
+  const { primeCache } = await importModule("./prompt-loader.js");
+  primeCache();
+  await (deps.openProjectDb ?? openProjectDbIfPresent)(basePath);
 }
 
 export function setActiveEngineId(id: string | null): void {
@@ -966,6 +1008,21 @@ function cleanupAfterLoopExit(ctx: ExtensionContext): void {
   }
 }
 
+export function _cleanupAfterLoopExitForTest(ctx: ExtensionContext): void {
+  cleanupAfterLoopExit(ctx);
+}
+
+export type AutoWorktreeExitAction = "skip" | "merge" | "preserve";
+
+export function _resolveAutoWorktreeExitActionForTest(
+  currentMilestoneId: string | null | undefined,
+  milestoneMergedInPhases: boolean,
+  milestoneComplete: boolean,
+): AutoWorktreeExitAction {
+  if (!currentMilestoneId || milestoneMergedInPhases) return "skip";
+  return milestoneComplete ? "merge" : "preserve";
+}
+
 export async function stopAuto(
   ctx?: ExtensionContext,
   pi?: ExtensionAPI,
@@ -1117,10 +1174,16 @@ export async function stopAuto(
           logWarning("engine", `milestone summary check failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
         }
 
-        if (milestoneComplete) {
+        const exitAction = _resolveAutoWorktreeExitActionForTest(
+          s.currentMilestoneId,
+          s.milestoneMergedInPhases,
+          milestoneComplete,
+        );
+
+        if (exitAction === "merge") {
           // Milestone is complete — merge worktree branch back to main
           resolver.mergeAndExit(s.currentMilestoneId, notifyCtx);
-        } else {
+        } else if (exitAction === "preserve") {
           // Milestone still in progress — preserve branch for later resumption
           resolver.exitMilestone(s.currentMilestoneId, notifyCtx, {
             preserveBranch: true,
@@ -1993,9 +2056,7 @@ export async function startAuto(
         { file: "auto.ts", milestoneId: s.currentMilestoneId ?? "" },
       );
     }
-    if (resumeWorktreePath && existsSync(resumeWorktreePath)) {
-      s.basePath = resumeWorktreePath;
-    }
+    s.basePath = _resolvePausedResumeBasePathForTest(base, resumeWorktreePath);
     // Rebuild scope now that s.basePath reflects the actual worktree (or project root).
     rebuildScope(s.basePath, s.currentMilestoneId);
     // Ensure the workflow-logger audit log is pinned to the project root
@@ -2047,20 +2108,7 @@ export async function startAuto(
     // tree; deployed extensions live at ~/.gsd/agent/extensions/gsd/ where the
     // relative path resolves to ~/.gsd/agent/resource-loader.js which doesn't exist.
     // Using GSD_PKG_ROOT constructs a correct absolute path in both contexts (#3949).
-    const agentDir = process.env.GSD_CODING_AGENT_DIR || join(gsdHome(), "agent");
-    const pkgRoot = process.env.GSD_PKG_ROOT;
-    const resourceLoaderPath = pkgRoot
-      ? pathToFileURL(join(pkgRoot, "dist", "resource-loader.js")).href
-      : new URL("../../../resource-loader.js", import.meta.url).href;
-    const { initResources } = await import(resourceLoaderPath);
-    initResources(agentDir);
-    // initResources() uses synchronous fs APIs, so the prompt-template cache
-    // can be primed immediately — no need for the legacy 1s setTimeout deferral.
-    const { primeCache } = await import("./prompt-loader.js");
-    primeCache();
-    // Open the project DB before rebuild/derive so resume uses DB-backed
-    // state instead of falling back to stale markdown parsing (#2940).
-    await openProjectDbIfPresent(s.basePath);
+    await refreshResumeResourcesAndDb(s.basePath);
     try {
       await rebuildState(s.basePath);
       pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, state: await deriveState(s.basePath) });

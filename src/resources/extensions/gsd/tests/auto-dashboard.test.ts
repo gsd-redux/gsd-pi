@@ -26,6 +26,9 @@ import {
   formatRuntimeHealthSignal,
   shouldRenderRoadmapProgress,
 } from "../auto-dashboard.ts";
+import { getAutoDashboardData } from "../auto.ts";
+import { autoSession } from "../auto-runtime-state.ts";
+import { formatRtkSavingsLabel } from "../../shared/rtk-session-stats.ts";
 import {
   openDatabase,
   closeDatabase,
@@ -33,9 +36,6 @@ import {
   insertSlice,
   insertTask,
 } from "../gsd-db.ts";
-
-const autoSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto.ts"), "utf-8");
-const dashboardSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto-dashboard.ts"), "utf-8");
 
 function makeTempDir(prefix: string): string {
   return join(
@@ -253,14 +253,40 @@ test("formatAutoElapsed returns empty string for negative autoStartTime", () => 
 });
 
 test("getAutoDashboardData returns RTK savings in the dashboard payload", () => {
-  assert.match(autoSource, /const rtkSavings = sessionId && s\.basePath/);
-  assert.match(autoSource, /rtkSavings,/);
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = makeTempDir("rtk-dashboard");
+  autoSession.cmdCtx = {
+    sessionManager: { getSessionId: () => "session-1" },
+  } as any;
+  try {
+    const data = getAutoDashboardData();
+    assert.equal(Object.hasOwn(data, "rtkSavings"), true);
+    assert.equal(
+      data.rtkSavings === null || typeof data.rtkSavings === "object",
+      true,
+    );
+  } finally {
+    cleanup(autoSession.basePath);
+    autoSession.reset();
+  }
 });
 
-test("auto progress widget renders RTK savings under the footer stats line", () => {
-  assert.match(dashboardSource, /formatRtkSavingsLabel/);
-  assert.match(dashboardSource, /getRtkSessionSavings\(accessors\.getBasePath\(\), sessionId\)/);
-  assert.match(dashboardSource, /lines\.push\(rightAlign\("", theme\.fg\("dim", cachedRtkLabel\), width\)\);/);
+test("RTK savings label formats the dashboard footer text", () => {
+  assert.equal(formatRtkSavingsLabel(null), null);
+  assert.equal(
+    formatRtkSavingsLabel({
+      commands: 2,
+      inputTokens: 10_000,
+      outputTokens: 1_000,
+      savedTokens: 2_500,
+      savingsPct: 25,
+      totalTimeMs: 100,
+      avgTimeMs: 50,
+      updatedAt: new Date(0).toISOString(),
+    }),
+    "rtk: 2.5k saved (25%)",
+  );
 });
 
 test("updateProgressWidget refreshes slice progress cache immediately", (t) => {

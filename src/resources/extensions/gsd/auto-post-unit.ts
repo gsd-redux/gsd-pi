@@ -134,6 +134,26 @@ function enqueueSidecar(
   if (notification) ctx.ui.notify(notification, "info");
   return "continue";
 }
+
+export function _shouldDispatchTriageForTest(
+  state: Pick<AutoSession, "stepMode" | "currentUnit">,
+): boolean {
+  return !state.stepMode &&
+    !!state.currentUnit &&
+    !state.currentUnit.type.startsWith("hook/") &&
+    state.currentUnit.type !== "triage-captures" &&
+    state.currentUnit.type !== "quick-task";
+}
+
+export function _shouldDispatchQuickTaskForTest(
+  state: Pick<AutoSession, "stepMode" | "currentUnit" | "pendingQuickTasks">,
+): boolean {
+  return !state.stepMode &&
+    state.pendingQuickTasks.length > 0 &&
+    !!state.currentUnit &&
+    state.currentUnit.type !== "quick-task";
+}
+
 /** Unit types that only touch `.gsd/` internal state files (no code changes).
  *  Auto-commit is skipped for these — their state files are picked up by the
  *  next actual task commit via `smartStage()`. */
@@ -276,7 +296,7 @@ export function detectRogueFileWrites(
  * in auto-verification.ts. Exceeding this limit pauses auto-mode instead of
  * looping indefinitely (#2007).
  */
-const MAX_ARTIFACT_VERIFICATION_RETRIES = 3;
+export const MAX_ARTIFACT_VERIFICATION_RETRIES = 3;
 
 export const STEP_COMPLETE_FALLBACK_MESSAGE =
   "Step complete. Run /clear, then /gsd to continue (or /gsd auto to run continuously).";
@@ -1487,13 +1507,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   }
 
   // ── Triage check ──
-  if (
-    !s.stepMode &&
-    s.currentUnit &&
-    !s.currentUnit.type.startsWith("hook/") &&
-    s.currentUnit.type !== "triage-captures" &&
-    s.currentUnit.type !== "quick-task"
-  ) {
+  if (_shouldDispatchTriageForTest(s)) {
     try {
       if (hasPendingCaptures(s.basePath)) {
         const pending = loadPendingCaptures(s.basePath);
@@ -1541,12 +1555,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   }
 
   // ── Quick-task dispatch ──
-  if (
-    !s.stepMode &&
-    s.pendingQuickTasks.length > 0 &&
-    s.currentUnit &&
-    s.currentUnit.type !== "quick-task"
-  ) {
+  if (_shouldDispatchQuickTaskForTest(s)) {
     try {
       const capture = s.pendingQuickTasks.shift()!;
       const { buildQuickTaskPrompt } = await import("./triage-resolution.js");

@@ -1,58 +1,76 @@
 /**
  * dispatch-complete-milestone-guard.test.ts — #4324
- *
- * Verify that the completing-milestone dispatch rule has a defense-in-depth
- * DB status guard. When the DB marks a milestone as closed, the rule must
- * return skip instead of dispatching a redundant complete-milestone unit.
- * This prevents silent data loss when the legacy filesystem state-derivation
- * path produces a stale completing-milestone phase.
  */
 
-import { describe, test } from "node:test";
+import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const sourceFile = join(__dirname, "..", "auto-dispatch.ts");
+import { DISPATCH_RULES, type DispatchContext } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
+
+function makeBase(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-complete-dispatch-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "milestones", "M001", "ROADMAP.md"), "# M001\n\n## Slices\n\n- [x] **S01**: Done\n");
+  writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "SUMMARY.md"), "# Summary\n");
+  writeFileSync(join(base, "implementation.txt"), "done\n");
+  return base;
+}
+
+function buildDispatchCtx(basePath: string): DispatchContext {
+  return {
+    basePath,
+    mid: "M001",
+    midTitle: "Milestone One",
+    state: {
+      activeMilestone: { id: "M001", title: "Milestone One" },
+      activeSlice: null,
+      activeTask: null,
+      phase: "completing-milestone",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [{ id: "M001", title: "Milestone One", status: "active" }],
+      requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+      progress: { milestones: { done: 0, total: 1 } },
+    },
+    prefs: undefined,
+  };
+}
 
 describe("completing-milestone dispatch guard (#4324)", () => {
-  const source = readFileSync(sourceFile, "utf-8");
+  let base = "";
+  const rule = DISPATCH_RULES.find((candidate) => candidate.name === "completing-milestone → complete-milestone");
+  assert.ok(rule, "complete-milestone dispatch rule should exist");
 
-  test("imports isClosedStatus from status-guards", () => {
-    assert.match(source, /import\s*\{[^}]*isClosedStatus[^}]*\}\s*from\s*["']\.\/status-guards/);
+  afterEach(() => {
+    try { closeDatabase(); } catch { /* ignore */ }
+    if (base) rmSync(base, { recursive: true, force: true });
+    base = "";
   });
 
-  test("checks DB milestone status before dispatching complete-milestone", () => {
-    assert.match(source, /isClosedStatus\(milestone\.status\)/);
+  test("skips complete-milestone dispatch when the DB milestone is already closed", async () => {
+    base = makeBase();
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+
+    const result = await rule.match(buildDispatchCtx(base));
+
+    assert.equal(result?.action, "skip");
   });
 
-  test("isClosedStatus guard appears in the completing-milestone rule", () => {
-    // The completing-milestone phase check and the isClosedStatus guard
-    // must both appear in the same rule, with the guard before dispatch.
-    const phaseCheck = source.indexOf('phase !== "completing-milestone"');
-    assert.ok(phaseCheck > -1, "completing-milestone phase check should exist");
+  test("dispatches complete-milestone when the DB milestone is still active", async () => {
+    base = makeBase();
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "active" });
 
-    // Find the isClosedStatus guard after the phase check
-    const guardIdx = source.indexOf("isClosedStatus(milestone.status)", phaseCheck);
-    assert.ok(guardIdx > -1, "isClosedStatus guard should appear after the phase check");
+    const result = await rule.match(buildDispatchCtx(base));
 
-    // Find the skip return after the guard
-    const skipIdx = source.indexOf('action: "skip"', guardIdx);
-    assert.ok(skipIdx > -1, "skip action should follow the isClosedStatus guard");
-
-    // The skip should come before the dispatch in this rule
-    const dispatchIdx = source.indexOf('unitType: "complete-milestone"', skipIdx);
-    assert.ok(dispatchIdx > -1, "complete-milestone dispatch should exist after the skip guard");
-  });
-
-  test("does not reconcile DB from SUMMARY.md projection (#4658 superseded)", () => {
-    const phaseCheck = source.indexOf('phase !== "completing-milestone"');
-    assert.ok(phaseCheck > -1, "completing-milestone phase check should exist");
-    const ruleTail = source.slice(phaseCheck, source.indexOf('name:', phaseCheck + 1));
-    assert.doesNotMatch(ruleTail, /resolveMilestoneFile\(basePath,\s*mid,\s*"SUMMARY"\)/);
-    assert.doesNotMatch(ruleTail, /classifyMilestoneSummaryContent/);
-    assert.doesNotMatch(ruleTail, /updateMilestoneStatus\(mid,\s*"complete"/);
+    assert.equal(result?.action, "dispatch");
+    assert.equal(result?.unitType, "complete-milestone");
+    assert.equal(result?.unitId, "M001");
   });
 });

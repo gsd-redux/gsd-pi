@@ -85,7 +85,7 @@ function taskGateFieldForId(
  * Normalize a list parameter that may arrive as a string (newline-delimited
  * bullet list from the LLM) into a string array (#3361).
  */
-function normalizeListParam(value: unknown): string[] {
+export function normalizeListParam(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String);
   if (typeof value === "string" && value.trim()) {
     return value.split(/\n/).map(s => s.replace(/^[\s\-*•]+/, "").trim()).filter(Boolean);

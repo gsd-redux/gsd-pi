@@ -126,8 +126,21 @@ const PLAN_V2_GATE_PHASES: ReadonlySet<Phase> = new Set([
   "completing-milestone",
 ]);
 
-function shouldRunPlanV2Gate(phase: Phase): boolean {
+export function shouldRunPlanV2Gate(phase: Phase): boolean {
   return PLAN_V2_GATE_PHASES.has(phase);
+}
+
+export function _shouldProceedWithInvalidRepoClassificationForTest(
+  reason: string | undefined,
+  hasGit: boolean,
+): boolean {
+  return reason === "missing .git" && hasGit;
+}
+
+export function _resolveCurrentUnitStartedAtForTest(
+  currentUnit: { startedAt: number } | null | undefined,
+): number | undefined {
+  return currentUnit?.startedAt;
 }
 
 /**
@@ -1575,7 +1588,7 @@ export async function runUnitPhase(
     if (projectClassification.kind === "invalid-repo") {
       const msg = `Worktree health check failed: ${s.basePath} classified as invalid-repo (${projectClassification.reason}) — refusing to dispatch ${unitType} ${unitId}`;
       debugLog("runUnitPhase", { phase: "worktree-health-invalid-repo", basePath: s.basePath, classification: projectClassification });
-      if (projectClassification.reason === "missing .git" && hasGit) {
+      if (_shouldProceedWithInvalidRepoClassificationForTest(projectClassification.reason, hasGit)) {
         ctx.ui.notify(
           `Warning: ${s.basePath} project classification could not confirm .git; assuming it has no project content yet — proceeding as greenfield project because worktree health reported .git present`,
           "warning",
@@ -2090,7 +2103,7 @@ export async function runUnitPhase(
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
       const lastUnit = [...currentLedger.units].reverse().find(
-        (u: { type: string; id: string; startedAt: number; toolCalls: number }) => u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit?.startedAt,
+        (u: { type: string; id: string; startedAt: number; toolCalls: number }) => u.type === unitType && u.id === unitId && u.startedAt === _resolveCurrentUnitStartedAtForTest(s.currentUnit),
       );
       if (lastUnit && lastUnit.toolCalls === 0) {
         if (USER_DRIVEN_DEEP_UNITS.has(unitType) && isAwaitingUserInput(s.lastUnitAgentEndMessages ?? undefined)) {
@@ -2112,7 +2125,7 @@ export async function runUnitPhase(
           );
           // Fall through to next iteration where dispatch will re-derive
           // and re-dispatch this unit.
-          return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
+          return { action: "next", data: { unitStartedAt: _resolveCurrentUnitStartedAtForTest(s.currentUnit), requestDispatchedAt: unitResult.requestDispatchedAt } };
         }
       }
     }
@@ -2177,7 +2190,7 @@ export async function runUnitPhase(
     s.checkpointSha = null;
   }
 
-  return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
+  return { action: "next", data: { unitStartedAt: _resolveCurrentUnitStartedAtForTest(s.currentUnit), requestDispatchedAt: unitResult.requestDispatchedAt } };
 }
 
 // ─── runFinalize ──────────────────────────────────────────────────────────────

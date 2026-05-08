@@ -30,6 +30,10 @@ interface InitWizardResult {
   gitEnabled?: boolean;
 }
 
+export function shouldWriteGitFiles(gitEnabled: boolean): boolean {
+  return gitEnabled;
+}
+
 interface ProjectPreferences {
   mode: "solo" | "team";
   gitIsolation: "worktree" | "branch" | "none";
@@ -299,7 +303,7 @@ export async function showProjectInit(
 
   // Ensure .gitignore only when git is active. A user who selected "Skip"
   // should not have git initialized or git-related files mutated later.
-  if (gitEnabled) {
+  if (shouldWriteGitFiles(gitEnabled)) {
     ensureGitignore(basePath);
     untrackRuntimeFiles(basePath);
   }
