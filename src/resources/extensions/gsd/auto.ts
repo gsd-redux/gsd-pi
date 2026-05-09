@@ -1600,6 +1600,7 @@ function buildLifecycle(): WorktreeLifecycle {
   return new WorktreeLifecycle(
     s,
     buildResolverDeps() as unknown as WorktreeLifecycleDeps,
+    () => buildResolver(),
   );
 }
 

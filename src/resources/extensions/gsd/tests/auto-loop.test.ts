@@ -747,6 +747,14 @@ function makeMockDeps(
       mergeAndExit: () => {},
       mergeAndEnterNext: () => {},
     } as any,
+    lifecycle: {
+      enterMilestone: () => ({ ok: true, mode: "worktree", path: "/tmp/project" }),
+      exitMilestone: (_mid: string, opts: { merge: boolean }) => ({
+        ok: true,
+        merged: opts.merge,
+        codeFilesChanged: false,
+      }),
+    } as any,
     postUnitPreVerification: async () => {
       callLog.push("postUnitPreVerification");
       return "continue" as const;
@@ -986,6 +994,15 @@ test("autoLoop marks transition merge complete before postflight recovery stop",
         mergeCalls += 1;
       },
       mergeAndEnterNext: () => {},
+    } as any,
+    lifecycle: {
+      enterMilestone: () => {
+        assert.fail("must not enter the next milestone after postflight recovery fails");
+      },
+      exitMilestone: (_mid: string, opts: { merge: boolean }) => {
+        if (opts.merge) mergeCalls += 1;
+        return { ok: true, merged: opts.merge, codeFilesChanged: false };
+      },
     } as any,
     stopAuto: async (_ctx, _pi, reason) => {
       deps.callLog.push("stopAuto");
