@@ -116,11 +116,6 @@ export interface LoopDeps {
   pruneQueueOrder: (basePath: string, pendingIds: string[]) => void;
   isInAutoWorktree: (basePath: string) => boolean;
   shouldUseWorktreeIsolation: () => boolean;
-  mergeMilestoneToMain: (
-    basePath: string,
-    milestoneId: string,
-    roadmapContent: string,
-  ) => { pushed: boolean; codeFilesChanged: boolean };
   teardownAutoWorktree: (basePath: string, milestoneId: string) => void;
   createAutoWorktree: (basePath: string, milestoneId: string) => string;
   captureIntegrationBranch: (

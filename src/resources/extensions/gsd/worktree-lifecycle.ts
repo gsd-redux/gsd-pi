@@ -98,6 +98,16 @@ export interface WorktreeLifecycleDeps {
     milestoneId: string,
     opts?: { preserveBranch?: boolean },
   ) => void;
+  /**
+   * Inner squash-merge primitive (`auto-worktree.ts:mergeMilestoneToMain`).
+   *
+   * **Module-internal seam — do not construct your own.** Only the wiring
+   * factory `auto.ts:buildWorktreeLifecycleDeps()` is permitted to populate
+   * this field. The primitive is `@internal` (ADR-016 phase 2 / A3, issue
+   * #5619); production callers reach the merge body through
+   * `mergeMilestoneStandalone` or `WorktreeLifecycle.exitMilestone`, never
+   * by calling this dep directly.
+   */
   mergeMilestoneToMain: (
     basePath: string,
     milestoneId: string,

@@ -1502,6 +1502,14 @@ function autoCommitDirtyState(cwd: string): boolean {
  * On merge conflict: throws MergeConflictError.
  * On "nothing to commit" after squash: safe only if milestone work is already
  * on the integration branch.  Throws if unanchored code changes would be lost.
+ *
+ * @internal **Do not call directly.** This is the inner squash-merge primitive
+ * for the Worktree Lifecycle Module (ADR-016 phase 2 / A3, issue #5619).
+ * Production callers must go through `WorktreeLifecycle.mergeMilestoneStandalone`
+ * or `WorktreeLifecycle.exitMilestone({ merge: true })`. The export keyword
+ * is preserved only so `auto.ts:buildWorktreeLifecycleDeps()` can wire this
+ * function through the Module's deps seam — that is the construction of the
+ * seam, not a bypass.
  */
 export function mergeMilestoneToMain(
   originalBasePath_: string,
