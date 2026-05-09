@@ -237,6 +237,10 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
       mergeAndExit: () => {},
       mergeAndEnterNext: () => {},
     } as any,
+    lifecycle: {
+      enterMilestone: () => ({ ok: true }),
+      exitMilestone: () => ({ ok: true, merged: true, codeFilesChanged: false }),
+    } as any,
     postUnitPreVerification: async () => "continue" as const,
     runPostUnitVerification: async () => "continue" as const,
     postUnitPostVerification: async () => "continue" as const,

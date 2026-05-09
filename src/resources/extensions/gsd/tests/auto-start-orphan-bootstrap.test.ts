@@ -105,6 +105,7 @@ test("bootstrap aborts before starting next milestone when completed orphan merg
             throw new Error("synthetic merge failure");
           },
         }) as any,
+        buildLifecycle: () => ({ enterMilestone: () => ({ ok: true }) }) as any,
       },
       {
         classification: "none",
