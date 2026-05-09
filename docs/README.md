@@ -30,6 +30,7 @@ Simplified Chinese translation: [`zh-CN/`](./zh-CN/).
 | [Troubleshooting](./user-docs/troubleshooting.md) | Common issues, `/gsd doctor` (real-time visibility v2.40), `/gsd forensics` (full debugger v2.40), and recovery procedures |
 | [Web Interface](./user-docs/web-interface.md) | Browser-based project management with `gsd --web` (v2.41) |
 | [VS Code Extension](../vscode-extension/README.md) | Chat participant, sidebar dashboard, and RPC integration for VS Code |
+| [Release Notes](../CHANGELOG.md) | Current v2.81 release notes and full version history |
 
 ## Architecture & Internals
 
