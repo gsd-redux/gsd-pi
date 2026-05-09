@@ -385,11 +385,19 @@ function rebuildGitService(
  * without round-tripping through callers.
  */
 export class WorktreeLifecycle {
+  private readonly s: AutoSession;
+  private readonly deps: WorktreeLifecycleDeps;
+  private readonly resolverFactory?: () => WorktreeResolver;
+
   constructor(
-    private readonly s: AutoSession,
-    private readonly deps: WorktreeLifecycleDeps,
-    private readonly resolverFactory?: () => WorktreeResolver,
-  ) {}
+    s: AutoSession,
+    deps: WorktreeLifecycleDeps,
+    resolverFactory?: () => WorktreeResolver,
+  ) {
+    this.s = s;
+    this.deps = deps;
+    this.resolverFactory = resolverFactory;
+  }
 
   /**
    * Enter or create the auto-worktree for `milestoneId`. Idempotent if
