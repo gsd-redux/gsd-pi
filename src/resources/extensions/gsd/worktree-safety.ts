@@ -19,7 +19,8 @@ export type WorktreeSafetyFailureKind =
   | "worktree-git-marker-not-file"
   | "worktree-unregistered"
   | "branch-mismatch"
-  | "lease-lost";
+  | "lease-lost"
+  | "empty-worktree-with-project-content";
 
 export type WorktreeSafetyResult =
   | {
@@ -51,6 +52,7 @@ export interface WorktreeSafetyInput {
   unitRoot: string;
   milestoneId?: string | null;
   expectedBranch?: string | null;
+  emptyWorktreeWithProjectContent?: boolean;
   lease?: {
     required: boolean;
     held: boolean;
@@ -188,6 +190,15 @@ export function createWorktreeSafetyModule(
           `Worktree root ${unitRoot} is not registered with git worktree list.`,
           "Recreate or re-register the milestone worktree before dispatching the source-writing Unit.",
           { unitRoot },
+        );
+      }
+
+      if (input.emptyWorktreeWithProjectContent) {
+        return failure(
+          "empty-worktree-with-project-content",
+          `Worktree root ${unitRoot} has no project content, but the project root does.`,
+          "Resolve untracked project-root content or recreate the worktree so source writes stay isolated.",
+          { unitRoot, projectRoot },
         );
       }
 

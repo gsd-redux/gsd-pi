@@ -6,8 +6,25 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
 
 import { createWorktreeSafetyModule } from "../worktree-safety.ts";
+import { createWorktree, worktreePath } from "../worktree-manager.ts";
+
+function run(command: string, cwd: string): string {
+  return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+}
+
+function makeBaseRepo(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-wt-safety-repo-"));
+  run("git init -b main", base);
+  run('git config user.name "Test User"', base);
+  run('git config user.email "test@example.com"', base);
+  writeFileSync(join(base, "README.md"), "# Test Project\n", "utf-8");
+  run("git add .", base);
+  run('git commit -m "chore: init"', base);
+  return base;
+}
 
 describe("Worktree Safety module", () => {
   let root: string;
@@ -145,5 +162,47 @@ describe("Worktree Safety module", () => {
     assert.equal(result.ok, false);
     assert.equal(result.kind, "branch-mismatch");
     assert.equal(result.details?.branch, "feature/unexpected");
+  });
+
+  test("rejects an empty worktree when the project root has content", () => {
+    const safety = createWorktreeSafetyModule({
+      existsSync: () => true,
+      lstatSync: () => ({ isFile: () => true }),
+      listRegisteredWorktrees: () => [{ path: unitRoot, branch: "milestone/M001" }],
+    });
+
+    const result = safety.validateUnitRoot({
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      writeScope: "source-writing",
+      projectRoot,
+      unitRoot,
+      milestoneId: "M001",
+      emptyWorktreeWithProjectContent: true,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.kind, "empty-worktree-with-project-content");
+  });
+
+  test("default adapter proves registered worktree and current branch", (t) => {
+    const base = makeBaseRepo();
+    t.after(() => rmSync(base, { recursive: true, force: true }));
+    createWorktree(base, "M001", { branch: "milestone/M001" });
+
+    const safety = createWorktreeSafetyModule();
+    const result = safety.validateUnitRoot({
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      writeScope: "source-writing",
+      projectRoot: base,
+      unitRoot: worktreePath(base, "M001"),
+      milestoneId: "M001",
+      expectedBranch: "milestone/M001",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.kind, "safe");
+    assert.equal(result.branch, "milestone/M001");
   });
 });

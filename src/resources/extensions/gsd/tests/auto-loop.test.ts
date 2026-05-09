@@ -1,6 +1,6 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -2694,7 +2694,7 @@ test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2
 
 // ─── Worktree health check (#1833) ────────────────────────────────────────
 
-test("autoLoop stops when worktree has no .git for execute-task (#1833)", async () => {
+test("autoLoop stops when Worktree Safety finds no .git marker for execute-task (#1833)", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2705,7 +2705,16 @@ test("autoLoop stops when worktree has no .git for execute-task (#1833)", async 
   const notifications: string[] = [];
   ctx.ui.notify = (msg: string) => { notifications.push(msg); };
 
-  const s = makeLoopSession({ basePath: "/tmp/broken-worktree" });
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-loop-"));
+  const worktreeRoot = join(projectRoot, ".gsd", "worktrees", "M001");
+  mkdirSync(worktreeRoot, { recursive: true });
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+
+  const s = makeLoopSession({
+    basePath: worktreeRoot,
+    originalBasePath: projectRoot,
+    canonicalProjectRoot: projectRoot,
+  });
 
   const deps = makeMockDeps({
     deriveState: async () => {
@@ -2719,8 +2728,7 @@ test("autoLoop stops when worktree has no .git for execute-task (#1833)", async 
         blockers: [],
       } as any;
     },
-    // .git does not exist in the broken worktree
-    existsSync: (p: string) => !p.endsWith(".git"),
+    getIsolationMode: () => "worktree",
   });
 
   await autoLoop(ctx, pi, s, deps);
@@ -2730,15 +2738,15 @@ test("autoLoop stops when worktree has no .git for execute-task (#1833)", async 
     "should stop auto-mode when worktree is invalid",
   );
   const healthNotification = notifications.find(
-    (n) => n.includes("Worktree health check failed") && n.includes("no .git"),
+    (n) => n.includes("Worktree Safety failed") && n.includes("worktree-git-marker-missing"),
   );
   assert.ok(
     healthNotification,
-    "should notify about missing .git in worktree",
+    "should notify about missing worktree .git marker",
   );
 });
 
-test("dispatch health check wins before stuck detection for execute-task without .git", async () => {
+test("dispatch Worktree Safety wins before stuck detection for execute-task without .git", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2746,9 +2754,18 @@ test("dispatch health check wins before stuck detection for execute-task without
   const notifications: string[] = [];
   ctx.ui.notify = (msg: string) => { notifications.push(msg); };
 
-  const s = makeLoopSession({ basePath: "/tmp/broken-worktree" });
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-dispatch-"));
+  const worktreeRoot = join(projectRoot, ".gsd", "worktrees", "M001");
+  mkdirSync(worktreeRoot, { recursive: true });
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+
+  const s = makeLoopSession({
+    basePath: worktreeRoot,
+    originalBasePath: projectRoot,
+    canonicalProjectRoot: projectRoot,
+  });
   const deps = makeMockDeps({
-    existsSync: (p: string) => !p.endsWith(".git"),
+    getIsolationMode: () => "worktree",
   });
   const result = await runDispatch(
     {
@@ -2784,11 +2801,11 @@ test("dispatch health check wins before stuck detection for execute-task without
   );
 
   assert.equal(result.action, "break");
-  assert.equal(result.reason, "worktree-invalid");
-  assert.ok(deps.callLog.includes("stopAuto"), "should stop through worktree health check");
+  assert.equal(result.reason, "worktree-git-marker-missing");
+  assert.ok(deps.callLog.includes("stopAuto"), "should stop through Worktree Safety");
   assert.ok(
-    notifications.some((n) => n.includes("Worktree health check failed") && n.includes("no .git")),
-    "should notify about missing .git",
+    notifications.some((n) => n.includes("Worktree Safety failed") && n.includes("worktree-git-marker-missing")),
+    "should notify about missing worktree .git marker",
   );
   assert.ok(
     !notifications.some((n) => n.includes("Stuck on execute-task")),
