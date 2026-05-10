@@ -1,3 +1,6 @@
+// Project/App: GSD-2
+// File Purpose: Auto-loop execution, dispatch, recovery, and cancellation regression tests.
+
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -19,7 +22,7 @@ import {
 } from "../auto/resolve.js";
 import { runUnit } from "../auto/run-unit.js";
 import { autoLoop } from "../auto/loop.js";
-import { runDispatch } from "../auto/phases.js";
+import { runDispatch, runUnitPhase } from "../auto/phases.js";
 import { detectStuck } from "../auto/detect-stuck.js";
 import type { UnitResult, AgentEndEvent } from "../auto/types.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
@@ -2262,6 +2265,108 @@ test("resolveAgentEndCancelled with errorContext passes it through to resolved p
   assert.equal(resolved.errorContext!.category, "timeout");
   assert.equal(resolved.errorContext!.message, "test timeout");
   assert.equal(resolved.errorContext!.isTransient, true);
+});
+
+test("runUnitPhase pauses ghost completions before closeout and finalize side effects", async (t) => {
+  _resetPendingResolve();
+
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-ghost-completion-"));
+  t.after(() => {
+    _resetPendingResolve();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  let closeoutCalls = 0;
+  let preVerificationCalls = 0;
+  let postVerificationCalls = 0;
+  const journalEvents: any[] = [];
+  const deps = makeMockDeps({
+    closeoutUnit: async () => {
+      closeoutCalls++;
+    },
+    postUnitPreVerification: async () => {
+      preVerificationCalls++;
+      return "continue";
+    },
+    postUnitPostVerification: async () => {
+      postVerificationCalls++;
+      return "continue";
+    },
+    emitJournalEvent: (event: any) => {
+      journalEvents.push(event);
+    },
+  });
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const pi = {
+    ...makeMockPi(),
+    sendMessage: () => {
+      queueMicrotask(() => resolveAgentEnd({ messages: [] }));
+    },
+  } as any;
+  const s = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+  });
+  let seq = 0;
+
+  const result = await runUnitPhase(
+    { ctx, pi, s, deps, prefs: undefined, iteration: 1, flowId: "flow-ghost", nextSeq: () => ++seq },
+    {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "do work",
+      finalPrompt: "do work",
+      pauseAfterUatDispatch: false,
+      state: {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Milestone" },
+        activeSlice: { id: "S01", title: "Slice" },
+        activeTask: { id: "T01", title: "Task" },
+        registry: [{ id: "M001", title: "Milestone", status: "active" }],
+        recentDecisions: [],
+        blockers: [],
+        nextAction: "",
+        progress: { milestones: { done: 0, total: 1 } },
+        requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+      } as any,
+      mid: "M001",
+      midTitle: "Milestone",
+      isRetry: false,
+      previousTier: undefined,
+    },
+    { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+  );
+
+  assert.equal(result.action, "break");
+  assert.equal((result as any).reason, "ghost-completion");
+  assert.equal(deps.callLog.includes("pauseAuto"), true);
+  assert.equal(closeoutCalls, 0);
+  assert.equal(preVerificationCalls, 0);
+  assert.equal(postVerificationCalls, 0);
+  assert.equal(s.currentUnit, null);
+  assert.ok(
+    journalEvents.some((event) =>
+      event.eventType === "unit-end" &&
+      event.data?.status === "cancelled" &&
+      event.data?.errorContext?.message.includes("stale ghost completion")
+    ),
+    "ghost completion should emit a cancelled unit-end",
+  );
 });
 
 test("resolveAgentEndCancelled without args produces no errorContext field", async () => {

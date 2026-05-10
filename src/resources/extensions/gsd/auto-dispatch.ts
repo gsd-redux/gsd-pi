@@ -1,3 +1,6 @@
+// Project/App: GSD-2
+// File Purpose: Declarative auto-mode dispatch rules and dispatch resolver.
+
 /**
  * Auto-mode Dispatch Table — declarative phase → unit mapping.
  *
@@ -1418,8 +1421,19 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "complete → stop",
-    match: async ({ state }) => {
+    match: async ({ state, mid, midTitle, basePath }) => {
       if (state.phase !== "complete") return null;
+      if (mid && isDbAvailable()) {
+        const milestone = getMilestone(mid);
+        if (milestone && !isClosedStatus(milestone.status)) {
+          return {
+            action: "dispatch",
+            unitType: "complete-milestone",
+            unitId: mid,
+            prompt: await buildCompleteMilestonePrompt(mid, midTitle, basePath),
+          };
+        }
+      }
       return {
         action: "stop",
         reason: "All milestones complete.",

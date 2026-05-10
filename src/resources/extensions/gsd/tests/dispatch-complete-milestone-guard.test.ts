@@ -1,3 +1,6 @@
+// Project/App: GSD-2
+// File Purpose: Regression tests for complete-milestone dispatch guards.
+
 /**
  * dispatch-complete-milestone-guard.test.ts — #4324
  */
@@ -72,5 +75,46 @@ describe("completing-milestone dispatch guard (#4324)", () => {
     assert.equal(result?.action, "dispatch");
     assert.equal(result?.unitType, "complete-milestone");
     assert.equal(result?.unitId, "M001");
+  });
+});
+
+describe("complete phase dispatch guard (#5683)", () => {
+  let base = "";
+  const rule = DISPATCH_RULES.find((candidate) => candidate.name === "complete → stop");
+  assert.ok(rule, "complete phase terminal rule should exist");
+
+  afterEach(() => {
+    try { closeDatabase(); } catch { /* ignore */ }
+    if (base) rmSync(base, { recursive: true, force: true });
+    base = "";
+  });
+
+  test("dispatches complete-milestone when derived state is complete but DB milestone is still open", async () => {
+    base = makeBase();
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "in_progress" });
+
+    const ctx = buildDispatchCtx(base);
+    ctx.state.phase = "complete";
+
+    const result = await rule.match(ctx);
+
+    assert.equal(result?.action, "dispatch");
+    assert.equal(result?.unitType, "complete-milestone");
+    assert.equal(result?.unitId, "M001");
+  });
+
+  test("stops when derived state is complete and DB milestone is closed", async () => {
+    base = makeBase();
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+
+    const ctx = buildDispatchCtx(base);
+    ctx.state.phase = "complete";
+
+    const result = await rule.match(ctx);
+
+    assert.equal(result?.action, "stop");
+    assert.equal(result?.reason, "All milestones complete.");
   });
 });

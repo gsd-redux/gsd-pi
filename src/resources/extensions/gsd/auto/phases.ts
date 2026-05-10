@@ -74,6 +74,7 @@ import {
 } from "../workflow-mcp.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { createWorktreeSafetyModule, type WorktreeSafetyResult } from "../worktree-safety.js";
+import { isSuspiciousGhostCompletion } from "../auto-unit-closeout.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
@@ -2005,6 +2006,33 @@ export async function runUnitPhase(
     unitId,
     status: unitResult.status,
   });
+
+  if (
+    unitResult.status === "completed" &&
+    s.currentUnit &&
+    (unitResult.event?.messages?.length ?? 0) === 0 &&
+    isSuspiciousGhostCompletion(ctx, unitResult.requestDispatchedAt ?? s.currentUnit.startedAt)
+  ) {
+    const message =
+      `${unitType} ${unitId} completed without assistant output or tool calls; treating as a stale ghost completion.`;
+    debugLog("autoLoop", {
+      phase: "ghost-completion",
+      iteration: ic.iteration,
+      unitType,
+      unitId,
+      elapsedMs: Date.now() - (unitResult.requestDispatchedAt ?? s.currentUnit.startedAt),
+    });
+    logWarning("engine", message);
+    ctx.ui.notify(`${message} Pausing auto-mode before closeout side effects.`, "warning");
+    await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, {
+      message,
+      category: "unknown",
+      isTransient: true,
+    });
+    s.currentUnit = null;
+    await deps.pauseAuto(ctx, pi);
+    return { action: "break", reason: "ghost-completion" };
+  }
 
   // Now that runUnit has called newSession(), the session file path is correct.
   const sessionFile = deps.getSessionFile(ctx);
