@@ -1,4 +1,5 @@
-// GSD Extension — Plan-slice tool integration tests.
+// Project/App: GSD-2
+// File Purpose: Plan-slice tool integration tests.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -87,7 +88,9 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
     assert.equal(tasks.length, 2);
     assert.equal(tasks[0]?.title, 'Write slice handler');
     assert.equal(tasks[0]?.description, 'Implement the slice planning handler.');
+    assert.equal(tasks[0]?.sequence, 1);
     assert.equal(tasks[1]?.estimate, '30m');
+    assert.equal(tasks[1]?.sequence, 2);
 
     const planPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S02', 'S02-PLAN.md');
     assert.ok(existsSync(planPath), 'slice plan should be rendered to disk');
@@ -244,6 +247,31 @@ test('handlePlanSlice rejects absolute task IO paths outside the active worktree
     assert.ok('error' in result);
     assert.match(result.error, /validation failed: tasks\[0\]\.inputs contains absolute path outside working directory/);
     assert.equal(getSliceTasks('M001', 'S02').length, 0, 'invalid planning IO must not persist tasks');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanSlice rejects absolute paths in task prose outside the active worktree', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    const outsideRoot = join(tmpdir(), 'outside-checkout');
+    const result = await handlePlanSlice({
+      ...validParams(),
+      tasks: [
+        {
+          ...validParams().tasks[0],
+          description: `Run all commands inside ${outsideRoot} before editing files.`,
+        },
+      ],
+    }, base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /validation failed: tasks\[0\]\.description contains absolute path outside working directory/);
+    assert.equal(getSliceTasks('M001', 'S02').length, 0, 'invalid planning prose must not persist tasks');
   } finally {
     cleanup(base);
   }

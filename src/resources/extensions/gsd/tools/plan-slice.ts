@@ -1,3 +1,6 @@
+// Project/App: GSD-2
+// File Purpose: Persists slice planning tasks and renders DB-backed plan artifacts.
+
 import { existsSync, rmSync } from "node:fs";
 import { join, relative } from "node:path";
 import { clearParseCache } from "../files.js";
@@ -24,7 +27,7 @@ import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
-import { validatePlanningPathScope } from "../planning-path-scope.js";
+import { validatePlanningPathScope, validatePlanningTextPathScope } from "../planning-path-scope.js";
 import { checkFilePathConsistency, checkTaskOrdering } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { buildTaskFileName, gsdRoot, resolveTasksDir } from "../paths.js";
@@ -88,6 +91,7 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] {
     const inputs = obj.inputs;
     const expectedOutput = obj.expectedOutput;
     const observabilityImpact = obj.observabilityImpact;
+    const fullPlanMd = obj.fullPlanMd;
 
     if (!isNonEmptyString(taskId)) throw new Error(`tasks[${index}].taskId must be a non-empty string`);
     if (seen.has(taskId)) throw new Error(`tasks[${index}].taskId must be unique`);
@@ -102,6 +106,9 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] {
     if (observabilityImpact !== undefined && !isNonEmptyString(observabilityImpact)) {
       throw new Error(`tasks[${index}].observabilityImpact must be a non-empty string when provided`);
     }
+    if (fullPlanMd !== undefined && typeof fullPlanMd !== "string") {
+      throw new Error(`tasks[${index}].fullPlanMd must be a string when provided`);
+    }
 
     return {
       taskId,
@@ -113,6 +120,7 @@ function validateTasks(value: unknown): PlanSliceTaskInput[] {
       inputs: validatedInputs,
       expectedOutput: validatedExpectedOutput,
       observabilityImpact: typeof observabilityImpact === "string" ? observabilityImpact : "",
+      fullPlanMd: typeof fullPlanMd === "string" ? fullPlanMd : "",
     };
   });
 }
@@ -207,6 +215,18 @@ export async function handlePlanSlice(
     return { error: `validation failed: ${pathScopeError}` };
   }
 
+  const textScopeError = validatePlanningTextPathScope(
+    basePath,
+    params.tasks.flatMap((task, index) => [
+      { field: `tasks[${index}].description`, text: task.description },
+      { field: `tasks[${index}].verify`, text: task.verify },
+      { field: `tasks[${index}].fullPlanMd`, text: task.fullPlanMd ?? "" },
+    ]),
+  );
+  if (textScopeError) {
+    return { error: `validation failed: ${textScopeError}` };
+  }
+
   const pathError = validateTaskPathsBeforePersist(params, basePath);
   if (pathError) {
     return { error: `pre-execution validation failed:\n${pathError}` };
@@ -270,13 +290,14 @@ export async function handlePlanSlice(
         deleteTask(params.milestoneId, params.sliceId, taskId);
       }
 
-      for (const task of params.tasks) {
+      for (const [index, task] of params.tasks.entries()) {
         insertTask({
           id: task.taskId,
           sliceId: params.sliceId,
           milestoneId: params.milestoneId,
           title: task.title,
           status: "pending",
+          sequence: index + 1,
         });
         upsertTaskPlanning(params.milestoneId, params.sliceId, task.taskId, {
           title: task.title,
