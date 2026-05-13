@@ -371,7 +371,7 @@ export function detectRogueFileWrites(
 export const MAX_ARTIFACT_VERIFICATION_RETRIES = 3;
 
 export const STEP_COMPLETE_FALLBACK_MESSAGE =
-  "Step complete. Run /clear, then /gsd to continue (or /gsd auto to run continuously).";
+  "Step complete. Run /clear if you want a clean view, then /gsd next to continue one step (or /gsd auto to run continuously).";
 
 export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string {
   if (nextState.phase === "complete") {
@@ -379,7 +379,7 @@ export function buildStepCompleteMessage(nextState: import("./types.js").GSDStat
   }
   const next = describeNextUnit(nextState);
   return `Step complete. Next: ${next.label}\n`
-    + `Run /clear, then /gsd to continue (or /gsd auto to run continuously).`;
+    + `Run /clear if you want a clean view, then /gsd next to continue one step (or /gsd auto to run continuously).`;
 }
 
 /**
@@ -1731,8 +1731,8 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   }
 
   // Step mode → show wizard instead of dispatch.
-  // Without this notify(), /gsd in step mode finishes a unit and silently
-  // exits the loop, leaving the user with no hint to /clear and /gsd again.
+  // Without this notify(), /gsd next finishes a unit and silently exits the
+  // loop, leaving the user with no next-step command.
   if (s.stepMode) {
     let phaseAfterUnit: string | null = null;
     try {
