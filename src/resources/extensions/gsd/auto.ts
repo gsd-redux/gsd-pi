@@ -1029,6 +1029,7 @@ export async function rerootCommandSession(
 }
 
 export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void> {
+  const preserveStepSurface = s.preserveStepSurfaceAfterLoopExit;
   s.currentUnit = null;
   s.active = false;
   deactivateGSD();
@@ -1051,12 +1052,16 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
   // A transient provider-error pause intentionally leaves the paused badge
   // visible so the user still has a resumable auto-mode signal on screen.
   if (!s.paused) {
-    ctx.ui.setStatus("gsd-auto", undefined);
-    ctx.ui.setWidget("gsd-progress", undefined);
-    if (s.completionStopInProgress) {
-      s.completionStopInProgress = false;
+    if (preserveStepSurface) {
+      s.preserveStepSurfaceAfterLoopExit = false;
+    } else {
+      ctx.ui.setStatus("gsd-auto", undefined);
+      ctx.ui.setWidget("gsd-progress", undefined);
+      if (s.completionStopInProgress) {
+        s.completionStopInProgress = false;
+      }
+      initHealthWidget(ctx);
     }
-    initHealthWidget(ctx);
   }
 
   // ADR-016 phase 3 (#5693): the stop-path basePath restore + chdir routes
@@ -1064,7 +1069,7 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
   // `s.basePath` mutation and the paired `process.chdir` for auto-loop
   // transitions. The verb assigns `s.basePath` before any throwable work, so
   // a thrown error still leaves basePath restored.
-  if (s.originalBasePath) {
+  if (s.originalBasePath && !preserveStepSurface) {
     try {
       buildLifecycle().restoreToProjectRoot();
     } catch (err) {
@@ -1076,7 +1081,7 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
     }
   }
 
-  if (s.originalBasePath && s.cmdCtx) {
+  if (s.originalBasePath && s.cmdCtx && !preserveStepSurface) {
     const result = await rerootCommandSession(s.cmdCtx, s.originalBasePath);
     if (result.status === "cancelled") {
       logWarning("engine", "post-loop session re-root was cancelled", { file: "auto.ts", basePath: s.originalBasePath });

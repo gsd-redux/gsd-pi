@@ -1,3 +1,5 @@
+// Project/App: GSD-2
+// File Purpose: Main auto-mode execution loop.
 /**
  * auto/loop.ts — Main auto-mode execution loop.
  *
@@ -945,11 +947,18 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       const finalizeReason = finalizeResult.action === "break" ? finalizeResult.reason : undefined;
+      const finalizeStatus = finalizeReason === "step-wizard"
+        ? "completed"
+        : finalizeResult.action === "next"
+          ? "completed"
+          : finalizeResult.action === "continue"
+            ? "retry"
+            : "stopped";
       journalReporter.emit("post-unit-finalize-end", {
         iteration,
         unitType: iterData.unitType,
         unitId: iterData.unitId,
-        status: finalizeResult.action === "next" ? "completed" : finalizeResult.action === "continue" ? "retry" : "stopped",
+        status: finalizeStatus,
         action: finalizeResult.action,
         ...(finalizeReason ? { reason: finalizeReason } : {}),
       });
@@ -996,6 +1005,10 @@ export async function autoLoop(
       }) || dispatchSettled;
       completeIteration();
       finishTurn("completed");
+      if (finalizeDecision.action === "complete-and-break") {
+        s.preserveStepSurfaceAfterLoopExit = true;
+        break;
+      }
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
       const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);

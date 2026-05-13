@@ -48,7 +48,8 @@ export type FinalizeDecision =
       action: "retry";
       ledgerErrorSummary: "finalize-retry";
     }
-  | { action: "complete" };
+  | { action: "complete" }
+  | { action: "complete-and-break" };
 
 export type EngineReconcileInput =
   | { outcome: "milestone-complete" }
@@ -278,6 +279,9 @@ export function decideEngineDispatch(input: EngineDispatchInput): EngineDispatch
 export function decideFinalizeResult(input: FinalizeInput): FinalizeDecision {
   if (input.action === "break") {
     const reason = input.reason ?? "unknown";
+    if (reason === "step-wizard") {
+      return { action: "complete-and-break" };
+    }
     return {
       action: "stop",
       failureClass: reason === "git-closeout-failure" ? "git" : "closeout",

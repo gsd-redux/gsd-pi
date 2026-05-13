@@ -1,3 +1,5 @@
+// Project/App: GSD-2
+// File Purpose: Mutable auto-mode session state container.
 /**
  * AutoSession — encapsulates all mutable auto-mode state into a single instance.
  *
@@ -89,6 +91,7 @@ export class AutoSession {
   active = false;
   paused = false;
   completionStopInProgress = false;
+  preserveStepSurfaceAfterLoopExit = false;
   stepMode = false;
   verbose = false;
   activeEngineId: string | null = null;
@@ -289,6 +292,7 @@ export class AutoSession {
     this.active = false;
     this.paused = false;
     this.completionStopInProgress = false;
+    this.preserveStepSurfaceAfterLoopExit = false;
     this.stepMode = false;
     this.verbose = false;
     this.activeEngineId = null;

@@ -165,6 +165,13 @@ test("decideFinalizeResult maps break results to stop decisions", () => {
   );
 });
 
+test("decideFinalizeResult maps step-wizard breaks to completed step exits", () => {
+  assert.deepEqual(
+    decideFinalizeResult({ action: "break", reason: "step-wizard" }),
+    { action: "complete-and-break" },
+  );
+});
+
 test("decideFinalizeResult maps continue and next results", () => {
   assert.deepEqual(
     decideFinalizeResult({ action: "continue" }),

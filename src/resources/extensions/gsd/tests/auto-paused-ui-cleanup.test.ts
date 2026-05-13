@@ -117,6 +117,70 @@ test("cleanupAfterLoopExit clears progress widget after stopAuto reset", async (
   }
 });
 
+test("cleanupAfterLoopExit preserves step-mode surface and worktree session after completed step", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-step-surface-"));
+  const worktree = join(base, ".gsd", "worktrees", "M001");
+  const previousCwd = process.cwd();
+  const statusCalls: unknown[] = [];
+  const widgetCalls: unknown[] = [];
+  const newSessionWorkspaces: string[] = [];
+  let restoreCalls = 0;
+
+  t.mock.method(WorktreeLifecycle.prototype, "restoreToProjectRoot", function () {
+    restoreCalls += 1;
+  });
+
+  mkdirSync(worktree, { recursive: true });
+  process.chdir(worktree);
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.paused = false;
+  autoSession.stepMode = true;
+  autoSession.preserveStepSurfaceAfterLoopExit = true;
+  autoSession.basePath = worktree;
+  autoSession.originalBasePath = base;
+  autoSession.cmdCtx = {
+    newSession: async ({ workspaceRoot }: { workspaceRoot: string }) => {
+      newSessionWorkspaces.push(workspaceRoot);
+      return { cancelled: false };
+    },
+  } as any;
+
+  try {
+    await cleanupAfterLoopExit({
+      hasUI: true,
+      ui: {
+        setStatus: (...args: unknown[]) => statusCalls.push(args),
+        setWidget: (...args: unknown[]) => widgetCalls.push(args),
+        setHeader: () => {},
+        notify: () => {},
+      },
+    } as any);
+
+    assert.deepEqual(statusCalls, [], "step-mode cleanup must leave the NEXT badge visible");
+    assert.equal(
+      widgetCalls.some((args) => Array.isArray(args) && args[0] === "gsd-progress" && args[1] === undefined),
+      false,
+      "step-mode cleanup must not clear the completed step progress surface",
+    );
+    assert.equal(
+      widgetCalls.some((args) => Array.isArray(args) && args[0] === "gsd-health"),
+      false,
+      "step-mode cleanup must not replace the progress surface with idle health",
+    );
+    assert.deepEqual(newSessionWorkspaces, [], "step-mode cleanup must not re-root the visible command session");
+    assert.equal(restoreCalls, 0, "step-mode cleanup must not restore out of the active worktree");
+    assert.equal(autoSession.active, false);
+    assert.equal(autoSession.preserveStepSurfaceAfterLoopExit, false);
+    assert.equal(autoSession.basePath, worktree);
+    assert.equal(realpathSync(process.cwd()), realpathSync(worktree));
+  } finally {
+    autoSession.reset();
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("cleanupAfterLoopExit restores project root through lifecycle and preserves chdir", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-cleanup-lifecycle-"));
   const worktree = join(base, ".gsd", "worktrees", "M001");
