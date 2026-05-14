@@ -44,6 +44,7 @@ import {
   diagnoseExpectedArtifact,
 } from "./auto-artifact-paths.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
+import { hasVerdict } from "./verdict-parser.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { getProjectResearchStatus } from "./project-research-policy.js";
 import { isGsdWorktreePath } from "./worktree-root.js";
@@ -823,6 +824,14 @@ export function verifyExpectedArtifact(
     const validationContent = readFileSync(absPath, "utf-8");
     if (!isValidationTerminal(validationContent)) {
       logWarning("recovery", `verify-fail ${unitType} ${unitId}: validation not terminal (len=${validationContent.length}) at ${absPath}`);
+      return false;
+    }
+  }
+
+  if (unitType === "run-uat") {
+    const assessmentContent = readFileSync(absPath, "utf-8");
+    if (!hasVerdict(assessmentContent)) {
+      logWarning("recovery", `verify-fail ${unitType} ${unitId}: assessment missing verdict at ${absPath}`);
       return false;
     }
   }
