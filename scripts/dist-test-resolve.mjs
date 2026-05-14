@@ -19,15 +19,13 @@ process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK ??= '1';
 
 const GIT_TEST_ENV_DIR = join(tmpdir(), `gsd-test-git-env-${process.pid}`);
 mkdirSync(GIT_TEST_ENV_DIR, { recursive: true });
-process.env.GIT_CONFIG_GLOBAL ??= join(GIT_TEST_ENV_DIR, 'global.gitconfig');
-process.env.GIT_CONFIG_SYSTEM ??= join(GIT_TEST_ENV_DIR, 'system.gitconfig');
-if (process.env.GIT_TEMPLATE_DIR == null) {
-  const gitTemplateDir = join(GIT_TEST_ENV_DIR, 'templates');
-  mkdirSync(join(gitTemplateDir, 'hooks'), { recursive: true });
-  mkdirSync(join(gitTemplateDir, 'info'), { recursive: true });
-  writeFileSync(join(gitTemplateDir, 'info', 'exclude'), '');
-  process.env.GIT_TEMPLATE_DIR = gitTemplateDir;
-}
+process.env.GIT_CONFIG_GLOBAL = join(GIT_TEST_ENV_DIR, 'global.gitconfig');
+process.env.GIT_CONFIG_SYSTEM = join(GIT_TEST_ENV_DIR, 'system.gitconfig');
+const gitTemplateDir = join(GIT_TEST_ENV_DIR, 'templates');
+mkdirSync(join(gitTemplateDir, 'hooks'), { recursive: true });
+mkdirSync(join(gitTemplateDir, 'info'), { recursive: true });
+writeFileSync(join(gitTemplateDir, 'info', 'exclude'), '');
+process.env.GIT_TEMPLATE_DIR = gitTemplateDir;
 
 // dist-test root — everything compiled lands here
 const DIST_TEST = new URL('../dist-test/', import.meta.url).href;
