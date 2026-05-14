@@ -45,7 +45,7 @@ function createMockHost() {
 		toolOutputExpanded: false,
 		hideThinkingBlock: false,
 		isBashMode: false,
-		onInputCallback: undefined,
+		onInputCallback: undefined as ((text: string) => void) | undefined,
 		isInitialized: true,
 		loadingAnimation: undefined,
 		pendingWorkingMessage: undefined,
