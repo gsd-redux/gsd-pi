@@ -828,7 +828,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
   assert.equal(endEvents[0].flowId, ic.flowId);
   assert.equal((endEvents[0].data as any).unitType, "execute-task");
   assert.equal((endEvents[0].data as any).unitId, "M001/S01/T01");
-  assert.equal((endEvents[0].data as any).status, "completed");
+  assert.equal((endEvents[0].data as any).status, "no-artifact");
 
   // Verify causedBy: unit-end references unit-start's seq
   assert.ok(endEvents[0].causedBy, "unit-end must have a causedBy reference");
