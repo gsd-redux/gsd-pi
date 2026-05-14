@@ -145,6 +145,76 @@ test("advance() returns blocked stop when resources are stale", async () => {
   assert.ok(!calls.includes("state.reconcile"));
 });
 
+test("advance() pre-dispatch parity: gate emissions and control-flow action match legacy branches", async () => {
+  type Scenario = {
+    name: string;
+    staleMsg: string | null;
+    gateResult: Awaited<ReturnType<AutoOrchestratorDeps["health"]["preAdvanceGate"]>>;
+    expectedKind: "advanced" | "blocked";
+    expectedAction?: "pause" | "stop";
+    expectedGates: string[];
+  };
+  const scenarios: Scenario[] = [
+    {
+      name: "pass",
+      staleMsg: null,
+      gateResult: { kind: "pass" },
+      expectedKind: "advanced",
+      expectedGates: [
+        "resource-version-guard:policy:pass:none:resource version guard passed:",
+        "pre-dispatch-health-gate:execution:pass:none:pre-dispatch health gate passed:",
+      ],
+    },
+    {
+      name: "resource-stale",
+      staleMsg: "resources changed since session start",
+      gateResult: { kind: "pass" },
+      expectedKind: "blocked",
+      expectedAction: "stop",
+      expectedGates: [
+        "resource-version-guard:policy:fail:policy:resource version guard blocked dispatch:resources changed since session start",
+      ],
+    },
+    {
+      name: "health-gate-fail",
+      staleMsg: null,
+      gateResult: { kind: "fail", reason: "doctor-block" },
+      expectedKind: "blocked",
+      expectedAction: "pause",
+      expectedGates: [
+        "resource-version-guard:policy:pass:none:resource version guard passed:",
+        "pre-dispatch-health-gate:execution:manual-attention:manual-attention:pre-dispatch health gate blocked dispatch:doctor-block",
+      ],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const gateEvents: string[] = [];
+    const { deps } = makeDeps({
+      health: {
+        checkResourcesStale: () => scenario.staleMsg,
+        async preAdvanceGate() { return scenario.gateResult; },
+        async postAdvanceRecord() {},
+      },
+      uokGate: {
+        async emit(input) {
+          gateEvents.push(
+            `${input.gateId}:${input.gateType}:${input.outcome}:${input.failureClass}:${input.rationale}:${input.findings ?? ""}`,
+          );
+        },
+      },
+    });
+    const orchestrator = createAutoOrchestrator(deps);
+    const result = await orchestrator.advance();
+
+    assert.equal(result.kind, scenario.expectedKind, `${scenario.name} result kind`);
+    if (scenario.expectedKind === "blocked") {
+      assert.equal(result.action, scenario.expectedAction, `${scenario.name} blocked action`);
+    }
+    assert.deepEqual(gateEvents, scenario.expectedGates, `${scenario.name} gate parity`);
+  }
+});
+
 test("advance() continues past pre-dispatch health gate when it throws", async () => {
   const { deps, calls } = makeDeps({
     health: {
