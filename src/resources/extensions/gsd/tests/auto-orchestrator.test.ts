@@ -125,7 +125,7 @@ test("advance() returns blocked when health gate denies", async () => {
   assert.ok(calls.includes("gate:pre-dispatch-health-gate:manual-attention"));
 });
 
-test("advance() returns blocked stop when resources are stale", async () => {
+test("advance() returns blocked pause when resources are stale", async () => {
   const { deps, calls } = makeDeps({
     health: {
       checkResourcesStale: () => "resources changed since session start",
@@ -139,7 +139,7 @@ test("advance() returns blocked stop when resources are stale", async () => {
 
   assert.equal(result.kind, "blocked");
   assert.equal(result.reason, "resources changed since session start");
-  assert.equal(result.action, "stop");
+  assert.equal(result.action, "pause");
   assert.ok(calls.includes("gate:resource-version-guard:fail"));
   assert.ok(!calls.includes("health.pre"));
   assert.ok(!calls.includes("state.reconcile"));
@@ -405,6 +405,7 @@ test("resume() returns blocked when advance detects a dispatch blocker", async (
   assert.equal(result.kind, "blocked");
   if (result.kind !== "blocked") return;
   assert.equal(result.reason, "remediation required");
+  assert.equal(result.action, "pause");
 });
 
 test("advance() uses recovery on error", async () => {
@@ -777,6 +778,7 @@ test("stuck-loop: start() resets the ring so a fresh saturation cycle is require
   const next = await orchestrator.advance();
   assert.equal(next.kind, "blocked");
   assert.equal(next.reason, "idempotent advance: unit already active");
+  assert.equal(next.action, "stop");
 });
 
 test("stuck-loop: resume() resets the ring", async () => {
@@ -793,6 +795,7 @@ test("stuck-loop: resume() resets the ring", async () => {
   const next = await orchestrator.advance();
   assert.equal(next.kind, "blocked");
   assert.equal(next.reason, "idempotent advance: unit already active");
+  assert.equal(next.action, "stop");
 });
 
 test("stuck-loop: stop() resets the ring", async () => {
