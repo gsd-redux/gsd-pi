@@ -2024,22 +2024,22 @@ export function createWiredAutoOrchestrationModule(
       },
       async journalTransition(event) {
         const eventType = event.name === "start"
-          ? "iteration-start"
+          ? "orchestrator-iteration-start"
           : event.name === "resume"
-            ? "iteration-start"
+            ? "orchestrator-iteration-start"
             : event.name === "advance"
-              ? "dispatch-match"
+              ? "orchestrator-dispatch-match"
               : event.name === "advance-blocked"
-                ? "guard-block"
+                ? "orchestrator-guard-block"
                 : event.name === "advance-stopped"
-                  ? "dispatch-stop"
+                  ? "orchestrator-dispatch-stop"
                   : event.name === "advance-error"
-                    ? "iteration-end"
+                    ? "orchestrator-iteration-end"
                     : event.name === "advance-paused" || event.name === "advance-retry"
-                      ? "guard-block"
+                      ? "orchestrator-guard-block"
                       : event.name === "stop"
-                      ? "terminal"
-                      : "iteration-end";
+                      ? "orchestrator-terminal"
+                      : "orchestrator-iteration-end";
 
         _emitJournalEvent(runtimeBasePath, {
           ts: new Date().toISOString(),
