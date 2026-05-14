@@ -8,6 +8,7 @@ import { parseRoadmap } from "./parsers-legacy.js";
 import { isClosedStatus, isSkippedForDispatch } from "./status-guards.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { readFileSync } from "node:fs";
+import type { LoopState } from "./auto/types.js";
 
 const SLICE_DISPATCH_TYPES = new Set([
   "research-slice",
@@ -24,12 +25,25 @@ const CONSECUTIVE_SAME_UNIT_CAP_TYPES = new Set([
 ]);
 const CONSECUTIVE_SAME_UNIT_CAP = 2;
 
-type ConsecutiveDispatchState = {
-  consecutiveDispatchCount?: Map<string, number>;
-  lastDispatchedKey?: string | null;
-  lastDispatchPhase?: string | null;
-};
+type ConsecutiveDispatchState = Pick<
+  LoopState,
+  "consecutiveDispatchCount" | "lastDispatchedKey" | "lastDispatchPhase"
+>;
 
+/**
+ * Prevent repeated dispatches of the same unit within the same phase.
+ *
+ * Applies only to unit types in `CONSECUTIVE_SAME_UNIT_CAP_TYPES`. The first
+ * dispatch for a unit/phase pair starts a counter, unit or phase changes reset
+ * tracking, and dispatch is blocked once the counter reaches
+ * `CONSECUTIVE_SAME_UNIT_CAP`.
+ *
+ * Side effects: mutates `state.consecutiveDispatchCount`,
+ * `state.lastDispatchedKey`, and `state.lastDispatchPhase`.
+ *
+ * Returns `null` when dispatch is allowed, or a blocker message (including
+ * guidance to run `/gsd resume`) when the cap is reached.
+ */
 export function getConsecutiveDispatchBlocker(
   state: ConsecutiveDispatchState,
   phase: string,
