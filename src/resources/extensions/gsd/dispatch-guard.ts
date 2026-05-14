@@ -17,6 +17,50 @@ const SLICE_DISPATCH_TYPES = new Set([
   "complete-slice",
 ]);
 
+const CONSECUTIVE_SAME_UNIT_CAP_TYPES = new Set([
+  "complete-milestone",
+  "validate-milestone",
+  "research-slice",
+]);
+const CONSECUTIVE_SAME_UNIT_CAP = 2;
+
+type ConsecutiveDispatchState = {
+  consecutiveDispatchCount?: Map<string, number>;
+  lastDispatchedKey?: string | null;
+  lastDispatchPhase?: string | null;
+};
+
+export function getConsecutiveDispatchBlocker(
+  state: ConsecutiveDispatchState,
+  phase: string,
+  unitType: string,
+  unitId: string,
+): string | null {
+  if (!CONSECUTIVE_SAME_UNIT_CAP_TYPES.has(unitType)) return null;
+  if (!state.consecutiveDispatchCount) state.consecutiveDispatchCount = new Map<string, number>();
+
+  const key = `${unitType}:${unitId}`;
+  const phaseChanged = state.lastDispatchPhase !== phase;
+  const switchedUnit = state.lastDispatchedKey !== key;
+  if (phaseChanged || switchedUnit) {
+    state.consecutiveDispatchCount.clear();
+    state.consecutiveDispatchCount.set(key, 1);
+    state.lastDispatchedKey = key;
+    state.lastDispatchPhase = phase;
+    return null;
+  }
+
+  const count = state.consecutiveDispatchCount.get(key) ?? 0;
+  if (count >= CONSECUTIVE_SAME_UNIT_CAP) {
+    return `Cannot dispatch ${unitType} ${unitId}: dispatched ${count} consecutive times; same-unit repeat cap reached. Resolve via /gsd resume.`;
+  }
+
+  state.consecutiveDispatchCount.set(key, count + 1);
+  state.lastDispatchedKey = key;
+  state.lastDispatchPhase = phase;
+  return null;
+}
+
 export function getPriorSliceCompletionBlocker(
   base: string,
   _mainBranch: string,

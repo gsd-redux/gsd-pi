@@ -78,6 +78,7 @@ import { createWorktreeSafetyModule, type WorktreeSafetyResult } from "../worktr
 import { isSuspiciousGhostCompletion } from "../auto-unit-closeout.js";
 import { decideVerificationRetry, verificationRetryKey } from "./verification-retry-policy.js";
 import { buildPhaseHandoffOutcome, setAutoOutcomeWidget } from "../auto-dashboard.js";
+import { getConsecutiveDispatchBlocker } from "../dispatch-guard.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
@@ -1351,6 +1352,18 @@ export async function runDispatch(
     await deps.stopAuto(ctx, pi, priorSliceBlocker);
     debugLog("autoLoop", { phase: "exit", reason: "prior-slice-blocker" });
     return { action: "break", reason: "prior-slice-blocker" };
+  }
+
+  const consecutiveDispatchBlocker = getConsecutiveDispatchBlocker(
+    loopState,
+    state.phase,
+    unitType,
+    unitId,
+  );
+  if (consecutiveDispatchBlocker) {
+    await deps.stopAuto(ctx, pi, consecutiveDispatchBlocker);
+    debugLog("autoLoop", { phase: "exit", reason: "consecutive-dispatch-blocker" });
+    return { action: "break", reason: "consecutive-dispatch-blocker" };
   }
 
   const worktreeSafetyBlock = await validateSourceWriteWorktreeSafety(

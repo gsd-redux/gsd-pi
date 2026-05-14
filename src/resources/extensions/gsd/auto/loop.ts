@@ -286,6 +286,9 @@ export async function autoLoop(
     recentUnits: persisted.recentUnits,
     stuckRecoveryAttempts: persisted.stuckRecoveryAttempts,
     consecutiveFinalizeTimeouts: 0,
+    consecutiveDispatchCount: new Map<string, number>(),
+    lastDispatchedKey: null,
+    lastDispatchPhase: null,
   };
   let consecutiveErrors = 0;
   let consecutiveCooldowns = 0;
