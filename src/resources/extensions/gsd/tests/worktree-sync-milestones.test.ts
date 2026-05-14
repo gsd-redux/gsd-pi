@@ -634,6 +634,11 @@ describe('worktree-sync-milestones', async () => {
       mkdirSync(wtM002, { recursive: true });
       writeFileSync(join(wtM002, 'M002-ROADMAP.md'), '# Worktree M002 Roadmap');
 
+      // Canonical .gsd has M004 with no corresponding worktree directory at all.
+      const mainM004 = join(mainBase, '.gsd', 'milestones', 'M004');
+      mkdirSync(mainM004, { recursive: true });
+      writeFileSync(join(mainM004, 'M004-CONTEXT-DRAFT.md'), '# M004 Context Draft');
+
       syncProjectRootToWorktree(mainBase, wtBase, 'M002');
 
       assert.ok(
@@ -641,9 +646,18 @@ describe('worktree-sync-milestones', async () => {
         '#5687: future milestone context draft projected into worktree',
       );
       assert.equal(
+        readFileSync(join(wtBase, '.gsd', 'milestones', 'M003', 'M003-ROADMAP.md'), 'utf-8'),
+        '# WT Roadmap',
+        '#5687: existing worktree-local M003 file is not overwritten',
+      );
+      assert.equal(
         readFileSync(join(wtBase, '.gsd', 'milestones', 'M002', 'M002-ROADMAP.md'), 'utf-8'),
         '# Worktree M002 Roadmap',
         '#5687: existing worktree-local files are not overwritten',
+      );
+      assert.ok(
+        existsSync(join(wtBase, '.gsd', 'milestones', 'M004', 'M004-CONTEXT-DRAFT.md')),
+        '#5687: future milestone context draft projected into worktree when no wt dir existed',
       );
     } finally {
       cleanup(mainBase);
