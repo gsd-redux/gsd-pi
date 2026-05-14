@@ -598,7 +598,10 @@ export function nativeBranchList(basePath: string, pattern?: string): string[] {
   const result = gitFileExec(basePath, args, true);
   if (!result) return [];
 
-  return result.split("\n").map(b => b.trim().replace(/^\* /, "")).filter(Boolean);
+  return result
+    .split("\n")
+    .map(b => b.trim().replace(/^[*+]\s+/, ""))
+    .filter(Boolean);
 }
 
 /**
