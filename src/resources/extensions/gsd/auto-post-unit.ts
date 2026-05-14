@@ -987,6 +987,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                     command: row.command,
                     exitCode: row.exit_code,
                     verdict: row.verdict,
+                    createdAt: row.created_at,
                   }))
                   .filter((row) => typeof row.command === "string" && row.command.trim().length > 0);
                 const mismatches = crossReferenceEvidence(claimedEvidence, actual);
