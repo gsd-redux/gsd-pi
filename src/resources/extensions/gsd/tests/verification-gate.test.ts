@@ -244,6 +244,26 @@ pythonpath = ["."]
     assert.deepStrictEqual(result.commands, ["python3 -m pytest"]);
   });
 
+  test("dependency-free Node project with root test file discovers node test command", () => {
+    writeFileSync(join(tmp, "test-todo-cli.js"), "require('node:test')('ok', () => {});\n");
+
+    const result = discoverCommands({ cwd: tmp });
+
+    assert.equal(result.source, "node-test-file");
+    assert.deepStrictEqual(result.commands, ["node test-todo-cli.js"]);
+  });
+
+  test("dependency-free Node test discovery is lower priority than Python pytest", () => {
+    mkdirSync(join(tmp, "tests"), { recursive: true });
+    writeFileSync(join(tmp, "tests", "test_sample.py"), "def test_sample():\n    assert True\n");
+    writeFileSync(join(tmp, "sample.test.js"), "require('node:test')('ok', () => {});\n");
+
+    const result = discoverCommands({ cwd: tmp });
+
+    assert.equal(result.source, "python-project");
+    assert.deepStrictEqual(result.commands, ["python3 -m pytest"]);
+  });
+
   test("Python project with nested Python test file discovers pytest", () => {
     mkdirSync(join(tmp, "tests", "unit"), { recursive: true });
     writeFileSync(join(tmp, "tests", "unit", "sample_test.py"), "def test_sample():\n    assert True\n");
