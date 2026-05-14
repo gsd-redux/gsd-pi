@@ -146,6 +146,20 @@ describe("input-controller pending images", () => {
 		assert.equal(host.pendingImages.length, 0);
 		assert.equal(promptCalls.length, 0); // bash commands don't go through prompt
 	});
+
+	it("preserves pending images when using onInputCallback path", async () => {
+		let callbackText = "";
+		host.onInputCallback = (text: string) => {
+			callbackText = text;
+		};
+		host.pendingImages.push({ ...TEST_IMAGE });
+
+		await host.defaultEditor.onSubmit!("[Image #1] describe");
+
+		assert.equal(callbackText, "[Image #1] describe");
+		assert.equal(host.pendingImages.length, 1);
+		assert.equal(promptCalls.length, 0);
+	});
 });
 
 type HostOptions = {
