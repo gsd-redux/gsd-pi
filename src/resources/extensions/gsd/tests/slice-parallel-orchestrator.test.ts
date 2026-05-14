@@ -3,7 +3,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -12,8 +12,12 @@ import { validatePreferences } from "../preferences-validation.ts";
 import {
   _buildSliceWorkerEnvForTest,
   _resolveSliceParallelMaxWorkersForTest,
+  getSliceOrchestratorState,
   restoreSliceState,
+  resetSliceOrchestrator,
   SLICE_WORKER_AUTO_ARGS,
+  startSliceParallel,
+  stopSliceParallel,
 } from "../slice-parallel-orchestrator.ts";
 
 function readLinuxProcessStartFingerprint(pid: number): string | null {
@@ -48,6 +52,23 @@ function makeTempProject(): string {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-slice-parallel-"));
   mkdirSync(join(basePath, ".gsd"), { recursive: true });
   return basePath;
+}
+
+function runGit(basePath: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: basePath,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  }).trim();
+}
+
+function initGitProject(basePath: string): void {
+  runGit(basePath, ["init", "--initial-branch=main"]);
+  runGit(basePath, ["config", "user.email", "test@example.com"]);
+  runGit(basePath, ["config", "user.name", "Test User"]);
+  writeFileSync(join(basePath, "README.md"), "initial\n", "utf-8");
+  runGit(basePath, ["add", "README.md"]);
+  runGit(basePath, ["commit", "-m", "initial"]);
 }
 
 function writeSliceOrchestratorState(
@@ -108,6 +129,56 @@ describe("slice worker launch contract", () => {
   it("defaults to two workers unless explicitly configured", () => {
     assert.equal(_resolveSliceParallelMaxWorkersForTest(), 2);
     assert.equal(_resolveSliceParallelMaxWorkersForTest(4), 4);
+  });
+});
+
+describe("slice-parallel stale worktree handling", () => {
+  it("replaces a stale slice worktree before spawning the worker", async () => {
+    const basePath = makeTempProject();
+    const oldGsdBinPath = process.env.GSD_BIN_PATH;
+    try {
+      initGitProject(basePath);
+      const workerBin = join(basePath, "fake-worker.js");
+      writeFileSync(
+        workerBin,
+        [
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join("\n"),
+        "utf-8",
+      );
+      process.env.GSD_BIN_PATH = workerBin;
+
+      const staleWorktree = join(basePath, ".gsd", "worktrees", "M900-S01");
+      mkdirSync(staleWorktree, { recursive: true });
+      writeFileSync(join(staleWorktree, ".git"), "gitdir: /tmp/not-this-repo\n", "utf-8");
+      writeFileSync(join(staleWorktree, "stale-marker"), "stale\n", "utf-8");
+
+      const result = await startSliceParallel(basePath, "M900", [{ id: "S01" }], { maxWorkers: 1 });
+
+      assert.deepEqual(result, { started: ["S01"], errors: [] });
+      assert.equal(existsSync(join(staleWorktree, "stale-marker")), false);
+      assert.equal(lstatSync(join(staleWorktree, ".git")).isFile(), true);
+      assert.match(readFileSync(join(staleWorktree, ".git"), "utf-8"), /^gitdir: /);
+      assert.equal(getSliceOrchestratorState()?.active, true);
+    } finally {
+      const child = getSliceOrchestratorState()?.workers.get("S01")?.process;
+      if (child && child.exitCode === null) {
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(resolve, 500);
+          child.once("exit", () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+          child.kill("SIGTERM");
+        });
+      }
+      stopSliceParallel();
+      resetSliceOrchestrator();
+      if (oldGsdBinPath === undefined) delete process.env.GSD_BIN_PATH;
+      else process.env.GSD_BIN_PATH = oldGsdBinPath;
+      rmSync(basePath, { recursive: true, force: true });
+    }
   });
 });
 
