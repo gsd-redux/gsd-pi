@@ -2,7 +2,7 @@
 // File Purpose: Git service integration and commit-message tests.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync, execSync } from "node:child_process";
@@ -627,6 +627,43 @@ describe('git-service', async () => {
     assert.ok(msg2!.startsWith("feat:"), "meaningful commit uses feat type without scope");
     assert.ok(msg2!.includes("JWT-based auth"), "meaningful commit includes one-liner content");
     assert.ok(msg2!.includes("GSD-Task: S01/T02"), "meaningful commit has GSD-Task trailer");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('GitServiceImpl: autoCommit retries once when pre-commit rewrites files', () => {
+    const repo = initTempRepo();
+    const svc = new GitServiceImpl(repo);
+
+    const hookPath = join(repo, ".git", "hooks", "pre-commit");
+    const countFile = join(repo, ".git", "pre-commit-count");
+    writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        `count_file="${countFile}"`,
+        "count=0",
+        "[ -f \"$count_file\" ] && count=$(cat \"$count_file\")",
+        "count=$((count + 1))",
+        "echo \"$count\" > \"$count_file\"",
+        "if [ \"$count\" -eq 1 ]; then",
+        "  printf 'export const fixed = true;\\n' > src/fix-me.ts",
+        "  exit 1",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    chmodSync(hookPath, 0o755);
+
+    createFile(repo, "src/fix-me.ts", "export const fixed = false;\n");
+    const msg = svc.autoCommit("execute-task", "M001/S01/T04");
+
+    assert.ok(msg !== null, "autoCommit succeeds after one retry for hook rewrites");
+    assert.equal(run("git rev-list --count HEAD", repo), "2", "exactly one new commit created");
+    assert.equal(readFileSync(join(repo, "src/fix-me.ts"), "utf-8"), "export const fixed = true;\n");
+    assert.equal(readFileSync(countFile, "utf-8").trim(), "2", "pre-commit hook ran twice");
 
     rmSync(repo, { recursive: true, force: true });
   });

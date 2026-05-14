@@ -906,7 +906,16 @@ export class GitServiceImpl {
     const message = taskContext
       ? buildTaskCommitMessage(taskContext)
       : `chore: auto-commit after ${unitType}\n\nGSD-Unit: ${unitId}`;
-    nativeCommit(this.basePath, message, { allowEmpty: false });
+    try {
+      nativeCommit(this.basePath, message, { allowEmpty: false });
+    } catch (err) {
+      // Some pre-commit hooks intentionally rewrite files and fail the first
+      // commit to force a re-stage + retry.
+      if (!nativeHasChanges(this.basePath)) throw err;
+      this.smartStage(extraExclusions);
+      if (!nativeHasStagedChanges(this.basePath)) throw err;
+      nativeCommit(this.basePath, message, { allowEmpty: false });
+    }
 
     // Absorb any preceding gsd snapshot commits into this real commit.
     // Walk backwards from HEAD~1 counting consecutive snapshot subjects,
