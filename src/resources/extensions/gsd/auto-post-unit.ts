@@ -1503,7 +1503,9 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         // s.canonicalProjectRoot is the project root and lacks files that a
         // prior slice wrote to the worktree but hasn't merged to main yet.
         const preExecutionBasePath = s.basePath;
-        const result: PreExecutionResult = await runPreExecutionChecks(tasks, preExecutionBasePath);
+        const result: PreExecutionResult = await runPreExecutionChecks(tasks, preExecutionBasePath, {
+          additionalRoots: [s.canonicalProjectRoot],
+        });
 
         // Log summary to stderr in existing verification output format
         const emoji = result.status === "pass" ? "✅" : result.status === "warn" ? "⚠️" : "❌";
@@ -1520,12 +1522,12 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         }
 
         // Write evidence JSON to slice artifacts directory
-        const slicePath = resolveSlicePath(preExecutionBasePath, mid, sid);
+        const slicePath = resolveSlicePath(s.canonicalProjectRoot, mid, sid);
         const evidenceFileName = `${sid}-PRE-EXEC-VERIFY.json`;
         let evidencePath = join(".gsd", "milestones", mid, "slices", sid, evidenceFileName);
         if (slicePath) {
           writePreExecutionEvidence(result, slicePath, mid, sid);
-          evidencePath = relative(preExecutionBasePath, join(slicePath, evidenceFileName)) || evidenceFileName;
+          evidencePath = relative(s.canonicalProjectRoot, join(slicePath, evidenceFileName)) || evidenceFileName;
         }
 
         if (uokFlags.gates) {

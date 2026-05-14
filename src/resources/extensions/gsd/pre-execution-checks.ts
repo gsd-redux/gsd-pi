@@ -38,6 +38,10 @@ export interface PreExecutionResult {
   durationMs: number;
 }
 
+export interface PreExecutionCheckContext {
+  additionalRoots?: string[];
+}
+
 export function checkVerificationCommands(tasks: TaskRow[]): PreExecutionCheckJSON[] {
   const results: PreExecutionCheckJSON[] = [];
 
@@ -480,9 +484,11 @@ function getExpectedOutputsUpTo(tasks: TaskRow[], taskIndex: number): Set<string
  */
 export function checkFilePathConsistency(
   tasks: TaskRow[],
-  basePath: string
+  basePath: string,
+  context?: PreExecutionCheckContext,
 ): PreExecutionCheckJSON[] {
   const results: PreExecutionCheckJSON[] = [];
+  const resolutionRoots = [basePath, ...(context?.additionalRoots ?? [])];
 
   // Build a set of all files created by any task at any position (normalized).
   // Used to suppress consistency errors for files that will be caught with a
@@ -510,8 +516,7 @@ export function checkFilePathConsistency(
       if (containsGlobPattern(normalizedFile)) continue;
 
       // Check if file exists on disk
-      const absolutePath = resolve(basePath, normalizedFile);
-      const existsOnDisk = existsSync(absolutePath);
+      const existsOnDisk = resolutionRoots.some((root) => existsSync(resolve(root, normalizedFile)));
 
       // Check if file is in prior expected outputs (priorOutputs already normalized)
       const inPriorOutputs = priorOutputs.has(normalizedFile);
@@ -557,9 +562,11 @@ export function checkFilePathConsistency(
  */
 export function checkTaskOrdering(
   tasks: TaskRow[],
-  basePath: string
+  basePath: string,
+  context?: PreExecutionCheckContext,
 ): PreExecutionCheckJSON[] {
   const results: PreExecutionCheckJSON[] = [];
+  const resolutionRoots = [basePath, ...(context?.additionalRoots ?? [])];
 
   // Build map: normalized file → task index that creates it
   const fileCreators = new Map<string, { taskId: string; index: number; originalPath: string; completed: boolean }>();
@@ -597,8 +604,7 @@ export function checkTaskOrdering(
       // files, and a same-task output under the directory satisfies it.
       if (isDirectoryReference(file)) continue;
       const creator = fileCreators.get(normalizedFile);
-      const absolutePath = resolve(basePath, normalizedFile);
-      const existsOnDisk = existsSync(absolutePath);
+      const existsOnDisk = resolutionRoots.some((root) => existsSync(resolve(root, normalizedFile)));
       // Skip if the creating task has already completed — its output is available
       // regardless of disk state (e.g. file was a temp artifact cleaned up after
       // the task ran, or a replan introduced a new earlier-sequence task that
@@ -778,14 +784,15 @@ export function checkInterfaceContracts(
  */
 export async function runPreExecutionChecks(
   tasks: TaskRow[],
-  basePath: string
+  basePath: string,
+  context?: PreExecutionCheckContext,
 ): Promise<PreExecutionResult> {
   const startTime = Date.now();
   const allChecks: PreExecutionCheckJSON[] = [];
 
   // Run sync checks first
-  const fileChecks = checkFilePathConsistency(tasks, basePath);
-  const orderingChecks = checkTaskOrdering(tasks, basePath);
+  const fileChecks = checkFilePathConsistency(tasks, basePath, context);
+  const orderingChecks = checkTaskOrdering(tasks, basePath, context);
   const contractChecks = checkInterfaceContracts(tasks, basePath);
   const verificationChecks = checkVerificationCommands(tasks);
 
