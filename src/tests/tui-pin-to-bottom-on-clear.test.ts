@@ -102,8 +102,12 @@ describe("TUI pin-to-bottom on clear", () => {
 
     const frame = terminal.writtenData.join("");
     assert.ok(
-      frame.includes("\x1b[2J\x1b[17;1H"),
-      `expected append to redraw the resized bottom-anchored block at row 17, got ${JSON.stringify(frame)}`,
+      !frame.includes("\x1b[2J"),
+      `expected append to avoid full-screen clear to reduce flicker, got ${JSON.stringify(frame)}`,
+    );
+    assert.ok(
+      frame.includes("line 4"),
+      `expected append to render the new line, got ${JSON.stringify(frame)}`,
     );
   });
 
