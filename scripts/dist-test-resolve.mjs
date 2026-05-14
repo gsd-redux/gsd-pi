@@ -11,10 +11,14 @@
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { devNull } from 'node:os';
 
 // Compiled legacy state tests exercise markdown derivation through deriveState().
 // Production/runtime keeps this fallback disabled unless explicitly requested.
 process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK ??= '1';
+process.env.GIT_CONFIG_GLOBAL ??= devNull;
+process.env.GIT_CONFIG_SYSTEM ??= devNull;
+process.env.GIT_TEMPLATE_DIR ??= devNull;
 
 // dist-test root — everything compiled lands here
 const DIST_TEST = new URL('../dist-test/', import.meta.url).href;
