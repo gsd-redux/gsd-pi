@@ -132,6 +132,7 @@
   Verify field rules:
   - MUST be a mechanically executable command: `npm test`, `grep -q "pattern" file`, `test -f path`
   - MUST NOT use shell pipes, redirects, semicolons, backticks, command substitution, or output trimming
+  - MUST NOT use inline `node -e` assertions for verification; put assertions in a real test file and run it with `node --test` or a package test script
   - For content/document tasks: verify file existence, section count, YAML validity, or word count
     NOT exact phrasing, specific formulas, or "zero TBD" aspirational criteria
   - If no command can verify the output, write: "Manual review — file exists and is non-empty"

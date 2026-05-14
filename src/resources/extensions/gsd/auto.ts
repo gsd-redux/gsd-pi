@@ -1030,6 +1030,7 @@ export async function rerootCommandSession(
 
 export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void> {
   const preserveStepSurface = s.preserveStepSurfaceAfterLoopExit;
+  const preservePausedSurface = s.paused;
   s.currentUnit = null;
   s.active = false;
   deactivateGSD();
@@ -1069,7 +1070,7 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
   // `s.basePath` mutation and the paired `process.chdir` for auto-loop
   // transitions. The verb assigns `s.basePath` before any throwable work, so
   // a thrown error still leaves basePath restored.
-  if (s.originalBasePath && !preserveStepSurface) {
+  if (s.originalBasePath && !preserveStepSurface && !preservePausedSurface) {
     try {
       buildLifecycle().restoreToProjectRoot();
     } catch (err) {
@@ -1081,7 +1082,7 @@ export async function cleanupAfterLoopExit(ctx: ExtensionContext): Promise<void>
     }
   }
 
-  if (s.originalBasePath && s.cmdCtx && !preserveStepSurface) {
+  if (s.originalBasePath && s.cmdCtx && !preserveStepSurface && !preservePausedSurface) {
     const result = await rerootCommandSession(s.cmdCtx, s.originalBasePath);
     if (result.status === "cancelled") {
       logWarning("engine", "post-loop session re-root was cancelled", { file: "auto.ts", basePath: s.originalBasePath });
