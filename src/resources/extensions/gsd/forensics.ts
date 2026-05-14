@@ -301,6 +301,8 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // 6. Run doctor
   let doctorIssues: DoctorIssue[] = [];
   try {
+    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+    await ensureDbOpen(basePath);
     const report = await runGSDDoctor(basePath, { scope: undefined });
     doctorIssues = report.issues;
   } catch { /* doctor failure is non-fatal */ }
