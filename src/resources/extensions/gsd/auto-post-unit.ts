@@ -109,6 +109,18 @@ function formatPreExecutionCheckDetail(check: PreExecutionCheckJSON): string {
 
 const COMPLETE_MILESTONE_DB_SETTLE_MS = 1500;
 const COMPLETE_MILESTONE_DB_SETTLE_POLL_MS = 100;
+const GIT_ACTION_FAILURE_LOG_REL_PATH = ".gsd/git-action-failures.log";
+
+function persistGitActionFailure(basePath: string, action: TurnGitActionMode, message: string): string {
+  const logPath = join(basePath, GIT_ACTION_FAILURE_LOG_REL_PATH);
+  const logDir = join(basePath, ".gsd");
+  const timestamp = new Date().toISOString();
+  const body = message.trim() || "unknown git failure";
+  const entry = `[${timestamp}] action=${action}\n${body}\n\n`;
+  mkdirSync(logDir, { recursive: true });
+  appendFileSync(logPath, entry, "utf-8");
+  return logPath;
+}
 
 function stripKnownIdPrefix(value: string | undefined | null, id: string): string | undefined {
   const raw = String(value ?? "").trim();
@@ -241,7 +253,7 @@ import {
   unitVerb,
   describeNextUnit,
 } from "./auto-dashboard.js";
-import { existsSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 import { autoCommitCurrentBranch } from "./worktree.js";
@@ -579,6 +591,8 @@ async function runCloseoutGitAction(
       if (gitResult.status === "failed") {
         s.lastGitActionFailure = gitResult.error ?? `git ${turnAction} failed`;
         s.lastGitActionStatus = "failed";
+        const fullError = gitResult.error ?? "unknown error";
+        const failureLogPath = persistGitActionFailure(s.basePath, turnAction, fullError);
         if (uokFlags.gitops && uokFlags.gates) {
           const parsed = parseUnitId(unit.id);
           const gateRunner = new UokGateRunner();
@@ -589,7 +603,7 @@ async function runCloseoutGitAction(
               outcome: "fail",
               failureClass: "git",
               rationale: `turn git action "${turnAction}" failed`,
-              findings: gitResult.error ?? "unknown git failure",
+              findings: fullError,
             }),
           });
           await gateRunner.run("closeout-git-action", {
@@ -604,12 +618,13 @@ async function runCloseoutGitAction(
           });
         }
 
-        const failureMsg = `Git ${turnAction} failed: ${(gitResult.error ?? "unknown error").split("\n")[0]}`;
+        const failureMsg = `Git ${turnAction} failed: ${fullError.split("\n")[0]} (full details: ${failureLogPath})`;
         ctx.ui.notify(failureMsg, opts?.softFailure ? "warning" : "error");
         debugLog("postUnit", {
           phase: opts?.softFailure ? "git-action-failed-soft" : "git-action-failed-blocking",
           action: turnAction,
-          error: gitResult.error ?? "unknown error",
+          error: fullError,
+          failureLogPath,
         });
         if (opts?.softFailure) {
           return "continue";

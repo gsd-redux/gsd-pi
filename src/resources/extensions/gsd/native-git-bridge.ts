@@ -991,7 +991,11 @@ export function nativeCommit(
     if (combined.includes("nothing to commit") || combined.includes("nothing added to commit") || combined.includes("no changes added")) {
       return null;
     }
-    throw err;
+    const commitDetail = errObj.stderr?.trim() || errObj.message || "git commit failed";
+    const wrapped = new Error(`git commit failed: ${commitDetail}`);
+    (wrapped as Error & { stdout?: string; stderr?: string }).stdout = errObj.stdout;
+    (wrapped as Error & { stdout?: string; stderr?: string }).stderr = errObj.stderr;
+    throw wrapped;
   }
 }
 

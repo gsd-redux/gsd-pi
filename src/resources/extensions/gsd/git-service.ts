@@ -1212,10 +1212,11 @@ export function handleTurnGitActionError(action: TurnGitActionMode, err: unknown
   if (isInfrastructureError(err)) {
     throw err;
   }
+  const errorWithStreams = err as { stderr?: string; message?: string };
   return {
     action,
     status: "failed",
-    error: getErrorMessage(err),
+    error: errorWithStreams.stderr?.trim() || errorWithStreams.message || getErrorMessage(err),
   };
 }
 
