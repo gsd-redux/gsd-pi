@@ -461,6 +461,44 @@ test("verifyExpectedArtifact rejects complete-slice when roadmap checkbox is sti
   }
 });
 
+test("verifyExpectedArtifact rejects run-uat when ASSESSMENT has no verdict", () => {
+  const base = makeTmpBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-ASSESSMENT.md"), "# Reassessment\n\nNo canonical verdict field.\n");
+
+    assert.equal(
+      verifyExpectedArtifact("run-uat", "M001/S01", base),
+      false,
+      "run-uat should not verify from a pre-existing ASSESSMENT without verdict",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact accepts run-uat when ASSESSMENT has verdict", () => {
+  const base = makeTmpBase();
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    writeFileSync(join(sliceDir, "S01-ASSESSMENT.md"), [
+      "---",
+      "verdict: pass",
+      "---",
+      "",
+      "# UAT Assessment",
+    ].join("\n"));
+
+    assert.equal(
+      verifyExpectedArtifact("run-uat", "M001/S01", base),
+      true,
+      "run-uat should verify when ASSESSMENT contains a canonical verdict",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
 
 // ─── verifyExpectedArtifact: plan-slice task plan check (#739) ────────────
 
