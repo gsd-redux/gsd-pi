@@ -2817,7 +2817,7 @@ test("runUnitPhase records failed routing outcome when expected artifact is miss
       routing: { tier: "light" } as any,
       appliedModel: null,
     }),
-    recordOutcome: (unitType: string, tier: "light" | "standard" | "heavy", success: boolean) => {
+    recordOutcome: (unitType: string, tier: string, success: boolean) => {
       recordedOutcomes.push({ unitType, tier, success });
     },
   });
