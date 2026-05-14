@@ -142,29 +142,24 @@ async function reapplyValidatedModelOnFallback(
 }
 
 /**
- * Apply a CLI --model override by id or provider/id and warn when invalid.
+ * Apply the --model CLI flag override to the active session.
+ * Searches available models by exact id or provider/id pattern and warns
+ * on stderr when the requested model is not found in the registry.
  */
-async function applyModelOverride(
+function applyModelOverride(
   session: { setModel(model: { provider: string; id: string }): unknown | Promise<unknown> },
   modelRegistry: ModelRegistryInstance,
   modelFlag: string | undefined,
-): Promise<void> {
+): void {
   if (!modelFlag) return
-
   const available = modelRegistry.getAvailable()
   const match =
     available.find((m) => m.id === modelFlag) ||
     available.find((m) => `${m.provider}/${m.id}` === modelFlag)
-
-  if (!match) {
+  if (match) {
+    void session.setModel(match)
+  } else {
     process.stderr.write(`[gsd] Warning: Model "${modelFlag}" not found. Using configured default.\n`)
-    return
-  }
-
-  try {
-    await session.setModel(match)
-  } catch {
-    process.stderr.write(`[gsd] Warning: Could not apply --model override "${modelFlag}" (provider not ready). Using session default.\n`)
   }
 }
 
@@ -699,7 +694,7 @@ if (isPrintMode) {
   printExtensionErrors(extensionsResult.errors)
   printExtensionWarnings(extensionsResult.warnings)
 
-  await applyModelOverride(session, modelRegistry, cliFlags.model)
+  applyModelOverride(session, modelRegistry, cliFlags.model)
 
   const mode = cliFlags.mode || 'text'
 
@@ -823,7 +818,7 @@ await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, i
 printExtensionErrors(extensionsResult.errors)
 printExtensionWarnings(extensionsResult.warnings)
 
-await applyModelOverride(session, modelRegistry, cliFlags.model)
+applyModelOverride(session, modelRegistry, cliFlags.model)
 
 // Restore scoped models from settings on startup.
 // The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,
