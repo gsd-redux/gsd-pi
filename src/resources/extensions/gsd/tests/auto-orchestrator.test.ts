@@ -152,6 +152,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
     gateResult: Awaited<ReturnType<AutoOrchestratorDeps["health"]["preAdvanceGate"]>>;
     expectedKind: "advanced" | "blocked";
     expectedAction?: "pause" | "stop";
+    expectedReason?: string;
     expectedGates: string[];
   };
   const scenarios: Scenario[] = [
@@ -171,6 +172,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
       gateResult: { kind: "pass" },
       expectedKind: "blocked",
       expectedAction: "stop",
+      expectedReason: "resources changed since session start",
       expectedGates: [
         "resource-version-guard:policy:fail:policy:resource version guard blocked dispatch:resources changed since session start",
       ],
@@ -181,6 +183,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
       gateResult: { kind: "fail", reason: "doctor-block" },
       expectedKind: "blocked",
       expectedAction: "pause",
+      expectedReason: "doctor-block",
       expectedGates: [
         "resource-version-guard:policy:pass:none:resource version guard passed:",
         "pre-dispatch-health-gate:execution:manual-attention:manual-attention:pre-dispatch health gate blocked dispatch:doctor-block",
@@ -210,6 +213,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
     assert.equal(result.kind, scenario.expectedKind, `${scenario.name} result kind`);
     if (scenario.expectedKind === "blocked") {
       assert.equal(result.action, scenario.expectedAction, `${scenario.name} blocked action`);
+      assert.equal(result.reason, scenario.expectedReason, `${scenario.name} blocked reason`);
     }
     assert.deepEqual(gateEvents, scenario.expectedGates, `${scenario.name} gate parity`);
   }
