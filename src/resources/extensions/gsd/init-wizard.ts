@@ -445,9 +445,11 @@ export async function handleReinit(
   }
 
   if (choice === "skills") {
-    const { detectProjectSignals } = await import("./detection.js");
-    const signals = detectProjectSignals(process.cwd());
-    await runSkillInstallStep(ctx, signals);
+    try {
+      await runSkillInstallStep(ctx, detection.projectSignals);
+    } catch {
+      // Non-fatal — suggestion/install failures should not break re-init flow
+    }
   }
 }
 

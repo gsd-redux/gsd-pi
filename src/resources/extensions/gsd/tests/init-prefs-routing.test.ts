@@ -264,6 +264,11 @@ test("handleReinit — exposes skills flow and runs prefs wizard directly (#5173
   );
   assert.match(
     src,
+    /if \(choice === "skills"\)\s*\{[\s\S]*?await runSkillInstallStep\(ctx,\s*.*\)/,
+    "handleReinit skills branch should invoke runSkillInstallStep",
+  );
+  assert.match(
+    src,
     /if \(choice === "prefs"\)\s*\{[\s\S]*?await handlePrefsWizard\(ctx,\s*"project"\)/,
     "handleReinit prefs branch should launch prefs wizard directly",
   );
