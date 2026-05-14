@@ -47,7 +47,7 @@ import { regenerateIfMissing } from "./workflow-projections.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
 import { createWorkspace, scopeMilestone } from "./workspace.js";
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
-import { isDbAvailable, getTask, getSlice, getMilestone, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { isDbAvailable, getDbPath, refreshOpenDatabaseFromDisk, getTask, getSlice, getMilestone, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
 import { renderPlanCheckboxes } from "./markdown-renderer.js";
 import { consumeSignal } from "./session-status-io.js";
 import {
@@ -684,6 +684,14 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
   // Small delay to let files settle (skipped for sidecars where latency matters more)
   if (!opts?.skipSettleDelay) {
     await new Promise(r => setTimeout(r, 100));
+  }
+
+  const dbPath = getDbPath();
+  if (isDbAvailable() && dbPath && dbPath !== ":memory:") {
+    const refreshed = refreshOpenDatabaseFromDisk();
+    if (!refreshed) {
+      logWarning("db", "post-unit database refresh failed; derived state may be stale");
+    }
   }
 
   // Turn-level git action (commit | snapshot | status-only)

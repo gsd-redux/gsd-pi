@@ -8,8 +8,32 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
 import { AutoSession } from "../auto/session.ts";
 import { postUnitPreVerification } from "../auto-post-unit.ts";
+import {
+  _getAdapter,
+  closeDatabase,
+  getTask,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
+
+const _require = createRequire(import.meta.url);
+
+function openRawSqliteForTest(dbPath: string): { exec(sql: string): void; close(): void } {
+  try {
+    const mod = _require("node:sqlite") as { DatabaseSync: new (path: string) => { exec(sql: string): void; close(): void } };
+    return new mod.DatabaseSync(dbPath);
+  } catch {
+    type SqliteCtor = new (path: string) => { exec(sql: string): void; close(): void };
+    const mod = _require("better-sqlite3") as SqliteCtor | { default: SqliteCtor };
+    const DatabaseCtor: SqliteCtor = typeof mod === "function" ? mod : mod.default;
+    return new DatabaseCtor(dbPath);
+  }
+}
 
 test("postUnitPreVerification rebuilds STATE.md after a completed unit", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-post-unit-state-"));
@@ -44,6 +68,66 @@ test("postUnitPreVerification rebuilds STATE.md after a completed unit", async (
     assert.equal(existsSync(statePath), true);
     assert.ok(readFileSync(statePath, "utf-8").includes("M001"));
   } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("postUnitPreVerification refreshes DB before checking execute-task completion", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-post-unit-db-refresh-"));
+  try {
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    const tasksDir = join(sliceDir, "tasks");
+    mkdirSync(tasksDir, { recursive: true });
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      "# Roadmap\n\n## Slices\n\n- [ ] **S01: Slice** `risk:low` `depends:[]`\n",
+    );
+    writeFileSync(
+      join(sliceDir, "S01-PLAN.md"),
+      "# S01: Slice\n\n## Tasks\n\n- [ ] **T01: Do work** `est:30m`\n",
+    );
+    writeFileSync(
+      join(tasksDir, "T01-SUMMARY.md"),
+      "---\nid: T01\nparent: S01\nmilestone: M001\n---\n# T01\nDone.\n",
+    );
+
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+    insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Do work", status: "pending" });
+    const adapterBefore = _getAdapter();
+
+    const externalDb = openRawSqliteForTest(dbPath);
+    try {
+      externalDb.exec("UPDATE tasks SET status = 'complete', completed_at = '2026-05-14T00:00:00.000Z' WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'");
+    } finally {
+      externalDb.close();
+    }
+
+    const s = new AutoSession();
+    s.basePath = base;
+    s.originalBasePath = base;
+    s.currentMilestoneId = "M001";
+    s.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+
+    const result = await postUnitPreVerification({
+      s,
+      ctx: { ui: { notify() {} } } as any,
+      pi: {} as any,
+      buildSnapshotOpts: () => ({}),
+      lockBase: () => base,
+      stopAuto: async () => {},
+      pauseAuto: async () => {},
+      updateProgressWidget: () => {},
+    }, { skipSettleDelay: true, skipWorktreeSync: true });
+
+    assert.equal(result, "continue");
+    assert.notEqual(_getAdapter(), adapterBefore, "post-unit flow must reopen the DB before deriving state");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(s.pendingVerificationRetry, null);
+  } finally {
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
 });
