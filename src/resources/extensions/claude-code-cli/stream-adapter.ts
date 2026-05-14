@@ -249,8 +249,8 @@ export function normalizeClaudePathForSdk(
 	bundledCliPath: string | null = resolveBundledClaudeCliPath(),
 ): string {
 	if (platform !== "win32") return resolvedPath;
-	if (/\.exe$/i.test(resolvedPath)) return resolvedPath;
-	if (bundledCliPath) return bundledCliPath;
+	if (/\.exe$/i.test(resolvedPath)) return resolvedPath.replaceAll("\\", "/");
+	if (bundledCliPath) return bundledCliPath.replaceAll("\\", "/");
 	return resolvedPath;
 }
 

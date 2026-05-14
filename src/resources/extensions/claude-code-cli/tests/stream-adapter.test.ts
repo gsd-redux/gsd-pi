@@ -1468,8 +1468,8 @@ describe("stream-adapter — Windows Claude path lookup (#3770)", () => {
 	test("normalizeClaudePathForSdk swaps Windows shim paths to bundled cli.js", () => {
 		const shimPath = "C:\\Users\\djeff\\AppData\\Roaming\\npm\\claude";
 		const bundled = "C:\\repo\\node_modules\\@anthropic-ai\\claude-agent-sdk\\cli.js";
-		assert.equal(normalizeClaudePathForSdk(shimPath, "win32", bundled), bundled);
-		assert.equal(normalizeClaudePathForSdk("C:\\Program Files\\Claude\\claude.exe", "win32", bundled), "C:\\Program Files\\Claude\\claude.exe");
+		assert.equal(normalizeClaudePathForSdk(shimPath, "win32", bundled), "C:/repo/node_modules/@anthropic-ai/claude-agent-sdk/cli.js");
+		assert.equal(normalizeClaudePathForSdk("C:\\Program Files\\Claude\\claude.exe", "win32", bundled), "C:/Program Files/Claude/claude.exe");
 	});
 
 	test("resolveBundledClaudeCliPath returns a .js path when SDK package is present", () => {
