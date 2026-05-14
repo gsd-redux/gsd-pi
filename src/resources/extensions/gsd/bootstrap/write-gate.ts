@@ -967,9 +967,9 @@ function isPathContained(target: string, container: string): boolean {
  * while `git.isolation: worktree` is in effect and auto-mode hasn't created
  * (or flipped cwd into) the milestone worktree.
  *
- * Pure / unit-testable. Callers in `register-hooks.ts` supply the resolved
- * project root and current auto liveness; this function does no I/O beyond
- * realpath resolution.
+ * Pure / unit-testable. Callers in `register-hooks.ts` supply the effective
+ * execution base path (worker cwd or project root) and current auto liveness;
+ * this function does no I/O beyond realpath resolution.
  *
  * Allow rules (in order):
  *   1. Tool isn't a planning-write (write/edit/multi_edit/notebook_edit).
@@ -1007,10 +1007,11 @@ export function shouldBlockWorktreeWrite(
     };
   }
 
-  // Resolve the target relative to the project root, then realpath to defeat
+  // Resolve relative targets against the effective execution base path, then
+  // canonicalize against the project root to defeat
   // symlink-based escapes and prefix tricks (e.g. .gsd/worktrees-extra/).
   const projectRoot = resolveWorktreeProjectRoot(effectiveBasePath);
-  const absTarget = isAbsolute(targetPath) ? targetPath : resolve(projectRoot, targetPath);
+  const absTarget = isAbsolute(targetPath) ? targetPath : resolve(effectiveBasePath, targetPath);
   const realTarget = realpathOrResolve(absTarget);
   const realRoot = realpathOrResolve(projectRoot);
   const realGsd = realpathOrResolve(join(projectRoot, ".gsd"));

@@ -807,11 +807,10 @@ export function registerHooks(
     // git.isolation=worktree but auto-mode hasn't created the milestone
     // worktree yet. Without this, writes silently orphan outside git history.
     if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
-      const wtBasePath = resolveWorktreeProjectRoot(dash.basePath ?? discussionBasePath);
       const wtGuard = shouldBlockWorktreeWrite(
         event.toolName,
         event.input.path,
-        wtBasePath,
+        dash.basePath ?? discussionBasePath,
         isAutoActive(),
         dash.currentUnit?.type,
       );
