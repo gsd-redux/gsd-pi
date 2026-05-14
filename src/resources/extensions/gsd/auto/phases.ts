@@ -1439,7 +1439,6 @@ export async function runDispatch(
           );
           deps.invalidateAllCaches();
           loopState.recentUnits.length = 0;
-          loopState.stuckRecoveryAttempts = 0;
           return { action: "continue" };
         }
         ctx.ui.notify(
