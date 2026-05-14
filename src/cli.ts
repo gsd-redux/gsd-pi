@@ -805,6 +805,17 @@ await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, i
 printExtensionErrors(extensionsResult.errors)
 printExtensionWarnings(extensionsResult.warnings)
 
+// Apply --model override if specified
+if (cliFlags.model) {
+  const available = modelRegistry.getAvailable()
+  const match =
+    available.find((m) => m.id === cliFlags.model) ||
+    available.find((m) => `${m.provider}/${m.id}` === cliFlags.model)
+  if (match) {
+    session.setModel(match)
+  }
+}
+
 // Restore scoped models from settings on startup.
 // The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,
 // but doesn't apply them to the session at startup — so Ctrl+P cycles all models instead of
