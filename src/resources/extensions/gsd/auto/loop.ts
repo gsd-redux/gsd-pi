@@ -992,6 +992,7 @@ export async function autoLoop(
         finishIncompleteIteration({
           status: "retry",
           reason: "finalize-retry",
+          retry: true,
           unitType: iterData.unitType,
           unitId: iterData.unitId,
         });
