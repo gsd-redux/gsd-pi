@@ -733,10 +733,10 @@ export class TUI extends Container {
 		}
 
 		if (
-			newLines.length !== this.previousLines.length &&
+			newLines.length < this.previousLines.length &&
 			(newLines.length <= height || this.previousLines.length <= height)
 		) {
-			logRedraw(`bottom-anchored short block resized (${this.previousLines.length} -> ${newLines.length})`);
+			logRedraw(`bottom-anchored short block shrunk (${this.previousLines.length} -> ${newLines.length})`);
 			fullRender(true);
 			return;
 		}
