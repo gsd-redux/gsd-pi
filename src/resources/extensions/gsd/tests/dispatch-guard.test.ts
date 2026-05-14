@@ -282,6 +282,7 @@ test("dispatch guard does not skip prior milestone from SUMMARY projection when 
 });
 
 test("consecutive dispatch guard blocks complete-milestone after repeat cap", () => {
+  // REPEAT_CAP = 2: two same-unit dispatches are allowed; the third is blocked.
   const state = {
     consecutiveDispatchCount: new Map<string, number>(),
     lastDispatchedKey: null as string | null,
