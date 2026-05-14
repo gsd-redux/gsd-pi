@@ -900,9 +900,11 @@ test("wired DispatchAdapter prefers caller-supplied dispatch inputs over ctx-der
       getActiveTools: () => [],
     } as any;
     const adapter = createWiredDispatchAdapter(ctx, pi, "/tmp/parity-fixture");
+    const session = { basePath: "/tmp/session-fixture" } as any;
 
     const result = await adapter.decideNextUnit({
       stateSnapshot,
+      session,
       structuredQuestionsAvailable: "true",
       sessionContextWindow: 500_000,
       sessionProvider: "openai",
@@ -915,6 +917,7 @@ test("wired DispatchAdapter prefers caller-supplied dispatch inputs over ctx-der
     assert.equal(captured[0].sessionContextWindow, 500_000);
     assert.equal(captured[0].sessionProvider, "openai");
     assert.equal(captured[0].modelRegistry, overrideModelRegistry);
+    assert.equal(captured[0].session, session);
   } finally {
     resetRegistry();
   }
