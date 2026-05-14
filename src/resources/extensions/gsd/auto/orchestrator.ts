@@ -54,7 +54,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           rationale: "resource version guard blocked dispatch",
           findings: staleMsg,
         });
-        const blocked: AutoAdvanceResult = { kind: "blocked", reason: staleMsg, action: "stop" };
+        const blocked: AutoAdvanceResult = { kind: "blocked", reason: staleMsg, action: "pause" };
         await this.deps.runtime.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         await this.deps.health.postAdvanceRecord(blocked);
         return blocked;
