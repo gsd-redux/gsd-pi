@@ -42,8 +42,9 @@ It checks:
 - `.gsd/runtime/<unit-type>/<unit-id>.json` shows the latest runtime phase, timeout timestamp, recovery attempts, and progress marker. Timeout recovery uses progress kinds such as `idle-recovery-retry`, `hard-recovery-retry`, `finalize-pre-timeout`, `finalize-post-timeout`, and `finalize-success`.
 - `.gsd/journal/` shows the ordered loop events. Look for `unit-end`, then `post-unit-finalize-start`, `post-unit-finalize-end`, and `iteration-end`.
 - `post-unit-finalize-end.status` tells you whether closeout completed, retried, stopped, or failed. `iteration-end.status` and `iteration-end.reason` show the final loop outcome that caused auto mode to continue, retry, pause, or stop.
+- `.gsd/git-action-failures.log` appends each failed post-unit git action with timestamp and action mode (`commit` or `merge`) so you can inspect the exact git error that paused auto mode.
 
-**Fix:** If the runtime record shows fresh recovery progress, resume with `/gsd auto`; the failsafe defers cancellation while recovery is actively producing durable output. If the journal shows a stopped finalize reason such as a git closeout failure or repeated finalize timeout, resolve that underlying issue first, then resume.
+**Fix:** If the runtime record shows fresh recovery progress, resume with `/gsd auto`; the failsafe defers cancellation while recovery is actively producing durable output. If the journal shows a stopped finalize reason such as a git closeout failure or repeated finalize timeout, inspect `.gsd/git-action-failures.log`, resolve the underlying git issue, then resume.
 
 ### Wrong files in worktree
 
