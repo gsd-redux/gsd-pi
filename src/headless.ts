@@ -511,7 +511,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Idle timeout — fallback completion detection
   let idleTimer: ReturnType<typeof setTimeout> | null = null
-  const effectiveIdleTimeout = isNewMilestone
+  let effectiveIdleTimeout = isNewMilestone
     ? NEW_MILESTONE_IDLE_TIMEOUT_MS
     : isAutoMode
       ? 0
@@ -938,6 +938,8 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     completed = false
     milestoneReady = false
     blocked = false
+    effectiveIdleTimeout = 0
+    resetIdleTimer()
     const autoCompletionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve
     })
