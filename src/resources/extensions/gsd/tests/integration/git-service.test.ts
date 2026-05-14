@@ -668,6 +668,55 @@ describe('git-service', async () => {
     rmSync(repo, { recursive: true, force: true });
   });
 
+  test('GitServiceImpl: autoCommit retry preserves task-scoped staging', () => {
+    const repo = initTempRepo();
+    const svc = new GitServiceImpl(repo);
+
+    const hookPath = join(repo, ".git", "hooks", "pre-commit");
+    const countFile = join(repo, ".git", "pre-commit-count");
+    writeFileSync(
+      hookPath,
+      [
+        "#!/bin/sh",
+        `count_file="${countFile}"`,
+        "count=0",
+        "[ -f \"$count_file\" ] && count=$(cat \"$count_file\")",
+        "count=$((count + 1))",
+        "echo \"$count\" > \"$count_file\"",
+        "if [ \"$count\" -eq 1 ]; then",
+        "  printf 'export const fixed = true;\\n' > src/task.ts",
+        "  exit 1",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    chmodSync(hookPath, 0o755);
+
+    createFile(repo, "src/task.ts", "export const fixed = false;\n");
+    createFile(repo, "src/unrelated.ts", "export const unrelated = true;\n");
+
+    const msg = svc.autoCommit("execute-task", "M001/S01/T05", [], {
+      taskId: "S01/T05",
+      taskTitle: "update task file",
+      oneLiner: "Updated task file after hook rewrite",
+      keyFiles: ["src/task.ts"],
+    });
+
+    assert.ok(msg !== null, "autoCommit succeeds after retry with task-scoped staging");
+    assert.equal(readFileSync(countFile, "utf-8").trim(), "2", "pre-commit hook ran twice");
+
+    const committed = run("git show --name-only --format= HEAD", repo);
+    assert.ok(committed.includes("src/task.ts"), "task file is committed after retry");
+    assert.ok(!committed.includes("src/unrelated.ts"), "retry does not widen staging to unrelated dirty files");
+
+    const status = run("git status --porcelain", repo);
+    assert.ok(status.includes("src/unrelated.ts"), "unrelated dirty file remains in working tree");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
   test('GitServiceImpl: task context keyFiles scope autoCommit staging', () => {
     const repo = initTempRepo();
     const svc = new GitServiceImpl(repo);

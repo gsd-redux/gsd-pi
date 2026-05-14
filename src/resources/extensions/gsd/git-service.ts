@@ -912,7 +912,10 @@ export class GitServiceImpl {
       // Some pre-commit hooks intentionally rewrite files and fail the first
       // commit to force a re-stage + retry.
       if (!nativeHasChanges(this.basePath)) throw err;
-      this.smartStage(extraExclusions);
+      const retriedScoped = taskContext
+        ? this.scopedStageTaskFiles(taskContext, extraExclusions)
+        : false;
+      if (!retriedScoped) this.smartStage(extraExclusions);
       if (!nativeHasStagedChanges(this.basePath)) throw err;
       nativeCommit(this.basePath, message, { allowEmpty: false });
     }
