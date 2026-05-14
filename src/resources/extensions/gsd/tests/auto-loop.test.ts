@@ -3,7 +3,7 @@
 
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,11 @@ import type { LoopDeps } from "../auto/loop-deps.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
+import { registerAutoWorker } from "../db/auto-workers.js";
+import { claimMilestoneLease } from "../db/milestone-leases.js";
+import { recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
+import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -965,6 +970,79 @@ test("autoLoop exits on terminal complete state", async (t) => {
     !deps.callLog.includes("resolveDispatch"),
     "should not dispatch when complete",
   );
+});
+
+test("autoLoop persists stuck counter reset when dispatch recovery continues", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const basePath = realpathSync(mkdtempSync(join(tmpdir(), "gsd-stuck-counter-reset-")));
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+  mkdirSync(join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+  writeFileSync(
+    join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"),
+    "# Slice Plan\n\n- [ ] **T01:** task one\n",
+  );
+  writeFileSync(
+    join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-PLAN.md"),
+    "# Task Plan\n",
+  );
+
+  try {
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "pending" });
+    insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task One", status: "pending" });
+    const workerId = registerAutoWorker({ projectRootRealpath: basePath });
+    const lease = claimMilestoneLease(workerId, "M001");
+    assert.equal(lease.ok, true);
+    if (!lease.ok) return;
+
+    for (let i = 0; i < 2; i++) {
+      const claim = recordDispatchClaim({
+        traceId: `stuck-${i}`,
+        workerId,
+        milestoneLeaseToken: lease.token,
+        milestoneId: "M001",
+        sliceId: "S01",
+        unitType: "plan-slice",
+        unitId: "M001/S01",
+      });
+      assert.equal(claim.ok, true);
+      if (!claim.ok) return;
+      markCanceled(claim.dispatchId, "seed stuck window");
+    }
+    setRuntimeKv("global", basePath, "stuck_recovery_attempts", 1);
+
+    const s = makeLoopSession({
+      basePath,
+      originalBasePath: basePath,
+      canonicalProjectRoot: basePath,
+    });
+    const deps = makeMockDeps({
+      resolveDispatch: async () => ({
+        action: "dispatch" as const,
+        unitType: "plan-slice",
+        unitId: "M001/S01",
+        prompt: "plan the slice",
+      }),
+      invalidateAllCaches: () => {
+        s.active = false;
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+
+    assert.equal(
+      getRuntimeKv<number>("global", basePath, "stuck_recovery_attempts"),
+      0,
+      "dispatch-level artifact recovery exits through continue, so the reset counter must still persist",
+    );
+  } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(basePath, { recursive: true, force: true });
+  }
 });
 
 test("autoLoop stops before success notification when postflight stash restore needs recovery", async () => {
