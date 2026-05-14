@@ -1194,6 +1194,8 @@ export async function stopAuto(
         ? "merge-conflict"
         : rawReason.startsWith("Merge error") || rawReason.startsWith("Merge failed")
           ? "merge-failed"
+          : rawReason.startsWith("Slice-parallel dispatched")
+            ? "stop"
           : rawReason.startsWith("slice-merge-conflict")
             ? "slice-merge-conflict"
             : rawReason === "All milestones complete"
