@@ -141,6 +141,33 @@ async function reapplyValidatedModelOnFallback(
   }
 }
 
+/**
+ * Apply a CLI --model override by id or provider/id and warn when invalid.
+ */
+async function applyModelOverride(
+  session: { setModel(model: { provider: string; id: string }): unknown | Promise<unknown> },
+  modelRegistry: ModelRegistryInstance,
+  modelFlag: string | undefined,
+): Promise<void> {
+  if (!modelFlag) return
+
+  const available = modelRegistry.getAvailable()
+  const match =
+    available.find((m) => m.id === modelFlag) ||
+    available.find((m) => `${m.provider}/${m.id}` === modelFlag)
+
+  if (!match) {
+    process.stderr.write(`[gsd] Warning: Model "${modelFlag}" not found. Using configured default.\n`)
+    return
+  }
+
+  try {
+    await session.setModel(match)
+  } catch {
+    process.stderr.write(`[gsd] Warning: Could not apply --model override "${modelFlag}" (provider not ready). Using session default.\n`)
+  }
+}
+
 const cliFlags = parseCliArgs(process.argv)
 const isPrintMode = cliFlags.print || cliFlags.mode !== undefined
 
@@ -672,16 +699,7 @@ if (isPrintMode) {
   printExtensionErrors(extensionsResult.errors)
   printExtensionWarnings(extensionsResult.warnings)
 
-  // Apply --model override if specified
-  if (cliFlags.model) {
-    const available = modelRegistry.getAvailable()
-    const match =
-      available.find((m) => m.id === cliFlags.model) ||
-      available.find((m) => `${m.provider}/${m.id}` === cliFlags.model)
-    if (match) {
-      session.setModel(match)
-    }
-  }
+  await applyModelOverride(session, modelRegistry, cliFlags.model)
 
   const mode = cliFlags.mode || 'text'
 
@@ -805,16 +823,7 @@ await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, i
 printExtensionErrors(extensionsResult.errors)
 printExtensionWarnings(extensionsResult.warnings)
 
-// Apply --model override if specified
-if (cliFlags.model) {
-  const available = modelRegistry.getAvailable()
-  const match =
-    available.find((m) => m.id === cliFlags.model) ||
-    available.find((m) => `${m.provider}/${m.id}` === cliFlags.model)
-  if (match) {
-    session.setModel(match)
-  }
-}
+await applyModelOverride(session, modelRegistry, cliFlags.model)
 
 // Restore scoped models from settings on startup.
 // The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,
