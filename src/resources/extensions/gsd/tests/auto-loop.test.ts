@@ -2802,6 +2802,89 @@ test("runUnitPhase pauses ghost completions before closeout and finalize side ef
   );
 });
 
+test("runUnitPhase records failed routing outcome when expected artifact is missing", async (t) => {
+  _resetPendingResolve();
+
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-routing-artifact-missing-"));
+  t.after(() => {
+    _resetPendingResolve();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  const recordedOutcomes: Array<{ unitType: string; tier: string; success: boolean }> = [];
+  const deps = makeMockDeps({
+    selectAndApplyModel: async () => ({
+      routing: { tier: "light" } as any,
+      appliedModel: null,
+    }),
+    recordOutcome: (unitType: string, tier: "light" | "standard" | "heavy", success: boolean) => {
+      recordedOutcomes.push({ unitType, tier, success });
+    },
+  });
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const pi = {
+    ...makeMockPi(),
+    sendMessage: () => {
+      queueMicrotask(() => resolveAgentEnd({ messages: [{ role: "assistant" }] }));
+    },
+  } as any;
+  const s = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+  });
+  let seq = 0;
+
+  const result = await runUnitPhase(
+    { ctx, pi, s, deps, prefs: undefined, iteration: 1, flowId: "flow-routing-outcome", nextSeq: () => ++seq },
+    {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "do work",
+      finalPrompt: "do work",
+      pauseAfterUatDispatch: false,
+      state: {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Milestone" },
+        activeSlice: { id: "S01", title: "Slice" },
+        activeTask: { id: "T01", title: "Task" },
+        registry: [{ id: "M001", title: "Milestone", status: "active" }],
+        recentDecisions: [],
+        blockers: [],
+        nextAction: "",
+        progress: { milestones: { done: 0, total: 1 } },
+        requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+      } as any,
+      mid: "M001",
+      midTitle: "Milestone",
+      isRetry: false,
+      previousTier: undefined,
+    },
+    { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+  );
+
+  assert.equal(result.action, "next");
+  assert.deepEqual(
+    recordedOutcomes,
+    [{ unitType: "execute-task", tier: "light", success: false }],
+    "routing history must treat missing artifacts as failed outcomes so retries can escalate",
+  );
+});
+
 test("resolveAgentEndCancelled without args produces no errorContext field", async () => {
   _resetPendingResolve();
 
