@@ -191,6 +191,8 @@ Auto mode also enforces a same-unit consecutive dispatch cap for `complete-miles
 
 After each unit, GSD verifies that the expected artifact exists on disk. If the artifact is missing, auto mode re-dispatches the unit with explicit failure context and records an `artifact-verification-retry` journal event.
 
+For `run-uat`, existence alone is not sufficient: a pre-existing `S##-ASSESSMENT.md` only counts as completed when it contains a canonical verdict field (for example frontmatter `verdict: PASS | FAIL | PARTIAL`). If the file exists but has no verdict, artifact verification fails and `run-uat` is redispatched.
+
 Artifact verification retries are capped at 3 attempts. If the expected artifact is still missing after those retries, GSD pauses auto mode with an "Artifact still missing..." error instead of relying on loop detection or an unbounded dispatch counter.
 
 ### Post-Mortem Investigation (v2.40)
