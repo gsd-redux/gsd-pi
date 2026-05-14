@@ -310,10 +310,11 @@ export async function showInterviewRound(
 					const selected = sorted.map((idx) => q.options[idx].label);
 					if (selected.length > 0 || notes) answers[q.id] = { selected, notes };
 				} else {
-					if (st.committedIndex === null && !notes) continue;
+					const effectiveCommittedIndex = st.committedIndex ?? st.cursorIndex;
+					if (effectiveCommittedIndex === null && !notes) continue;
 					let selected = OTHER_OPTION_LABEL;
-					if (st.committedIndex !== null) {
-						const idx = st.committedIndex;
+					if (effectiveCommittedIndex !== null) {
+						const idx = effectiveCommittedIndex;
 						if (idx < q.options.length) selected = q.options[idx].label;
 						else if (idx === noneOrDoneIdx(i)) selected = OTHER_OPTION_LABEL;
 					}
