@@ -662,7 +662,7 @@ describe('git-service', async () => {
 
     assert.ok(msg !== null, "autoCommit succeeds after one retry for hook rewrites");
     assert.equal(run("git rev-list --count HEAD", repo), "2", "exactly one new commit created");
-    assert.equal(readFileSync(join(repo, "src/fix-me.ts"), "utf-8"), "export const fixed = true;\n");
+    assert.equal(readFileSync(join(repo, "src/fix-me.ts"), "utf-8"), "export const fixed = true;\n"); // allow-source-grep: verifies pre-commit output inside the temp repo fixture, not product source.
     assert.equal(readFileSync(countFile, "utf-8").trim(), "2", "pre-commit hook ran twice");
 
     rmSync(repo, { recursive: true, force: true });
