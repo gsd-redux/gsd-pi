@@ -293,6 +293,10 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
 
   // 4. Load completed keys (legacy) and DB completion counts
   const completedKeys = loadCompletedKeys(basePath);
+  try {
+    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+    await ensureDbOpen(basePath);
+  } catch { /* best-effort DB open for report enrichment */ }
   const dbCompletionCounts = getDbCompletionCounts();
 
   // 5. Check crash lock
@@ -301,8 +305,6 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // 6. Run doctor
   let doctorIssues: DoctorIssue[] = [];
   try {
-    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
-    await ensureDbOpen(basePath);
     const report = await runGSDDoctor(basePath, { scope: undefined });
     doctorIssues = report.issues;
   } catch { /* doctor failure is non-fatal */ }
