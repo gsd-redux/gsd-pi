@@ -734,42 +734,88 @@ export async function autoLoop(
       }
 
       if (!sidecarItem) {
-        // ── Phase 1: Pre-dispatch ─────────────────────────────────────────
-        const preDispatchResult = await runPreDispatch(ic, loopState);
-        phaseReporter.report("pre-dispatch", preDispatchResult.action);
-        if (preDispatchResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "pre-dispatch-break");
-          break;
-        }
-        if (preDispatchResult.action === "continue") {
-          finishTurn("skipped");
-          continue;
-        }
+        const orchestration = s.orchestration;
+        if (orchestration) {
+          const orchestrationResult = await orchestration.advance();
 
-        const preData = preDispatchResult.data;
+          if (orchestrationResult.kind === "blocked") {
+            s.pendingOrchestrationDispatch = null;
+            if (orchestrationResult.action === "pause") {
+              await deps.pauseAuto(ctx, pi, {
+                message: orchestrationResult.reason,
+                category: "unknown",
+              });
+            } else {
+              await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+            }
+            finishTurn("stopped", "manual-attention", "orchestration-blocked");
+            break;
+          }
 
-        // ── Phase 2: Guards ───────────────────────────────────────────────
-        const guardsResult = await runGuards(ic, preData.mid);
-        phaseReporter.report("guard", guardsResult.action);
-        if (guardsResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "guard-break");
-          break;
-        }
+          if (orchestrationResult.kind === "stopped") {
+            s.pendingOrchestrationDispatch = null;
+            await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+            finishTurn("stopped", "manual-attention", "orchestration-stopped");
+            break;
+          }
 
-        // ── Phase 3: Dispatch ─────────────────────────────────────────────
-        const dispatchResult = await runDispatch(ic, preData, loopState);
-        phaseReporter.report("dispatch", dispatchResult.action);
-        if (dispatchResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "dispatch-break");
-          break;
+          if (orchestrationResult.kind !== "advanced") {
+            s.pendingOrchestrationDispatch = null;
+            finishTurn("skipped");
+            continue;
+          }
+          const pendingDispatch = s.pendingOrchestrationDispatch;
+          iterData = {
+            unitType: pendingDispatch?.unitType ?? orchestrationResult.unit.unitType,
+            unitId: pendingDispatch?.unitId ?? orchestrationResult.unit.unitId,
+            prompt: pendingDispatch?.prompt ?? "",
+            finalPrompt: pendingDispatch?.prompt ?? "",
+            pauseAfterUatDispatch: pendingDispatch?.pauseAfterUatDispatch ?? false,
+            state: pendingDispatch?.state ?? orchestrationResult.stateSnapshot,
+            mid: pendingDispatch?.mid ?? s.currentMilestoneId ?? "workflow",
+            midTitle: pendingDispatch?.midTitle ?? orchestrationResult.stateSnapshot.activeMilestone?.title ?? "Workflow",
+            isRetry: false,
+            previousTier: undefined,
+          };
+          s.pendingOrchestrationDispatch = null;
+          phaseReporter.report("dispatch", "next", {
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+          });
+          observedUnitType = iterData.unitType;
+          observedUnitId = iterData.unitId;
+        } else {
+          const preDispatchResult = await runPreDispatch(ic, loopState);
+          phaseReporter.report("pre-dispatch", preDispatchResult.action);
+          if (preDispatchResult.action === "break") {
+            finishTurn("stopped", "manual-attention", "pre-dispatch-break");
+            break;
+          }
+          if (preDispatchResult.action === "continue") {
+            finishTurn("skipped");
+            continue;
+          }
+          const preData = preDispatchResult.data;
+          const guardsResult = await runGuards(ic, preData.mid);
+          phaseReporter.report("guard", guardsResult.action);
+          if (guardsResult.action === "break") {
+            finishTurn("stopped", "manual-attention", "guard-break");
+            break;
+          }
+          const dispatchResult = await runDispatch(ic, preData, loopState);
+          phaseReporter.report("dispatch", dispatchResult.action);
+          if (dispatchResult.action === "break") {
+            finishTurn("stopped", "manual-attention", "dispatch-break");
+            break;
+          }
+          if (dispatchResult.action === "continue") {
+            finishTurn("skipped");
+            continue;
+          }
+          iterData = dispatchResult.data;
+          observedUnitType = iterData.unitType;
+          observedUnitId = iterData.unitId;
         }
-        if (dispatchResult.action === "continue") {
-          finishTurn("skipped");
-          continue;
-        }
-        iterData = dispatchResult.data;
-        observedUnitType = iterData.unitType;
-        observedUnitId = iterData.unitId;
       } else {
         iterData = await buildSidecarIterationData({
           sidecarItem,
