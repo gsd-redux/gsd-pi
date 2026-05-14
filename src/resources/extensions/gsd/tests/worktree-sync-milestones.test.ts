@@ -641,6 +641,11 @@ describe('worktree-sync-milestones', async () => {
         '#5687: future milestone context draft projected into worktree',
       );
       assert.equal(
+        readFileSync(join(wtBase, '.gsd', 'milestones', 'M003', 'M003-ROADMAP.md'), 'utf-8'),
+        '# WT Roadmap',
+        '#5687: existing future-milestone roadmap is not overwritten',
+      );
+      assert.equal(
         readFileSync(join(wtBase, '.gsd', 'milestones', 'M002', 'M002-ROADMAP.md'), 'utf-8'),
         '# Worktree M002 Roadmap',
         '#5687: existing worktree-local files are not overwritten',
