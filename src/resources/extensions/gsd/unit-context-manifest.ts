@@ -409,11 +409,9 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     codebaseMap: false,
     preferences: "active-only",
     contextMode: "verification",
-    // planning-dispatch: validation is a verification-fan-out unit. It reads
-    // the milestone surface and dispatches reviewer/security/tester subagents
-    // to report findings without touching user source. Write isolation to
-    // .gsd/ is preserved.
-    tools: TOOLS_PLANNING_DISPATCH_REVIEW,
+    // Validation may need to run shell verification commands and apply source
+    // fixes before milestone closeout can proceed.
+    tools: TOOLS_ALL,
     artifacts: {
       inline: ["roadmap", "slice-summary", "slice-uat", "requirements", "decisions", "templates"],
       excerpt: [],
@@ -518,10 +516,9 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     codebaseMap: false,
     preferences: "active-only",
     contextMode: "verification",
-    // See complete-milestone — same rationale: dispatch to reviewer / security /
-    // tester subagents to fan out review work without bloating this unit's
-    // context.
-    tools: TOOLS_PLANNING_DISPATCH_REVIEW,
+    // Slice closeout may need to run shell verification commands and apply
+    // source fixes before completion can be recorded.
+    tools: TOOLS_ALL,
     artifacts: {
       // Phase 3 migration (#4782): matches today's actual
       // buildCompleteSlicePrompt inlining order. Overrides prepend +
