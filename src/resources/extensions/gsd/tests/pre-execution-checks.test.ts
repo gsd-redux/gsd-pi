@@ -128,6 +128,12 @@ import type { Request } from 'express';
     assert.deepEqual(packages, []);
   });
 
+  test("ignores @/ path alias imports", () => {
+    const desc = `import { handler } from '@/app/api/hello/route';`;
+    const packages = extractPackageReferences(desc);
+    assert.deepEqual(packages, []);
+  });
+
   test("normalizes package subpaths", () => {
     const desc = "npm install lodash/get";
     const packages = extractPackageReferences(desc);
