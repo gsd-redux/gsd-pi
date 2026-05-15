@@ -1252,7 +1252,10 @@ export function insertTask(t: {
       expected_output = CASE WHEN NULLIF(:expected_output, '[]') IS NOT NULL THEN :expected_output ELSE tasks.expected_output END,
       observability_impact = CASE WHEN NULLIF(:observability_impact, '') IS NOT NULL THEN :observability_impact ELSE tasks.observability_impact END,
       sequence = :sequence,
-      target_repositories = CASE WHEN NULLIF(:target_repositories, '[]') IS NOT NULL THEN :target_repositories ELSE tasks.target_repositories END`,
+      target_repositories = CASE
+        WHEN :raw_target_repositories IS NOT NULL THEN :target_repositories
+        ELSE tasks.target_repositories
+      END`,
   ).run({
     ":milestone_id": t.milestoneId,
     ":slice_id": t.sliceId,
@@ -1279,6 +1282,10 @@ export function insertTask(t: {
     ":observability_impact": t.planning?.observabilityImpact ?? "",
     ":sequence": t.sequence ?? 0,
     ":target_repositories": JSON.stringify(t.planning?.targetRepositories ?? []),
+    ":raw_target_repositories":
+      t.planning && "targetRepositories" in t.planning
+        ? JSON.stringify(t.planning.targetRepositories ?? [])
+        : null,
   });
 }
 

@@ -63,12 +63,13 @@ function resolveVerificationTargets(
   slice: SliceRow | null,
 ): VerificationTarget[] {
   const registry = createRepositoryRegistryFromPreferences(basePath, prefs);
-  const requestedIds =
+  const explicitIds =
     task?.target_repositories?.length
       ? task.target_repositories
       : slice?.target_repositories?.length
         ? slice.target_repositories
-        : ["project"];
+        : null;
+  const requestedIds = explicitIds ?? ["project"];
 
   const targets: VerificationTarget[] = [];
   const seen = new Set<string>();
@@ -76,7 +77,9 @@ function resolveVerificationTargets(
     if (seen.has(id)) continue;
     seen.add(id);
     const repo = registry.byId.get(id);
-    if (!repo) continue;
+    if (!repo) {
+      throw new Error(`unknown verification target repository: ${id}`);
+    }
     targets.push({
       id: repo.id,
       cwd: repo.root,
@@ -87,7 +90,7 @@ function resolveVerificationTargets(
     });
   }
 
-  if (targets.length === 0) {
+  if (!explicitIds && targets.length === 0) {
     const project = registry.byId.get("project");
     if (project) targets.push({ id: "project", cwd: project.root });
   }
