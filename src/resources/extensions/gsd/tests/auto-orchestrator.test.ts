@@ -218,6 +218,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
 
     assert.equal(result.kind, scenario.expectedKind, `${scenario.name} result kind`);
     if (scenario.expectedKind === "blocked") {
+      assertBlockedResult(result);
       assert.equal(result.action, scenario.expectedAction, `${scenario.name} blocked action`);
       assert.equal(result.reason, scenario.expectedReason, `${scenario.name} blocked reason`);
     }
