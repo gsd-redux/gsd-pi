@@ -1216,6 +1216,40 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Claude Code MCP Per-Model Config ───────────────────────────────────────
+  if (preferences.claude_code_mcp !== undefined) {
+    if (typeof preferences.claude_code_mcp === "object" && preferences.claude_code_mcp !== null) {
+      const raw = preferences.claude_code_mcp as unknown as Record<string, unknown>;
+      if (typeof raw.per_model !== "object" || raw.per_model === null || Array.isArray(raw.per_model)) {
+        warnings.push("claude_code_mcp.per_model must be an object — ignoring claude_code_mcp");
+      } else {
+        const perModel = raw.per_model as Record<string, unknown>;
+        const validPerModel: Record<string, { allowed_servers?: string[]; blocked_servers?: string[] }> = {};
+        for (const [prefix, entry] of Object.entries(perModel)) {
+          if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+            warnings.push(`claude_code_mcp.per_model["${prefix}"] must be an object — ignoring entry`);
+            continue;
+          }
+          const e = entry as Record<string, unknown>;
+          const validEntry: { allowed_servers?: string[]; blocked_servers?: string[] } = {};
+          for (const field of ["allowed_servers", "blocked_servers"] as const) {
+            if (e[field] !== undefined) {
+              if (Array.isArray(e[field]) && (e[field] as unknown[]).every((s) => typeof s === "string")) {
+                validEntry[field] = e[field] as string[];
+              } else {
+                warnings.push(`claude_code_mcp.per_model["${prefix}"].${field} must be an array of strings — ignoring field`);
+              }
+            }
+          }
+          validPerModel[prefix] = validEntry;
+        }
+        validated.claude_code_mcp = { per_model: validPerModel };
+      }
+    } else {
+      warnings.push("claude_code_mcp must be an object — ignoring");
+    }
+  }
+
   // ─── Enhanced Verification ──────────────────────────────────────────────────
   if (preferences.enhanced_verification !== undefined) {
     if (typeof preferences.enhanced_verification === "boolean") {

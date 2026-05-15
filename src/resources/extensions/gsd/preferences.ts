@@ -55,6 +55,8 @@ export type {
   UokTurnActionMode,
   UokPreferences,
   CodebaseMapPreferences,
+  ClaudeCodeMcpPerModelEntry,
+  ClaudeCodeMcpConfig,
   GSDPreferences,
   LoadedGSDPreferences,
   SkillResolution,
@@ -98,6 +100,9 @@ export {
   resolveSearchProviderFromPreferences,
   resolveDisabledModelProvidersFromPreferences,
 } from "./preferences-models.js";
+
+// ─── Re-exports: MCP ────────────────────────────────────────────────────────
+export { resolveModelMcpConfig } from "./preferences-mcp.js";
 
 // ─── Path Constants & Getters ───────────────────────────────────────────────
 
