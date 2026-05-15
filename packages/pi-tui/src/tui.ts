@@ -741,9 +741,54 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Tall buffer shrinks: fall through to differential render instead of full-clearing.
-		// Ghost lines will be handled below; the viewport shift means old ghost rows get
-		// overwritten by the differential render, so no \x1b[2J flash is needed.
+		// Tall→tall shrink with viewport baseline shift. Both buffers fill the
+		// viewport, but newLines is shorter, so the viewport baseline must move
+		// from (previousLines.length - height) down to (newLines.length - height).
+		// The differential render below would see no diff in the overlapping
+		// indices (content[20..39] is identical between frames) and would leave
+		// the screen showing stale rows from the old viewport.
+		//
+		// Repaint the visible viewport in place without \x1b[2J — the four-pass
+		// flicker fix exists exactly to avoid that full-screen clear — then reset
+		// maxLinesRendered and previousViewportTop so subsequent diffs anchor
+		// against the new baseline.
+		if (
+			this.previousLines.length > height &&
+			newLines.length > height &&
+			newLines.length < this.previousLines.length &&
+			this.overlayStack.length === 0
+		) {
+			logRedraw(`tall→tall shrink viewport realign (${this.previousLines.length} -> ${newLines.length})`);
+			const newViewportTop = getViewportTop(newLines.length);
+			const currentScreenRow = Math.max(0, hardwareCursorRow - prevViewportTop);
+			let buffer = "\x1b[?2026h";
+			if (currentScreenRow > 0) {
+				buffer += `\x1b[${currentScreenRow}A`;
+			}
+			buffer += "\r";
+			for (let i = 0; i < height; i++) {
+				const idx = newViewportTop + i;
+				if (i > 0) buffer += "\r\n";
+				buffer += "\x1b[2K";
+				let line = newLines[idx] ?? "";
+				if (!isImageLine(line) && visibleWidth(line) > width) {
+					line = truncateToWidth(line, width);
+				}
+				buffer += line;
+			}
+			buffer += "\x1b[?2026l";
+			this.terminal.write(buffer);
+			this.cursorRow = newLines.length - 1;
+			this.hardwareCursorRow = newLines.length - 1;
+			this.maxLinesRendered = newLines.length;
+			this.previousViewportTop = newViewportTop;
+			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.previousLines = newLines;
+			this.previousWidth = width;
+			this.previousHeight = height;
+			this._shrinkDebounceActive = false;
+			return;
+		}
 
 		// Content shrunk below the working area and no overlays - re-render to clear empty rows
 		// (overlays need the padding, so only do this when no overlays are active)
