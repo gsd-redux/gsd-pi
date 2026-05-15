@@ -1615,7 +1615,7 @@ export function updateMilestoneStatus(milestoneId: string, status: string, compl
 export function getActiveMilestoneFromDb(): MilestoneRow | null {
   if (!currentDb) return null;
   const row = currentDb.prepare(
-    "SELECT * FROM milestones WHERE status NOT IN ('complete', 'parked') ORDER BY id LIMIT 1",
+    "SELECT * FROM milestones WHERE status NOT IN ('complete', 'done', 'skipped', 'closed', 'parked') ORDER BY id LIMIT 1",
   ).get();
   if (!row) return null;
   return rowToMilestone(row);
@@ -1671,7 +1671,7 @@ export function getArtifact(path: string): ArtifactRow | null {
 export function getActiveMilestoneIdFromDb(): IdStatusSummary | null {
   if (!currentDb) return null;
   const row = currentDb.prepare(
-    "SELECT id, status FROM milestones WHERE status NOT IN ('complete', 'parked') ORDER BY id LIMIT 1",
+    "SELECT id, status FROM milestones WHERE status NOT IN ('complete', 'done', 'skipped', 'closed', 'parked') ORDER BY id LIMIT 1",
   ).get();
   if (!row) return null;
   return rowToIdStatusSummary(row);
@@ -1886,16 +1886,16 @@ export function reconcileWorktreeDb(
           )
           SELECT w.id, w.title,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.status ELSE w.status
                  END,
                  w.depends_on,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.created_at ELSE w.created_at
                  END,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.completed_at ELSE w.completed_at
                  END,
                  w.vision, w.success_criteria, w.key_risks, w.proof_strategy,
@@ -1919,12 +1919,12 @@ export function reconcileWorktreeDb(
           )
           SELECT w.milestone_id, w.id, w.title,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.status ELSE w.status
                  END,
                  w.risk, w.depends, w.demo, w.created_at,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.completed_at ELSE w.completed_at
                  END,
                  w.full_summary_md, w.full_uat_md, w.goal, w.success_criteria, w.proof_level,
@@ -1950,13 +1950,13 @@ export function reconcileWorktreeDb(
           )
           SELECT w.milestone_id, w.slice_id, w.id, w.title,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.status ELSE w.status
                  END,
                  w.one_liner, w.narrative,
                  w.verification_result, w.duration,
                  CASE
-                   WHEN m.status IN ('complete', 'done') AND w.status NOT IN ('complete', 'done')
+                   WHEN m.status IN ('complete', 'done', 'skipped', 'closed') AND w.status NOT IN ('complete', 'done', 'skipped', 'closed')
                    THEN m.completed_at ELSE w.completed_at
                  END,
                  w.blocker_discovered,
