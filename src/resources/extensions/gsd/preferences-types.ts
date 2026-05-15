@@ -152,6 +152,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_window_override",
   "context_mode",
   "planning_depth",
+  "claude_code_mcp",
 ]);
 
 /**
@@ -318,6 +319,17 @@ export interface CodebaseMapPreferences {
   max_files?: number;
   /** Files-per-directory threshold before collapsing to a summary line. Default: 20. */
   collapse_threshold?: number;
+}
+
+/** Per-model MCP server allow/block lists for a single model prefix. */
+export interface ClaudeCodeMcpPerModelEntry {
+  allowed_servers?: string[];
+  blocked_servers?: string[];
+}
+
+/** Top-level claude_code_mcp preference: maps model-ID prefixes to server filter lists. */
+export interface ClaudeCodeMcpConfig {
+  per_model?: Record<string, ClaudeCodeMcpPerModelEntry>;
 }
 
 export interface GSDPreferences {
@@ -499,6 +511,8 @@ export interface GSDPreferences {
    * (e.g. "Chinese", "zh", "German", "de", "日本語"). Persists across /clear.
    */
   language?: string;
+  /** Per-model MCP server filtering configuration. Uses longest-prefix-wins matching. */
+  claude_code_mcp?: ClaudeCodeMcpConfig;
 }
 
 export interface LoadedGSDPreferences {
