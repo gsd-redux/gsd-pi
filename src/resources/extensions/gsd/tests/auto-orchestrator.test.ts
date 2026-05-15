@@ -177,7 +177,7 @@ test("advance() pre-dispatch parity: gate emissions and control-flow action matc
       staleMsg: "resources changed since session start",
       gateResult: { kind: "pass" },
       expectedKind: "blocked",
-      expectedAction: "stop",
+      expectedAction: "pause",
       expectedReason: "resources changed since session start",
       expectedGates: [
         "resource-version-guard:policy:fail:policy:resource version guard blocked dispatch:resources changed since session start",

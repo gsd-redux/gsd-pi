@@ -327,14 +327,14 @@ test("#5843: run-uat uses verification tools policy so build/test commands can r
 });
 
 test("planning-dispatch hard block message omits internal tracker references", () => {
-  const manifest = UNIT_MANIFESTS["validate-milestone"];
+  const manifest = UNIT_MANIFESTS["plan-slice"];
   assert.strictEqual(manifest.tools.mode, "planning-dispatch");
 
   const result = shouldBlockPlanningUnit(
     "task",
     "scout",
     process.cwd(),
-    "validate-milestone",
+    "plan-slice",
     manifest.tools,
   );
 
