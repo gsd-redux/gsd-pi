@@ -3023,6 +3023,7 @@ test("autoLoop re-iterates when postUnitPreVerification returns retry (#1571)", 
     const s = makeLoopSession();
 
     let preVerifyCallCount = 0;
+    const currentUnitSnapshotsAtPreVerify: Array<{ type: string; id: string; startedAt: number } | null> = [];
     // Pre-queued responses: first call returns "retry", second returns "continue"
     const preVerifyResponses = ["retry", "continue"] as const;
 
@@ -3040,6 +3041,7 @@ test("autoLoop re-iterates when postUnitPreVerification returns retry (#1571)", 
       },
       postUnitPreVerification: async () => {
         deps.callLog.push("postUnitPreVerification");
+        currentUnitSnapshotsAtPreVerify.push(s.currentUnit);
         const response = preVerifyResponses[preVerifyCallCount++] ?? "continue";
         if (response === "retry") {
           s.pendingVerificationRetry = {
@@ -3070,6 +3072,11 @@ test("autoLoop re-iterates when postUnitPreVerification returns retry (#1571)", 
     await loopPromise;
 
     assert.equal(preVerifyCallCount, 2, "preVerification should be called twice");
+    assert.deepEqual(
+      currentUnitSnapshotsAtPreVerify,
+      [null, null],
+      "currentUnit should be cleared before each preVerification run to prevent stale retry scope",
+    );
 
     const postVerifyCalls = deps.callLog.filter(
       (c: string) => c === "runPostUnitVerification",
