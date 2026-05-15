@@ -162,7 +162,15 @@ describe("TUI pin-to-bottom on clear", () => {
     );
   });
 
-  it("re-anchors tall shrinks so the latest turn end remains visible", () => {
+  it("re-anchors tall shrinks so the latest turn end remains visible without a full-screen clear", () => {
+    // Tall→tall shrink (60 → 40 on a 20-row terminal). The viewport baseline
+    // must move from 40 down to 20, repainting visible rows with content
+    // indices 20..39 in place. The renderer must NOT emit \x1b[2J — that
+    // full-screen clear is what causes the bottom-panel flicker the four-pass
+    // fix exists to avoid. The earlier byte-level assertion `\x1b[2J\x1b[1;1H`
+    // captured the spirit (new bottom visible, baseline reset) via the only
+    // mechanism available at the time; the fix replaces that mechanism with an
+    // in-place viewport repaint that preserves both intents.
     const terminal = new ResizableMockTerminal(20);
     const tui = new TUI(terminal, false);
     const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`);
@@ -177,8 +185,19 @@ describe("TUI pin-to-bottom on clear", () => {
 
     const frame = terminal.writtenData.join("");
     assert.ok(
-      frame.includes("\x1b[2J\x1b[1;1H"),
-      `expected tall shrink to force a bottom-visible redraw, got ${JSON.stringify(frame.slice(0, 120))}`,
+      !frame.includes("\x1b[2J"),
+      `tall→tall shrink must not emit \\x1b[2J (causes bottom-panel flicker), got ${JSON.stringify(frame.slice(0, 160))}`,
+    );
+    // New viewport content (indices 20..39 → "line 21".."line 40") must be
+    // painted into the visible rows. Check the top and bottom of the new
+    // viewport are both present.
+    assert.ok(
+      frame.includes("line 21"),
+      `expected new viewport top "line 21" to be repainted, got ${JSON.stringify(frame.slice(0, 200))}`,
+    );
+    assert.ok(
+      frame.includes("line 40"),
+      `expected new viewport bottom "line 40" to be repainted, got ${JSON.stringify(frame.slice(0, 200))}`,
     );
     assert.strictEqual(
       (tui as any).previousViewportTop,
