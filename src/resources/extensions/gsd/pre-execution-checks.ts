@@ -135,7 +135,7 @@ export function extractPackageReferences(description: string): string[] {
   while ((importMatch = importPattern.exec(description)) !== null) {
     // Skip relative imports and node builtins
     const pkg = importMatch[1];
-    if (!pkg.startsWith(".") && !pkg.startsWith("node:")) {
+    if (!pkg.startsWith(".") && !pkg.startsWith("node:") && !pkg.startsWith("@/")) {
       packages.add(normalizePackageName(pkg));
     }
   }
