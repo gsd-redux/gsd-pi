@@ -78,7 +78,10 @@ function resolveVerificationTargets(
     seen.add(id);
     const repo = registry.byId.get(id);
     if (!repo) {
-      throw new Error(`unknown verification target repository: ${id}`);
+      if (explicitIds) {
+        throw new Error(`unknown verification target repository: ${id}`);
+      }
+      continue;
     }
     targets.push({
       id: repo.id,
