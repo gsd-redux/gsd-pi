@@ -13,6 +13,12 @@ import { RuleRegistry, setRegistry, resetRegistry } from "../rule-registry.js";
 import type { UnifiedRule } from "../rule-types.js";
 import { supportsStructuredQuestions } from "../workflow-mcp.js";
 
+function assertBlockedResult(
+  result: Awaited<ReturnType<ReturnType<typeof createAutoOrchestrator>["advance"]>>,
+): asserts result is Extract<typeof result, { kind: "blocked" }> {
+  assert.equal(result.kind, "blocked");
+}
+
 function makeState(): GSDState {
   return {
     activeMilestone: { id: "M001", title: "Milestone" },
@@ -119,7 +125,7 @@ test("advance() returns blocked when health gate denies", async () => {
 
   const result = await orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
+  assertBlockedResult(result);
   assert.equal(result.reason, "doctor-block");
   assert.equal(result.action, "pause");
   assert.ok(calls.includes("gate:pre-dispatch-health-gate:manual-attention"));
@@ -137,7 +143,7 @@ test("advance() returns blocked pause when resources are stale", async () => {
 
   const result = await orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
+  assertBlockedResult(result);
   assert.equal(result.reason, "resources changed since session start");
   assert.equal(result.action, "pause");
   assert.ok(calls.includes("gate:resource-version-guard:fail"));
@@ -297,7 +303,7 @@ test("advance() blocks before dispatch when State Reconciliation blocks", async 
 
   const result = await orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
+  assertBlockedResult(result);
   assert.equal(result.reason, "state drift blocked");
   assert.equal(result.action, "pause");
   assert.ok(!calls.includes("dispatch.decide"));
@@ -317,7 +323,7 @@ test("advance() blocks before Runtime persistence when Tool Contract fails", asy
 
   const result = await orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
+  assertBlockedResult(result);
   assert.equal(result.reason, "unknown Unit");
   assert.equal(result.action, "pause");
   assert.ok(!calls.includes("worktree.prepare"));
@@ -340,7 +346,7 @@ test("advance() blocks before Runtime persistence when Worktree Safety fails", a
 
   const result = await orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
+  assertBlockedResult(result);
   assert.equal(result.reason, "worktree invalid");
   assert.equal(result.action, "pause");
   assert.ok(!calls.includes("journal:advance"));
