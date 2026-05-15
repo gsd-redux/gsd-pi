@@ -80,6 +80,7 @@ function resolveVerificationTargets(
     targets.push({
       id: repo.id,
       cwd: repo.root,
+      // Top-level verification commands override per-repo defaults.
       preferenceCommands: prefs?.verification_commands?.length
         ? undefined
         : repo.verification,
@@ -450,7 +451,7 @@ export async function runPostUnitVerification(
 
       if (enhancedEnabled && postEnabled && isDbAvailable()) {
         try {
-          // Get the completed task from DB
+          // Reuse the already-loaded task row for post-execution checks.
           if (taskRow && taskRow.key_files && taskRow.key_files.length > 0) {
             // Get all tasks in the slice
             const allTasks = getSliceTasks(mid, sid);

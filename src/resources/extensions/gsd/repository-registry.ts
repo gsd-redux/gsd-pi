@@ -53,6 +53,8 @@ export function createRepositoryRegistry(
   const repoMap = new Map<string, RegisteredRepository>();
 
   // Backward-compatible default for single-repo projects.
+  // Explicit workspacePrefs?.repositories entries can override "project"
+  // via resolveRepositoryRoot to customize role/verification/commit policy.
   repoMap.set("project", { id: "project", root: projectRoot });
 
   for (const [repoId, repoConfig] of Object.entries(workspacePrefs?.repositories ?? {})) {

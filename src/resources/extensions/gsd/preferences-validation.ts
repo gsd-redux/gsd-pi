@@ -9,6 +9,7 @@
 import type { GitPreferences } from "./git-service.js";
 import type { PostUnitHookConfig, PreDispatchHookConfig, TokenProfile, PhaseSkipPreferences } from "./types.js";
 import type { DynamicRoutingConfig } from "./model-router.js";
+import { isAbsolute } from "node:path";
 import { VALID_BRANCH_NAME } from "./git-service.js";
 import { normalizeStringArray } from "../shared/format-utils.js";
 
@@ -1289,6 +1290,10 @@ export function validatePreferences(preferences: GSDPreferences): {
 
             if (typeof repo.path === "string" && repo.path.trim().length > 0) {
               validRepo.path = repo.path.trim();
+              if (isAbsolute(validRepo.path)) {
+                errors.push(`workspace.repositories.${repoId}.path must be a relative path`);
+                continue;
+              }
               const normalizedPathKey = validRepo.path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
               if (normalizedPaths.has(normalizedPathKey)) {
                 errors.push(`workspace.repositories contains duplicate path: ${validRepo.path}`);

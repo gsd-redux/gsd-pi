@@ -345,6 +345,7 @@ describe("verification-gate: execution", () => {
       cwd: tmp,
       preferenceCommands: ["echo hello", "echo world"],
     });
+    assert.equal(result.passed, true);
     assert.equal(result.checks.length, 2);
     assert.equal(result.discoverySource, "preference");
     assert.equal(result.checks[0].exitCode, 0);

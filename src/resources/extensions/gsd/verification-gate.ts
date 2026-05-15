@@ -336,7 +336,16 @@ function mergeDiscoverySource(
   if (sources.length === 0) return "none";
   const first = sources[0];
   if (sources.every((source) => source === first)) return first;
-  return sources.find((source) => source !== "none") ?? "none";
+  const precedence: VerificationResult["discoverySource"][] = [
+    "preference",
+    "task-plan",
+    "package-json",
+    "python-project",
+  ];
+  for (const source of precedence) {
+    if (sources.includes(source)) return source;
+  }
+  return "none";
 }
 
 /**
