@@ -147,6 +147,14 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `unique_milestone_ids`: boolean — when `true`, generates milestone IDs in `M{seq}-{rand6}` format (e.g. `M001-eh88as`) instead of plain sequential `M001`. Prevents ID collisions in team workflows where multiple contributors create milestones concurrently. Both formats coexist — existing `M001`-style milestones remain valid. Default: `false`.
 
+- `workspace`: optional parent-workspace repository registry. Keys:
+  - `mode`: `"project"` or `"parent"` — registry mode for repository lookup. Default: `"project"`.
+  - `repositories`: object keyed by repository id. A default `"project"` repository pointing at the project root is always available, even when not listed here (and can be overridden by explicitly defining `"project"`). Each repository supports:
+    - `path`: string — repository root path relative to project root.
+    - `role`: string — optional human label for prompts/reporting.
+    - `verification`: string[] — optional default verification commands.
+    - `commit_policy`: `"auto"` or `"skip"` — optional turn-commit policy for auto-mode commit actions. Defaults to `"auto"` when omitted. `"skip"` suppresses commit execution for that target repo.
+
 - `budget_ceiling`: number — maximum dollar amount to spend on auto-mode. When reached, behavior is controlled by `budget_enforcement`. Default: no limit.
 
 - `budget_enforcement`: `"warn"`, `"pause"`, or `"halt"` — action taken when `budget_ceiling` is reached.

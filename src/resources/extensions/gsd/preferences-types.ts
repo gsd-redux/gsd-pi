@@ -153,6 +153,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "context_mode",
   "planning_depth",
   "claude_code_mcp",
+  "workspace",
 ]);
 
 /**
@@ -332,6 +333,22 @@ export interface ClaudeCodeMcpConfig {
   per_model?: Record<string, ClaudeCodeMcpPerModelEntry>;
 }
 
+export interface WorkspaceRepositoryPreference {
+  /** Child repository path; relative paths resolve from the project root. */
+  path: string;
+  /** Optional human-oriented role label (for prompts/reporting). */
+  role?: string;
+  /** Optional default verification commands for this repository. */
+  verification?: string[];
+  /** Optional per-repository commit execution policy for auto-mode turn commits. */
+  commit_policy?: "auto" | "skip";
+}
+
+export interface WorkspacePreferences {
+  /** Parent-workspace uses one parent .gsd coordinating child repos. */
+  mode?: "project" | "parent";
+  repositories?: Record<string, WorkspaceRepositoryPreference>;
+}
 export interface GSDPreferences {
   version?: number;
   mode?: WorkflowMode;
@@ -427,6 +444,8 @@ export interface GSDPreferences {
   experimental?: ExperimentalPreferences;
   /** Configuration for the codebase map generator (/gsd codebase). */
   codebase?: CodebaseMapPreferences;
+  /** Multi-repository parent workspace configuration. */
+  workspace?: WorkspacePreferences;
   /** Slice-level parallelism within a milestone. Disabled by default. */
   slice_parallel?: { enabled?: boolean; max_workers?: number };
   /** LLM safety harness configuration. Monitors, validates, and constrains LLM behavior during auto-mode. Enabled by default with warn-and-continue policy. */

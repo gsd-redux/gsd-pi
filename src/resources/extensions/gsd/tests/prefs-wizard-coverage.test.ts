@@ -87,6 +87,16 @@ const PREF_SAMPLE_VALUES: Record<string, unknown> = {
   context_mode: { enabled: true },
   planning_depth: "deep",
   claude_code_mcp: { per_model: { "claude-haiku": { allowed_servers: ["gsd-workflow"] } } },
+  workspace: {
+    mode: "parent",
+    repositories: {
+      frontend: {
+        path: "frontend",
+        role: "web UI",
+        verification: ["npm test"],
+      },
+    },
+  },
 };
 
 test("prefs wizard save path preserves every known preference key", async () => {
