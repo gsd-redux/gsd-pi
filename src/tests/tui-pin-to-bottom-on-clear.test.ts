@@ -215,6 +215,60 @@ describe("TUI pin-to-bottom on clear", () => {
     );
   });
 
+  it("re-anchors tall shrinks with a visible-region edit without ghost-line leakage", () => {
+    // CodeRabbit follow-up to PR #6131: the existing tall-shrink test only
+    // exercises the pure-shrink path (`firstChanged >= newLines.length`).
+    // This test covers the mixed case — shrink AND a visible-region rewrite
+    // — to confirm the renderer does not emit a full clear and does not leak
+    // ghost-line `\r\n\x1b[2K` sequences past the viewport bottom (which is
+    // what the `!clampedToViewport` + `ghostLinesVisible` gating at
+    // tui.ts:972 protects against). Sizes use the literal CodeRabbit ratio
+    // (3:1.5) but scaled up so both buffers stay > height — on a 20-row
+    // terminal the 20→10 literal scenario flows through the short-block
+    // full-render path instead, which is by design and would emit \x1b[2J.
+    const terminal = new ResizableMockTerminal(20);
+    const tui = new TUI(terminal, false);
+    const lines = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`);
+    const component = new StaticLinesComponent(lines);
+    tui.addChild(component);
+    (tui as any).doRender();
+    terminal.writtenData = [];
+
+    // Shrink 60 → 40 AND edit a line inside the new viewport (indices 20..39
+    // map to "line 21".."line 40"). Index 25 → screen row 5 of the new
+    // viewport.
+    const next = lines.slice(0, 40);
+    next[25] = "EDITED line 26";
+    component.lines = next;
+    (tui as any).doRender();
+
+    const frame = terminal.writtenData.join("");
+
+    // 1. No full-screen clear.
+    assert.ok(
+      !frame.includes("\x1b[2J"),
+      `tall shrink + edit must not emit \\x1b[2J, got ${JSON.stringify(frame.slice(0, 160))}`,
+    );
+    // 2. Edited visible-region line is repainted.
+    assert.ok(
+      frame.includes("EDITED line 26"),
+      `expected visible-region edit "EDITED line 26" to be repainted, got ${JSON.stringify(frame.slice(0, 240))}`,
+    );
+    // 3. No spurious \r\n past screen-bottom. The realign path emits exactly
+    //    (height - 1) row separators inside the viewport repaint. A misfiring
+    //    ghost-line cleanup would add (previousLines.length - newLines.length)
+    //    extra `\r\n\x1b[2K` sequences (20 here), pushing well past 19.
+    const newlineCount = (frame.match(/\r\n/g) ?? []).length;
+    const height = 20;
+    assert.ok(
+      newlineCount <= height - 1,
+      `expected at most ${height - 1} \\r\\n sequences (one per inter-row separator), got ${newlineCount} in ${JSON.stringify(frame.slice(0, 240))}`,
+    );
+    // 4. Baseline invariants — same as the pure-shrink test.
+    assert.strictEqual((tui as any).previousViewportTop, 20);
+    assert.strictEqual((tui as any).maxLinesRendered, 40);
+  });
+
   it("uses differential render for same-line-count edit on short content", () => {
     // Gap C: verify the negative-viewport coordinate math is correct when a
     // same-length edit reaches the differential path (no line count change →
