@@ -141,6 +141,7 @@ function syncTopLevelMilestoneArtifacts(
           if (!fileEntry.isFile()) continue;
           if (!fileEntry.name.endsWith(".md") && !fileEntry.name.endsWith(".json")) continue;
 
+          safeCopy(
             join(srcMilestoneDir, fileEntry.name),
             join(dstMilestoneDir, fileEntry.name),
             { force: false },
