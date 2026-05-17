@@ -491,26 +491,35 @@ export async function _runMilestoneMergeWithStashRestore(
   // already saw the postflightPopStash notify above.
   if (mergeError) {
     if (mergeError instanceof MergeConflictError) {
-      ctx.ui.notify(
-        `Merge conflict: ${mergeError.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`,
-        "error",
-      );
-      await deps.stopAuto(ctx, pi, `Merge conflict on milestone ${milestoneId}`);
+      // A merge conflict is a recoverable human checkpoint, not an
+      // infrastructure failure — the user resolves the conflict and runs
+      // `/gsd auto` to resume. Pause (don't stop): stopAuto tears down the
+      // session and, because `milestoneMergedInPhases` stays false here,
+      // re-runs the already-failed worktree merge in its cleanup step
+      // (#2645), then drops the user out of the interactive TUI onto a
+      // "stopped" surface.
+      const conflictReason = `Merge conflict on milestone ${milestoneId}: ${mergeError.conflictedFiles.join(", ")}. Resolve conflicts manually and run /gsd auto to resume.`;
+      ctx.ui.notify(conflictReason, "error");
+      await deps.pauseAuto(ctx, pi, {
+        message: conflictReason,
+        category: "unknown",
+      });
       return { action: "break", reason: "merge-conflict" };
     }
     logError("engine", "Milestone merge failed with non-conflict error", {
       milestone: milestoneId,
       error: String(mergeError),
     });
-    ctx.ui.notify(
-      `Merge failed: ${mergeError instanceof Error ? mergeError.message : String(mergeError)}. Resolve and run /gsd auto to resume.`,
-      "error",
-    );
-    await deps.stopAuto(
-      ctx,
-      pi,
-      `Merge error on milestone ${milestoneId}: ${String(mergeError)}`,
-    );
+    // Like a merge conflict, a non-conflict merge failure (index lock,
+    // network, permissions) is recoverable — the user fixes the cause and
+    // runs `/gsd auto` to resume. Pause (don't stop) so the session stays
+    // resumable and stopAuto's teardown does not re-run the failed merge.
+    const mergeFailReason = `Merge error on milestone ${milestoneId}: ${mergeError instanceof Error ? mergeError.message : String(mergeError)}. Resolve and run /gsd auto to resume.`;
+    ctx.ui.notify(mergeFailReason, "error");
+    await deps.pauseAuto(ctx, pi, {
+      message: mergeFailReason,
+      category: "unknown",
+    });
     return { action: "break", reason: "merge-failed" };
   }
 
