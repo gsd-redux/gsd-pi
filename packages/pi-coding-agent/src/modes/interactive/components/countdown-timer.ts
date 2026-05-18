@@ -29,6 +29,9 @@ export class CountdownTimer {
 				this.onExpire();
 			}
 		}, 1000);
+		// The TUI keeps the process alive while a dialog is open; this timer
+		// must not pin the event loop on its own if dispose() is missed.
+		this.intervalId.unref?.();
 	}
 
 	dispose(): void {

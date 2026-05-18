@@ -187,6 +187,8 @@ export class ArminComponent implements Component {
 				this.stopAnimation();
 			}
 		}, 1000 / fps);
+		// Cosmetic animation — must never keep the Node event loop alive.
+		this.interval.unref?.();
 	}
 
 	private stopAnimation(): void {

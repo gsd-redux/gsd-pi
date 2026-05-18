@@ -71,6 +71,15 @@ export class DynamicBorder implements Component {
 		// No cached state to invalidate currently
 	}
 
+	/**
+	 * Stop the spinner when the component is removed. Without this, a spinner
+	 * started via startSpinner() keeps firing its interval (and calling
+	 * ui.requestRender()) after the border is detached from its container.
+	 */
+	dispose(): void {
+		this.stopSpinner();
+	}
+
 	render(width: number): string[] {
 		this.lastExternalRender = Date.now();
 		const spinnerPrefix = this.spinnerInterval && this.spinnerColorFn
