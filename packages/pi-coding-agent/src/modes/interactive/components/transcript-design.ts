@@ -126,11 +126,15 @@ export function renderAssistantRail(
 	if (opts.meta) {
 		surface = surface.titleRight(theme.fg("dim", opts.meta));
 	}
-	// Tint the whole block. Background colour is an SGR code, not a glyph, so
+	// Inset the assistant block by two columns, as the rail did before the
+	// migration. The indent sits outside the tint; the tinted block fills
+	// the remaining width. Background colour is an SGR code, not a glyph, so
 	// it never lands in a copy selection — body lines stay copy-clean.
+	const indent = "  ";
+	const innerWidth = Math.max(20, width - indent.length);
 	return surface
-		.render(source.length > 0 ? source : [""], Math.max(20, width))
-		.map((line) => theme.bg("customMessageBg", line));
+		.render(source.length > 0 ? source : [""], innerWidth)
+		.map((line) => indent + theme.bg("customMessageBg", line));
 }
 
 export function renderUserRail(
