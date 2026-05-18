@@ -2,7 +2,7 @@
 import { Container, Markdown, type MarkdownTheme, Text } from "@gsd/pi-tui";
 import type { ParsedSkillBlock } from "../../../core/agent-session.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { renderChatFrame } from "./chat-frame.js";
+import { renderChatFrame } from "./transcript-design.js";
 import { editorKey } from "./keybinding-hints.js";
 
 /**

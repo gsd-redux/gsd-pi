@@ -3,9 +3,13 @@
 
 import { style, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { theme, type ThemeBg, type ThemeColor } from "../theme/theme.js";
+import { formatTimestamp, type TimestampFormat } from "./timestamp.js";
 import { alignRight, padRight, roundedPanel } from "./tui-style-kit.js";
 
 export type StatusTone = "running" | "success" | "error" | "warning" | "muted";
+
+/** Conversation/system surfaces that the chat frame distinguishes by color. */
+export type FrameTone = "assistant" | "user" | "compaction" | "skill";
 
 export function chatMessageWidth(width: number): number {
 	return Math.max(24, Math.min(width, Math.floor(width * 0.72)));
@@ -59,6 +63,50 @@ export function openSurface(
 		surface = surface.paddingX(opts.paddingX);
 	}
 	return surface.render(lines, Math.max(20, width));
+}
+
+/**
+ * Render a framed system/conversation surface (compaction notices, skill
+ * invocations) as a copy-clean open surface (ADR 0001): a titled top rule
+ * and body lines with no border column. Replaces the former chat-frame.ts.
+ */
+export function renderChatFrame(
+	contentLines: string[],
+	width: number,
+	opts: {
+		label: string;
+		tone: FrameTone;
+		timestamp?: number;
+		timestampFormat: TimestampFormat;
+		showTimestamp?: boolean;
+	},
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const isPurple = opts.tone === "compaction" || opts.tone === "skill";
+	const frameColor: ThemeColor = opts.tone === "user" ? "border" : isPurple ? "customMessageLabel" : "borderAccent";
+	const bodyColor: ThemeColor =
+		opts.tone === "user" ? "userMessageText" : isPurple ? "customMessageText" : "assistantMessageText";
+
+	// A label may carry a " - " splitting a bold name from a dim detail.
+	const dashIdx = opts.label.indexOf(" - ");
+	const titleStyled =
+		dashIdx >= 0
+			? theme.fg(frameColor, theme.bold(opts.label.slice(0, dashIdx))) + theme.fg("dim", opts.label.slice(dashIdx))
+			: theme.fg(frameColor, theme.bold(opts.label));
+	const rightRaw =
+		opts.showTimestamp === false || !opts.timestamp ? "" : formatTimestamp(opts.timestamp, opts.timestampFormat);
+
+	const source = trimOuterBlankLines(contentLines);
+	const body = (source.length > 0 ? source : [""]).map((line) => theme.fg(bodyColor, line));
+
+	let surface = style()
+		.border("open")
+		.borderColor((text) => theme.fg(frameColor, text))
+		.title(titleStyled);
+	if (rightRaw) {
+		surface = surface.titleRight(theme.fg("dim", rightRaw));
+	}
+	return surface.render(body, outerWidth);
 }
 
 export function renderAssistantRail(

@@ -1,7 +1,7 @@
 import { Container, Markdown, type MarkdownTheme, Text } from "@gsd/pi-tui";
 import type { CompactionSummaryMessage } from "../../../core/messages.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { renderChatFrame } from "./chat-frame.js";
+import { renderChatFrame } from "./transcript-design.js";
 import { editorKey } from "./keybinding-hints.js";
 
 /**
