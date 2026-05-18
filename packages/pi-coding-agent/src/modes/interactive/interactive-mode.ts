@@ -328,6 +328,7 @@ export class InteractiveMode {
 
 	// Branch change listener unsubscribe function
 	private _branchChangeUnsub?: () => void;
+	private _themeChangeUnsub?: () => void;
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
@@ -647,7 +648,7 @@ export class InteractiveMode {
 		this.subscribeToAgent();
 
 		// Set up theme file watcher
-		onThemeChange(() => {
+		this._themeChangeUnsub = onThemeChange(() => {
 			this.ui.invalidate();
 			this.updateEditorBorderColor();
 			this.ui.requestRender();
@@ -4295,7 +4296,8 @@ export class InteractiveMode {
 		this._branchChangeUnsub = undefined;
 
 		// Clean up theme change listener and watcher (Fix 2)
-		onThemeChange(() => {});
+		this._themeChangeUnsub?.();
+		this._themeChangeUnsub = undefined;
 		stopThemeWatcher();
 
 		// Resolve any pending getUserInput promise so the run() loop can exit (Fix 3)
