@@ -30,8 +30,26 @@ function parseImage(): number[][][] {
 	return pixels;
 }
 
+// Quantize a 24-bit color to the closest xterm-256 index so the image
+// degrades gracefully on terminals that don't support truecolor SGR.
+function rgbTo256(r: number, g: number, b: number): number {
+	if (r === g && g === b) {
+		if (r < 8) return 16;
+		if (r > 248) return 231;
+		return 232 + Math.round(((r - 8) / 247) * 24);
+	}
+	const ri = Math.round((r / 255) * 5);
+	const gi = Math.round((g / 255) * 5);
+	const bi = Math.round((b / 255) * 5);
+	return 16 + 36 * ri + 6 * gi + bi;
+}
+
 function rgb(r: number, g: number, b: number, bg = false): string {
-	return `\x1b[${bg ? 48 : 38};2;${r};${g};${b}m`;
+	const layer = bg ? 48 : 38;
+	if (theme.getColorMode() === "truecolor") {
+		return `\x1b[${layer};2;${r};${g};${b}m`;
+	}
+	return `\x1b[${layer};5;${rgbTo256(r, g, b)}m`;
 }
 
 const RESET = "\x1b[0m";
