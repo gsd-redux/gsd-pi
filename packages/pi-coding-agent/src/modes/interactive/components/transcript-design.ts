@@ -126,7 +126,11 @@ export function renderAssistantRail(
 	if (opts.meta) {
 		surface = surface.titleRight(theme.fg("dim", opts.meta));
 	}
-	return surface.render(source.length > 0 ? source : [""], Math.max(20, width));
+	// Tint the whole block. Background colour is an SGR code, not a glyph, so
+	// it never lands in a copy selection — body lines stay copy-clean.
+	return surface
+		.render(source.length > 0 ? source : [""], Math.max(20, width))
+		.map((line) => theme.bg("customMessageBg", line));
 }
 
 export function renderUserRail(
@@ -146,7 +150,9 @@ export function renderUserRail(
 	if (opts.meta) {
 		surface = surface.titleRight(theme.fg("dim", opts.meta));
 	}
-	return surface.render(body, Math.max(20, width));
+	return surface
+		.render(body, Math.max(20, width))
+		.map((line) => theme.bg("userMessageBg", line));
 }
 
 /**
