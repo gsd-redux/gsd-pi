@@ -2,7 +2,7 @@
 
 import { truncateToWidth, visibleWidth } from "./utils.js";
 
-export type TerminalBorderStyle = "none" | "rule" | "single" | "rounded" | "heavy" | "minimal";
+export type TerminalBorderStyle = "none" | "rule" | "single" | "rounded" | "heavy" | "minimal" | "open";
 export type TerminalDensity = "compact" | "comfortable" | "dashboard";
 export type TerminalTone = "default" | "muted" | "running" | "success" | "error" | "current";
 
@@ -32,7 +32,7 @@ type BorderChars = {
 	vertical: string;
 };
 
-const BORDER_CHARS: Record<Exclude<TerminalBorderStyle, "none" | "rule" | "minimal">, BorderChars> = {
+const BORDER_CHARS: Record<Exclude<TerminalBorderStyle, "none" | "rule" | "minimal" | "open">, BorderChars> = {
 	single: {
 		topLeft: "┌",
 		topRight: "┐",
@@ -148,7 +148,9 @@ export class TerminalStyle {
 		const paddingY = Math.max(0, Math.floor(this.spec.paddingY ?? densityPadding.y));
 		const gutter = this.spec.bodyGutter ?? "";
 		const gutterWidth = visibleWidth(gutter);
-		const borderColumns = border === "none" ? 0 : 2;
+		// "open" surfaces have no vertical border column — body lines are
+		// emitted as pure content so terminal selection copies clean text.
+		const borderColumns = border === "none" || border === "open" ? 0 : 2;
 		const innerWidth = Math.max(1, outerWidth - borderColumns - paddingX * 2 - gutterWidth);
 		const emptyPaddedLine = " ".repeat(paddingX * 2 + innerWidth);
 		const sourceLines = contentLines.length > 0 ? contentLines : [""];
@@ -184,6 +186,17 @@ export class TerminalStyle {
 			];
 		}
 
+		if (border === "open") {
+			// Copy-clean content surface (ADR 0001): a titled top rule, body
+			// lines emitted verbatim with no border column or prefix, and a
+			// closing rule. Selecting a body line copies only its content.
+			return [
+				this.renderOpenTopRule(outerWidth, borderColor),
+				...paddedBody.map((line) => padVisible(line, outerWidth)),
+				borderColor("─".repeat(Math.max(1, outerWidth))),
+			];
+		}
+
 		const chars = BORDER_CHARS[border];
 		const horizontalWidth = Math.max(0, outerWidth - 2);
 		const top = borderColor(
@@ -203,6 +216,40 @@ export class TerminalStyle {
 			),
 			bottom,
 		];
+	}
+
+	/**
+	 * Build the titled top rule for an "open" surface, e.g.
+	 * `─── bash · success ─────────── 1.2s ───`. The whole line is rule
+	 * characters plus the (optional) titles — no content, so it is safe for
+	 * a user to include in a copy selection.
+	 */
+	private renderOpenTopRule(width: number, borderColor: (text: string) => string): string {
+		const w = Math.max(1, width);
+		const left = this.spec.title ?? "";
+		const right = this.spec.titleRight ?? "";
+		if (!left && !right) return borderColor("─".repeat(w));
+
+		const styledLeft = color(this.spec.titleColor, left);
+		const styledRight = color(this.spec.titleRightColor, right);
+
+		if (left && right) {
+			const fixed = 4 + visibleWidth(left) + 2 + visibleWidth(right) + 4;
+			const fill = Math.max(1, w - fixed);
+			return (
+				borderColor("─── ") +
+				styledLeft +
+				borderColor(` ${"─".repeat(fill)} `) +
+				styledRight +
+				borderColor(" ───")
+			);
+		}
+		if (left) {
+			const fill = Math.max(1, w - 5 - visibleWidth(left));
+			return borderColor("─── ") + styledLeft + borderColor(` ${"─".repeat(fill)}`);
+		}
+		const fill = Math.max(1, w - 5 - visibleWidth(right));
+		return borderColor(`${"─".repeat(fill)} `) + styledRight + borderColor(" ───");
 	}
 
 	private renderTitleRows(width: number): string[] {
