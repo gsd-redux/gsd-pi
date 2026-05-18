@@ -549,6 +549,25 @@ test('multi-turn commands still complete via terminal notification', () => {
   assert.equal(state.exitCode, EXIT_SUCCESS)
 })
 
+test('new-milestone auto phase ignores execution_complete until terminal notification', () => {
+  const client = new MockRpcClient()
+  const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }
+
+  handleEvent({ type: 'execution_complete', status: 'completed' }, state, client)
+
+  assert.equal(state.completed, false, 'auto-chained milestone execution must not stop after the first auto unit')
+  assert.equal(state.exitCode, -1)
+
+  handleEvent(
+    { type: 'extension_ui_request', method: 'notify', id: 'n1', message: 'Auto-mode stopped — milestone M001 complete' },
+    state,
+    client,
+  )
+
+  assert.equal(state.completed, true)
+  assert.equal(state.exitCode, EXIT_SUCCESS)
+})
+
 test('multi-turn commands detect blocked via terminal notification', () => {
   const client = new MockRpcClient()
   const state: EventHandlerState = { completed: false, blocked: false, exitCode: -1, v2Enabled: true, isMultiTurnCommand: true }

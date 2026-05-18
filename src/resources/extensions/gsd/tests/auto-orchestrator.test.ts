@@ -388,6 +388,52 @@ test("advance() stops when dispatch has no next unit", async () => {
   assert.equal(orchestrator.getStatus().phase, "stopped");
 });
 
+test("advance() reports completion when complete state has no next unit", async () => {
+  const completeState: GSDState = {
+    ...makeState(),
+    activeMilestone: null,
+    phase: "complete",
+    lastCompletedMilestone: { id: "M001", title: "Milestone" },
+    nextAction: "All milestones complete.",
+  };
+  const { deps } = makeDeps({
+    stateReconciliation: {
+      async reconcileBeforeDispatch() {
+        return { ok: true, stateSnapshot: completeState };
+      },
+    },
+    dispatch: {
+      async decideNextUnit() { return null; },
+    },
+  });
+  const orchestrator = createAutoOrchestrator(deps);
+
+  const result = await orchestrator.advance();
+
+  assert.equal(result.kind, "stopped");
+  assert.equal(result.reason, "all milestones complete");
+});
+
+test("advance() keeps running when dispatch intentionally skips a phase", async () => {
+  const { deps, calls } = makeDeps({
+    dispatch: {
+      async decideNextUnit() {
+        return { kind: "skipped", reason: "evaluating-gates skipped after marking gates omitted" };
+      },
+    },
+  });
+  const orchestrator = createAutoOrchestrator(deps);
+
+  const result = await orchestrator.advance();
+
+  assert.equal(result.kind, "skipped");
+  if (result.kind !== "skipped") return;
+  assert.equal(result.reason, "evaluating-gates skipped after marking gates omitted");
+  assert.equal(orchestrator.getStatus().phase, "running");
+  assert.ok(calls.includes("journal:advance-skipped"));
+  assert.ok(!calls.includes("journal:advance-stopped"));
+});
+
 test("advance() surfaces dispatch blocker reason instead of generic no remaining units", async () => {
   const { deps, calls } = makeDeps({
     dispatch: {
@@ -1084,6 +1130,36 @@ test("wired DispatchAdapter preserves stop reason as a blocked decision", async 
       kind: "blocked",
       reason: "remediation blocker",
       action: "pause",
+    });
+  } finally {
+    resetRegistry();
+  }
+});
+
+test("wired DispatchAdapter preserves dispatch skip instead of collapsing it to no remaining units", async () => {
+  const stateSnapshot = makeState();
+  const skipRule: UnifiedRule = {
+    name: "test-skip-gate",
+    when: "dispatch",
+    evaluation: "first-match",
+    where: async () => ({
+      action: "skip" as const,
+      matchedRule: "evaluating-gates -> omitted",
+    }),
+    then: (r: unknown) => r,
+  };
+  setRegistry(new RuleRegistry([skipRule]));
+
+  try {
+    const ctx = { model: {}, modelRegistry: { getAll: () => [] } } as any;
+    const pi = { getActiveTools: () => [] } as any;
+    const adapter = createWiredDispatchAdapter(ctx, pi, "/tmp/parity-fixture");
+
+    const result = await adapter.decideNextUnit({ stateSnapshot });
+
+    assert.deepEqual(result, {
+      kind: "skipped",
+      reason: "evaluating-gates -> omitted",
     });
   } finally {
     resetRegistry();

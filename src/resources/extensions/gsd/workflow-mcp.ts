@@ -310,7 +310,13 @@ export function getRequiredWorkflowToolsForGuidedUnit(unitType: string): string[
     case "research-decision":
       return ["ask_user_questions"];
     case "discuss-milestone":
-      return ["gsd_summary_save", "gsd_plan_milestone"];
+      return [
+        "gsd_summary_save",
+        "gsd_requirement_save",
+        "gsd_requirement_update",
+        "gsd_plan_milestone",
+        "gsd_milestone_generate_id",
+      ];
     case "discuss-slice":
       return ["gsd_summary_save"];
     case "research-milestone":
@@ -338,7 +344,13 @@ export function getRequiredWorkflowToolsForAutoUnit(unitType: string): string[] 
     case "research-decision":
       return ["ask_user_questions"];
     case "discuss-milestone":
-      return ["gsd_summary_save", "gsd_plan_milestone"];
+      return [
+        "gsd_summary_save",
+        "gsd_requirement_save",
+        "gsd_requirement_update",
+        "gsd_plan_milestone",
+        "gsd_milestone_generate_id",
+      ];
     case "research-milestone":
     case "research-slice":
     case "run-uat":

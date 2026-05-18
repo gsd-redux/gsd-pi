@@ -137,7 +137,14 @@ export const MINIMAL_AUTO_BASE_TOOL_NAMES = [
 const AUTO_UNIT_SCOPED_TOOLS: Record<string, readonly string[]> = {
   "research-milestone": ["gsd_summary_save", "gsd_decision_save"],
   "plan-milestone": ["gsd_plan_milestone", "gsd_decision_save", "gsd_requirement_update"],
-  "discuss-milestone": ["gsd_summary_save", "gsd_decision_save", "gsd_requirement_save"],
+  "discuss-milestone": [
+    "gsd_summary_save",
+    "gsd_decision_save",
+    "gsd_requirement_save",
+    "gsd_requirement_update",
+    "gsd_plan_milestone",
+    "gsd_milestone_generate_id",
+  ],
   "validate-milestone": ["gsd_validate_milestone", "gsd_reassess_roadmap", "subagent"],
   "complete-milestone": ["gsd_complete_milestone", "subagent"],
   "research-slice": ["gsd_summary_save", "gsd_decision_save"],

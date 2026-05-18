@@ -281,7 +281,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const isAutoMode = options.command === 'auto'
   // discuss and plan are multi-turn: they involve multiple question rounds,
   // codebase scanning, and artifact writing before the workflow completes (#3547).
-  const isMultiTurnCommand = isMultiTurnHeadlessCommand(options.command)
+  let isMultiTurnCommand = isMultiTurnHeadlessCommand(options.command)
   if (isAutoMode && options.timeout === 300_000) {
     options.timeout = 0
   }
@@ -938,6 +938,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     completed = false
     milestoneReady = false
     blocked = false
+    isMultiTurnCommand = true
     effectiveIdleTimeout = 0
     resetIdleTimer()
     const autoCompletionPromise = new Promise<void>((resolve) => {

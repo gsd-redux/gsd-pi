@@ -1911,7 +1911,10 @@ export function createWiredDispatchAdapter(
       }
       if (action.action !== "dispatch") {
         if (session) session.pendingOrchestrationDispatch = null;
-        return null;
+        return {
+          kind: "skipped",
+          reason: action.matchedRule ?? "dispatch-skip",
+        };
       }
       if (session) {
         const pending: PendingOrchestrationDispatch = {

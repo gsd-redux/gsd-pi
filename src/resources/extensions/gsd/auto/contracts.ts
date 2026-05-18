@@ -26,6 +26,7 @@ export type AutoAdvanceResult =
   | { kind: "started" }
   | { kind: "resumed" }
   | { kind: "advanced"; unit: UnitRef; stateSnapshot: GSDState }
+  | { kind: "skipped"; reason: string; stateSnapshot?: GSDState }
   | { kind: "blocked"; reason: string; action: "pause" | "stop"; stateSnapshot?: GSDState }
   | { kind: "stopped"; reason: string; stateSnapshot?: GSDState }
   | { kind: "paused"; reason: string }
@@ -57,6 +58,10 @@ export interface DispatchAdapter {
         kind: "blocked";
         reason: string;
         action: "pause" | "stop";
+      }
+    | {
+        kind: "skipped";
+        reason: string;
       }
     | {
         unitType: string;

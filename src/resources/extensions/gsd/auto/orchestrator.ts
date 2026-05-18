@@ -2,6 +2,7 @@
 // File Purpose: Auto Orchestration module implementation and ADR-015 invariant pipeline owner.
 
 import type { AutoAdvanceResult, AutoOrchestrationModule, AutoOrchestratorDeps, AutoSessionContext, AutoStatus } from "./contracts.js";
+import type { GSDState } from "../types.js";
 
 function now(): number {
   return Date.now();
@@ -16,6 +17,13 @@ function now(): number {
  * preserved across the eventual cutover (issue #5791).
  */
 export const STUCK_WINDOW_SIZE = 6;
+
+function noRemainingUnitsReason(stateSnapshot: GSDState): string {
+  if (stateSnapshot.phase === "complete") {
+    return "all milestones complete";
+  }
+  return "no remaining units";
+}
 
 export class AutoOrchestrator implements AutoOrchestrationModule {
   private status: AutoStatus = {
@@ -118,7 +126,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
       const decision = await this.deps.dispatch.decideNextUnit({ stateSnapshot: reconciliation.stateSnapshot });
       if (!decision) {
-        const stopped: AutoAdvanceResult = { kind: "stopped", reason: "no remaining units", stateSnapshot: reconciliation.stateSnapshot };
+        const stopped: AutoAdvanceResult = {
+          kind: "stopped",
+          reason: noRemainingUnitsReason(reconciliation.stateSnapshot),
+          stateSnapshot: reconciliation.stateSnapshot,
+        };
         this.status.phase = "stopped";
         this.status.activeUnit = undefined;
         this.lastAdvanceKey = null;
@@ -127,6 +139,19 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         await this.deps.runtime.journalTransition({ name: "advance-stopped", reason: stopped.reason });
         await this.deps.health.postAdvanceRecord(stopped);
         return stopped;
+      }
+      if ("kind" in decision && decision.kind === "skipped") {
+        const skipped: AutoAdvanceResult = {
+          kind: "skipped",
+          reason: decision.reason,
+          stateSnapshot: reconciliation.stateSnapshot,
+        };
+        this.status.phase = "running";
+        this.status.activeUnit = undefined;
+        this.bumpTransition();
+        await this.deps.runtime.journalTransition({ name: "advance-skipped", reason: skipped.reason });
+        await this.deps.health.postAdvanceRecord(skipped);
+        return skipped;
       }
       if (!("unitType" in decision)) {
         const blocked: AutoAdvanceResult = {
