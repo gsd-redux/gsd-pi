@@ -103,6 +103,23 @@ describe("style", () => {
 		assert.match(plain[2], /^─+$/);
 	});
 
+	test("open border omits the closing rule when bottomRule is false", () => {
+		const plain = style()
+			.border("open")
+			.bottomRule(false)
+			.title("GSD")
+			.render(["a turn of conversation"], 40)
+			.map((line) => stripAnsi(line));
+
+		// Top rule, then body — and no trailing rule line.
+		assert.ok(plain[0].includes("GSD"));
+		assert.equal(plain[plain.length - 1].trimEnd(), "a turn of conversation");
+		assert.ok(
+			!/^─+$/.test(plain[plain.length - 1]),
+			"last line should be content, not a closing rule",
+		);
+	});
+
 	test("open border places left and right titles in the top rule", () => {
 		const plain = style()
 			.border("open")

@@ -116,8 +116,11 @@ export function renderAssistantRail(
 ): string[] {
 	const railColor = opts.railColor ?? "borderAccent";
 	const source = trimOuterBlankLines(lines);
+	// Conversation turns omit the closing rule — the next turn's top rule
+	// separates them, which keeps a long transcript from filling with lines.
 	let surface = style()
 		.border("open")
+		.bottomRule(false)
 		.borderColor((text) => theme.fg(railColor, text))
 		.title(theme.fg(railColor, theme.bold(opts.label)));
 	if (opts.meta) {
@@ -137,6 +140,7 @@ export function renderUserRail(
 	);
 	let surface = style()
 		.border("open")
+		.bottomRule(false)
 		.borderColor((text) => theme.fg("border", text))
 		.title(theme.fg("border", theme.bold(opts.label)));
 	if (opts.meta) {

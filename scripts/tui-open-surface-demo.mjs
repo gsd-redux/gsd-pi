@@ -22,7 +22,8 @@ import {
 
 initTheme("dark", false);
 
-const W = 64;
+// Render at the full terminal width (falls back to 100 when not a TTY).
+const W = process.stdout.columns || 100;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 const cyan = (s) => `\x1b[36m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

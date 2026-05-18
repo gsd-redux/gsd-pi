@@ -21,6 +21,8 @@ export interface TerminalStyleSpec {
 	titleColor?: (text: string) => string;
 	titleRightColor?: (text: string) => string;
 	bodyGutter?: string;
+	/** "open" border only: render the closing rule. Defaults to true. */
+	bottomRule?: boolean;
 }
 
 type BorderChars = {
@@ -140,6 +142,11 @@ export class TerminalStyle {
 		return new TerminalStyle({ ...this.spec, bodyGutter });
 	}
 
+	/** "open" border only: when false, omit the closing rule line. */
+	bottomRule(bottomRule: boolean): TerminalStyle {
+		return new TerminalStyle({ ...this.spec, bottomRule });
+	}
+
 	render(contentLines: string[], width?: number): string[] {
 		const outerWidth = normalizeWidth(this.spec, width);
 		const border = this.spec.border ?? "none";
@@ -187,14 +194,19 @@ export class TerminalStyle {
 		}
 
 		if (border === "open") {
-			// Copy-clean content surface (ADR 0001): a titled top rule, body
-			// lines emitted verbatim with no border column or prefix, and a
-			// closing rule. Selecting a body line copies only its content.
-			return [
+			// Copy-clean content surface (ADR 0001): a titled top rule and
+			// body lines emitted verbatim with no border column or prefix, so
+			// selecting a body line copies only its content. The closing rule
+			// is optional — conversation turns omit it and rely on the next
+			// turn's top rule for separation.
+			const openLines = [
 				this.renderOpenTopRule(outerWidth, borderColor),
 				...paddedBody.map((line) => padVisible(line, outerWidth)),
-				borderColor("─".repeat(Math.max(1, outerWidth))),
 			];
+			if (this.spec.bottomRule !== false) {
+				openLines.push(borderColor("─".repeat(Math.max(1, outerWidth))));
+			}
+			return openLines;
 		}
 
 		const chars = BORDER_CHARS[border];
