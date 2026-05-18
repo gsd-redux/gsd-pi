@@ -4,7 +4,7 @@
 import { style, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { theme, type ThemeBg, type ThemeColor } from "../theme/theme.js";
 import { formatTimestamp, type TimestampFormat } from "./timestamp.js";
-import { alignRight, padRight, roundedPanel } from "./tui-style-kit.js";
+import { alignRight, roundedPanel } from "./tui-style-kit.js";
 
 export type StatusTone = "running" | "success" | "error" | "warning" | "muted";
 
