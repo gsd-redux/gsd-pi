@@ -334,10 +334,13 @@ export class Input implements Component, Focusable {
 
 		this.pushUndo();
 
-		// Delete the previously yanked text (still at end of ring before rotation)
+		// Delete the previously yanked text (still at end of ring before rotation).
+		// Clamp the start index: a negative arg to slice() counts from the end,
+		// which would silently corrupt the value rather than delete nothing.
 		const prevText = this.killRing.peek() || "";
-		this.value = this.value.slice(0, this.cursor - prevText.length) + this.value.slice(this.cursor);
-		this.cursor -= prevText.length;
+		const deleteFrom = Math.max(0, this.cursor - prevText.length);
+		this.value = this.value.slice(0, deleteFrom) + this.value.slice(this.cursor);
+		this.cursor = deleteFrom;
 
 		// Rotate and insert new entry
 		this.killRing.rotate();
