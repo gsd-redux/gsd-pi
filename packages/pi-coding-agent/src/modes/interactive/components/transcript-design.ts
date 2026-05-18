@@ -157,9 +157,20 @@ export function renderUserRail(
 	];
 }
 
-function cardRow(line: string, contentWidth: number, paddingX: number, border: (text: string) => string): string {
-	const padded = " ".repeat(paddingX) + padRight(line, contentWidth) + " ".repeat(paddingX);
-	return `${border("│")}${padded}${border("│")}`;
+/**
+ * Render a single titled rule line — the collapsed form of a tool/command
+ * card on the "open" surface. `title` and `right` must be pre-styled.
+ */
+function openRuleLine(title: string, right: string, width: number, tone: ThemeColor): string {
+	let surface = style()
+		.border("open")
+		.borderColor((text) => theme.fg(tone, text))
+		.title(title);
+	if (right) {
+		surface = surface.titleRight(right);
+	}
+	// render([]) yields [topRule, emptyBody, bottomRule] — we want the rule.
+	return surface.render([], Math.max(20, width))[0];
 }
 
 export function renderTranscriptCard(
@@ -174,26 +185,22 @@ export function renderTranscriptCard(
 	},
 ): string[] {
 	const outerWidth = Math.max(20, width);
-	const innerWidth = Math.max(1, outerWidth - 2);
-	const paddingX = 2;
-	const contentWidth = Math.max(1, innerWidth - paddingX * 2);
-	const borderColor = toneColor(opts.tone);
-	const border = (text: string) => theme.fg(borderColor, text);
-	const title = theme.fg("borderAccent", opts.title);
-	const right = opts.right ? theme.fg(toneColor(opts.tone), opts.right) : "";
-	const header = rightAlign(title, right, contentWidth);
-	const body = lines.map((line) => padRight(line, contentWidth));
-	const footer =
-		opts.footerLeft || opts.footerRight
-			? [rightAlign(theme.fg("dim", opts.footerLeft ?? ""), theme.fg("dim", opts.footerRight ?? ""), contentWidth)]
-			: [];
-	return [
-		border("╭" + "─".repeat(outerWidth - 2) + "╮"),
-		cardRow(header, contentWidth, paddingX, border),
-		...body.map((line) => cardRow(line, contentWidth, paddingX, border)),
-		...footer.map((line) => cardRow(line, contentWidth, paddingX, border)),
-		border("╰" + "─".repeat(outerWidth - 2) + "╯"),
-	];
+	const tone = toneColor(opts.tone);
+	const body = [...lines];
+	if (opts.footerLeft || opts.footerRight) {
+		body.push("");
+		body.push(
+			rightAlign(theme.fg("dim", opts.footerLeft ?? ""), theme.fg("dim", opts.footerRight ?? ""), outerWidth),
+		);
+	}
+	let surface = style()
+		.border("open")
+		.borderColor((text) => theme.fg(tone, text))
+		.title(theme.fg("borderAccent", opts.title));
+	if (opts.right) {
+		surface = surface.titleRight(theme.fg(tone, opts.right));
+	}
+	return surface.render(body, outerWidth);
 }
 
 export function renderToolLineCard(
@@ -202,26 +209,14 @@ export function renderToolLineCard(
 	width: number,
 	opts: { status: string; tone: StatusTone; hidden?: boolean; titlePrefix?: string; bg?: ThemeBg },
 ): string[] {
-	const outerWidth = Math.max(20, width);
-	const innerWidth = Math.max(1, outerWidth - 2);
-	const paddingX = 2;
-	const contentWidth = Math.max(1, innerWidth - paddingX * 2);
-	const borderColor = toneColor(opts.tone);
-	const border = (text: string) => theme.fg(borderColor, text);
-	const titleText = `${opts.titlePrefix ?? ""}${theme.fg("borderAccent", title)}`;
-	const targetText = target ? ` ${theme.fg("text", target)}` : "";
-	const left = `${titleText}${targetText}`;
-	const statusText = opts.hidden
-		? `${opts.status} · output hidden · ctrl+o expand`
-		: opts.status;
-	const right = theme.fg(opts.tone === "success" ? "success" : borderColor, statusText);
-	const line = rightAlign(left, right, contentWidth);
-	const row = cardRow(line, contentWidth, paddingX, border);
-	return [
-		border("╭" + "─".repeat(outerWidth - 2) + "╮"),
-		opts.bg ? theme.bg(opts.bg, row) : row,
-		border("╰" + "─".repeat(outerWidth - 2) + "╯"),
-	];
+	const tone = toneColor(opts.tone);
+	const titleText = `${opts.titlePrefix ?? ""}${theme.fg("borderAccent", title)}${
+		target ? ` ${theme.fg("text", target)}` : ""
+	}`;
+	const statusText = opts.hidden ? `${opts.status} · output hidden · ctrl+o expand` : opts.status;
+	const right = theme.fg(opts.tone === "success" ? "success" : tone, statusText);
+	const rule = openRuleLine(titleText, right, width, tone);
+	return [opts.bg ? theme.bg(opts.bg, rule) : rule];
 }
 
 export function renderCommandCard(
@@ -229,23 +224,13 @@ export function renderCommandCard(
 	width: number,
 	opts: { status: string; tone: StatusTone; progress?: string },
 ): string[] {
-	const outerWidth = Math.max(20, width);
-	const innerWidth = Math.max(1, outerWidth - 2);
-	const paddingX = 2;
-	const contentWidth = Math.max(1, innerWidth - paddingX * 2);
-	const borderColor = toneColor(opts.tone);
-	const left = `${theme.fg("accent", "$")} ${theme.fg("text", command)}`;
+	const tone = toneColor(opts.tone);
+	const titleText = `${theme.fg("accent", "$")} ${theme.fg("text", command)}`;
 	const statusText = opts.progress
 		? `${opts.progress} ${opts.status}`
 		: `${opts.status} · output hidden · ctrl+o expand`;
-	const right = theme.fg(opts.tone === "success" ? "success" : borderColor, statusText);
-	const line = rightAlign(left, right, contentWidth);
-	const border = (text: string) => theme.fg(borderColor, text);
-	return [
-		border("╭" + "─".repeat(outerWidth - 2) + "╮"),
-		cardRow(line, contentWidth, paddingX, border),
-		border("╰" + "─".repeat(outerWidth - 2) + "╯"),
-	];
+	const right = theme.fg(opts.tone === "success" ? "success" : tone, statusText);
+	return [openRuleLine(titleText, right, width, tone)];
 }
 
 export function renderProgressBar(done: number, total: number, width: number, tone: StatusTone = "success"): string {
