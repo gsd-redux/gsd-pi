@@ -114,22 +114,16 @@ export function renderAssistantRail(
 	width: number,
 	opts: { label: string; meta?: string; railColor?: ThemeColor } = { label: "GSD" },
 ): string[] {
-	const outerWidth = Math.max(20, width);
-	const indent = "  ";
-	const rail = theme.fg(opts.railColor ?? "borderAccent", "┃");
-	const blockWidth = Math.max(1, outerWidth - visibleWidth(indent));
-	const contentWidth = Math.max(1, blockWidth - 2);
-	const header = opts.meta
-		? `${theme.fg("borderAccent", theme.bold(opts.label))} ${theme.fg("dim", opts.meta)}`
-		: theme.fg("borderAccent", theme.bold(opts.label));
-	const source = lines.length > 0 ? lines : [""];
-	const row = (line: string) => `${indent}${theme.bg("customMessageBg", padRight(`${rail} ${line}`, blockWidth))}`;
-	return [
-		row(""),
-		row(truncateToWidth(header, contentWidth, "")),
-		...source.map((line) => row(truncateToWidth(line, contentWidth, ""))),
-		row(""),
-	];
+	const railColor = opts.railColor ?? "borderAccent";
+	const source = trimOuterBlankLines(lines);
+	let surface = style()
+		.border("open")
+		.borderColor((text) => theme.fg(railColor, text))
+		.title(theme.fg(railColor, theme.bold(opts.label)));
+	if (opts.meta) {
+		surface = surface.titleRight(theme.fg("dim", opts.meta));
+	}
+	return surface.render(source.length > 0 ? source : [""], Math.max(20, width));
 }
 
 export function renderUserRail(
@@ -137,24 +131,18 @@ export function renderUserRail(
 	width: number,
 	opts: { label: string; meta?: string },
 ): string[] {
-	const outerWidth = Math.max(20, width);
-	const maxMessageWidth = chatMessageWidth(outerWidth);
-	const rawBodyLines = trimOuterBlankLines(lines).length > 0 ? trimOuterBlankLines(lines) : [""];
-	const rail = theme.fg("border", "┃");
-	const contentWidth = Math.max(1, Math.min(maxMessageWidth, outerWidth - 2));
-	const header = opts.meta
-		? `${theme.fg("border", theme.bold(opts.label))} ${theme.fg("dim", opts.meta)}`
-		: theme.fg("border", theme.bold(opts.label));
-	const bodyLines = rawBodyLines.map((line) =>
-		theme.fg("userMessageText", truncateToWidth(line.trimEnd(), contentWidth, ""))
+	const source = trimOuterBlankLines(lines);
+	const body = (source.length > 0 ? source : [""]).map((line) =>
+		theme.fg("userMessageText", line.trimEnd()),
 	);
-	const row = (line: string) => theme.bg("userMessageBg", padRight(`${rail} ${line}`, outerWidth));
-	return [
-		row(""),
-		row(truncateToWidth(header, contentWidth, "")),
-		...bodyLines.map((line) => row(truncateToWidth(line, contentWidth, ""))),
-		row(""),
-	];
+	let surface = style()
+		.border("open")
+		.borderColor((text) => theme.fg("border", text))
+		.title(theme.fg("border", theme.bold(opts.label)));
+	if (opts.meta) {
+		surface = surface.titleRight(theme.fg("dim", opts.meta));
+	}
+	return surface.render(body, Math.max(20, width));
 }
 
 /**
