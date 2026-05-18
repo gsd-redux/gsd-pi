@@ -1,7 +1,7 @@
 // Project/App: GSD-2
 // File Purpose: Shared recommended transcript rendering primitives for assistant, tool, command, footer, and auto-mode TUI surfaces.
 
-import { truncateToWidth, visibleWidth } from "@gsd/pi-tui";
+import { style, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import { theme, type ThemeBg, type ThemeColor } from "../theme/theme.js";
 import { alignRight, padRight, roundedPanel } from "./tui-style-kit.js";
 
@@ -32,6 +32,33 @@ function toneColor(tone: StatusTone): ThemeColor {
 
 export function rightAlign(left: string, right: string, width: number): string {
 	return alignRight(left, right, width);
+}
+
+/**
+ * Render a copy-clean content surface (ADR 0001): a titled top rule, body
+ * lines emitted with no border column or leading glyph, and a closing rule.
+ * Selecting a body line in the terminal copies only its content.
+ *
+ * This is the target surface for transcript messages, tool output, and
+ * summaries. Migration steps 3–5 move existing renderers onto it.
+ */
+export function openSurface(
+	lines: string[],
+	width: number,
+	opts: { title: string; right?: string; tone: StatusTone; paddingX?: number },
+): string[] {
+	const tc = toneColor(opts.tone);
+	let surface = style()
+		.border("open")
+		.title(opts.title, (text) => theme.fg("borderAccent", text))
+		.borderColor((text) => theme.fg(tc, text));
+	if (opts.right) {
+		surface = surface.titleRight(opts.right, (text) => theme.fg(tc, text));
+	}
+	if (opts.paddingX !== undefined) {
+		surface = surface.paddingX(opts.paddingX);
+	}
+	return surface.render(lines, Math.max(20, width));
 }
 
 export function renderAssistantRail(
