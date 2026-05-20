@@ -619,13 +619,18 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (!needsRunUat) return null;
       const { sliceId, uatType } = needsRunUat;
 
-      // Cap run-uat dispatch attempts to prevent infinite replay (#3624)
-      const attempts = incrementUatCount(basePath, mid, sliceId);
-      if (attempts > MAX_UAT_ATTEMPTS) {
+      // Cap run-uat dispatch attempts to prevent infinite replay (#3624).
+      // Check before incrementing so an exhausted counter cannot create a
+      // no-progress skip loop that starves later dispatch rules.
+      const attempts = getUatCount(basePath, mid, sliceId);
+      if (attempts >= MAX_UAT_ATTEMPTS) {
         return {
-          action: "skip" as const,
+          action: "stop" as const,
+          reason: `Cannot dispatch run-uat for ${mid}/${sliceId}: retry limit reached after ${attempts} attempt(s) without a PASS assessment. Fix the underlying UAT/tool issue, reset the retry counter with /gsd doctor --fix, then rerun /gsd auto.`,
+          level: "warning" as const,
         };
       }
+      incrementUatCount(basePath, mid, sliceId);
       const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
       const uatContent = await loadFile(uatFile);
       return {

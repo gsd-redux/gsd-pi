@@ -36,7 +36,7 @@ function makeUatProject(): string {
   return base;
 }
 
-test("run-uat dispatch skips after three attempts without a verdict", async () => {
+test("run-uat dispatch stops after three attempts without a verdict", async () => {
   const basePath = makeUatProject();
   const rule = DISPATCH_RULES.find((r) => r.name === "run-uat (post-completion)");
   assert.ok(rule, "run-uat dispatch rule is registered");
@@ -58,8 +58,13 @@ test("run-uat dispatch skips after three attempts without a verdict", async () =
     }
 
     const capped = await rule.match(ctx as any);
-    assert.equal(capped?.action, "skip");
-    assert.equal(getUatCount(basePath, "M001", "S01"), 4);
+    assert.equal(capped?.action, "stop");
+    assert.match(capped?.reason ?? "", /retry limit reached/);
+    assert.equal(getUatCount(basePath, "M001", "S01"), 3);
+
+    const stillCapped = await rule.match(ctx as any);
+    assert.equal(stillCapped?.action, "stop");
+    assert.equal(getUatCount(basePath, "M001", "S01"), 3);
   } finally {
     rmSync(basePath, { recursive: true, force: true });
   }
