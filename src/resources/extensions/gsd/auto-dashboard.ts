@@ -966,7 +966,7 @@ export function updateProgressWidget(
         lines.push("");
         // Step-mode guidance — shown above keyboard hints when auto is paused
         if (accessors.isStepMode()) {
-          lines.push(`${pad}${theme.fg("accent", "→")} ${theme.fg("dim", "Ctrl+N to advance to next step  ·  /gsd status for overview")}`);
+          lines.push(`${pad}${theme.fg("accent", "→")} ${theme.fg("dim", "/gsd next to advance one step  ·  /gsd status for overview")}`);
         }
 
         // Hints line
@@ -1000,9 +1000,8 @@ export function setCompletionProgressWidget(
   snapshot: CompletionDashboardSnapshot,
 ): void {
   if (!ctx.hasUI) return;
-  const widgetKey = snapshot.allMilestonesComplete ? "gsd-outcome" : "gsd-progress";
-  const clearedWidgetKey = snapshot.allMilestonesComplete ? "gsd-progress" : "gsd-outcome";
-  ctx.ui.setWidget(clearedWidgetKey, undefined);
+  const widgetKey = "gsd-progress";
+  ctx.ui.setWidget("gsd-outcome", undefined);
 
   if (typeof ctx.ui?.setHeader === "function") {
     ctx.ui.setHeader(() => ({
