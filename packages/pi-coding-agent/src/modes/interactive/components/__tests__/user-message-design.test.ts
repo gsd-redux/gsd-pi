@@ -55,9 +55,10 @@ describe("UserMessageComponent open surface", () => {
 
 		assert.match(joined, /You/);
 		assert.match(joined, /feel like chat/);
-		// Open surface — no rail glyph, no boxed bubble corners.
-		assert.doesNotMatch(joined, /[│┃╭╮╰╯]/, "user surface must use no rail or box glyphs");
-		// A titled top rule carries the You label.
+		assert.match(joined, /╭─ You/);
+		assert.match(joined, /╰─/);
+		assert.doesNotMatch(joined, /[│┃]/, "user content lines must not use side rail glyphs");
+		// A rounded titled top rule carries the You label.
 		assert.ok(
 			joined.split("\n").some((line) => line.includes("You") && line.includes("─")),
 			`expected a titled top rule carrying the You label:\n${joined}`,
@@ -67,6 +68,9 @@ describe("UserMessageComponent open surface", () => {
 		const contentIndex = plain.findIndex((line) => line.includes("feel like chat"));
 		assert.ok(contentIndex > topRuleIndex + 1, `expected a breathing row before content:\n${joined}`);
 		assert.equal(plain[contentIndex + 1]?.trim(), "", `expected a breathing row after content:\n${joined}`);
+		assert.equal(plain[contentIndex].length, 100, `user content row should fill the bubble background:\n${joined}`);
+		assert.equal(plain[contentIndex + 1]?.length, 100, `user breathing row should fill the bubble background:\n${joined}`);
+		assert.doesNotMatch(plain[contentIndex], /[│┃╭╮╰╯]/, `content line must stay copy-clean:\n${joined}`);
 	});
 
 	test("does not inject OSC 133 zones for unsupported terminals", () => {

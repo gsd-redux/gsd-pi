@@ -24,6 +24,51 @@ function trimOuterBlankLines(lines: string[]): string[] {
 	return lines.slice(start, end);
 }
 
+function copyCleanRoundedSurface(
+	lines: string[],
+	width: number,
+	opts: {
+		title: string;
+		right?: string;
+		borderColor: ThemeColor;
+		bodyColor: ThemeColor;
+		paddingX?: number;
+		paddingY?: number;
+	},
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const paddingX = Math.max(0, opts.paddingX ?? 3);
+	const paddingY = Math.max(0, opts.paddingY ?? 1);
+	const title = opts.title;
+	const right = opts.right ?? "";
+	const border = (text: string) => theme.fg(opts.borderColor, text);
+	const contentWidth = Math.max(1, outerWidth - paddingX);
+
+	const titleBudget = right ? Math.max(0, outerWidth - visibleWidth(right) - 9) : Math.max(0, outerWidth - 6);
+	const clippedTitle = truncateToWidth(title, titleBudget, "");
+	const clippedRight = right ? truncateToWidth(right, Math.max(0, outerWidth - visibleWidth(clippedTitle) - 9), "") : "";
+	const fixedWidth = 3 + visibleWidth(clippedTitle) + (clippedRight ? 3 + visibleWidth(clippedRight) : 0) + 1;
+	const fill = Math.max(1, outerWidth - fixedWidth);
+	const top = clippedRight
+		? border("╭─ ") + clippedTitle + border(` ${"─".repeat(fill)} `) + theme.fg("dim", clippedRight) + border("╮")
+		: border("╭─ ") + clippedTitle + border(` ${"─".repeat(fill)}╮`);
+	const bottom = border("╰" + "─".repeat(Math.max(1, outerWidth - 2)) + "╯");
+
+	const source = trimOuterBlankLines(lines);
+	const bodySource = source.length > 0 ? source : [""];
+	const blank = "";
+	const body = [
+		...Array.from({ length: paddingY }, () => blank),
+		...bodySource.map((line) =>
+			" ".repeat(paddingX) +
+			truncateToWidth(theme.fg(opts.bodyColor, line.trimEnd()), contentWidth, ""),
+		),
+		...Array.from({ length: paddingY }, () => blank),
+	];
+
+	return [top, ...body, bottom].map((line) => padRight(truncateToWidth(line, outerWidth, ""), outerWidth));
+}
+
 function toneColor(tone: StatusTone): ThemeColor {
 	switch (tone) {
 		case "running": return "toolRunning";
@@ -168,30 +213,22 @@ export function renderChatFrame(
 export function renderAssistantRail(
 	lines: string[],
 	width: number,
-	opts: { label: string; meta?: string; railColor?: ThemeColor } = { label: "GSD" },
+	opts: { label: string; meta?: string; railColor?: ThemeColor; connected?: boolean } = { label: "GSD" },
 ): string[] {
 	const railColor = opts.railColor ?? "borderAccent";
 	const source = trimOuterBlankLines(lines);
-	// Conversation turns omit the closing rule — the next turn's top rule
-	// separates them, which keeps a long transcript from filling with lines.
-	let surface = style()
-		.border("open")
-		.bottomRule(false)
-		.paddingY(1)
-		.borderColor((text) => theme.fg(railColor, text))
-		.title(theme.fg(railColor, theme.bold(opts.label)));
-	if (opts.meta) {
-		surface = surface.titleRight(theme.fg("dim", opts.meta));
-	}
-	// Inset the assistant block by two columns, as the rail did before the
-	// migration. The indent sits outside the tint; the tinted block fills
-	// the remaining width. Background colour is an SGR code, not a glyph, so
-	// it never lands in a copy selection — body lines stay copy-clean.
-	const indent = "  ";
+	const indent = "";
 	const innerWidth = Math.max(20, width - indent.length);
-	return surface
-		.render(source.length > 0 ? source : [""], innerWidth)
-		.map((line) => indent + theme.bg("customMessageBg", line));
+	const title = theme.fg(railColor, theme.bold(opts.label));
+	const surface = copyCleanRoundedSurface(source.length > 0 ? source : [""], innerWidth, {
+		title,
+		right: opts.meta,
+		borderColor: railColor,
+		bodyColor: "assistantMessageText",
+	});
+	const renderedSurface = surface.map((line) => indent + theme.bg("customMessageBg", line));
+	if (!opts.connected) return renderedSurface;
+	return [`${indent}${theme.fg(railColor, "      ╰──────╮")}`, ...renderedSurface];
 }
 
 export function renderUserRail(
@@ -200,21 +237,13 @@ export function renderUserRail(
 	opts: { label: string; meta?: string },
 ): string[] {
 	const source = trimOuterBlankLines(lines);
-	const body = (source.length > 0 ? source : [""]).map((line) =>
-		theme.fg("userMessageText", line.trimEnd()),
-	);
-	let surface = style()
-		.border("open")
-		.bottomRule(false)
-		.paddingY(1)
-		.borderColor((text) => theme.fg("border", text))
-		.title(theme.fg("border", theme.bold(opts.label)));
-	if (opts.meta) {
-		surface = surface.titleRight(theme.fg("dim", opts.meta));
-	}
-	return surface
-		.render(body, Math.max(20, width))
-		.map((line) => theme.bg("userMessageBg", line));
+	const surface = copyCleanRoundedSurface(source.length > 0 ? source : [""], Math.max(20, width), {
+		title: theme.fg("border", theme.bold(opts.label)),
+		right: opts.meta,
+		borderColor: "border",
+		bodyColor: "userMessageText",
+	});
+	return surface.map((line) => theme.bg("userMessageBg", line));
 }
 
 /**

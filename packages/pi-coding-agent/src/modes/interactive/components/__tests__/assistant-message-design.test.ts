@@ -9,6 +9,7 @@ import type { AssistantMessage } from "@gsd/pi-ai";
 import { initTheme } from "../../theme/theme.js";
 import { AssistantMessageComponent } from "../assistant-message.js";
 import { formatTimestamp } from "../timestamp.js";
+import { renderAssistantRail } from "../transcript-design.js";
 
 initTheme("dark", false);
 
@@ -30,9 +31,11 @@ describe("AssistantMessageComponent open surface", () => {
 		assert.match(joined, /GSD/);
 		assert.match(joined, /gpt-test/);
 		assert.match(joined, /update the renderer/);
-		// Open surface — no rail glyph, no boxed bubble corners.
-		assert.doesNotMatch(joined, /[│┃╭╮╰╯]/, "assistant surface must use no rail or box glyphs");
-		// A titled top rule carries the GSD label.
+		assert.doesNotMatch(joined, /╰──────╮/);
+		assert.match(joined, /╭─ GSD/);
+		assert.match(joined, /╰─/);
+		assert.doesNotMatch(joined, /[│┃]/, "assistant content lines must not use side rail glyphs");
+		// A rounded titled top rule carries the GSD label.
 		assert.ok(
 			plain.some((line) => line.includes("GSD") && line.includes("─")),
 			`expected a titled top rule:\n${joined}`,
@@ -41,6 +44,27 @@ describe("AssistantMessageComponent open surface", () => {
 		const contentIndex = plain.findIndex((line) => line.includes("update the renderer"));
 		assert.ok(contentIndex > topRuleIndex + 1, `expected a breathing row before content:\n${joined}`);
 		assert.equal(plain[contentIndex + 1]?.trim(), "", `expected a breathing row after content:\n${joined}`);
+		assert.ok(plain[contentIndex].startsWith("   "), `assistant content should keep inner padding:\n${joined}`);
+		assert.doesNotMatch(
+			plain[contentIndex],
+			/^ {10,}/,
+			`assistant content should not preserve the old outer rail indent:\n${joined}`,
+		);
+		assert.equal(plain[contentIndex].length, 80, `assistant content row should fill the bubble background:\n${joined}`);
+		assert.equal(plain[contentIndex + 1]?.length, 80, `assistant breathing row should fill the bubble background:\n${joined}`);
+		assert.doesNotMatch(plain[contentIndex], /[│┃╭╮╰╯]/, `content line must stay copy-clean:\n${joined}`);
+	});
+
+	test("can render a connector only when explicitly requested", () => {
+		const standalone = renderAssistantRail(["Standalone"], 80, { label: "GSD" })
+			.map((line) => stripAnsi(line))
+			.join("\n");
+		const connected = renderAssistantRail(["Connected"], 80, { label: "GSD", connected: true })
+			.map((line) => stripAnsi(line))
+			.join("\n");
+
+		assert.doesNotMatch(standalone, /╰──────╮/);
+		assert.match(connected, /╰──────╮/);
 	});
 
 	test("renders metadata for a zero timestamp", () => {

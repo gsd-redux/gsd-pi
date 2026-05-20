@@ -199,6 +199,48 @@ export function shouldRenderExtensionNotifyInChat(type: ExtensionNotifyType): bo
 	return type !== "warning";
 }
 
+function hasAnsiStyling(message: string): boolean {
+	return /\x1b\[[0-9;]*m/.test(message);
+}
+
+function stripAnsiStyling(message: string): string {
+	return message.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function styleGsdStatusCardMessage(message: string): string | null {
+	const plain = stripAnsiStyling(message);
+	if (!/(Verification Gate|Commit|Snapshot|GSD .*Complete|Next step)/.test(plain)) return null;
+
+	const styled = plain.split("\n").map((line) => {
+		if (line.includes("╭─ ✓") || line.includes("✓ Verification Gate") || line.includes("✓ Commit") || line.includes("✓ Snapshot")) {
+			return line.replace(/(╭─)\s+(.*)/, (_match, border, title) =>
+				`${theme.fg("borderAccent", border)} ${theme.fg("success", theme.bold(title))}`);
+		}
+		if (line.includes("╭─ ✕") || line.includes("✕ Verification Gate")) {
+			return line.replace(/(╭─)\s+(.*)/, (_match, border, title) =>
+				`${theme.fg("borderAccent", border)} ${theme.fg("error", theme.bold(title))}`);
+		}
+		if (line.includes("╭─ Next step")) {
+			return line.replace(/(╭─)\s+(.*)/, (_match, border, title) =>
+				`${theme.fg("borderAccent", border)} ${theme.fg("accent", theme.bold(title))}`);
+		}
+		if (/^\s*╰/.test(line)) {
+			return theme.fg("borderAccent", line);
+		}
+		const contentMatch = /^(\s*)(.*)$/u.exec(line);
+		const indent = contentMatch?.[1] ?? "";
+		const text = contentMatch?.[2] ?? line;
+		if (/(Completed:|Next:|Continue:|Auto-run:)/.test(text)) {
+			const styled = text
+				.replace(/(Completed:|Next:|Continue:|Auto-run:)/g, (label) => theme.fg("dim", label))
+				.replace(/(\/gsd\s+(?:next|auto|status))/g, (command) => theme.fg("success", command));
+			return `${indent}${styled}`;
+		}
+		return text ? `${indent}${theme.fg("text", text)}` : line;
+	});
+	return styled.join("\n");
+}
+
 export interface ExtensionNotifyRenderResult {
 	rendered: boolean;
 	statusSpacer?: Spacer;
@@ -229,7 +271,12 @@ export function renderExtensionNotifyInChat(
 		return { rendered: true };
 	}
 
-	const statusText = new Text(theme.fg("dim", message), 1, 0);
+	const styledStatusCard = styleGsdStatusCardMessage(message);
+	const statusText = new Text(
+		styledStatusCard ?? (hasAnsiStyling(message) ? message : theme.fg("dim", message)),
+		1,
+		0,
+	);
 	chatContainer.addChild(statusText);
 	return { rendered: true, statusSpacer: spacer, statusText };
 }
