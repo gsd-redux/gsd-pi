@@ -78,6 +78,7 @@ import { writeTurnGitTransaction } from "./uok/gitops.js";
 import { isClosedStatus } from "./status-guards.js";
 import { detectAbandonMilestone } from "./abandon-detect.js";
 import { isDeterministicPolicyError } from "./auto-tool-tracking.js";
+import { formatConnectedStepStack, formatPostUnitStatusCard } from "./auto-status-message.js";
 import {
   clearProjectResearchInflightMarker,
   finalizeProjectResearchTimeout,
@@ -423,6 +424,8 @@ import {
   updateSliceProgressCache,
   unitVerb,
   describeNextUnit,
+  setAutoOutcomeWidget,
+  type AutoOutcomeSurfaceSnapshot,
 } from "./auto-dashboard.js";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -553,16 +556,83 @@ export function detectRogueFileWrites(
  */
 export const MAX_ARTIFACT_VERIFICATION_RETRIES = 3;
 
-export const STEP_COMPLETE_FALLBACK_MESSAGE =
-  "Step complete. Run /gsd next to continue one step, or /gsd auto to run continuously.";
+function buildStepCompleteCallout(
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string {
+  const isTask = currentUnit?.type === "execute-task";
+  const completedLabel = currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : "Step complete";
+  return formatConnectedStepStack(`✓ GSD ${isTask ? "Task" : "Step"} Complete`, completedLabel);
+}
+
+export const STEP_COMPLETE_FALLBACK_MESSAGE = buildStepCompleteCallout();
 
 export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string | null {
   if (nextState.phase === "complete") {
     return null;
   }
+  return buildStepCompleteCallout();
+}
+
+function buildStepCompleteMessageForUnit(
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string | null {
+  if (nextState.phase === "complete") {
+    return null;
+  }
+  return buildStepCompleteCallout(currentUnit);
+}
+
+export function buildStepCompleteOutcome(
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): AutoOutcomeSurfaceSnapshot | null {
+  if (nextState.phase === "complete") {
+    return null;
+  }
   const next = describeNextUnit(nextState);
-  return `Step complete. Next: ${next.label}\n`
-    + `Run /gsd next to continue one step, or /gsd auto to run continuously.`;
+  return {
+    status: "step",
+    title: "Step complete",
+    detail: `Next: ${next.label}.`,
+    unitLabel: currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : null,
+    nextAction: "Advance one step, or resume automatic mode.",
+    commands: ["/gsd next", "/gsd auto", "/gsd status for overview"],
+  };
+}
+
+export function setStepCompleteSurface(
+  ctx: ExtensionContext,
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string | null {
+  const outcome = buildStepCompleteOutcome(nextState, currentUnit);
+  if (!outcome) {
+    return null;
+  }
+  if (ctx.hasUI && typeof ctx.ui?.setWidget === "function") {
+    ctx.ui.setWidget("gsd-progress", undefined);
+  }
+  setAutoOutcomeWidget(ctx, outcome);
+  return buildStepCompleteMessageForUnit(nextState, currentUnit);
+}
+
+export function setStepCompleteFallbackSurface(
+  ctx: ExtensionContext,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string {
+  if (ctx.hasUI && typeof ctx.ui?.setWidget === "function") {
+    ctx.ui.setWidget("gsd-progress", undefined);
+  }
+  setAutoOutcomeWidget(ctx, {
+    status: "step",
+    title: "Step complete",
+    detail: "State refresh failed after the unit completed.",
+    unitLabel: currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : null,
+    nextAction: "Inspect state, then advance one step or resume automatic mode.",
+    commands: ["/gsd status for overview", "/gsd next", "/gsd auto"],
+  });
+  return buildStepCompleteCallout(currentUnit);
 }
 
 /**
@@ -665,7 +735,7 @@ export async function autoCommitUnit(
 
     const commitMsg = autoCommitCurrentBranch(basePath, unitType, unitId, taskContext);
     if (commitMsg) {
-      ctx?.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
+      ctx?.ui.notify(formatPostUnitStatusCard("✓ Commit", commitMsg.split("\n")[0]), "info");
     }
     return commitMsg;
   } catch (e) {
@@ -819,9 +889,9 @@ async function runCloseoutGitAction(
       s.lastGitActionStatus = "ok";
 
       if (turnAction === "commit" && gitResult.commitMessage) {
-        ctx.ui.notify(`Committed: ${gitResult.commitMessage.split("\n")[0]}`, "info");
+        ctx.ui.notify(formatPostUnitStatusCard("✓ Commit", gitResult.commitMessage.split("\n")[0]), "info");
       } else if (turnAction === "snapshot" && gitResult.snapshotLabel) {
-        ctx.ui.notify(`Snapshot recorded: ${gitResult.snapshotLabel}`, "info");
+        ctx.ui.notify(formatPostUnitStatusCard("✓ Snapshot", gitResult.snapshotLabel), "info");
       }
     }
   } catch (e) {
@@ -2077,11 +2147,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     try {
       const nextState = await deriveState(s.canonicalProjectRoot);
       phaseAfterUnit = nextState.phase;
-      const message = buildStepCompleteMessage(nextState);
+      const message = setStepCompleteSurface(ctx, nextState, s.currentUnit);
       if (message) ctx.ui.notify(message, "info");
     } catch (e) {
       debugLog("postUnit", { phase: "step-wizard-notify", error: String(e) });
-      ctx.ui.notify(STEP_COMPLETE_FALLBACK_MESSAGE, "info");
+      ctx.ui.notify(setStepCompleteFallbackSurface(ctx, s.currentUnit), "info");
     }
     return shouldReturnStepWizardAfterUnit(s.currentUnit?.type, phaseAfterUnit)
       ? "step-wizard"
