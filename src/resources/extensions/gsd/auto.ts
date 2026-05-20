@@ -336,6 +336,20 @@ export function formatAutoStopNotification(prefix: string, totals: { cost: numbe
   ].join("\n");
 }
 
+function isBlockedStopReason(reason?: string | null): boolean {
+  return /^Blocked:\s*/i.test(reason ?? "");
+}
+
+function formatAutoStopDisplayReason(reason?: string | null): string {
+  return (reason ?? "").replace(/^Blocked:\s*/i, "").trim();
+}
+
+export function formatAutoStopNotificationPrefix(reason?: string | null): string {
+  const displayReason = formatAutoStopDisplayReason(reason);
+  const prefix = isBlockedStopReason(reason) ? "Auto-mode blocked" : "Auto-mode stopped";
+  return displayReason ? `${prefix} — ${displayReason}` : prefix;
+}
+
 /**
  * Phase B — register this auto-mode process in the workers table so other
  * workers and janitors can detect liveness via heartbeat. Best-effort: if
@@ -1252,7 +1266,8 @@ export async function stopAuto(
 ): Promise<void> {
   if (!s.active && !s.paused) return;
   const loadedPreferences = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences;
-  const reasonSuffix = reason ? ` — ${reason}` : "";
+  const stopNotificationPrefix = formatAutoStopNotificationPrefix(reason);
+  const displayReason = formatAutoStopDisplayReason(reason);
   const preserveCompletionSurface = Boolean(options.completionWidget);
   s.completionStopInProgress = preserveCompletionSurface;
 
@@ -1497,7 +1512,7 @@ export async function stopAuto(
           ? "All milestones complete"
           : isMilestoneComplete
             ? `${reason}. Auto-mode finished this milestone`
-            : `Auto-mode stopped${reasonSuffix}`;
+            : stopNotificationPrefix;
         if (ledger && ledger.units.length > 0) {
           const totals = getProjectTotals(ledger.units);
           ctx?.ui.notify(
@@ -1565,7 +1580,7 @@ export async function stopAuto(
         basePath: s.originalBasePath || s.basePath || null,
       });
       if (process.env.GSD_HEADLESS === "1") {
-        ctx.ui.notify(`Auto-mode stopped${reasonSuffix}.`, "info");
+        ctx.ui.notify(`${stopNotificationPrefix}.`, "info");
       }
     }
 
@@ -1574,8 +1589,8 @@ export async function stopAuto(
       pi?.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "clear" as const, preferences: loadedPreferences });
       pi?.events.emit(CMUX_CHANNELS.LOG, {
         preferences: loadedPreferences,
-        message: `Auto-mode stopped${reasonSuffix || ""}.`,
-        level: reason?.startsWith("Blocked:") ? "warning" : "info",
+        message: `${stopNotificationPrefix}.`,
+        level: isBlockedStopReason(reason) ? "warning" : "info",
       });
     } catch (e) {
       debugLog("stop-cleanup-cmux", { error: e instanceof Error ? e.message : String(e) });
@@ -1661,11 +1676,11 @@ export async function stopAuto(
     ctx?.ui.setStatus("gsd-auto", undefined);
     if (!preserveCompletionSurface) {
       ctx?.ui.setWidget("gsd-progress", undefined);
-      const status = reason?.startsWith("Blocked:") ? "blocked" : reason?.toLowerCase().includes("fail") ? "failed" : "stopped";
+      const status = isBlockedStopReason(reason) ? "blocked" : reason?.toLowerCase().includes("fail") ? "failed" : "stopped";
       setLifecycleOutcome(ctx, {
         status,
         title: status === "blocked" ? "Auto-mode blocked" : status === "failed" ? "Auto-mode stopped with an issue" : "Auto-mode stopped",
-        detail: reason ?? "Auto-mode stopped.",
+        detail: displayReason || "Auto-mode stopped.",
         nextAction: status === "blocked"
           ? "Fix the blocker, then run /gsd auto to resume."
           : "Run /gsd status for the current project state, or /gsd auto to continue.",

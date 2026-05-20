@@ -105,6 +105,7 @@ import {
 } from "./workflow-custom-engine-verify-outcome.js";
 import { handleCustomEngineReconcile } from "./workflow-custom-engine-reconcile.js";
 import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-reconcile-outcome.js";
+import { formatLeaseConflictNotice } from "./lease-conflict-notice.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -240,6 +241,18 @@ function logCustomVerifyRetryLoadFailure(err: unknown): void {
   debugLog("autoLoop", {
     phase: "load-custom-verify-retries-failed",
     error: err instanceof Error ? err.message : String(err),
+  });
+}
+
+function leaseConflictNotice(
+  iterData: IterationData,
+  reason: string,
+): string {
+  return formatLeaseConflictNotice({
+    milestoneId: iterData.mid,
+    unitType: iterData.unitType,
+    unitId: iterData.unitId,
+    reason,
   });
 }
 
@@ -977,7 +990,7 @@ export async function autoLoop(
           if (retryLease.kind === "ready") {
             leaseBeforeClaim = retryLease;
           } else {
-            const msg = `Lost milestone lease for ${iterData.mid ?? "unknown"} before dispatching ${iterData.unitType} ${iterData.unitId}: ${retryLease.reason}`;
+            const msg = leaseConflictNotice(iterData, retryLease.reason);
             ctx.ui.notify(msg, "error");
             finishTurn("stopped", "execution", msg);
             await deps.stopAuto(ctx, pi, msg);
@@ -986,7 +999,7 @@ export async function autoLoop(
         }
       }
       if (leaseBeforeClaim.kind === "blocked" || leaseBeforeClaim.kind === "failed") {
-        const msg = `Lost milestone lease for ${iterData.mid ?? "unknown"} before dispatching ${iterData.unitType} ${iterData.unitId}: ${leaseBeforeClaim.reason}`;
+        const msg = leaseConflictNotice(iterData, leaseBeforeClaim.reason);
         ctx.ui.notify(msg, "error");
         finishTurn("stopped", "execution", msg);
         await deps.stopAuto(ctx, pi, msg);
@@ -1029,7 +1042,7 @@ export async function autoLoop(
                 : { kind: "degraded" },
           );
         } else {
-          const msg = `Lost milestone lease for ${iterData.mid ?? "unknown"} while claiming ${iterData.unitType} ${iterData.unitId}: ${leaseRecovery.reason}`;
+          const msg = leaseConflictNotice(iterData, leaseRecovery.reason);
           ctx.ui.notify(msg, "error");
           finishTurn("stopped", "execution", msg);
           await deps.stopAuto(ctx, pi, msg);
@@ -1038,7 +1051,7 @@ export async function autoLoop(
       }
       if (dispatchDecision.action === "skip") {
         if (dispatchDecision.reason === "stale-lease") {
-          const msg = `Lost milestone lease for ${iterData.mid ?? "unknown"} while claiming ${iterData.unitType} ${iterData.unitId}; dispatch claim still failed after recovery.`;
+          const msg = leaseConflictNotice(iterData, "dispatch claim still failed after stale-lease recovery");
           ctx.ui.notify(msg, "error");
           finishTurn("stopped", "execution", msg);
           await deps.stopAuto(ctx, pi, msg);
