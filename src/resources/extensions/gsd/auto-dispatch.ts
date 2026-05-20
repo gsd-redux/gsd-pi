@@ -90,6 +90,7 @@ import { insertMilestoneValidationGates } from "./milestone-validation-gates.js"
 import { nativeHasChanges, nativeIsRepo, _resetHasChangesCache } from "./native-git-bridge.js";
 import { debugLog, isDebugEnabled } from "./debug-logger.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
+import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { listUnmergedGitPaths } from "./git-conflict-state.js";
 import { runTurnGitAction } from "./git-service.js";
 import { parseUnitId } from "./unit-id.js";
@@ -1449,7 +1450,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "validating-milestone → validate-milestone",
-    match: async ({ state, mid, midTitle, basePath, prefs }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, session }) => {
       if (state.phase !== "validating-milestone") return null;
 
       // Safety guard (#1368): verify all roadmap slices have SUMMARY files before
@@ -1476,70 +1477,78 @@ export const DISPATCH_RULES: DispatchRule[] = [
 
       // Skip preference OR trivial scope: write a minimal pass-through VALIDATION file.
       if (prefs?.phases?.skip_milestone_validation || trivialVariant) {
-        const mDir = resolveMilestonePath(basePath, mid);
-        if (mDir) {
-          if (!existsSync(mDir)) mkdirSync(mDir, { recursive: true });
-          const validationPath = join(
-            mDir,
-            buildMilestoneFileName(mid, "VALIDATION"),
-          );
-          const skipSource = trivialVariant
-            ? "trivial-scope pipeline variant"
-            : "`skip_milestone_validation` preference";
-          const skipValidationReason = trivialVariant ? "trivial-scope" : "preference";
-          const content = [
-            "---",
-            "verdict: pass",
-            "skip_validation: true",
-            `skip_validation_reason: ${skipValidationReason}`,
-            "remediation_round: 0",
-            "---",
-            "",
-            "# Milestone Validation (skipped)",
-            "",
-            `Milestone validation was skipped via ${skipSource}.`,
-          ].join("\n");
-          writeFileSync(validationPath, content, "utf-8");
-          try {
-            // DB-backed state derivation keys off assessments, not only the file
-            // projection. Persist the skipped validation there too so the next
-            // loop iteration advances to completing-milestone instead of
-            // re-entering validating-milestone.
-            if (isDbAvailable()) {
-              transaction(() => {
-                insertAssessment({
-                  path: validationPath,
-                  milestoneId: mid,
-                  sliceId: null,
-                  taskId: null,
-                  status: "pass",
-                  scope: "milestone-validation",
-                  fullContent: content,
-                });
-                const gateSliceId = getMilestoneSlices(mid)[0]?.id;
-                if (gateSliceId) {
-                  insertMilestoneValidationGates(
-                    mid,
-                    gateSliceId,
-                    "pass",
-                    new Date().toISOString(),
-                  );
-                }
-              });
-            }
-          } catch (err) {
-            try {
-              unlinkSync(validationPath);
-            } catch (unlinkErr) {
-              logWarning(
-                "dispatch",
-                `failed to remove skipped validation file after DB write failure for ${mid}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`,
-              );
-            }
-            throw err;
-          }
-          invalidateAllCaches();
+        const artifactBasePath = resolveArtifactBasePath(basePath, mid, session);
+        const projectRoot = resolveWorktreeProjectRoot(basePath, session?.originalBasePath);
+        const mDir = resolveMilestonePath(artifactBasePath, mid) ??
+          (projectRoot !== artifactBasePath ? resolveMilestonePath(projectRoot, mid) : null);
+        if (!mDir) {
+          return {
+            action: "stop",
+            reason: `Cannot skip milestone validation for ${mid}: milestone artifacts are missing under ${artifactBasePath}. Run /gsd doctor before resuming auto-mode.`,
+            level: "warning",
+          };
         }
+        if (!existsSync(mDir)) mkdirSync(mDir, { recursive: true });
+        const validationPath = join(
+          mDir,
+          buildMilestoneFileName(mid, "VALIDATION"),
+        );
+        const skipSource = trivialVariant
+          ? "trivial-scope pipeline variant"
+          : "`skip_milestone_validation` preference";
+        const skipValidationReason = trivialVariant ? "trivial-scope" : "preference";
+        const content = [
+          "---",
+          "verdict: pass",
+          "skip_validation: true",
+          `skip_validation_reason: ${skipValidationReason}`,
+          "remediation_round: 0",
+          "---",
+          "",
+          "# Milestone Validation (skipped)",
+          "",
+          `Milestone validation was skipped via ${skipSource}.`,
+        ].join("\n");
+        writeFileSync(validationPath, content, "utf-8");
+        try {
+          // DB-backed state derivation keys off assessments, not only the file
+          // projection. Persist the skipped validation there too so the next
+          // loop iteration advances to completing-milestone instead of
+          // re-entering validating-milestone.
+          if (isDbAvailable()) {
+            transaction(() => {
+              insertAssessment({
+                path: validationPath,
+                milestoneId: mid,
+                sliceId: null,
+                taskId: null,
+                status: "pass",
+                scope: "milestone-validation",
+                fullContent: content,
+              });
+              const gateSliceId = getMilestoneSlices(mid)[0]?.id;
+              if (gateSliceId) {
+                insertMilestoneValidationGates(
+                  mid,
+                  gateSliceId,
+                  "pass",
+                  new Date().toISOString(),
+                );
+              }
+            });
+          }
+        } catch (err) {
+          try {
+            unlinkSync(validationPath);
+          } catch (unlinkErr) {
+            logWarning(
+              "dispatch",
+              `failed to remove skipped validation file after DB write failure for ${mid}: ${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}`,
+            );
+          }
+          throw err;
+        }
+        invalidateAllCaches();
         return { action: "skip" };
       }
       return {

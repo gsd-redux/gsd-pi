@@ -357,11 +357,11 @@ console.log('\n=== complete-slice: handler idempotency ===');
   const dbPath = tempDbPath();
   openDatabase(dbPath);
 
-  const { basePath, roadmapPath } = createTempProject();
+  const { basePath } = createTempProject();
 
   // Set up DB state
   insertMilestone({ id: 'M001' });
-  insertSlice({ id: 'S01', milestoneId: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'medium', depends: [], demo: 'basic functionality works', sequence: 1 });
   insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
 
   const params = makeValidSliceParams();
@@ -370,17 +370,78 @@ console.log('\n=== complete-slice: handler idempotency ===');
   const r1 = await handleCompleteSlice(params, basePath);
   assertTrue(!('error' in r1), 'first call should succeed');
 
-  // Second call — state machine guard rejects (slice is already complete)
-  const r2 = await handleCompleteSlice(params, basePath);
-  assertTrue('error' in r2, 'second call should return error (slice already complete)');
-  if ('error' in r2) {
-    assertMatch(r2.error, /already complete/, 'error should mention already complete');
+  if ('error' in r1) {
+    cleanupDir(basePath);
+    cleanup(dbPath);
+    throw new Error('first completion unexpectedly failed');
+  }
+  const summaryBefore = fs.readFileSync(r1.summaryPath, 'utf-8');
+
+  // Second call — healthy duplicates unwind as non-mutating success.
+  const r2 = await handleCompleteSlice(
+    { ...params, oneLiner: 'This duplicate payload should not rewrite completed history' },
+    basePath,
+  );
+  assertTrue(!('error' in r2), 'second call should return duplicate success');
+  if (!('error' in r2)) {
+    assertEq(r2.duplicate, true, 'second call should be marked duplicate');
+    assertEq(
+      fs.readFileSync(r2.summaryPath, 'utf-8'),
+      summaryBefore,
+      'healthy duplicate should not rewrite the existing summary',
+    );
   }
 
   // Verify only 1 slice row (not duplicated)
   const adapter = _getAdapter()!;
   const sliceRows = adapter.prepare("SELECT * FROM slices WHERE milestone_id = 'M001' AND id = 'S01'").all();
   assertEq(sliceRows.length, 1, 'should have exactly 1 slice row after calls');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: Handler repairs already-complete slice with stale roadmap
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: handler repairs stale duplicate roadmap ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath, roadmapPath } = createTempProject();
+
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', risk: 'medium', depends: [], demo: 'basic functionality works', sequence: 1 });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+
+  const params = makeValidSliceParams();
+  const r1 = await handleCompleteSlice(params, basePath);
+  assertTrue(!('error' in r1), 'first completion should succeed');
+  if ('error' in r1) {
+    cleanupDir(basePath);
+    cleanup(dbPath);
+    throw new Error('first completion unexpectedly failed');
+  }
+
+  fs.writeFileSync(
+    roadmapPath,
+    fs.readFileSync(roadmapPath, 'utf-8').replace('- [x] **S01:', '- [ ] **S01:'),
+    'utf-8',
+  );
+  const staleRoadmap = parseRoadmap(fs.readFileSync(roadmapPath, 'utf-8'));
+  assertEq(staleRoadmap.slices.find(s => s.id === 'S01')?.done, false, 'fixture roadmap should be stale before repair');
+
+  const r2 = await handleCompleteSlice(params, basePath);
+  assertTrue(!('error' in r2), 'duplicate completion should repair stale artifacts instead of erroring');
+  if (!('error' in r2)) {
+    assertEq(r2.duplicate, true, 'repair result should be marked duplicate');
+    const repairedRoadmap = fs.readFileSync(roadmapPath, 'utf-8');
+    assertMatch(repairedRoadmap, /- \[x\] \*\*S01:/, 'duplicate completion should re-render roadmap as checked');
+    assertTrue(fs.existsSync(r2.summaryPath), 'summary should still exist after repair');
+    assertTrue(fs.existsSync(r2.uatPath), 'UAT should still exist after repair');
+  }
 
   cleanupDir(basePath);
   cleanup(dbPath);
