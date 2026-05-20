@@ -1268,7 +1268,9 @@ export async function stopAuto(
   const loadedPreferences = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences;
   const stopNotificationPrefix = formatAutoStopNotificationPrefix(reason);
   const displayReason = formatAutoStopDisplayReason(reason);
-  const preserveCompletionSurface = Boolean(options.completionWidget);
+  const completionStopRequested = Boolean(options.completionWidget);
+  const renderCompletionWidget = completionStopRequested && process.env.GSD_HEADLESS === "1";
+  const preserveCompletionSurface = completionStopRequested;
   s.completionStopInProgress = preserveCompletionSurface;
 
   // #4764 — telemetry: record the exit reason, isolation mode, whether an auto
@@ -1527,7 +1529,7 @@ export async function stopAuto(
       debugLog("stop-cleanup-ledger", { error: e instanceof Error ? e.message : String(e) });
     }
 
-    if (preserveCompletionSurface && ctx && options.completionWidget) {
+    if (renderCompletionWidget && ctx && options.completionWidget) {
       const ledger = getLedger();
       const units = ledger?.units ?? [];
       const totals = units.length > 0 ? getProjectTotals(units) : null;
@@ -1674,7 +1676,12 @@ export async function stopAuto(
 
     // UI cleanup
     ctx?.ui.setStatus("gsd-auto", undefined);
-    if (!preserveCompletionSurface) {
+    if (renderCompletionWidget) {
+      // Headless callers keep the durable completion widget/notification path.
+    } else if (preserveCompletionSurface) {
+      ctx?.ui.setWidget("gsd-progress", undefined);
+      ctx?.ui.setWidget("gsd-outcome", undefined);
+    } else {
       ctx?.ui.setWidget("gsd-progress", undefined);
       const status = isBlockedStopReason(reason) ? "blocked" : reason?.toLowerCase().includes("fail") ? "failed" : "stopped";
       setLifecycleOutcome(ctx, {

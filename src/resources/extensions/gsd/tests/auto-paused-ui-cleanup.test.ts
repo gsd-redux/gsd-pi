@@ -135,7 +135,7 @@ test("cleanupAfterLoopExit clears status and progress widget without replacing o
   }
 });
 
-test("cleanupAfterLoopExit preserves completion roll-up after stopAuto reset", async () => {
+test("cleanupAfterLoopExit preserves completion closeout surface after stopAuto reset", async () => {
   const statusCalls: unknown[] = [];
   const widgetCalls: unknown[] = [];
 
@@ -160,12 +160,12 @@ test("cleanupAfterLoopExit preserves completion roll-up after stopAuto reset", a
     assert.equal(
       widgetCalls.some((args) => Array.isArray(args) && args[0] === "gsd-progress" && args[1] === undefined),
       false,
-      "post-loop completion cleanup must leave the final roll-up widget visible",
+      "post-loop completion cleanup must not clear the foreground closeout surface",
     );
     assert.equal(
       widgetCalls.some((args) => Array.isArray(args) && args[0] === "gsd-outcome"),
       false,
-      "completion cleanup must not replace the roll-up with a generic outcome card",
+      "completion cleanup must not replace the closeout surface with a generic outcome card",
     );
     assert.equal(autoSession.completionStopInProgress, false);
   } finally {
@@ -434,7 +434,7 @@ test("rerootCommandSession refreshes command workspace to project root", async (
   assert.deepEqual(calls, ["/project/root"]);
 });
 
-test("stopAuto completion closeout reroots session, restores cwd, and preserves final widget", async (t) => {
+test("stopAuto foreground completion closeout reroots session and preserves the transcript surface", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-completion-stop-"));
   const previousCwd = process.cwd();
   const widgetCalls: Array<[string, unknown]> = [];
@@ -552,30 +552,12 @@ test("stopAuto completion closeout reroots session, restores cwd, and preserves 
     assert.deepEqual(newSessionWorkspaces, [base], "completion stop must reroot command session to original project root");
     assert.equal(restoreCalls, 1, "completion stop must restore project root through lifecycle");
     assert.equal(realpathSync(process.cwd()), realpathSync(base), "completion stop must chdir back to project root");
-    assert.ok(
-      widgetCalls.some(([key, value]) => key === "gsd-progress" && typeof value === "function"),
-      "completion stop must install a final progress widget",
-    );
     const lastProgressWidget = widgetCalls.filter(([key]) => key === "gsd-progress").at(-1);
-    assert.equal(typeof lastProgressWidget?.[1], "function", "completion stop must leave the final progress widget installed after reroot");
-    const factory = lastProgressWidget?.[1] as any;
-    const component = factory(
-      { requestRender() {} },
-      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+    assert.equal(
+      lastProgressWidget?.[1],
+      undefined,
+      "foreground completion stop must clear stale progress widgets so the closeout transcript remains visible",
     );
-    const output = component.render(140).join("\n");
-    assert.match(output, /Milestone M003 roll-up/);
-    assert.match(output, /Outcome/);
-    assert.match(output, /Added budget warning output/);
-    assert.match(output, /Verification/);
-    assert.match(output, /Files: src\/resources\/extensions\/gsd\/auto-dashboard\.ts/);
-    assert.match(output, /Lessons: Milestone endings need report output/);
-    assert.match(output, /2\/3 slices/);
-    assert.match(output, /Next/);
-    assert.match(output, /Review the roll-up/);
-    assert.match(output, /\/gsd auto for next milestone/);
-    assert.doesNotMatch(output, /COMPLETE-MILESTONE/);
-    assert.doesNotMatch(output, /\/gsd auto to resume/);
     assert.ok(
       notifications.every(message => !message.includes("/gsd auto to resume")),
       "completion stop notification must not tell users to resume a finished auto run",
@@ -586,7 +568,7 @@ test("stopAuto completion closeout reroots session, restores cwd, and preserves 
     );
     assert.ok(
       widgetCalls.every(([key, value]) => key !== "gsd-outcome" || value === undefined),
-      "completion stop should use the roll-up as the single final surface",
+      "foreground completion stop must not replace the transcript with a generic outcome card",
     );
 
     const widgetCallCountBeforePostLoopCleanup = widgetCalls.length;
@@ -595,7 +577,12 @@ test("stopAuto completion closeout reroots session, restores cwd, and preserves 
     assert.equal(
       postLoopWidgetCalls.some(([key, value]) => key === "gsd-progress" && value === undefined),
       false,
-      "outer auto-loop cleanup must not clear the final completion roll-up after stopAuto returns",
+      "outer auto-loop cleanup must not touch the closeout surface after stopAuto returns",
+    );
+    assert.equal(
+      postLoopWidgetCalls.some(([key]) => key === "gsd-outcome"),
+      false,
+      "outer auto-loop cleanup must not add a replacement outcome after stopAuto returns",
     );
   } finally {
     try { closeDatabase(); } catch { /* noop */ }
@@ -693,7 +680,7 @@ test("stopAuto completion closeout emits a headless terminal notification withou
   }
 });
 
-test("stopAuto all-complete closeout clears active progress and leaves final outcome", async () => {
+test("stopAuto foreground all-complete closeout leaves the transcript as the final surface", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-all-complete-closeout-"));
   const previousCwd = process.cwd();
   const widgetCalls: Array<[string, unknown]> = [];
@@ -741,14 +728,15 @@ test("stopAuto all-complete closeout clears active progress and leaves final out
       },
     );
 
-    assert.ok(
-      widgetCalls.some(([key, value]) => key === "gsd-progress" && value === undefined),
-      "all-complete closeout must clear the stale active progress widget",
+    assert.equal(
+      widgetCalls.some(([key, value]) => key === "gsd-progress" && typeof value === "function"),
+      false,
+      "foreground all-complete closeout must not install a roll-up widget that pushes the transcript away",
     );
     const finalProgress = widgetCalls.filter(([key]) => key === "gsd-progress").at(-1);
-    assert.equal(finalProgress?.[1], undefined, "all-complete closeout must not reinstall active progress");
+    assert.equal(finalProgress?.[1], undefined, "foreground all-complete closeout clears stale progress widgets");
     const finalOutcome = widgetCalls.filter(([key]) => key === "gsd-outcome").at(-1);
-    assert.equal(typeof finalOutcome?.[1], "function", "all-complete closeout must install the final outcome widget");
+    assert.equal(finalOutcome?.[1], undefined, "foreground all-complete closeout must not add an outcome replacement");
   } finally {
     try { closeDatabase(); } catch { /* noop */ }
     autoSession.reset();
