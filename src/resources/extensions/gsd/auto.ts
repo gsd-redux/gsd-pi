@@ -1271,7 +1271,7 @@ export async function stopAuto(
   const stopNotificationPrefix = formatAutoStopNotificationPrefix(reason);
   const displayReason = formatAutoStopDisplayReason(reason);
   const completionStopRequested = Boolean(options.completionWidget);
-  const renderCompletionWidget = completionStopRequested && process.env.GSD_HEADLESS === "1";
+  const installCompletionWidget = completionStopRequested;
   const preserveCompletionSurface = completionStopRequested;
   s.completionStopInProgress = preserveCompletionSurface;
 
@@ -1531,7 +1531,7 @@ export async function stopAuto(
       debugLog("stop-cleanup-ledger", { error: e instanceof Error ? e.message : String(e) });
     }
 
-    if (renderCompletionWidget && ctx && options.completionWidget) {
+    if (installCompletionWidget && ctx && options.completionWidget) {
       const ledger = getLedger();
       const units = ledger?.units ?? [];
       const totals = units.length > 0 ? getProjectTotals(units) : null;
@@ -1678,8 +1678,8 @@ export async function stopAuto(
 
     // UI cleanup
     ctx?.ui.setStatus("gsd-auto", undefined);
-    if (renderCompletionWidget) {
-      // Headless callers keep the durable completion widget/notification path.
+    if (installCompletionWidget) {
+      // Completion stops keep the durable final closeout surface visible.
     } else if (preserveCompletionSurface) {
       ctx?.ui.setWidget("gsd-progress", undefined);
       ctx?.ui.setWidget("gsd-outcome", undefined);

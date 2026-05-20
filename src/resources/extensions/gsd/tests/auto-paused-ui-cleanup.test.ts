@@ -434,7 +434,7 @@ test("rerootCommandSession refreshes command workspace to project root", async (
   assert.deepEqual(calls, ["/project/root"]);
 });
 
-test("stopAuto foreground completion closeout reroots session and preserves the transcript surface", async (t) => {
+test("stopAuto foreground completion closeout reroots session and installs the durable roll-up surface", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-completion-stop-"));
   const previousCwd = process.cwd();
   const widgetCalls: Array<[string, unknown]> = [];
@@ -554,10 +554,17 @@ test("stopAuto foreground completion closeout reroots session and preserves the 
     assert.equal(realpathSync(process.cwd()), realpathSync(base), "completion stop must chdir back to project root");
     const lastProgressWidget = widgetCalls.filter(([key]) => key === "gsd-progress").at(-1);
     assert.equal(
-      lastProgressWidget?.[1],
-      undefined,
-      "foreground completion stop must clear stale progress widgets so the closeout transcript remains visible",
+      typeof lastProgressWidget?.[1],
+      "function",
+      "foreground completion stop must leave the durable roll-up widget visible",
     );
+    const rollup = (lastProgressWidget?.[1] as any)(
+      { requestRender() {} },
+      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+    ).render(140).join("\n");
+    assert.match(rollup, /Milestone M003 roll-up/);
+    assert.match(rollup, /Budget tracking/);
+    assert.match(rollup, /Users can see what shipped without opening a fresh session/);
     assert.ok(
       notifications.every(message => !message.includes("/gsd auto to resume")),
       "completion stop notification must not tell users to resume a finished auto run",
@@ -680,7 +687,7 @@ test("stopAuto completion closeout emits a headless terminal notification withou
   }
 });
 
-test("stopAuto foreground all-complete closeout leaves the transcript as the final surface", async () => {
+test("stopAuto foreground all-complete closeout leaves a durable roll-up as the final surface", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-all-complete-closeout-"));
   const previousCwd = process.cwd();
   const widgetCalls: Array<[string, unknown]> = [];
@@ -730,11 +737,17 @@ test("stopAuto foreground all-complete closeout leaves the transcript as the fin
 
     assert.equal(
       widgetCalls.some(([key, value]) => key === "gsd-progress" && typeof value === "function"),
-      false,
-      "foreground all-complete closeout must not install a roll-up widget that pushes the transcript away",
+      true,
+      "foreground all-complete closeout must install a durable roll-up widget",
     );
     const finalProgress = widgetCalls.filter(([key]) => key === "gsd-progress").at(-1);
-    assert.equal(finalProgress?.[1], undefined, "foreground all-complete closeout clears stale progress widgets");
+    assert.equal(typeof finalProgress?.[1], "function", "foreground all-complete closeout keeps the roll-up visible");
+    const rollup = (finalProgress?.[1] as any)(
+      { requestRender() {} },
+      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+    ).render(140).join("\n");
+    assert.match(rollup, /All milestones complete/);
+    assert.match(rollup, /Review the roll-up/);
     const finalOutcome = widgetCalls.filter(([key]) => key === "gsd-outcome").at(-1);
     assert.equal(finalOutcome?.[1], undefined, "foreground all-complete closeout must not add an outcome replacement");
   } finally {

@@ -283,7 +283,7 @@ test("setAutoOutcomeWidget renders a durable next-action handoff", () => {
   assert.match(output, /\/gsd auto/);
 });
 
-test("setCompletionProgressWidget uses the outcome slot for terminal all-complete handoff", () => {
+test("setCompletionProgressWidget uses the progress slot for terminal all-complete handoff", () => {
   const calls: Array<[string, unknown]> = [];
   setCompletionProgressWidget(
     {
@@ -313,13 +313,13 @@ test("setCompletionProgressWidget uses the outcome slot for terminal all-complet
   );
 
   assert.ok(
-    calls.some(([key, value]) => key === "gsd-progress" && value === undefined),
-    "terminal completion must clear the active progress widget",
+    calls.some(([key, value]) => key === "gsd-outcome" && value === undefined),
+    "terminal completion must clear stale outcome widgets",
   );
-  const outcome = calls.filter(([key]) => key === "gsd-outcome").at(-1);
-  assert.equal(typeof outcome?.[1], "function", "terminal completion must install the final handoff in the outcome slot");
+  const progress = calls.filter(([key]) => key === "gsd-progress").at(-1);
+  assert.equal(typeof progress?.[1], "function", "terminal completion must install the final handoff in the progress slot");
 
-  const component = (outcome?.[1] as any)(
+  const component = (progress?.[1] as any)(
     { requestRender() {} },
     { fg: (_color: string, text: string) => text, bold: (text: string) => text },
   );

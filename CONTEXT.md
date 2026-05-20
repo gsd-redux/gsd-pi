@@ -5,7 +5,7 @@
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
-- **Closeout Boundary Stop**: the rule that a foreground run stops after the first task, slice, or milestone closeout boundary and leaves that closeout evidence as the visible terminal surface.
+- **Closeout Boundary Stop**: the rule that a foreground run stops after the first task, slice, or milestone closeout boundary and leaves a durable final closeout surface visible in the live terminal, not merely scrollback or a cleared progress area.
 - **Dispatch decision**: selection of the next Unit plus rationale and preconditions.
 - **Recovery decision**: retry/escalate/abort choice after runtime failure.
 - **Runtime persistence**: lock state, transition journal, and any persisted execution state required for safe resume.
