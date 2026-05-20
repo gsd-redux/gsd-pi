@@ -135,8 +135,8 @@ function getBundledWorkflowMcpCliPath(env: NodeJS.ProcessEnv): string | null {
 function getBundledWorkflowExecutorModulePath(): string | null {
   const candidates = [
     resolve(fileURLToPath(new URL("./tools/workflow-tool-executors.js", import.meta.url))),
-    resolve(fileURLToPath(new URL("./tools/workflow-tool-executors.ts", import.meta.url))),
     resolve(fileURLToPath(new URL("../../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.js", import.meta.url))),
+    resolve(fileURLToPath(new URL("./tools/workflow-tool-executors.ts", import.meta.url))),
   ];
 
   for (const candidate of candidates) {
@@ -149,8 +149,8 @@ function getBundledWorkflowExecutorModulePath(): string | null {
 function getBundledWorkflowWriteGateModulePath(): string | null {
   const candidates = [
     resolve(fileURLToPath(new URL("./bootstrap/write-gate.js", import.meta.url))),
-    resolve(fileURLToPath(new URL("./bootstrap/write-gate.ts", import.meta.url))),
     resolve(fileURLToPath(new URL("../../../../dist/resources/extensions/gsd/bootstrap/write-gate.js", import.meta.url))),
+    resolve(fileURLToPath(new URL("./bootstrap/write-gate.ts", import.meta.url))),
   ];
 
   for (const candidate of candidates) {

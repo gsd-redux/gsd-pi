@@ -7,11 +7,28 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 import { symlinkSync, realpathSync } from "node:fs";
 
-import { _getAdapter, closeDatabase, getSliceTasks } from "../../../src/resources/extensions/gsd/gsd-db.ts";
-import { _buildImportCandidates, registerWorkflowTools, WORKFLOW_TOOL_NAMES, validateProjectDir } from "./workflow-tools.ts";
+import {
+  _getAdapter,
+  closeDatabase,
+  getSliceTasks,
+  insertMilestone,
+  insertSlice,
+  openDatabase,
+  upsertMilestonePlanning,
+} from "../../../src/resources/extensions/gsd/gsd-db.ts";
+import { buildReassessRoadmapPrompt } from "../../../src/resources/extensions/gsd/auto-prompts.ts";
+import { invalidateAllCaches } from "../../../src/resources/extensions/gsd/cache.ts";
+import {
+  _buildBridgeImportCandidates,
+  _buildImportCandidates,
+  registerWorkflowTools,
+  WORKFLOW_TOOL_NAMES,
+  validateProjectDir,
+} from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-mcp-workflow-${randomUUID()}`);
@@ -25,11 +42,58 @@ function cleanup(base: string): void {
   } catch {
     // swallow
   }
+  invalidateAllCaches();
   try {
     rmSync(base, { recursive: true, force: true });
   } catch {
     // swallow
   }
+}
+
+function seedContextModeFixture(base: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Context Mode", status: "active", depends_on: [] });
+  upsertMilestonePlanning("M001", {
+    title: "Context Mode",
+    status: "active",
+    vision: "Verify the bundled context-mode contract",
+    successCriteria: ["Prompt, tool, and persisted evidence surfaces agree"],
+    keyRisks: [],
+    proofStrategy: [],
+    verificationContract: "",
+    verificationIntegration: "",
+    verificationOperational: "",
+    verificationUat: "",
+    definitionOfDone: [],
+    requirementCoverage: "",
+    boundaryMapMarkdown: "",
+  });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Contract",
+    status: "complete",
+    risk: "low",
+    depends: [],
+    demo: "",
+    sequence: 1,
+  });
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+    "# M001\n\n## Slices\n\n- [x] **S01: Contract** `risk:low` `depends:[]`\n",
+    "utf-8",
+  );
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md"),
+    "# S01 Summary\n\n**Context mode contract is ready for reassessment.**\n",
+    "utf-8",
+  );
+  writeFileSync(
+    join(base, ".gsd", "last-snapshot.md"),
+    "# GSD context snapshot\n\nContext mode resume evidence.\n",
+    "utf-8",
+  );
 }
 
 function writeWriteGateSnapshot(
@@ -90,6 +154,16 @@ function cacheBustedWorkflowToolsImport(tag: string): string {
   return `./workflow-tools.${extension}?${tag}=${randomUUID()}`;
 }
 
+const workflowBridgeExtension = import.meta.url.includes("/dist-test/") ? "js" : "ts";
+process.env.GSD_WORKFLOW_EXECUTORS_MODULE ??= fileURLToPath(new URL(
+  `../../../src/resources/extensions/gsd/tools/workflow-tool-executors.${workflowBridgeExtension}`,
+  import.meta.url,
+));
+process.env.GSD_WORKFLOW_WRITE_GATE_MODULE ??= fileURLToPath(new URL(
+  `../../../src/resources/extensions/gsd/bootstrap/write-gate.${workflowBridgeExtension}`,
+  import.meta.url,
+));
+
 describe("workflow MCP tools", () => {
   it("registers the full headless-safe workflow tool surface", () => {
     const server = makeMockServer();
@@ -115,7 +189,7 @@ describe("workflow MCP tools", () => {
     assert.ok("reason" in taskReopen.params);
   });
 
-  it("prefers source TypeScript before compiled dist fallbacks", () => {
+  it("prefers source TypeScript for generic local module imports", () => {
     assert.deepEqual(
       _buildImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
       [
@@ -123,6 +197,18 @@ describe("workflow MCP tools", () => {
         "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js",
         "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.ts",
         "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.js",
+      ],
+    );
+  });
+
+  it("prefers compiled runtime bridge modules before source fallbacks", () => {
+    assert.deepEqual(
+      _buildBridgeImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
+      [
+        "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.js",
+        "../../../dist/resources/extensions/gsd/tools/workflow-tool-executors.ts",
+        "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js",
+        "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts",
       ],
     );
   });
@@ -333,6 +419,94 @@ describe("workflow MCP tools", () => {
 
       assertToolError(result, /context_mode\.enabled: false/);
       assert.equal((result as any).structuredContent.error, "context_mode_disabled");
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("Context Mode contract is wired through prompts, MCP tools, persisted evidence, and disabled-mode blocking", async () => {
+    const base = makeTmpBase();
+    try {
+      seedContextModeFixture(base);
+      invalidateAllCaches();
+
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const execTool = server.tools.find((t) => t.name === "gsd_exec");
+      const searchTool = server.tools.find((t) => t.name === "gsd_exec_search");
+      const resumeTool = server.tools.find((t) => t.name === "gsd_resume");
+      assert.ok(execTool, "exec tool should be registered");
+      assert.ok(searchTool, "exec search tool should be registered");
+      assert.ok(resumeTool, "resume tool should be registered");
+
+      const prompt = await buildReassessRoadmapPrompt("M001", "Context Mode", "S01", base);
+      assert.match(prompt, /## Context Mode/);
+      assert.match(prompt, /Lane: \*\*planning lane\*\*/);
+      assert.match(prompt, /## Context Snapshot/);
+      assert.match(prompt, /Context mode resume evidence/);
+      assert.ok(
+        prompt.indexOf("## Context Mode") < prompt.indexOf("## Context Snapshot"),
+        "prompt should explain Context Mode before injecting the snapshot",
+      );
+
+      const execResult = await execTool!.handler({
+        projectDir: base,
+        runtime: "node",
+        script: "console.log('context-contract-e2e');",
+        purpose: "context-contract-e2e",
+      });
+      assert.equal((execResult as any).isError, false);
+      assert.equal((execResult as any).structuredContent.operation, "gsd_exec");
+      assert.ok(existsSync((execResult as any).structuredContent.stdout_path), "stdout should be persisted");
+
+      const searchResult = await searchTool!.handler({
+        projectDir: base,
+        query: "context-contract-e2e",
+      });
+      assert.equal((searchResult as any).structuredContent.operation, "gsd_exec_search");
+      assert.equal((searchResult as any).structuredContent.matches, 1);
+      assert.equal(
+        (searchResult as any).structuredContent.results[0].stdout_path,
+        (execResult as any).structuredContent.stdout_path,
+        "search should rediscover the persisted exec evidence instead of rerunning it",
+      );
+
+      const resumeResult = await resumeTool!.handler({ projectDir: base });
+      assert.deepEqual((resumeResult as any).structuredContent, {
+        operation: "gsd_resume",
+        found: true,
+        bytes: Buffer.byteLength("# GSD context snapshot\n\nContext mode resume evidence.\n", "utf-8"),
+      });
+      assert.match((resumeResult as any).content[0].text as string, /Context mode resume evidence/);
+
+      const worktree = join(base, ".gsd", "worktrees", "M001");
+      mkdirSync(worktree, { recursive: true });
+      const rootSafetyResult = await execTool!.handler({
+        projectDir: worktree,
+        runtime: "node",
+        script: `console.log(${JSON.stringify(base)});`,
+      });
+      assertToolError(rootSafetyResult, /original project root/);
+
+      writeFileSync(
+        join(base, ".gsd", "PREFERENCES.md"),
+        "---\ncontext_mode:\n  enabled: false\n---\n",
+        "utf-8",
+      );
+      invalidateAllCaches();
+
+      const disabledPrompt = await buildReassessRoadmapPrompt("M001", "Context Mode", "S01", base);
+      assert.doesNotMatch(disabledPrompt, /## Context Mode|## Context Snapshot|Context mode resume evidence/);
+
+      for (const [tool, args] of [
+        [execTool, { projectDir: base, runtime: "node", script: "console.log('blocked');" }],
+        [searchTool, { projectDir: base, query: "context-contract-e2e" }],
+        [resumeTool, { projectDir: base }],
+      ] as const) {
+        const result = await tool!.handler(args);
+        assertToolError(result, /context_mode\.enabled: false/);
+        assert.equal((result as any).structuredContent.error, "context_mode_disabled");
+      }
     } finally {
       cleanup(base);
     }

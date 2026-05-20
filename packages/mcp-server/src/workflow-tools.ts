@@ -547,6 +547,29 @@ function buildImportCandidates(relativePath: string): string[] {
   return [...new Set(candidates)];
 }
 
+function buildBridgeImportCandidates(relativePath: string): string[] {
+  const candidates: string[] = [];
+  const pushCompiledThenSource = (path: string | null) => {
+    if (!path) return;
+    candidates.push(path);
+    if (path.endsWith(".js")) candidates.push(path.replace(/\.js$/, ".ts"));
+  };
+
+  const sourcePath = relativePath.includes("/dist/")
+    ? relativePath.replace("/dist/", "/src/")
+    : relativePath;
+  const distPath = relativePath.includes("/src/")
+    ? relativePath.replace("/src/", "/dist/")
+    : relativePath.includes("/dist/")
+      ? relativePath
+      : null;
+
+  pushCompiledThenSource(distPath);
+  pushCompiledThenSource(sourcePath);
+
+  return [...new Set(candidates)];
+}
+
 function getWriteGateModuleCandidates(): string[] {
   const candidates: string[] = [];
   const explicitModule = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE?.trim();
@@ -559,7 +582,7 @@ function getWriteGateModuleCandidates(): string[] {
   }
 
   candidates.push(
-    ...buildImportCandidates("../../../src/resources/extensions/gsd/bootstrap/write-gate.js")
+    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/bootstrap/write-gate.js")
       .map((p) => new URL(p, import.meta.url).href),
   );
 
@@ -594,6 +617,11 @@ export function _buildImportCandidates(relativePath: string): string[] {
   // variant, before falling back to compiled dist. In source/dev execution a
   // stale dist/resources tree must not silently override edited source files.
   return buildImportCandidates(relativePath);
+}
+
+/** @internal — exported for testing only */
+export function _buildBridgeImportCandidates(relativePath: string): string[] {
+  return buildBridgeImportCandidates(relativePath);
 }
 
 async function importLocalModule<T>(relativePath: string): Promise<T> {
@@ -637,7 +665,7 @@ function getWorkflowExecutorModuleCandidates(env: NodeJS.ProcessEnv = process.en
   }
 
   candidates.push(
-    ...buildImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js")
+    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js")
       .map((p) => new URL(p, import.meta.url).href),
   );
 
