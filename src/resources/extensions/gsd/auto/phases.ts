@@ -57,7 +57,8 @@ import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
 import { getEligibleSlices } from "../slice-parallel-eligibility.js";
 import { isSliceParallelActive, startSliceParallel } from "../slice-parallel-orchestrator.js";
-import { isDbAvailable, getMilestoneSlices } from "../gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getSlice, getTask, refreshOpenDatabaseFromDisk } from "../gsd-db.js";
+import { isClosedStatus } from "../status-guards.js";
 import { reconcileBeforeSpawn } from "../state-reconciliation.js";
 import type { MinimalModelRegistry } from "../context-budget.js";
 import type { PostflightResult, PreflightResult } from "../clean-root-preflight.js";
@@ -68,6 +69,7 @@ import { resetEvidence, loadEvidenceFromDisk } from "../safety/evidence-collecto
 import { parseUnitId } from "../unit-id.js";
 import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
 import { resolveSafetyHarnessConfig } from "../safety/safety-harness.js";
+import { getContextPauseAction } from "../auto-budget.js";
 import {
   getWorkflowTransportSupportError,
   getRequiredWorkflowToolsForAutoUnit,
@@ -164,6 +166,25 @@ function rememberRetryDispatch(
     mid: iterData.mid,
     midTitle: iterData.midTitle,
   };
+}
+
+function getAlreadyClosedDispatchReason(unitType: string, unitId: string): string | null {
+  if (!isDbAvailable()) return null;
+  refreshOpenDatabaseFromDisk();
+  const { milestone, slice, task } = parseUnitId(unitId);
+  if (unitType === "execute-task" && milestone && slice && task) {
+    const row = getTask(milestone, slice, task);
+    return row && isClosedStatus(row.status)
+      ? `execute-task ${unitId} is already ${row.status}`
+      : null;
+  }
+  if (unitType === "complete-slice" && milestone && slice) {
+    const row = getSlice(milestone, slice);
+    return row && isClosedStatus(row.status)
+      ? `complete-slice ${unitId} is already ${row.status}`
+      : null;
+  }
+  return null;
 }
 
 export function shouldDegradeEmptyWorktreeToProjectRoot(
@@ -1426,6 +1447,27 @@ export async function runDispatch(
     });
   }
 
+  const alreadyClosedReason = getAlreadyClosedDispatchReason(unitType, unitId);
+  if (alreadyClosedReason) {
+    s.pendingVerificationRetry = null;
+    debugLog("autoLoop", {
+      phase: "dispatch-skip-already-closed",
+      unitType,
+      unitId,
+      reason: alreadyClosedReason,
+    });
+    deps.emitJournalEvent({
+      ts: new Date().toISOString(),
+      flowId: ic.flowId,
+      seq: ic.nextSeq(),
+      eventType: "guard-block",
+      data: { unitType, unitId, reason: alreadyClosedReason },
+    });
+    ctx.ui.notify(`Skipping ${unitType} ${unitId}: ${alreadyClosedReason}.`, "info");
+    await new Promise((r) => setImmediate(r));
+    return { action: "continue" };
+  }
+
   deps.emitJournalEvent({
     ts: new Date().toISOString(),
     flowId: ic.flowId,
@@ -1829,19 +1871,16 @@ export async function runGuards(
   const contextThreshold = prefs?.context_pause_threshold ?? 0;
   if (contextThreshold > 0 && s.cmdCtx) {
     const contextUsage = s.cmdCtx.getContextUsage();
-    if (
-      contextUsage &&
-      contextUsage.percent !== null &&
-      contextUsage.percent >= contextThreshold
-    ) {
-      const msg = `Context window at ${contextUsage.percent}% (threshold: ${contextThreshold}%). Pausing to prevent truncated output.`;
+    if (getContextPauseAction(contextUsage?.percent, contextThreshold) === "pause") {
+      const contextPercent = contextUsage!.percent as number;
+      const msg = `Context window at ${contextPercent}% (threshold: ${contextThreshold}%). Pausing to prevent truncated output.`;
       ctx.ui.notify(
         `${msg} Run /gsd auto to continue (will start fresh session).`,
         "warning",
       );
       deps.sendDesktopNotification(
         "GSD",
-        `Context ${contextUsage.percent}% — paused`,
+        `Context ${contextPercent}% — paused`,
         "warning",
         "attention",
         basename(s.originalBasePath || s.basePath),

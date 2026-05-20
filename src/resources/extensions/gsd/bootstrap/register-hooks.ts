@@ -632,6 +632,11 @@ export function registerHooks(
     }
   });
 
+  pi.on("message_end", async (event) => {
+    const { suppressTerminalDeletedWorktreeMessageEnd } = await import("./agent-end-recovery.js");
+    suppressTerminalDeletedWorktreeMessageEnd(event);
+  });
+
   // Squash-merge quick-task branch back to the original branch after the
   // agent turn completes (#2668). cleanupQuickBranch is a no-op when no
   // quick-return state is pending, so this is safe to call on every turn.

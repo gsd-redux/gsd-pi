@@ -8,6 +8,7 @@ import {
   type ExecSandboxRequest,
   type ExecSandboxResult,
 } from "../exec-sandbox.js";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { isContextModeEnabled, type ContextModeConfig } from "../preferences-types.js";
 import { contextModeDisabledResult, type ToolExecutionResult } from "./context-mode-tool-result.js";
@@ -103,6 +104,27 @@ function pathInside(parent: string, target: string): boolean {
   return target === parent || target.startsWith(parentWithSep);
 }
 
+function comparablePathVariants(value: string): string[] {
+  const variants = new Set<string>();
+  const normalized = normalizeScanPath(path.resolve(value));
+  variants.add(normalized);
+  try {
+    variants.add(normalizeScanPath(realpathSync(normalized)));
+  } catch {
+    // Nonexistent paths are still compared lexically.
+  }
+  if (normalized.startsWith("/private/var/")) {
+    variants.add(normalized.replace(/^\/private\/var\//, "/var/"));
+  } else if (normalized.startsWith("/var/")) {
+    variants.add(`/private${normalized}`);
+  }
+  return [...variants];
+}
+
+function pathInsideAny(parents: readonly string[], targets: readonly string[]): boolean {
+  return targets.some((target) => parents.some((parent) => pathInside(parent, target)));
+}
+
 function stripWrappingQuotes(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length < 2) return trimmed;
@@ -147,9 +169,11 @@ function resolvesToOriginalRootOutsideWorktree(script: string, baseDir: string):
 
   const normalizedWorktree = normalizeScanPath(path.resolve(parsed.worktreeRoot));
   const normalizedOriginalRoot = normalizeScanPath(path.resolve(parsed.originalRoot));
+  const worktreeRoots = comparablePathVariants(normalizedWorktree);
+  const originalRoots = comparablePathVariants(normalizedOriginalRoot);
   for (const value of extractPathLikeValues(script)) {
-    const resolved = normalizeScanPath(path.resolve(normalizedWorktree, value));
-    if (pathInside(normalizedOriginalRoot, resolved) && !pathInside(normalizedWorktree, resolved)) {
+    const resolved = comparablePathVariants(path.resolve(normalizedWorktree, value));
+    if (pathInsideAny(originalRoots, resolved) && !pathInsideAny(worktreeRoots, resolved)) {
       return true;
     }
   }
@@ -160,10 +184,12 @@ function scriptReferencesOriginalRootFromWorktree(script: string, baseDir: strin
   const parsed = parseWorktreeBase(baseDir);
   if (!parsed) return false;
   const normalizedScript = script.replace(/\\/g, "/");
-  const originalRootPattern = new RegExp(
-    `${escapeRegExp(parsed.originalRoot)}(?=$|[\\s'"\\\`;)&|<>]|/(?!\\.gsd/worktrees(?:/|$)))`,
-  );
-  return originalRootPattern.test(normalizedScript);
+  return comparablePathVariants(parsed.originalRoot).some((originalRoot) => {
+    const originalRootPattern = new RegExp(
+      `${escapeRegExp(originalRoot)}(?=$|[\\s'"\\\`;)&|<>]|/(?!\\.gsd/worktrees(?:/|$)))`,
+    );
+    return originalRootPattern.test(normalizedScript);
+  });
 }
 
 export async function executeGsdExec(

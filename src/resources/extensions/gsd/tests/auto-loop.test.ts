@@ -1172,6 +1172,67 @@ test("autoLoop persists stuck counter reset when dispatch recovery continues", a
   }
 });
 
+test("autoLoop skips provider dispatch when execute-task is already complete in DB", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.setWidget = () => {};
+  const pi = makeMockPi();
+  const basePath = realpathSync(mkdtempSync(join(tmpdir(), "gsd-already-complete-dispatch-")));
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+
+  try {
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "pending" });
+    insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task One", status: "complete" });
+
+    const s = makeLoopSession({
+      basePath,
+      originalBasePath: basePath,
+      canonicalProjectRoot: basePath,
+    });
+    let deriveCount = 0;
+    const notifications: string[] = [];
+    ctx.ui.notify = (msg: string) => notifications.push(msg);
+
+    const deps = makeMockDeps({
+      isDbAvailable: () => true,
+      deriveState: async () => {
+        deriveCount++;
+        if (deriveCount > 1) s.active = false;
+        return {
+          phase: "executing",
+          activeMilestone: { id: "M001", title: "Test", status: "active" },
+          activeSlice: { id: "S01", title: "Slice 1" },
+          activeTask: { id: "T01" },
+          registry: [{ id: "M001", status: "active" }],
+          blockers: [],
+        } as any;
+      },
+      resolveDispatch: async () => {
+        deps.callLog.push("resolveDispatch");
+        return {
+          action: "dispatch" as const,
+          unitType: "execute-task",
+          unitId: "M001/S01/T01",
+          prompt: "do the already-complete task",
+        };
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+
+    assert.equal(pi.calls.length, 0, "completed task must not be sent to provider again");
+    assert.ok(!deps.callLog.includes("postUnitPreVerification"));
+    assert.ok(notifications.some((m) => m.includes("already complete")));
+  } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(basePath, { recursive: true, force: true });
+  }
+});
+
 test("autoLoop stops before success notification when postflight stash restore needs recovery", async () => {
   _resetPendingResolve();
 
