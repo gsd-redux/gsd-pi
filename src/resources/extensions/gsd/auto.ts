@@ -84,6 +84,7 @@ import {
   getBudgetAlertLevel,
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
+  getContextPauseAction,
 } from "./auto-budget.js";
 import {
   markToolStart as _markToolStart,
@@ -633,6 +634,7 @@ export {
   getBudgetAlertLevel,
   getNewBudgetAlertLevel,
   getBudgetEnforcementAction,
+  getContextPauseAction,
 } from "./auto-budget.js";
 
 function closeOutSignalInterruptedUnit(currentBasePath: string): void {
@@ -1873,8 +1875,11 @@ export async function pauseAuto(
     unitLabel: pausedUnitLabel,
   });
   if (ctx) initHealthWidget(ctx);
+  const pauseMessage = _errorContext?.message
+    ? `${s.stepMode ? "Step" : "Auto"}-mode paused: ${_errorContext.message}`
+    : `${s.stepMode ? "Step" : "Auto"}-mode paused (Escape). Type to interact, or ${resumeCmd} to resume.`;
   ctx?.ui.notify(
-    `${s.stepMode ? "Step" : "Auto"}-mode paused (Escape). Type to interact, or ${resumeCmd} to resume.`,
+    pauseMessage,
     "info",
   );
 }

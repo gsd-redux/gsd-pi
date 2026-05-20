@@ -366,13 +366,16 @@ export function validatePreferences(preferences: GSDPreferences): {
 
   // ─── Context Pause Threshold ────────────────────────────────────────
   if (preferences.context_pause_threshold !== undefined) {
-    const raw = preferences.context_pause_threshold;
-    if (typeof raw === "number" && Number.isFinite(raw)) {
-      validated.context_pause_threshold = raw;
-    } else if (typeof raw === "string" && Number.isFinite(Number(raw))) {
-      validated.context_pause_threshold = Number(raw);
+    const raw = (preferences as Record<string, unknown>).context_pause_threshold;
+    const value = typeof raw === "string" && raw.trim() !== "" ? Number(raw) : raw;
+    if (
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      (value === 0 || (value >= 1 && value <= 100))
+    ) {
+      validated.context_pause_threshold = value;
     } else {
-      errors.push("context_pause_threshold must be a finite number");
+      errors.push("context_pause_threshold must be 0 to disable or a percentage between 1 and 100");
     }
   }
 

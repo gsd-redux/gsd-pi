@@ -41,3 +41,14 @@ export function getUnitCostSpikeAction(
   if (!Number.isFinite(multiplier) || multiplier <= 0) return "none";
   return unitCostUsd >= (rollingAvgUsd * multiplier) ? "pause" : "none";
 }
+
+export function getContextPauseAction(
+  contextPercent: number | null | undefined,
+  thresholdPercent: number | null | undefined,
+): "none" | "pause" {
+  if (!Number.isFinite(contextPercent ?? NaN)) return "none";
+  if (!Number.isFinite(thresholdPercent ?? NaN)) return "none";
+  const threshold = thresholdPercent as number;
+  if (threshold <= 0) return "none";
+  return (contextPercent as number) >= threshold ? "pause" : "none";
+}

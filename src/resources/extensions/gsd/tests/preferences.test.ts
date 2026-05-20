@@ -319,11 +319,20 @@ test("valid values pass through correctly", () => {
   const { preferences: p1 } = validatePreferences({ budget_enforcement: "halt" });
   assert.equal(p1.budget_enforcement, "halt");
 
-  const { preferences: p2 } = validatePreferences({ context_pause_threshold: 0.75 });
-  assert.equal(p2.context_pause_threshold, 0.75);
+  const { preferences: p2 } = validatePreferences({ context_pause_threshold: 75 });
+  assert.equal(p2.context_pause_threshold, 75);
 
   const { preferences: p3 } = validatePreferences({ auto_supervisor: { model: "claude-opus-4-6" } });
   assert.equal(p3.auto_supervisor?.model, "claude-opus-4-6");
+});
+
+test("context_pause_threshold rejects fractional ratio values", () => {
+  const { preferences, errors } = validatePreferences({ context_pause_threshold: 0.75 });
+  assert.equal(preferences.context_pause_threshold, undefined);
+  assert.ok(
+    errors.some((e) => e.includes("context_pause_threshold")),
+    "fractional ratio values should fail instead of pausing at less than one percent",
+  );
 });
 
 test("min_request_interval_ms floors decimals and rejects timer overflow values", () => {
