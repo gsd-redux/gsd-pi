@@ -403,7 +403,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
         };
       }
 
-      const existingIds = findMilestoneIds(basePath);
+      await ensureDbOpen(basePath);
+      const { getAllMilestones } = await import("../gsd-db.js");
+      const existingIds = [
+        ...findMilestoneIds(basePath),
+        ...getAllMilestones().map((m) => m.id),
+      ];
       const uniqueEnabled = !!loadEffectiveGSDPreferences(basePath)?.preferences?.unique_milestone_ids;
       const allIds = [...new Set([...existingIds, ...getReservedMilestoneIds()])];
       const newId = nextMilestoneId(allIds, uniqueEnabled);
@@ -794,6 +799,10 @@ export function registerDbTools(pi: ExtensionAPI): void {
             id: Type.String({ description: "Requirement ID" }),
             proof: Type.String({ description: "What proof validates it" }),
           }),
+          Type.Object({
+            id: Type.String({ description: "Requirement ID" }),
+            how: Type.String({ description: "Alias accepted for proof (normalized internally)" }),
+          }),
           Type.String({ description: "Fallback: 'ID — proof' string" }),
         ]),
         { description: "Requirements validated by this slice" },
@@ -803,6 +812,10 @@ export function registerDbTools(pi: ExtensionAPI): void {
           Type.Object({
             id: Type.String({ description: "Requirement ID" }),
             what: Type.String({ description: "What changed" }),
+          }),
+          Type.Object({
+            id: Type.String({ description: "Requirement ID" }),
+            how: Type.String({ description: "Alias accepted for what (normalized internally)" }),
           }),
           Type.String({ description: "Fallback: 'ID — what' string" }),
         ]),
