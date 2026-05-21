@@ -1,16 +1,14 @@
 /**
- * gsdroot-worktree-detection.test.ts — Regression test for #2594.
+ * gsdroot-worktree-detection.test.ts — Regression test for #2594 and #6140.
  *
- * gsdRoot() must return the canonical project .gsd directory when basePath
- * is inside a .gsd/worktrees/<name>/ structure. Worktree-local .gsd folders
- * are projection roots; runtime/control state stays DB-authoritative at the
- * project .gsd.
+ * gsdRoot() must return the worktree-local .gsd directory when basePath
+ * is inside a .gsd/worktrees/<name>/ structure. This keeps the writer and
+ * reader colocated under worktree isolation, preventing the plan-slice
+ * verifier loop that occurred when they diverged (#6140).
  *
- * The bug: when a git worktree lives at /project/.gsd/worktrees/M008/,
- * probeGsdRoot() runs `git rev-parse --show-toplevel` which can return the
- * main project root (not the worktree root) depending on git version and
- * worktree setup. The walk-up then finds /project/.gsd and returns that
- * instead of the worktree's own .gsd path.
+ * gsdProjectionRoot() always returns the worktree-local .gsd (including when
+ * it does not exist yet), so after this fix gsdRoot() and gsdProjectionRoot()
+ * agree for worktree paths.
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";
@@ -62,7 +60,7 @@ describe("gsdRoot() worktree detection (#2594)", () => {
     rmSync(projectRoot, { recursive: true, force: true });
   });
 
-  test("returns project .gsd when basePath is a worktree with its own .gsd", () => {
+  test("returns worktree-local .gsd when basePath is a worktree with its own .gsd", () => {
     // Simulates a worktree that already had copyPlanningArtifacts() run,
     // so it has its own .gsd/ directory.
     const worktreeBase = join(projectGsd, "worktrees", "M008");
@@ -72,28 +70,29 @@ describe("gsdRoot() worktree detection (#2594)", () => {
     const result = gsdRoot(worktreeBase);
     assert.equal(
       result,
-      projectGsd,
-      `Expected canonical project .gsd (${projectGsd}), got ${result}.`,
+      worktreeGsd,
+      `Expected worktree-local .gsd (${worktreeGsd}), got ${result}.`,
     );
     assert.equal(resolveGsdPathContract(worktreeBase).worktreeGsd, worktreeGsd);
     assert.equal(gsdProjectionRoot(worktreeBase), worktreeGsd);
   });
 
-  test("returns project .gsd when worktree .gsd does not exist yet", () => {
+  test("returns worktree-local .gsd path when worktree .gsd does not exist yet", () => {
     const worktreeBase = join(projectGsd, "worktrees", "M008");
     mkdirSync(worktreeBase, { recursive: true });
     // NOTE: no .gsd/ inside worktreeBase
+    const expectedGsd = join(worktreeBase, ".gsd");
 
     const result = gsdRoot(worktreeBase);
     assert.equal(
       result,
-      projectGsd,
-      `Expected canonical project .gsd (${projectGsd}), got ${result}.`,
+      expectedGsd,
+      `Expected worktree-local .gsd (${expectedGsd}), got ${result}.`,
     );
-    assert.equal(gsdProjectionRoot(worktreeBase), join(worktreeBase, ".gsd"));
+    assert.equal(gsdProjectionRoot(worktreeBase), expectedGsd);
   });
 
-  test("returns project .gsd when basePath is a real git worktree inside .gsd/worktrees/", () => {
+  test("returns worktree-local .gsd when basePath is a real git worktree inside .gsd/worktrees/", () => {
     // Create a real git worktree at .gsd/worktrees/M010
     const worktreeName = "M010";
     const worktreeBase = join(projectGsd, "worktrees", worktreeName);
@@ -112,13 +111,14 @@ describe("gsdRoot() worktree detection (#2594)", () => {
     }
 
     // The real git worktree exists at worktreeBase but has NO .gsd/ subdir yet
+    const expectedGsd = join(worktreeBase, ".gsd");
     const gsdResult = gsdRoot(worktreeBase);
     assert.equal(
       gsdResult,
-      projectGsd,
-      `Expected canonical project .gsd (${projectGsd}), got ${gsdResult}`,
+      expectedGsd,
+      `Expected worktree-local .gsd (${expectedGsd}), got ${gsdResult}`,
     );
-    assert.equal(gsdProjectionRoot(worktreeBase), join(worktreeBase, ".gsd"));
+    assert.equal(gsdProjectionRoot(worktreeBase), expectedGsd);
 
     // Cleanup worktree
     spawnSync("git", ["worktree", "remove", "--force", worktreeBase], {
