@@ -141,7 +141,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd closeout       Recover failed git closeout actions  [status|retry|resolve] [unit-id]",
     "  /gsd worktree       Manage worktrees from the TUI  [list|merge|clean|remove]",
-    "  /gsd migrate        Migrate .planning/ (v1) to .gsd/ (v2) format",
+    "  /gsd migrate        Migrate .planning/ (v1) to DB-backed .gsd/ with backup + audit",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
     "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
     "  /gsd update         Update GSD to the latest version via npm",
