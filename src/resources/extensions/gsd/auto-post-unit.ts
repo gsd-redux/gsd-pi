@@ -47,8 +47,9 @@ import { regenerateIfMissing } from "./workflow-projections.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
 import { createWorkspace, scopeMilestone } from "./workspace.js";
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
-import { isDbAvailable, getDbPath, refreshOpenDatabaseFromDisk, getTask, getSlice, getMilestone, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
-import { renderPlanCheckboxes } from "./markdown-renderer.js";
+import { isDbAvailable, getDbPath, refreshOpenDatabaseFromDisk, getTask, getSlice, getMilestone, getMilestoneSlices, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { renderPlanCheckboxes, renderRoadmapFromDb } from "./markdown-renderer.js";
+import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
 import { consumeSignal } from "./session-status-io.js";
 import {
   checkPostUnitHooks,
@@ -67,7 +68,7 @@ import { crossReferenceEvidence, type ClaimedEvidence } from "./safety/evidence-
 import { validateContent } from "./safety/content-validator.js";
 import { resolveSafetyHarnessConfig } from "./safety/safety-harness.js";
 import { resolveExpectedArtifactPath as resolveArtifactForContent } from "./auto-artifact-paths.js";
-import { getIsolationMode, loadEffectiveGSDPreferences } from "./preferences.js";
+import { getIsolationMode, loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 import { getSliceTasks } from "./gsd-db.js";
 import { runPreExecutionChecks, type PreExecutionResult } from "./pre-execution-checks.js";
 import { writePreExecutionEvidence, type PreExecutionCheckJSON } from "./verification-evidence.js";
@@ -78,6 +79,7 @@ import { writeTurnGitTransaction } from "./uok/gitops.js";
 import { isClosedStatus } from "./status-guards.js";
 import { detectAbandonMilestone } from "./abandon-detect.js";
 import { isDeterministicPolicyError } from "./auto-tool-tracking.js";
+import { formatConnectedStepStack, formatPostUnitStatusCard } from "./auto-status-message.js";
 import {
   clearProjectResearchInflightMarker,
   finalizeProjectResearchTimeout,
@@ -86,6 +88,7 @@ import { validateArtifact } from "./schemas/validate.js";
 import { verificationRetryKey } from "./auto/verification-retry-policy.js";
 import { getLedger } from "./metrics.js";
 import { getUnitCostSpikeAction } from "./auto-budget.js";
+import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
@@ -102,6 +105,78 @@ const MAX_VERIFICATION_RETRIES = 3;
 const MAX_NOTIFICATION_DETAILS = 3;
 const NOTIFICATION_BULLET = "•";
 
+function agentEndMessagesIncludeToolCall(messages: unknown[] | undefined, toolName: string): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const typed = part as { type?: unknown; name?: unknown };
+      if (typed.type === "toolCall" && typed.name === toolName) return true;
+    }
+  }
+  return false;
+}
+
+function agentEndMessagesIncludeSuccessfulToolResult(messages: unknown[] | undefined, toolName: string): boolean {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+    const typed = message as { role?: unknown; toolName?: unknown; isError?: unknown };
+    if (typed.role === "toolResult" && typed.toolName === toolName && typed.isError !== true) return true;
+  }
+  return false;
+}
+
+function agentEndMessagesMentionTool(messages: unknown[] | undefined, toolName: string): boolean {
+  if (!Array.isArray(messages)) return false;
+  try {
+    return JSON.stringify(messages).includes(toolName);
+  } catch {
+    return false;
+  }
+}
+
+function hasIncompleteMilestoneSlice(milestoneId: string): boolean {
+  if (!isDbAvailable()) return false;
+  return getMilestoneSlices(milestoneId).some((slice) => !isClosedStatus(slice.status));
+}
+
+function hasRoadmapReassessmentArtifact(basePath: string, milestoneId: string): boolean {
+  const slicesDir = join(basePath, ".gsd", "milestones", milestoneId, "slices");
+  if (!existsSync(slicesDir)) return false;
+
+  try {
+    for (const entry of readdirSync(slicesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (existsSync(join(slicesDir, entry.name, `${entry.name}-ASSESSMENT.md`))) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function unitActivityMentionsTool(basePath: string, unitType: string, unitId: string, toolName: string): boolean {
+  const safeUnitId = unitId.replace(/\//g, "-");
+  const activityDir = join(basePath, ".gsd", "activity");
+  if (!existsSync(activityDir)) return false;
+
+  try {
+    for (const entry of readdirSync(activityDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith(`${unitType}-${safeUnitId}.jsonl`)) continue;
+      const content = readFileSync(join(activityDir, entry.name), "utf-8");
+      if (content.includes(toolName)) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function formatPreExecutionCheckDetail(check: PreExecutionCheckJSON): string {
   const category = check.category?.trim() || "unknown category";
   const target = check.target?.trim() || "unknown target";
@@ -109,10 +184,42 @@ function formatPreExecutionCheckDetail(check: PreExecutionCheckJSON): string {
   return `  ${NOTIFICATION_BULLET} [${category}] ${target}: ${message}`;
 }
 
+function formatPreExecutionFinding(check: PreExecutionCheckJSON): string {
+  const category = check.category?.trim() || "unknown category";
+  const target = check.target?.trim() || "unknown target";
+  const message = check.message.split(/\r?\n/, 1)[0]?.trim() || "No details provided";
+  return `[${category}] ${target}: ${message}`;
+}
+
+function formatPreExecutionRetryContext(input: {
+  unitType: string;
+  unitId: string;
+  verdictExcerpt: string;
+  findings: string[];
+  evidencePath: string;
+}): string {
+  const findings = input.findings.length > 0
+    ? input.findings.map((finding) => `- ${finding}`).join("\n")
+    : "- No specific findings captured";
+  return [
+    `Pre-execution checks failed after ${input.unitType} ${input.unitId}.`,
+    "Rewrite the slice plan so every task has safe, mechanically runnable Verify commands.",
+    "Verify commands must not use shell pipes, redirects, semicolons, backticks, command substitution, output trimming, or grep regex alternation with \"|\".",
+    "Use package scripts, node:test files, or separate simple commands joined only with \"&&\" when multiple checks are needed.",
+    "",
+    `Verdict: ${input.verdictExcerpt}`,
+    "Findings:",
+    findings,
+    "",
+    `Evidence: ${input.evidencePath}`,
+  ].join("\n");
+}
+
 const COMPLETE_MILESTONE_DB_SETTLE_MS = 1500;
 const COMPLETE_MILESTONE_DB_SETTLE_POLL_MS = 100;
 const GIT_ACTION_FAILURE_LOG_REL_PATH = ".gsd/git-action-failures.log";
 const DEFAULT_PER_UNIT_COST_CAP_USD = 5.0;
+const MAX_PRE_EXEC_RETRIES = 2;
 
 function getCurrentUnitCostStats(unitId: string): { unitCostUsd: number; rollingAvgUsd: number } {
   const ledger = getLedger();
@@ -133,6 +240,44 @@ function getCurrentUnitCostStats(unitId: string): { unitCostUsd: number; rolling
     unitCostUsd,
     rollingAvgUsd: totalUnits > 0 ? totalCost / totalUnits : 0,
   };
+}
+
+async function hasArtifactCostGuardAdvancedPastUnit(
+  s: AutoSession,
+  ctx: ExtensionContext,
+  unitType: string,
+  unitId: string,
+  prefs: GSDPreferences | undefined,
+): Promise<boolean> {
+  try {
+    const state = await deriveState(s.canonicalProjectRoot);
+    const activeMilestone = state.activeMilestone;
+    if (!activeMilestone) return false;
+
+    const { resolveDispatch } = await import("./auto-dispatch.js");
+    const contextUsage = (ctx as any).sessionManager?.getContextUsage?.();
+    const action = await resolveDispatch({
+      basePath: s.basePath,
+      mid: activeMilestone.id,
+      midTitle: activeMilestone.title,
+      state,
+      prefs,
+      session: s,
+      sessionContextWindow: contextUsage?.contextWindow ?? (ctx as any).model?.contextWindow,
+      sessionProvider: (ctx as any).model?.provider,
+      modelRegistry: (ctx as any).modelRegistry,
+    });
+
+    return action.action !== "dispatch" || action.unitType !== unitType || action.unitId !== unitId;
+  } catch (err) {
+    debugLog("postUnit", {
+      phase: "artifact-cost-guard-advance-check-failed",
+      unitType,
+      unitId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
 }
 
 function persistGitActionFailure(basePath: string, action: TurnGitActionMode, message: string): string {
@@ -281,8 +426,10 @@ import {
   updateSliceProgressCache,
   unitVerb,
   describeNextUnit,
+  setAutoOutcomeWidget,
+  type AutoOutcomeSurfaceSnapshot,
 } from "./auto-dashboard.js";
-import { appendFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 import { autoCommitCurrentBranch } from "./worktree.js";
@@ -411,16 +558,83 @@ export function detectRogueFileWrites(
  */
 export const MAX_ARTIFACT_VERIFICATION_RETRIES = 3;
 
-export const STEP_COMPLETE_FALLBACK_MESSAGE =
-  "Step complete. Run /clear if you want a clean view, then /gsd next to continue one step (or /gsd auto to run continuously).";
+function buildStepCompleteCallout(
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string {
+  const isTask = currentUnit?.type === "execute-task";
+  const completedLabel = currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : "Step complete";
+  return formatConnectedStepStack(`✓ GSD ${isTask ? "Task" : "Step"} Complete`, completedLabel);
+}
 
-export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string {
+export const STEP_COMPLETE_FALLBACK_MESSAGE = buildStepCompleteCallout();
+
+export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string | null {
   if (nextState.phase === "complete") {
-    return "Step complete — milestone finished. Run /gsd status to review, or start the next milestone.";
+    return null;
+  }
+  return buildStepCompleteCallout();
+}
+
+function buildStepCompleteMessageForUnit(
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string | null {
+  if (nextState.phase === "complete") {
+    return null;
+  }
+  return buildStepCompleteCallout(currentUnit);
+}
+
+export function buildStepCompleteOutcome(
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): AutoOutcomeSurfaceSnapshot | null {
+  if (nextState.phase === "complete") {
+    return null;
   }
   const next = describeNextUnit(nextState);
-  return `Step complete. Next: ${next.label}\n`
-    + `Run /clear if you want a clean view, then /gsd next to continue one step (or /gsd auto to run continuously).`;
+  return {
+    status: "step",
+    title: "Step complete",
+    detail: `Next: ${next.label}.`,
+    unitLabel: currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : null,
+    nextAction: "Advance one step, or resume automatic mode.",
+    commands: ["/gsd next", "/gsd auto", "/gsd status for overview"],
+  };
+}
+
+export function setStepCompleteSurface(
+  ctx: ExtensionContext,
+  nextState: import("./types.js").GSDState,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string | null {
+  const outcome = buildStepCompleteOutcome(nextState, currentUnit);
+  if (!outcome) {
+    return null;
+  }
+  if (ctx.hasUI && typeof ctx.ui?.setWidget === "function") {
+    ctx.ui.setWidget("gsd-progress", undefined);
+  }
+  setAutoOutcomeWidget(ctx, outcome);
+  return buildStepCompleteMessageForUnit(nextState, currentUnit);
+}
+
+export function setStepCompleteFallbackSurface(
+  ctx: ExtensionContext,
+  currentUnit?: NonNullable<AutoSession["currentUnit"]> | null,
+): string {
+  if (ctx.hasUI && typeof ctx.ui?.setWidget === "function") {
+    ctx.ui.setWidget("gsd-progress", undefined);
+  }
+  setAutoOutcomeWidget(ctx, {
+    status: "step",
+    title: "Step complete",
+    detail: "State refresh failed after the unit completed.",
+    unitLabel: currentUnit ? `${unitVerb(currentUnit.type)} ${currentUnit.id}` : null,
+    nextAction: "Inspect state, then advance one step or resume automatic mode.",
+    commands: ["/gsd status for overview", "/gsd next", "/gsd auto"],
+  });
+  return buildStepCompleteCallout(currentUnit);
 }
 
 /**
@@ -502,6 +716,45 @@ function describeArtifactVerificationFailure(unitType: string, unitId: string, b
   return `Artifact verification failed: ${relPath} exists but did not satisfy the ${unitType} completion contract${expected ? ` (${expected})` : ""}.`;
 }
 
+async function repairCompleteSliceRoadmapProjection(
+  unitType: string,
+  unitId: string,
+  basePath: string,
+): Promise<boolean> {
+  if (unitType !== "complete-slice") return false;
+
+  const { milestone: mid, slice: sid } = parseUnitId(unitId);
+  if (!mid || !sid) return false;
+
+  const slice = getSlice(mid, sid);
+  if (!slice || !isClosedStatus(slice.status)) return false;
+
+  const artifactBase = resolveCanonicalMilestoneRoot(basePath, mid);
+  const summaryPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  const uatPath = resolveSliceFile(artifactBase, mid, sid, "UAT");
+  if (!summaryPath || !existsSync(summaryPath) || !uatPath || !existsSync(uatPath)) {
+    return false;
+  }
+
+  const roadmapPath = resolveMilestoneFile(artifactBase, mid, "ROADMAP");
+  if (roadmapPath && existsSync(roadmapPath)) {
+    try {
+      const roadmap = parseLegacyRoadmap(readFileSync(roadmapPath, "utf-8"));
+      if (roadmap.slices.find((roadmapSlice) => roadmapSlice.id === sid)?.done) {
+        return false;
+      }
+    } catch (err) {
+      logWarning(
+        "projection",
+        `complete-slice roadmap parse failed before repair for ${mid}/${sid}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  await renderRoadmapFromDb(artifactBase, mid);
+  return true;
+}
+
 export async function autoCommitUnit(
   basePath: string,
   unitType: string,
@@ -523,7 +776,7 @@ export async function autoCommitUnit(
 
     const commitMsg = autoCommitCurrentBranch(basePath, unitType, unitId, taskContext);
     if (commitMsg) {
-      ctx?.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
+      ctx?.ui.notify(formatPostUnitStatusCard("✓ Commit", commitMsg.split("\n")[0]), "info");
     }
     return commitMsg;
   } catch (e) {
@@ -617,6 +870,7 @@ async function runCloseoutGitAction(
           status: gitResult.status,
           error: gitResult.error,
           metadata: {
+            basePath: s.basePath,
             dirty: gitResult.dirty,
             dirtyRepositories: gitResult.dirtyRepositories,
             commitMessage: gitResult.commitMessage,
@@ -676,9 +930,9 @@ async function runCloseoutGitAction(
       s.lastGitActionStatus = "ok";
 
       if (turnAction === "commit" && gitResult.commitMessage) {
-        ctx.ui.notify(`Committed: ${gitResult.commitMessage.split("\n")[0]}`, "info");
+        ctx.ui.notify(formatPostUnitStatusCard("✓ Commit", gitResult.commitMessage.split("\n")[0]), "info");
       } else if (turnAction === "snapshot" && gitResult.snapshotLabel) {
-        ctx.ui.notify(`Snapshot recorded: ${gitResult.snapshotLabel}`, "info");
+        ctx.ui.notify(formatPostUnitStatusCard("✓ Snapshot", gitResult.snapshotLabel), "info");
       }
     }
   } catch (e) {
@@ -1033,7 +1287,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         if (safetyConfig.evidence_cross_reference && s.currentUnit.type === "execute-task") {
           try {
             const actual = getEvidence();
-            const bashCalls = actual.filter(e => e.kind === "bash");
             if (sMid && sSid && sTid && isDbAvailable()) {
               const taskRow = getTask(sMid, sSid, sTid);
               if (taskRow?.status === "complete") {
@@ -1056,10 +1309,13 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   }
                 }
 
-                if (claimedEvidence.length > 0 && bashCalls.length === 0) {
-                  logWarning("safety", "task claimed verification command evidence but no execution tool calls were recorded");
+                const missingCommandMismatches = mismatches.filter((mismatch) => (
+                  mismatch.severity === "warning" && mismatch.actual === null
+                ));
+                if (missingCommandMismatches.length > 0) {
+                  logWarning("safety", `evidence mismatch: ${missingCommandMismatches.length} claimed command(s) not found in bash calls`);
                   ctx.ui.notify(
-                    `Safety: task ${sTid} claimed command evidence but no execution tool calls were recorded`,
+                    `Safety: task ${sTid} claimed ${missingCommandMismatches.length} command(s) not found in recorded bash calls`,
                     "warning",
                   );
                 }
@@ -1109,15 +1365,37 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
     }
 
     // Artifact verification
+    const verificationBasePath = s.currentUnit.workspaceRoot ?? s.basePath;
     let triggerArtifactVerified = false;
     if (!s.currentUnit.type.startsWith("hook/")) {
       try {
-        triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+        triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
         if (triggerArtifactVerified) {
           invalidateAllCaches();
         }
       } catch (e) {
         debugLog("postUnit", { phase: "artifact-verify", error: String(e) });
+      }
+
+      try {
+        const repairedRoadmapProjection = await repairCompleteSliceRoadmapProjection(
+          s.currentUnit.type,
+          s.currentUnit.id,
+          s.basePath,
+        );
+        if (repairedRoadmapProjection) {
+          triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+          if (triggerArtifactVerified) {
+            invalidateAllCaches();
+          }
+          debugLog("postUnit", {
+            phase: "complete-slice-roadmap-projection-repaired",
+            unitType: s.currentUnit.type,
+            unitId: s.currentUnit.id,
+          });
+        }
+      } catch (e) {
+        debugLog("postUnit", { phase: "complete-slice-roadmap-projection-repair", error: String(e) });
       }
 
       // If verification failed, attempt to regenerate missing projection files
@@ -1129,7 +1407,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             if (mid) {
               const settled = await waitForMilestoneDbClose(mid);
               if (settled) {
-                triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+                triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
                 if (triggerArtifactVerified) {
                   invalidateAllCaches();
                 }
@@ -1138,6 +1416,40 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           } catch (e) {
             debugLog("postUnit", { phase: "artifact-verify-settle-db", error: String(e) });
           }
+        }
+      }
+
+      if (
+        !triggerArtifactVerified &&
+        s.currentUnit.type === "validate-milestone" &&
+        (
+          agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesIncludeToolCall(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          hasRoadmapReassessmentArtifact(s.basePath, parseUnitId(s.currentUnit.id).milestone) ||
+          hasRoadmapReassessmentArtifact(s.canonicalProjectRoot, parseUnitId(s.currentUnit.id).milestone)
+        )
+      ) {
+        const { milestone: mid } = parseUnitId(s.currentUnit.id);
+        if (mid && (
+          agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          hasIncompleteMilestoneSlice(mid) ||
+          hasRoadmapReassessmentArtifact(s.basePath, mid) ||
+          hasRoadmapReassessmentArtifact(s.canonicalProjectRoot, mid)
+        )) {
+          triggerArtifactVerified = true;
+          invalidateAllCaches();
+          debugLog("postUnit", {
+            phase: "validate-milestone-reassessment-invalidated-validation",
+            unitType: s.currentUnit.type,
+            unitId: s.currentUnit.id,
+            milestoneId: mid,
+          });
         }
       }
 
@@ -1171,16 +1483,50 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
       }
 
+      if (
+        !triggerArtifactVerified &&
+        s.currentUnit.type === "validate-milestone" &&
+        (
+          agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesIncludeToolCall(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          hasRoadmapReassessmentArtifact(s.basePath, parseUnitId(s.currentUnit.id).milestone) ||
+          hasRoadmapReassessmentArtifact(s.canonicalProjectRoot, parseUnitId(s.currentUnit.id).milestone)
+        )
+      ) {
+        const { milestone: mid } = parseUnitId(s.currentUnit.id);
+        if (mid && (
+          agentEndMessagesIncludeSuccessfulToolResult(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          agentEndMessagesMentionTool(opts?.agentEndMessages, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.basePath, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          unitActivityMentionsTool(s.canonicalProjectRoot, s.currentUnit.type, s.currentUnit.id, "gsd_reassess_roadmap") ||
+          hasIncompleteMilestoneSlice(mid) ||
+          hasRoadmapReassessmentArtifact(s.basePath, mid) ||
+          hasRoadmapReassessmentArtifact(s.canonicalProjectRoot, mid)
+        )) {
+          triggerArtifactVerified = true;
+          invalidateAllCaches();
+          debugLog("postUnit", {
+            phase: "validate-milestone-reassessment-invalidated-validation",
+            unitType: s.currentUnit.type,
+            unitId: s.currentUnit.id,
+            milestoneId: mid,
+          });
+        }
+      }
+
       if (!triggerArtifactVerified && s.currentUnit.type === "research-project") {
         const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
         const outcome = finalizeProjectResearchTimeout(
-          s.basePath,
+          verificationBasePath,
           "Project research unit ended before all required dimensions produced durable files.",
         );
         s.pendingVerificationRetry = null;
         s.verificationRetryCount.delete(retryKey);
         s.verificationRetryFailureHashes.delete(retryKey);
-        triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+        triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
         if (triggerArtifactVerified) {
           invalidateAllCaches();
           ctx.ui.notify(
@@ -1245,9 +1591,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           "warning",
         );
         // Fall through to "continue" — do NOT enter the retry or db-unavailable paths.
-      } else if (!triggerArtifactVerified && diagnoseWorktreeIntegrityFailure(s.basePath)) {
+      } else if (!triggerArtifactVerified && diagnoseWorktreeIntegrityFailure(verificationBasePath)) {
         const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
-        const worktreeFailure = diagnoseWorktreeIntegrityFailure(s.basePath)!;
+        const worktreeFailure = diagnoseWorktreeIntegrityFailure(verificationBasePath)!;
         s.pendingVerificationRetry = null;
         s.verificationRetryCount.delete(retryKey);
         s.verificationRetryFailureHashes.delete(retryKey);
@@ -1255,7 +1601,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           phase: "worktree-integrity-failure",
           unitType: s.currentUnit.type,
           unitId: s.currentUnit.id,
-          basePath: s.basePath,
+          basePath: verificationBasePath,
         });
         ctx.ui.notify(
           `${worktreeFailure} Retry ${s.currentUnit.id} after repair.`,
@@ -1265,7 +1611,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         return "dispatched";
       } else if (!triggerArtifactVerified && !isDbAvailable()) {
         debugLog("postUnit", { phase: "artifact-verify-skip-db-unavailable", unitType: s.currentUnit.type, unitId: s.currentUnit.id });
-        const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
+        const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, verificationBasePath);
         ctx.ui.notify(
           `Artifact missing for ${s.currentUnit.type} ${s.currentUnit.id} — DB unavailable, skipping retry.${dbSkipDiag ? ` Expected: ${dbSkipDiag}` : ""}`,
           "error",
@@ -1275,7 +1621,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           const isUserSkip = /queued user message/i.test(s.lastToolInvocationError);
           const errMsg = isUserSkip
             ? `Tool skipped for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Queued user message interrupted the turn — pausing auto-mode.`
-            : `Tool invocation failed for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Structured argument generation failed — pausing auto-mode.`;
+            : `Tool invocation/runtime failed for ${s.currentUnit.type}: ${s.lastToolInvocationError}. Retrying cannot resolve this deterministic failure — pausing auto-mode.`;
           debugLog("postUnit", { phase: "tool-invocation-error-pause", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError });
           ctx.ui.notify(errMsg, "error");
           s.lastToolInvocationError = null;
@@ -1283,10 +1629,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           return "dispatched";
         }
 
-        const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, s.basePath) !== null;
+        const hasExpectedArtifact = resolveExpectedArtifactPath(s.currentUnit.type, s.currentUnit.id, verificationBasePath) !== null;
         if (hasExpectedArtifact) {
           const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
-          const prefs = loadEffectiveGSDPreferences()?.preferences;
+          const prefs = loadEffectiveGSDPreferences(s.canonicalProjectRoot)?.preferences;
           const perUnitCapUsd =
             typeof prefs?.per_unit_cost_cap_usd === "number" && Number.isFinite(prefs.per_unit_cost_cap_usd) && prefs.per_unit_cost_cap_usd > 0
               ? prefs.per_unit_cost_cap_usd
@@ -1307,6 +1653,27 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             s.pendingVerificationRetry = null;
             s.verificationRetryCount.delete(retryKey);
             s.verificationRetryFailureHashes.delete(retryKey);
+            const advancedPastUnit = await hasArtifactCostGuardAdvancedPastUnit(
+              s,
+              ctx,
+              s.currentUnit.type,
+              s.currentUnit.id,
+              prefs,
+            );
+            if (advancedPastUnit) {
+              debugLog("postUnit", {
+                phase: "artifact-cost-spike-continue-after-advance",
+                unitType: s.currentUnit.type,
+                unitId: s.currentUnit.id,
+                unitCostUsd,
+                rollingAvgUsd,
+              });
+              ctx.ui.notify(
+                `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) after state advanced; continuing closeout.`,
+                "warning",
+              );
+              return "continue";
+            }
             ctx.ui.notify(
               `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) — pausing auto-mode.`,
               "error",
@@ -1318,11 +1685,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           const failureDetails = describeArtifactVerificationFailure(
             s.currentUnit.type,
             s.currentUnit.id,
-            s.basePath,
+            verificationBasePath,
           );
           if (attempt > MAX_ARTIFACT_VERIFICATION_RETRIES) {
-            s.verificationRetryCount.delete(retryKey);
-            s.verificationRetryFailureHashes.delete(retryKey);
+            s.exhaustedVerificationUnits.add(retryKey);
             debugLog("postUnit", { phase: "artifact-verify-exhausted", unitType: s.currentUnit.type, unitId: s.currentUnit.id, attempt });
             ctx.ui.notify(
               `${failureDetails} Pausing auto-mode after ${MAX_ARTIFACT_VERIFICATION_RETRIES} retries.`,
@@ -1350,6 +1716,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // of the same unit gets a full retry budget instead of the stale count.
       if (triggerArtifactVerified) {
         const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
+        if (s.pendingVerificationRetry?.unitId === s.currentUnit.id) {
+          s.pendingVerificationRetry = null;
+        }
         s.verificationRetryCount.delete(retryKey);
         s.verificationRetryFailureHashes.delete(retryKey);
       }
@@ -1371,9 +1740,10 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
  * Returns:
  * - "continue" — proceed to sidecar drain / normal dispatch
  * - "step-wizard" — step mode, show wizard instead
- * - "stopped" — stopAuto was called
+ * - "retry" — planner-owned pre-execution validation failed; retry the planning unit with injected failure context
+ * - "stopped" — stopAuto/pauseAuto was called
  */
-export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"continue" | "step-wizard" | "stopped"> {
+export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"continue" | "step-wizard" | "retry" | "stopped"> {
   const { s, ctx, pi, buildSnapshotOpts, lockBase, stopAuto, pauseAuto, updateProgressWidget } = pctx;
 
   if (s.currentUnit) {
@@ -1539,7 +1909,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     (s.currentUnit.type === "plan-slice" || s.currentUnit.type === "refine-slice")
   ) {
     const currentUnit = s.currentUnit;
-    let preExecPauseNeeded = false;
+    const preExecPost = { action: "none" as "none" | "retry" | "pause" };
     await runSafely("postUnitPostVerification", "pre-execution-checks", async () => {
       const prefs = loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
@@ -1587,7 +1957,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         // prior slice wrote to the worktree but hasn't merged to main yet.
         const preExecutionBasePath = s.basePath;
         const result: PreExecutionResult = await runPreExecutionChecks(tasks, preExecutionBasePath, {
-          additionalRoots: [s.canonicalProjectRoot],
+          canonicalProjectRoot: s.canonicalProjectRoot,
         });
 
         // Log summary to stderr in existing verification output format
@@ -1643,57 +2013,87 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           });
         }
 
+        const beginPreExecRepair = (
+          checks: PreExecutionCheckJSON[],
+          verdictExcerpt: string,
+          heading: string,
+        ): "retry" | "pause" => {
+          const findings = checks.map(formatPreExecutionFinding);
+          const details = checks.slice(0, MAX_NOTIFICATION_DETAILS).map(formatPreExecutionCheckDetail).join("\n");
+          const suffix = checks.length > MAX_NOTIFICATION_DETAILS
+            ? `\n  ${NOTIFICATION_BULLET} ...and ${checks.length - MAX_NOTIFICATION_DETAILS} more`
+            : "";
+          const evidenceNote = `\nSee ${evidencePath} for full details.`;
+          const retryKey = currentUnit.id;
+          const attempt = (s.preExecRetryCount.get(retryKey) ?? 0) + 1;
+
+          s.lastPreExecFailure = {
+            unitId: currentUnit.id,
+            blockingFindings: findings,
+            verdictExcerpt,
+          };
+          s.preExecRetryCount.set(retryKey, attempt);
+
+          if (attempt >= MAX_PRE_EXEC_RETRIES) {
+            s.pendingVerificationRetry = null;
+            ctx.ui.notify(
+              `${heading}\n${details}${suffix}${evidenceNote}\nPlanner repair failed after ${attempt} consecutive pre-exec failures; pausing for human review.`,
+              "error",
+            );
+            return "pause";
+          }
+
+          s.pendingVerificationRetry = {
+            unitId: currentUnit.id,
+            failureContext: formatPreExecutionRetryContext({
+              unitType: currentUnit.type,
+              unitId: currentUnit.id,
+              verdictExcerpt,
+              findings,
+              evidencePath,
+            }),
+            attempt,
+          };
+          ctx.ui.notify(
+            `${heading}\n${details}${suffix}${evidenceNote}\nRetrying planning with this failure context.`,
+            "warning",
+          );
+          return "retry";
+        };
+
         // Notify UI — surface actionable details (#4259)
         if (result.status === "fail") {
           const blockingChecks = result.checks.filter(c => !c.passed && c.blocking);
           const blockingCount = blockingChecks.length;
-          const details = blockingChecks.slice(0, MAX_NOTIFICATION_DETAILS).map(formatPreExecutionCheckDetail).join("\n");
-          const suffix = blockingChecks.length > MAX_NOTIFICATION_DETAILS
-            ? `\n  ${NOTIFICATION_BULLET} ...and ${blockingChecks.length - MAX_NOTIFICATION_DETAILS} more`
-            : "";
-          const evidenceNote = `\nSee ${evidencePath} for full details.`;
-          ctx.ui.notify(
-            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found\n${details}${suffix}${evidenceNote}`,
-            "error",
+          preExecPost.action = beginPreExecRepair(
+            blockingChecks,
+            `status=${result.status}; ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} detected`,
+            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
           );
-          // Persist failure context so the next plan-slice re-dispatch can inject
-          // it into the prompt and break the infinite loop (#4551).
-          s.lastPreExecFailure = {
-            unitId: currentUnit.id,
-            blockingFindings: blockingChecks.map(
-              c => `[${c.category}] ${c.target}: ${c.message}`,
-            ),
-            verdictExcerpt: `status=${result.status}; ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} detected`,
-          };
-          // Track consecutive pre-exec failures per slice for loop detection.
-          const retryKey = currentUnit.id;
-          s.preExecRetryCount.set(retryKey, (s.preExecRetryCount.get(retryKey) ?? 0) + 1);
-          preExecPauseNeeded = true;
         } else if (result.status === "warn") {
-          ctx.ui.notify(
-            `Pre-execution checks passed with warnings`,
-            "warning",
-          );
           // Strict mode: treat warnings as blocking
           if (prefs?.enhanced_verification_strict === true) {
             const warnChecks = result.checks.filter(c => !c.passed);
-            s.lastPreExecFailure = {
-              unitId: currentUnit.id,
-              blockingFindings: warnChecks.map(
-                c => `[${c.category}] ${c.target}: ${c.message}`,
-              ),
-              verdictExcerpt: `status=${result.status} (strict mode); ${warnChecks.length} warning${warnChecks.length === 1 ? "" : "s"} treated as blocking`,
-            };
-            const retryKey = currentUnit.id;
-            s.preExecRetryCount.set(retryKey, (s.preExecRetryCount.get(retryKey) ?? 0) + 1);
-            preExecPauseNeeded = true;
+            preExecPost.action = beginPreExecRepair(
+              warnChecks,
+              `status=${result.status} (strict mode); ${warnChecks.length} warning${warnChecks.length === 1 ? "" : "s"} treated as blocking`,
+              `Pre-execution warnings blocked execution in strict mode: ${warnChecks.length} warning${warnChecks.length === 1 ? "" : "s"} found`,
+            );
+          } else {
+            ctx.ui.notify(
+              `Pre-execution checks passed with warnings`,
+              "warning",
+            );
           }
         }
 
-        // Reset the retry counter when checks pass — a successful re-plan
-        // should not carry over a stale failure count into future slices.
-        if (result.status === "pass") {
+        // Reset the retry counter once checks are non-blocking. A successful
+        // repair should not make a later unrelated failure hit the cap early.
+        if (preExecPost.action === "none") {
           s.preExecRetryCount.delete(currentUnit.id);
+          if (s.lastPreExecFailure?.unitId === currentUnit.id) {
+            s.lastPreExecFailure = null;
+          }
         }
 
         debugLog("postUnitPostVerification", {
@@ -1738,13 +2138,25 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             unitId: s.currentUnit.id,
           });
         }
-        preExecPauseNeeded = true;
+        preExecPost.action = "pause";
       }
     });
 
     // Check for blocking failures after runSafely completes
-    if (preExecPauseNeeded) {
-      debugLog("postUnitPostVerification", { phase: "pre-execution-checks", pausing: true, reason: "blocking failures detected" });
+    if (preExecPost.action === "retry") {
+      debugLog("postUnitPostVerification", {
+        phase: "pre-execution-checks",
+        retrying: true,
+        reason: "planner-owned failures detected",
+      });
+      return "retry";
+    }
+    if (preExecPost.action === "pause") {
+      debugLog("postUnitPostVerification", {
+        phase: "pre-execution-checks",
+        pausing: true,
+        reason: "pre-execution repair exhausted or checker errored",
+      });
       await pauseAuto(ctx, pi);
       return "stopped";
     }
@@ -1832,10 +2244,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     try {
       const nextState = await deriveState(s.canonicalProjectRoot);
       phaseAfterUnit = nextState.phase;
-      ctx.ui.notify(buildStepCompleteMessage(nextState), "info");
+      const message = setStepCompleteSurface(ctx, nextState, s.currentUnit);
+      if (message) ctx.ui.notify(message, "info");
     } catch (e) {
       debugLog("postUnit", { phase: "step-wizard-notify", error: String(e) });
-      ctx.ui.notify(STEP_COMPLETE_FALLBACK_MESSAGE, "info");
+      ctx.ui.notify(setStepCompleteFallbackSurface(ctx, s.currentUnit), "info");
     }
     return shouldReturnStepWizardAfterUnit(s.currentUnit?.type, phaseAfterUnit)
       ? "step-wizard"

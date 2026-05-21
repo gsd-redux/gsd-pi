@@ -723,9 +723,25 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
       return
     }
 
+    // Blocking command blocks are rendered as assistant messages instead of
+    // extension UI notifications, but headless still needs to stop immediately.
+    if (eventObj.type !== 'extension_ui_request') {
+      if (isBlockedNotification(eventObj)) {
+        blocked = true
+      }
+      if (isTerminalNotification(eventObj)) {
+        completed = true
+        exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
+        resolveCompletion()
+        return
+      }
+    }
+
     // Handle extension_ui_request
-    if (eventObj.type === 'extension_ui_request' && clientStarted) {
-      // Check for terminal notification before auto-responding
+    if (eventObj.type === 'extension_ui_request') {
+      // State tracking runs regardless of clientStarted: bootstrap-time
+      // notifications (e.g. survivor-branch merge failures) arrive before
+      // the LLM session begins and must still trip the blocked/terminal gates.
       if (isBlockedNotification(eventObj)) {
         blocked = true
       }
@@ -737,6 +753,16 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
       if (isTerminalNotification(eventObj)) {
         completed = true
+      }
+
+      if (!clientStarted) {
+        // Before the LLM session starts, only state tracking matters.
+        // Resolve immediately on terminal; skip UI interaction handling.
+        if (completed) {
+          exitCode = blocked ? EXIT_BLOCKED : EXIT_SUCCESS
+          resolveCompletion()
+        }
+        return
       }
 
       // Answer injection: try to handle with pre-supplied answers before supervised/auto
@@ -900,9 +926,14 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   if (internalProcess) {
     internalProcess.on('exit', (code: number | null) => {
       if (!completed) {
-        const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
-        process.stderr.write(msg)
-        exitCode = EXIT_ERROR
+        if (code === 0) {
+          process.stderr.write('[headless] Child exited cleanly (code 0) without terminal notification\n')
+          exitCode = EXIT_SUCCESS
+        } else {
+          const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
+          process.stderr.write(msg)
+          exitCode = EXIT_ERROR
+        }
         resolveCompletion()
       }
     })
