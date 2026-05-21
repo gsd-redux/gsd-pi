@@ -27,6 +27,7 @@ import type { MigrationPreview, WrittenFiles } from "./writer.js";
 import { ensureDbOpen } from "../bootstrap/dynamic-tools.js";
 import { clearArtifacts, clearDecisions, clearRequirements, clearEngineHierarchy, transaction } from "../gsd-db.js";
 import { migrateFromMarkdown } from "../md-importer.js";
+import { importCompletedQuickTasks } from "../quick-task-ledger.js";
 import { invalidateStateCache } from "../state.js";
 import {
   archiveLegacyPlanningDirectory,
@@ -96,6 +97,7 @@ export async function importWrittenMigrationToDb(
     if (preview) assertMigrationImportMatchesPreview(imported, preview);
     return imported;
   });
+  importCompletedQuickTasks(basePath, "migration");
   invalidateStateCache();
   return counts;
 }

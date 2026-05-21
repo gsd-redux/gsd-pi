@@ -473,6 +473,22 @@ export async function writeGSDDirectory(
     counts.requirements++;
   }
 
+  for (const quick of project.quickTasks) {
+    const quickDir = join(gsdDir, 'quick', quick.dirName);
+    if (quick.plan) {
+      const planPath = join(quickDir, `${quick.number}-PLAN.md`);
+      await saveFile(planPath, quick.plan);
+      paths.push(planPath);
+      counts.other++;
+    }
+    if (quick.summary) {
+      const summaryPath = join(quickDir, `${quick.number}-SUMMARY.md`);
+      await saveFile(summaryPath, quick.summary);
+      paths.push(summaryPath);
+      counts.other++;
+    }
+  }
+
   // Milestones
   for (const milestone of project.milestones) {
     const mDir = join(milestonesBase, milestone.id);

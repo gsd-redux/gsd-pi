@@ -80,6 +80,8 @@ export interface SidecarItem {
   model?: string;
   /** Capture ID for quick-task items (already marked executed at enqueue time). */
   captureId?: string;
+  /** Capture text for quick-task ledger entries after completion. */
+  captureText?: string;
 }
 
 export interface PreExecFailure {

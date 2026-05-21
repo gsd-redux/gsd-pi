@@ -17,6 +17,7 @@ import { gsdRoot } from "./paths.js";
 import { GitServiceImpl, runGit } from "./git-service.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { nativeHasStagedChanges } from "./native-git-bridge.js";
+import { recordQuickTaskCompletion } from "./quick-task-ledger.js";
 
 interface QuickReturnState {
   basePath: string;
@@ -180,9 +181,21 @@ export function cleanupQuickBranch(basePath = process.cwd()): boolean {
 
   runGit(repoPath, ["merge", "--squash", state.quickBranch]);
 
+  let commitSha: string | null = null;
   if (hasStagedChanges(repoPath)) {
     runGit(repoPath, ["commit", "-m", `quick(Q${state.taskNum}): ${state.slug}`]);
+    commitSha = runGit(repoPath, ["rev-parse", "HEAD"], { allowFailure: true }) || null;
   }
+
+  const summaryPath = `.gsd/quick/${state.taskNum}-${state.slug}/${state.taskNum}-SUMMARY.md`;
+  recordQuickTaskCompletion(repoPath, {
+    id: `Q${state.taskNum}`,
+    origin: "manual",
+    description: state.description,
+    summaryPath,
+    branch: state.quickBranch,
+    commitSha,
+  });
 
   runGit(repoPath, ["branch", "-D", state.quickBranch], { allowFailure: true });
   clearPendingReturn(repoPath);

@@ -2983,6 +2983,22 @@ export async function runFinalize(
       lastProgressAt: Date.now(),
       lastProgressKind: "finalize-success",
     });
+    if (sidecarItem?.kind === "quick-task" && preUnitSnapshot.type === "quick-task") {
+      const { recordQuickTaskCompletion } = await import("../quick-task-ledger.js");
+      const summary = buildPhaseHandoffOutcome({
+        unitType: preUnitSnapshot.type,
+        unitId: preUnitSnapshot.id,
+        agentEndMessages: s.lastUnitAgentEndMessages,
+      }).detail ?? "";
+      recordQuickTaskCompletion(s.basePath, {
+        id: sidecarItem.captureId ?? preUnitSnapshot.id,
+        origin: "capture",
+        description: sidecarItem.captureText ?? sidecarItem.captureId ?? preUnitSnapshot.id,
+        status: /\balready resolved\b/i.test(summary) ? "already-resolved" : "complete",
+        captureId: sidecarItem.captureId ?? null,
+        fullSummaryMd: summary,
+      });
+    }
     if (
       !preUnitSnapshot.type.startsWith("hook/") &&
       preUnitSnapshot.type !== "custom-step" &&

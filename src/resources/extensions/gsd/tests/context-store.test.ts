@@ -9,12 +9,15 @@ import {
   insertDecision,
   insertRequirement,
   insertArtifact,
+  upsertQuickTask,
 } from '../gsd-db.ts';
 import {
   queryDecisions,
   queryRequirements,
+  queryQuickTasks,
   formatDecisionsForPrompt,
   formatRequirementsForPrompt,
+  formatQuickTasksForPrompt,
   queryArtifact,
   queryProject,
   formatRoadmapExcerpt,
@@ -41,6 +44,42 @@ describe("context-store: fallback when DB not open", () => {
 
     const rf = queryRequirements({ sliceId: 'S01' });
     assert.deepStrictEqual(rf, [], 'queryRequirements with opts returns [] when DB closed');
+  });
+});
+
+describe("context-store: quick task planning history", () => {
+  afterEach(() => closeDatabase());
+
+  test("queryQuickTasks returns shipped quick tasks for planner context", () => {
+    openDatabase(':memory:');
+    upsertQuickTask({
+      id: "Q001",
+      origin: "manual",
+      description: "add dark mode",
+      status: "complete",
+      summary_path: ".gsd/quick/1-add-dark-mode/1-SUMMARY.md",
+      branch: "gsd/quick/1-add-dark-mode",
+      commit_sha: "abc123",
+      capture_id: null,
+      completed_at: "2026-05-21T10:00:00.000Z",
+      full_summary_md: "# Quick Task: add dark mode",
+    });
+    upsertQuickTask({
+      id: "Q002",
+      origin: "manual",
+      description: "unfinished idea",
+      status: "failed",
+      summary_path: "",
+      branch: "",
+      commit_sha: null,
+      capture_id: null,
+      completed_at: "2026-05-21T11:00:00.000Z",
+      full_summary_md: "",
+    });
+
+    const quickTasks = queryQuickTasks({ shippedOnly: true });
+    assert.deepEqual(quickTasks.map((task) => task.id), ["Q001"]);
+    assert.match(formatQuickTasksForPrompt(quickTasks), /add dark mode/);
   });
 });
 

@@ -267,6 +267,8 @@ export interface GSDProject {
   requirements: GSDRequirement[];
   /** Empty or pass-through from old project key decisions */
   decisionsContent: string;
+  /** Legacy quick tasks preserved for DB-backed planning history. */
+  quickTasks: PlanningQuickTask[];
 }
 
 export interface GSDMilestone {

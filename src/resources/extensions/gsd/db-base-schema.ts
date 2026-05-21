@@ -63,6 +63,23 @@ export function createBaseSchemaObjects(db: DbAdapter, hooks: BaseSchemaHooks): 
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS quick_tasks (
+      id TEXT PRIMARY KEY,
+      origin TEXT NOT NULL DEFAULT 'manual',
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'complete',
+      summary_path TEXT NOT NULL DEFAULT '',
+      branch TEXT NOT NULL DEFAULT '',
+      commit_sha TEXT DEFAULT NULL,
+      capture_id TEXT DEFAULT NULL,
+      completed_at TEXT NOT NULL DEFAULT '',
+      full_summary_md TEXT NOT NULL DEFAULT ''
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quick_tasks_completed ON quick_tasks(status, completed_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_quick_tasks_capture ON quick_tasks(capture_id)");
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       id TEXT NOT NULL UNIQUE,

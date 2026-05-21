@@ -2343,7 +2343,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       const qtUnitId = `${s.currentMilestoneId}/${capture.id}`;
       return enqueueSidecar(
         s, ctx,
-        { kind: "quick-task", unitType: "quick-task", unitId: qtUnitId, prompt, captureId: capture.id },
+        { kind: "quick-task", unitType: "quick-task", unitId: qtUnitId, prompt, captureId: capture.id, captureText: capture.text },
         { captureId: capture.id },
         `Executing quick-task: ${capture.id} — "${capture.text}"`,
       );

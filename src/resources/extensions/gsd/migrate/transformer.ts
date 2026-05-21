@@ -407,5 +407,6 @@ export function transformToGSD(parsed: PlanningProject): GSDProject {
     projectContent: parsed.project ?? '',
     requirements: mapRequirements(parsed.requirements),
     decisionsContent: deriveDecisions(parsed),
+    quickTasks: parsed.quickTasks,
   };
 }

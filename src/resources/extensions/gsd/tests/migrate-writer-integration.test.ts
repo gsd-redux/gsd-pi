@@ -104,6 +104,7 @@ function buildIncompleteProject(): GSDProject {
     projectContent: '# My Project\n\nA test project for migration.\n',
     requirements,
     decisionsContent: '',
+    quickTasks: [],
   };
 }
 
@@ -126,6 +127,7 @@ function buildCompleteProject(): GSDProject {
     projectContent: '# Done Project\n',
     requirements: [],
     decisionsContent: '# Decisions\n\n| ID | Decision | Rationale | Date |\n',
+    quickTasks: [],
   };
 }
 

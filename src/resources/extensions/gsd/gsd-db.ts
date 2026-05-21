@@ -82,6 +82,7 @@ import {
   applyMigrationV27ArtifactHash,
   applyMigrationV28MemoryLastHitAt,
   applyMigrationV29RepositoryTargets,
+  applyMigrationV30QuickTasks,
 } from "./db-migration-steps.js";
 import { isMemoriesFtsAvailableSchema, tryCreateMemoriesFtsSchema } from "./db-memory-fts-schema.js";
 import { createDbOpenState, type DbOpenPhase } from "./db-open-state.js";
@@ -110,7 +111,7 @@ const providerLoader = createSqliteProviderLoader({
   writeStderr: (message: string) => process.stderr.write(message),
 });
 
-export const SCHEMA_VERSION = 29;
+export const SCHEMA_VERSION = 30;
 const TERMINAL_STATUS_SQL = "'complete', 'done', 'skipped', 'closed'";
 
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
@@ -365,6 +366,11 @@ function migrateSchema(db: DbAdapter): void {
     if (currentVersion < 29) {
       applyMigrationV29RepositoryTargets(db);
       recordSchemaVersion(db, 29);
+    }
+
+    if (currentVersion < 30) {
+      applyMigrationV30QuickTasks(db);
+      recordSchemaVersion(db, 30);
     }
 
     db.exec("COMMIT");
@@ -968,6 +974,51 @@ export function insertArtifact(a: {
     ":full_content": a.full_content,
     ":imported_at": new Date().toISOString(),
     ":content_hash": contentHash,
+  });
+}
+
+export interface QuickTaskRow {
+  id: string;
+  origin: "manual" | "capture" | "migration";
+  description: string;
+  status: "complete" | "already-resolved" | "failed";
+  summary_path: string;
+  branch: string;
+  commit_sha: string | null;
+  capture_id: string | null;
+  completed_at: string;
+  full_summary_md: string;
+}
+
+export function upsertQuickTask(row: QuickTaskRow): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  currentDb.prepare(
+    `INSERT INTO quick_tasks (
+      id, origin, description, status, summary_path, branch, commit_sha, capture_id, completed_at, full_summary_md
+    ) VALUES (
+      :id, :origin, :description, :status, :summary_path, :branch, :commit_sha, :capture_id, :completed_at, :full_summary_md
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      origin = quick_tasks.origin,
+      description = excluded.description,
+      status = excluded.status,
+      summary_path = excluded.summary_path,
+      branch = excluded.branch,
+      commit_sha = COALESCE(excluded.commit_sha, quick_tasks.commit_sha),
+      capture_id = COALESCE(excluded.capture_id, quick_tasks.capture_id),
+      completed_at = excluded.completed_at,
+      full_summary_md = excluded.full_summary_md`,
+  ).run({
+    ":id": row.id,
+    ":origin": row.origin,
+    ":description": row.description,
+    ":status": row.status,
+    ":summary_path": row.summary_path,
+    ":branch": row.branch,
+    ":commit_sha": row.commit_sha,
+    ":capture_id": row.capture_id,
+    ":completed_at": row.completed_at,
+    ":full_summary_md": row.full_summary_md,
   });
 }
 

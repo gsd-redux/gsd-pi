@@ -5,6 +5,7 @@
 // All functions degrade gracefully: return empty results when DB unavailable, never throw.
 
 import { isDbAvailable, _getAdapter } from './gsd-db.js';
+import type { QuickTaskRow } from './gsd-db.js';
 import type { Decision, DecisionMadeBy, Requirement } from './types.js';
 
 // ─── Query Functions ───────────────────────────────────────────────────────
@@ -18,6 +19,11 @@ export interface RequirementQueryOpts {
   milestoneId?: string;
   sliceId?: string;
   status?: string;
+}
+
+export interface QuickTaskQueryOpts {
+  limit?: number;
+  shippedOnly?: boolean;
 }
 
 /**
@@ -169,6 +175,40 @@ export function queryDecisionsFromMemories(opts?: DecisionQueryOpts): Decision[]
   return readDecisionsFromMemories(opts, /* includeSuperseded */ false);
 }
 
+export function queryQuickTasks(opts?: QuickTaskQueryOpts): QuickTaskRow[] {
+  if (!isDbAvailable()) return [];
+  const adapter = _getAdapter();
+  if (!adapter) return [];
+
+  try {
+    const clauses = opts?.shippedOnly === false
+      ? []
+      : ["status IN ('complete', 'already-resolved')"];
+    const limit = Math.max(1, Math.min(opts?.limit ?? 8, 25));
+    const sql = [
+      "SELECT * FROM quick_tasks",
+      clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "",
+      "ORDER BY completed_at DESC, id DESC",
+      "LIMIT :limit",
+    ].filter(Boolean).join(" ");
+    const rows = adapter.prepare(sql).all({ ":limit": limit }) as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      id: row["id"] as string,
+      origin: row["origin"] as QuickTaskRow["origin"],
+      description: row["description"] as string,
+      status: row["status"] as QuickTaskRow["status"],
+      summary_path: row["summary_path"] as string,
+      branch: row["branch"] as string,
+      commit_sha: (row["commit_sha"] as string | null) ?? null,
+      capture_id: (row["capture_id"] as string | null) ?? null,
+      completed_at: row["completed_at"] as string,
+      full_summary_md: row["full_summary_md"] as string,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * ADR-013 Phase 6 cutover (Stage 2a): read **all** decisions (active +
  * superseded) from the `memories` table. Used by the DECISIONS.md
@@ -292,6 +332,14 @@ export function formatRequirementsForPrompt(requirements: Requirement[]): string
 
     return lines.join('\n');
   }).join('\n\n');
+}
+
+export function formatQuickTasksForPrompt(tasks: QuickTaskRow[]): string {
+  if (tasks.length === 0) return '';
+  return tasks.map((task) => {
+    const evidence = task.summary_path || task.commit_sha || task.capture_id || task.origin;
+    return `- ${task.id}: ${task.description} (${task.status}; ${evidence})`;
+  }).join('\n');
 }
 
 // ─── Artifact Query Functions ──────────────────────────────────────────────

@@ -959,6 +959,29 @@ export async function inlineRequirementsFromDb(
   return inlineGsdRootFile(base, "requirements.md", "Requirements");
 }
 
+export async function inlineCompletedQuickTasksFromDb(base: string): Promise<string | null> {
+  try {
+    const { importCompletedQuickTasks } = await import("./quick-task-ledger.js");
+    importCompletedQuickTasks(base, "migration");
+    const { isDbAvailable } = await import("./gsd-db.js");
+    if (!isDbAvailable()) return null;
+    const { queryQuickTasks, formatQuickTasksForPrompt } = await import("./context-store.js");
+    const quickTasks = queryQuickTasks({ limit: 8, shippedOnly: true });
+    if (quickTasks.length === 0) return null;
+    return [
+      "### Completed Quick Tasks",
+      "Source: `quick_tasks` DB ledger (`.gsd/quick/` summaries are projections).",
+      "",
+      "Treat these as already-shipped capabilities. Do not recommend duplicate work unless the new scope explicitly extends or improves it.",
+      "",
+      formatQuickTasksForPrompt(quickTasks),
+    ].join("\n");
+  } catch (err) {
+    logWarning("prompt", `inlineCompletedQuickTasksFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
 /**
  * Inline project context from the DB.
  * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
@@ -1786,6 +1809,7 @@ export async function buildDiscussMilestonePrompt(
   }
 
   const contextModeInstructions = renderContextModeForPrompt("discuss-milestone", base);
+  const quickTasksInline = await inlineCompletedQuickTasksFromDb(base);
 
   const basePrompt = loadPrompt("guided-discuss-milestone", {
     workingDirectory: base,
@@ -1796,7 +1820,10 @@ export async function buildDiscussMilestonePrompt(
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
     fastPathInstruction: "",
   });
-  const promptWithContextMode = prependContextModeToBlock("discuss-milestone", base, basePrompt);
+  const promptBody = quickTasksInline
+    ? `${quickTasksInline}\n\n---\n\n${basePrompt}`
+    : basePrompt;
+  const promptWithContextMode = prependContextModeToBlock("discuss-milestone", base, promptBody);
 
   // If a CONTEXT-DRAFT.md exists, append it as seed material
   const draftPath = resolveMilestoneFile(base, mid, "CONTEXT-DRAFT");
@@ -1806,7 +1833,7 @@ export async function buildDiscussMilestonePrompt(
     return `${promptWithContextMode}\n\n## Prior Discussion (Draft Seed)\n\nThe following draft was captured from a prior multi-milestone discussion. Use it as seed material — the user has already provided this context. Start with a brief reflection on what the draft covers, then probe for any gaps or open questions before writing the full CONTEXT.md.\n\n${draftContent}`;
   }
 
-  return contextModeInstructions ? promptWithContextMode : basePrompt;
+  return contextModeInstructions || quickTasksInline ? promptWithContextMode : basePrompt;
 }
 
 /**
@@ -1938,6 +1965,13 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
   // instructions remain the final contract in the preloaded block.
   const knowledgeInlineRM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   const parts: string[] = [];
+  const quickTasksInlineRM = await inlineCompletedQuickTasksFromDb(base);
+  if (quickTasksInlineRM) {
+    parts.push(quickTasksInlineRM);
+    trackPromptContext(contextTelemetry, "quick-tasks", "inline", quickTasksInlineRM);
+  } else {
+    trackPromptContext(contextTelemetry, "quick-tasks", "skipped", null, "missing");
+  }
   if (composed.prepend) parts.push(composed.prepend);
   if (knowledgeInlineRM && composed.inline) {
     const idx = composed.inline.lastIndexOf("### Output Template:");
@@ -2028,6 +2062,12 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   }
 
   pushTracked("project-classification", formatProjectClassificationForPlanning(classifyProject(base)));
+  const quickTasksInline = await inlineCompletedQuickTasksFromDb(base);
+  if (quickTasksInline) {
+    pushTracked("quick-tasks", quickTasksInline);
+  } else {
+    trackPromptContext(contextTelemetry, "quick-tasks", "skipped", null, "missing");
+  }
 
   pushTracked("milestone-context", await inlineFile(contextPath, contextRel, "Milestone Context"));
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Milestone Research");

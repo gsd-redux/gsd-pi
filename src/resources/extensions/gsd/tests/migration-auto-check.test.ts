@@ -34,6 +34,7 @@ function projectFixture(): GSDProject {
     projectContent: "# Legacy Project\n",
     decisionsContent: "",
     requirements: [],
+    quickTasks: [],
     milestones: [
       {
         id: "M001",
