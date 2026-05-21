@@ -814,12 +814,20 @@ export function verifyExpectedArtifact(
   }
 
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  let absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
   // For unit types with no verifiable artifact (null path), the parent directory
   // is missing on disk — treat as stale completion state so the key gets evicted (#313).
   if (!absPath) {
     logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (parent dir missing)`);
     return false;
+  }
+  // When redirected to a worktree and the artifact isn't there yet (stale projection),
+  // fall back to the project-root artifact so completed work is not re-triggered.
+  if (!existsSync(absPath) && artifactBase !== base) {
+    const fallbackPath = resolveExpectedArtifactPath(unitType, unitId, base);
+    if (fallbackPath && existsSync(fallbackPath)) {
+      absPath = fallbackPath;
+    }
   }
   if (!existsSync(absPath)) {
     const worktreeFailure = diagnoseWorktreeIntegrityFailure(artifactBase);

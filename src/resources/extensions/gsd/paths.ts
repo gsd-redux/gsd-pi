@@ -577,6 +577,21 @@ export function relGsdRootFile(key: GSDRootFileKey): string {
 }
 
 /**
+ * Like resolveGsdRootFile, but always resolves against the canonical project
+ * .gsd/ even when basePath is inside a worktree. Used for shared state files
+ * (e.g. OVERRIDES) that must live at the project root regardless of whether
+ * the caller is running inside an auto-worktree.
+ */
+export function resolveProjectGsdRootFile(basePath: string, key: GSDRootFileKey): string {
+  const root = normalizeRealPath(resolveGsdPathContract(basePath).projectGsd);
+  const canonical = join(root, GSD_ROOT_FILES[key]);
+  if (existsSync(canonical)) return canonical;
+  const legacy = join(root, LEGACY_GSD_ROOT_FILES[key]);
+  if (existsSync(legacy)) return legacy;
+  return canonical;
+}
+
+/**
  * Resolve the full path to a milestone directory.
  * Returns null if the milestone doesn't exist.
  */
