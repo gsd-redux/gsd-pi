@@ -135,6 +135,7 @@ import {
   resetMetrics,
   getLedger,
   getProjectTotals,
+  filterUnitsForMilestone,
   formatCost,
   formatTokenCount,
 } from "./metrics.js";
@@ -1543,7 +1544,7 @@ export async function stopAuto(
 
     if (installCompletionWidget && ctx && options.completionWidget) {
       const ledger = getLedger();
-      const units = ledger?.units ?? [];
+      const units = filterUnitsForMilestone(ledger?.units ?? [], completionMilestoneId);
       const totals = units.length > 0 ? getProjectTotals(units) : null;
       let totalInput = 0;
       let totalCacheRead = 0;
