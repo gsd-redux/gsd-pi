@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   detect-changes:
-    timeout-minutes: 2
+    timeout-minutes: 5
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       heavy-code-changed: ${{ steps.check.outputs.heavy-code-changed }}
