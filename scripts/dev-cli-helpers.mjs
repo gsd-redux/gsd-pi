@@ -1,5 +1,19 @@
 // GSD2 - Dev CLI child-process spawn helpers.
 
+import { join } from 'node:path'
+
+export function buildWorkspaceBuildPreflight({ root }) {
+  return {
+    command: process.execPath,
+    args: [join(root, 'scripts', 'ensure-workspace-builds.cjs')],
+    options: {
+      cwd: root,
+      stdio: 'inherit',
+      timeout: 120_000,
+    },
+  }
+}
+
 export function buildDevCliSpawnArgs({
   resolveTsPath,
   srcLoaderPath,

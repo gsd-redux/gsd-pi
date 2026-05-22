@@ -39,6 +39,17 @@ test("explicit CLI path overrides the invoked source loader path", () => {
 });
 
 test("dev CLI wrapper passes itself as every child-process CLI entrypoint", () => {
+  const preflight = devCli.buildWorkspaceBuildPreflight({ root: "/repo" });
+  assert.deepEqual(preflight, {
+    command: process.execPath,
+    args: ["/repo/scripts/ensure-workspace-builds.cjs"],
+    options: {
+      cwd: "/repo",
+      stdio: "inherit",
+      timeout: 120_000,
+    },
+  });
+
   const env = devCli.buildDevCliChildEnv({ PATH: "/usr/bin" }, "/repo/scripts/dev-cli.js");
   assert.equal(env.PATH, "/usr/bin");
   assert.equal(env.GSD_DEV_CLI_PATH, "/repo/scripts/dev-cli.js");
