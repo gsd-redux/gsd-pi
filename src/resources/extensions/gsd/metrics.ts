@@ -625,6 +625,12 @@ export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
   return totals;
 }
 
+export function filterUnitsForMilestone(units: UnitMetrics[], milestoneId: string | null | undefined): UnitMetrics[] {
+  if (!milestoneId) return units;
+  const childPrefix = `${milestoneId}/`;
+  return units.filter((unit) => unit.id === milestoneId || unit.id.startsWith(childPrefix));
+}
+
 export function getPromptSizeStats(units: UnitMetrics[]): PromptSizeStats | null {
   const promptUnits = units.filter(
     (u) => typeof u.promptCharCount === "number" && Number.isFinite(u.promptCharCount) && u.promptCharCount > 0,
