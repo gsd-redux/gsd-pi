@@ -18,7 +18,7 @@ test("isUnderNodeModules returns false for paths outside node_modules", () => {
 
 test("isUnderNodeModules returns true for Unix paths under node_modules/", () => {
   assert.equal(
-    isUnderNodeModules("/usr/lib/node_modules/gsd-pi"),
+    isUnderNodeModules("/usr/lib/node_modules/@opengsd/gsd-pi"),
     true,
   )
 })
@@ -56,7 +56,7 @@ test("resolveSubprocessModule returns source .ts path when NOT under node_module
 })
 
 test("resolveSubprocessModule returns compiled .js path when under node_modules and dist file exists", () => {
-  const packageRoot = "/usr/lib/node_modules/gsd-pi"
+  const packageRoot = "/usr/lib/node_modules/@opengsd/gsd-pi"
   const distPath = join(packageRoot, "dist", "resources/extensions/gsd/workspace-index.js")
   const result = resolveSubprocessModule(
     packageRoot,
@@ -71,7 +71,7 @@ test("resolveSubprocessModule returns compiled .js path when under node_modules 
 })
 
 test("resolveSubprocessModule falls back to source .ts when under node_modules but dist file missing", () => {
-  const packageRoot = "/usr/lib/node_modules/gsd-pi"
+  const packageRoot = "/usr/lib/node_modules/@opengsd/gsd-pi"
   const result = resolveSubprocessModule(
     packageRoot,
     "resources/extensions/gsd/workspace-index.ts",
@@ -100,7 +100,7 @@ test("resolveSubprocessModule handles Windows paths under node_modules", () => {
 })
 
 test("resolveSubprocessModule strips .ts extension when building dist .js path", () => {
-  const packageRoot = "/usr/lib/node_modules/gsd-pi"
+  const packageRoot = "/usr/lib/node_modules/@opengsd/gsd-pi"
   let checkedPath = ""
   resolveSubprocessModule(
     packageRoot,
@@ -122,9 +122,9 @@ test("resolveSubprocessModule strips .ts extension when building dist .js path",
 test("buildSubprocessPrefixArgs omits TS loaders when compiled JS was selected", () => {
   assert.deepEqual(
     buildSubprocessPrefixArgs(
-      "/usr/lib/node_modules/gsd-pi",
+      "/usr/lib/node_modules/@opengsd/gsd-pi",
       {
-        modulePath: "/usr/lib/node_modules/gsd-pi/dist/resources/extensions/gsd/workspace-index.js",
+        modulePath: "/usr/lib/node_modules/@opengsd/gsd-pi/dist/resources/extensions/gsd/workspace-index.js",
         useCompiledJs: true,
       },
       "file:///loader.mjs",

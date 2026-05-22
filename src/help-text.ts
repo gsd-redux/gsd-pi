@@ -19,7 +19,7 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '',
     'Update GSD to the latest version.',
     '',
-    'Equivalent to: npm install -g gsd-pi@latest',
+    'Equivalent to: npm install -g @opengsd/gsd-pi@latest',
   ].join('\n'),
 
   sessions: [

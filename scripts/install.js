@@ -3,13 +3,13 @@
 /**
  * GSD Interactive Installer
  *
- * Entry point for `npx gsd-pi` or `npx gsd-pi@latest`.
+ * Entry point for `npx @opengsd/gsd-pi` or `npx @opengsd/gsd-pi@latest`.
  * When invoked directly (not as a postinstall hook), runs the visual
  * installer with full terminal access — banner, spinners, progress.
  *
  * If GSD is already installed and the user runs `gsd`, this script
  * is NOT invoked — the normal loader.js handles that via the "gsd" bin.
- * This script only fires for `npx gsd-pi` (the package name bin).
+ * This script only fires for `npx @opengsd/gsd-pi` (the package name bin).
  */
 
 import { execSync, spawnSync, exec as execCb } from 'child_process'
@@ -24,8 +24,8 @@ import { createInterface } from 'readline'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// packageRoot is always relative to this script — it's the gsd-pi package directory.
-// This is correct whether running as postinstall (inside node_modules/gsd-pi) or
+// packageRoot is always relative to this script — it's the @opengsd/gsd-pi package directory.
+// This is correct whether running as postinstall (inside node_modules/@opengsd/gsd-pi) or
 // via npx (inside a transient cache), since __dirname resolves to the script's location.
 const IS_POSTINSTALL = !!process.env.npm_lifecycle_event
 const packageRoot = resolve(__dirname, '..')
@@ -61,8 +61,8 @@ if (HAS_HELP) {
   ${c.bold}GSD Installer${c.reset} ${c.dim}v${gsdVersion}${c.reset}
 
   ${c.yellow}Usage:${c.reset}
-    npx gsd-pi@latest          Install GSD globally (recommended)
-    npx gsd-pi@latest --local  Install GSD to current project
+    npx @opengsd/gsd-pi@latest          Install GSD globally (recommended)
+    npx @opengsd/gsd-pi@latest --local  Install GSD to current project
 
   ${c.yellow}Options:${c.reset}
     ${c.cyan}--local${c.reset}     Install to current directory instead of globally
@@ -166,11 +166,11 @@ const managedBinaryPath = join(managedBinDir, platform() === 'win32' ? 'rtk.exe'
 // ── Step: npm install -g ───────────────────────────────────────────────────
 
 async function installGlobally() {
-  startSpinner('Installing gsd-pi globally...             ')
+  startSpinner('Installing @opengsd/gsd-pi globally...             ')
   try {
     const result = await new Promise((res) => {
       execCb(
-        `npm install -g gsd-pi@${gsdVersion}`,
+        `npm install -g @opengsd/gsd-pi@${gsdVersion}`,
         { timeout: 300_000 },
         (error, stdout, stderr) => {
           res({ ok: !error, stdout: stdout || '', stderr: stderr || '', error })
@@ -185,11 +185,11 @@ async function installGlobally() {
         .filter(l => !l.includes('npm warn') && !l.includes('npm WARN') && l.trim())
         .slice(-3)
         .join('; ')
-      printFail('Global install failed', meaningful || 'run npm install -g gsd-pi manually')
+      printFail('Global install failed', meaningful || 'run npm install -g @opengsd/gsd-pi manually')
       return false
     }
 
-    printStep('Installed globally', 'npm install -g gsd-pi')
+    printStep('Installed globally', 'npm install -g @opengsd/gsd-pi')
     return true
   } catch (err) {
     stopSpinner()
@@ -199,11 +199,11 @@ async function installGlobally() {
 }
 
 async function installLocally() {
-  startSpinner('Installing gsd-pi locally...              ')
+  startSpinner('Installing @opengsd/gsd-pi locally...              ')
   try {
     const result = await new Promise((res) => {
       execCb(
-        `npm install gsd-pi@${gsdVersion}`,
+        `npm install @opengsd/gsd-pi@${gsdVersion}`,
         { cwd: process.cwd(), timeout: 300_000 },
         (error, stdout, stderr) => {
           res({ ok: !error, stdout: stdout || '', stderr: stderr || '', error })
@@ -218,11 +218,11 @@ async function installLocally() {
         .filter(l => !l.includes('npm warn') && !l.includes('npm WARN') && l.trim())
         .slice(-3)
         .join('; ')
-      printFail('Local install failed', meaningful || 'run npm install gsd-pi manually')
+      printFail('Local install failed', meaningful || 'run npm install @opengsd/gsd-pi manually')
       return false
     }
 
-    printStep('Installed locally', 'npm install gsd-pi')
+    printStep('Installed locally', 'npm install @opengsd/gsd-pi')
     return true
   } catch (err) {
     stopSpinner()

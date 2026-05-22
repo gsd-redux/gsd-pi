@@ -15,7 +15,7 @@ function _require(name: string): any {
   } catch {
     try {
       const gsdPiRequire = createRequire(
-        join(process.cwd(), "node_modules", "gsd-pi", "index.js"),
+        join(process.cwd(), "node_modules", "@opengsd", "gsd-pi", "index.js"),
       );
       return gsdPiRequire(name);
     } catch {

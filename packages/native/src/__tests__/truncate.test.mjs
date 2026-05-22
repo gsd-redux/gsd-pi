@@ -114,7 +114,7 @@ describe("truncateHead", () => {
 
 // ── truncateOutput ───────────────────────────────────────────────────────
 
-// `truncateOutput` may be missing from published `@gsd-build/engine-*`
+// `truncateOutput` may be missing from published `@opengsd/engine-*`
 // binaries (see #4854 — coverage fix surfaced that some symbols weren't
 // in the shipped binary). Skip this suite when the function isn't
 // present rather than failing with a TypeError on every test.

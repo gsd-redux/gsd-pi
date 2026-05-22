@@ -110,7 +110,7 @@ if (!existsSync(appRoot)) {
 // GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/ instead of ~/.gsd/agent/
 process.env.GSD_CODING_AGENT_DIR = agentDir
 
-// GSD_PKG_ROOT — absolute path to gsd-pi package root. Used by deployed extensions
+// GSD_PKG_ROOT — absolute path to @opengsd/gsd-pi package root. Used by deployed extensions
 // (e.g. auto.ts resume path) to import modules like resource-loader.js that live
 // in the package tree, not in the deployed ~/.gsd/agent/ tree.
 process.env.GSD_PKG_ROOT = gsdRoot
@@ -234,11 +234,11 @@ if (missingPackages.length > 0) {
   process.stderr.write(
     `\nError: GSD installation is broken — missing packages: ${missing}\n\n` +
     `This is usually caused by one of:\n` +
-    `  • An outdated version installed from npm (run: npm install -g gsd-pi@latest)\n` +
+    `  • An outdated version installed from npm (run: npm install -g @opengsd/gsd-pi@latest)\n` +
     `  • The packages/ directory was excluded from the installed tarball\n` +
     `  • A filesystem error prevented linking or copying the workspace packages\n\n` +
     `Fix it by reinstalling:\n\n` +
-    `  npm install -g gsd-pi@latest\n\n` +
+    `  npm install -g @opengsd/gsd-pi@latest\n\n` +
     `If the issue persists, please open an issue at:\n` +
     `  https://github.com/open-gsd/gsd-pi/issues\n`
   )

@@ -52,7 +52,7 @@ test("resolveInstallCommand returns bun command when running under Bun (#4145)",
   const orig = (process.versions as Record<string, string | undefined>).bun;
   try {
     (process.versions as Record<string, string | undefined>).bun = "1.0.0";
-    assert.equal(resolveInstallCommand("gsd-pi@latest"), "bun add -g gsd-pi@latest");
+    assert.equal(resolveInstallCommand("@opengsd/gsd-pi@latest"), "bun add -g @opengsd/gsd-pi@latest");
   } finally {
     if (orig === undefined) {
       delete (process.versions as Record<string, string | undefined>).bun;
@@ -67,7 +67,7 @@ test("resolveInstallCommand returns npm command when not running under Bun (#414
   const orig = (process.versions as Record<string, string | undefined>).bun;
   try {
     delete (process.versions as Record<string, string | undefined>).bun;
-    assert.equal(resolveInstallCommand("gsd-pi@latest"), "npm install -g gsd-pi@latest");
+    assert.equal(resolveInstallCommand("@opengsd/gsd-pi@latest"), "npm install -g @opengsd/gsd-pi@latest");
   } finally {
     if (orig !== undefined) {
       (process.versions as Record<string, string | undefined>).bun = orig;
@@ -104,7 +104,7 @@ test("/gsd update handler fetches latest version through the registry endpoint (
     }
   }
 
-  assert.deepEqual(fetchUrls, ["https://registry.npmjs.org/gsd-pi/latest"]);
+  assert.deepEqual(fetchUrls, ["https://registry.npmjs.org/@opengsd%2fgsd-pi/latest"]);
   assert.ok(notifications.some((notification) => notification.message.includes("Already up to date")));
 });
 
@@ -130,7 +130,7 @@ test("isBunInstall detects bun install via argv[1] even when process.versions.bu
 
     // Non-bun path must NOT match
     delete process.env.BUN_INSTALL;
-    process.argv[1] = "/usr/local/lib/node_modules/gsd-pi/dist/loader.js";
+    process.argv[1] = "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js";
     assert.equal(isBunInstall(), false, "npm global install path should not match");
 
     // Prefix false-positive guard: /.bun/bin-other should not match /.bun/bin
@@ -158,7 +158,7 @@ test("isBunInstall returns true when running under Bun runtime (#4145)", async (
   try {
     (process.versions as Record<string, string | undefined>).bun = "1.0.0";
     // Even with a non-bun argv[1], runtime detection wins
-    process.argv[1] = "/usr/local/lib/node_modules/gsd-pi/dist/loader.js";
+    process.argv[1] = "/usr/local/lib/node_modules/@opengsd/gsd-pi/dist/loader.js";
     assert.equal(isBunInstall(), true);
   } finally {
     if (orig === undefined) {

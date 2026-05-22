@@ -12,7 +12,7 @@ function findRepoRoot(start: string): string {
 	for (let i = 0; i < 10; i++) {
 		try {
 			const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-			if (pkg.name === "gsd-pi" && pkg.workspaces) return dir;
+			if (pkg.name === "@opengsd/gsd-pi" && pkg.workspaces) return dir;
 		} catch {
 			// Keep walking.
 		}

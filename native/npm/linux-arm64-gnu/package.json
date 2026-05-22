@@ -1,5 +1,5 @@
 {
-  "name": "@gsd-build/engine-linux-arm64-gnu",
+  "name": "@opengsd/engine-linux-arm64-gnu",
   "version": "1.0.0",
   "description": "GSD native engine binary for Linux ARM64 (glibc)",
   "os": [

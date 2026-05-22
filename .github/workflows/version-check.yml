@@ -28,7 +28,7 @@ jobs:
             const reportedVersion = match[1].trim().replace(/^v/, '');
             core.info('Reported version: ' + reportedVersion);
 
-            const npmResponse = await fetch('https://registry.npmjs.org/gsd-pi/latest');
+            const npmResponse = await fetch('https://registry.npmjs.org/@opengsd%2fgsd-pi/latest');
             if (!npmResponse.ok) {
               core.setFailed('npm registry request failed: ' + npmResponse.status);
               return;
@@ -81,7 +81,7 @@ jobs:
               'Before we investigate further, please upgrade and check whether the issue still occurs:',
               '',
               '```bash',
-              'npm install -g gsd-pi@latest',
+              'npm install -g @opengsd/gsd-pi@latest',
               'gsd --version   # should print ' + latestVersion,
               '```',
               '',

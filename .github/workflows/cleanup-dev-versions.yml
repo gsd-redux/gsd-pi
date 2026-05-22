@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          PACKAGE="gsd-pi"
+          PACKAGE="@opengsd/gsd-pi"
           MAX_AGE_DAYS=30
           CUTOFF=$(date -u -d "-${MAX_AGE_DAYS} days" +%s 2>/dev/null || date -u -v-${MAX_AGE_DAYS}d +%s)
 
@@ -48,7 +48,7 @@ jobs:
             " 2>/dev/null || echo "0")
 
             if [ "${PUBLISH_TIME}" -gt 0 ] && [ "${PUBLISH_TIME}" -lt "${CUTOFF}" ]; then
-              echo "Unpublishing ${PACKAGE}@${VERSION} (published $(date -u -d @${PUBLISH_TIME} +%Y-%m-%d 2>/dev/null || date -u -r ${PUBLISH_TIME} +%Y-%m-%d))"
+              echo "Unpublishing ${PACKAGE}@${VERSION} (published $(date -u -d "@${PUBLISH_TIME}" +%Y-%m-%d 2>/dev/null || date -u -r "${PUBLISH_TIME}" +%Y-%m-%d))"
               npm unpublish "${PACKAGE}@${VERSION}" || echo "  Warning: failed to unpublish ${VERSION}"
               REMOVED=$((REMOVED + 1))
             fi

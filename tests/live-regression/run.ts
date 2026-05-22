@@ -13,7 +13,7 @@
  * These tests DO NOT require LLM API keys — they test the state machine
  * and infrastructure, not the LLM execution.
  *
- * Run from CI pipeline after `npm install -g gsd-pi@<version>`:
+ * Run from CI pipeline after `npm install -g @opengsd/gsd-pi@<version>`:
  *   node --experimental-strip-types tests/live-regression/run.ts
  *
  * Or locally:

@@ -115,7 +115,7 @@ jobs:
           else
             if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
               echo "::error::Version ${RELEASE_VERSION} already exists. Trusted publishing only authenticates npm publish, not dist-tag mutation."
-              echo "::error::Promote manually if intended: npm dist-tag add gsd-pi@${RELEASE_VERSION} latest"
+              echo "::error::Promote manually if intended: npm dist-tag add @opengsd/gsd-pi@${RELEASE_VERSION} latest"
               exit 1
             else
               echo "$OUTPUT"
@@ -149,7 +149,7 @@ jobs:
           NOTES=$(cat /tmp/release-notes.md)
           curl -s -X POST "$DISCORD_WEBHOOK" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i gsd-pi@${RELEASE_VERSION}\`" '{content:$c}')"
+            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i @opengsd/gsd-pi@${RELEASE_VERSION}\`" '{content:$c}')"
 
       - name: Log in to GHCR
         uses: docker/login-action@v4

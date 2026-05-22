@@ -6,7 +6,7 @@ import { join } from "node:path"
  *
  * Node v24 enforces ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING for files
  * resolved under `node_modules/`. When GSD is installed globally via npm,
- * all source files live under `node_modules/gsd-pi/src/...`, so
+ * all source files live under `node_modules/@opengsd/gsd-pi/src/...`, so
  * `--experimental-strip-types` fails deterministically.
  *
  * `--experimental-transform-types` applies a full TypeScript transform that

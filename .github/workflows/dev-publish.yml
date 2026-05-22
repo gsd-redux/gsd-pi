@@ -1,4 +1,4 @@
-# gsd-pi + CI: manual @dev channel publish with approval gate
+# @opengsd/gsd-pi + CI: manual @dev channel publish with approval gate
 name: Dev Publish
 
 # Manual pre-release. Click "Run workflow" in the Actions tab to stamp a
@@ -98,20 +98,20 @@ jobs:
       - name: Publish @dev
         run: |
           VERSION=$(node -e 'process.stdout.write(require("./package.json").version)')
-          if npm view "gsd-pi@${VERSION}" version 2>/dev/null; then
+          if npm view "@opengsd/gsd-pi@${VERSION}" version 2>/dev/null; then
             echo "::error::Version ${VERSION} already exists. Trusted publishing only authenticates npm publish, not dist-tag mutation."
-            echo "::error::Move the tag manually if intended: npm dist-tag add gsd-pi@${VERSION} dev"
+            echo "::error::Move the tag manually if intended: npm dist-tag add @opengsd/gsd-pi@${VERSION} dev"
             exit 1
           else
             npm publish --tag dev
           fi
-          echo "Verifying gsd-pi@${VERSION} is reachable on npm..."
+          echo "Verifying @opengsd/gsd-pi@${VERSION} is reachable on npm..."
           for i in 1 2 3 4 5; do
-            npm view "gsd-pi@${VERSION}" version 2>/dev/null && echo "Confirmed: gsd-pi@${VERSION} is live." && exit 0
+            npm view "@opengsd/gsd-pi@${VERSION}" version 2>/dev/null && echo "Confirmed: @opengsd/gsd-pi@${VERSION} is live." && exit 0
             echo "Attempt $i: not yet visible — waiting 10s..."
             sleep 10
           done
-          echo "::error::Publish step succeeded but gsd-pi@${VERSION} is not reachable on npm after 50s. Check NPM_TOKEN permissions and registry config."
+          echo "::error::Publish step succeeded but @opengsd/gsd-pi@${VERSION} is not reachable on npm after 50s. Check NPM_TOKEN permissions and registry config."
           exit 1
 
   dev-verify:
@@ -129,17 +129,17 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: 'npm'
 
-      - name: Install published gsd-pi@dev globally (with registry propagation retry)
+      - name: Install published @opengsd/gsd-pi@dev globally (with registry propagation retry)
         env:
           DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
         run: |
           for i in 1 2 3 4 5 6; do
-            npm install -g "gsd-pi@${DEV_VERSION}" && exit 0
+            npm install -g "@opengsd/gsd-pi@${DEV_VERSION}" && exit 0
             echo "Attempt $i failed — waiting 10s for npm registry propagation..."
             sleep 10
           done
-          echo "::error::Failed to install gsd-pi@${DEV_VERSION} after 6 attempts."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
+          echo "::error::Failed to install @opengsd/gsd-pi@${DEV_VERSION} after 6 attempts."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
           exit 1
 
       - name: Run smoke tests (against installed binary)
@@ -162,6 +162,6 @@ jobs:
         env:
           DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
         run: |
-          echo "::error::Post-publish verification failed for gsd-pi@${DEV_VERSION}."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
+          echo "::error::Post-publish verification failed for @opengsd/gsd-pi@${DEV_VERSION}."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
           exit 1

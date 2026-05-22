@@ -97,9 +97,9 @@ jobs:
       - name: Publish @next
         run: |
           VERSION=$(node -e 'process.stdout.write(require("./package.json").version)')
-          if npm view "gsd-pi@${VERSION}" version 2>/dev/null; then
+          if npm view "@opengsd/gsd-pi@${VERSION}" version 2>/dev/null; then
             echo "::error::Version ${VERSION} already exists. Trusted publishing only authenticates npm publish, not dist-tag mutation."
-            echo "::error::Move the tag manually if intended: npm dist-tag add gsd-pi@${VERSION} next"
+            echo "::error::Move the tag manually if intended: npm dist-tag add @opengsd/gsd-pi@${VERSION} next"
             exit 1
           else
             npm publish --tag next
@@ -120,16 +120,16 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: 'npm'
 
-      - name: Install published gsd-pi@next globally (with registry propagation retry)
+      - name: Install published @opengsd/gsd-pi@next globally (with registry propagation retry)
         env:
           NEXT_VERSION: ${{ needs.next-publish.outputs.next-version }}
         run: |
           for i in 1 2 3 4 5 6; do
-            npm install -g "gsd-pi@${NEXT_VERSION}" && exit 0
+            npm install -g "@opengsd/gsd-pi@${NEXT_VERSION}" && exit 0
             echo "Attempt $i failed — waiting 10s for npm registry propagation..."
             sleep 10
           done
-          echo "::error::Failed to install gsd-pi@${NEXT_VERSION} after 6 attempts. The @next tag may point at a broken artifact — deprecate it with: npm deprecate gsd-pi@${NEXT_VERSION} 'broken build'"
+          echo "::error::Failed to install @opengsd/gsd-pi@${NEXT_VERSION} after 6 attempts. The @next tag may point at a broken artifact — deprecate it with: npm deprecate @opengsd/gsd-pi@${NEXT_VERSION} 'broken build'"
           exit 1
 
       - name: Run smoke tests (against installed binary)
@@ -152,6 +152,6 @@ jobs:
         env:
           NEXT_VERSION: ${{ needs.next-publish.outputs.next-version }}
         run: |
-          echo "::error::Post-publish verification failed for gsd-pi@${NEXT_VERSION}. The @next tag still points at this version on npm."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) deprecate the broken version with 'npm deprecate gsd-pi@${NEXT_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Next Publish."
+          echo "::error::Post-publish verification failed for @opengsd/gsd-pi@${NEXT_VERSION}. The @next tag still points at this version on npm."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) deprecate the broken version with 'npm deprecate @opengsd/gsd-pi@${NEXT_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Next Publish."
           exit 1

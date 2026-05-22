@@ -1,5 +1,5 @@
 {
-  "name": "@gsd-build/engine-darwin-arm64",
+  "name": "@opengsd/engine-darwin-arm64",
   "version": "1.0.0",
   "description": "GSD native engine binary for macOS ARM64",
   "os": [

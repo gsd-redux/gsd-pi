@@ -152,7 +152,7 @@ try {
   // Checks every package with `gsd.linkable: true` — not just a hand-picked subset —
   // so any future addition is automatically covered.
   console.log('==> Verifying workspace package resolution (every linkable package)...');
-  const installedRoot = join(installDir, 'node_modules', 'gsd-pi');
+  const installedRoot = join(installDir, 'node_modules', '@opengsd', 'gsd-pi');
   let resolutionFailed = false;
   for (const pkg of getLinkablePackages()) {
     const pkgPath = join(installedRoot, 'node_modules', pkg.scope, pkg.name);

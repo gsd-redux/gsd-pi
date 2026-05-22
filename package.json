@@ -1,5 +1,5 @@
 {
-  "name": "gsd-pi",
+  "name": "@opengsd/gsd-pi",
   "version": "1.0.0",
   "description": "GSD Pi local-first coding agent",
   "license": "MIT",
@@ -157,11 +157,11 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.2.83",
-    "@gsd-build/engine-darwin-arm64": ">=1.0.0",
-    "@gsd-build/engine-darwin-x64": ">=1.0.0",
-    "@gsd-build/engine-linux-arm64-gnu": ">=1.0.0",
-    "@gsd-build/engine-linux-x64-gnu": ">=1.0.0",
-    "@gsd-build/engine-win32-x64-msvc": ">=1.0.0",
+    "@opengsd/engine-darwin-arm64": ">=1.0.0",
+    "@opengsd/engine-darwin-x64": ">=1.0.0",
+    "@opengsd/engine-linux-arm64-gnu": ">=1.0.0",
+    "@opengsd/engine-linux-x64-gnu": ">=1.0.0",
+    "@opengsd/engine-win32-x64-msvc": ">=1.0.0",
     "fsevents": "~2.3.3",
     "koffi": "^2.9.0"
   },

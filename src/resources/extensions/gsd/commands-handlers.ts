@@ -36,7 +36,7 @@ import {
   scopeGsdWorkflowToolsForDispatch,
 } from "./bootstrap/register-hooks.js";
 
-const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/gsd-pi/latest";
+const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/@opengsd%2fgsd-pi/latest";
 const UPDATE_FETCH_TIMEOUT_MS = 5000;
 
 // Detects a bun-installed gsd via `process.argv[1]`. Mirrors isBunInstall in
@@ -474,7 +474,7 @@ function compareSemverLocal(a: string, b: string): number {
 export async function handleUpdate(ctx: ExtensionCommandContext): Promise<void> {
   const { execSync } = await import("node:child_process");
 
-  const NPM_PACKAGE = "gsd-pi";
+  const NPM_PACKAGE = "@opengsd/gsd-pi";
   const current = process.env.GSD_VERSION || "0.0.0";
 
   ctx.ui.notify(`Current version: v${current}\nChecking npm registry...`, "info");
