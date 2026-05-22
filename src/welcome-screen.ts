@@ -4,7 +4,7 @@
 /**
  * GSD Welcome Screen
  *
- * Command-center layout: rounded terminal card with compact logo, project
+ * Command-center layout: compact identity block, project
  * state, primary action, branch/workspace, and secondary hints.
  * Falls back to simple text on narrow terminals (<70 cols) or non-TTY.
  */
@@ -14,7 +14,6 @@ import { join } from 'node:path'
 import os from 'node:os'
 import chalk from 'chalk'
 import stripAnsi from 'strip-ansi'
-import { GSD_LOGO } from './logo.js'
 
 interface GsdState {
   milestone?: string
@@ -98,6 +97,13 @@ function rightAlign(left: string, right: string, width: number): string {
   return clampVisible(left + ' '.repeat(gap) + right, width)
 }
 
+function centerText(text: string, width: number): string {
+  const gap = Math.max(0, width - visLen(text))
+  const left = Math.floor(gap / 2)
+  const right = gap - left
+  return ' '.repeat(left) + text + ' '.repeat(right)
+}
+
 /** Clamp rendered terminal output by visible columns. Falls back to plain text only when truncating. */
 function clampVisible(s: string, w: number): string {
   if (w <= 0) return ''
@@ -125,11 +131,19 @@ export function buildWelcomeScreenLines(opts: WelcomeScreenOptions): string[] {
   if (remoteChannel)                  toolParts.push(`${remoteChannel.charAt(0).toUpperCase() + remoteChannel.slice(1)} ✓`)
 
   const innerWidth = Math.max(1, termWidth - 2)
-  const logoWidth = Math.max(...GSD_LOGO.map((line) => visLen(line)))
+  const identityRows = [
+    '╭─ OPEN GSD ─╮',
+    `│${centerText('Project', 12)}│`,
+    `│${centerText('Console', 12)}│`,
+    '╰────────────╯',
+    '',
+    '',
+  ]
+  const identityWidth = Math.max(...identityRows.map((line) => visLen(line)))
   // Plain spaces, not a `│` divider — a vertical bar would be dragged into
-  // every copied logo row.
+  // every copied status row.
   const divider = '   '
-  const panelWidth = innerWidth - logoWidth - visLen(divider)
+  const panelWidth = innerWidth - identityWidth - visLen(divider)
   if (panelWidth < 44) {
     return ['', `  Get Shit Done v${version}`, `  ${shortCwd}`, '']
   }
@@ -169,12 +183,12 @@ export function buildWelcomeScreenLines(opts: WelcomeScreenOptions): string[] {
   ]
 
   // ── Render ──────────────────────────────────────────────────────────────────
-  // No box: logo + panel are indented, with a single closing rule. Every
+  // No outer box: identity + panel are indented, with a single closing rule. Every
   // content line is plain text, so terminal selection copies cleanly.
   const out: string[] = ['']
-  for (let i = 0; i < GSD_LOGO.length; i++) {
-    const logo = rpad(chalk.hex('#a7ba78')(GSD_LOGO[i]), logoWidth)
-    out.push('  ' + clampVisible(`${logo}${divider}${panelRows[i] ?? ''}`, termWidth - 2))
+  for (let i = 0; i < identityRows.length; i++) {
+    const identity = rpad(chalk.hex('#a7ba78')(identityRows[i]), identityWidth)
+    out.push('  ' + clampVisible(`${identity}${divider}${panelRows[i] ?? ''}`, termWidth - 2))
   }
   out.push(chalk.hex('#a7ba78')('─'.repeat(Math.max(0, termWidth))))
   out.push('')

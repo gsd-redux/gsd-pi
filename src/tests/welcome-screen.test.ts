@@ -32,9 +32,11 @@ function strip(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
-test('renders GSD logo', () => {
+test('renders OPEN GSD identity block', () => {
   const out = strip(capture({ version: '1.0.0' }))
-  assert.ok(out.includes('██'), 'logo block characters missing')
+  assert.ok(out.includes('╭─ OPEN GSD ─╮'), 'identity block title missing')
+  assert.ok(out.includes('│  Project   │'), 'identity block project row missing')
+  assert.ok(out.includes('│  Console   │'), 'identity block console row missing')
 })
 
 test('renders version', () => {
@@ -155,17 +157,16 @@ test('Project row does not truncate short milestone text', (t) => {
   assert.ok(!projectLine!.includes('…'), 'short title should not be truncated')
 })
 
-test('command-center renders a borderless panel with a full-width closing rule', (t) => {
+test('command-center renders one identity block with a full-width closing rule', (t) => {
   const origColumns = process.stderr.columns
   ;(process.stderr as any).columns = 250
   t.after(() => { ;(process.stderr as any).columns = origColumns })
 
   const out = strip(capture({ version: '1.0.0' }))
   const lines = out.split('\n')
-  // No box corners — content lines must stay copy/paste-safe (no side bars).
-  for (const corner of ['╭', '╮', '╰', '╯']) {
-    assert.ok(!out.includes(corner), `welcome screen must not draw box border char ${corner}`)
-  }
+  assert.equal(lines.filter(l => l.includes('OPEN GSD')).length, 1, 'expected one OPEN GSD title row')
+  assert.equal(lines.filter(l => l.includes('│  Project   │')).length, 1, 'expected one project identity row')
+  assert.equal(lines.filter(l => l.includes('│  Console   │')).length, 1, 'expected one console identity row')
   // Exactly one closing rule, spanning the terminal width (columns - 1 = 249).
   const ruleLines = lines.filter(l => /^─+$/.test(l.trim()))
   assert.equal(ruleLines.length, 1, 'expected exactly one closing rule line')
