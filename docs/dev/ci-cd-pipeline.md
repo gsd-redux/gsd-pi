@@ -63,6 +63,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | CI | `ci.yml` | PR + push to main | Build, test, typecheck — **gate for all promotions** |
+| Prerelease Publish | `prerelease-publish.yml` | Manual dispatch | Publish approved `@dev` or `@next` prereleases |
 | Release Pipeline | `pipeline.yml` | After CI succeeds on main | Three-stage promotion |
 | Native Binaries | `build-native.yml` | `v*` tags | Cross-compile platform binaries |
 | Dev Cleanup | `cleanup-dev-versions.yml` | Weekly (Monday 06:00 UTC) | Unpublish `-dev.` versions older than 30 days |
@@ -75,7 +76,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 
 **Pipeline optimization (v2.41):**
 - **Shallow clones** — CI lint and build jobs use `fetch-depth: 1` or `fetch-depth: 2` instead of full history, saving ~30-60s per job
-- **npm cache in pipeline** — dev-publish, test-verify, and prod-release now use `cache: 'npm'` on setup-node, saving ~1-2 min per job on repeat runs
+- **npm cache in pipeline** — prerelease verification and prod-release use `cache: 'npm'` on setup-node, saving ~1-2 min per job on repeat runs
 - **Exponential backoff** — npm registry propagation waits in `build-native.yml` replaced hardcoded `sleep 30` + fixed 15s retries with exponential backoff (5s → 10s → 20s → 30s cap), typically finishing in <15s when the registry is fast
 - **Security hardening** — pipeline.yml moved `${{ }}` expressions from `run:` blocks to `env:` variables to prevent command injection vectors
 ### Build-Relevant Change Detection

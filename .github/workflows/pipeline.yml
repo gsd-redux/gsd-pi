@@ -1,8 +1,8 @@
 name: Pipeline
 
 # Rebuilds the CI builder Docker image when its build inputs change on main.
-# Dev and prod publishing live in separate workflows (dev-publish.yml,
-# prod-release.yml) — both manual "Run workflow" triggers.
+# Prerelease and prod publishing live in separate manual workflows
+# (prerelease-publish.yml, prod-release.yml).
 
 on:
   workflow_run:

@@ -1,20 +1,27 @@
-# @opengsd/gsd-pi + CI: manual @dev channel publish with approval gate
-name: Dev Publish
+# @opengsd/gsd-pi + CI: manual prerelease channel publish with approval gate
+name: Prerelease Publish
 
-# Manual pre-release. Click "Run workflow" in the Actions tab to stamp a
-# version and publish @dev to npm. Gated by the `dev` GitHub Environment
-# (configure reviewers in repo Settings -> Environments).
+# Manual prerelease. Click "Run workflow" in the Actions tab, choose a
+# prerelease channel, then publish to the matching npm dist-tag.
 
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "npm dist-tag and GitHub Environment to publish"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - next
       ref:
-        description: 'Branch or SHA to publish as @dev'
+        description: "Branch or SHA to publish (defaults: dev -> main, next -> next)"
         required: false
-        default: 'main'
+        default: ""
 
 concurrency:
-  group: dev-publish-${{ github.event.inputs.ref }}
+  group: prerelease-publish-${{ github.event.inputs.channel }}-${{ github.event.inputs.ref || 'default' }}
   cancel-in-progress: false
 
 permissions:
@@ -23,11 +30,11 @@ permissions:
   packages: write
 
 jobs:
-  dev-publish:
-    name: Dev Publish
+  prerelease-publish:
+    name: Publish @${{ github.event.inputs.channel }}
     # npm trusted publishing requires GitHub-hosted runners for OIDC.
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    environment: dev
+    environment: ${{ github.event.inputs.channel }}
     container:
       image: ghcr.io/open-gsd/gsd-ci-builder:latest
       credentials:
@@ -36,11 +43,11 @@ jobs:
       env:
         GITHUB_REPO_NAME: ${{ github.repository }}
     outputs:
-      dev-version: ${{ steps.stamp.outputs.version }}
+      version: ${{ steps.stamp.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ github.event.inputs.ref != '' && github.event.inputs.ref || (github.event.inputs.channel == 'next' && 'next' || 'main') }}
           token: ${{ secrets.RELEASE_PAT }}
           fetch-depth: 0
 
@@ -79,10 +86,10 @@ jobs:
       - name: Build web host
         run: npm run build:web-host
 
-      - name: Stamp dev version and sync platform packages
+      - name: Stamp prerelease version and sync platform packages
         id: stamp
         env:
-          VERSION_CHANNEL: dev
+          VERSION_CHANNEL: ${{ github.event.inputs.channel }}
         run: |
           npm run pipeline:version-stamp
           npm run sync-platform-versions
@@ -95,51 +102,53 @@ jobs:
           export GSD_SMOKE_BINARY
           npm run test:smoke
 
-      - name: Publish @dev
+      - name: Publish @${{ github.event.inputs.channel }}
+        env:
+          CHANNEL: ${{ github.event.inputs.channel }}
         run: |
           VERSION=$(node -e 'process.stdout.write(require("./package.json").version)')
           if npm view "@opengsd/gsd-pi@${VERSION}" version 2>/dev/null; then
             echo "::error::Version ${VERSION} already exists. Trusted publishing only authenticates npm publish, not dist-tag mutation."
-            echo "::error::Move the tag manually if intended: npm dist-tag add @opengsd/gsd-pi@${VERSION} dev"
+            echo "::error::Move the tag manually if intended: npm dist-tag add @opengsd/gsd-pi@${VERSION} ${CHANNEL}"
             exit 1
-          else
-            npm publish --tag dev
           fi
+          npm publish --tag "${CHANNEL}"
           echo "Verifying @opengsd/gsd-pi@${VERSION} is reachable on npm..."
           for i in 1 2 3 4 5; do
             npm view "@opengsd/gsd-pi@${VERSION}" version 2>/dev/null && echo "Confirmed: @opengsd/gsd-pi@${VERSION} is live." && exit 0
-            echo "Attempt $i: not yet visible — waiting 10s..."
+            echo "Attempt $i: not yet visible - waiting 10s..."
             sleep 10
           done
-          echo "::error::Publish step succeeded but @opengsd/gsd-pi@${VERSION} is not reachable on npm after 50s. Check NPM_TOKEN permissions and registry config."
+          echo "::error::Publish step succeeded but @opengsd/gsd-pi@${VERSION} is not reachable on npm after 50s. Check trusted publishing and registry propagation."
           exit 1
 
-  dev-verify:
-    name: Dev Verify (installed package)
-    needs: dev-publish
+  prerelease-verify:
+    name: Verify @${{ github.event.inputs.channel }} package
+    needs: prerelease-publish
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.inputs.ref }}
+          ref: ${{ github.event.inputs.ref != '' && github.event.inputs.ref || (github.event.inputs.channel == 'next' && 'next' || 'main') }}
 
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-          cache: 'npm'
+          cache: "npm"
 
-      - name: Install published @opengsd/gsd-pi@dev globally (with registry propagation retry)
+      - name: Install published @opengsd/gsd-pi@${{ github.event.inputs.channel }} globally (with registry propagation retry)
         env:
-          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
+          PUBLISH_VERSION: ${{ needs.prerelease-publish.outputs.version }}
+          CHANNEL: ${{ github.event.inputs.channel }}
         run: |
           for i in 1 2 3 4 5 6; do
-            npm install -g "@opengsd/gsd-pi@${DEV_VERSION}" && exit 0
-            echo "Attempt $i failed — waiting 10s for npm registry propagation..."
+            npm install -g "@opengsd/gsd-pi@${PUBLISH_VERSION}" && exit 0
+            echo "Attempt $i failed - waiting 10s for npm registry propagation..."
             sleep 10
           done
-          echo "::error::Failed to install @opengsd/gsd-pi@${DEV_VERSION} after 6 attempts."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
+          echo "::error::Failed to install @opengsd/gsd-pi@${PUBLISH_VERSION} after 6 attempts."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${PUBLISH_VERSION} \"broken ${CHANNEL} build; see Actions run\"', (3) cut a fix and re-run Prerelease Publish."
           exit 1
 
       - name: Run smoke tests (against installed binary)
@@ -160,8 +169,9 @@ jobs:
       - name: Warn on verify failure
         if: failure()
         env:
-          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
+          PUBLISH_VERSION: ${{ needs.prerelease-publish.outputs.version }}
+          CHANNEL: ${{ github.event.inputs.channel }}
         run: |
-          echo "::error::Post-publish verification failed for @opengsd/gsd-pi@${DEV_VERSION}."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
+          echo "::error::Post-publish verification failed for @opengsd/gsd-pi@${PUBLISH_VERSION}."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate @opengsd/gsd-pi@${PUBLISH_VERSION} \"broken ${CHANNEL} build; see Actions run\"', (3) cut a fix and re-run Prerelease Publish."
           exit 1
