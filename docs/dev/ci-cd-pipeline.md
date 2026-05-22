@@ -153,16 +153,16 @@ For `@dev` or `@next` rollbacks, the next successful merge will overwrite the ta
 | Secret: `ANTHROPIC_API_KEY` | Prod environment only |
 | Secret: `OPENAI_API_KEY` | Prod environment only |
 | Variable: `RUN_LIVE_TESTS` | `false` (set to `true` to enable live LLM tests) |
-| GHCR | Enabled for the `gsd-redux` org |
+| GHCR | Enabled for the `open-gsd` org |
 
 ### Docker Images
 
 | Image | Base | Purpose | Tags |
 |-------|------|---------|------|
-| `ghcr.io/gsd-redux/gsd-ci-builder` | `node:24-bookworm` | CI build environment with Rust toolchain | `:latest`, `:<date>` |
+| `ghcr.io/open-gsd/gsd-ci-builder` | `node:24-bookworm` | CI build environment with Rust toolchain | `:latest`, `:<date>` |
 | `ghcr.io/open-gsd/gsd-pi` | `node:24-slim` | User-facing runtime | `:latest`, `:next`, `:v<version>` |
 
-The CI builder image is rebuilt automatically when the `Dockerfile` changes. It eliminates ~3-5 min of toolchain setup per CI run.
+The CI builder image is rebuilt automatically when its build inputs change. It eliminates ~3-5 min of toolchain setup per CI run.
 
 ## LLM Fixture Tests
 

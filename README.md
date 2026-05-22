@@ -87,6 +87,10 @@ The active public baseline starts at `1.0.0`.
 
 Historical tags and archived refs may exist for traceability, but active release notes should be written from this baseline forward.
 
+## Community
+
+Join the [GSD Discord community](https://discord.com/invite/nKXTsAcmbT).
+
 ## License
 
 MIT
