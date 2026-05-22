@@ -704,7 +704,9 @@ async function generateModels() {
 			candidate.maxTokens = 128000;
 		}
 		if (candidate.provider === "openai" && candidate.id === "gpt-5.4") {
-			candidate.contextWindow = 272000;
+			// OpenAI lists gpt-5.4 with a 1M context window.
+			// Source: https://platform.openai.com/docs/models
+			candidate.contextWindow = 1000000;
 			candidate.maxTokens = 128000;
 		}
 		if (candidate.provider === "openai" && candidate.id === "gpt-5.5") {

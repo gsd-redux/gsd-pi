@@ -511,7 +511,7 @@ export const OPENAI_MODELS = {
 				cacheRead: 0.25,
 				cacheWrite: 0,
 			},
-			contextWindow: 272000,
+			contextWindow: 1000000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
 		"gpt-5.5": {

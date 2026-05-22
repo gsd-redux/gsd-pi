@@ -345,6 +345,58 @@ describe("removed models are absent from the registry", () => {
 // GPT-5.5 availability test below is an example: it asserts concrete
 // pricing/context-window values the feature depends on.
 
+describe("high-impact model context windows", () => {
+	const expectedContextWindows: Array<{
+		provider: string;
+		id: string;
+		contextWindow: number;
+		source: string;
+	}> = [
+		// Anthropic context windows:
+		// https://docs.anthropic.com/en/docs/build-with-claude/context-windows
+		{ provider: "anthropic", id: "claude-haiku-4-5", contextWindow: 200000, source: "Anthropic model context window" },
+		{ provider: "anthropic", id: "claude-sonnet-4-6", contextWindow: 1000000, source: "Anthropic 1M context window" },
+		{ provider: "anthropic", id: "claude-opus-4-6", contextWindow: 1000000, source: "Anthropic 1M context window" },
+		{ provider: "anthropic", id: "claude-opus-4-7", contextWindow: 1000000, source: "Anthropic 1M context window" },
+
+		// OpenAI model pages:
+		// https://platform.openai.com/docs/models
+		// https://platform.openai.com/docs/models/compare
+		{ provider: "openai", id: "gpt-4o", contextWindow: 128000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-4o-mini", contextWindow: 128000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-4.1", contextWindow: 1047576, source: "OpenAI compare models" },
+		{ provider: "openai", id: "gpt-4.1-mini", contextWindow: 1047576, source: "OpenAI compare models" },
+		{ provider: "openai", id: "gpt-4.1-nano", contextWindow: 1047576, source: "OpenAI compare models" },
+		{ provider: "openai", id: "gpt-5", contextWindow: 400000, source: "OpenAI GPT-5 model page" },
+		{ provider: "openai", id: "gpt-5-mini", contextWindow: 400000, source: "OpenAI GPT-5 model page" },
+		{ provider: "openai", id: "gpt-5-nano", contextWindow: 400000, source: "OpenAI GPT-5 model page" },
+		{ provider: "openai", id: "gpt-5.1", contextWindow: 400000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-5.2", contextWindow: 400000, source: "OpenAI compare models" },
+		{ provider: "openai", id: "gpt-5.2-codex", contextWindow: 400000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-5.3-codex", contextWindow: 400000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-5.4", contextWindow: 1000000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-5.4-mini", contextWindow: 400000, source: "OpenAI model page" },
+		{ provider: "openai", id: "gpt-5.5", contextWindow: 1000000, source: "OpenAI model page" },
+		{ provider: "openai", id: "o1", contextWindow: 200000, source: "OpenAI model page" },
+		{ provider: "openai", id: "o3", contextWindow: 200000, source: "OpenAI model page" },
+		{ provider: "openai", id: "o4-mini", contextWindow: 200000, source: "OpenAI model page" },
+		{ provider: "openai", id: "o4-mini-deep-research", contextWindow: 200000, source: "OpenAI model page" },
+
+		// Gemini model page:
+		// https://ai.google.dev/gemini-api/docs/models
+		{ provider: "google", id: "gemini-2.0-flash", contextWindow: 1048576, source: "Gemini model page" },
+		{ provider: "google", id: "gemini-2.5-pro", contextWindow: 1048576, source: "Gemini model page" },
+	];
+
+	for (const { provider, id, contextWindow, source } of expectedContextWindows) {
+		it(`${provider}/${id} matches the provider-published context window`, () => {
+			const model = getModel(provider as any, id as any);
+			assert.ok(model, `${provider}/${id} should be present for routed/default model budgeting`);
+			assert.equal(model.contextWindow, contextWindow, `${provider}/${id} should match ${source}`);
+		});
+	}
+});
+
 describe("GPT-5.5 availability", () => {
 	it("exposes GPT-5.5 through OpenAI API and OpenAI Codex providers", () => {
 		const apiModel = getModel("openai", "gpt-5.5" as any);
