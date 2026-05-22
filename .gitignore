@@ -1,0 +1,80 @@
+# Compiled output
+/dist/
+dist-test/
+build/
+packages/*/dist/
+pkg/dist/
+
+# Compiled output in src/ should only contain TypeScript source.
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map
+!src/**/*.test.js
+
+# Dependencies and package-manager noise
+node_modules/
+packages/*/node_modules/
+.next/
+coverage/
+*.tsbuildinfo
+*.tgz
+.gsd*.tgz
+pnpm-lock.yaml
+bun.lock
+
+# GSD project state and generated runtime files
+.gsd/
+.gsd
+.gsd-id
+.bg_shell
+.bg-shell/
+.artifacts/
+.planning/
+.audits/
+.plans/
+docs/coherence-audit/
+
+# Local MCP client config
+.mcp.json
+
+# Local agent/editor state
+.claude/
+.agents/
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local caches
+.repowise/
+repowise.db
+repowise.db-*
+.cache/
+tmp/
+__pycache__/
+*.pyc
+.venv/
+venv/
+target/
+vendor/
+!packages/pi-coding-agent/src/core/export-html/vendor/
+!packages/pi-coding-agent/src/core/export-html/vendor/**
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.log
+
+# Local scratch files
+preflight-script.ts
+RELEASE-GUIDE.md
+TODOS.md
+AGENTS.md

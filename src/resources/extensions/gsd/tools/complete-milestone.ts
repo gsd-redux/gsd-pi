@@ -1,0 +1,273 @@
+// Project/App: GSD-2
+// File Purpose: Complete-milestone tool handler for GSD workflow state and summaries.
+
+// GSD2 complete-milestone tool handler
+/**
+ * complete-milestone handler — the core operation behind gsd_complete_milestone.
+ *
+ * Validates all slices are complete, updates milestone status in DB,
+ * renders MILESTONE-SUMMARY.md to disk, stores rendered markdown in DB
+ * for recovery, and invalidates caches.
+ */
+
+import { join } from "node:path";
+import { existsSync } from "node:fs";
+
+import {
+  transaction,
+  getMilestone,
+  getMilestoneSlices,
+  getSliceTasks,
+  getLatestAssessmentByScope,
+  updateMilestoneStatus,
+} from "../gsd-db.js";
+import { gsdProjectionRoot, clearPathCache } from "../paths.js";
+import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
+import { isClosedStatus } from "../status-guards.js";
+import { saveFile, clearParseCache } from "../files.js";
+import { invalidateStateCache } from "../state.js";
+import { renderAllProjections, stripIdPrefix } from "../workflow-projections.js";
+import { writeManifest } from "../workflow-manifest.js";
+import { appendEvent } from "../workflow-events.js";
+import { logWarning, logError } from "../workflow-logger.js";
+
+export interface CompleteMilestoneParams {
+  milestoneId: string;
+  title: string;
+  oneLiner: string;
+  narrative: string;
+  verificationPassed: boolean;
+  /** @optional — empty/omitted renders as "Not provided." */
+  successCriteriaResults?: string;
+  /** @optional — empty/omitted renders as "Not provided." */
+  definitionOfDoneResults?: string;
+  /** @optional — empty/omitted renders as "Not provided." */
+  requirementOutcomes?: string;
+  /** @optional — empty/omitted renders as an empty frontmatter list */
+  keyDecisions?: string[];
+  /** @optional — empty/omitted renders as an empty frontmatter list */
+  keyFiles?: string[];
+  /** @optional — empty/omitted renders as "(none)" */
+  lessonsLearned?: string[];
+  /** @optional — empty/omitted renders as "None." */
+  followUps?: string;
+  /** @optional — empty/omitted renders as "None." */
+  deviations?: string;
+  /** Optional caller-provided identity for audit trail */
+  actorName?: string;
+  /** Optional caller-provided reason this action was triggered */
+  triggerReason?: string;
+}
+
+export interface CompleteMilestoneResult {
+  milestoneId: string;
+  summaryPath: string;
+  stale?: boolean;
+  alreadyComplete?: boolean;
+}
+
+function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams, completedAt: string): string {
+  const displayTitle = stripIdPrefix(params.title, params.milestoneId);
+
+  // Apply defaults for optional enrichment fields (#2771)
+  const keyDecisions = params.keyDecisions ?? [];
+  const keyFiles = params.keyFiles ?? [];
+  const lessonsLearned = params.lessonsLearned ?? [];
+
+  const keyDecisionsYaml = keyDecisions.length > 0
+    ? `\n${keyDecisions.map(d => `  - ${d}`).join("\n")}`
+    : " []";
+
+  const keyFilesYaml = keyFiles.length > 0
+    ? `\n${keyFiles.map(f => `  - ${f}`).join("\n")}`
+    : " []";
+
+  const lessonsYaml = lessonsLearned.length > 0
+    ? lessonsLearned.map(l => `  - ${l}`).join("\n")
+    : "  - (none)";
+
+  return `---
+id: ${params.milestoneId}
+title: "${displayTitle}"
+status: complete
+completed_at: ${completedAt}
+key_decisions:${keyDecisionsYaml}
+key_files:${keyFilesYaml}
+lessons_learned:
+${lessonsYaml}
+---
+
+# ${params.milestoneId}: ${displayTitle}
+
+**${params.oneLiner}**
+
+## What Happened
+
+${params.narrative}
+
+## Success Criteria Results
+
+${params.successCriteriaResults || "Not provided."}
+
+## Definition of Done Results
+
+${params.definitionOfDoneResults || "Not provided."}
+
+## Requirement Outcomes
+
+${params.requirementOutcomes || "Not provided."}
+
+## Deviations
+
+${params.deviations || "None."}
+
+## Follow-ups
+
+${params.followUps || "None."}
+`;
+}
+
+export async function handleCompleteMilestone(
+  params: CompleteMilestoneParams,
+  basePath: string,
+): Promise<CompleteMilestoneResult | { error: string }> {
+  // ── Validate required fields ────────────────────────────────────────────
+  if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
+    return { error: "milestoneId is required and must be a non-empty string" };
+  }
+  if (!params.title || typeof params.title !== "string" || params.title.trim() === "") {
+    return { error: "title is required and must be a non-empty string" };
+  }
+
+  const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
+
+  // ── Verify that verification passed ─────────────────────────────────────
+  if (params.verificationPassed !== true) {
+    return { error: "verification did not pass — milestone completion blocked. verificationPassed must be explicitly set to true after all verification steps succeed" };
+  }
+
+  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
+  const completedAt = new Date().toISOString();
+  let guardError: string | null = null;
+  let alreadyComplete = false;
+
+  transaction(() => {
+    // State machine preconditions (inside txn for atomicity)
+    const milestone = getMilestone(params.milestoneId);
+    if (!milestone) {
+      guardError = `milestone not found: ${params.milestoneId}`;
+      return;
+    }
+    if (isClosedStatus(milestone.status)) {
+      alreadyComplete = true;
+      return;
+    }
+
+    // Defense-in-depth: only a passing milestone validation permits closeout.
+    const validation = getLatestAssessmentByScope(params.milestoneId, "milestone-validation");
+    if (validation?.status !== "pass") {
+      guardError =
+        `Refusing to complete ${params.milestoneId}: latest milestone-validation verdict is ` +
+        `"${validation?.status ?? "absent"}". Only verdict=pass permits closeout.`;
+      return;
+    }
+
+    // Verify all slices are complete
+    const slices = getMilestoneSlices(params.milestoneId);
+    if (slices.length === 0) {
+      guardError = `no slices found for milestone ${params.milestoneId}`;
+      return;
+    }
+
+    const incompleteSlices = slices.filter(s => !isClosedStatus(s.status));
+    if (incompleteSlices.length > 0) {
+      const incompleteIds = incompleteSlices.map(s => `${s.id} (status: ${s.status})`).join(", ");
+      guardError = `incomplete slices: ${incompleteIds}`;
+      return;
+    }
+
+    // Deep check: verify all tasks in all slices are complete
+    for (const slice of slices) {
+      const tasks = getSliceTasks(params.milestoneId, slice.id);
+      const incompleteTasks = tasks.filter(t => !isClosedStatus(t.status));
+      if (incompleteTasks.length > 0) {
+        const ids = incompleteTasks.map(t => `${t.id} (status: ${t.status})`).join(", ");
+        guardError = `slice ${slice.id} has incomplete tasks: ${ids}`;
+        return;
+      }
+    }
+
+    // All guards passed — perform write
+    updateMilestoneStatus(params.milestoneId, 'complete', completedAt);
+  });
+
+  if (guardError) {
+    return { error: guardError };
+  }
+
+  // ── Filesystem operations (outside transaction) ─────────────────────────
+  const summaryMd = renderMilestoneSummaryMarkdown(params, completedAt);
+
+  const summaryPath = join(
+    gsdProjectionRoot(artifactBasePath),
+    "milestones",
+    params.milestoneId,
+    `${params.milestoneId}-SUMMARY.md`,
+  );
+
+  // Guard (#4598): if SUMMARY.md already exists on disk, do not overwrite it.
+  // This handles re-dispatch scenarios (DB/disk state divergence) where a prior
+  // completion already wrote the file. Overwriting would silently destroy the
+  // richer content the agent produced during the original completion run.
+  let projectionStale = false;
+  if (!existsSync(summaryPath)) {
+    try {
+      await saveFile(summaryPath, summaryMd);
+    } catch (renderErr) {
+      projectionStale = true;
+      logWarning("projection", `complete_milestone projection write failed for ${params.milestoneId}; DB completion remains committed`, {
+        error: (renderErr as Error).message,
+      });
+    }
+  }
+
+  // Invalidate all caches
+  invalidateStateCache();
+  clearPathCache();
+  clearParseCache();
+
+  // ── Post-mutation hook: projections, manifest, event log ───────────────
+  // Separate try/catch per step so a projection failure doesn't prevent
+  // the event log entry (critical for worktree reconciliation).
+  try {
+    await renderAllProjections(artifactBasePath, params.milestoneId);
+  } catch (projErr) {
+    logWarning("tool", `complete-milestone projection warning: ${(projErr as Error).message}`);
+  }
+  try {
+    writeManifest(artifactBasePath);
+  } catch (mfErr) {
+    logWarning("tool", `complete-milestone manifest warning: ${(mfErr as Error).message}`);
+  }
+  try {
+    if (!alreadyComplete) {
+      appendEvent(artifactBasePath, {
+        cmd: "complete-milestone",
+        params: { milestoneId: params.milestoneId },
+        ts: new Date().toISOString(),
+        actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
+      });
+    }
+  } catch (eventErr) {
+    logError("tool", `complete-milestone event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
+  }
+
+  return {
+    milestoneId: params.milestoneId,
+    summaryPath,
+    ...(projectionStale ? { stale: true } : {}),
+    ...(alreadyComplete ? { alreadyComplete: true } : {}),
+  };
+}

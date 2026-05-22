@@ -1,0 +1,36 @@
+# CODEOWNERS
+# Defines required reviewers per path. GitHub enforces these on PRs.
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Format: <pattern>  <@user or @org/team>
+# Last matching rule wins.
+
+# Default: maintainers review everything not explicitly matched below
+*                                   @gsd-redux/maintainers
+
+# Core agent orchestration — RFC required, senior review only
+packages/pi-agent-core/             @gsd-redux/maintainers
+src/resources/extensions/gsd/       @gsd-redux/maintainers
+
+# AI/LLM provider integrations
+packages/pi-ai/                     @gsd-redux/maintainers
+
+# Terminal UI
+packages/pi-tui/                    @gsd-redux/maintainers
+
+# Native bindings — platform-specific, needs careful review
+native/                             @gsd-redux/maintainers
+
+# CI/CD and release pipeline — high blast radius
+.github/                            @gsd-redux/maintainers
+scripts/                            @gsd-redux/maintainers
+Dockerfile                          @gsd-redux/maintainers
+
+# Security-sensitive files — always require maintainer sign-off
+.secretscanignore                   @gsd-redux/maintainers
+scripts/secret-scan.sh              @gsd-redux/maintainers
+scripts/install-hooks.sh            @gsd-redux/maintainers
+
+# Contributor-facing docs — keep accurate, maintainers approve
+CONTRIBUTING.md                     @gsd-redux/maintainers
+VISION.md                           @gsd-redux/maintainers

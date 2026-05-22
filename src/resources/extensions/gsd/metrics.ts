@@ -1,0 +1,1034 @@
+// GSD-2 + metrics.ts: token & cost tracking for auto-mode units
+/**
+ * GSD Metrics — Token & Cost Tracking
+ *
+ * Accumulates per-unit usage data across auto-mode sessions.
+ * Data is extracted from session entries before each context wipe,
+ * written to .gsd/metrics.json, and surfaced in the dashboard.
+ *
+ * Data flow:
+ *   1. Before newSession() wipes context, snapshotUnitMetrics() scans
+ *      session entries for AssistantMessage usage data
+ *   2. The unit record is appended to the in-memory ledger and flushed to disk
+ *   3. The dashboard overlay and progress widget read from the in-memory ledger
+ *   4. On crash recovery or fresh start, the ledger is loaded from disk
+ */
+
+import { join } from "node:path";
+import { openSync, closeSync, unlinkSync, statSync, writeFileSync } from "node:fs";
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
+import { gsdRoot } from "./paths.js";
+import { getAndClearSkills } from "./skill-telemetry.js";
+import { loadJsonFile, loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
+import { parseUnitId } from "./unit-id.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
+import type { MilestoneScope } from "./workspace.js";
+import { logWarning } from "./workflow-logger.js";
+
+// Re-export from shared — import directly from format-utils to avoid pulling
+// in the full barrel (mod.js → ui.js → @gsd/pi-tui) which breaks when loaded
+// outside jiti's alias resolution (e.g. dynamic import in auto-loop reports).
+export { formatTokenCount } from "../shared/format-utils.js";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface TokenCounts {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
+
+export interface UnitMetrics {
+  type: string;            // e.g. "research-milestone", "execute-task"
+  id: string;              // e.g. "M001/S01/T01"
+  model: string;           // model ID used
+  startedAt: number;       // ms timestamp
+  finishedAt: number;      // ms timestamp
+  autoSessionKey?: string; // identifies one auto-mode run across pause/resume
+  tokens: TokenCounts;
+  cost: number;            // total USD cost
+  toolCalls: number;
+  assistantMessages: number;
+  userMessages: number;
+  apiRequests?: number;    // total API requests made (useful for copilot users where cost is always 0)
+  // Budget fields (optional — absent in pre-M009 metrics data)
+  contextWindowTokens?: number;
+  truncationSections?: number;
+  continueHereFired?: boolean;
+  promptCharCount?: number;
+  baselineCharCount?: number;
+  tier?: string;           // complexity tier (light/standard/heavy) if dynamic routing active
+  modelDowngraded?: boolean; // true if dynamic routing used a cheaper model
+  skills?: string[];       // skill names available/loaded during this unit (#599)
+  cacheHitRate?: number;       // percentage 0-100, computed from cacheRead/(cacheRead+input)
+  compressionSavings?: number; // percentage 0-100, char savings from prompt compression
+}
+
+/** Budget state passed to snapshotUnitMetrics for persistence in the metrics ledger. */
+export interface BudgetInfo {
+  contextWindowTokens?: number;
+  truncationSections?: number;
+  continueHereFired?: boolean;
+}
+
+export interface MetricsLedger {
+  version: 1;
+  projectStartedAt: number;
+  units: UnitMetrics[];
+}
+
+// ─── Phase classification ─────────────────────────────────────────────────────
+
+export type MetricsPhase = "research" | "discussion" | "planning" | "execution" | "completion" | "reassessment";
+
+export function classifyUnitPhase(unitType: string): MetricsPhase {
+  switch (unitType) {
+    case "research-milestone":
+    case "research-slice":
+      return "research";
+    case "discuss-milestone":
+    case "discuss-slice":
+      return "discussion";
+    case "plan-milestone":
+    case "plan-slice":
+    case "refine-slice":
+      return "planning";
+    case "execute-task":
+      return "execution";
+    case "complete-slice":
+      return "completion";
+    case "reassess-roadmap":
+      return "reassessment";
+    default:
+      return "execution";
+  }
+}
+
+// ─── In-memory state ──────────────────────────────────────────────────────────
+
+let ledger: MetricsLedger | null = null;
+let basePath: string = "";
+
+// Per-workspace ledger map, keyed by workspace.identityKey.
+// Populated by initMetricsByScope; independent of the module singleton.
+const scopedLedgers = new Map<string, MetricsLedger>();
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Initialize the metrics system for a given project.
+ * Loads existing ledger from disk if present.
+ *
+ * @deprecated TODO(C-future): remove module singleton. Use initMetricsByScope instead.
+ */
+export function initMetrics(base: string): void {
+  basePath = base;
+  ledger = loadLedger(base);
+}
+
+/**
+ * Reset in-memory state. Called when auto-mode stops.
+ *
+ * @deprecated TODO(C-future): remove module singleton. Use resetMetricsByScope instead.
+ */
+export function resetMetrics(): void {
+  ledger = null;
+  basePath = "";
+}
+
+/**
+ * Snapshot usage metrics from the current session before it's wiped.
+ * Scans session entries for AssistantMessage usage data.
+ *
+ * @deprecated TODO(C-future): remove module singleton. Use snapshotUnitMetricsByScope instead.
+ */
+export function snapshotUnitMetrics(
+  ctx: ExtensionContext,
+  unitType: string,
+  unitId: string,
+  startedAt: number,
+  model: string,
+  opts?: {
+    tier?: string;
+    modelDowngraded?: boolean;
+    contextWindowTokens?: number;
+    truncationSections?: number;
+    continueHereFired?: boolean;
+    promptCharCount?: number;
+    baselineCharCount?: number;
+    autoSessionKey?: string;
+    traceId?: string;
+    turnId?: string;
+    causedBy?: string;
+  },
+): UnitMetrics | null {
+  if (!ledger) return null;
+
+  const entries = ctx.sessionManager.getEntries();
+  if (!entries || entries.length === 0) return null;
+
+  const tokens: TokenCounts = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  let cost = 0;
+  let toolCalls = 0;
+  let assistantMessages = 0;
+  let userMessages = 0;
+
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const msg = (entry as any).message;
+    if (!msg) continue;
+
+    if (msg.role === "assistant") {
+      assistantMessages++;
+      if (msg.usage) {
+        tokens.input += msg.usage.input ?? 0;
+        tokens.output += msg.usage.output ?? 0;
+        tokens.cacheRead += msg.usage.cacheRead ?? 0;
+        tokens.cacheWrite += msg.usage.cacheWrite ?? 0;
+        tokens.total += msg.usage.totalTokens ?? 0;
+        if (msg.usage.cost != null) {
+          const c = msg.usage.cost;
+          cost += typeof c === "number" ? c : (c.total ?? 0);
+        }
+      }
+      // Count tool calls in this message
+      if (msg.content && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === "toolCall") toolCalls++;
+        }
+      }
+    } else if (msg.role === "user") {
+      userMessages++;
+    }
+  }
+
+  const unit: UnitMetrics = {
+    type: unitType,
+    id: unitId,
+    model,
+    startedAt,
+    finishedAt: Date.now(),
+    ...(opts?.autoSessionKey ? { autoSessionKey: opts.autoSessionKey } : {}),
+    tokens,
+    cost,
+    toolCalls,
+    assistantMessages,
+    userMessages,
+    apiRequests: assistantMessages, // each assistant message = one API request
+    ...(opts?.tier ? { tier: opts.tier } : {}),
+    ...(opts?.modelDowngraded !== undefined ? { modelDowngraded: opts.modelDowngraded } : {}),
+    ...(opts?.contextWindowTokens !== undefined ? { contextWindowTokens: opts.contextWindowTokens } : {}),
+    ...(opts?.truncationSections !== undefined ? { truncationSections: opts.truncationSections } : {}),
+    ...(opts?.continueHereFired !== undefined ? { continueHereFired: opts.continueHereFired } : {}),
+    ...(opts?.promptCharCount != null ? { promptCharCount: opts.promptCharCount } : {}),
+    ...(opts?.baselineCharCount != null ? { baselineCharCount: opts.baselineCharCount } : {}),
+  };
+
+  // Auto-capture skill telemetry (#599)
+  const skills = getAndClearSkills();
+  if (skills.length > 0) {
+    unit.skills = skills;
+  }
+
+  // Compute cache hit rate
+  if (tokens.cacheRead > 0 || tokens.input > 0) {
+    const totalInput = tokens.cacheRead + tokens.input;
+    unit.cacheHitRate = totalInput > 0 ? Math.round((tokens.cacheRead / totalInput) * 100) : 0;
+  }
+  if (
+    unit.promptCharCount != null &&
+    unit.baselineCharCount != null &&
+    unit.baselineCharCount > 0
+  ) {
+    unit.compressionSavings = Math.max(
+      0,
+      Math.round(((unit.baselineCharCount - unit.promptCharCount) / unit.baselineCharCount) * 100),
+    );
+  }
+
+  // ── Idempotency guard ──────────────────────────────────────────────────
+  // Prevent duplicate metrics entries when multiple callers snapshot the
+  // same unit (e.g. idle-watchdog closeoutUnit + normal loop closeoutUnit).
+  // A unit is considered a duplicate when type, id, AND startedAt all match
+  // an existing entry. On duplicate, the existing entry is updated in-place
+  // with the latest finishedAt and token counts instead of appending.
+  const dupeIdx = ledger.units.findIndex(
+    (u) => u.type === unit.type && u.id === unit.id && u.startedAt === unit.startedAt,
+  );
+  if (dupeIdx >= 0) {
+    ledger.units[dupeIdx] = unit;
+  } else {
+    ledger.units.push(unit);
+  }
+  saveLedger(basePath, ledger);
+
+  if (isUnifiedAuditEnabled()) {
+    emitUokAuditEvent(
+      basePath,
+      buildAuditEnvelope({
+        traceId: opts?.traceId ?? `metrics:${unitType}:${unitId}`,
+        turnId: opts?.turnId,
+        causedBy: opts?.causedBy,
+        category: "metrics",
+        type: "unit-metrics-snapshot",
+        payload: {
+          unitType,
+          unitId,
+          model,
+          tokens: unit.tokens,
+          cost: unit.cost,
+          toolCalls: unit.toolCalls,
+        },
+      }),
+    );
+  }
+
+  return unit;
+}
+
+/**
+ * Get the current ledger (read-only).
+ */
+export function getLedger(): MetricsLedger | null {
+  return ledger;
+}
+
+// ─── Scope-aware API (canonical) ─────────────────────────────────────────────
+
+/**
+ * Initialize the metrics system for a given workspace scope.
+ * Loads existing ledger from disk into the per-scope ledger map.
+ * Does NOT touch the module-level singleton.
+ */
+export function initMetricsByScope(scope: MilestoneScope): void {
+  const base = scope.workspace.projectRoot;
+  const loaded = loadLedger(base);
+  scopedLedgers.set(scope.workspace.identityKey, loaded);
+}
+
+/**
+ * Get the in-memory ledger for the given scope, or null if not initialized.
+ */
+export function getLedgerByScope(scope: MilestoneScope): MetricsLedger | null {
+  return scopedLedgers.get(scope.workspace.identityKey) ?? null;
+}
+
+/**
+ * Reset scoped in-memory state for a workspace. Called when auto-mode stops.
+ */
+export function resetMetricsByScope(scope: MilestoneScope): void {
+  scopedLedgers.delete(scope.workspace.identityKey);
+}
+
+/**
+ * Snapshot usage metrics using an explicit workspace scope.
+ *
+ * This is the canonical variant. It derives the metrics path from
+ * scope.workspace.projectRoot rather than the module singleton, so it
+ * remains correct across session resume and in multi-workspace processes.
+ *
+ * Preserves the atomic write-merge logic from saveLedger so concurrent
+ * workers cannot silently discard each other's entries.
+ *
+ * If initMetricsByScope has not been called, the ledger is loaded from
+ * disk on first call (lazy init).
+ */
+export function snapshotUnitMetricsByScope(
+  scope: MilestoneScope,
+  ctx: ExtensionContext,
+  unitType: string,
+  unitId: string,
+  startedAt: number,
+  model: string,
+  opts?: {
+    tier?: string;
+    modelDowngraded?: boolean;
+    contextWindowTokens?: number;
+    truncationSections?: number;
+    continueHereFired?: boolean;
+    promptCharCount?: number;
+    baselineCharCount?: number;
+    autoSessionKey?: string;
+    traceId?: string;
+    turnId?: string;
+    causedBy?: string;
+  },
+): UnitMetrics | null {
+  const base = scope.workspace.projectRoot;
+  const key = scope.workspace.identityKey;
+
+  // Lazy init: load from disk if not yet in scoped map.
+  if (!scopedLedgers.has(key)) {
+    scopedLedgers.set(key, loadLedger(base));
+  }
+  const scopedLedger = scopedLedgers.get(key)!;
+
+  const entries = ctx.sessionManager.getEntries();
+  if (!entries || entries.length === 0) return null;
+
+  const tokens: TokenCounts = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  let cost = 0;
+  let toolCalls = 0;
+  let assistantMessages = 0;
+  let userMessages = 0;
+
+  for (const entry of entries) {
+    if (entry.type !== "message") continue;
+    const msg = (entry as any).message;
+    if (!msg) continue;
+
+    if (msg.role === "assistant") {
+      assistantMessages++;
+      if (msg.usage) {
+        tokens.input += msg.usage.input ?? 0;
+        tokens.output += msg.usage.output ?? 0;
+        tokens.cacheRead += msg.usage.cacheRead ?? 0;
+        tokens.cacheWrite += msg.usage.cacheWrite ?? 0;
+        tokens.total += msg.usage.totalTokens ?? 0;
+        if (msg.usage.cost != null) {
+          const c = msg.usage.cost;
+          cost += typeof c === "number" ? c : (c.total ?? 0);
+        }
+      }
+      if (msg.content && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === "toolCall") toolCalls++;
+        }
+      }
+    } else if (msg.role === "user") {
+      userMessages++;
+    }
+  }
+
+  const unit: UnitMetrics = {
+    type: unitType,
+    id: unitId,
+    model,
+    startedAt,
+    finishedAt: Date.now(),
+    ...(opts?.autoSessionKey ? { autoSessionKey: opts.autoSessionKey } : {}),
+    tokens,
+    cost,
+    toolCalls,
+    assistantMessages,
+    userMessages,
+    apiRequests: assistantMessages,
+    ...(opts?.tier ? { tier: opts.tier } : {}),
+    ...(opts?.modelDowngraded !== undefined ? { modelDowngraded: opts.modelDowngraded } : {}),
+    ...(opts?.contextWindowTokens !== undefined ? { contextWindowTokens: opts.contextWindowTokens } : {}),
+    ...(opts?.truncationSections !== undefined ? { truncationSections: opts.truncationSections } : {}),
+    ...(opts?.continueHereFired !== undefined ? { continueHereFired: opts.continueHereFired } : {}),
+    ...(opts?.promptCharCount != null ? { promptCharCount: opts.promptCharCount } : {}),
+    ...(opts?.baselineCharCount != null ? { baselineCharCount: opts.baselineCharCount } : {}),
+  };
+
+  // Auto-capture skill telemetry (#599)
+  const skills = getAndClearSkills();
+  if (skills.length > 0) {
+    unit.skills = skills;
+  }
+
+  // Compute cache hit rate
+  if (tokens.cacheRead > 0 || tokens.input > 0) {
+    const totalInput = tokens.cacheRead + tokens.input;
+    unit.cacheHitRate = totalInput > 0 ? Math.round((tokens.cacheRead / totalInput) * 100) : 0;
+  }
+  if (
+    unit.promptCharCount != null &&
+    unit.baselineCharCount != null &&
+    unit.baselineCharCount > 0
+  ) {
+    unit.compressionSavings = Math.max(
+      0,
+      Math.round(((unit.baselineCharCount - unit.promptCharCount) / unit.baselineCharCount) * 100),
+    );
+  }
+
+  // Idempotency guard: update in-place on duplicate, append otherwise.
+  const dupeIdx = scopedLedger.units.findIndex(
+    (u) => u.type === unit.type && u.id === unit.id && u.startedAt === unit.startedAt,
+  );
+  if (dupeIdx >= 0) {
+    scopedLedger.units[dupeIdx] = unit;
+  } else {
+    scopedLedger.units.push(unit);
+  }
+  saveLedger(base, scopedLedger);
+
+  if (isUnifiedAuditEnabled()) {
+    emitUokAuditEvent(
+      base,
+      buildAuditEnvelope({
+        traceId: opts?.traceId ?? `metrics:${unitType}:${unitId}`,
+        turnId: opts?.turnId,
+        causedBy: opts?.causedBy,
+        category: "metrics",
+        type: "unit-metrics-snapshot",
+        payload: {
+          unitType,
+          unitId,
+          model,
+          tokens: unit.tokens,
+          cost: unit.cost,
+          toolCalls: unit.toolCalls,
+        },
+      }),
+    );
+  }
+
+  return unit;
+}
+
+// ─── Aggregation helpers ──────────────────────────────────────────────────────
+
+export interface PhaseAggregate {
+  phase: MetricsPhase;
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  duration: number;  // ms
+}
+
+export interface SliceAggregate {
+  sliceId: string;
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  duration: number;
+}
+
+export interface ModelAggregate {
+  model: string;
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  contextWindowTokens?: number;
+}
+
+export interface ProjectTotals {
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  duration: number;
+  toolCalls: number;
+  assistantMessages: number;
+  userMessages: number;
+  apiRequests: number;
+  totalTruncationSections: number;
+  continueHereFiredCount: number;
+}
+
+export interface PromptSizeStats {
+  units: number;
+  averagePromptChars: number;
+  maxPromptChars: number;
+  averageBaselineChars: number | null;
+  averageCompressionSavings: number | null;
+}
+
+function emptyTokens(): TokenCounts {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+}
+
+function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    total: a.total + b.total,
+  };
+}
+
+export function aggregateByPhase(units: UnitMetrics[]): PhaseAggregate[] {
+  const map = new Map<MetricsPhase, PhaseAggregate>();
+  for (const u of units) {
+    const phase = classifyUnitPhase(u.type);
+    let agg = map.get(phase);
+    if (!agg) {
+      agg = { phase, units: 0, tokens: emptyTokens(), cost: 0, duration: 0 };
+      map.set(phase, agg);
+    }
+    agg.units++;
+    agg.tokens = addTokens(agg.tokens, u.tokens);
+    agg.cost += u.cost;
+    agg.duration += u.finishedAt - u.startedAt;
+  }
+  // Return in a stable order
+  const order: MetricsPhase[] = ["research", "discussion", "planning", "execution", "completion", "reassessment"];
+  return order.map(p => map.get(p)).filter((a): a is PhaseAggregate => !!a);
+}
+
+export function aggregateBySlice(units: UnitMetrics[]): SliceAggregate[] {
+  const map = new Map<string, SliceAggregate>();
+  for (const u of units) {
+    const { milestone, slice } = parseUnitId(u.id);
+    const sliceId = slice ? `${milestone}/${slice}` : milestone;
+    let agg = map.get(sliceId);
+    if (!agg) {
+      agg = { sliceId, units: 0, tokens: emptyTokens(), cost: 0, duration: 0 };
+      map.set(sliceId, agg);
+    }
+    agg.units++;
+    agg.tokens = addTokens(agg.tokens, u.tokens);
+    agg.cost += u.cost;
+    agg.duration += u.finishedAt - u.startedAt;
+  }
+  return Array.from(map.values()).sort((a, b) => a.sliceId.localeCompare(b.sliceId));
+}
+
+export function aggregateByModel(units: UnitMetrics[]): ModelAggregate[] {
+  const map = new Map<string, ModelAggregate>();
+  for (const u of units) {
+    let agg = map.get(u.model);
+    if (!agg) {
+      agg = { model: u.model, units: 0, tokens: emptyTokens(), cost: 0 };
+      map.set(u.model, agg);
+    }
+    agg.units++;
+    agg.tokens = addTokens(agg.tokens, u.tokens);
+    agg.cost += u.cost;
+    if (u.contextWindowTokens !== undefined && agg.contextWindowTokens === undefined) {
+      agg.contextWindowTokens = u.contextWindowTokens;
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.cost - a.cost);
+}
+
+export function getProjectTotals(units: UnitMetrics[]): ProjectTotals {
+  const totals: ProjectTotals = {
+    units: units.length,
+    tokens: emptyTokens(),
+    cost: 0,
+    duration: 0,
+    toolCalls: 0,
+    assistantMessages: 0,
+    userMessages: 0,
+    apiRequests: 0,
+    totalTruncationSections: 0,
+    continueHereFiredCount: 0,
+  };
+  for (const u of units) {
+    totals.tokens = addTokens(totals.tokens, u.tokens);
+    totals.cost += u.cost;
+    totals.duration += u.finishedAt - u.startedAt;
+    totals.toolCalls += u.toolCalls;
+    totals.assistantMessages += u.assistantMessages;
+    totals.userMessages += u.userMessages;
+    totals.apiRequests += u.apiRequests ?? u.assistantMessages; // fallback for pre-existing data
+    totals.totalTruncationSections += u.truncationSections ?? 0;
+    if (u.continueHereFired) totals.continueHereFiredCount++;
+  }
+  return totals;
+}
+
+export function getPromptSizeStats(units: UnitMetrics[]): PromptSizeStats | null {
+  const promptUnits = units.filter(
+    (u) => typeof u.promptCharCount === "number" && Number.isFinite(u.promptCharCount) && u.promptCharCount > 0,
+  );
+  if (promptUnits.length === 0) return null;
+
+  let promptTotal = 0;
+  let maxPromptChars = 0;
+  let baselineTotal = 0;
+  let baselineCount = 0;
+  let savingsTotal = 0;
+  let savingsCount = 0;
+
+  for (const unit of promptUnits) {
+    const promptChars = unit.promptCharCount!;
+    promptTotal += promptChars;
+    maxPromptChars = Math.max(maxPromptChars, promptChars);
+
+    if (
+      typeof unit.baselineCharCount === "number" &&
+      Number.isFinite(unit.baselineCharCount) &&
+      unit.baselineCharCount > 0
+    ) {
+      baselineTotal += unit.baselineCharCount;
+      baselineCount++;
+      const savings = Math.max(0, ((unit.baselineCharCount - promptChars) / unit.baselineCharCount) * 100);
+      savingsTotal += savings;
+      savingsCount++;
+    } else if (
+      typeof unit.compressionSavings === "number" &&
+      Number.isFinite(unit.compressionSavings)
+    ) {
+      savingsTotal += Math.max(0, unit.compressionSavings);
+      savingsCount++;
+    }
+  }
+
+  return {
+    units: promptUnits.length,
+    averagePromptChars: Math.round(promptTotal / promptUnits.length),
+    maxPromptChars,
+    averageBaselineChars: baselineCount > 0 ? Math.round(baselineTotal / baselineCount) : null,
+    averageCompressionSavings: savingsCount > 0 ? Math.round(savingsTotal / savingsCount) : null,
+  };
+}
+
+// ─── Tier Aggregation ────────────────────────────────────────────────────────
+
+export interface TierAggregate {
+  tier: string;
+  units: number;
+  tokens: TokenCounts;
+  cost: number;
+  downgraded: number;   // units that were downgraded by dynamic routing
+}
+
+export function aggregateByTier(units: UnitMetrics[]): TierAggregate[] {
+  const map = new Map<string, TierAggregate>();
+  for (const u of units) {
+    const tier = u.tier ?? "unknown";
+    let agg = map.get(tier);
+    if (!agg) {
+      agg = { tier, units: 0, tokens: emptyTokens(), cost: 0, downgraded: 0 };
+      map.set(tier, agg);
+    }
+    agg.units++;
+    agg.tokens = addTokens(agg.tokens, u.tokens);
+    agg.cost += u.cost;
+    if (u.modelDowngraded) agg.downgraded++;
+  }
+  const order = ["light", "standard", "heavy", "unknown"];
+  return order.map(t => map.get(t)).filter((a): a is TierAggregate => !!a);
+}
+
+/**
+ * Format a summary of savings from dynamic routing.
+ * Returns empty string if no units were downgraded.
+ */
+export function formatTierSavings(units: UnitMetrics[]): string {
+  const downgraded = units.filter(u => u.modelDowngraded);
+  if (downgraded.length === 0) return "";
+
+  const downgradedCost = downgraded.reduce((sum, u) => sum + u.cost, 0);
+  const totalUnits = units.filter(u => u.tier).length;
+  const pct = totalUnits > 0 ? Math.round((downgraded.length / totalUnits) * 100) : 0;
+
+  return `Dynamic routing: ${downgraded.length}/${totalUnits} units downgraded (${pct}%), cost: ${formatCost(downgradedCost)}`;
+}
+
+/**
+ * Compute aggregate cache hit rate across all units.
+ * Returns percentage 0-100.
+ */
+export function aggregateCacheHitRate(): number {
+  if (!ledger || ledger.units.length === 0) return 0;
+  let totalInput = 0;
+  let totalCacheRead = 0;
+  for (const unit of ledger.units) {
+    totalInput += unit.tokens.input;
+    totalCacheRead += unit.tokens.cacheRead;
+  }
+  const total = totalInput + totalCacheRead;
+  return total > 0 ? Math.round((totalCacheRead / total) * 100) : 0;
+}
+
+// ─── Formatting helpers ───────────────────────────────────────────────────────
+
+export function formatCost(cost: number): string {
+  const n = Number(cost) || 0;
+  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 1) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+// ─── Budget Prediction ────────────────────────────────────────────────────────
+
+/**
+ * Calculate average cost per unit type from completed units.
+ * Returns a Map from unit type to average cost in USD.
+ */
+export function getAverageCostPerUnitType(units: UnitMetrics[]): Map<string, number> {
+  const sums = new Map<string, { total: number; count: number }>();
+  for (const u of units) {
+    const entry = sums.get(u.type) ?? { total: 0, count: 0 };
+    entry.total += u.cost;
+    entry.count += 1;
+    sums.set(u.type, entry);
+  }
+  const avgs = new Map<string, number>();
+  for (const [type, { total, count }] of sums) {
+    avgs.set(type, total / count);
+  }
+  return avgs;
+}
+
+/**
+ * Estimate remaining cost given average costs and remaining unit counts.
+ * @param avgCosts - Average cost per unit type
+ * @param remainingUnits - Array of unit types still to dispatch
+ * @param fallbackAvg - Fallback average if unit type not seen before
+ * @returns Estimated remaining cost in USD
+ */
+export function predictRemainingCost(
+  avgCosts: Map<string, number>,
+  remainingUnits: string[],
+  fallbackAvg?: number,
+): number {
+  // If no averages available, use overall average as fallback
+  const allAvgs = [...avgCosts.values()];
+  const overallAvg = fallbackAvg ?? (allAvgs.length > 0 ? allAvgs.reduce((a, b) => a + b, 0) / allAvgs.length : 0);
+
+  let total = 0;
+  for (const unitType of remainingUnits) {
+    total += avgCosts.get(unitType) ?? overallAvg;
+  }
+  return total;
+}
+
+/**
+ * Compute a projected remaining cost based on completed slice averages.
+ *
+ * Filters to slice-level entries (sliceId contains "/") to exclude bare milestone
+ * aggregates from the average. Returns [] when fewer than 2 slice-level entries
+ * exist (insufficient data for a reliable projection).
+ *
+ * If `budgetCeiling` is provided and `totalCost >= budgetCeiling`, a warning line
+ * is appended to the result.
+ */
+export function formatCostProjection(
+  completedSlices: SliceAggregate[],
+  remainingCount: number,
+  budgetCeiling?: number,
+): string[] {
+  const sliceLevel = completedSlices.filter(s => s.sliceId.includes("/"));
+  if (sliceLevel.length < 2) return [];
+
+  const totalCost = sliceLevel.reduce((sum, s) => sum + s.cost, 0);
+  const avgCost = totalCost / sliceLevel.length;
+  const projected = avgCost * remainingCount;
+
+  const projLine = `Projected remaining: ${formatCost(projected)} (${formatCost(avgCost)}/slice avg × ${remainingCount} remaining)`;
+  const result: string[] = [projLine];
+
+  if (budgetCeiling !== undefined && totalCost >= budgetCeiling) {
+    result.push(`Budget ceiling ${formatCost(budgetCeiling)} reached (spent ${formatCost(totalCost)})`);
+  }
+
+  return result;
+}
+
+
+// ─── Disk I/O ─────────────────────────────────────────────────────────────────
+
+function metricsPath(base: string): string {
+  return join(gsdRoot(base), "metrics.json");
+}
+
+function isMetricsLedger(data: unknown): data is MetricsLedger {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as MetricsLedger).version === 1 &&
+    Array.isArray((data as MetricsLedger).units)
+  );
+}
+
+function defaultLedger(): MetricsLedger {
+  return { version: 1, projectStartedAt: Date.now(), units: [] };
+}
+
+/**
+ * Prune the metrics ledger to at most `keepCount` most-recent unit entries.
+ *
+ * Called by the doctor when the ledger exceeds the bloat threshold.
+ * Keeps the newest entries (highest index = most recent) and discards
+ * the oldest from the head of the array. Preserves `projectStartedAt`.
+ *
+ * Updates both the on-disk file and the in-memory ledger if it is loaded,
+ * so the current session sees the pruned state immediately.
+ *
+ * @returns the number of entries removed, or 0 if no pruning was needed.
+ */
+export function pruneMetricsLedger(base: string, keepCount: number): number {
+  const disk = loadLedgerFromDisk(base);
+  if (!disk || disk.units.length <= keepCount) return 0;
+  const removed = disk.units.length - keepCount;
+  disk.units = disk.units.slice(-keepCount);
+  saveJsonFile(metricsPath(base), disk);
+  // Keep the in-memory ledger in sync if it is loaded for this session.
+  if (ledger) {
+    ledger.units = ledger.units.slice(-keepCount);
+  }
+  // Invalidate all scoped ledger cache entries. Prune is rare; clearing the
+  // entire map is simpler than tracking which entry belongs to `base`. Without
+  // this, scopedLedgers entries for the pruned workspace hold a pre-prune
+  // MetricsLedger that snapshotUnitMetricsByScope would merge back in, causing
+  // pruned units to reappear in subsequent snapshots.
+  scopedLedgers.clear();
+  return removed;
+}
+
+/**
+ * Load ledger from disk without initializing in-memory state.
+ * Used by history/export commands outside of auto-mode.
+ */
+export function loadLedgerFromDisk(base: string): MetricsLedger | null {
+  return loadJsonFileOrNull(metricsPath(base), isMetricsLedger);
+}
+
+function loadLedger(base: string): MetricsLedger {
+  const raw = loadJsonFile(metricsPath(base), isMetricsLedger, defaultLedger);
+  const before = raw.units.length;
+  raw.units = deduplicateUnits(raw.units);
+  if (raw.units.length < before) {
+    // Persist the cleaned ledger so duplicates don't re-accumulate
+    saveLedger(base, raw);
+  }
+  return raw;
+}
+
+/**
+ * Collapse duplicate entries with the same (type, id, startedAt) triple.
+ * Keeps the entry with the highest finishedAt (the most complete snapshot).
+ *
+ * This is a defensive measure against idle-watchdog race conditions that can
+ * produce duplicate entries on disk despite the in-memory idempotency guard
+ * in snapshotUnitMetrics(). See #1943.
+ */
+function deduplicateUnits(units: UnitMetrics[]): UnitMetrics[] {
+  const map = new Map<string, UnitMetrics>();
+  for (const u of units) {
+    const key = `${u.type}\0${u.id}\0${u.startedAt}`;
+    const existing = map.get(key);
+    if (!existing || u.finishedAt > existing.finishedAt) {
+      map.set(key, u);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// How long a lock file must be untouched (in ms) before it is considered
+// orphaned from a crashed process. Set to 2× the acquire timeout.
+export const STALE_LOCK_THRESHOLD_MS = 4000;
+
+// Retry interval between lock acquire attempts (ms). Caps syscall rate at
+// ~200 attempts over a 2s timeout instead of ~20,000 without any sleep.
+// Exposed for tests.
+export const LOCK_RETRY_INTERVAL_MS = 5;
+
+// Sync sleep via Atomics.wait — true OS-level sleep, no CPU spin.
+// Int32Array must reference a SharedArrayBuffer; we wait on index 0 which
+// will never be woken by a Atomics.notify, so the wait always times out.
+const _lockSleepBuf = new Int32Array(new SharedArrayBuffer(4));
+function syncSleep(ms: number): void {
+  Atomics.wait(_lockSleepBuf, 0, 0, ms);
+}
+
+// Counts the number of sleepy retries (non-stale-evicting) made by acquireLock
+// across all calls since the last reset. Exported for test instrumentation only.
+let _lockSleepyRetries = 0;
+export function getLockSleepyRetries(): number { return _lockSleepyRetries; }
+export function resetLockSleepyRetries(): void { _lockSleepyRetries = 0; }
+
+/**
+ * Acquire an exclusive .lock sentinel file via O_EXCL.
+ *
+ * Improvements over the original:
+ *  - No busy spin: the inner `while (Date.now() < waitUntil) {}` spin that
+ *    burned CPU doing nothing useful is removed. Each retry attempt now makes
+ *    one `openSync` syscall and immediately re-checks the deadline, which is
+ *    orders of magnitude cheaper than a tight spin loop.
+ *  - Stale-lock detection: if the existing lock file's mtime is older than
+ *    STALE_LOCK_THRESHOLD_MS, the lock is considered orphaned (e.g. the
+ *    writing process crashed) and is forcibly removed before retrying.
+ *    A warning is logged so operators can detect crash patterns.
+ *  - PID stamp: on success, writes the acquiring process's PID and a
+ *    timestamp into the lock file so external monitors can identify orphans.
+ *  - Retry sleep: after each non-stale-evicting retry, sleeps
+ *    LOCK_RETRY_INTERVAL_MS (5ms) via Atomics.wait so the process yields to
+ *    the OS. This caps syscall rate at ~200–400/s under contention instead of
+ *    the ~20,000/s that would result from a tight openSync loop.
+ *    After a stale-lock eviction (lock already removed), no sleep is injected
+ *    — we retry immediately to close the short race window.
+ *
+ * Returns true on success, false on timeout.
+ */
+function acquireLock(lockPath: string, timeoutMs = 2000): boolean {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const fd = openSync(lockPath, "wx"); // O_WRONLY | O_CREAT | O_EXCL
+      closeSync(fd);
+      // Write PID stamp so external monitors can identify the lock owner.
+      try {
+        writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
+      } catch { /* non-fatal — stamp is diagnostic only */ }
+      return true;
+    } catch {
+      // Lock held by another process — check for staleness before retrying.
+      try {
+        const st = statSync(lockPath);
+        if (Date.now() - st.mtimeMs > STALE_LOCK_THRESHOLD_MS) {
+          logWarning(
+            "fs",
+            `stale metrics lock at ${lockPath} (age ${Date.now() - st.mtimeMs}ms); forcibly removing and retrying`,
+          );
+          try { unlinkSync(lockPath); } catch { /* already gone */ }
+          // Do NOT sleep after stale-lock eviction — retry the open
+          // immediately. The lock file was just removed; a short race window
+          // exists and sleeping here would unnecessarily delay recovery.
+          continue;
+        }
+      } catch { /* lock file disappeared between the failed open and stat — retry */ }
+      // Sleep between retries to yield to the OS and cap syscall rate.
+      // Uses Atomics.wait for a true blocking sleep (no CPU spin).
+      _lockSleepyRetries++;
+      syncSleep(LOCK_RETRY_INTERVAL_MS);
+    }
+  }
+  return false;
+}
+
+function releaseLock(lockPath: string): void {
+  try { unlinkSync(lockPath); } catch { /* ignore */ }
+}
+
+/**
+ * Save the ledger with cross-process merge semantics.
+ *
+ * Acquires a .lock sentinel file, reads the current on-disk ledger,
+ * merges worker units with existing peer units (worker's entry wins on
+ * type+id+startedAt conflict since it has the latest finishedAt),
+ * then writes atomically. This prevents parallel auto-mode workers from
+ * silently discarding each other's metrics entries.
+ *
+ * Falls back to a direct write (no merge) if the lock cannot be acquired
+ * within the timeout — better to potentially overwrite than to lose data
+ * entirely.
+ */
+function saveLedger(base: string, data: MetricsLedger): void {
+  const path = metricsPath(base);
+  const lockPath = `${path}.lock`;
+  const acquired = acquireLock(lockPath);
+  if (acquired) {
+    try {
+      // Read current on-disk state and merge with worker's in-memory units.
+      // Worker units take precedence on conflict (by finishedAt in deduplicateUnits).
+      const onDisk = loadJsonFileOrNull(path, isMetricsLedger);
+      if (onDisk && onDisk.units.length > 0) {
+        const merged = deduplicateUnits([...onDisk.units, ...data.units]);
+        saveJsonFile(path, { ...data, units: merged });
+      } else {
+        saveJsonFile(path, data);
+      }
+    } finally {
+      releaseLock(lockPath);
+    }
+  } else {
+    // Lock could not be acquired within the timeout. Fall back to a direct
+    // write (no cross-process merge) to avoid losing this worker's data
+    // entirely. A concurrent writer may overwrite us, but that is preferable
+    // to a torn write caused by two writers simultaneously executing the
+    // read-merge-write sequence without mutual exclusion.
+    logWarning("fs", "saveLedger: lock not acquired — falling back to direct write (no merge)");
+    saveJsonFile(path, data);
+  }
+}

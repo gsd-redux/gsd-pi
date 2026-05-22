@@ -1,0 +1,53 @@
+{
+  "name": "@gsd-build/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing GSD orchestration tools for compatible clients",
+  "license": "MIT",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd-build",
+    "name": "mcp-server"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-gsd/gsd-pi.git",
+    "directory": "packages/mcp-server"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "gsd-mcp-server": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test dist/mcp-server.test.js dist/remote-questions.test.js"
+  },
+  "dependencies": {
+    "@gsd-build/contracts": "^1.0.0",
+    "@gsd-build/rpc-client": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ]
+}

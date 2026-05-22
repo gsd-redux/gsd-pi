@@ -1,0 +1,529 @@
+// Project/App: GSD-2
+// File Purpose: Tests unit context composer rendering, budgets, and reassess-roadmap prompt integration.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import {
+  composeContextModeInstructions,
+  composeInlinedContext,
+  composeUnitContext,
+  manifestBudgetChars,
+  type ArtifactResolver,
+  type ExcerptResolver,
+} from "../unit-context-composer.ts";
+import type {
+  ArtifactKey,
+  BaseResolverContext,
+  ComputedArtifactRegistry,
+  UnitContextManifest,
+} from "../unit-context-manifest.ts";
+import { KNOWN_UNIT_TYPES, UNIT_MANIFESTS } from "../unit-context-manifest.ts";
+import {
+  buildExecuteTaskPrompt,
+  buildGateEvaluatePrompt,
+  buildReassessRoadmapPrompt,
+  buildWorkflowPreferencesPrompt,
+} from "../auto-prompts.ts";
+import { invalidateAllCaches } from "../cache.ts";
+import {
+  openDatabase,
+  closeDatabase,
+  insertGateRow,
+  insertMilestone,
+  upsertMilestonePlanning,
+  insertSlice,
+} from "../gsd-db.ts";
+
+// ─── Pure composer tests ──────────────────────────────────────────────────
+
+test("#4782 composer: returns empty string for unknown unit type", async () => {
+  const out = await composeInlinedContext("never-dispatched", async () => "body");
+  assert.strictEqual(out, "");
+});
+
+test("#4782 composer: walks the manifest's inline list in declared order", async () => {
+  // reassess-roadmap manifest keeps broad project docs out of inline context.
+  const calls: ArtifactKey[] = [];
+  const resolver: ArtifactResolver = async (key) => {
+    calls.push(key);
+    return `BODY:${key}`;
+  };
+  const out = await composeInlinedContext("reassess-roadmap", resolver);
+  assert.deepEqual(calls, [
+    "roadmap",
+    "slice-context",
+  ]);
+  // Output joins blocks with the "---" separator.
+  assert.match(out, /BODY:roadmap\n\n---\n\nBODY:slice-context/);
+});
+
+test("#4782 composer: null-returning resolvers are silently omitted", async () => {
+  const resolver: ArtifactResolver = async (key) => {
+    if (key === "slice-context" || key === "project") return null;
+    return `BODY:${key}`;
+  };
+  const out = await composeInlinedContext("reassess-roadmap", resolver);
+  // slice-context + project skipped — not in output, no empty blocks
+  assert.ok(!out.includes("BODY:slice-context"));
+  assert.ok(!out.includes("BODY:project"));
+  // Remaining keys still emitted in declared order
+  assert.strictEqual(out, "BODY:roadmap");
+});
+
+test("#4782 composer: empty-string resolvers are omitted (treated as no-op)", async () => {
+  const resolver: ArtifactResolver = async (key) => {
+    if (key === "slice-context") return "";
+    if (key === "slice-summary") return null;
+    return `BODY:${key}`;
+  };
+  const out = await composeInlinedContext("reassess-roadmap", resolver);
+  assert.ok(!out.includes("BODY:slice-context"));
+  assert.ok(!out.includes("BODY:slice-summary"));
+  // Must not leave double-separators when blocks are skipped
+  assert.ok(!out.includes("---\n\n---"));
+});
+
+test("#4782 composer: resolver errors surface to caller", async () => {
+  const resolver: ArtifactResolver = async () => {
+    throw new Error("resolver boom");
+  };
+  await assert.rejects(
+    () => composeInlinedContext("reassess-roadmap", resolver),
+    /resolver boom/,
+  );
+});
+
+test("#4782 composer: manifestBudgetChars returns declared budget", () => {
+  const small = manifestBudgetChars("reassess-roadmap");
+  assert.ok(small !== null && small > 0);
+  assert.strictEqual(manifestBudgetChars("never-dispatched"), null);
+});
+
+test("Context Mode composer: disabled, unknown, and none modes return empty string", () => {
+  assert.strictEqual(
+    composeContextModeInstructions("execute-task", { enabled: false, renderMode: "standalone" }),
+    "",
+  );
+  assert.strictEqual(
+    composeContextModeInstructions("never-dispatched", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+  assert.strictEqual(
+    composeContextModeInstructions("workflow-preferences", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+});
+
+test("Context Mode composer: standalone output starts with heading and includes required tools", () => {
+  const out = composeContextModeInstructions("execute-task", { enabled: true, renderMode: "standalone" });
+  assert.ok(out.startsWith("## Context Mode"));
+  assert.match(out, /execution lane/i);
+  assert.match(out, /`gsd_exec`/);
+  assert.match(out, /builds, tests, and diagnostics/);
+  assert.match(out, /`gsd_exec_search`/);
+  assert.match(out, /before reruns/);
+  assert.match(out, /`gsd_resume`/);
+  assert.match(out, /after compaction or resume/);
+});
+
+test("Context Mode composer: nested output is compact single sentence", () => {
+  const out = composeContextModeInstructions("gate-evaluate", { enabled: true, renderMode: "nested" });
+  assert.ok(!out.startsWith("## Context Mode"));
+  assert.match(out, /^Context Mode \(verification lane\): /);
+  assert.strictEqual(out.split(/\n/).length, 1);
+  assert.match(out, /`gsd_exec`/);
+  assert.match(out, /`gsd_exec_search`/);
+  assert.match(out, /`gsd_resume`/);
+  assert.ok(out.length < 240, `nested guidance should stay compact, got ${out.length} chars`);
+});
+
+const laneLabelByMode: Record<string, string> = {
+  interview: "interview",
+  research: "research",
+  planning: "planning",
+  execution: "execution",
+  verification: "verification",
+  orchestration: "orchestration",
+  docs: "documentation",
+  triage: "triage",
+};
+
+test("Context Mode composer: every known eligible unit renders its configured lane and required tools", () => {
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    const manifest = UNIT_MANIFESTS[unitType];
+    assert.ok(manifest, `missing manifest for ${unitType}`);
+    const out = composeContextModeInstructions(unitType, { enabled: true, renderMode: "standalone" });
+    if (manifest.contextMode === "none") {
+      assert.strictEqual(out, "", `${unitType} should not render Context Mode`);
+      continue;
+    }
+    assert.ok(out.startsWith("## Context Mode"), `${unitType} should render standalone Context Mode heading`);
+    assert.match(out, new RegExp(`Lane: \\*\\*${laneLabelByMode[manifest.contextMode]} lane\\*\\*\\.`, "i"));
+    assert.match(out, /`gsd_exec`/, `${unitType} should mention gsd_exec`);
+    assert.match(out, /`gsd_exec_search`/, `${unitType} should mention gsd_exec_search`);
+    assert.match(out, /`gsd_resume`/, `${unitType} should mention gsd_resume`);
+  }
+});
+
+test("Context Mode composer: workflow-preferences and research-decision render no Context Mode block", () => {
+  assert.strictEqual(
+    composeContextModeInstructions("workflow-preferences", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+  assert.strictEqual(
+    composeContextModeInstructions("research-decision", { enabled: true, renderMode: "standalone" }),
+    "",
+  );
+});
+
+// ─── Integration: migrated buildReassessRoadmapPrompt ─────────────────────
+
+function makeFixtureBase(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-composer-pilot-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+  return base;
+}
+
+function cleanup(base: string): void {
+  try { closeDatabase(); } catch { /* noop */ }
+  invalidateAllCaches();
+  rmSync(base, { recursive: true, force: true });
+}
+
+function seed(base: string, mid: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: mid, title: "Test", status: "active", depends_on: [] });
+  upsertMilestonePlanning(mid, {
+    title: "Test",
+    status: "active",
+    vision: "Ship it",
+    successCriteria: ["It ships"],
+    keyRisks: [],
+    proofStrategy: [],
+    verificationContract: "",
+    verificationIntegration: "",
+    verificationOperational: "",
+    verificationUat: "",
+    definitionOfDone: [],
+    requirementCoverage: "",
+    boundaryMapMarkdown: "",
+  });
+  insertSlice({
+    id: "S01",
+    milestoneId: mid,
+    title: "First",
+    status: "complete",
+    risk: "low",
+    depends: [],
+    demo: "",
+    sequence: 1,
+  });
+}
+
+function writeArtifacts(base: string): void {
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+    "# M001\n## Slices\n- [x] **S01: First** `risk:low` `depends:[]`\n",
+  );
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md"),
+    "---\nid: S01\nparent: M001\n---\n# S01 Summary\n**One-liner**\n\n## What Happened\nDone.\n",
+  );
+}
+
+test("#4782 phase 2: buildReassessRoadmapPrompt emits composer-shaped context with manifest-declared artifacts", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+
+  const prompt = await buildReassessRoadmapPrompt("M001", "Test", "S01", base);
+
+  // Context block wrapper from capPreamble
+  assert.match(prompt, /## Inlined Context \(preloaded — do not re-read these files\)/);
+
+  // Roadmap inlined first (manifest order)
+  assert.match(prompt, /### Current Roadmap/);
+  assert.match(prompt, /S01: First/);
+
+  // Slice summary present
+  assert.match(prompt, /### S01 Summary \(excerpt\)/);
+  assert.match(prompt, /One-liner/);
+  assert.ok(!prompt.includes("## What Happened\nDone."), "reassess prompt should not inline full completed-slice narrative");
+
+  // Broad project docs are advertised on demand instead of fully inlined.
+  assert.match(prompt, /### On-demand Planning Context/);
+  assert.match(prompt, /\.gsd\/PROJECT\.md/);
+  assert.match(prompt, /\.gsd\/REQUIREMENTS\.md/);
+  assert.match(prompt, /\.gsd\/DECISIONS\.md/);
+
+  // Slice context is optional and not present in this fixture — must not
+  // leave a stray empty section
+  assert.ok(!prompt.includes("Slice Context (from discussion)"));
+});
+
+test("Context Mode resume injection: eligible prompts include one bounded snapshot block above inlined context", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+  writeFileSync(
+    join(base, ".gsd", "last-snapshot.md"),
+    "# GSD context snapshot\n\nResume evidence.\n",
+    "utf-8",
+  );
+
+  const prompt = await buildReassessRoadmapPrompt("M001", "Test", "S01", base);
+
+  assert.equal(prompt.match(/## Context Snapshot/g)?.length, 1);
+  assert.match(prompt, /Source: `\.gsd\/last-snapshot\.md`/);
+  assert.match(prompt, /Resume evidence/);
+  assert.ok(prompt.indexOf("## Context Mode") < prompt.indexOf("## Context Snapshot"));
+  assert.ok(prompt.indexOf("## Context Snapshot") < prompt.indexOf("## Inlined Context"));
+});
+
+test("Context Mode resume injection: missing snapshot does not add an empty block", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+
+  const prompt = await buildReassessRoadmapPrompt("M001", "Test", "S01", base);
+
+  assert.match(prompt, /## Context Mode/);
+  assert.doesNotMatch(prompt, /## Context Snapshot/);
+});
+
+test("Context Mode resume injection: disabled mode suppresses guidance and snapshot reads", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), "---\ncontext_mode:\n  enabled: false\n---\n", "utf-8");
+  writeFileSync(join(base, ".gsd", "last-snapshot.md"), "# GSD context snapshot\n\nDo not inject.\n", "utf-8");
+
+  const prompt = await buildReassessRoadmapPrompt("M001", "Test", "S01", base);
+
+  assert.doesNotMatch(prompt, /## Context Mode/);
+  assert.doesNotMatch(prompt, /## Context Snapshot/);
+  assert.doesNotMatch(prompt, /Do not inject/);
+});
+
+test("Context Mode resume injection: none-mode units do not inject snapshots", async () => {
+  const base = makeFixtureBase();
+  try {
+    writeFileSync(join(base, ".gsd", "last-snapshot.md"), "# GSD context snapshot\n\nNo lane.\n", "utf-8");
+    const prompt = await buildWorkflowPreferencesPrompt(base);
+    assert.doesNotMatch(prompt, /## Context Mode/);
+    assert.doesNotMatch(prompt, /## Context Snapshot/);
+    assert.doesNotMatch(prompt, /No lane/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("Context Mode prompt suppression: disabled inlined, phase-anchor, and nested prompts omit Context Mode", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  invalidateAllCaches();
+
+  seed(base, "M001");
+  writeArtifacts(base);
+  insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", scope: "slice" });
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), "---\ncontext_mode:\n  enabled: false\n---\n", "utf-8");
+  writeFileSync(join(base, ".gsd", "last-snapshot.md"), "# GSD context snapshot\n\nDo not inject.\n", "utf-8");
+
+  const inlinedPrompt = await buildReassessRoadmapPrompt("M001", "Test", "S01", base);
+  assert.doesNotMatch(inlinedPrompt, /## Context Mode|Context Mode \(|## Context Snapshot/);
+
+  const phaseAnchorPrompt = await buildExecuteTaskPrompt("M001", "S01", "First", "T01", "Task", base);
+  assert.doesNotMatch(phaseAnchorPrompt, /## Context Mode|Context Mode \(|## Context Snapshot/);
+
+  const nestedPrompt = await buildGateEvaluatePrompt("M001", "Test", "S01", "First", base);
+  assert.match(nestedPrompt, /Use this as the prompt for a `subagent` call/);
+  assert.doesNotMatch(nestedPrompt, /## Context Mode|Context Mode \(|## Context Snapshot/);
+});
+
+// ─── v2 surface (#4924) ───────────────────────────────────────────────────
+
+const fakeBase: BaseResolverContext = {
+  unitType: "reassess-roadmap",
+  basePath: process.env.GSD_TEST_WORKSPACE_ROOT ?? process.cwd(),
+  milestoneId: "M001",
+  sliceId: "S01",
+};
+
+test("#4924 v2 composer: returns empty sections for unknown unit type", async () => {
+  const out = await composeUnitContext("never-dispatched", { base: fakeBase });
+  assert.deepEqual(out, { prepend: "", inline: "" });
+});
+
+test("#4924 v2 composer: omitting resolveArtifact skips inline keys without erroring", async () => {
+  const out = await composeUnitContext("reassess-roadmap", { base: fakeBase });
+  assert.strictEqual(out.inline, "");
+  assert.strictEqual(out.prepend, "");
+});
+
+test("#4924 v2 composer: walks inline + excerpt + computed sections in declared order", async () => {
+  // Run-uat now keeps the UAT body inline and moves slice summary to excerpt
+  // context, so verify both resolver lanes preserve manifest order.
+  const calls: string[] = [];
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    calls.push(`art:${key}`);
+    return `BODY:${key}`;
+  };
+  const resolveExcerpt: ExcerptResolver = async (key) => {
+    calls.push(`excerpt:${key}`);
+    return `EXCERPT:${key}`;
+  };
+  const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" }, resolveArtifact, resolveExcerpt });
+  assert.deepEqual(calls, ["art:slice-uat", "excerpt:slice-summary"]);
+  assert.match(out.inline, /BODY:slice-uat\n\n---\n\nEXCERPT:slice-summary/);
+});
+
+test("#4924 v2 composer: excerpt section calls resolveExcerpt for declared keys", async () => {
+  // complete-milestone declares slice-summary as excerpt — perfect target.
+  const inlineCalls: ArtifactKey[] = [];
+  const excerptCalls: ArtifactKey[] = [];
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    inlineCalls.push(key);
+    return `INLINE:${key}`;
+  };
+  const resolveExcerpt: ExcerptResolver = async (key) => {
+    excerptCalls.push(key);
+    return `EXCERPT:${key}`;
+  };
+  const out = await composeUnitContext("complete-milestone", {
+    base: { ...fakeBase, unitType: "complete-milestone" },
+    resolveArtifact,
+    resolveExcerpt,
+  });
+  assert.ok(excerptCalls.includes("slice-summary"));
+  // Excerpt body appears in the composed inline section, after inline keys.
+  assert.match(out.inline, /EXCERPT:slice-summary/);
+  // The inline keys come first per the manifest order.
+  const cmManifest = UNIT_MANIFESTS["complete-milestone"];
+  const firstInlineKey = cmManifest.artifacts.inline[0]!;
+  const firstInlineIdx = out.inline.indexOf(`INLINE:${firstInlineKey}`);
+  const excerptIdx = out.inline.indexOf("EXCERPT:slice-summary");
+  assert.ok(firstInlineIdx >= 0 && excerptIdx > firstInlineIdx, "inline body should precede excerpt body");
+});
+
+test("#4924 v2 composer: prepend block is separate from inline section", async () => {
+  // No production manifest declares a prepend block yet (those land with
+  // each batched migration). Drive the composer through a synthetic
+  // manifest by patching UNIT_MANIFESTS just for this test.
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner"] as never[], // computed id not in production registry — typed via cast for the test
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    const computed = {
+      "test-banner": {
+        build: async (_inputs: never, base: BaseResolverContext) => `BANNER for ${base.unitType}`,
+        inputs: undefined as never,
+      },
+    } as unknown as ComputedArtifactRegistry;
+    const out = await composeUnitContext("run-uat", {
+      base: { ...fakeBase, unitType: "run-uat" },
+      computed,
+    });
+    assert.strictEqual(out.prepend, "BANNER for run-uat");
+    assert.strictEqual(out.inline, "");
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: missing computed registry entry is skipped silently", async () => {
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner"] as never[],
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    // No `computed` registry supplied — declared id should be skipped, not throw.
+    const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" } });
+    assert.strictEqual(out.prepend, "");
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: computed builder returning null omits the section (no empty separator)", async () => {
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner-a", "test-banner-b"] as never[],
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    const computed = {
+      "test-banner-a": { build: async () => null, inputs: undefined as never },
+      "test-banner-b": { build: async () => "B", inputs: undefined as never },
+    } as unknown as ComputedArtifactRegistry;
+    const out = await composeUnitContext("run-uat", { base: { ...fakeBase, unitType: "run-uat" }, computed });
+    assert.strictEqual(out.prepend, "B");
+    assert.ok(!out.prepend.includes("---"));
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});
+
+test("#4924 v2 composer: backward-compat — composeInlinedContext still works for v1 callers", async () => {
+  const out = await composeInlinedContext("run-uat", async (key) => `BODY:${key}`);
+  assert.strictEqual(out, "BODY:slice-uat");
+});
+
+test("#4926 review: computed builders see normalized base.unitType matching the resolved manifest", async () => {
+  // Caller passes one unitType to composeUnitContext but a different (stale)
+  // value in opts.base. Composer must normalize so builders observe the
+  // unitType the manifest was resolved against — preventing manifests and
+  // computed context from drifting.
+  const original = UNIT_MANIFESTS["run-uat"];
+  type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+  const patched: UnitContextManifest = {
+    ...original,
+    prepend: ["test-banner"] as never[],
+  };
+  (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = patched;
+  try {
+    let observedUnitType: string | undefined;
+    const computed = {
+      "test-banner": {
+        build: async (_inputs: never, base: BaseResolverContext) => {
+          observedUnitType = base.unitType;
+          return `BANNER for ${base.unitType}`;
+        },
+        inputs: undefined as never,
+      },
+    } as unknown as ComputedArtifactRegistry;
+    const out = await composeUnitContext("run-uat", {
+      // Deliberately mismatched: function arg "run-uat" vs. base.unitType "stale-other-unit".
+      base: { ...fakeBase, unitType: "stale-other-unit" },
+      computed,
+    });
+    assert.strictEqual(observedUnitType, "run-uat", "builder must see the unitType the manifest was resolved against");
+    assert.strictEqual(out.prepend, "BANNER for run-uat");
+  } finally {
+    (UNIT_MANIFESTS as Mutable<typeof UNIT_MANIFESTS>)["run-uat"] = original;
+  }
+});

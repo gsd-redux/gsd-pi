@@ -1,0 +1,266 @@
+// Project/App: GSD-2
+// File Purpose: Interactive terminal footer renderer for workspace, model, usage, context, and extension status.
+
+import { type Component, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
+import type { AgentSession } from "../../../core/agent-session.js";
+import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
+import { theme } from "../theme/theme.js";
+import { providerAuthBadge, providerDisplayName } from "./model-selector.js";
+import { renderFooterStrip } from "./transcript-design.js";
+
+/**
+ * Sanitize text for display in a single-line status.
+ * Removes newlines, tabs, carriage returns, and other control characters.
+ */
+function sanitizeStatusText(text: string): string {
+	// Replace newlines, tabs, carriage returns with space, then collapse multiple spaces
+	return text
+		.replace(/[\r\n\t]/g, " ")
+		.replace(/ +/g, " ")
+		.trim();
+}
+
+function truncateFooterPath(text: string, width: number): string {
+	if (visibleWidth(text) <= width) return text;
+	const tailMatch = text.match(/( \([^)]+\)(?: • .*)?)$/);
+	if (!tailMatch) return truncateToWidth(text, width, "...");
+	const tail = tailMatch[1];
+	const tailWidth = visibleWidth(tail);
+	if (tailWidth >= width - 4) return truncateToWidth(text, width, "...");
+	const head = text.slice(0, -tail.length);
+	return `${truncateToWidth(head, width - tailWidth, "...")}${tail}`;
+}
+
+/**
+ * Format token counts (similar to web-ui)
+ */
+function formatTokens(count: number): string {
+	if (count < 1000) return count.toString();
+	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1000000) return `${Math.round(count / 1000)}k`;
+	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
+	return `${Math.round(count / 1000000)}M`;
+}
+
+/**
+ * Format a cost value for compact display.
+ * Uses fewer decimal places for larger amounts.
+ * @internal Exported for testing only.
+ */
+export function formatPromptCost(cost: number): string {
+	if (cost < 0.001) return `$${cost.toFixed(4)}`;
+	if (cost < 0.01) return `$${cost.toFixed(3)}`;
+	if (cost < 1) return `$${cost.toFixed(3)}`;
+	return `$${cost.toFixed(2)}`;
+}
+
+/**
+ * Footer component that shows pwd, token stats, and context usage.
+ * Computes token/context stats from session, gets git branch and extension statuses from provider.
+ */
+export class FooterComponent implements Component {
+	private autoCompactEnabled = true;
+
+	constructor(
+		private session: AgentSession,
+		private footerData: ReadonlyFooterDataProvider,
+	) {}
+
+	setAutoCompactEnabled(enabled: boolean): void {
+		this.autoCompactEnabled = enabled;
+	}
+
+	/**
+	 * No-op: git branch caching now handled by provider.
+	 * Kept for compatibility with existing call sites in interactive-mode.
+	 */
+	invalidate(): void {
+		// No-op: git branch is cached/invalidated by provider
+	}
+
+	/**
+	 * Clean up resources.
+	 * Git watcher cleanup now handled by provider.
+	 */
+	dispose(): void {
+		// Git watcher cleanup handled by provider
+	}
+
+	render(width: number): string[] {
+		const state = this.session.state;
+
+		const usageTotals = this.session.sessionManager.getUsageTotals();
+		const totalInput = usageTotals.input;
+		const totalOutput = usageTotals.output;
+		const totalCacheRead = usageTotals.cacheRead;
+		const totalCacheWrite = usageTotals.cacheWrite;
+		const totalCost = usageTotals.cost;
+
+		// Use activeInferenceModel during streaming to show the model actually
+		// being used, not the configured model which may have been switched mid-turn.
+		const displayModel = state.activeInferenceModel ?? state.model;
+
+		// Calculate context usage from session (handles compaction correctly).
+		// After compaction, tokens are unknown until the next LLM response.
+		const contextUsage = this.session.getContextUsage();
+		const contextWindow = contextUsage?.contextWindow ?? displayModel?.contextWindow ?? 0;
+		const contextPercentValue = contextUsage?.percent ?? 0;
+		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
+
+		// Replace home directory with ~
+		let pwd = process.cwd();
+		const home = process.env.HOME || process.env.USERPROFILE;
+		if (home && pwd.startsWith(home)) {
+			pwd = `~${pwd.slice(home.length)}`;
+		}
+
+		// Add git branch if available
+		const branch = this.footerData.getGitBranch();
+		if (branch) {
+			pwd = `${pwd} (${branch})`;
+		}
+
+		// Add session name if set
+		const sessionName = this.session.sessionManager.getSessionName();
+		if (sessionName) {
+			pwd = `${pwd} • ${sessionName}`;
+		}
+
+		// Build stats line as separate groups joined by a dim middle-dot separator
+		const sep = ` ${theme.fg("dim", "\u00B7")} `;
+
+		// Group 1: total tokens.
+		const tokenGroup: string[] = [];
+		const totalTokens = totalInput + totalOutput + totalCacheRead + totalCacheWrite;
+		if (totalTokens > 0) tokenGroup.push(formatTokens(totalTokens));
+
+		// Group 2: cache efficiency — cacheRead / all input-side tokens.
+		// Collapses the old cr/cw pair into a single "how much was served
+		// from cache" signal. cr/cw breakdown moved to `/stats`.
+		const cacheGroup: string[] = [];
+		const inputSide = totalInput + totalCacheRead + totalCacheWrite;
+		if (totalCacheRead > 0 && inputSide > 0) {
+			const cachedPct = Math.round((totalCacheRead / inputSide) * 100);
+			cacheGroup.push(`${cachedPct}% cached`);
+		}
+
+		// Group 3: cost
+		const costGroup: string[] = [];
+		const usingSubscription = displayModel ? this.session.modelRegistry.isUsingOAuth(displayModel) : false;
+		if (totalCost || usingSubscription) {
+			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			costGroup.push(costStr);
+		}
+
+		// Per-prompt cost annotation (opt-in via show_token_cost preference, #1515)
+		if (process.env.GSD_SHOW_TOKEN_COST === "1") {
+			const lastTurnCost = this.session.getLastTurnCost();
+			if (lastTurnCost > 0) {
+				costGroup.push(`(last: ${formatPromptCost(lastTurnCost)})`);
+			}
+		}
+
+		// Group 4: context bar + percentage (mirrors /gsd auto dashboard style).
+		// Bar colors track the same thresholds as the percent text.
+		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
+		const barColor: "error" | "warning" | "success" =
+			contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "success";
+		const BAR_WIDTH = 8;
+		const filled = contextUsage?.percent !== null
+			? Math.max(0, Math.min(BAR_WIDTH, Math.round((contextPercentValue / 100) * BAR_WIDTH)))
+			: 0;
+		const bar =
+			theme.fg(barColor, "█".repeat(filled)) +
+			theme.fg("dim", "░".repeat(Math.max(0, BAR_WIDTH - filled)));
+		const pctText = contextPercent === "?" ? "?" : `${contextPercent}%`;
+		const suffix = `/${formatTokens(contextWindow)}${autoIndicator}`;
+		const colorizedPct =
+			contextPercentValue > 90
+				? theme.fg("error", pctText)
+				: contextPercentValue > 70
+					? theme.fg("warning", pctText)
+					: pctText;
+		const contextPercentStr = `${bar} ${colorizedPct}${suffix}`;
+
+		// Assemble groups: items within a group are space-separated,
+		// groups are separated by a dim middle-dot
+		const groups: string[] = [];
+		if (tokenGroup.length > 0) groups.push(tokenGroup.join(" "));
+		if (cacheGroup.length > 0) groups.push(cacheGroup.join(" "));
+		if (costGroup.length > 0) groups.push(costGroup.join(" "));
+		groups.push(contextPercentStr);
+
+		let statsLeft = groups.join(sep);
+
+		// Add model name on the right side, plus thinking level if model supports it
+		const modelName = displayModel?.id || "no-model";
+
+		let statsLeftWidth = visibleWidth(statsLeft);
+
+		// If statsLeft is too wide, truncate it
+		if (statsLeftWidth > width) {
+			statsLeft = truncateToWidth(statsLeft, width, "...");
+			statsLeftWidth = visibleWidth(statsLeft);
+		}
+
+		// Calculate available space for padding (minimum 2 spaces between stats and model)
+		const minPadding = 2;
+
+		// Add thinking level indicator if model supports reasoning
+		let rightSideWithoutProvider = modelName;
+		if (displayModel?.reasoning) {
+			const thinkingLevel = state.thinkingLevel || "off";
+			rightSideWithoutProvider =
+				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
+		}
+
+		// Prepend the provider in parentheses if there are multiple providers and there's enough room.
+		// Include the auth mode so users can tell at a glance whether the active model is
+		// API-key-backed, OAuth-backed, or delegated to a third-party CLI.
+		let rightSide = rightSideWithoutProvider;
+		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
+			const authMode = this.session.modelRegistry.getProviderAuthMode(displayModel.provider);
+			const authLabel = providerAuthBadge(authMode);
+			const providerLabel = providerDisplayName(displayModel.provider);
+			const parenthetical = authLabel ? `${providerLabel} · ${authLabel}` : providerLabel;
+			rightSide = `(${parenthetical}) ${rightSideWithoutProvider}`;
+			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+				// Too wide: drop the auth suffix first, then fall back to no parenthetical.
+				rightSide = `(${providerLabel}) ${rightSideWithoutProvider}`;
+				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+					rightSide = rightSideWithoutProvider;
+				}
+			}
+		}
+
+		// Extension statuses right-aligned on the pwd line (sorted by key).
+		// Keeps the footer compact by avoiding a dedicated row when the content
+		// fits alongside pwd. Falls back to pwd-only if the combined line would
+		// exceed width.
+		const extensionStatuses = this.footerData.getExtensionStatuses();
+		const extStatusText =
+			extensionStatuses.size > 0
+				? Array.from(extensionStatuses.entries())
+						.sort(([a], [b]) => a.localeCompare(b))
+						.map(([, text]) => sanitizeStatusText(text))
+						.join(" ")
+				: "";
+
+		const footerRight = [rightSide, extStatusText].filter(Boolean).join(" ");
+		const gsdSegment = theme.fg("accent", "● GSD");
+		const dimStatsLeft = theme.fg("dim", statsLeft);
+		const innerWidth = Math.max(1, width - 2);
+		const rightWidth = visibleWidth(footerRight);
+		const leftBudget = footerRight ? Math.max(1, innerWidth - rightWidth - 3) : innerWidth;
+		const sepWidth = visibleWidth("  │  ");
+		const pwdBudget = Math.max(1, leftBudget - visibleWidth(gsdSegment) - visibleWidth(dimStatsLeft) - sepWidth * 2);
+		const pwdSegment = theme.fg("dim", truncateFooterPath(pwd, pwdBudget));
+
+		const leftSegments = [
+			gsdSegment,
+			pwdSegment,
+			dimStatsLeft,
+		];
+		return renderFooterStrip(leftSegments, footerRight, width);
+	}
+}

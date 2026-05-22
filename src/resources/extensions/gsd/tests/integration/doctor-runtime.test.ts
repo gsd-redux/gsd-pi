@@ -1,0 +1,549 @@
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+/**
+ * doctor-runtime.test.ts — Tests for doctor runtime health checks.
+ *
+ * Tests detection and auto-fix of:
+ *   stale_crash_lock, stranded_lock_directory, orphaned_completed_units,
+ *   stale_hook_state, activity_log_bloat, state_file_missing,
+ *   state_file_stale, gitignore_missing_patterns
+ */
+
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execSync } from "node:child_process";
+
+import { runGSDDoctor } from "../../doctor.ts";
+function run(cmd: string, cwd: string): string {
+  return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+}
+
+/** Create a minimal .gsd project with a milestone for STATE.md tests. */
+function createMinimalProject(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-runtime-test-")));
+  const msDir = join(dir, ".gsd", "milestones", "M001");
+  mkdirSync(msDir, { recursive: true });
+  writeFileSync(join(msDir, "M001-ROADMAP.md"), `# M001: Test
+
+## Slices
+- [ ] **S01: Demo** \`risk:low\` \`depends:[]\`
+  > After this: done
+`);
+  const sDir = join(msDir, "slices", "S01", "tasks");
+  mkdirSync(sDir, { recursive: true });
+  writeFileSync(join(msDir, "slices", "S01", "S01-PLAN.md"), `# S01: Demo
+
+**Goal:** Demo
+
+## Tasks
+- [ ] **T01: Do thing** \`est:10m\`
+`);
+  return dir;
+}
+
+/** Create a minimal git repo with .gsd for gitignore tests. */
+function createGitProject(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-runtime-git-")));
+  run("git init", dir);
+  run("git config user.email test@test.com", dir);
+  run("git config user.name Test", dir);
+  writeFileSync(join(dir, "README.md"), "# test\n");
+  run("git add .", dir);
+  run("git commit -m init", dir);
+  run("git branch -M main", dir);
+  return dir;
+}
+
+describe('doctor-runtime', async () => {
+  const cleanups: string[] = [];
+
+  try {
+    // ─── Test 1: Stale crash lock detection & fix ─────────────────────
+    test('stale_crash_lock', async (t) => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Phase C pt 2: stale lock state lives in the workers table now.
+      // Insert a fake stale worker row directly (PID 9999999 is dead).
+      const { openDatabase, _getAdapter } = await import("../../gsd-db.ts");
+      const gsdDb = await import("../../gsd-db.ts");
+      t.after(() => { gsdDb.closeDatabase(); });
+      const { randomUUID } = await import("node:crypto");
+      openDatabase(join(dir, ".gsd", "gsd.db"));
+      const db = _getAdapter()!;
+      db.prepare(
+        `INSERT INTO workers (worker_id, host, pid, started_at, version, last_heartbeat_at, status, project_root_realpath)
+         VALUES (:w, 'test-host', 9999999, '2026-03-10T00:00:00Z', 'test', '1970-01-01T00:00:00.000Z', 'active', :root)`,
+      ).run({ ":w": `test-fake-${randomUUID().slice(0, 8)}`, ":root": dir });
+      // Leave DB open — runGSDDoctor's readCrashLock relies on the
+      // currently-open DB connection (it does not open one of its own).
+
+      const detect = await runGSDDoctor(dir);
+      const lockIssues = detect.issues.filter(i => i.code === "stale_crash_lock");
+      assert.ok(lockIssues.length > 0, "detects stale crash lock");
+      assert.ok(lockIssues[0]?.message.includes("9999999"), "message includes PID");
+      assert.ok(lockIssues[0]?.fixable === true, "stale lock is fixable");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(
+        fixed.fixesApplied.some(f => f.includes("cleared stale")),
+        `fix clears stale lock (got: ${fixed.fixesApplied.join(", ")})`,
+      );
+
+      // Close DB so subsequent tests in this file (which expect a clean
+      // state) don't see this test's connection lingering.
+      const { closeDatabase } = await import("../../gsd-db.ts");
+      closeDatabase();
+    });
+
+    // ─── Test 2: No false positive for missing lock ───────────────────
+    test('stale_crash_lock — no false positive', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      const detect = await runGSDDoctor(dir);
+      const lockIssues = detect.issues.filter(i => i.code === "stale_crash_lock");
+      assert.deepStrictEqual(lockIssues.length, 0, "no stale lock issue when no lock file exists");
+    });
+
+    // ─── Test 3: Stale hook state detection & fix ─────────────────────
+    test('stale_hook_state', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Write hook state with active cycle counts and no auto.lock (no running session)
+      const hookState = {
+        cycleCounts: {
+          "code-review/execute-task/M001/S01/T01": 2,
+          "lint-check/execute-task/M001/S01/T02": 1,
+        },
+        savedAt: "2026-03-10T00:00:00Z",
+      };
+      writeFileSync(join(dir, ".gsd", "hook-state.json"), JSON.stringify(hookState, null, 2));
+
+      const detect = await runGSDDoctor(dir);
+      const hookIssues = detect.issues.filter(i => i.code === "stale_hook_state");
+      assert.ok(hookIssues.length > 0, "detects stale hook state");
+      assert.ok(hookIssues[0]?.message.includes("2 residual cycle count"), "message includes count");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(fixed.fixesApplied.some(f => f.includes("cleared stale hook-state.json")), "fix clears hook state");
+
+      // Verify the file was cleaned
+      const content = JSON.parse(readFileSync(join(dir, ".gsd", "hook-state.json"), "utf-8"));
+      assert.deepStrictEqual(Object.keys(content.cycleCounts).length, 0, "hook state cycle counts cleared");
+    });
+
+    // ─── Test 3b: Exhausted run-uat retry counter detection & fix ──────
+    test('uat_retry_exhausted', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      const runtimeDir = join(dir, ".gsd", "runtime");
+      mkdirSync(runtimeDir, { recursive: true });
+      const counterPath = join(runtimeDir, "uat-count-M001-S01.json");
+      writeFileSync(counterPath, JSON.stringify({ count: 7, updatedAt: "2026-04-30T00:00:00.000Z" }));
+
+      const detect = await runGSDDoctor(dir);
+      const uatIssues = detect.issues.filter(i => i.code === "uat_retry_exhausted");
+      assert.ok(uatIssues.length > 0, "detects exhausted UAT retry counter");
+      assert.equal(uatIssues[0]?.unitId, "M001/S01", "issue is scoped to the stuck slice");
+      assert.ok(uatIssues[0]?.fixable === true, "exhausted UAT counter is fixable");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(
+        fixed.fixesApplied.some(f => f.includes("reset exhausted run-uat retry counter for M001/S01")),
+        "fix resets the UAT retry counter",
+      );
+      assert.ok(!existsSync(counterPath), "UAT retry counter removed after fix");
+    });
+
+    test('uat_retry_exhausted — no issue when ASSESSMENT has verdict', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      const runtimeDir = join(dir, ".gsd", "runtime");
+      mkdirSync(runtimeDir, { recursive: true });
+      writeFileSync(join(runtimeDir, "uat-count-M001-S01.json"), JSON.stringify({ count: 7 }));
+
+      const assessmentPath = join(dir, ".gsd", "milestones", "M001", "slices", "S01", "S01-ASSESSMENT.md");
+      writeFileSync(assessmentPath, "---\nverdict: PASS\n---\n# UAT Result\n");
+
+      const detect = await runGSDDoctor(dir);
+      const uatIssues = detect.issues.filter(i => i.code === "uat_retry_exhausted");
+      assert.deepStrictEqual(uatIssues.length, 0, "does not flag stale counter when ASSESSMENT already has a verdict");
+    });
+
+    // ─── Test 4: Activity log bloat detection ─────────────────────────
+    test('activity_log_bloat', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Create an activity dir with > 500 files
+      const activityDir = join(dir, ".gsd", "activity");
+      mkdirSync(activityDir, { recursive: true });
+      for (let i = 0; i < 510; i++) {
+        writeFileSync(join(activityDir, `${String(i).padStart(3, "0")}-execute-task-M001-S01-T01.jsonl`), `{"test":${i}}\n`);
+      }
+
+      const detect = await runGSDDoctor(dir);
+      const bloatIssues = detect.issues.filter(i => i.code === "activity_log_bloat");
+      assert.ok(bloatIssues.length > 0, "detects activity log bloat");
+      assert.ok(bloatIssues[0]?.message.includes("510 files"), "message includes file count");
+    });
+
+    // ─── Test 5: STATE.md missing detection & fix ─────────────────────
+    test('state_file_missing', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // No STATE.md exists by default in our minimal setup
+      const stateFilePath = join(dir, ".gsd", "STATE.md");
+      assert.ok(!existsSync(stateFilePath), "STATE.md does not exist initially");
+
+      const detect = await runGSDDoctor(dir);
+      const stateIssues = detect.issues.filter(i => i.code === "state_file_missing");
+      assert.ok(stateIssues.length > 0, "detects missing STATE.md");
+      assert.ok(stateIssues[0]?.fixable === true, "missing STATE.md is fixable");
+      assert.deepStrictEqual(stateIssues[0]?.severity, "warning", "missing STATE.md is a warning (derived file)");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(fixed.fixesApplied.some(f => f.includes("created STATE.md")), "fix creates STATE.md");
+      assert.ok(existsSync(stateFilePath), "STATE.md exists after fix");
+
+      // Verify content has expected structure
+      const content = readFileSync(stateFilePath, "utf-8");
+      assert.ok(content.includes("# GSD State"), "STATE.md has header");
+      assert.ok(content.includes("M001"), "STATE.md references milestone");
+    });
+
+    // ─── Test 6: STATE.md stale detection & fix ───────────────────────
+    test('state_file_stale', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Write a STATE.md with wrong phase/milestone info
+      const stateFilePath = join(dir, ".gsd", "STATE.md");
+      writeFileSync(stateFilePath, `# GSD State
+
+**Active Milestone:** None
+**Active Slice:** None
+**Phase:** idle
+
+## Milestone Registry
+
+## Recent Decisions
+- None recorded
+
+## Blockers
+- None
+
+## Next Action
+None
+`);
+
+      const detect = await runGSDDoctor(dir);
+      const staleIssues = detect.issues.filter(i => i.code === "state_file_stale");
+      assert.ok(staleIssues.length > 0, "detects stale STATE.md");
+      assert.ok(staleIssues[0]?.message.includes("idle"), "message references old phase");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(fixed.fixesApplied.some(f => f.includes("rebuilt STATE.md")), "fix rebuilds STATE.md");
+
+      // Verify updated content matches derived state
+      const content = readFileSync(stateFilePath, "utf-8");
+      assert.ok(content.includes("M001"), "rebuilt STATE.md references milestone");
+    });
+
+    // ─── Test 7: Gitignore missing patterns detection & fix ───────────
+    if (process.platform !== "win32") {
+    test('gitignore_missing_patterns', async () => {
+      const dir = createGitProject();
+      cleanups.push(dir);
+
+      // Create .gsd dir so checks can run
+      mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+      // Write a .gitignore missing GSD runtime patterns
+      writeFileSync(join(dir, ".gitignore"), `node_modules/
+.env
+`);
+
+      const detect = await runGSDDoctor(dir);
+      const gitignoreIssues = detect.issues.filter(i => i.code === "gitignore_missing_patterns");
+      assert.ok(gitignoreIssues.length > 0, "detects missing gitignore patterns");
+      assert.ok(gitignoreIssues[0]?.message.includes(".gsd"), "message lists missing .gsd pattern");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(fixed.fixesApplied.some(f => f.includes("added missing GSD runtime patterns")), "fix adds patterns");
+
+      // Verify .gsd entry was added (external state symlink)
+      const content = readFileSync(join(dir, ".gitignore"), "utf-8");
+      assert.ok(content.includes(".gsd"), "gitignore now has .gsd entry");
+    });
+    } else {
+    }
+
+    // ─── Test 8: No false positive when gitignore has blanket .gsd/ ───
+    if (process.platform !== "win32") {
+    test('gitignore — blanket .gsd/', async () => {
+      const dir = createGitProject();
+      cleanups.push(dir);
+
+      mkdirSync(join(dir, ".gsd"), { recursive: true });
+      writeFileSync(join(dir, ".gitignore"), `.gsd/
+node_modules/
+`);
+
+      const detect = await runGSDDoctor(dir);
+      const gitignoreIssues = detect.issues.filter(i => i.code === "gitignore_missing_patterns");
+      assert.deepStrictEqual(gitignoreIssues.length, 0, "no missing patterns when blanket .gsd/ present");
+    });
+    } else {
+    }
+
+    // ─── Test 8b: Symlinked .gsd without .gitignore entry (#4423) ─────
+    if (process.platform !== "win32") {
+    test('symlinked_gsd_unignored', async () => {
+      const dir = createGitProject();
+      cleanups.push(dir);
+
+      // Create .gsd as a symlink to an external directory (standard external
+      // state layout), and write a .gitignore that does NOT list .gsd.
+      const externalGsd = mkdtempSync(join(tmpdir(), "gsd-external-doctor-"));
+      cleanups.push(externalGsd);
+      writeFileSync(join(externalGsd, "STATE.md"), "# State\n");
+      symlinkSync(externalGsd, join(dir, ".gsd"));
+
+      writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+
+      const detect = await runGSDDoctor(dir);
+      const symlinkIssues = detect.issues.filter(i => i.code === "symlinked_gsd_unignored");
+      assert.ok(symlinkIssues.length > 0, "detects symlinked .gsd without gitignore entry");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(
+        fixed.fixesApplied.some(f => f.includes(".gitignore")),
+        "fix updates .gitignore",
+      );
+
+      const content = readFileSync(join(dir, ".gitignore"), "utf-8");
+      assert.ok(/^\.gsd\/?$/m.test(content), "gitignore now has .gsd entry");
+    });
+    } else {
+    }
+
+    // ─── Test 9: Orphaned completed-units detection & fix ─────────────
+    test('failed_migration orphan cleanup when .gsd is intact', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Intact current state marker required by cleanup gate.
+      writeFileSync(join(dir, ".gsd", "STATE.md"), "# GSD State\n");
+      writeFileSync(join(dir, ".gsd", "gsd.db"), "db");
+      mkdirSync(join(dir, ".gsd.migrating"), { recursive: true });
+      writeFileSync(join(dir, ".gsd.migrating", "stale.txt"), "stale snapshot");
+
+      const detect = await runGSDDoctor(dir);
+      const migrationIssues = detect.issues.filter(i => i.code === "failed_migration");
+      assert.ok(migrationIssues.length > 0, "detects failed migration orphan");
+      assert.ok(migrationIssues[0]?.fixable === true, "failed migration is fixable");
+
+      await runGSDDoctor(dir, { fix: true });
+      assert.ok(!existsSync(join(dir, ".gsd.migrating")), "orphan .gsd.migrating removed");
+      assert.ok(existsSync(join(dir, ".gsd")), "current .gsd preserved");
+    });
+
+    test('failed_migration orphan NOT removed when .gsd is incomplete', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      rmSync(join(dir, ".gsd", "STATE.md"), { force: true });
+      mkdirSync(join(dir, ".gsd.migrating"), { recursive: true });
+      writeFileSync(join(dir, ".gsd.migrating", "STATE.md"), "# Migrating state\n");
+
+      await runGSDDoctor(dir, { fix: true });
+      assert.ok(existsSync(join(dir, ".gsd.migrating")), ".gsd.migrating preserved when current .gsd is incomplete");
+      assert.ok(existsSync(join(dir, ".gsd", "milestones", "M001")), "current .gsd milestones preserved");
+    });
+
+    test('orphaned_completed_units', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Write completed-units.json with keys that reference non-existent artifacts
+      const completedKeys = [
+        "execute-task/M001/S01/T99",  // T99 doesn't exist
+        "complete-slice/M001/S99",     // S99 doesn't exist
+      ];
+      writeFileSync(join(dir, ".gsd", "completed-units.json"), JSON.stringify(completedKeys));
+
+      const detect = await runGSDDoctor(dir);
+      const orphanIssues = detect.issues.filter(i => i.code === "orphaned_completed_units");
+      assert.ok(orphanIssues.length > 0, "detects orphaned completed-unit keys");
+      assert.ok(orphanIssues[0]?.message.includes("2 completed-unit key"), "message includes count");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(fixed.fixesApplied.some(f => f.includes("removed") && f.includes("orphaned")), "fix removes orphaned keys");
+
+      // Verify keys were cleaned
+      const content = JSON.parse(readFileSync(join(dir, ".gsd", "completed-units.json"), "utf-8"));
+      assert.deepStrictEqual(content.length, 0, "all orphaned keys removed");
+    });
+
+    // ─── Test: hook/ compound keys are NOT flagged as orphaned (#2826) ─
+    test('orphaned_completed_units — hook/ compound keys not flagged', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Hook unit types are stored as "hook/<hookName>/<unitId...>".
+      // These are valid completions with no artifact to verify — they must
+      // not be reported as orphaned_completed_units.
+      const completedKeys = [
+        "hook/telegram-progress/M001/S01",
+        "hook/telegram-progress/M001/S01/T01",
+        "hook/my-custom-hook/M001",
+        // Mix in a genuinely missing plain key to confirm detection still works
+        "execute-task/M001/S01/T99",
+      ];
+      writeFileSync(join(dir, ".gsd", "completed-units.json"), JSON.stringify(completedKeys));
+
+      const detect = await runGSDDoctor(dir);
+      const orphanIssues = detect.issues.filter(i => i.code === "orphaned_completed_units");
+
+      // Only the plain "execute-task/M001/S01/T99" should be flagged, not the hooks.
+      // If the compound-type parsing is broken, all 4 keys (including the 3 hook/
+      // keys) would be flagged. With the fix, at most 1 key is flagged.
+      if (orphanIssues.length > 0) {
+        const msg = orphanIssues[0]!.message;
+        assert.ok(
+          !msg.includes("hook/telegram-progress") && !msg.includes("hook/my-custom-hook"),
+          `hook/ keys must not appear in orphaned_completed_units message — got: ${msg}`,
+        );
+        assert.ok(
+          !msg.includes("4 completed-unit key") && !msg.includes("3 completed-unit key"),
+          `hook/ keys must not inflate the orphaned count — got: ${msg}`,
+        );
+      }
+    });
+
+    // ─── Test: Stranded lock directory detection & fix ────────────────
+    // Skip on Windows: proper-lockfile uses advisory file locking on Windows,
+    // not the directory-based mechanism. The .gsd.lock/ directory pattern is
+    // a POSIX-specific lockfile implementation detail.
+    if (process.platform !== "win32") {
+    test('stranded_lock_directory', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Create the proper-lockfile lock directory without a live lock holder.
+      // The lock dir sits at <parent of .gsd>/.gsd.lock (i.e., <basePath>/.gsd.lock).
+      const lockDir = join(dir, ".gsd.lock");
+      mkdirSync(lockDir, { recursive: true });
+
+      const detect = await runGSDDoctor(dir);
+      const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
+      assert.ok(strandedIssues.length > 0, "detects stranded lock directory");
+      assert.ok(strandedIssues[0]?.message.includes("lock directory"), "message describes stranded lock directory");
+      assert.ok(strandedIssues[0]?.fixable === true, "stranded lock dir is fixable");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(
+        fixed.fixesApplied.some(f => f.includes("removed stranded lock directory")),
+        "fix removes stranded lock directory",
+      );
+      assert.ok(!existsSync(lockDir), "lock directory removed after fix");
+    });
+
+    // ─── Test: Stranded lock dir with live lock holder — NOT flagged ───
+    test('stranded_lock_directory (live holder not flagged)', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Create lock dir + insert a live worker row (PID 1 = init/launchd —
+      // always alive, never our own PID). Phase C pt 2: worker liveness
+      // lives in the workers table. last_heartbeat_at = now → not stale.
+      const lockDir = join(dir, ".gsd.lock");
+      mkdirSync(lockDir, { recursive: true });
+      const { openDatabase, _getAdapter } = await import("../../gsd-db.ts");
+      const { randomUUID } = await import("node:crypto");
+      openDatabase(join(dir, ".gsd", "gsd.db"));
+      const db = _getAdapter()!;
+      db.prepare(
+        `INSERT INTO workers (worker_id, host, pid, started_at, version, last_heartbeat_at, status, project_root_realpath)
+         VALUES (:w, 'test-host', 1, :now, 'test', :now, 'active', :root)`,
+      ).run({ ":w": `test-fake-${randomUUID().slice(0, 8)}`, ":now": new Date().toISOString(), ":root": dir });
+
+      const detect = await runGSDDoctor(dir);
+      const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
+      assert.deepStrictEqual(strandedIssues.length, 0, "live lock holder: stranded_lock_directory NOT detected");
+    });
+
+    test('stranded_lock_directory still reports when worker lookup fails', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      const lockDir = join(dir, ".gsd.lock");
+      mkdirSync(lockDir, { recursive: true });
+      const { openDatabase, _getAdapter, closeDatabase } = await import("../../gsd-db.ts");
+      openDatabase(join(dir, ".gsd", "gsd.db"));
+      const db = _getAdapter()!;
+      db.exec("DROP TABLE workers");
+
+      try {
+        const detect = await runGSDDoctor(dir);
+        const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
+        assert.ok(strandedIssues.length > 0, "reports stranded lock directory even when active worker lookup fails");
+      } finally {
+        closeDatabase();
+      }
+    });
+    } else {
+    }
+
+    // ─── Test: orphaned_completed_units NOT auto-fixed at fixLevel="task" (#1809) ──
+    // Regression: task-level doctor was removing completed-unit keys whose artifacts
+    // were temporarily missing, causing deriveState to revert the user to S01 and
+    // effectively discarding hours of work.
+    test('orphaned_completed_units protected at fixLevel=task (#1809)', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Write completed-units.json with keys that reference non-existent artifacts.
+      // At fixLevel="task" (auto-mode post-unit), these must NOT be removed.
+      const completedKeys = [
+        "execute-task/M001/S01/T99",  // artifact missing
+        "complete-slice/M001/S99",     // artifact missing
+      ];
+      writeFileSync(join(dir, ".gsd", "completed-units.json"), JSON.stringify(completedKeys));
+
+      // fixLevel="task" — the level used by auto-post-unit after every task
+      const taskLevelFix = await runGSDDoctor(dir, { fix: true, fixLevel: "task" });
+      const taskLevelOrphan = taskLevelFix.issues.filter(i => i.code === "orphaned_completed_units");
+      assert.ok(taskLevelOrphan.length > 0, "orphaned_completed_units detected at task fixLevel");
+
+      // Verify keys were NOT removed — the fix must be suppressed at task level
+      const afterTaskFix = JSON.parse(readFileSync(join(dir, ".gsd", "completed-units.json"), "utf-8"));
+      assert.deepStrictEqual(afterTaskFix.length, 2, "completed-unit keys preserved at fixLevel=task (data loss prevention)");
+      assert.ok(
+        !taskLevelFix.fixesApplied.some(f => f.includes("orphaned")),
+        "no orphaned-units fix applied at fixLevel=task",
+      );
+
+      // fixLevel="all" (explicit manual doctor) — fix SHOULD apply
+      const allLevelFix = await runGSDDoctor(dir, { fix: true, fixLevel: "all" });
+      assert.ok(
+        allLevelFix.fixesApplied.some(f => f.includes("orphaned")),
+        "orphaned-units fix applied at fixLevel=all (manual doctor)",
+      );
+      const afterAllFix = JSON.parse(readFileSync(join(dir, ".gsd", "completed-units.json"), "utf-8"));
+      assert.deepStrictEqual(afterAllFix.length, 0, "orphaned keys removed at fixLevel=all");
+    });
+
+  } finally {
+    for (const dir of cleanups) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }
+});

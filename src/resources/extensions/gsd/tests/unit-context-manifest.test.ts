@@ -1,0 +1,462 @@
+// GSD-2 — #4782 phase 1: schema tests + CI coverage guard for manifests.
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  ARTIFACT_KEYS,
+  KNOWN_UNIT_TYPES,
+  UNIT_MANIFESTS,
+  resolveSubagentPermissionContract,
+  resolveManifest,
+  type ArtifactKey,
+  type ContextModePolicy,
+  type SkillsPolicy,
+  type UnitContextManifest,
+} from "../unit-context-manifest.ts";
+import {
+  ALLOWED_PLANNING_DISPATCH_AGENTS,
+  shouldBlockPlanningUnit,
+} from "../bootstrap/write-gate.ts";
+import {
+  getRequiredWorkflowToolsForAutoUnit,
+  getRequiredWorkflowToolsForGuidedUnit,
+} from "../workflow-mcp.ts";
+
+// ─── Coverage: every known unit type has a manifest ──────────────────────
+
+test("#4782 phase 1: every KNOWN_UNIT_TYPES entry has a UNIT_MANIFESTS entry", () => {
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    assert.ok(
+      UNIT_MANIFESTS[unitType],
+      `unit type "${unitType}" is declared in KNOWN_UNIT_TYPES but has no manifest`,
+    );
+  }
+});
+
+test("#4782 phase 1: every UNIT_MANIFESTS entry corresponds to a known unit type", () => {
+  const known = new Set<string>(KNOWN_UNIT_TYPES as readonly string[]);
+  for (const unitType of Object.keys(UNIT_MANIFESTS)) {
+    assert.ok(
+      known.has(unitType),
+      `manifest entry "${unitType}" is not in KNOWN_UNIT_TYPES — add it there or remove the manifest`,
+    );
+  }
+});
+
+// ─── Coverage: every unitType stringly-typed in auto-dispatch.ts is known ─
+
+test("#4782 phase 1: workflow tool policy maps are defined for every known unit type", () => {
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    assert.ok(Array.isArray(getRequiredWorkflowToolsForAutoUnit(unitType)));
+    assert.ok(Array.isArray(getRequiredWorkflowToolsForGuidedUnit(unitType)));
+  }
+});
+
+// ─── Shape: every manifest conforms to the schema invariants ──────────────
+
+test("#4782 phase 1: every manifest's artifacts reference known ArtifactKey values", () => {
+  const validKeys = new Set<string>(ARTIFACT_KEYS as readonly string[]);
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const all: ArtifactKey[] = [
+      ...manifest.artifacts.inline,
+      ...manifest.artifacts.excerpt,
+      ...manifest.artifacts.onDemand,
+    ];
+    for (const key of all) {
+      assert.ok(
+        validKeys.has(key),
+        `manifest "${unitType}" references unknown artifact key "${key}"`,
+      );
+    }
+  }
+});
+
+test("#4782 phase 1: no manifest has the same artifact key in inline AND excerpt (mutually exclusive)", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const inline = new Set<string>(manifest.artifacts.inline as readonly string[]);
+    const clashes = (manifest.artifacts.excerpt as readonly string[]).filter(k => inline.has(k));
+    assert.deepEqual(
+      clashes,
+      [],
+      `manifest "${unitType}" has overlapping inline+excerpt artifact keys: ${clashes.join(", ")}. Pick one.`,
+    );
+  }
+});
+
+test("#4782 phase 1: every manifest has a positive maxSystemPromptChars", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    assert.ok(
+      typeof manifest.maxSystemPromptChars === "number" && manifest.maxSystemPromptChars > 0,
+      `manifest "${unitType}" has invalid maxSystemPromptChars: ${manifest.maxSystemPromptChars}`,
+    );
+  }
+});
+
+test("Context Mode: every manifest declares the expected contextMode lane", () => {
+  const expected: Record<string, ContextModePolicy> = {
+    "workflow-preferences": "none",
+    "research-decision": "none",
+    "discuss-project": "interview",
+    "discuss-requirements": "interview",
+    "discuss-milestone": "interview",
+    "research-project": "research",
+    "research-milestone": "research",
+    "research-slice": "research",
+    "plan-milestone": "planning",
+    "plan-slice": "planning",
+    "refine-slice": "planning",
+    "replan-slice": "planning",
+    "reassess-roadmap": "planning",
+    "execute-task": "execution",
+    "reactive-execute": "execution",
+    "quick-task": "execution",
+    "run-uat": "verification",
+    "gate-evaluate": "verification",
+    "triage-captures": "triage",
+    "validate-milestone": "verification",
+    "complete-slice": "verification",
+    "complete-milestone": "verification",
+    "rewrite-docs": "docs",
+  };
+
+  assert.deepEqual(Object.keys(expected).sort(), [...KNOWN_UNIT_TYPES].sort());
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    assert.strictEqual(UNIT_MANIFESTS[unitType].contextMode, expected[unitType]);
+  }
+});
+
+test("#4782 phase 1: skills policy shapes are valid discriminated-union members", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const p = manifest.skills as SkillsPolicy;
+    switch (p.mode) {
+      case "none":
+      case "all":
+        break;
+      case "allowlist":
+        assert.ok(
+          Array.isArray(p.skills) && p.skills.every(s => typeof s === "string"),
+          `manifest "${unitType}" has allowlist policy with invalid skills[]`,
+        );
+        break;
+      default: {
+        const _exhaustive: never = p;
+        void _exhaustive;
+        assert.fail(`manifest "${unitType}" has unrecognized skills.mode`);
+      }
+    }
+  }
+});
+
+// ─── Lookup helper ────────────────────────────────────────────────────────
+
+test("#4782 phase 1: resolveManifest returns null for an unknown unit type", () => {
+  assert.strictEqual(resolveManifest("never-dispatched-unit-type"), null);
+});
+
+test("#4782 phase 1: resolveManifest returns a manifest for every known unit type", () => {
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    const m = resolveManifest(unitType);
+    assert.ok(m, `resolveManifest("${unitType}") should return a manifest`);
+    // Identity check — the helper should return the exact object, not a copy.
+    assert.strictEqual(m, UNIT_MANIFESTS[unitType]);
+  }
+});
+
+// ─── Phase-2 target: complete-milestone manifest reflects #4780's excerpt shape ─
+
+test("#4782 phase 1: complete-milestone manifest declares slice-summary as excerpt (matches #4780)", () => {
+  const m = UNIT_MANIFESTS["complete-milestone"];
+  assert.ok(
+    m.artifacts.excerpt.includes("slice-summary"),
+    "complete-milestone should declare slice-summary as excerpt (alignment with #4780)",
+  );
+  assert.ok(
+    !m.artifacts.inline.includes("slice-summary"),
+    "complete-milestone should NOT declare slice-summary as inline — that was the #4780 bloat",
+  );
+});
+
+test("closeout manifests keep broad narrative docs on-demand in standard mode", () => {
+  for (const unitType of ["validate-milestone", "complete-milestone"] as const) {
+    const m = UNIT_MANIFESTS[unitType];
+    assert.ok(
+      m.artifacts.onDemand.includes("project"),
+      `${unitType} should keep project narrative on-demand`,
+    );
+    assert.ok(
+      m.artifacts.onDemand.includes("milestone-context"),
+      `${unitType} should keep milestone context on-demand`,
+    );
+    assert.ok(
+      !m.artifacts.inline.includes("project"),
+      `${unitType} should not inline project narrative by default`,
+    );
+    assert.ok(
+      !m.artifacts.inline.includes("milestone-context"),
+      `${unitType} should not inline milestone context by default`,
+    );
+  }
+});
+
+// ─── v2 contract invariants (#4924) ──────────────────────────────────────
+
+test("#4924: computed + prepend ids (when declared) are non-empty strings", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const ids: string[] = [
+      ...((manifest.artifacts as { computed?: readonly string[] }).computed ?? []),
+      ...((manifest as { prepend?: readonly string[] }).prepend ?? []),
+    ];
+    for (const id of ids) {
+      assert.ok(
+        typeof id === "string" && id.length > 0,
+        `manifest "${unitType}" has an empty/invalid computed/prepend id: ${JSON.stringify(id)}`,
+      );
+    }
+  }
+});
+
+test("#4924: no computed id appears in both artifacts.computed AND prepend (mutually exclusive position)", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const inlineComputed = new Set<string>(
+      ((manifest.artifacts as { computed?: readonly string[] }).computed ?? []),
+    );
+    const clashes = ((manifest as { prepend?: readonly string[] }).prepend ?? [])
+      .filter(id => inlineComputed.has(id));
+    assert.deepEqual(
+      clashes,
+      [],
+      `manifest "${unitType}" places computed id(s) in both prepend and inline-computed: ${clashes.join(", ")}. Pick one position.`,
+    );
+  }
+});
+
+// ─── Tools-policy invariants (#4934) ─────────────────────────────────────
+
+test("#4934: every manifest declares a tools policy", () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const policy = (manifest as { tools?: { mode?: string } }).tools;
+    assert.ok(
+      policy && typeof policy.mode === "string",
+      `manifest "${unitType}" is missing a tools policy — required to fail loud rather than default to "all" silently`,
+    );
+  }
+});
+
+test("#4934: tools.mode is one of the declared policies", () => {
+  const validModes = new Set(["all", "read-only", "planning", "planning-dispatch", "docs", "verification"]);
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const mode = (manifest as { tools: { mode: string } }).tools.mode;
+    assert.ok(
+      validModes.has(mode),
+      `manifest "${unitType}" has invalid tools.mode "${mode}" — must be one of ${[...validModes].join(", ")}`,
+    );
+  }
+});
+
+test('#4934: only execution units, quick-task, and closeout units may use tools.mode "all"', () => {
+  const allowedAllUnits = new Set([
+    "execute-task",
+    "reactive-execute",
+    "quick-task",
+    "validate-milestone",
+    "complete-milestone",
+    "complete-slice",
+  ]);
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const mode = (manifest as { tools: { mode: string } }).tools.mode;
+    if (mode === "all") {
+      assert.ok(
+        allowedAllUnits.has(unitType),
+        `manifest "${unitType}" declares tools.mode = "all" but is not explicitly allowed. ` +
+        'Only execute-task/reactive-execute, quick-task, and closeout units should have full source write access; ' +
+        'planning/discuss/research units must use "planning" or "planning-dispatch" (or "docs" for rewrite-docs).',
+      );
+    }
+  }
+});
+
+test("#5453: complete-milestone uses all tools so bash verification is not planning-dispatch blocked", () => {
+  const manifest = UNIT_MANIFESTS["complete-milestone"];
+
+  assert.strictEqual(manifest.tools.mode, "all");
+  assert.deepEqual(resolveSubagentPermissionContract("complete-milestone"), {
+    allowed: true,
+    allowedSubagents: ["*"],
+    toolsMode: "all",
+  });
+  // Runtime gate-level regression: these verification commands were blocked
+  // under planning-dispatch in #5453; complete-milestone must bypass that gate.
+  for (const cmd of ["git diff --name-only HEAD~1", "git log -n1 --oneline"]) {
+    const result = shouldBlockPlanningUnit(
+      "bash",
+      cmd,
+      process.cwd(),
+      "complete-milestone",
+      manifest.tools,
+    );
+    assert.strictEqual(
+      result.block,
+      false,
+      `shouldBlockPlanningUnit must not block ${cmd} for complete-milestone: ${result.reason}`,
+    );
+  }
+});
+
+test("#5731: validate-milestone and complete-slice use all tools so closeout verification is not planning-dispatch blocked", () => {
+  for (const unitType of ["validate-milestone", "complete-slice"] as const) {
+    const manifest = UNIT_MANIFESTS[unitType];
+    assert.strictEqual(manifest.tools.mode, "all");
+    const result = shouldBlockPlanningUnit(
+      "bash",
+      "go test -short -count=1 ./...",
+      process.cwd(),
+      unitType,
+      manifest.tools,
+    );
+    assert.strictEqual(
+      result.block,
+      false,
+      `${unitType} must allow verification bash commands: ${result.reason}`,
+    );
+  }
+});
+
+test("#5843: run-uat uses verification tools policy so build/test commands can run", () => {
+  const manifest = UNIT_MANIFESTS["run-uat"];
+
+  assert.strictEqual(manifest.tools.mode, "verification");
+
+  const buildResult = shouldBlockPlanningUnit(
+    "bash",
+    "npm run build 2>&1",
+    process.cwd(),
+    "run-uat",
+    manifest.tools,
+  );
+  assert.strictEqual(
+    buildResult.block,
+    false,
+    `run-uat must allow build verification commands: ${buildResult.reason}`,
+  );
+
+  const sourceWriteResult = shouldBlockPlanningUnit(
+    "edit",
+    "src/main.ts",
+    process.cwd(),
+    "run-uat",
+    manifest.tools,
+  );
+  assert.strictEqual(sourceWriteResult.block, true);
+  assert.match(sourceWriteResult.reason!, /tools-policy "verification"/);
+});
+
+test("planning-dispatch hard block message omits internal tracker references", () => {
+  const manifest = UNIT_MANIFESTS["plan-slice"];
+  assert.strictEqual(manifest.tools.mode, "planning-dispatch");
+
+  const result = shouldBlockPlanningUnit(
+    "task",
+    "scout",
+    process.cwd(),
+    "plan-slice",
+    manifest.tools,
+  );
+
+  assert.strictEqual(result.block, true);
+  assert.ok(result.reason, "blocked dispatch should include a user-facing reason");
+  assert.doesNotMatch(result.reason!, /#[0-9]{3,}/);
+});
+
+test('planning-dispatch mode is reserved for slice-level decomposition and completion units', () => {
+  const allowedDispatchUnits = new Set([
+    "plan-slice",
+    "research-slice",
+    "refine-slice",
+    "gate-evaluate",
+    // Deep planning mode: research-project orchestrates 4 parallel research
+    // subagents (stack/features/architecture/pitfalls). Subagent dispatch is
+    // the unit's core mechanism — without it, the unit cannot do its job.
+    "research-project",
+  ]);
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const mode = (manifest as { tools: { mode: string } }).tools.mode;
+    if (mode === "planning-dispatch") {
+      assert.ok(
+        allowedDispatchUnits.has(unitType),
+        `manifest "${unitType}" declares tools.mode = "planning-dispatch" but is not on the dispatch-allowed allowlist. ` +
+        'planning-dispatch is intentionally narrow — extend the allowlist consciously when a new unit type genuinely benefits from subagent delegation.',
+      );
+    }
+  }
+});
+
+test('Unit Tool Contract exposes subagent dispatch permissions', () => {
+  assert.deepEqual(resolveSubagentPermissionContract("plan-slice"), {
+    allowed: true,
+    allowedSubagents: ["scout", "planner"],
+    toolsMode: "planning-dispatch",
+  });
+  assert.deepEqual(resolveSubagentPermissionContract("gate-evaluate"), {
+    allowed: true,
+    allowedSubagents: ["reviewer", "security", "tester"],
+    toolsMode: "planning-dispatch",
+  });
+  assert.deepEqual(resolveSubagentPermissionContract("discuss-milestone"), {
+    allowed: false,
+    allowedSubagents: [],
+    toolsMode: "planning",
+  });
+});
+
+test('planning-dispatch manifests declare non-empty allowedSubagents lists', () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    if (manifest.tools.mode !== "planning-dispatch") continue;
+    assert.ok(
+      Array.isArray(manifest.tools.allowedSubagents) && manifest.tools.allowedSubagents.length > 0,
+      `manifest "${unitType}" has planning-dispatch policy but no allowedSubagents — explicit allowlist is required for runtime dispatch gating`,
+    );
+    for (const agent of manifest.tools.allowedSubagents) {
+      assert.ok(
+        typeof agent === "string" && agent.length > 0,
+        `manifest "${unitType}" has empty/invalid allowedSubagents entry: ${JSON.stringify(agent)}`,
+      );
+      assert.ok(
+        ALLOWED_PLANNING_DISPATCH_AGENTS.has(agent),
+        `manifest "${unitType}" allows "${agent}", but the runtime planning-dispatch registry will hard-block it`,
+      );
+    }
+  }
+});
+
+test('#4934: tools.mode "docs" requires a non-empty allowedPathGlobs array', () => {
+  for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
+    const tools = (manifest as { tools: { mode: string; allowedPathGlobs?: readonly string[] } }).tools;
+    if (tools.mode !== "docs") continue;
+    assert.ok(
+      Array.isArray(tools.allowedPathGlobs) && tools.allowedPathGlobs.length > 0,
+      `manifest "${unitType}" has docs policy but no allowedPathGlobs — explicit allow-set is required so the enforcement layer doesn't fall back to a hardcoded default`,
+    );
+    for (const g of tools.allowedPathGlobs!) {
+      assert.ok(
+        typeof g === "string" && g.length > 0,
+        `manifest "${unitType}" has empty/invalid allowedPathGlobs entry: ${JSON.stringify(g)}`,
+      );
+    }
+  }
+});
+
+// ─── Budget floor: run-uat + gate-evaluate hit the smallest budget tier ──
+
+test("#4782 phase 2: run-uat and gate-evaluate use the smallest budget tier", () => {
+  const uatBudget = UNIT_MANIFESTS["run-uat"].maxSystemPromptChars;
+  const gateBudget = UNIT_MANIFESTS["gate-evaluate"].maxSystemPromptChars;
+  assert.strictEqual(uatBudget, gateBudget, "run-uat and gate-evaluate both use COMMON_BUDGET_SMALL");
+  // They should be the tightest (or tied for tightest) across all manifests
+  for (const [unitType, other] of Object.entries(UNIT_MANIFESTS)) {
+    assert.ok(
+      uatBudget <= other.maxSystemPromptChars,
+      `run-uat budget (${uatBudget}) should be ≤ ${unitType} budget (${other.maxSystemPromptChars})`,
+    );
+  }
+});

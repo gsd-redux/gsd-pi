@@ -1,0 +1,458 @@
+# CI workflow — builds, tests, and gates merges to main
+name: CI
+
+on:
+  push:
+    branches: [main, dev, test, 'hotfix/**']
+    paths-ignore:
+      - '.github/workflows/ai-triage.yml'
+      - '.github/workflows/build-native.yml'
+      - '.github/workflows/cleanup-dev-versions.yml'
+      - 'LICENSE'
+  pull_request:
+    branches: [main, dev, test]
+    paths-ignore:
+      - '.github/workflows/ai-triage.yml'
+      - '.github/workflows/build-native.yml'
+      - '.github/workflows/cleanup-dev-versions.yml'
+      - 'LICENSE'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    timeout-minutes: 2
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      heavy-code-changed: ${{ steps.check.outputs.heavy-code-changed }}
+      portability-changed: ${{ steps.check.outputs.portability-changed }}
+      windows-e2e-changed: ${{ steps.check.outputs.windows-e2e-changed }}
+      docker-changed: ${{ steps.check.outputs.docker-changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: check
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BASE="$PR_BASE_SHA"
+          else
+            BASE="$PUSH_BEFORE_SHA"
+          fi
+          FILES=$(git diff --name-only "$BASE" "$HEAD_SHA" 2>/dev/null || git diff --name-only HEAD~1)
+          echo "Changed files:"
+          echo "$FILES"
+
+          is_core_file() {
+            case "$1" in
+              src/*|packages/*|native/*|scripts/*|web/*|extensions/*|tests/*|docker/*|Dockerfile|package.json|package-lock.json|tsconfig*.json) return 0 ;;
+              packages/*/tsconfig.json) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_portability_file() {
+            case "$1" in
+              src/*|packages/*|native/*|scripts/*|web/*|package.json|package-lock.json|web/package-lock.json|tsconfig*.json) return 0 ;;
+              packages/*/tsconfig.json) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_windows_e2e_file() {
+            case "$1" in
+              tests/e2e/*|src/loader*|src/rtk*|src/native*|src/resources/extensions/gsd/gsd-db*|src/resources/extensions/gsd/extension-host*|src/resources/extensions/gsd/auto-worktree*|src/resources/extensions/gsd/workflow-mcp*|packages/pi-coding-agent/*|packages/pi-ai/*|packages/pi-agent-core/*|packages/native/*|packages/mcp-server/*|packages/rpc-client/*|native/*|package.json|package-lock.json|tsconfig*.json) return 0 ;;
+              packages/*/tsconfig.json) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_docker_file() {
+            case "$1" in
+              Dockerfile|docker/*|scripts/install.js|scripts/*.cjs|scripts/*.mjs|package.json|package-lock.json|src/*|packages/*|tests/e2e/docker/*) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          HEAVY_CODE=""
+          PORTABILITY=""
+          WINDOWS_E2E=""
+          DOCKER=""
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if is_core_file "$file"; then
+              HEAVY_CODE="${HEAVY_CODE}${file}"$'\n'
+            fi
+            if is_portability_file "$file"; then
+              PORTABILITY="${PORTABILITY}${file}"$'\n'
+            fi
+            if is_windows_e2e_file "$file"; then
+              WINDOWS_E2E="${WINDOWS_E2E}${file}"$'\n'
+            fi
+            if is_docker_file "$file"; then
+              DOCKER="${DOCKER}${file}"$'\n'
+            fi
+          done <<< "$FILES"
+
+          if [ -n "$HEAVY_CODE" ]; then
+            echo "heavy-code-changed=true" >> "$GITHUB_OUTPUT"
+            echo "Build/runtime-relevant files changed:"
+            echo "$HEAVY_CODE"
+          else
+            echo "heavy-code-changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No build/runtime-relevant changes detected — skipping heavy build/test jobs"
+          fi
+          if [ -n "$PORTABILITY" ]; then
+            echo "portability-changed=true" >> "$GITHUB_OUTPUT"
+            echo "Portability-relevant files changed:"
+            echo "$PORTABILITY"
+          else
+            echo "portability-changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No portability-relevant changes detected — skipping Windows portability checks"
+          fi
+          if [ -n "$WINDOWS_E2E" ]; then
+            echo "windows-e2e-changed=true" >> "$GITHUB_OUTPUT"
+            echo "Windows e2e-relevant files changed:"
+            echo "$WINDOWS_E2E"
+          else
+            echo "windows-e2e-changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Windows e2e-relevant changes detected — skipping Windows e2e"
+          fi
+          if [ -n "$DOCKER" ]; then
+            echo "docker-changed=true" >> "$GITHUB_OUTPUT"
+            echo "Docker-relevant files changed:"
+            echo "$DOCKER"
+          else
+            echo "docker-changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Docker-relevant changes detected — skipping docker-e2e"
+          fi
+
+  docs-check:
+    timeout-minutes: 5
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan documentation for prompt injection
+        run: bash scripts/docs-prompt-injection-scan.sh --diff origin/main
+
+  lint:
+    timeout-minutes: 5
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Fetch diff base for lint scans
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "${PR_BASE_SHA:-}" ]; then
+            git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
+            git update-ref "refs/remotes/origin/${BASE_REF:-main}" "$PR_BASE_SHA"
+          else
+            git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+          fi
+
+      - name: Scan for hardcoded secrets
+        run: bash scripts/secret-scan.sh --diff origin/main
+
+      - name: Scan for base64-encoded secrets
+        run: bash scripts/base64-scan.sh --diff origin/main
+
+      - name: Ensure .gsd/ is not checked in
+        run: |
+          if [ -d ".gsd" ]; then
+            echo "::error::.gsd/ directory must not be checked in"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Validate skill references
+        run: node scripts/check-skill-references.mjs
+
+      - name: Require tests with source changes
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/require-tests.sh
+
+      - name: Reject source-grep tests
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/check-source-grep-tests.sh
+
+      - name: CodeRabbit-theme self-tests
+        run: node --test scripts/__tests__/check-coderabbit-themes.test.mjs
+
+      - name: Reject recurring CodeRabbit themes
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/check-coderabbit-themes.mjs
+
+  build:
+    timeout-minutes: 25
+    needs: [detect-changes, docs-check, lint]
+    if: needs.detect-changes.outputs.heavy-code-changed == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
+      - name: Cache Next.js build
+        uses: useblacksmith/cache@v5
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Build web host
+        run: npm run build:web-host
+
+      - name: Typecheck extensions
+        run: npm run typecheck:extensions
+
+      - name: Validate package is installable
+        run: npm run validate-pack
+
+      - name: Verify workspace coverage (every linkable package has tests)
+        run: npm run verify:workspace-coverage
+
+      - name: Run unit tests
+        run: |
+          npm run test:compile
+          npm run test:unit:compiled
+
+      - name: Run package tests
+        run: npm run test:packages:compiled
+
+      - name: Check test coverage thresholds
+        run: npm run test:coverage
+
+  integration-tests:
+    timeout-minutes: 15
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.heavy-code-changed == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Integration tests need core compiled artifacts:
+      # - dist/loader.js and packages/pi-coding-agent/dist/** from `npm run build:core`
+      # - web/node_modules/.bin/next for tests that shell `build:web-host` at runtime
+      # Duplicating the core build here (instead of sharing artifacts via needs: build)
+      # preserves wall-clock parallelism with the build job — see PR #4093.
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
+      - name: Cache Next.js build
+        uses: useblacksmith/cache@v5
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+  e2e:
+    # Real-process e2e tests in tests/e2e/. Spawns the built dist/loader.js
+    # through the shared harness in tests/e2e/_shared/. This is where new
+    # cross-process flows land (fake-LLM agent loops, MCP server, native
+    # ABI, migration chain, etc.) - see tests/e2e/README.md.
+    # No untrusted GitHub event input is consumed in run: blocks.
+    timeout-minutes: 15
+    needs: [detect-changes, build]
+    if: needs.detect-changes.outputs.heavy-code-changed == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Run e2e suite (against built binary)
+        run: |
+          chmod +x dist/loader.js
+          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          npm run test:e2e
+
+      - name: Upload e2e artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: test-results/e2e
+          if-no-files-found: ignore
+          retention-days: 7
+
+  docker-e2e:
+    # Builds the runtime-local Dockerfile target from the current source
+    # (npm pack + COPY into image) and runs `gsd --version` inside the
+    # container. Catches missing system deps, broken postinstall, missing
+    # tarball files. Gated by detect-changes so doc-only PRs skip it.
+    # No untrusted GitHub event input is consumed in run: blocks.
+    timeout-minutes: 20
+    needs: [detect-changes, integration-tests, e2e]
+    if: >-
+      needs.detect-changes.outputs.heavy-code-changed == 'true' &&
+      needs.detect-changes.outputs.docker-changed == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        # `npm pack` does not run prepublishOnly, so we must build dist/
+        # explicitly before packing — otherwise the tarball ships without
+        # the loader and the runtime-local Dockerfile target can't find
+        # the entry point.
+        run: npm run build:core
+
+      - name: Run docker e2e suite
+        run: npm run test:e2e:docker
+
+  windows-portability:
+    # Consolidates the blocking Windows portability checks with the
+    # non-blocking Windows e2e smoke suite.
+    timeout-minutes: 25
+    needs: [detect-changes, integration-tests, e2e]
+    if: >-
+      needs.detect-changes.outputs.heavy-code-changed == 'true' &&
+      (needs.detect-changes.outputs.portability-changed == 'true' ||
+       needs.detect-changes.outputs.windows-e2e-changed == 'true')
+    runs-on: blacksmith-4vcpu-windows-2025
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+          GSD_SKIP_RTK_INSTALL: '1'
+        run: npm ci --ignore-scripts
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Typecheck extensions
+        if: needs.detect-changes.outputs.portability-changed == 'true'
+        run: npm run typecheck:extensions
+
+      - name: Run package tests
+        if: needs.detect-changes.outputs.portability-changed == 'true'
+        run: npm run test:packages
+
+      - name: Run Windows portability tests
+        if: needs.detect-changes.outputs.portability-changed == 'true'
+        run: >-
+          node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs
+          --experimental-strip-types --test
+          src/tests/windows-portability.test.ts
+          src/resources/extensions/gsd/tests/validate-directory.test.ts
+          src/tests/integration/web-mode-windows-hide.test.ts
+
+      - name: Run Windows e2e smoke suite (non-blocking)
+        id: windows-smoke-e2e
+        if: needs.detect-changes.outputs.windows-e2e-changed == 'true'
+        timeout-minutes: 10
+        shell: bash
+        continue-on-error: true
+        run: |
+          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
+          npm run test:e2e:windows-smoke
+
+      - name: Upload Windows e2e artifacts on failure
+        if: steps.windows-smoke-e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-windows
+          path: test-results/e2e
+          if-no-files-found: ignore
+          retention-days: 7

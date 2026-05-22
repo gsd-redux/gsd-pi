@@ -1,0 +1,807 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+
+import {
+  unitVerb,
+  unitPhaseLabel,
+  describeNextUnit,
+  formatAutoElapsed,
+  formatWidgetTokens,
+  estimateTimeRemaining,
+  extractUatSliceId,
+  buildPhaseHandoffOutcome,
+  updateProgressWidget,
+  setAutoOutcomeWidget,
+  setCompletionProgressWidget,
+  getRoadmapSlicesSync,
+  clearSliceProgressCache,
+  getWidgetMode,
+  cycleWidgetMode,
+  _resetWidgetModeForTests,
+  _resetLastCommitCacheForTests,
+  _refreshLastCommitForTests,
+  _getLastCommitForTests,
+  _getLastCommitFetchedAtForTests,
+  formatRuntimeHealthSignal,
+  shouldRenderRoadmapProgress,
+} from "../auto-dashboard.ts";
+import { getAutoDashboardData } from "../auto.ts";
+import { autoSession } from "../auto-runtime-state.ts";
+import { formatRtkSavingsLabel } from "../../shared/rtk-session-stats.ts";
+import {
+  openDatabase,
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+} from "../gsd-db.ts";
+
+function makeTempDir(prefix: string): string {
+  return join(
+    tmpdir(),
+    `gsd-auto-dashboard-test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+}
+
+function cleanup(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
+
+// ─── unitVerb ─────────────────────────────────────────────────────────────
+
+test("unitVerb maps known unit types to verbs", () => {
+  assert.equal(unitVerb("research-milestone"), "researching");
+  assert.equal(unitVerb("research-slice"), "researching");
+  assert.equal(unitVerb("plan-milestone"), "planning");
+  assert.equal(unitVerb("plan-slice"), "planning");
+  assert.equal(unitVerb("execute-task"), "executing");
+  assert.equal(unitVerb("complete-slice"), "completing");
+  assert.equal(unitVerb("replan-slice"), "replanning");
+  assert.equal(unitVerb("reassess-roadmap"), "reassessing");
+  assert.equal(unitVerb("run-uat"), "running UAT");
+});
+
+test("unitVerb returns raw type for unknown types", () => {
+  assert.equal(unitVerb("custom-thing"), "custom-thing");
+});
+
+test("unitVerb handles hook types", () => {
+  assert.equal(unitVerb("hook/verify-code"), "hook: verify-code");
+  assert.equal(unitVerb("hook/"), "hook: ");
+});
+
+// ─── unitPhaseLabel ───────────────────────────────────────────────────────
+
+test("unitPhaseLabel maps known types to labels", () => {
+  assert.equal(unitPhaseLabel("research-milestone"), "RESEARCH");
+  assert.equal(unitPhaseLabel("research-slice"), "RESEARCH");
+  assert.equal(unitPhaseLabel("plan-milestone"), "PLAN");
+  assert.equal(unitPhaseLabel("plan-slice"), "PLAN");
+  assert.equal(unitPhaseLabel("execute-task"), "EXECUTE");
+  assert.equal(unitPhaseLabel("complete-slice"), "COMPLETE");
+  assert.equal(unitPhaseLabel("replan-slice"), "REPLAN");
+  assert.equal(unitPhaseLabel("reassess-roadmap"), "REASSESS");
+  assert.equal(unitPhaseLabel("run-uat"), "UAT");
+});
+
+test("unitPhaseLabel uppercases unknown types", () => {
+  assert.equal(unitPhaseLabel("custom-thing"), "CUSTOM-THING");
+});
+
+test("unitPhaseLabel returns HOOK for hook types", () => {
+  assert.equal(unitPhaseLabel("hook/verify"), "HOOK");
+});
+
+// ─── describeNextUnit ─────────────────────────────────────────────────────
+
+test("describeNextUnit handles pre-planning phase", () => {
+  const result = describeNextUnit({
+    phase: "pre-planning",
+    activeMilestone: { id: "M001", title: "Test" },
+  } as any);
+  assert.equal(result.label, "Research & plan milestone");
+});
+
+test("describeNextUnit handles executing phase", () => {
+  const result = describeNextUnit({
+    phase: "executing",
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: { id: "S01", title: "Slice" },
+    activeTask: { id: "T01", title: "Task One" },
+  } as any);
+  assert.ok(result.label.includes("T01"));
+  assert.ok(result.label.includes("Task One"));
+});
+
+test("describeNextUnit handles summarizing phase", () => {
+  const result = describeNextUnit({
+    phase: "summarizing",
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: { id: "S01", title: "First Slice" },
+  } as any);
+  assert.ok(result.label.includes("S01"));
+});
+
+test("describeNextUnit handles needs-discussion phase", () => {
+  const result = describeNextUnit({
+    phase: "needs-discussion",
+    activeMilestone: { id: "M001", title: "Test" },
+  } as any);
+  assert.ok(
+    result.label.toLowerCase().includes("discuss") || result.label.toLowerCase().includes("draft"),
+  );
+});
+
+test("describeNextUnit handles completing-milestone phase", () => {
+  const result = describeNextUnit({
+    phase: "completing-milestone",
+    activeMilestone: { id: "M001", title: "Test" },
+  } as any);
+  assert.ok(result.label.toLowerCase().includes("milestone"));
+});
+
+test("describeNextUnit returns fallback for unknown phase", () => {
+  const result = describeNextUnit({
+    phase: "some-future-phase" as any,
+    activeMilestone: { id: "M001", title: "Test" },
+  } as any);
+  assert.equal(result.label, "Continue");
+});
+
+// ─── formatAutoElapsed ────────────────────────────────────────────────────
+
+test("formatAutoElapsed returns empty for zero startTime", () => {
+  assert.equal(formatAutoElapsed(0), "");
+});
+
+test("formatAutoElapsed formats seconds", () => {
+  const result = formatAutoElapsed(Date.now() - 30_000);
+  assert.match(result, /^\d+s$/);
+});
+
+test("formatAutoElapsed formats minutes", () => {
+  const result = formatAutoElapsed(Date.now() - 180_000); // 3 min
+  assert.match(result, /^3m/);
+});
+
+test("formatAutoElapsed formats hours", () => {
+  const result = formatAutoElapsed(Date.now() - 3_700_000); // ~1h
+  assert.match(result, /^1h/);
+});
+
+// ─── formatWidgetTokens ──────────────────────────────────────────────────
+
+test("formatWidgetTokens formats small numbers directly", () => {
+  assert.equal(formatWidgetTokens(0), "0");
+  assert.equal(formatWidgetTokens(500), "500");
+  assert.equal(formatWidgetTokens(999), "999");
+});
+
+test("formatWidgetTokens formats thousands with k", () => {
+  assert.equal(formatWidgetTokens(1000), "1.0k");
+  assert.equal(formatWidgetTokens(5500), "5.5k");
+  assert.equal(formatWidgetTokens(10000), "10k");
+  assert.equal(formatWidgetTokens(99999), "100k");
+});
+
+test("formatWidgetTokens formats millions with M", () => {
+  assert.equal(formatWidgetTokens(1_000_000), "1.0M");
+  assert.equal(formatWidgetTokens(10_000_000), "10M");
+  assert.equal(formatWidgetTokens(25_000_000), "25M");
+});
+
+test("formatRuntimeHealthSignal surfaces idle recovery instead of generic progress", () => {
+  const signal = formatRuntimeHealthSignal({
+    version: 1,
+    unitType: "research-milestone",
+    unitId: "M001",
+    startedAt: 1_000,
+    updatedAt: 600_000,
+    phase: "recovered",
+    wrapupWarningSent: false,
+    continueHereFired: false,
+    timeoutAt: null,
+    lastProgressAt: 1_000,
+    progressCount: 1,
+    lastProgressKind: "idle-recovery-retry",
+    recoveryAttempts: 1,
+    lastRecoveryReason: "idle",
+  }, 600_000);
+
+  assert.deepEqual(signal, {
+    level: "yellow",
+    state: "recovering",
+    summary: "Recovering",
+    detail: "retry 1 after idle stall",
+  });
+});
+
+test("formatRuntimeHealthSignal describes provider idle without repeating waiting text", () => {
+  const signal = formatRuntimeHealthSignal({
+    version: 1,
+    unitType: "run-uat",
+    unitId: "M007/S01",
+    startedAt: 1_000,
+    updatedAt: 120_000,
+    phase: "dispatched",
+    wrapupWarningSent: false,
+    continueHereFired: false,
+    timeoutAt: null,
+    lastProgressAt: 1_000,
+    progressCount: 0,
+    lastProgressKind: "start",
+    recoveryAttempts: 0,
+  }, 121_000);
+
+  assert.deepEqual(signal, {
+    level: "yellow",
+    state: "waiting",
+    summary: "provider idle 2m",
+    detail: "last output 2m ago",
+  });
+});
+
+test("setAutoOutcomeWidget renders a durable next-action handoff", () => {
+  let widgetFactory: any;
+  setAutoOutcomeWidget(
+    {
+      hasUI: true,
+      ui: {
+        setWidget(key: string, factory: any) {
+          if (key === "gsd-outcome") widgetFactory = factory;
+        },
+      },
+    } as any,
+    {
+      status: "paused",
+      title: "Auto-mode paused",
+      detail: "Paused by user request.",
+      unitLabel: "researching M005/S01",
+      nextAction: "Type to steer, or run /gsd auto to resume.",
+      commands: ["/gsd auto", "/gsd status for overview"],
+      startedAt: Date.now() - 2_000,
+    },
+  );
+
+  assert.equal(typeof widgetFactory, "function");
+  const component = widgetFactory(
+    { requestRender() {} },
+    { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+  );
+  const output = component.render(100).join("\n");
+  assert.match(output, /Auto-mode paused/);
+  assert.match(output, /Paused by user request/);
+  assert.match(output, /researching M005\/S01/);
+  assert.match(output, /\/gsd auto/);
+});
+
+test("setCompletionProgressWidget keeps terminal all-complete handoff in progress slot", () => {
+  const calls: Array<[string, unknown]> = [];
+  setCompletionProgressWidget(
+    {
+      hasUI: true,
+      ui: {
+        setWidget(key: string, factory: unknown) {
+          calls.push([key, factory]);
+        },
+        setHeader() {},
+        setStatus() {},
+      },
+    } as any,
+    {
+      milestoneId: "M007",
+      milestoneTitle: "Live Text Search",
+      oneLiner: "Completed the milestone.",
+      reason: "All milestones complete",
+      startedAt: Date.now() - 2_000,
+      totalCost: 31.06,
+      totalTokens: 3_600_000,
+      unitCount: 78,
+      completedSlices: 1,
+      totalSlices: 1,
+      allMilestonesComplete: true,
+      basePath: "/project/root",
+    },
+  );
+
+  assert.ok(
+    calls.some(([key, value]) => key === "gsd-outcome" && value === undefined),
+    "terminal completion should clear stale outcome widgets before rendering progress roll-up",
+  );
+  const progress = calls.filter(([key]) => key === "gsd-progress").at(-1);
+  assert.equal(typeof progress?.[1], "function", "terminal completion must install the final handoff in the progress slot");
+
+  const component = (progress?.[1] as any)(
+    { requestRender() {} },
+    { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+  );
+  const output = component.render(120).join("\n");
+  assert.match(output, /All milestones complete/);
+  assert.match(output, /Review the roll-up/);
+  assert.doesNotMatch(output, /\/gsd auto to resume/);
+});
+
+test("buildPhaseHandoffOutcome summarizes the last phase result", () => {
+  const snapshot = buildPhaseHandoffOutcome({
+    unitType: "plan-slice",
+    unitId: "M005/S01",
+    agentEndMessages: [
+      { message: { role: "assistant", content: "Planned S01 with category-aware filtering and validation steps." } },
+    ],
+  });
+
+  assert.equal(snapshot.status, "complete");
+  assert.equal(snapshot.title, "PLAN complete");
+  assert.match(snapshot.detail ?? "", /category-aware filtering/);
+  assert.equal(snapshot.unitLabel, "planning M005/S01");
+  assert.match(snapshot.nextAction, /next phase/);
+});
+
+test("buildPhaseHandoffOutcome ignores non-assistant trailing messages", () => {
+  const snapshot = buildPhaseHandoffOutcome({
+    unitType: "plan-slice",
+    unitId: "M005/S01",
+    agentEndMessages: [
+      { message: { role: "assistant", content: "Assistant summary to hand off." } },
+      { role: "tool", content: "Tool output should not be shown." },
+      { role: "user", content: "User follow-up should not be shown." },
+    ],
+  });
+
+  assert.match(snapshot.detail ?? "", /Assistant summary/);
+  assert.doesNotMatch(snapshot.detail ?? "", /Tool output/);
+  assert.doesNotMatch(snapshot.detail ?? "", /User follow-up/);
+});
+
+test("updateProgressWidget preserves the phase handoff during session switching", () => {
+  const calls: Array<[string, unknown]> = [];
+  updateProgressWidget(
+    {
+      hasUI: true,
+      ui: {
+        setWidget(key: string, factory: unknown) {
+          calls.push([key, factory]);
+        },
+        setHeader() {},
+        setStatus() {},
+      },
+    } as any,
+    "execute-task",
+    "M005/S01/T01",
+    {
+      phase: "executing",
+      activeSlice: { id: "S01", title: "Filter chip bar" },
+      activeTask: { id: "T01", title: "Add category filter" },
+    } as any,
+    {
+      getAutoStartTime: () => Date.now(),
+      isStepMode: () => false,
+      getCmdCtx: () => null,
+      getBasePath: () => "",
+      isVerbose: () => false,
+      isSessionSwitching: () => true,
+      getCurrentDispatchedModelId: () => null,
+    },
+  );
+
+  assert.ok(calls.some(([key]) => key === "gsd-progress"));
+  assert.ok(
+    !calls.some(([key, value]) => key === "gsd-outcome" && value === undefined),
+    "handoff widget should stay visible until the next progress frame renders",
+  );
+});
+
+test("updateProgressWidget clears the phase handoff once active progress resumes", () => {
+  const calls: Array<[string, unknown]> = [];
+  updateProgressWidget(
+    {
+      hasUI: true,
+      ui: {
+        setWidget(key: string, factory: unknown) {
+          calls.push([key, factory]);
+        },
+        setHeader() {},
+        setStatus() {},
+      },
+    } as any,
+    "execute-task",
+    "M005/S01/T01",
+    {
+      phase: "executing",
+      activeSlice: { id: "S01", title: "Filter chip bar" },
+      activeTask: { id: "T01", title: "Add category filter" },
+    } as any,
+    {
+      getAutoStartTime: () => Date.now(),
+      isStepMode: () => false,
+      getCmdCtx: () => null,
+      getBasePath: () => "",
+      isVerbose: () => false,
+      isSessionSwitching: () => false,
+      getCurrentDispatchedModelId: () => null,
+    },
+  );
+
+  assert.ok(calls.some(([key]) => key === "gsd-progress"));
+  assert.ok(
+    calls.some(([key, value]) => key === "gsd-outcome" && value === undefined),
+    "handoff widget should clear once the active dashboard can render",
+  );
+});
+
+test("shouldRenderRoadmapProgress hides pre-roadmap zero-slice progress", () => {
+  assert.equal(shouldRenderRoadmapProgress(null), false);
+  assert.equal(shouldRenderRoadmapProgress({ done: 0, total: 0, activeSliceTasks: null } as any), false);
+  assert.equal(shouldRenderRoadmapProgress({ done: 0, total: 1, activeSliceTasks: null } as any), true);
+});
+
+// ─── estimateTimeRemaining ──────────────────────────────────────────────
+
+test("estimateTimeRemaining returns null when no ledger data", () => {
+  // With no active auto-mode session, ledger is empty
+  const result = estimateTimeRemaining();
+  assert.equal(result, null);
+});
+
+test("estimateTimeRemaining is exported and callable", () => {
+  assert.equal(typeof estimateTimeRemaining, "function");
+});
+
+// ─── getAutoDashboardData elapsed guard ──────────────────────────────────────
+// These tests verify the elapsed time calculation in getAutoDashboardData()
+// doesn't produce absurd values when autoStartTime is 0 (uninitialized).
+// The actual function is in auto.ts and tested structurally here by verifying
+// that formatAutoElapsed properly handles the zero case.
+
+test("formatAutoElapsed returns empty string for negative autoStartTime", () => {
+  // A negative value should be treated as invalid — the guard in
+  // getAutoDashboardData prevents this, but formatAutoElapsed should also
+  // handle it gracefully via its falsy check.
+  assert.equal(formatAutoElapsed(-1), "");
+  assert.equal(formatAutoElapsed(NaN), "");
+});
+
+test("getAutoDashboardData returns RTK savings in the dashboard payload", () => {
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = makeTempDir("rtk-dashboard");
+  autoSession.cmdCtx = {
+    sessionManager: { getSessionId: () => "session-1" },
+  } as any;
+  try {
+    const data = getAutoDashboardData();
+    assert.equal(Object.hasOwn(data, "rtkSavings"), true);
+    assert.equal(
+      data.rtkSavings === null || typeof data.rtkSavings === "object",
+      true,
+    );
+  } finally {
+    cleanup(autoSession.basePath);
+    autoSession.reset();
+  }
+});
+
+test("RTK savings label formats the dashboard footer text", () => {
+  assert.equal(formatRtkSavingsLabel(null), null);
+  assert.equal(
+    formatRtkSavingsLabel({
+      commands: 2,
+      inputTokens: 10_000,
+      outputTokens: 1_000,
+      savedTokens: 2_500,
+      savingsPct: 25,
+      totalTimeMs: 100,
+      avgTimeMs: 50,
+      updatedAt: new Date(0).toISOString(),
+    }),
+    "rtk: 2.5k saved (25%)",
+  );
+});
+
+test("updateProgressWidget refreshes slice progress cache immediately", (t) => {
+  const dir = makeTempDir("progress-cache");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+  t.after(() => {
+    closeDatabase();
+    clearSliceProgressCache();
+    cleanup(dir);
+  });
+
+  openDatabase(join(dir, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Done", status: "complete", sequence: 1 });
+  insertSlice({ milestoneId: "M001", id: "S02", title: "Active", status: "pending", sequence: 2 });
+  insertSlice({ milestoneId: "M001", id: "S03", title: "Pending", status: "pending", sequence: 3 });
+  insertTask({ milestoneId: "M001", sliceId: "S02", id: "T01", title: "Task", status: "complete" });
+
+  clearSliceProgressCache();
+  updateProgressWidget(
+    {
+      hasUI: true,
+      ui: { setWidget() {} },
+    } as any,
+    "complete-slice",
+    "M001/S02",
+    {
+      phase: "summarizing",
+      activeMilestone: { id: "M001", title: "Milestone" },
+      activeSlice: { id: "S02", title: "Active" },
+      activeTask: null,
+    } as any,
+    {
+      getAutoStartTime: () => 0,
+      isStepMode: () => false,
+      getCmdCtx: () => null,
+      getBasePath: () => dir,
+      isVerbose: () => false,
+      isSessionSwitching: () => false,
+      getCurrentDispatchedModelId: () => null,
+    },
+  );
+
+  const progress = getRoadmapSlicesSync();
+  assert.ok(progress, "progress cache should be populated immediately after updateProgressWidget");
+  assert.deepEqual({
+    done: progress.done,
+    total: progress.total,
+    activeSliceTasks: progress.activeSliceTasks,
+  }, {
+    done: 1,
+    total: 3,
+    activeSliceTasks: { done: 1, total: 1 },
+  });
+});
+
+test("updateProgressWidget full mode keeps footer-owned signals out of auto deck", (t) => {
+  const dir = makeTempDir("command-deck");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  let widget: { render(width: number): string[]; dispose?: () => void } | null = null;
+
+  t.after(() => {
+    widget?.dispose?.();
+    clearSliceProgressCache();
+    cleanup(dir);
+  });
+
+  updateProgressWidget(
+    {
+      hasUI: true,
+      ui: {
+        setHeader() {},
+        setStatus() {},
+        setWidget(_key: string, factory: any) {
+          if (_key === "gsd-progress") {
+            widget = factory(
+              { requestRender() {} },
+              { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+            );
+          }
+        },
+      },
+      sessionManager: { getSessionId: () => "session-1" },
+    } as any,
+    "execute-task",
+    "M004/S01/T01",
+    {
+      phase: "executing",
+      activeMilestone: { id: "M004", title: "Budget Tracking" },
+      activeSlice: { id: "S01", title: "Schema migration + expense add --repeat" },
+      activeTask: { id: "T01", title: "Add repeat column via idempotent ALTER TABLE" },
+    } as any,
+    {
+      getAutoStartTime: () => Date.now() - 18_000,
+      isStepMode: () => false,
+      getCmdCtx: () => ({
+        model: { id: "claude-sonnet-4-6", provider: "claude-code", contextWindow: 1_000_000 },
+        getContextUsage: () => ({ percent: 0.2, contextWindow: 1_000_000 }),
+        sessionManager: { getEntries: () => [] },
+      } as any),
+      getBasePath: () => dir,
+      isVerbose: () => false,
+      isSessionSwitching: () => false,
+      getCurrentDispatchedModelId: () => "claude-code/claude-sonnet-4-6",
+    },
+  );
+
+  const installedWidget = widget as { render(width: number): string[]; dispose?: () => void } | null;
+  assert.ok(installedWidget, "progress widget should be installed");
+  const rendered = installedWidget.render(120).join("\n");
+
+  assert.match(rendered, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+GSD\s+·\s+AUTO\s+·\s+running/);
+  assert.doesNotMatch(rendered.split("\n")[1] ?? "", /M004\/S01\/T01/);
+  assert.match(rendered, /Budget Tracking/);
+  assert.match(rendered, /T01: Add repeat column via idempotent ALTER TABLE/);
+  assert.match(rendered, /dashboard/);
+  assert.doesNotMatch(rendered, /claude-sonnet-4-6/, "footer owns provider/model display");
+  assert.doesNotMatch(rendered, /0\.2%|ctx|1\.0M/, "footer owns raw context meter display");
+  assert.doesNotMatch(rendered, /\$/, "footer owns session cost display");
+});
+
+test("updateProgressWidget shows provider-waiting state consistently for auto and next modes", (t) => {
+  const dir = makeTempDir("auto-next-dashboard");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  const widgets: Array<{ render(width: number): string[]; dispose?: () => void }> = [];
+
+  t.after(() => {
+    for (const widget of widgets) widget.dispose?.();
+    _resetWidgetModeForTests();
+    clearSliceProgressCache();
+    cleanup(dir);
+  });
+
+  function renderDashboard(stepMode: boolean): string {
+    const holder: { widget?: { render(width: number): string[]; dispose?: () => void } } = {};
+    updateProgressWidget(
+      {
+        hasUI: true,
+        ui: {
+          setHeader() {},
+          setStatus() {},
+          setWidget(_key: string, factory: any) {
+            if (_key === "gsd-progress") {
+              const installed = factory(
+                { requestRender() {} },
+                { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+              );
+              holder.widget = installed;
+              widgets.push(installed);
+            }
+          },
+        },
+      } as any,
+      "complete-slice",
+      "M003/S01",
+      {
+        phase: "summarizing",
+        activeMilestone: { id: "M003", title: "Inline editing" },
+        activeSlice: { id: "S01", title: "Inline Edit" },
+        activeTask: null,
+      } as any,
+      {
+        getAutoStartTime: () => Date.now() - 12_000,
+        isStepMode: () => stepMode,
+        getCmdCtx: () => null,
+        getBasePath: () => dir,
+        isVerbose: () => false,
+        isSessionSwitching: () => false,
+        getCurrentDispatchedModelId: () => null,
+      },
+    );
+
+    assert.ok(holder.widget, "progress widget should be installed");
+    return holder.widget.render(120).join("\n");
+  }
+
+  const autoRendered = renderDashboard(false);
+  const nextRendered = renderDashboard(true);
+
+  assert.match(autoRendered, /GSD\s+·\s+AUTO\s+·\s+running/);
+  assert.match(nextRendered, /GSD\s+·\s+NEXT\s+·\s+running/);
+  assert.doesNotMatch(autoRendered.split("\n")[1] ?? "", /completing M003\/S01/);
+  assert.doesNotMatch(nextRendered.split("\n")[1] ?? "", /completing M003\/S01/);
+  assert.doesNotMatch(autoRendered, /waiting on provider.*Waiting on provider/i);
+  assert.doesNotMatch(nextRendered, /waiting on provider.*Waiting on provider/i);
+  assert.match(autoRendered, /completing\s+M003\/S01/);
+  assert.match(nextRendered, /completing\s+M003\/S01/);
+  assert.doesNotMatch(autoRendered, /Working/);
+  assert.doesNotMatch(nextRendered, /Working/);
+});
+
+test("last commit refresh backs off cleanly when base path is not a git repo", (t) => {
+  const dir = makeTempDir("non-git");
+  mkdirSync(dir, { recursive: true });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  assert.equal(_getLastCommitForTests(dir), null);
+  assert.ok(
+    _getLastCommitFetchedAtForTests() > 0,
+    "non-git refresh should still advance fetchedAt to avoid render-loop retries",
+  );
+});
+
+test("last commit refresh backs off cleanly when git repo has no commits", (t) => {
+  const dir = makeTempDir("empty-git");
+  mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "pipe" });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  assert.equal(_getLastCommitForTests(dir), null);
+  assert.ok(
+    _getLastCommitFetchedAtForTests() > 0,
+    "empty git refresh should still advance fetchedAt to avoid render-loop retries",
+  );
+});
+
+test("last commit refresh still returns commit info for a valid git repo", (t) => {
+  const dir = makeTempDir("git");
+  mkdirSync(dir, { recursive: true });
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "GSD Test"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "gsd@example.com"], { cwd: dir, stdio: "pipe" });
+  writeFileSync(join(dir, "README.md"), "hello\n", "utf-8");
+  execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "test: seed dashboard repo"], { cwd: dir, stdio: "pipe" });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  const lastCommit = _getLastCommitForTests(dir);
+  assert.ok(lastCommit, "git repo should produce last commit metadata");
+  assert.match(lastCommit!.message, /test: seed dashboard repo/);
+  assert.ok(lastCommit!.timeAgo.length > 0, "relative time should be populated");
+});
+
+// ─── extractUatSliceId ───────────────────────────────────────────────────
+
+test("extractUatSliceId extracts slice ID from M001/S01 format", () => {
+  assert.equal(extractUatSliceId("M001/S01"), "S01");
+  assert.equal(extractUatSliceId("M002/S03"), "S03");
+  assert.equal(extractUatSliceId("M001/S12"), "S12");
+});
+
+test("extractUatSliceId returns null for invalid formats", () => {
+  assert.equal(extractUatSliceId("M001"), null);
+  assert.equal(extractUatSliceId(""), null);
+  assert.equal(extractUatSliceId("M001/T01"), null);
+});
+
+test("widget mode respects project preference precedence and persists there", (t) => {
+  const homeDir = makeTempDir("home");
+  const projectDir = makeTempDir("project");
+  const globalPrefsPath = join(homeDir, ".gsd", "preferences.md");
+  const projectPrefsPath = join(projectDir, ".gsd", "preferences.md");
+
+  mkdirSync(join(homeDir, ".gsd"), { recursive: true });
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nwidget_mode: off\n---\n", "utf-8");
+  writeFileSync(projectPrefsPath, "---\nversion: 1\nwidget_mode: small\n---\n", "utf-8");
+
+  t.after(() => {
+    cleanup(homeDir);
+    cleanup(projectDir);
+    _resetWidgetModeForTests();
+  });
+
+  _resetWidgetModeForTests();
+
+  assert.equal(getWidgetMode(projectPrefsPath, globalPrefsPath), "small", "project widget_mode overrides global");
+  assert.equal(
+    cycleWidgetMode(projectPrefsPath, globalPrefsPath),
+    "min",
+    "cycling advances from the project-owned mode",
+  );
+
+  const projectPrefs = readFileSync(projectPrefsPath, "utf-8");
+  const globalPrefs = readFileSync(globalPrefsPath, "utf-8");
+  assert.match(projectPrefs, /widget_mode:\s*min/);
+  assert.match(globalPrefs, /widget_mode:\s*off/);
+});

@@ -1,0 +1,77 @@
+// GSD-2 — BUNDLED_SKILL_TRIGGERS regression test
+//
+// Guards the skill-trigger table in system-context.ts against accidental
+// regression. Every entry must have a non-empty trigger + skill, and the
+// skills added in PR #4505 and PR #5060 must remain present.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { BUNDLED_SKILL_TRIGGERS } from '../bootstrap/system-context.ts';
+
+const PR_4505_BUNDLED_SKILLS = [
+  'review',
+  'test',
+  'lint',
+  'make-interfaces-feel-better',
+  'accessibility',
+  'grill-me',
+  'design-an-interface',
+  'tdd',
+  'write-milestone-brief',
+  'decompose-into-slices',
+  'spike-wrap-up',
+  'verify-before-complete',
+  'create-mcp-server',
+  'write-docs',
+  'forensics',
+  'handoff',
+  'security-review',
+  'api-design',
+  'dependency-upgrade',
+  'observability',
+] as const;
+
+const PR_5060_BUNDLED_SKILLS = [
+  'react-best-practices',
+  'core-web-vitals',
+  'github-workflows',
+  'web-quality-audit',
+  'agent-browser',
+  'web-design-guidelines',
+  'userinterface-wiki',
+  'create-skill',
+  'create-gsd-extension',
+  'create-workflow',
+  'code-optimizer',
+] as const;
+
+function assertBundledSkillsRegistered(label: string, expectedSkills: readonly string[]): void {
+  const registered = new Set(BUNDLED_SKILL_TRIGGERS.map(e => e.skill));
+  for (const skill of expectedSkills) {
+    assert.ok(registered.has(skill), `${label}: expected bundled skill "${skill}" to be registered`);
+  }
+}
+
+test('BUNDLED_SKILL_TRIGGERS: every entry has a non-empty trigger and skill', () => {
+  assert.ok(BUNDLED_SKILL_TRIGGERS.length > 0, 'table should not be empty');
+  for (const { trigger, skill } of BUNDLED_SKILL_TRIGGERS) {
+    assert.ok(trigger && trigger.trim().length > 0, `trigger missing for skill="${skill}"`);
+    assert.ok(skill && skill.trim().length > 0, `skill missing for trigger="${trigger}"`);
+  }
+});
+
+test('BUNDLED_SKILL_TRIGGERS: PR #4505 bundled skills are present', () => {
+  assertBundledSkillsRegistered('PR #4505', PR_4505_BUNDLED_SKILLS);
+});
+
+test('BUNDLED_SKILL_TRIGGERS: PR #5060 previously-unexposed skills are present', () => {
+  assertBundledSkillsRegistered('PR #5060', PR_5060_BUNDLED_SKILLS);
+});
+
+test('BUNDLED_SKILL_TRIGGERS: skill ids are unique', () => {
+  const seen = new Set<string>();
+  for (const { skill } of BUNDLED_SKILL_TRIGGERS) {
+    assert.ok(!seen.has(skill), `duplicate skill registration: ${skill}`);
+    seen.add(skill);
+  }
+});

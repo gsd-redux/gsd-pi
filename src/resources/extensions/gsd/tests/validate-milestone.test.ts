@@ -1,0 +1,766 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+
+import { deriveState, invalidateStateCache, isValidationTerminal } from "../state.ts";
+import { resolveExpectedArtifactPath, diagnoseExpectedArtifact } from "../auto-artifact-paths.ts";
+import { verifyExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { buildCompleteMilestonePrompt, buildValidateMilestonePrompt } from "../auto-prompts.ts";
+import type { GSDState } from "../types.ts";
+import { clearPathCache } from "../paths.ts";
+import { clearParseCache } from "../files.ts";
+import { closeDatabase, insertAssessment, insertMilestone, insertSlice, openDatabase, getMilestone } from "../gsd-db.ts";
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function makeTmpBase(): string {
+  const base = join(tmpdir(), `gsd-val-test-${randomUUID()}`);
+  mkdirSync(join(base, ".gsd", "milestones"), { recursive: true });
+  return base;
+}
+
+function cleanup(base: string): void {
+  invalidateStateCache();
+  clearPathCache();
+  clearParseCache();
+  closeDatabase();
+  try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
+}
+
+function openTestDb(base: string): void {
+  const dbPath = join(base, ".gsd", "gsd.db");
+  assert.equal(openDatabase(dbPath), true, "test DB should open");
+}
+
+function writeRoadmap(base: string, mid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-ROADMAP.md`), content);
+}
+
+function writeContext(base: string, mid: string, content = "# M001 Context\n\nValidated context."): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-CONTEXT.md`), content);
+}
+
+function writeMilestoneSummary(base: string, mid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-SUMMARY.md`), content);
+}
+
+function writeValidation(base: string, mid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-VALIDATION.md`), content);
+}
+
+function writeSlicePlan(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(join(dir, "tasks"), { recursive: true });
+  writeFileSync(join(dir, `${sid}-PLAN.md`), content);
+}
+
+function writeSliceSummary(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sid}-SUMMARY.md`), content);
+}
+
+function writeSliceAssessment(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sid}-ASSESSMENT.md`), content);
+}
+
+const ALL_DONE_ROADMAP = `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > After this: it works
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`;
+
+const CONTEXT_FILE = `---
+id: M001
+title: Test Milestone
+---
+
+# Context
+Test context.
+`;
+
+// ─── isValidationTerminal ─────────────────────────────────────────────────
+
+test("isValidationTerminal returns true for verdict: pass", () => {
+  const content = "---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns true for verdict: needs-attention", () => {
+  const content = "---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns true for verdict: needs-remediation (#832)", () => {
+  // needs-remediation is treated as terminal to prevent infinite loops
+  // when no remediation slices exist in the roadmap.
+  const content = "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns true for verdict: passed (#1429)", () => {
+  const content = "---\nverdict: passed\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns true for verdict: fail (#2769)", () => {
+  const content = "---\nverdict: fail\nremediation_round: 1\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns true for any arbitrary verdict string (#2769)", () => {
+  const content = "---\nverdict: custom-verdict\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), true);
+});
+
+test("isValidationTerminal returns false for missing frontmatter", () => {
+  const content = "# Validation\nNo frontmatter here.";
+  assert.equal(isValidationTerminal(content), false);
+});
+
+test("isValidationTerminal returns false for missing verdict field", () => {
+  const content = "---\nremediation_round: 0\n---\n\n# Validation";
+  assert.equal(isValidationTerminal(content), false);
+});
+
+// ─── deriveState: validating-milestone ────────────────────────────────────
+
+test("deriveState returns validating-milestone when all slices done and no VALIDATION file", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    // Write CONTEXT so milestone has a title
+    const dir = join(base, ".gsd", "milestones", "M001");
+    writeFileSync(join(dir, "M001-CONTEXT.md"), CONTEXT_FILE);
+
+    const state = await deriveState(base);
+    assert.equal(state.phase, "validating-milestone");
+    assert.equal(state.activeMilestone?.id, "M001");
+    assert.equal(state.activeSlice, null);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("deriveState returns completing-milestone when VALIDATION exists with terminal verdict", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeValidation(base, "M001", "---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nAll good.");
+
+    const state = await deriveState(base);
+    assert.equal(state.phase, "completing-milestone");
+    assert.equal(state.activeMilestone?.id, "M001");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("deriveState returns blocked when needs-remediation has no incomplete slices (#4506)", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeValidation(base, "M001", "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds fixes.");
+
+    const state = await deriveState(base);
+    // All slices done + needs-remediation → blocked (prevents infinite
+    // validate-milestone dispatch loop). Previously returned
+    // validating-milestone, which caused #4506.
+    assert.equal(state.phase, "blocked");
+    assert.equal(state.activeMilestone?.id, "M001");
+    assert.ok(
+      state.blockers.some(b => b.includes("needs-remediation") && b.includes("M001")),
+      "blocker message should mention milestone and verdict",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("deriveState blocks milestone when validation verdict is needs-attention and no summary", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeValidation(base, "M001", "---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds attention.");
+
+    const state = await deriveState(base);
+    assert.equal(state.phase, "blocked");
+    assert.equal(state.activeMilestone?.id, "M001");
+    assert.equal(state.registry.find(entry => entry.id === "M001")?.status, "active");
+    assert.ok(
+      state.blockers.some(b => b.includes("needs-attention") && b.includes("/gsd park M001")),
+      "blocker message should explain explicit resolution paths",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("deriveState blocks DB-backed milestone when validation verdict is needs-attention", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    insertAssessment({
+      path: join(".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+      milestoneId: "M001",
+      status: "needs-attention",
+      scope: "milestone-validation",
+      fullContent: "---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds attention.",
+    });
+
+    const state = await deriveState(base);
+    assert.equal(state.phase, "blocked");
+    assert.equal(state.activeMilestone?.id, "M001");
+    assert.equal(state.registry.find(entry => entry.id === "M001")?.status, "active");
+    assert.ok(
+      state.blockers.some(b => b.includes("needs-attention") && b.includes("/gsd park M001")),
+      "blocker message should explain explicit resolution paths",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("deriveState returns complete when both VALIDATION and SUMMARY exist", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeValidation(base, "M001", "---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nPassed.");
+    writeMilestoneSummary(base, "M001", "# Summary\nDone.");
+
+    const state = await deriveState(base);
+    assert.equal(state.phase, "complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt inlines ASSESSMENT evidence instead of UAT spec", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    const dir = join(base, ".gsd", "milestones", "M001");
+    writeFileSync(join(dir, "M001-CONTEXT.md"), CONTEXT_FILE);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeFileSync(join(dir, "slices", "S01", "S01-UAT.md"), "# UAT Spec\nDo the thing.\n");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Assessment/i, "prompt should inline assessment evidence");
+    assert.match(prompt, /verdict: PASS/i, "prompt should include the assessment verdict");
+    assert.doesNotMatch(prompt, /UAT Spec/i, "prompt should not inline the raw UAT spec as evidence");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildCompleteMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+
+    const prompt = await buildCompleteMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
+    assert.doesNotMatch(prompt, /S02-SUMMARY\.md/, "skipped slice must not appear in on-demand path list (#4780)");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── Dispatch rule ────────────────────────────────────────────────────────
+
+test("dispatch rule matches validating-milestone phase", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "validating-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Validate milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    // Set up minimal milestone structure for the prompt builder
+    writeContext(base, "M001");
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "dispatch");
+    if (result.action === "dispatch") {
+      assert.equal(result.unitType, "validate-milestone");
+      assert.equal(result.unitId, "M001");
+    }
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule backfills missing slice ASSESSMENT from existing SUMMARY before validation dispatch (#6225)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "validating-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Validate milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+
+    writeContext(base, "M001");
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone.");
+
+    const assessmentPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-ASSESSMENT.md");
+    assert.equal(existsSync(assessmentPath), false, "precondition: ASSESSMENT does not exist");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "dispatch");
+    assert.ok(existsSync(assessmentPath), "ASSESSMENT should be backfilled before validation dispatch");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule skips when skip_milestone_validation preference is set", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "validating-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Validate milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    writeContext(base, "M001");
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: { phases: { skip_milestone_validation: true } },
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "skip");
+
+    // Verify the VALIDATION file was written
+    const validationPath = join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
+    assert.ok(existsSync(validationPath), "VALIDATION file should be written on skip");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("skip write immediately advances deriveState out of validating-milestone", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" } as any);
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" } as any);
+
+    writeContext(base, "M001");
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone.");
+
+    invalidateStateCache();
+    clearPathCache();
+    clearParseCache();
+
+    const before = await deriveState(base);
+    assert.equal(before.phase, "validating-milestone", "precondition: missing VALIDATION keeps phase in validation");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state: before,
+      prefs: { phases: { skip_milestone_validation: true } },
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "skip");
+
+    const after = await deriveState(base);
+    assert.equal(
+      after.phase,
+      "completing-milestone",
+      "post-skip deriveState should see the new VALIDATION file without manual cache invalidation",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule ignores failure-path SUMMARY projection when DB milestone is not complete (#4658 superseded)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(base, "M001", "# Milestone Summary\nverification FAILED — not complete.");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "dispatch");
+    assert.equal(getMilestone("M001")?.status, "active");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule does not reconcile DB from successful stale SUMMARY projection (#4658 superseded)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(
+      base,
+      "M001",
+      [
+        "---",
+        "id: M001",
+        "status: complete",
+        "---",
+        "",
+        "# M001: Test",
+        "",
+        "**Complete.**",
+      ].join("\n"),
+    );
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "dispatch");
+    const milestone = getMilestone("M001");
+    assert.equal(milestone?.status, "active");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule ignores ambiguous stale SUMMARY projection (#4658 superseded)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(base, "M001", "# M001 Summary\nSome notes without completion metadata.");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "dispatch");
+    assert.equal(getMilestone("M001")?.status, "active");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── Artifact resolution & verification ───────────────────────────────────
+
+test("resolveExpectedArtifactPath returns VALIDATION path for validate-milestone", () => {
+  const base = makeTmpBase();
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    const result = resolveExpectedArtifactPath("validate-milestone", "M001", base);
+    assert.ok(result);
+    assert.ok(result!.includes("VALIDATION"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact passes when VALIDATION.md exists", () => {
+  const base = makeTmpBase();
+  try {
+    writeValidation(base, "M001", "---\nverdict: pass\n---\n# Val");
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, true);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact fails when VALIDATION.md is missing", () => {
+  const base = makeTmpBase();
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, false);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact rejects VALIDATION with missing frontmatter", () => {
+  const base = makeTmpBase();
+  try {
+    // A VALIDATION file without frontmatter should be treated as incomplete —
+    // matching what deriveState expects. Without this, the artifact check passes
+    // but deriveState still returns validating-milestone, causing the hard skip loop.
+    writeValidation(base, "M001", "# Validation\nNo frontmatter here.");
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, false, "VALIDATION without frontmatter should fail verification");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact rejects VALIDATION with missing verdict field", () => {
+  const base = makeTmpBase();
+  try {
+    writeValidation(base, "M001", "---\nremediation_round: 0\n---\n\n# Validation");
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, false, "VALIDATION without verdict field should fail verification");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact accepts VALIDATION with any extracted verdict", () => {
+  const base = makeTmpBase();
+  try {
+    writeValidation(base, "M001", "---\nverdict: unknown-value\nremediation_round: 0\n---\n\n# Validation");
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, true, "VALIDATION with any extracted verdict should pass verification");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact passes VALIDATION with needs-attention verdict", () => {
+  const base = makeTmpBase();
+  try {
+    writeValidation(base, "M001", "---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds attention.");
+    clearPathCache();
+    clearParseCache();
+    const result = verifyExpectedArtifact("validate-milestone", "M001", base);
+    assert.equal(result, true, "VALIDATION with needs-attention verdict should pass verification");
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── diagnoseExpectedArtifact ─────────────────────────────────────────────
+
+test("diagnoseExpectedArtifact returns validation path for validate-milestone", () => {
+  const base = makeTmpBase();
+  try {
+    const result = diagnoseExpectedArtifact("validate-milestone", "M001", base);
+    assert.ok(result);
+    assert.ok(result!.includes("VALIDATION"));
+    assert.ok(result!.includes("milestone validation report"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── buildLoopRemediationSteps ────────────────────────────────────────────
+
+test("buildLoopRemediationSteps returns steps for validate-milestone", () => {
+  const base = makeTmpBase();
+  try {
+    const result = buildLoopRemediationSteps("validate-milestone", "M001", base);
+    assert.ok(result);
+    assert.ok(result!.includes("VALIDATION"));
+    assert.ok(result!.includes("verdict: pass"));
+    assert.ok(result!.includes("gsd recover"));
+  } finally {
+    cleanup(base);
+  }
+});

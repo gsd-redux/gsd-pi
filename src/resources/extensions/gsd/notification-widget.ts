@@ -1,0 +1,69 @@
+// GSD Extension — Notification Status
+// Always-on ambient notification chip surfaced as an extension status on the
+// footer pwd row. Refreshes on store change + on a 30s timer. Hidden when
+// unread=0. Key sorts late so the chip renders to the right of other
+// extension statuses.
+
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
+
+import { getUnreadCount, onNotificationStoreChange } from "./notification-store.js";
+import { formattedShortcutPair } from "./shortcut-defs.js";
+
+// Key chosen to sort after alphabetic extension keys so the chip lands on the
+// far right of the extension-status block.
+const STATUS_KEY = "zz-notifications";
+const WIDGET_MAX_WIDTH = 80;
+
+export function buildNotificationChip(): string {
+  const unread = getUnreadCount();
+  if (unread === 0) return "";
+  return `🔔 ${unread} unread (${formattedShortcutPair("notifications")})`;
+}
+
+// Retained for backwards compatibility with tests and the RPC fallback path
+// that still expected a line-array widget. Returns empty when no unread.
+export function buildNotificationWidgetLines(): string[] {
+  const chip = buildNotificationChip();
+  if (!chip) return [];
+  const singleLine = chip.replace(/\s+/g, " ").trim();
+  const truncated = singleLine.length > WIDGET_MAX_WIDTH
+    ? `${singleLine.slice(0, WIDGET_MAX_WIDTH - 1)}…`
+    : singleLine;
+  return [`  ${truncated}`];
+}
+
+const REFRESH_INTERVAL_MS = 30_000;
+let notificationWidgetCleanup: (() => void) | undefined;
+
+export function initNotificationWidget(ctx: ExtensionContext): () => void {
+  notificationWidgetCleanup?.();
+  notificationWidgetCleanup = undefined;
+
+  if (!ctx.hasUI) return () => {};
+
+  const push = () => {
+    const chip = buildNotificationChip();
+    ctx.ui.setStatus(STATUS_KEY, chip.length > 0 ? chip : undefined);
+  };
+  push();
+
+  const unsubscribe = onNotificationStoreChange(push);
+  const interval = setInterval(push, REFRESH_INTERVAL_MS);
+  interval.unref?.();
+
+  const cleanup = () => {
+    unsubscribe();
+    clearInterval(interval);
+    if (notificationWidgetCleanup === cleanup) {
+      ctx.ui.setStatus(STATUS_KEY, undefined);
+      notificationWidgetCleanup = undefined;
+    }
+  };
+  notificationWidgetCleanup = cleanup;
+  return cleanup;
+}
+
+export function _resetNotificationWidgetForTests(): void {
+  notificationWidgetCleanup?.();
+  notificationWidgetCleanup = undefined;
+}

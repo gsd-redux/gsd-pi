@@ -1,0 +1,350 @@
+// Project/App: GSD-2
+// File Purpose: Handles operational /gsd subcommands.
+import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+
+import { enableDebug } from "../../debug-logger.js";
+import { dispatchDirectPhase } from "../../auto-direct-dispatch.js";
+import { handleConfig } from "../../commands-config.js";
+import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkillHealth, handleSteer, handleTriage, handleUpdate } from "../../commands-handlers.js";
+import { handleInspect } from "../../commands-inspect.js";
+import { handleLogs } from "../../commands-logs.js";
+import { handleDebug } from "../../commands-debug.js";
+import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover } from "../../commands-maintenance.js";
+import { handleExport } from "../../export.js";
+import { handleHistory } from "../../history.js";
+import { handleUndo } from "../../undo.js";
+import { handleRemote } from "../../../remote-questions/mod.js";
+import { handleShip } from "../../commands-ship.js";
+import { handleSessionReport } from "../../commands-session-report.js";
+import { handlePrBranch } from "../../commands-pr-branch.js";
+import { currentDirectoryRoot, projectRoot } from "../context.js";
+import { findUnmergedCompletedMilestones } from "../../unmerged-milestone-guard.js";
+import { mergeCompletedMilestone } from "../../parallel-merge.js";
+
+async function handleCompletedMilestoneRecovery(
+  phase: string,
+  ctx: ExtensionCommandContext,
+  basePath: string,
+): Promise<boolean> {
+  const tokens = phase.split(/\s+/).filter(Boolean);
+  const dispatchPhase = tokens[0] ?? "";
+  if (dispatchPhase !== "complete" && dispatchPhase !== "complete-milestone") return false;
+
+  const requestedMilestoneId = tokens[1];
+  const blockers = await findUnmergedCompletedMilestones(basePath);
+  const blocker = requestedMilestoneId
+    ? blockers.find((candidate) => candidate.milestoneId === requestedMilestoneId)
+    : blockers[0];
+  if (!blocker) return false;
+
+  ctx.ui.notify(
+    `Completing preserved milestone merge for ${blocker.milestoneId} from ${blocker.branch} into ${blocker.integrationBranch}.`,
+    "info",
+  );
+  const result = await mergeCompletedMilestone(basePath, blocker.milestoneId);
+  if (result.success) {
+    ctx.ui.notify(
+      `Milestone ${blocker.milestoneId} merged to ${blocker.integrationBranch}. Run /gsd again when ready.`,
+      "info",
+    );
+  } else {
+    ctx.ui.notify(
+      `Milestone ${blocker.milestoneId} merge recovery failed: ${result.error}`,
+      "error",
+    );
+  }
+  return true;
+}
+
+export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
+  const directDispatchAlias = new Map<string, string>([
+    ["research-milestone", "research"],
+    ["research-slice", "research"],
+    ["plan-milestone", "plan"],
+    ["plan-slice", "plan"],
+    ["execute-task", "execute"],
+    ["complete-slice", "complete"],
+    ["validate-milestone", "validate-milestone"],
+    ["complete-milestone", "complete"],
+  ]);
+  const aliasPhase = directDispatchAlias.get(trimmed);
+  if (aliasPhase) {
+    await dispatchDirectPhase(ctx, pi, aliasPhase, projectRoot());
+    return true;
+  }
+
+  if (trimmed === "init") {
+    const { detectProjectState } = await import("../../detection.js");
+    const { handleReinit, showProjectInit } = await import("../../init-wizard.js");
+    const basePath = projectRoot();
+    const detection = detectProjectState(basePath);
+    if (detection.state === "v2-gsd" || detection.state === "v2-gsd-empty") {
+      await handleReinit(ctx, detection);
+    } else {
+      await showProjectInit(ctx, pi, basePath, detection);
+    }
+    return true;
+  }
+  if (trimmed === "keys" || trimmed.startsWith("keys ")) {
+    const { handleKeys } = await import("../../key-manager.js");
+    await handleKeys(trimmed.replace(/^keys\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "doctor" || trimmed.startsWith("doctor ")) {
+    await handleDoctor(trimmed.replace(/^doctor\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "logs" || trimmed.startsWith("logs ")) {
+    await handleLogs(trimmed.replace(/^logs\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "debug" || trimmed.startsWith("debug ")) {
+    await handleDebug(trimmed.replace(/^debug\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "forensics" || trimmed.startsWith("forensics ")) {
+    const { handleForensics } = await import("../../forensics.js");
+    await handleForensics(trimmed.replace(/^forensics\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "changelog" || trimmed.startsWith("changelog ")) {
+    const { handleChangelog } = await import("../../changelog.js");
+    await handleChangelog(trimmed.replace(/^changelog\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "history" || trimmed.startsWith("history ")) {
+    await handleHistory(trimmed.replace(/^history\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "undo-task" || trimmed.startsWith("undo-task ")) {
+    const { handleUndoTask } = await import("../../undo.js");
+    await handleUndoTask(trimmed.replace(/^undo-task\s*/, "").trim(), ctx, pi, projectRoot());
+    return true;
+  }
+  if (trimmed === "reset-slice" || trimmed.startsWith("reset-slice ")) {
+    const { handleResetSlice } = await import("../../undo.js");
+    await handleResetSlice(trimmed.replace(/^reset-slice\s*/, "").trim(), ctx, pi, projectRoot());
+    return true;
+  }
+  if (trimmed === "undo" || trimmed.startsWith("undo ")) {
+    await handleUndo(trimmed.replace(/^undo\s*/, "").trim(), ctx, pi, projectRoot());
+    return true;
+  }
+  if (trimmed === "skip") {
+    ctx.ui.notify("Usage: /gsd skip <unit-id>  Example: /gsd skip M001/S01/T03", "warning");
+    return true;
+  }
+  if (trimmed.startsWith("skip ")) {
+    await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "recover") {
+    await handleRecover(ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "closeout" || trimmed.startsWith("closeout ")) {
+    const { handleCloseout } = await import("../../commands-closeout.js");
+    await handleCloseout(trimmed.replace(/^closeout\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "export" || trimmed.startsWith("export ")) {
+    await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "cleanup projects" || trimmed.startsWith("cleanup projects ")) {
+    await handleCleanupProjects(trimmed.replace(/^cleanup projects\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "cleanup worktrees") {
+    await handleCleanupWorktrees(ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "cleanup") {
+    await handleCleanupBranches(ctx, projectRoot());
+    await handleCleanupSnapshots(ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "cleanup branches") {
+    await handleCleanupBranches(ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "cleanup snapshots") {
+    await handleCleanupSnapshots(ctx, projectRoot());
+    return true;
+  }
+  if (trimmed.startsWith("capture ") || trimmed === "capture") {
+    await handleCapture(trimmed.replace(/^capture\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "triage") {
+    await handleTriage(ctx, pi, currentDirectoryRoot());
+    return true;
+  }
+  if (trimmed === "config") {
+    await handleConfig(ctx);
+    return true;
+  }
+  if (trimmed === "hooks") {
+    const { formatHookStatus } = await import("../../post-unit-hooks.js");
+    ctx.ui.notify(formatHookStatus(), "info");
+    return true;
+  }
+  if (trimmed === "skill-health" || trimmed.startsWith("skill-health ")) {
+    await handleSkillHealth(trimmed.replace(/^skill-health\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed.startsWith("run-hook ")) {
+    await handleRunHook(trimmed.replace(/^run-hook\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "run-hook") {
+    ctx.ui.notify(`Usage: /gsd run-hook <hook-name> <unit-type> <unit-id>
+
+Unit types:
+  execute-task   - Task execution (unit-id: M001/S01/T01)
+  plan-slice     - Slice planning (unit-id: M001/S01)
+  research-milestone - Milestone research (unit-id: M001)
+  complete-slice - Slice completion (unit-id: M001/S01)
+  complete-milestone - Milestone completion (unit-id: M001)
+
+Examples:
+  /gsd run-hook code-review execute-task M001/S01/T01
+  /gsd run-hook lint-check plan-slice M001/S01`, "warning");
+    return true;
+  }
+  if (trimmed.startsWith("steer ")) {
+    await handleSteer(trimmed.replace(/^steer\s+/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "steer") {
+    ctx.ui.notify("Usage: /gsd steer <description of change>. Example: /gsd steer Use Postgres instead of SQLite", "warning");
+    return true;
+  }
+  if (trimmed.startsWith("knowledge ")) {
+    await handleKnowledge(trimmed.replace(/^knowledge\s+/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "knowledge") {
+    ctx.ui.notify("Usage: /gsd knowledge <rule|pattern|lesson> <description>. Example: /gsd knowledge rule Use real DB for integration tests", "warning");
+    return true;
+  }
+  if (trimmed === "migrate" || trimmed.startsWith("migrate ")) {
+    const { handleMigrate } = await import("../../migrate/command.js");
+    await handleMigrate(trimmed.replace(/^migrate\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "remote" || trimmed.startsWith("remote ")) {
+    await handleRemote(trimmed.replace(/^remote\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "dispatch" || trimmed.startsWith("dispatch ")) {
+    const phase = trimmed.replace(/^dispatch\s*/, "").trim();
+    if (!phase) {
+      ctx.ui.notify("Usage: /gsd dispatch <phase>  (research|plan|execute|complete|validate|reassess|uat|replan)", "warning");
+      return true;
+    }
+    const basePath = projectRoot();
+    if (await handleCompletedMilestoneRecovery(phase, ctx, basePath)) {
+      return true;
+    }
+    await dispatchDirectPhase(ctx, pi, phase, basePath);
+    return true;
+  }
+  if (trimmed === "verdict" || trimmed.startsWith("verdict ")) {
+    const { handleVerdict } = await import("../../commands-verdict.js");
+    await handleVerdict(trimmed.replace(/^verdict\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
+  if (trimmed === "notifications" || trimmed.startsWith("notifications ")) {
+    const { handleNotificationsCommand } = await import("./notifications-handler.js");
+    await handleNotificationsCommand(trimmed.replace(/^notifications\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "escalate" || trimmed.startsWith("escalate ")) {
+    const { handleEscalateCommand } = await import("./escalate.js");
+    await handleEscalateCommand(trimmed.replace(/^escalate\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "inspect") {
+    await handleInspect(ctx);
+    return true;
+  }
+  if (trimmed === "update") {
+    await handleUpdate(ctx);
+    return true;
+  }
+  if (trimmed === "fast" || trimmed.startsWith("fast ")) {
+    const { handleFast } = await import("../../service-tier.js");
+    await handleFast(trimmed.replace(/^fast\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "mcp" || trimmed.startsWith("mcp ")) {
+    const { handleMcpStatus } = await import("../../commands-mcp-status.js");
+    await handleMcpStatus(trimmed.replace(/^mcp\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "extensions" || trimmed.startsWith("extensions ")) {
+    const { handleExtensions } = await import("../../commands-extensions.js");
+    await handleExtensions(trimmed.replace(/^extensions\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "rethink") {
+    const { handleRethink } = await import("../../rethink.js");
+    await handleRethink(trimmed, ctx, pi);
+    return true;
+  }
+  if (trimmed === "codebase" || trimmed.startsWith("codebase ")) {
+    const { handleCodebase } = await import("../../commands-codebase.js");
+    await handleCodebase(trimmed.replace(/^codebase\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "ship" || trimmed.startsWith("ship ")) {
+    await handleShip(trimmed.replace(/^ship\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "session-report" || trimmed.startsWith("session-report ")) {
+    await handleSessionReport(trimmed.replace(/^session-report\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "pr-branch" || trimmed.startsWith("pr-branch ")) {
+    await handlePrBranch(trimmed.replace(/^pr-branch\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "add-tests" || trimmed.startsWith("add-tests ")) {
+    const { handleAddTests } = await import("../../commands-add-tests.js");
+    await handleAddTests(trimmed.replace(/^add-tests\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "eval-review" || trimmed.startsWith("eval-review ")) {
+    const { handleEvalReview } = await import("../../commands-eval-review.js");
+    await handleEvalReview(trimmed.replace(/^eval-review\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "extract-learnings" || trimmed.startsWith("extract-learnings ")) {
+    const { handleExtractLearnings } = await import("../../commands-extract-learnings.js");
+    await handleExtractLearnings(trimmed.replace(/^extract-learnings\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "memory" || trimmed.startsWith("memory ") || trimmed === "memory help") {
+    const { handleMemory } = await import("../../commands-memory.js");
+    await handleMemory(trimmed.replace(/^memory\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "scan" || trimmed.startsWith("scan ")) {
+    const { handleScan } = await import("../../commands-scan.js");
+    // \s* (not \s+) is intentional: handles both /gsd scan (no args) and /gsd scan --focus X
+    await handleScan(trimmed.replace(/^scan\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (
+    trimmed === "worktree" ||
+    trimmed.startsWith("worktree ") ||
+    trimmed === "wt" ||
+    trimmed.startsWith("wt ")
+  ) {
+    const { handleWorktree } = await import("../../commands-worktree.js");
+    await handleWorktree(trimmed.replace(/^(worktree|wt)\s*/, "").trim(), ctx);
+    return true;
+  }
+  return false;
+}

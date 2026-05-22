@@ -1,0 +1,294 @@
+/**
+ * Regression tests for #3348 secondary issues — crash handler gaps surfaced after #3696
+ *
+ * 1. register-extension.ts: writeCrashLog writes to ~/.gsd/crash/ directory
+ * 2. register-extension.ts: _gsdRejectionGuard registered for unhandledRejection
+ * 3. register-extension.ts: _gsdEpipeGuard exits with code 1 for unrecoverable errors (no log-and-continue)
+ * 4. crash-recovery.ts: emitCrashRecoveredUnitEnd closes open unit-start journal entries
+ */
+
+import { describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+
+import { installEpipeGuard } from "../bootstrap/register-extension.ts";
+
+function makeTmpBase(): string {
+  const base = join(tmpdir(), `gsd-test-${randomUUID()}`);
+  mkdirSync(join(base, '.gsd'), { recursive: true });
+  return base;
+}
+
+describe('register-extension crash handler secondary fixes (#3348)', () => {
+  test('writeCrashLog is exported and writes a file to the crash directory', async () => {
+    // Dynamic import so GSD_HOME can be pointed at a temp dir without polluting ~/.gsd
+    const tmpHome = join(tmpdir(), `gsd-crash-test-${randomUUID()}`);
+    const origHome = process.env.GSD_HOME;
+    process.env.GSD_HOME = tmpHome;
+    try {
+      const { writeCrashLog } = await import('../bootstrap/crash-log.ts');
+      const err = new Error('test crash from secondary regression test');
+      writeCrashLog(err, 'uncaughtException');
+
+      const crashDir = join(tmpHome, 'crash');
+      assert.ok(existsSync(crashDir), 'crash directory should be created');
+
+      const logs = readdirSync(crashDir).filter((f) => f.endsWith('.log'));
+      assert.equal(logs.length, 1, 'exactly one crash log should be written');
+
+      const content = readFileSync(join(crashDir, logs[0]), 'utf-8');
+      assert.ok(content.includes('test crash from secondary regression test'), 'log should contain error message');
+      assert.ok(content.includes('uncaughtException'), 'log should identify the source');
+      assert.ok(content.includes('pid:'), 'log should include process pid');
+    } finally {
+      process.env.GSD_HOME = origHome;
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('_gsdRejectionGuard is registered for unhandledRejection', () => {
+    installEpipeGuard();
+    const listener = process.listeners("unhandledRejection").find((candidate) =>
+      candidate.name === "_gsdRejectionGuard"
+    );
+    assert.ok(listener, 'installEpipeGuard should register an unhandledRejection handler');
+  });
+
+  test('_gsdEpipeGuard writes a crash log and exits for unrecoverable errors', () => {
+    installEpipeGuard();
+    const listener = process.listeners("uncaughtException").find((candidate) =>
+      candidate.name === "_gsdEpipeGuard"
+    );
+    assert.ok(listener, '_gsdEpipeGuard should be registered');
+
+    const tmpHome = join(tmpdir(), `gsd-crash-exit-test-${randomUUID()}`);
+    const origHome = process.env.GSD_HOME;
+    const originalExit = process.exit;
+    let exitCode: number | string | null | undefined;
+    (process as any).exit = (code?: number | string | null | undefined): never => {
+      exitCode = code;
+      throw new Error("process.exit intercepted");
+    };
+    process.env.GSD_HOME = tmpHome;
+    try {
+      assert.throws(
+        () => listener(new Error("unrecoverable crash guard test"), "uncaughtException"),
+        /process\.exit intercepted/,
+      );
+      assert.equal(exitCode, 1);
+      const crashDir = join(tmpHome, "crash");
+      const logs = readdirSync(crashDir).filter((f) => f.endsWith(".log"));
+      assert.equal(logs.length, 1);
+      assert.match(readFileSync(join(crashDir, logs[0]), "utf-8"), /unrecoverable crash guard test/);
+    } finally {
+      (process as any).exit = originalExit;
+      process.env.GSD_HOME = origHome;
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  test('writeCrashLog never throws even when directory is unwritable', async () => {
+    const { writeCrashLog } = await import('../bootstrap/crash-log.ts');
+    const origHome = process.env.GSD_HOME;
+    // Point at a path that will fail to mkdir (e.g. a file that exists as non-dir)
+    const tmpFile = join(tmpdir(), `gsd-not-a-dir-${randomUUID()}`);
+    // Don't create it — mkdirSync with bad path should be caught internally
+    process.env.GSD_HOME = join(tmpFile, 'nested', 'deeply');
+    try {
+      // Should not throw
+      assert.doesNotThrow(() => {
+        writeCrashLog(new Error('should not throw'), 'test');
+      });
+    } finally {
+      process.env.GSD_HOME = origHome;
+    }
+  });
+});
+
+// ─── emitCrashRecoveredUnitEnd ────────────────────────────────────────────────
+
+describe('emitCrashRecoveredUnitEnd (#3348)', () => {
+  test('emits synthetic unit-end when unit-start has no matching unit-end', async () => {
+    const base = makeTmpBase();
+    try {
+      const { emitJournalEvent, queryJournal } = await import('../journal.ts');
+      const { emitCrashRecoveredUnitEnd } = await import('../crash-recovery.ts');
+
+      const flowId = randomUUID();
+      const unitStartSeq = 5;
+
+      // Emit a unit-start with no corresponding unit-end (simulating a crash)
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId,
+        seq: unitStartSeq,
+        eventType: 'unit-start',
+        data: { unitType: 'execute-task', unitId: 'M001/S01/T01' },
+      });
+
+      const lock = {
+        pid: 99999,
+        startedAt: new Date().toISOString(),
+        unitType: 'execute-task',
+        unitId: 'M001/S01/T01',
+        unitStartedAt: new Date().toISOString(),
+      };
+
+      emitCrashRecoveredUnitEnd(base, lock);
+
+      const events = queryJournal(base);
+      const ends = events.filter((e) => e.eventType === 'unit-end');
+      assert.equal(ends.length, 1, 'should emit exactly one unit-end');
+      assert.equal(ends[0].data?.unitId, 'M001/S01/T01');
+      assert.equal(ends[0].data?.status, 'crash-recovered');
+      assert.equal(ends[0].causedBy?.flowId, flowId);
+      assert.equal(ends[0].causedBy?.seq, unitStartSeq);
+      assert.ok(ends[0].seq > unitStartSeq, 'unit-end seq must be higher than unit-start seq');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('is a no-op when unit-end was already emitted (e.g. hard timeout fired)', async () => {
+    const base = makeTmpBase();
+    try {
+      const { emitJournalEvent, queryJournal } = await import('../journal.ts');
+      const { emitCrashRecoveredUnitEnd } = await import('../crash-recovery.ts');
+
+      const flowId = randomUUID();
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId,
+        seq: 3,
+        eventType: 'unit-start',
+        data: { unitType: 'plan-slice', unitId: 'M001/S02' },
+      });
+      // Hard timeout already emitted a unit-end
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId,
+        seq: 4,
+        eventType: 'unit-end',
+        data: { unitType: 'plan-slice', unitId: 'M001/S02', status: 'cancelled' },
+        causedBy: { flowId, seq: 3 },
+      });
+
+      const lock = {
+        pid: 99999,
+        startedAt: new Date().toISOString(),
+        unitType: 'plan-slice',
+        unitId: 'M001/S02',
+        unitStartedAt: new Date().toISOString(),
+      };
+      emitCrashRecoveredUnitEnd(base, lock);
+
+      const ends = queryJournal(base).filter((e) => e.eventType === 'unit-end');
+      assert.equal(ends.length, 1, 'should not emit a duplicate unit-end');
+      assert.equal(ends[0].data?.status, 'cancelled', 'original unit-end should be preserved');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('is a no-op for "starting" pseudo-units (bootstrap crash)', async () => {
+    const base = makeTmpBase();
+    try {
+      const { queryJournal } = await import('../journal.ts');
+      const { emitCrashRecoveredUnitEnd } = await import('../crash-recovery.ts');
+
+      const lock = {
+        pid: 99999,
+        startedAt: new Date().toISOString(),
+        unitType: 'starting',
+        unitId: 'bootstrap',
+        unitStartedAt: new Date().toISOString(),
+      };
+      emitCrashRecoveredUnitEnd(base, lock);
+
+      const events = queryJournal(base);
+      assert.equal(events.length, 0, 'should emit nothing for starting/bootstrap pseudo-units');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('is a no-op when no unit-start exists in the journal', async () => {
+    const base = makeTmpBase();
+    try {
+      const { queryJournal } = await import('../journal.ts');
+      const { emitCrashRecoveredUnitEnd } = await import('../crash-recovery.ts');
+
+      const lock = {
+        pid: 99999,
+        startedAt: new Date().toISOString(),
+        unitType: 'execute-task',
+        unitId: 'M002/S01/T03',
+        unitStartedAt: new Date().toISOString(),
+      };
+      emitCrashRecoveredUnitEnd(base, lock);
+
+      const events = queryJournal(base);
+      assert.equal(events.length, 0, 'should emit nothing when there is no journal entry to close');
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test('emitOpenUnitEndForUnit closes the latest open start with error context', async () => {
+    const base = makeTmpBase();
+    try {
+      const { emitJournalEvent, queryJournal } = await import('../journal.ts');
+      const { emitOpenUnitEndForUnit } = await import('../crash-recovery.ts');
+
+      const firstFlowId = randomUUID();
+      const secondFlowId = randomUUID();
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId: firstFlowId,
+        seq: 1,
+        eventType: 'unit-start',
+        data: { unitType: 'execute-task', unitId: 'M008/S04/T02' },
+      });
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId: firstFlowId,
+        seq: 2,
+        eventType: 'unit-end',
+        data: { unitType: 'execute-task', unitId: 'M008/S04/T02', status: 'completed' },
+        causedBy: { flowId: firstFlowId, seq: 1 },
+      });
+      emitJournalEvent(base, {
+        ts: new Date().toISOString(),
+        flowId: secondFlowId,
+        seq: 3,
+        eventType: 'unit-start',
+        data: { unitType: 'execute-task', unitId: 'M008/S04/T02' },
+      });
+
+      const emitted = emitOpenUnitEndForUnit(
+        base,
+        'execute-task',
+        'M008/S04/T02',
+        'cancelled',
+        { message: 'runUnitPhase exploded', category: 'unit-exception', isTransient: false },
+      );
+
+      assert.equal(emitted, true, 'open unit should be closed');
+      const ends = queryJournal(base).filter((e) => e.eventType === 'unit-end');
+      assert.equal(ends.length, 2, 'should preserve existing end and add one new end');
+      const newEnd = ends.find((e) => e.causedBy?.flowId === secondFlowId);
+      assert.ok(newEnd, 'new end should close the latest open start');
+      assert.equal(newEnd!.data?.status, 'cancelled');
+      assert.deepEqual(newEnd!.data?.errorContext, {
+        message: 'runUnitPhase exploded',
+        category: 'unit-exception',
+        isTransient: false,
+      });
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+});

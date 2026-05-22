@@ -1,0 +1,296 @@
+import * as vscode from "vscode";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import type { GsdClient, AgentEvent } from "./gsd-client.js";
+import {
+	captureCurrentSnapshots,
+	captureOriginalContent,
+	describeAction,
+	getToolInput,
+	getToolUseId,
+	isFileMutationTool,
+	normalizeToolName,
+	resolveToolPath,
+} from "./change-tracker-core.js";
+
+export interface FileSnapshot {
+	uri: vscode.Uri;
+	originalContent: string;
+	timestamp: number;
+}
+
+export interface Checkpoint {
+	id: number;
+	label: string;
+	timestamp: number;
+	/** Map of file path -> content at checkpoint creation time; null means the file did not exist. */
+	snapshots: Map<string, string | null>;
+}
+
+/**
+ * Tracks file changes made by the GSD agent. Stores original file content
+ * before the agent modifies it, enabling diff views, SCM integration,
+ * and checkpoint/rollback functionality.
+ */
+export class GsdChangeTracker implements vscode.Disposable {
+	/** file path → original content (before first agent modification this session) */
+	private originals = new Map<string, string | null>();
+	/** Set of file paths modified in the current agent turn */
+	private currentTurnFiles = new Set<string>();
+	/** Ordered list of checkpoints */
+	private _checkpoints: Checkpoint[] = [];
+	private nextCheckpointId = 1;
+	/** toolUseId → file path for in-flight tool executions */
+	private pendingTools = new Map<string, string>();
+	/** Whether the current turn has been described in the checkpoint label */
+	private turnDescribed = false;
+
+	private readonly _onDidChange = new vscode.EventEmitter<string[]>();
+	/** Fires when the set of tracked files changes. Payload is array of changed file paths. */
+	readonly onDidChange = this._onDidChange.event;
+
+	private readonly _onCheckpointChange = new vscode.EventEmitter<void>();
+	readonly onCheckpointChange = this._onCheckpointChange.event;
+
+	private disposables: vscode.Disposable[] = [];
+
+	constructor(
+		private readonly client: GsdClient,
+		private readonly workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd(),
+	) {
+		this.disposables.push(this._onDidChange, this._onCheckpointChange);
+
+		this.disposables.push(
+			client.onEvent((evt) => this.handleEvent(evt)),
+			client.onConnectionChange((connected) => {
+				if (!connected) {
+					this.reset();
+				}
+			}),
+		);
+	}
+
+	/** All file paths that have been modified by the agent */
+	get modifiedFiles(): string[] {
+		return [...this.originals.keys()];
+	}
+
+	/** Get the original content of a file (before agent first modified it) */
+	getOriginal(filePath: string): string | undefined {
+		const original = this.originals.get(filePath);
+		return original === undefined ? undefined : original ?? "";
+	}
+
+	/** Whether the tracker has any modifications */
+	get hasChanges(): boolean {
+		return this.originals.size > 0;
+	}
+
+	/** Current checkpoints (newest first) */
+	get checkpoints(): readonly Checkpoint[] {
+		return this._checkpoints;
+	}
+
+	/**
+	 * Discard agent changes to a single file — restore original content.
+	 * Returns true if the file was restored.
+	 */
+	async discardFile(filePath: string): Promise<boolean> {
+		const original = this.originals.get(filePath);
+		if (original === undefined) return false;
+
+		try {
+			if (original === null) {
+				await fs.promises.rm(filePath, { force: true });
+			} else {
+				await fs.promises.writeFile(filePath, original, "utf8");
+			}
+			this.originals.delete(filePath);
+			this._onDidChange.fire([filePath]);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Discard all agent changes — restore all files to their original state.
+	 */
+	async discardAll(): Promise<number> {
+		let count = 0;
+		const paths = [...this.originals.keys()];
+		for (const filePath of paths) {
+			if (await this.discardFile(filePath)) {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	/**
+	 * Accept changes to a file — remove from tracking (keep the current content).
+	 */
+	acceptFile(filePath: string): void {
+		if (this.originals.delete(filePath)) {
+			this._onDidChange.fire([filePath]);
+		}
+	}
+
+	/**
+	 * Accept all changes — clear all tracking.
+	 */
+	acceptAll(): void {
+		const paths = [...this.originals.keys()];
+		this.originals.clear();
+		if (paths.length > 0) {
+			this._onDidChange.fire(paths);
+		}
+	}
+
+	/**
+	 * Restore all files to a checkpoint state.
+	 */
+	async restoreCheckpoint(checkpointId: number): Promise<number> {
+		const idx = this._checkpoints.findIndex((c) => c.id === checkpointId);
+		if (idx === -1) return 0;
+
+		const checkpoint = this._checkpoints[idx];
+		let count = 0;
+
+		for (const [filePath, content] of checkpoint.snapshots) {
+			try {
+				if (content === null) {
+					await fs.promises.rm(filePath, { force: true });
+				} else {
+					await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+					await fs.promises.writeFile(filePath, content, "utf8");
+				}
+				count++;
+			} catch {
+				// skip files that can't be restored
+			}
+		}
+
+		// Reset originals to the checkpoint state
+		this.originals = new Map(checkpoint.snapshots);
+
+		// Remove all checkpoints after this one
+		this._checkpoints = this._checkpoints.slice(0, idx);
+
+		this._onDidChange.fire([...checkpoint.snapshots.keys()]);
+		this._onCheckpointChange.fire();
+		return count;
+	}
+
+	/** Clear all tracking state */
+	reset(): void {
+		const paths = [...this.originals.keys()];
+		this.originals.clear();
+		this.currentTurnFiles.clear();
+		this.pendingTools.clear();
+		this._checkpoints = [];
+		this.nextCheckpointId = 1;
+		if (paths.length > 0) {
+			this._onDidChange.fire(paths);
+		}
+		this._onCheckpointChange.fire();
+	}
+
+	dispose(): void {
+		for (const d of this.disposables) {
+			d.dispose();
+		}
+	}
+
+	private handleEvent(evt: AgentEvent): void {
+		switch (evt.type) {
+			case "agent_start":
+				this.createCheckpoint();
+				this.currentTurnFiles.clear();
+				this.turnDescribed = false;
+				break;
+
+			case "tool_execution_start": {
+				const toolName = String(evt.toolName ?? "");
+				const normalizedToolName = normalizeToolName(toolName);
+				const toolInput = getToolInput(evt);
+				const toolUseId = getToolUseId(evt);
+
+				// Update checkpoint label with first action description
+				if (!this.turnDescribed) {
+					this.turnDescribed = true;
+					this.updateLatestCheckpointLabel(describeAction(toolName, toolInput));
+				}
+
+				if (!isFileMutationTool(normalizedToolName)) break;
+
+				const filePath = this.resolveToolPath(toolInput);
+
+				if (!filePath) break;
+
+				// Store the original content before the agent modifies it
+				// Only capture on FIRST modification (don't overwrite)
+				if (!this.originals.has(filePath)) {
+					const original = captureOriginalContent(filePath, fs);
+					if (original !== undefined) {
+						this.originals.set(filePath, original);
+					}
+				}
+
+				if (toolUseId) {
+					this.pendingTools.set(toolUseId, filePath);
+				}
+				break;
+			}
+
+			case "tool_execution_end": {
+				const toolUseId = getToolUseId(evt);
+				const filePath = this.pendingTools.get(toolUseId);
+				if (filePath) {
+					this.pendingTools.delete(toolUseId);
+					this.currentTurnFiles.add(filePath);
+					this._onDidChange.fire([filePath]);
+				}
+				break;
+			}
+		}
+	}
+
+	private resolveToolPath(input: Record<string, unknown>): string {
+		return resolveToolPath(this.workspaceRoot, input);
+	}
+
+	private createCheckpoint(): void {
+		const now = Date.now();
+		const time = new Date(now).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+		const fileCount = this.originals.size;
+		const label = fileCount > 0
+			? `${time} (${fileCount} file${fileCount !== 1 ? "s" : ""} tracked)`
+			: `${time} (start)`;
+
+		const checkpoint: Checkpoint = {
+			id: this.nextCheckpointId++,
+			label,
+			timestamp: now,
+			snapshots: this.captureCurrentSnapshots(),
+		};
+		this._checkpoints.push(checkpoint);
+		this._onCheckpointChange.fire();
+	}
+
+	private captureCurrentSnapshots(): Map<string, string | null> {
+		return captureCurrentSnapshots(this.originals.keys(), fs);
+	}
+
+	/**
+	 * Update the label of the latest checkpoint with a description
+	 * of the first action taken (called after first tool execution in a turn).
+	 */
+	private updateLatestCheckpointLabel(description: string): void {
+		if (this._checkpoints.length === 0) return;
+		const latest = this._checkpoints[this._checkpoints.length - 1];
+		const time = new Date(latest.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+		latest.label = `${time} — ${description}`;
+		this._onCheckpointChange.fire();
+	}
+}

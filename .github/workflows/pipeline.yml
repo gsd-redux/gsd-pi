@@ -1,0 +1,56 @@
+name: Pipeline
+
+# Rebuilds the CI builder Docker image when Dockerfile changes on main.
+# Dev and prod publishing live in separate workflows (dev-publish.yml,
+# prod-release.yml) — both manual "Run workflow" triggers.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: pipeline-builder
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  update-builder:
+    name: Update CI Builder Image
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: Check for Dockerfile changes
+        id: check
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          CHANGED=$(git diff --name-only "${HEAD_SHA}~1" "${HEAD_SHA}" -- Dockerfile || echo "")
+          echo "changed=$([[ -n "$CHANGED" ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push CI builder image
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          docker build --target builder \
+            -t ghcr.io/gsd-redux/gsd-ci-builder:latest \
+            .
+          docker push ghcr.io/gsd-redux/gsd-ci-builder:latest

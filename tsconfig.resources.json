@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false,
+    "rootDir": "src/resources",
+    "outDir": "dist/resources",
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["src/resources/extensions/**/*.ts"],
+  "exclude": [
+    "src/resources/extensions/**/tests/**",
+    "src/resources/extensions/**/*.test.ts",
+    "src/resources/extensions/**/*.test.mts"
+  ]
+}

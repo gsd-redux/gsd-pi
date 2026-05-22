@@ -1,0 +1,1138 @@
+# Configuration
+
+GSD preferences live in `~/.gsd/PREFERENCES.md` (global) or `.gsd/PREFERENCES.md` (project-local). Manage interactively with `/gsd prefs`.
+
+## `/gsd prefs` Commands
+
+| Command | Description |
+|---------|-------------|
+| `/gsd prefs` | Open the global preferences wizard (default) |
+| `/gsd prefs global` | Interactive wizard for global preferences (`~/.gsd/PREFERENCES.md`) |
+| `/gsd prefs project` | Interactive wizard for project preferences (`.gsd/PREFERENCES.md`) |
+| `/gsd prefs status` | Show current preference files, merged values, and skill resolution status |
+| `/gsd prefs wizard` | Alias for `/gsd prefs global` |
+| `/gsd prefs setup` | Alias for `/gsd prefs wizard` — creates preferences file if missing |
+| `/gsd prefs import-claude` | Import Claude marketplace plugins and skills as namespaced GSD components |
+| `/gsd prefs import-claude global` | Import to global scope |
+| `/gsd prefs import-claude project` | Import to project scope |
+
+## Preferences File Format
+
+Preferences use YAML frontmatter in a markdown file:
+
+```yaml
+---
+version: 1
+models:
+  research: claude-sonnet-4-6
+  planning: claude-opus-4-6
+  execution: claude-sonnet-4-6
+  completion: claude-sonnet-4-6
+skill_discovery: suggest
+auto_supervisor:
+  soft_timeout_minutes: 20
+  idle_timeout_minutes: 10
+  hard_timeout_minutes: 30
+budget_ceiling: 50.00
+token_profile: balanced
+---
+```
+
+To opt a project into the staged project-level discovery flow, add:
+
+```yaml
+planning_depth: deep
+```
+
+## Global vs Project Preferences
+
+| Scope | Path | Applies to |
+|-------|------|-----------|
+| Global | `~/.gsd/PREFERENCES.md` | All projects |
+| Project | `.gsd/PREFERENCES.md` | Current project only |
+
+**Merge behavior:**
+- **Scalar fields** (`skill_discovery`, `budget_ceiling`): project wins if defined
+- **Array fields** (`always_use_skills`, etc.): concatenated (global first, then project)
+- **Object fields** (`models`, `git`, `auto_supervisor`): shallow-merged, project overrides per-key
+
+## Global API Keys (`/gsd config`)
+
+Tool API keys are stored globally in `~/.gsd/agent/auth.json` and apply to all projects automatically. Set them once with `/gsd config` — no need to configure per-project `.env` files.
+
+```bash
+/gsd config
+```
+
+This opens an interactive wizard showing which keys are configured and which are missing. Select a tool to enter its key.
+
+### Supported keys
+
+| Tool | Environment Variable | Purpose | Get a key |
+|------|---------------------|---------|-----------|
+| Tavily Search | `TAVILY_API_KEY` | Web search for non-Anthropic models | [tavily.com/app/api-keys](https://tavily.com/app/api-keys) |
+| Brave Search | `BRAVE_API_KEY` | Web search for non-Anthropic models | [brave.com/search/api](https://brave.com/search/api) |
+| Context7 Docs | `CONTEXT7_API_KEY` | Library documentation lookup | [context7.com/dashboard](https://context7.com/dashboard) |
+
+### How it works
+
+1. `/gsd config` saves keys to `~/.gsd/agent/auth.json`
+2. On every session start, `loadToolApiKeys()` reads the file and sets environment variables
+3. Keys apply to all projects — no per-project setup required
+4. Environment variables (`export BRAVE_API_KEY=...`) take precedence over saved keys
+5. Anthropic models don't need Brave/Tavily — they have built-in web search
+
+## MCP Servers
+
+GSD can connect to external MCP servers configured in project files. This is useful for local tools, internal APIs, self-hosted services, or integrations that aren't built in as native GSD extensions.
+
+### Config file locations
+
+GSD reads MCP client configuration from these project-local paths:
+
+- `.mcp.json`
+- `.gsd/mcp.json`
+
+If both files exist, server names are merged and the first definition found wins. Use:
+
+- `.mcp.json` for repo-shared MCP configuration you may want to commit
+- `.gsd/mcp.json` for local-only MCP configuration you do **not** want to share
+
+### Supported transports
+
+| Transport | Config shape | Use when |
+|-----------|--------------|----------|
+| `stdio` | `command` + optional `args`, `env`, `cwd` | Launching a local MCP server process |
+| `http` | `url` | Connecting to an already-running MCP server over HTTP |
+
+### Example: stdio server
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "/absolute/path/to/python3",
+      "args": ["/absolute/path/to/server.py"],
+      "env": {
+        "API_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+### Example: HTTP server
+
+```json
+{
+  "mcpServers": {
+    "my-http-server": {
+      "url": "http://localhost:8080/mcp"
+    }
+  }
+}
+```
+
+### Verifying a server
+
+After adding config, verify it from a GSD session:
+
+```text
+mcp_servers
+mcp_discover(server="my-server")
+mcp_call(server="my-server", tool="<tool_name>", args={...})
+```
+
+Recommended verification order:
+
+1. `mcp_servers` — confirms GSD can see the config file and parse the server entry
+2. `mcp_discover` — confirms the server process starts and responds to `tools/list`
+3. `mcp_call` — confirms at least one real tool invocation works
+
+### Notes
+
+- Use absolute paths for local executables and scripts when possible.
+- For `stdio` servers, prefer setting required environment variables directly in the MCP config instead of relying on an interactive shell profile.
+- GSD and `gsd-mcp-server` both hydrate supported model and tool keys saved in `~/.gsd/agent/auth.json`, so MCP configs can safely reference them through `${ENV_VAR}` placeholders without committing raw credentials.
+- MCP server runtime variables such as `GSD_WORKFLOW_EXECUTORS_MODULE`, `GSD_WORKFLOW_WRITE_GATE_MODULE`, `GSD_WORKFLOW_PROJECT_ROOT`, `GSD_CLI_PATH`, `NODE_OPTIONS`, `NODE_PATH`, `PATH`, `LD_PRELOAD`, and `DYLD_INSERT_LIBRARIES` cannot be set through `secure_env_collect`; configure them explicitly in the operator environment or MCP config.
+- When `secure_env_collect` writes to a local dotenv file, the accepted keys are also hydrated into the current MCP server process. When it pushes to Vercel or Convex, the values are sent to the remote destination only and are not added to `process.env`.
+- If a server is team-shared and safe to commit, `.mcp.json` is usually the better home.
+- If a server depends on machine-local paths, personal services, or local-only secrets, prefer `.gsd/mcp.json`.
+
+### Per-Model MCP Filtering
+
+Small-context models (e.g. Claude Haiku) suffer prompt-size blowouts when every available MCP server is announced to them. A subagent that only needs `gsd-workflow` does not need the 28 other servers in the prompt. GSD lets you restrict, per model, which MCP servers are exposed to the SDK by configuring `claude_code_mcp.per_model` in `.gsd/PREFERENCES.md`.
+
+#### YAML shape
+
+The block lives in the YAML frontmatter of `.gsd/PREFERENCES.md` under `claude_code_mcp.per_model`. Each key is a **model-ID prefix**; each value has optional `allowed_servers` and `blocked_servers` arrays of MCP server names:
+
+```yaml
+claude_code_mcp:
+  per_model:
+    <model-prefix>:
+      allowed_servers: [server-a, server-b]
+      blocked_servers: [server-c]
+```
+
+Both fields are optional. A model with no matching prefix gets the unfiltered set.
+
+#### Longest-prefix-wins matching
+
+Keys are matched against the active model ID by prefix; when multiple keys match, the **longest matching prefix wins** (longest-prefix-wins). This lets you set a coarse default for a model family and override it for a specific variant without tracking every date-stamped ID:
+
+| Model ID at runtime           | Keys configured                       | Winner             |
+|-------------------------------|---------------------------------------|--------------------|
+| `claude-haiku-4-5-20251001`   | `claude-haiku`, `claude-haiku-4-5`    | `claude-haiku-4-5` |
+| `claude-haiku-3-5-20241022`   | `claude-haiku`, `claude-haiku-4-5`    | `claude-haiku`     |
+| `claude-sonnet-4-6-20250101`  | `claude-haiku`                        | (no match)         |
+
+#### Resolution order: allowlist-first, blocklist-removes
+
+When `allowed_servers` is present, only those servers (plus the implicit `gsd-workflow` allow described below) are exposed; everything else is blocked. `blocked_servers` then removes entries from the resulting set. On overlap, **the blocklist wins** — a server listed in both `allowed_servers` and `blocked_servers` is blocked.
+
+| `allowed_servers` | `blocked_servers` | Effective exposure                                                |
+|-------------------|-------------------|-------------------------------------------------------------------|
+| absent / empty    | absent / empty    | All discovered servers exposed                                    |
+| `[a, b]`          | absent / empty    | Only `a`, `b`, and `gsd-workflow`                                 |
+| absent / empty    | `[c]`             | All discovered servers except `c`                                 |
+| `[a, b]`          | `[b]`             | Only `a` and `gsd-workflow` (`b` removed by blocklist)            |
+
+Blocking is implemented two ways depending on how the server arrives: user MCPs loaded by the SDK from `.mcp.json` / `.claude/settings.json` are blocked via `disallowedTools` patterns (`mcp__<name>__*`); the `gsd-workflow` server, which GSD controls directly, is dropped from the `mcpServers` map when explicitly blocked.
+
+#### `gsd-workflow` implicit allow
+
+GSD's own workflow MCP server (`gsd-workflow`) is **always allowed**, even when not listed in `allowed_servers`, because the GSD engine itself depends on it. The only way to remove `gsd-workflow` from a model's exposure is to name it explicitly in `blocked_servers`. Do this only if you understand that auto-mode tooling on that model will stop working.
+
+#### Worked example
+
+A Haiku subagent that only needs `gsd-workflow` and a single search MCP, and a Sonnet model that has everything except a noisy analytics server:
+
+```yaml
+claude_code_mcp:
+  per_model:
+    claude-haiku-4-5:
+      allowed_servers:
+        - google-search
+      # gsd-workflow is allowed implicitly; no need to list it.
+    claude-sonnet-4-6:
+      blocked_servers:
+        - analytics-noisy
+```
+
+With this configuration, a Haiku-4-5 subagent sees only `gsd-workflow` and `google-search` regardless of how many servers `.mcp.json` defines; a Sonnet-4-6 session sees every discovered server except `analytics-noisy`. Other models match no prefix and are unaffected.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GSD_HOME` | `~/.gsd` | Global GSD directory. All paths derive from this unless individually overridden. Affects preferences, skills, sessions, and per-project state. (v2.39) |
+| `GSD_PROJECT_ID` | (auto-hash) | Override the automatic project identity hash. Per-project state goes to `$GSD_HOME/projects/<GSD_PROJECT_ID>/` instead of the computed hash. Useful for CI/CD or sharing state across clones of the same repo. (v2.39) |
+| `GSD_STATE_DIR` | `$GSD_HOME` | Per-project state root. Controls where `projects/<repo-hash>/` directories are created. Takes precedence over `GSD_HOME` for project state. |
+| `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | Agent directory containing managed resources, extensions, and auth. Takes precedence over `GSD_HOME` for agent paths. |
+| `GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK` | (unset) | Set to literal `1` only for tests or explicit recovery workflows that must derive state from rendered markdown when the database is unavailable. Normal runtime treats the database as authoritative and refuses silent markdown fallback. |
+| `GSD_ALLOWED_COMMAND_PREFIXES` | (built-in list) | Comma-separated command prefixes allowed for `!command` value resolution. Overrides `allowedCommandPrefixes` in settings.json. See [Custom Models — Command Allowlist](custom-models.md#command-allowlist). |
+| `GSD_FETCH_ALLOWED_URLS` | (none) | Comma-separated hostnames exempted from `fetch_page` URL blocking. Overrides `fetchAllowedUrls` in settings.json. See [URL Blocking](#url-blocking-fetch_page). |
+| `PI_DISABLE_SYNC_OUTPUT` | (unset) | Set to literal `1` to disable synchronized terminal output mode in the TUI on non-Windows platforms. By default synchronized output is enabled on macOS/Linux and always disabled on Windows. |
+| `PI_TOKEN_TELEMETRY` | (unset) | Set to literal `1` to emit opt-in per-call token telemetry as JSONL on stderr. Other values are ignored. |
+
+### Token Telemetry
+
+Set `PI_TOKEN_TELEMETRY=1` when you need raw per-call token and cache data for cost analysis or prompt-cache tuning. The stream is off by default and writes to stderr, so stdout remains available for the TUI or for headless `--json` events.
+
+```bash
+# Capture telemetry separately from headless JSONL events
+PI_TOKEN_TELEMETRY=1 gsd headless --json auto \
+  > gsd-events.jsonl \
+  2> token-telemetry.jsonl
+
+# Capture telemetry from an interactive session
+PI_TOKEN_TELEMETRY=1 gsd 2> token-telemetry.jsonl
+```
+
+Each line is one JSON object with this shape:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | Assistant message timestamp in milliseconds since Unix epoch. |
+| `model` | Model identifier used for the call. |
+| `stopReason` | Provider stop reason recorded for the assistant message, such as `stop` or `error`. |
+| `input` | Input tokens reported for the call, excluding tokens served from prompt cache. |
+| `output` | Output tokens reported for the call. |
+| `cacheRead` | Input tokens read from prompt cache. |
+| `cacheWrite` | Input tokens written to prompt cache. |
+| `costTotal` | Provider total cost from the model registry. This is `0` when no rate is known for the model. |
+| `cacheHitRatio` | `cacheRead / (cacheRead + input)`. This is `0` when both values are zero and `1` for a full cache hit. |
+
+Telemetry is emitted per assistant API attempt, not per user turn. If a provider call records an error and auto-retry runs, the failed attempt can produce a line with `stopReason: "error"`, and each retry attempt that reaches an assistant message produces its own line. Keep all lines for billed-attempt accounting; group with session logs or timestamps downstream if you need a deduplicated final-response view.
+
+### Ollama
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL. A bare `host:port` value is treated as `http://host:port`. |
+| `OLLAMA_API_KEY` | (none) | Bearer token for remote or cloud Ollama endpoints. Local Ollama ignores this header. |
+| `OLLAMA_PROBE_TIMEOUT_MS` | `1500` | Startup health-check timeout in milliseconds. Unset, empty, non-numeric, zero, or negative values fall back to the default. Values above `2147483647` ms are capped to Node.js's maximum timer delay. |
+| `OLLAMA_REQUEST_TIMEOUT_MS` | `10000` | Per-request REST timeout in milliseconds. Unset, empty, non-numeric, zero, or negative values fall back to the default. Values above `2147483647` ms are capped to Node.js's maximum timer delay. |
+
+## All Settings
+
+### `models`
+
+Per-phase model selection. Each key accepts a model string or an object with fallbacks.
+
+```yaml
+models:
+  research: claude-sonnet-4-6
+  planning:
+    model: claude-opus-4-6
+    fallbacks:
+      - openrouter/z-ai/glm-5
+  execution: claude-sonnet-4-6
+  execution_simple: claude-haiku-4-5-20250414
+  completion: claude-sonnet-4-6
+  subagent: claude-sonnet-4-6
+```
+
+**Phases:** `research`, `planning`, `execution`, `execution_simple`, `completion`, `subagent`
+
+- `execution_simple` — used for tasks classified as "simple" by the [complexity router](./token-optimization.md#complexity-based-task-routing)
+- `subagent` — model for delegated subagent tasks (scout, researcher, worker)
+- Provider targeting: use `provider/model` format (e.g., `bedrock/claude-sonnet-4-6`) or the `provider` field in object format
+- Omit a key to use whatever model is currently active
+
+### Custom Model Definitions (`models.json`)
+
+Define custom models and providers in `~/.gsd/agent/models.json`. This lets you add models not included in the default registry — useful for self-hosted endpoints (Ollama, vLLM, LM Studio), fine-tuned models, proxies, or new provider releases.
+
+GSD resolves models.json with fallback logic:
+1. `~/.gsd/agent/models.json` — primary (GSD)
+2. `~/.pi/agent/models.json` — fallback (Pi)
+3. If neither exists, creates `~/.gsd/agent/models.json`
+
+**Quick example for local models (Ollama):**
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "llama3.1:8b" },
+        { "id": "qwen2.5-coder:7b" }
+      ]
+    }
+  }
+}
+```
+
+The file reloads each time you open `/model` — no restart needed.
+
+For full documentation including provider configuration, model overrides, OpenAI compatibility settings, and advanced examples, see the [Custom Models Guide](./custom-models.md).
+
+**With fallbacks:**
+
+```yaml
+models:
+  planning:
+    model: claude-opus-4-6
+    fallbacks:
+      - openrouter/z-ai/glm-5
+      - openrouter/moonshotai/kimi-k2.5
+    provider: bedrock    # optional: target a specific provider
+```
+
+When a model fails to switch (provider unavailable, rate limited, credits exhausted), GSD automatically tries the next model in the `fallbacks` list.
+
+### Community Provider Extensions
+
+For providers not built into GSD, community extensions can add full provider support with proper model definitions, thinking format configuration, and interactive API key setup.
+
+| Extension | Provider | Models | Install |
+|-----------|----------|--------|---------|
+| [`pi-dashscope`](https://www.npmjs.com/package/pi-dashscope) | Alibaba DashScope (ModelStudio) | Qwen3, GLM-5, MiniMax M2.5, Kimi K2.5 | `gsd install npm:pi-dashscope` |
+
+Community extensions are recommended over the built-in `alibaba-coding-plan` provider for DashScope models — they use the correct OpenAI-compatible endpoint and include per-model compatibility flags for thinking mode.
+
+### `token_profile`
+
+Coordinates model selection, phase skipping, and context compression. See [Token Optimization](./token-optimization.md).
+
+Values: `budget`, `balanced` (default), `quality`
+
+| Profile | Behavior |
+|---------|----------|
+| `budget` | Skips research + reassessment phases, uses cheaper models |
+| `balanced` | Default behavior — all phases run, standard model selection |
+| `quality` | All phases run, prefers higher-quality models |
+
+### `phases`
+
+Fine-grained control over which phases run in auto mode:
+
+```yaml
+phases:
+  skip_research: false        # skip milestone-level research
+  skip_reassess: false        # skip roadmap reassessment after each slice
+  skip_slice_research: true   # skip per-slice research
+  reassess_after_slice: true  # enable roadmap reassessment after each slice (required for reassessment)
+  require_slice_discussion: false  # pause auto-mode before each slice for discussion
+```
+
+These are usually set automatically by `token_profile`, but can be overridden explicitly.
+
+> **Note:** Roadmap reassessment requires `reassess_after_slice: true` to be set explicitly. Without it, reassessment is skipped regardless of `skip_reassess`.
+
+### `planning_depth`
+
+Controls how much discovery runs before milestone-level planning.
+
+```yaml
+planning_depth: deep
+```
+
+| Value | Behavior |
+|-------|----------|
+| `light` | Default. Uses the normal milestone discussion flow that writes milestone context and roadmap artifacts. |
+| `deep` | Runs staged project discovery first: workflow preferences, `.gsd/PROJECT.md`, `.gsd/REQUIREMENTS.md`, a research decision marker, and optional project research before milestone planning. |
+
+Enable deep mode for the current project with `/gsd new-project --deep` or `/gsd new-milestone --deep`; both write `planning_depth: deep` to `.gsd/PREFERENCES.md`. You can also set it manually in project or global preferences.
+
+In deep mode, `research-decision` writes `.gsd/runtime/research-decision.json` with `research` or `skip`. A `research` decision dispatches `research-project`, which writes `.gsd/research/STACK.md`, `FEATURES.md`, `ARCHITECTURE.md`, and `PITFALLS.md`; a `skip` decision proceeds directly to milestone work.
+
+### `workspace`
+
+Declares repository targets for project or parent workspaces. `plan-slice` validates `targetRepositories` against these IDs and scopes task file/input/output paths to the selected repository roots.
+
+```yaml
+workspace:
+  mode: parent   # "project" or "parent"
+  repositories:
+    frontend:
+      path: frontend
+      role: ui
+      verification:
+        - npm run test
+      commit_policy: auto   # "auto" or "skip"
+    backend:
+      path: backend
+```
+
+- `workspace.mode`: `project` (single-repo default) or `parent` (multi-repo workspace rooted at the current project).
+- `workspace.repositories.<id>.path`: required repository path (relative or absolute).
+- `workspace.repositories.<id>.role`: optional label used for planning/reporting context.
+- `workspace.repositories.<id>.verification`: optional default verification commands for that repository.
+- `workspace.repositories.<id>.commit_policy`: optional per-repository auto-commit policy (`auto` or `skip`).
+- Omitted slice/task `targetRepositories` default to `["project"]`.
+
+### `reactive_execution`
+
+Controls automatic parallel task dispatch inside a slice. This is enabled by default and only dispatches when task-plan IO annotations produce a non-ambiguous graph with enough ready, non-conflicting tasks.
+
+```yaml
+reactive_execution:
+  enabled: false    # opt out; omit this block to keep default-on behavior
+```
+
+Defaults and tuning:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Set to `false` to force sequential task execution. Set to `true` explicitly to use the lower two-ready-task threshold. |
+| `max_parallel` | number | `2` | Maximum tasks to dispatch in one reactive batch. Valid range: `1`-`8`. |
+| `isolation_mode` | string | `same-tree` | Execution isolation mode. `same-tree` is currently the only supported value. |
+| `subagent_model` | string | `models.subagent` fallback | Optional model override for reactive task subagents. |
+
+When `enabled` is omitted, reactive execution uses the default-on safety threshold of three ready tasks before it attempts a parallel batch. When `enabled: true` is set explicitly, GSD uses the earlier opt-in threshold of two ready tasks.
+
+### `taskIsolation`
+
+Controls optional filesystem isolation for explicit subagent tool calls that set `isolated: true`. This is a global `~/.gsd/agent/settings.json` setting.
+
+```json
+{
+  "taskIsolation": {
+    "mode": "worktree"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | none | `"worktree"` creates a temporary detached git worktree for the child task. `"fuse-overlay"` uses `fuse-overlayfs` on Linux when installed and falls back to `worktree`. Any other value disables subagent filesystem isolation. |
+
+See [Subagents](./subagents.md#filesystem-isolation) for invocation, merge, and recovery behavior.
+
+### `skill_discovery`
+
+Controls how GSD finds and applies skills during auto mode.
+
+| Value | Behavior |
+|-------|----------|
+| `auto` | Skills found and applied automatically |
+| `suggest` | Skills identified during research but not auto-installed (default) |
+| `off` | Skill discovery disabled |
+
+### `auto_supervisor`
+
+Timeout thresholds for auto mode supervision:
+
+```yaml
+auto_supervisor:
+  model: claude-sonnet-4-6    # optional: model for supervisor (defaults to active model)
+  soft_timeout_minutes: 20    # warn LLM to wrap up
+  idle_timeout_minutes: 10    # detect stalls
+  hard_timeout_minutes: 30    # pause auto mode
+```
+
+### `min_request_interval_ms`
+
+Minimum milliseconds between auto-mode LLM request dispatches. Use this to proactively slow auto-mode on rate-limited providers and reduce 429 errors. Set to `0` to disable.
+
+```yaml
+min_request_interval_ms: 1000   # wait at least 1 second between LLM requests
+```
+
+Default: `0` (disabled)
+
+### `budget_ceiling`
+
+Maximum USD to spend during auto mode. No `$` sign — just the number.
+
+```yaml
+budget_ceiling: 50.00
+```
+
+### `budget_enforcement`
+
+How the budget ceiling is enforced:
+
+| Value | Behavior |
+|-------|----------|
+| `warn` | Log a warning but continue |
+| `pause` | Pause auto mode (default when ceiling is set) |
+| `halt` | Stop auto mode entirely |
+
+### `context_pause_threshold`
+
+Context window usage percentage (0-100) at which auto mode pauses for checkpointing. Set to `0` to disable.
+
+```yaml
+context_pause_threshold: 80   # pause at 80% context usage
+```
+
+Default: `0` (disabled)
+
+### `uat_dispatch`
+
+Enable automatic UAT (User Acceptance Test) runs after slice completion:
+
+```yaml
+uat_dispatch: true
+```
+
+When enabled, auto-mode runs UAT after slice completion. Non-PASS verdicts on closed slices do not hard-stop dispatch progression, so downstream remediation slices can continue, but automatic milestone closure is still gated on explicit UAT PASS sign-off for closed slices.
+
+### Verification (v2.26)
+
+Configure shell commands that run automatically after every task execution. Failures trigger auto-fix retries before advancing.
+
+```yaml
+verification_commands:
+  - npm run lint
+  - npm run test
+verification_auto_fix: true       # auto-retry on failure (default: true)
+verification_max_retries: 2       # max retry attempts (default: 2)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `verification_commands` | string[] | `[]` | Simple executable commands to run after task execution |
+| `verification_auto_fix` | boolean | `true` | Auto-retry when verification fails |
+| `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts |
+
+Verification commands must be simple executable commands. Shell piping (`|`) is supported, but logical OR (`||`) is rejected. GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution (`$(...)`) because verification is run as a controlled command list, not as an arbitrary shell program.
+
+For task-level `verify` commands (`taskPlanVerify`), GSD splits command chains on `&&` and validates each segment independently. On Unix-like systems, commands run with `set -o pipefail` semantics, so any failing stage in a pipeline causes the verification command to fail.
+
+When `verification_commands` is empty and no task-level `verify` command is available, GSD can auto-discover project checks. JavaScript projects use `package.json` scripts in this order: `typecheck`, `lint`, `test`. Python projects use the `python-project` discovery source and run `python3 -m pytest` when GSD finds files matching pytest's default test file patterns (`test_*.py` or `*_test.py`) under `tests/` or an explicit pytest configuration marker: `pytest.ini`, `[tool.pytest]`, `[tool.pytest.*]`, `[pytest]`, or `[tool:pytest]` in `pyproject.toml`.
+
+### `workspace`
+
+Multi-repository workspace configuration for a parent project that coordinates child repositories.
+
+```yaml
+workspace:
+  mode: parent
+  repositories:
+    frontend:
+      path: apps/frontend
+      role: web
+      verification:
+        - pnpm -C apps/frontend test
+      commit_policy: auto
+    backend:
+      path: services/backend
+      role: api
+      verification:
+        - pnpm -C services/backend test
+      commit_policy: skip
+```
+
+`project` is always available as an implicit repository ID pointing at the project root. If plan/task `targetRepositories` is omitted, GSD defaults to `["project"]`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `workspace.mode` | `"project" \| "parent"` | `"project"` | Workspace operating mode. Use `parent` to declare and resolve child repositories. |
+| `workspace.repositories` | object | `{}` | Mapping of repository IDs to repository config. |
+| `workspace.repositories.<id>.path` | string | required | Child repository path, resolved relative to project root. Must stay inside the project root. |
+| `workspace.repositories.<id>.role` | string | optional | Human-oriented label used by prompts/reporting. |
+| `workspace.repositories.<id>.verification` | string[] | optional | Default verification commands for that repository. |
+| `workspace.repositories.<id>.commit_policy` | `"auto" \| "skip"` | optional | Per-repository auto-mode turn-commit policy. |
+
+Validation rules:
+
+- Repository IDs must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
+- Repository paths are normalized and must be unique (case-insensitive).
+- Paths resolving outside the project root are rejected.
+- Unknown keys under `workspace` and each repository entry are ignored with warnings.
+
+### URL Blocking (`fetch_page`)
+
+The `fetch_page` tool blocks requests to private and internal network addresses to prevent server-side request forgery (SSRF). This protects against the agent being tricked into accessing internal services, cloud metadata endpoints, or local files.
+
+**Blocked by default:**
+
+| Category | Examples |
+|----------|----------|
+| Private IP ranges | `10.x.x.x`, `172.16-31.x.x`, `192.168.x.x`, `127.x.x.x` |
+| Link-local / cloud metadata | `169.254.x.x` (AWS/GCP instance metadata) |
+| Cloud metadata hostnames | `metadata.google.internal`, `instance-data` |
+| Localhost | `localhost` (any port) |
+| Non-HTTP protocols | `file://`, `ftp://` |
+| IPv6 private ranges | `::1`, `fc00:`, `fd`, `fe80:` |
+
+Public URLs (`https://example.com`, `http://8.8.8.8`) are not affected.
+
+**Allowing specific internal hosts:**
+
+If you need the agent to fetch from internal URLs (self-hosted docs, internal APIs behind a VPN), add their hostnames to `fetchAllowedUrls` in global settings (`~/.gsd/agent/settings.json`):
+
+```json
+{
+  "fetchAllowedUrls": ["internal-docs.company.com", "192.168.1.50"]
+}
+```
+
+Alternatively, set the `GSD_FETCH_ALLOWED_URLS` environment variable (comma-separated). The env var takes precedence over settings.json:
+
+```bash
+export GSD_FETCH_ALLOWED_URLS="internal-docs.company.com,192.168.1.50"
+```
+
+Allowed hostnames bypass the blocklist checks. The protocol restriction (HTTP/HTTPS only) still applies — `file://` and `ftp://` cannot be allowlisted.
+
+> **Note:** This setting is global-only. Project-level settings.json cannot override the URL allowlist — this prevents a cloned repo from directing `fetch_page` at internal infrastructure.
+
+### `auto_report` (v2.26)
+
+Auto-generate HTML reports after milestone completion:
+
+```yaml
+auto_report: true    # default: true
+```
+
+Reports are written to `.gsd/reports/` as self-contained HTML files with embedded CSS/JS.
+
+### `unique_milestone_ids`
+
+Generate milestone IDs with a random suffix to avoid collisions in team workflows:
+
+```yaml
+unique_milestone_ids: true
+# Produces: M001-eh88as instead of M001
+```
+
+### `git`
+
+Git behavior configuration. All fields optional:
+
+```yaml
+git:
+  auto_push: false            # push commits to remote after committing
+  push_branches: false        # push milestone branch to remote
+  remote: origin              # git remote name
+  snapshots: true             # WIP snapshot commits during long tasks
+  pre_merge_check: auto       # run checks before worktree merge (true/false/"auto")
+  commit_type: feat           # override conventional commit prefix
+  main_branch: main           # primary branch name
+  merge_strategy: squash      # how worktree branches merge: "squash" or "merge"
+  isolation: none             # git isolation: "none" (default), "worktree", or "branch"
+  commit_docs: true           # commit .gsd/ artifacts to git (set false to keep local)
+  manage_gitignore: true      # set false to prevent GSD from modifying .gitignore
+  worktree_post_create: .gsd/hooks/post-worktree-create  # script to run after worktree creation
+  auto_pr: false              # create a PR on milestone completion (requires push_branches)
+  pr_target_branch: develop   # target branch for auto-created PRs (default: main branch)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto_push` | boolean | `false` | Push commits to remote after committing |
+| `push_branches` | boolean | `false` | Push milestone branch to remote |
+| `remote` | string | `"origin"` | Git remote name |
+| `snapshots` | boolean | `true` | WIP snapshot commits during long tasks |
+| `pre_merge_check` | bool/string | `"auto"` | Run checks before merge (`true`/`false`/`"auto"`) |
+| `commit_type` | string | (inferred) | Override conventional commit prefix (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`, `build`, `style`) |
+| `main_branch` | string | `"main"` | Primary branch name |
+| `merge_strategy` | string | `"squash"` | How worktree branches merge: `"squash"` (combine all commits) or `"merge"` (preserve individual commits) |
+| `isolation` | string | `"none"` | Auto-mode isolation: `"none"` (no isolation — commits on current branch, no worktree or milestone branch), `"worktree"` (separate directory), or `"branch"` (work in project root — useful for submodule-heavy repos). `worktree` requires a committed `HEAD`; zero-commit repos temporarily run as `none` until the first commit exists |
+| `commit_docs` | boolean | `true` | Commit `.gsd/` planning artifacts to git. Set `false` to keep local-only |
+| `manage_gitignore` | boolean | `true` | When `false`, GSD will not modify `.gitignore` at all — no baseline patterns, no self-healing. Use if you manage your own `.gitignore` |
+| `worktree_post_create` | string | (none) | Script to run after worktree creation. Receives `SOURCE_DIR` and `WORKTREE_DIR` env vars |
+| `auto_pr` | boolean | `false` | Automatically create a pull request when a milestone completes. Requires `auto_push: true` and `gh` CLI installed and authenticated |
+| `pr_target_branch` | string | (main branch) | Target branch for auto-created PRs (e.g. `develop`, `qa`). Defaults to `main_branch` if not set |
+
+#### `git.worktree_post_create`
+
+Script to run after a worktree is created (both auto-mode and manual `/worktree`). Useful for copying `.env` files, symlinking asset directories, or running setup commands that worktrees don't inherit from the main tree.
+
+```yaml
+git:
+  worktree_post_create: .gsd/hooks/post-worktree-create
+```
+
+The script receives two environment variables:
+- `SOURCE_DIR` — the original project root
+- `WORKTREE_DIR` — the newly created worktree path
+
+Example hook script (`.gsd/hooks/post-worktree-create`):
+
+```bash
+#!/bin/bash
+# Copy environment files and symlink assets into the new worktree
+cp "$SOURCE_DIR/.env" "$WORKTREE_DIR/.env"
+cp "$SOURCE_DIR/.env.local" "$WORKTREE_DIR/.env.local" 2>/dev/null || true
+ln -sf "$SOURCE_DIR/assets" "$WORKTREE_DIR/assets"
+```
+
+The path can be absolute or relative to the project root. The script runs with a 30-second timeout. Failure is non-fatal — GSD logs a warning and continues.
+
+#### `git.auto_pr`
+
+Automatically create a pull request when a milestone completes. Designed for teams using Gitflow or branch-based workflows where work should go through PR review before merging to a target branch.
+
+```yaml
+git:
+  auto_push: true
+  auto_pr: true
+  pr_target_branch: develop  # or qa, staging, etc.
+```
+
+**Requirements:**
+- `auto_push: true` — the milestone branch must be pushed before a PR can be created
+- [`gh` CLI](https://cli.github.com/) installed and authenticated (`gh auth login`)
+
+**How it works:**
+1. Milestone completes → GSD squash-merges the worktree to the main branch
+2. Pushes the main branch to remote (if `auto_push: true`)
+3. Pushes the milestone branch to remote
+4. Creates a PR from the milestone branch to `pr_target_branch` via `gh pr create`
+
+If `pr_target_branch` is not set, the PR targets the `main_branch` (or auto-detected main branch). PR creation failure is non-fatal — GSD logs and continues.
+
+### `github` (v2.39)
+
+GitHub sync configuration. When enabled, GSD auto-syncs milestones, slices, and tasks to GitHub Issues, PRs, and Milestones.
+
+```yaml
+github:
+  enabled: true
+  repo: "owner/repo"              # auto-detected from git remote if omitted
+  labels: [gsd, auto-generated]   # labels applied to created issues/PRs
+  project: "Project ID"           # optional GitHub Project board
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable GitHub sync |
+| `repo` | string | (auto-detected) | GitHub repository in `owner/repo` format |
+| `labels` | string[] | `[]` | Labels to apply to created issues and PRs |
+| `project` | string | (none) | GitHub Project ID for project board integration |
+
+**Requirements:**
+- `gh` CLI installed and authenticated (`gh auth login`)
+- Sync mapping is persisted in `.gsd/.github-sync.json`
+- Rate-limit aware — skips sync when GitHub API rate limit is low
+
+**Commands:**
+- `/github-sync bootstrap` — initial setup and sync
+- `/github-sync status` — show sync mapping counts
+
+### `workspace` (v2.49)
+
+Multi-repository parent workspace configuration. This lets one `.gsd` state manage multiple child repositories and constrains planning file paths to declared repository roots.
+
+```yaml
+workspace:
+  mode: parent                  # "project" (default) or "parent"
+  repositories:
+    frontend:
+      path: frontend            # relative to project root (or absolute path within project root)
+      role: ui                  # optional
+      verification:             # optional default verification commands
+        - npm run test
+      commit_policy: auto       # optional: "auto" or "skip"
+    backend:
+      path: backend
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | string | `project` | Workspace mode. `parent` enables multi-repo registry behavior. |
+| `repositories` | object | `{}` | Map of repository ids to repository config objects. |
+| `repositories.<id>.path` | string | required | Repository root path. Relative paths resolve from project root and must stay inside project root. |
+| `repositories.<id>.role` | string | (none) | Optional human-oriented label for prompts/reporting. |
+| `repositories.<id>.verification` | string[] | (none) | Optional default verification commands for that repository. |
+| `repositories.<id>.commit_policy` | string | (none) | Optional per-repo auto-mode turn commit policy: `auto` or `skip`. |
+
+**Path-scope behavior:**
+- During planning (`plan-slice`/`replan-slice`), file paths are validated against the selected `targetRepositories`.
+- Absolute and relative paths are both checked; paths that resolve outside declared repository roots are rejected.
+- If no explicit `targetRepositories` are provided, planning defaults to `["project"]`.
+
+### `notifications`
+
+Control what notifications GSD sends during auto mode:
+
+```yaml
+notifications:
+  enabled: true
+  on_complete: true           # notify on unit completion
+  on_error: true              # notify on errors
+  on_budget: true             # notify on budget thresholds
+  on_milestone: true          # notify when milestone finishes
+  on_attention: true          # notify when manual attention needed
+```
+
+**macOS delivery:** GSD uses [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) when available, falling back to `osascript`. We recommend installing `terminal-notifier` for reliable notification delivery:
+
+```bash
+brew install terminal-notifier
+```
+
+Why: `osascript display notification` is attributed to your terminal app (Ghostty, iTerm2, etc.), which may not have notification permissions in System Settings → Notifications. `terminal-notifier` registers as its own app and prompts for permission on first use. See [Troubleshooting: Notifications not appearing on macOS](troubleshooting.md#notifications-not-appearing-on-macos) if notifications aren't working.
+
+### `remote_questions`
+
+Route interactive questions **and informational notifications** to Slack, Discord, or Telegram for headless auto mode:
+
+```yaml
+remote_questions:
+  channel: slack              # or discord or telegram
+  channel_id: "C1234567890"
+  timeout_minutes: 15         # question timeout (1-30 minutes)
+  poll_interval_seconds: 10   # poll interval (2-30 seconds)
+```
+
+When `notifications.enabled: true` is set **and** a remote channel is configured, informational notifications (milestone complete, blocker, budget alerts, all milestones done) are also sent to the remote channel — not just to the desktop. No additional configuration is needed.
+
+See [Remote Questions](./remote-questions.md) for setup instructions and Telegram command reference.
+
+### `post_unit_hooks`
+
+Custom hooks that fire after specific unit types complete:
+
+```yaml
+post_unit_hooks:
+  - name: code-review
+    after: [execute-task]
+    prompt: "Review the code changes for quality and security issues."
+    model: claude-opus-4-6          # optional: model override
+    max_cycles: 1                   # max fires per trigger (1-10, default: 1)
+    artifact: REVIEW.md             # optional: skip if this file exists
+    retry_on: NEEDS-REWORK.md       # optional: re-run trigger unit if this file appears
+    agent: review-agent             # optional: agent definition to use
+    enabled: true                   # optional: disable without removing
+```
+
+**Known unit types for `after`:** `research-milestone`, `plan-milestone`, `research-slice`, `plan-slice`, `execute-task`, `complete-slice`, `replan-slice`, `reassess-roadmap`, `run-uat`
+
+**Prompt substitutions:** `{milestoneId}`, `{sliceId}`, `{taskId}` are replaced with current context values.
+
+### `pre_dispatch_hooks`
+
+Hooks that intercept units before dispatch. Three actions available:
+
+**Modify** — prepend/append text to the unit prompt:
+
+```yaml
+pre_dispatch_hooks:
+  - name: add-standards
+    before: [execute-task]
+    action: modify
+    prepend: "Follow our coding standards document."
+    append: "Run linting after changes."
+```
+
+**Skip** — skip the unit entirely:
+
+```yaml
+pre_dispatch_hooks:
+  - name: skip-research
+    before: [research-slice]
+    action: skip
+    skip_if: RESEARCH.md            # optional: only skip if this file exists
+```
+
+**Replace** — replace the unit prompt entirely:
+
+```yaml
+pre_dispatch_hooks:
+  - name: custom-execute
+    before: [execute-task]
+    action: replace
+    prompt: "Execute the task using TDD methodology."
+    unit_type: execute-task-tdd     # optional: override unit type label
+    model: claude-opus-4-6          # optional: model override
+```
+
+All pre-dispatch hooks support `enabled: true/false` to toggle without removing.
+
+### `always_use_skills` / `prefer_skills` / `avoid_skills`
+
+Skill routing preferences:
+
+```yaml
+always_use_skills:
+  - debug-like-expert
+prefer_skills:
+  - frontend-design
+avoid_skills: []
+```
+
+Skills can be bare names (looked up in `~/.agents/skills/` and `.agents/skills/`) or absolute paths.
+
+### `skill_rules`
+
+Situational skill routing with human-readable triggers:
+
+```yaml
+skill_rules:
+  - when: task involves authentication
+    use: [clerk]
+  - when: frontend styling work
+    prefer: [frontend-design]
+  - when: working with legacy code
+    avoid: [aggressive-refactor]
+```
+
+### `custom_instructions`
+
+Durable instructions appended to every session:
+
+```yaml
+custom_instructions:
+  - "Always use TypeScript strict mode"
+  - "Prefer functional patterns over classes"
+```
+
+For project-specific knowledge, use the GSD knowledge and memory surfaces instead. `.gsd/KNOWLEDGE.md` is a hybrid projection: manually maintained Rules stay in the file, while generated Patterns and Lessons are backed by the `memories` table and rendered back into the file for review. Add durable operating rules with `/gsd knowledge rule <description>`; agent-discovered patterns and lessons are stored as memories and selected for prompt injection automatically.
+
+### `RUNTIME.md` — Runtime Context (v2.39)
+
+Declare project-level runtime context in `.gsd/RUNTIME.md`. This file is inlined into task execution prompts, giving the agent accurate information about your runtime environment without relying on hallucinated paths or URLs.
+
+**Location:** `.gsd/RUNTIME.md`
+
+**Example:**
+
+```markdown
+# Runtime Context
+
+## API Endpoints
+- Main API: https://api.example.com
+- Cache: redis://localhost:6379
+
+## Environment Variables
+- DEPLOYMENT_ENV: staging
+- DB_POOL_SIZE: 20
+
+## Local Services
+- PostgreSQL: localhost:5432
+- Redis: localhost:6379
+```
+
+Use this for information that the agent needs during execution but that doesn't belong in `DECISIONS.md` (architectural) or project knowledge (rules, patterns, lessons). Common examples: API base URLs, service ports, deployment targets, and environment-specific configuration.
+
+### `dynamic_routing`
+
+Complexity-based model routing. See [Dynamic Model Routing](./dynamic-model-routing.md).
+
+```yaml
+dynamic_routing:
+  enabled: true
+  capability_routing: true          # score models by task capability (v2.59)
+  tier_models:
+    light: claude-haiku-4-5
+    standard: claude-sonnet-4-6
+    heavy: claude-opus-4-6
+  escalate_on_failure: true
+  budget_pressure: true
+  cross_provider: true
+```
+
+### `disabled_model_providers` (v2.60)
+
+Hide specific providers from model selection and routing without removing their auth credentials. Useful when you want a provider for tools (like `google_search`) but never want its models in `/model` or auto routing.
+
+```yaml
+disabled_model_providers:
+  - google-gemini-cli
+```
+
+### `context_management` (v2.59)
+
+Controls observation masking and tool result truncation during auto-mode sessions. Reduces context bloat between compactions with zero LLM overhead.
+
+```yaml
+context_management:
+  observation_masking: true          # replace old tool results with placeholders (default: true)
+  observation_mask_turns: 8          # keep results from last N user turns (1-50, default: 8)
+  compaction_threshold_percent: 0.70 # target compaction at 70% context usage (0.5-0.95, default: 0.70)
+  tool_result_max_chars: 800         # cap individual tool result content (200-10000, default: 800)
+```
+
+### `service_tier` (v2.42)
+
+OpenAI service tier preference for supported models. Toggle with `/gsd fast`.
+
+| Value | Behavior |
+|-------|----------|
+| `"priority"` | Priority tier — 2x cost, faster responses |
+| `"flex"` | Flex tier — 0.5x cost, slower responses |
+| (unset) | Default tier |
+
+```yaml
+service_tier: priority
+```
+
+### `forensics_dedup` (v2.43)
+
+Opt-in: search existing issues and PRs before filing from `/gsd forensics`. Uses additional AI tokens.
+
+```yaml
+forensics_dedup: true    # default: false
+```
+
+### `show_token_cost` (v2.44)
+
+Opt-in: show per-prompt and cumulative session token cost in the footer.
+
+```yaml
+show_token_cost: true    # default: false
+```
+
+### `auto_visualize`
+
+Show the workflow visualizer automatically after milestone completion:
+
+```yaml
+auto_visualize: true
+```
+
+See [Workflow Visualizer](./visualizer.md).
+
+### `parallel`
+
+Run multiple milestones simultaneously. Disabled by default.
+
+```yaml
+parallel:
+  enabled: false            # Master toggle
+  max_workers: 2            # Concurrent workers (1-4)
+  budget_ceiling: 50.00     # Aggregate cost limit in USD
+  merge_strategy: "per-milestone"  # "per-slice" or "per-milestone"
+  auto_merge: "confirm"            # "auto", "confirm", or "manual"
+```
+
+See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
+
+## Full Example
+
+```yaml
+---
+version: 1
+
+# Model selection
+models:
+  research: openrouter/deepseek/deepseek-r1
+  planning:
+    model: claude-opus-4-6
+    fallbacks:
+      - openrouter/z-ai/glm-5
+  execution: claude-sonnet-4-6
+  execution_simple: claude-haiku-4-5-20250414
+  completion: claude-sonnet-4-6
+
+# Token optimization
+token_profile: balanced
+
+# Dynamic model routing
+dynamic_routing:
+  enabled: true
+  escalate_on_failure: true
+  budget_pressure: true
+
+# Budget
+budget_ceiling: 25.00
+budget_enforcement: pause
+context_pause_threshold: 80
+
+# Supervision
+auto_supervisor:
+  soft_timeout_minutes: 15
+  hard_timeout_minutes: 25
+
+# Git
+git:
+  auto_push: true
+  merge_strategy: squash
+  isolation: none             # "none" (default), "worktree", or "branch"
+  commit_docs: true
+
+# Skills
+skill_discovery: suggest
+skill_staleness_days: 60     # Skills unused for N days get deprioritized (0 = disabled)
+always_use_skills:
+  - debug-like-expert
+skill_rules:
+  - when: task involves authentication
+    use: [clerk]
+
+# Notifications
+notifications:
+  on_complete: false
+  on_milestone: true
+  on_attention: true
+
+# Visualizer
+auto_visualize: true
+
+# Service tier
+service_tier: priority         # "priority" or "flex" (for /gsd fast)
+
+# Diagnostics
+forensics_dedup: true          # deduplicate before filing forensics issues
+show_token_cost: true          # show per-prompt cost in footer
+
+# Hooks
+post_unit_hooks:
+  - name: code-review
+    after: [execute-task]
+    prompt: "Review {sliceId}/{taskId} for quality and security."
+    artifact: REVIEW.md
+---
+```

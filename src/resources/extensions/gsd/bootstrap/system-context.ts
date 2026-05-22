@@ -1,0 +1,770 @@
+// Project/App: GSD-2
+// File Purpose: System prompt and hidden context bootstrap for GSD sessions.
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+
+import type { ExtensionContext } from "@gsd/pi-coding-agent";
+
+import { logWarning } from "../workflow-logger.js";
+import { debugTime } from "../debug-logger.js";
+import { loadPrompt, getTemplatesDir } from "../prompt-loader.js";
+import { readForensicsMarker } from "../forensics.js";
+import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
+import { resolveModelWithFallbacksForUnit } from "../preferences-models.js";
+import { resolveSkillReference } from "../preferences-skills.js";
+import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
+import { extractIntroAndRules } from "../knowledge-parser.js";
+import { ensureCodebaseMapFresh, readCodebaseMap } from "../codebase-generator.js";
+import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "../skill-discovery.js";
+import { getActiveAutoWorktreeContext } from "../auto-worktree.js";
+import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-session-state.js";
+import { deriveState } from "../state.js";
+import { formatOverridesSection, formatShortcut, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
+import { toPosixPath } from "../../shared/mod.js";
+import { autoEnableCmuxPreferences } from "../commands-cmux.js";
+import { gsdHome } from "../gsd-home.js";
+
+const DEFAULT_CONTEXT_MESSAGE_MAX_CHARS = 4_000;
+const DEFAULT_KNOWLEDGE_MAX_CHARS = 12_000;
+const DEFAULT_CODEBASE_MAX_CHARS = 8_000;
+const MIN_CONTEXT_MESSAGE_MAX_CHARS = 1_000;
+const MIN_KNOWLEDGE_MAX_CHARS = 1_000;
+
+/**
+ * Bundled skill triggers — resolved dynamically at runtime instead of
+ * hardcoding absolute paths in the system prompt template. Only skills
+ * that actually exist on disk are included in the table. (#3575)
+ */
+export const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> = [
+  { trigger: "Frontend UI - web components, pages, landing pages, dashboards, React/HTML/CSS, styling", skill: "frontend-design" },
+  { trigger: "macOS or iOS apps - SwiftUI, Xcode, App Store", skill: "swiftui" },
+  { trigger: "Debugging - complex bugs, failing tests, root-cause investigation after standard approaches fail", skill: "debug-like-expert" },
+  { trigger: "Code review - security, performance, bugs, quality review of staged/unstaged diffs or PRs", skill: "review" },
+  { trigger: "Test generation or execution - auto-detect framework, generate tests, run suite, analyze failures", skill: "test" },
+  { trigger: "Linting/formatting - run the detected linter/formatter with auto-fix, report remaining issues", skill: "lint" },
+  { trigger: "Polishing UI details - animations, hover states, typography, borders, micro-interactions, optical alignment", skill: "make-interfaces-feel-better" },
+  { trigger: "Accessibility audit - WCAG, screen reader, keyboard navigation, a11y review", skill: "accessibility" },
+  { trigger: "Planning interviews - stress-test a plan, grill the user, resolve decision trees one branch at a time", skill: "grill-me" },
+  { trigger: "Interface design - produce 3+ radically different designs for a module/API, compare in prose, synthesize", skill: "design-an-interface" },
+  { trigger: "TDD - red-green-refactor vertical slices, never refactor while red, tests survive refactors", skill: "tdd" },
+  { trigger: "Draft a milestone brief (M###-CONTEXT.md) or PRD from current conversation context", skill: "write-milestone-brief" },
+  { trigger: "Break a plan into vertical-slice roadmap slices (M###-ROADMAP.md) or GitHub issues with dependency ordering", skill: "decompose-into-slices" },
+  { trigger: "Package spike findings into a reusable project-local skill at .claude/skills/", skill: "spike-wrap-up" },
+  { trigger: "Block completion claims until verification evidence has been produced in this message", skill: "verify-before-complete" },
+  { trigger: "Create a Model Context Protocol (MCP) server — tool design, error handling, Inspector testing, evals", skill: "create-mcp-server" },
+  { trigger: "Write documentation, proposals, specs, RFCs, or READMEs for a fresh reader", skill: "write-docs" },
+  { trigger: "Post-mortem a failed GSD auto-mode run using .gsd/activity, .gsd/journal, and .gsd/metrics.json", skill: "forensics" },
+  { trigger: "Prepare a clean cross-session handoff — continue.md + summary updates (pause/resume work)", skill: "handoff" },
+  { trigger: "Security review with STRIDE threat modeling and exploit-scenario reporting", skill: "security-review" },
+  { trigger: "HTTP/REST/GraphQL API design — verbs, status codes, pagination, errors, idempotency, versioning", skill: "api-design" },
+  { trigger: "Dependency upgrades — risk-batched, verified between batches, one major per commit", skill: "dependency-upgrade" },
+  { trigger: "Agent-first observability — structured logs, persisted failure state, health surfaces, explicit failure modes", skill: "observability" },
+  { trigger: "React/Next.js performance — components, data fetching, bundle optimization, rendering patterns from Vercel Engineering", skill: "react-best-practices" },
+  { trigger: "Core Web Vitals — fix LCP, CLS, INP; layout shifts; page experience optimization", skill: "core-web-vitals" },
+  { trigger: "GitHub Actions CI/CD — write, run, and debug workflow files; live syntax and run monitoring", skill: "github-workflows" },
+  { trigger: "Comprehensive web quality audit — performance, accessibility, SEO, and best-practices (Lighthouse-style)", skill: "web-quality-audit" },
+  { trigger: "Browser automation — open sites, fill forms, click, screenshot, scrape, or test web apps programmatically", skill: "agent-browser" },
+  { trigger: "Review UI code for Web Interface Guidelines compliance — UX, design, and accessibility patterns", skill: "web-design-guidelines" },
+  { trigger: "UI/UX patterns reference — animations, CSS, typography, prefetching, icons (file:line findings)", skill: "userinterface-wiki" },
+  { trigger: "Author or refine a GSD skill — SKILL.md structure, frontmatter, and best practices", skill: "create-skill" },
+  { trigger: "Create or debug a GSD extension — tools, commands, event hooks, custom TUI, providers", skill: "create-gsd-extension" },
+  { trigger: "Author a YAML workflow definition — steps, triggers, and templates", skill: "create-workflow" },
+  { trigger: "Deep code optimization audit — perf anti-patterns, memory leaks, algorithmic complexity, bundle size, I/O, caching, dead code (parallel pattern-based hunt)", skill: "code-optimizer" },
+];
+
+function buildBundledSkillsTable(): string {
+  const cwd = process.cwd();
+  const rows: string[] = [];
+  for (const { trigger, skill } of BUNDLED_SKILL_TRIGGERS) {
+    const resolution = resolveSkillReference(skill, cwd);
+    if (resolution.method === "unresolved") continue; // skill not installed — omit from prompt
+    rows.push(`| ${trigger} | \`${resolution.resolvedPath}\` |`);
+  }
+  if (rows.length === 0) {
+    return "*No bundled skills found. Install skills to `~/.agents/skills/` or `~/.claude/skills/`.*";
+  }
+  return `| Trigger | Skill to load |\n|---|---|\n${rows.join("\n")}`;
+}
+
+function warnDeprecatedAgentInstructions(): void {
+  const paths = [
+    join(gsdHome(), "agent-instructions.md"),
+    join(process.cwd(), ".gsd", "agent-instructions.md"),
+  ];
+  for (const path of paths) {
+    if (existsSync(path)) {
+      console.warn(
+        `[GSD] DEPRECATED: ${path} is no longer loaded. ` +
+        `Migrate your instructions to AGENTS.md (or CLAUDE.md) in the same directory. ` +
+        `See https://github.com/open-gsd/gsd-pi/issues/1492`,
+      );
+    }
+  }
+}
+
+export async function buildBeforeAgentStartResult(
+  event: { prompt: string; systemPrompt: string },
+  ctx: ExtensionContext,
+): Promise<{ systemPrompt: string; message?: { customType: string; content: string; display: false } } | undefined> {
+  if (!existsSync(join(process.cwd(), ".gsd"))) return undefined;
+
+  const stopContextTimer = debugTime("context-inject");
+  const systemContent = loadPrompt("system", {
+    bundledSkillsTable: buildBundledSkillsTable(),
+    templatesDir: getTemplatesDir(),
+    shortcutDashboard: formatShortcut("Ctrl+Alt+G"),
+    shortcutShell: formatShortcut("Ctrl+Alt+B"),
+  });
+  let loadedPreferences = loadEffectiveGSDPreferences();
+  try {
+    const { markCmuxPromptShown, shouldPromptToEnableCmux } = await import("../../cmux/index.js");
+    if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
+      markCmuxPromptShown();
+      if (autoEnableCmuxPreferences()) {
+        loadedPreferences = loadEffectiveGSDPreferences();
+        ctx.ui.notify(
+          "cmux detected — auto-enabled. Run /gsd cmux off to disable.",
+          "info",
+        );
+      }
+    }
+  } catch (e) {
+    logWarning("bootstrap", `cmux prompt setup skipped: ${(e as Error).message}`);
+  }
+
+  const ctxProjectRoot = (ctx as { projectRoot?: unknown }).projectRoot;
+  const basePath = typeof ctxProjectRoot === "string" && ctxProjectRoot.length > 0
+    ? ctxProjectRoot
+    : process.cwd();
+
+  let preferenceBlock = "";
+  if (loadedPreferences) {
+    const cwd = basePath;
+    const report = resolveAllSkillReferences(loadedPreferences.preferences, cwd);
+    preferenceBlock = `\n\n${renderPreferencesForSystemPrompt(loadedPreferences.preferences, report.resolutions)}`;
+    if (report.warnings.length > 0) {
+      ctx.ui.notify(
+        `GSD skill preferences: ${report.warnings.length} unresolved skill${report.warnings.length === 1 ? "" : "s"}: ${report.warnings.join(", ")}`,
+        "warning",
+      );
+    }
+  }
+
+  // ADR-013 step 5: opportunistic decisions->memories backfill. Idempotent
+  // and best-effort — first run absorbs the existing decisions table into
+  // the memory store; subsequent runs are a single sentinel SELECT.
+  try {
+    const { backfillDecisionsToMemories } = await import("../memory-backfill.js");
+    const written = backfillDecisionsToMemories();
+    if (written > 0) {
+      ctx.ui.notify(`GSD: backfilled ${written} decision${written === 1 ? "" : "s"} into the memory store.`, "info");
+    }
+  } catch (e) {
+    logWarning("bootstrap", `decisions backfill failed: ${(e as Error).message}`);
+  }
+
+  // ADR-013 Stage 2b: KNOWLEDGE.md Patterns + Lessons backfill, then
+  // re-render the hybrid projection (manual Rules + projected Patterns +
+  // projected Lessons). Both are idempotent and best-effort — failures here
+  // can't block agent startup.
+  try {
+    const { backfillKnowledgeToMemories } = await import("../knowledge-backfill.js");
+    const writtenK = backfillKnowledgeToMemories(basePath);
+    if (writtenK > 0) {
+      ctx.ui.notify(`GSD: backfilled ${writtenK} KNOWLEDGE.md row${writtenK === 1 ? "" : "s"} into the memory store.`, "info");
+    }
+  } catch (e) {
+    logWarning("bootstrap", `KNOWLEDGE.md backfill failed: ${(e as Error).message}`);
+  }
+  try {
+    const { renderKnowledgeProjection } = await import("../knowledge-projection.js");
+    renderKnowledgeProjection(basePath);
+  } catch (e) {
+    logWarning("bootstrap", `KNOWLEDGE.md projection render failed: ${(e as Error).message}`);
+  }
+
+  // ADR-013 step 6 preflight: warn when decisions / KNOWLEDGE.md rows are not
+  // yet in the memories table. Read-only; never throws. Runs after the two
+  // backfills above so the gap report reflects post-backfill state.
+  try {
+    const { reportConsolidationGaps } = await import("../memory-consolidation-scanner.js");
+    reportConsolidationGaps(basePath);
+  } catch (e) {
+    logWarning("bootstrap", `memory consolidation scan failed: ${(e as Error).message}`);
+  }
+
+  const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome(), basePath);
+  if (globalSizeKb > 4) {
+    ctx.ui.notify(
+      `GSD: ~/.gsd/agent/KNOWLEDGE.md is ${globalSizeKb.toFixed(1)}KB — consider trimming to keep system prompt lean.`,
+      "warning",
+    );
+  }
+
+  let newSkillsBlock = "";
+  if (hasSkillSnapshot()) {
+    const newSkills = detectNewSkills();
+    if (newSkills.length > 0) {
+      newSkillsBlock = formatSkillsXml(newSkills);
+    }
+  }
+
+  let codebaseBlock = "";
+  try {
+    const codebaseOptions = loadedPreferences?.preferences?.codebase
+      ? {
+          excludePatterns: loadedPreferences.preferences.codebase.exclude_patterns,
+          maxFiles: loadedPreferences.preferences.codebase.max_files,
+          collapseThreshold: loadedPreferences.preferences.codebase.collapse_threshold,
+        }
+      : undefined;
+    ensureCodebaseMapFresh(process.cwd(), codebaseOptions);
+  } catch (e) {
+    logWarning("bootstrap", `CODEBASE refresh failed: ${(e as Error).message}`);
+  }
+
+  const codebasePath = resolveGsdRootFile(process.cwd(), "CODEBASE");
+  const rawCodebase = readCodebaseMap(process.cwd());
+  if (existsSync(codebasePath) && rawCodebase) {
+    try {
+      const rawContent = rawCodebase.trim();
+      if (rawContent) {
+        // Cap injection size to ~2 000 tokens to avoid bloating every request.
+        // Full map is always available at .gsd/CODEBASE.md.
+        const generatedMatch = rawContent.match(/Generated: (\S+)/);
+        const generatedAt = generatedMatch?.[1] ?? "unknown";
+        const content = rawContent.length > DEFAULT_CODEBASE_MAX_CHARS
+          ? rawContent.slice(0, DEFAULT_CODEBASE_MAX_CHARS) + "\n\n*(truncated — see .gsd/CODEBASE.md for full map)*"
+          : rawContent;
+        codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, auto-refreshed when GSD detects tracked file changes; use /gsd codebase stats for status)]\n\n${content}`;
+      }
+    } catch (e) {
+      logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
+    }
+  }
+
+  warnDeprecatedAgentInstructions();
+
+  const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
+  const memoryBlock = await loadMemoryBlock(event.prompt ?? "", {
+    includePromptRelevant: !(injection && isLowEntropyResumePrompt(event.prompt ?? "")),
+  });
+
+  // Re-inject forensics context on follow-up turns (#2941)
+  const forensicsInjection = !injection ? buildForensicsContextInjection(process.cwd(), event.prompt) : null;
+
+  const worktreeBlock = buildWorktreeContextBlock();
+
+  const subagentModelConfig = resolveModelWithFallbacksForUnit("subagent");
+  const subagentModelBlock = subagentModelConfig
+    ? `\n\n## Subagent Model\n\nWhen spawning subagents via the \`subagent\` tool, always pass \`model: "${subagentModelConfig.primary}"\` in the tool call parameters. Never omit this — always specify it explicitly.`
+    : "";
+
+  // memoryBlock is FTS-queried against the user prompt and changes per call.
+  // Keeping it out of `fullSystem` preserves provider prompt-cache stability
+  // for the static system/tool prefix. The dynamic memory block rides the
+  // volatile context message instead. (#5019)
+  const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${codebaseBlock}${newSkillsBlock}${worktreeBlock}${subagentModelBlock}`;
+
+  stopContextTimer({
+    systemPromptSize: fullSystem.length,
+    injectionSize: injection?.length ?? forensicsInjection?.length ?? 0,
+    hasPreferences: preferenceBlock.length > 0,
+    hasNewSkills: newSkillsBlock.length > 0,
+  });
+
+  const contextMessage = buildContextMessage({ memoryBlock, injection, forensicsInjection });
+
+  return {
+    systemPrompt: fullSystem,
+    ...(contextMessage ? { message: contextMessage } : {}),
+  };
+}
+
+/**
+ * Route the per-call dynamic blocks (memory, guided-execute, forensics) into a
+ * single user-message context payload so they ride the volatile suffix instead
+ * of the cached system prefix. Priority when both memory and an injection are
+ * present: guided > forensics > memory-only. (#5019)
+ *
+ * Exported for direct unit testing — the surrounding bootstrap has too many
+ * filesystem and DB dependencies to exercise this routing logic in-place.
+ */
+export function buildContextMessage(opts: {
+  memoryBlock: string;
+  injection: string | null;
+  forensicsInjection: string | null;
+}): { customType: string; content: string; display: false } | null {
+  const contextCharLimit = getContextMessageCharLimit();
+  const memoryContent = markMemoryContextSupplied(opts.memoryBlock.trim());
+  if (opts.injection) {
+    const content = limitContextMessageContent(
+      memoryContent ? `${memoryContent}\n\n${opts.injection}` : opts.injection,
+      contextCharLimit,
+    );
+    return { customType: "gsd-guided-context", content, display: false as const };
+  }
+  if (opts.forensicsInjection) {
+    const content = limitContextMessageContent(
+      memoryContent ? `${memoryContent}\n\n${opts.forensicsInjection}` : opts.forensicsInjection,
+      contextCharLimit,
+    );
+    return { customType: "gsd-forensics", content, display: false as const };
+  }
+  if (memoryContent) {
+    return {
+      customType: "gsd-memory",
+      content: limitContextMessageContent(memoryContent, contextCharLimit),
+      display: false as const,
+    };
+  }
+  return null;
+}
+
+function getContextMessageCharLimit(): number | null {
+  const raw = process.env.PI_GSD_CONTEXT_MAX_CHARS;
+  if (!raw) return DEFAULT_CONTEXT_MESSAGE_MAX_CHARS;
+  if (raw === "0") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < MIN_CONTEXT_MESSAGE_MAX_CHARS) {
+    return DEFAULT_CONTEXT_MESSAGE_MAX_CHARS;
+  }
+  return Math.floor(parsed);
+}
+
+function limitContextMessageContent(content: string, limit: number | null): string {
+  if (!limit || content.length <= limit) return content;
+  const suffix = "\n\n[GSD Context Truncated]\nFull context is available from the referenced .gsd files and tools; read on demand only if this excerpt lacks required evidence.";
+  const headBudget = Math.max(0, limit - suffix.length);
+  return `${content.slice(0, headBudget).trimEnd()}${suffix}`;
+}
+
+function markMemoryContextSupplied(memoryContent: string): string {
+  if (!memoryContent) return "";
+  return `[GSD Context Metadata]\n- Memory supplied: yes\n\n${memoryContent}`;
+}
+
+/**
+ * ADR-013 step 4 — auto-injection parity for the memories table.
+ *
+ * Mirrors loadKnowledgeBlock by producing a labeled, deterministic block
+ * combining two memory sets:
+ *
+ * 1. Always-on "critical" set — top-ranked active memories in categories
+ *    that future GSD turns generally want without asking. After ADR-013
+ *    expands this to include "architecture", these memories serve as the
+ *    auto-injected replacement for inlineDecisionsFromDb when the cutover
+ *    in step 6 lands.
+ * 2. Prompt-relevance set — FTS5/semantic hits against the current user
+ *    prompt, deduplicated against the critical set.
+ *
+ * Both sets are ranked, merged, and rendered via formatMemoriesForPrompt
+ * with a token-budget cap. Failures degrade gracefully — the function never
+ * throws and returns "" so the system prompt construction continues.
+ */
+export async function loadMemoryBlock(
+  userPrompt: string,
+  opts: { includePromptRelevant?: boolean } = {},
+): Promise<string> {
+  try {
+    const { formatMemoriesForPrompt, getActiveMemoriesRanked, queryMemoriesRanked } = await import("../memory-store.js");
+
+    // Categories that belong in every turn. Pre-ADR-013 this was just
+    // {gotcha, environment, convention}. ADR-013 adds "architecture" so
+    // decision-equivalent memories survive the inlineDecisionsFromDb cutover
+    // in step 6.
+    const CRITICAL_CATEGORIES = new Set(["gotcha", "environment", "convention", "architecture"]);
+    const CRITICAL_CAP = 8;
+    const QUERY_K = 10;
+    // ~1 token ≈ 4 chars. 4000 chars ≈ 1000 tokens — comfortably under the
+    // KNOWLEDGE.md 4KB warning threshold and roughly twice the pre-ADR-013
+    // budget so the absorbed DECISIONS surface fits.
+    const CHAR_BUDGET = 4000;
+
+    const allRanked = getActiveMemoriesRanked(80);
+    const critical = allRanked.filter((m) => CRITICAL_CATEGORIES.has(m.category)).slice(0, CRITICAL_CAP);
+    const criticalIds = new Set(critical.map((m) => m.id));
+
+    let relevant: typeof allRanked = [];
+    const trimmed = userPrompt.trim();
+    if (trimmed && opts.includePromptRelevant !== false) {
+      const hits = queryMemoriesRanked({ query: trimmed, k: QUERY_K });
+      relevant = hits.map((h) => h.memory).filter((m) => !criticalIds.has(m.id));
+    }
+
+    const merged = [...critical, ...relevant];
+    if (merged.length === 0) return "";
+
+    const formatted = formatMemoriesForPrompt(merged, CHAR_BUDGET);
+    if (!formatted) return "";
+
+    return `\n\n[MEMORY — Critical and prompt-relevant memories from the GSD memory store]\n\n${formatted}`;
+  } catch (e) {
+    logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
+    return "";
+  }
+}
+
+export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: string; globalSizeKb: number } {
+  // 1. Global knowledge (~/.gsd/agent/KNOWLEDGE.md) — cross-project,
+  //    user-maintained. NOT migrated to memories (which are project-scoped),
+  //    so the full file is injected unchanged.
+  let globalKnowledge = "";
+  let globalSizeKb = 0;
+  const globalKnowledgePath = join(gsdHomeDir, "agent", "KNOWLEDGE.md");
+  if (existsSync(globalKnowledgePath)) {
+    try {
+      const content = readFileSync(globalKnowledgePath, "utf-8").trim();
+      if (content) {
+        globalSizeKb = Buffer.byteLength(content, "utf-8") / 1024;
+        globalKnowledge = content;
+      }
+    } catch (e) {
+      logWarning("bootstrap", `global knowledge file read failed: ${(e as Error).message}`);
+    }
+  }
+
+  // 2. Project knowledge (.gsd/KNOWLEDGE.md) — project-specific.
+  //    ADR-013 Stage 2b: Patterns and Lessons are projected from the
+  //    memories table and already reach the LLM via loadMemoryBlock. Inject
+  //    only the intro prose + `## Rules` section here to avoid duplicating
+  //    Patterns/Lessons content in the prompt. Rules stay manual per
+  //    ADR-013 line 39 and have no memory equivalent.
+  let projectKnowledge = "";
+  const knowledgePath = resolveGsdRootFile(cwd, "KNOWLEDGE");
+  if (existsSync(knowledgePath)) {
+    try {
+      const raw = readFileSync(knowledgePath, "utf-8").trim();
+      if (raw) projectKnowledge = extractIntroAndRules(raw).trim();
+    } catch (e) {
+      logWarning("bootstrap", `project knowledge file read failed: ${(e as Error).message}`);
+    }
+  }
+
+  if (!globalKnowledge && !projectKnowledge) {
+    return { block: "", globalSizeKb: 0 };
+  }
+
+  const parts: string[] = [];
+  if (globalKnowledge) {
+    parts.push(`## Global Knowledge\nSource: \`${globalKnowledgePath}\`\n\n${globalKnowledge}`);
+  }
+  if (projectKnowledge) {
+    parts.push(`## Project Knowledge\nSource: \`${knowledgePath}\`\n\n${projectKnowledge}`);
+  }
+  const body = limitKnowledgeBlock(parts.join("\n\n"), getKnowledgeCharLimit());
+  return {
+    block: `\n\n[KNOWLEDGE — Rules from KNOWLEDGE.md (Patterns and Lessons reach the LLM via the memory block)]\n\n${body}`,
+    globalSizeKb,
+  };
+}
+
+function getKnowledgeCharLimit(): number | null {
+  const raw = process.env.PI_GSD_KNOWLEDGE_MAX_CHARS;
+  if (!raw) return DEFAULT_KNOWLEDGE_MAX_CHARS;
+  if (raw === "0") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < MIN_KNOWLEDGE_MAX_CHARS) {
+    return DEFAULT_KNOWLEDGE_MAX_CHARS;
+  }
+  return Math.floor(parsed);
+}
+
+function limitKnowledgeBlock(content: string, limit: number | null): string {
+  if (!limit || content.length <= limit) return content;
+  const suffix = "\n\n[Knowledge Truncated]\nFull KNOWLEDGE.md content remains available at the source path(s) above; read on demand only if this excerpt lacks a required rule.";
+  const headBudget = Math.max(0, limit - suffix.length);
+  return `${content.slice(0, headBudget).trimEnd()}${suffix}`;
+}
+
+function buildWorktreeContextBlock(): string {
+  const worktreeName = getActiveWorktreeName();
+  const worktreeMainCwd = getWorktreeOriginalCwd();
+  const autoWorktree = getActiveAutoWorktreeContext();
+
+  if (worktreeName && worktreeMainCwd) {
+    return [
+      "",
+      "",
+      "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
+      `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
+      `The actual current working directory is: ${toPosixPath(process.cwd())}`,
+      "",
+      `You are working inside a GSD worktree.`,
+      `- Worktree name: ${worktreeName}`,
+      `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+      `- Main project: ${toPosixPath(worktreeMainCwd)}`,
+      `- Branch: worktree/${worktreeName}`,
+      "",
+      "All file operations, bash commands, and GSD state resolve against the worktree path above.",
+      "Use /worktree merge to merge changes back. Use /worktree return to switch back to the main tree.",
+    ].join("\n");
+  }
+
+  if (autoWorktree) {
+    return [
+      "",
+      "",
+      "[WORKTREE CONTEXT — OVERRIDES CURRENT WORKING DIRECTORY ABOVE]",
+      `IMPORTANT: Ignore the "Current working directory" shown earlier in this prompt.`,
+      `The actual current working directory is: ${toPosixPath(process.cwd())}`,
+      "",
+      "You are working inside a GSD auto-worktree.",
+      `- Milestone worktree: ${autoWorktree.worktreeName}`,
+      `- Worktree path (this is the real cwd): ${toPosixPath(process.cwd())}`,
+      `- Main project: ${toPosixPath(autoWorktree.originalBase)}`,
+      `- Branch: ${autoWorktree.branch}`,
+      "",
+      "All file operations, bash commands, and GSD state resolve against the worktree path above.",
+      "Write every .gsd artifact in the worktree path above, never in the main project tree.",
+    ].join("\n");
+  }
+
+  return "";
+}
+
+/**
+ * Low-entropy resume intent patterns — short phrases a user types to
+ * continue work after a pause, rate limit, or context reset (#3615).
+ * Tested against the trimmed, lowercased prompt with trailing punctuation stripped.
+ */
+const RESUME_INTENT_PATTERNS = /^(continue|resume|ok|go|go ahead|proceed|keep going|carry on|next|yes|yeah|yep|sure|do it|let's go|pick up where you left off)$/;
+
+export function isLowEntropyResumePrompt(prompt: string): boolean {
+  const trimmed = prompt.trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  return RESUME_INTENT_PATTERNS.test(trimmed);
+}
+
+async function buildGuidedExecuteContextInjection(prompt: string, basePath: string): Promise<string | null> {
+  const ensureStateDbOpen = async () => {
+    const { ensureDbOpen } = await import("./dynamic-tools.js");
+    await ensureDbOpen();
+  };
+
+  const executeMatch = prompt.match(/Execute the next task:\s+(T\d+)\s+\("([^"]+)"\)\s+in slice\s+(S\d+)\s+of milestone\s+(M\d+(?:-[a-z0-9]{6})?)/i);
+  if (executeMatch) {
+    const [, taskId, taskTitle, sliceId, milestoneId] = executeMatch;
+    return buildTaskExecutionContextInjection(basePath, milestoneId, sliceId, taskId, taskTitle);
+  }
+
+  const resumeMatch = prompt.match(/Resume interrupted work\.[\s\S]*?slice\s+(S\d+)\s+of milestone\s+(M\d+(?:-[a-z0-9]{6})?)/i);
+  if (resumeMatch) {
+    const [, sliceId, milestoneId] = resumeMatch;
+    await ensureStateDbOpen();
+    const state = await deriveState(basePath);
+    if (state.activeMilestone?.id === milestoneId && state.activeSlice?.id === sliceId && state.activeTask) {
+      return buildTaskExecutionContextInjection(basePath, milestoneId, sliceId, state.activeTask.id, state.activeTask.title);
+    }
+  }
+
+  // Fallback: low-entropy resume prompt (e.g., "continue", "ok", "go ahead")
+  // during an active executing task — inject task context so the agent
+  // doesn't rebuild from scratch (#3615).
+  // Intent-gated: only fire for short, resume-like prompts to avoid hijacking
+  // control/help/diagnostic prompts with unrelated execution context.
+  // Phase-gated: only fire during "executing" to avoid misrouting during
+  // replanning, gate evaluation, or other non-execution phases.
+  if (isLowEntropyResumePrompt(prompt)) {
+    await ensureStateDbOpen();
+    const state = await deriveState(basePath);
+    if (state.phase === "executing" && state.activeTask && state.activeMilestone && state.activeSlice) {
+      return buildTaskExecutionContextInjection(
+        basePath,
+        state.activeMilestone.id,
+        state.activeSlice.id,
+        state.activeTask.id,
+        state.activeTask.title,
+      );
+    }
+  }
+
+  return null;
+}
+
+async function buildTaskExecutionContextInjection(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  taskTitle: string,
+): Promise<string> {
+  const taskPlanPath = resolveTaskFile(basePath, milestoneId, sliceId, taskId, "PLAN");
+  const taskPlanRelPath = relTaskFile(basePath, milestoneId, sliceId, taskId, "PLAN");
+  const taskPlanContent = taskPlanPath ? await loadFile(taskPlanPath) : null;
+  const taskPlanInline = taskPlanContent
+    ? ["## Inlined Task Plan (authoritative local execution contract)", `Source: \`${taskPlanRelPath}\``, "", taskPlanContent.trim()].join("\n")
+    : ["## Inlined Task Plan (authoritative local execution contract)", `Task plan not found at dispatch time. Read \`${taskPlanRelPath}\` before executing.`].join("\n");
+
+  const slicePlanPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
+  const slicePlanRelPath = relSliceFile(basePath, milestoneId, sliceId, "PLAN");
+  const slicePlanContent = slicePlanPath ? await loadFile(slicePlanPath) : null;
+  const slicePlanExcerpt = extractSliceExecutionExcerpt(slicePlanContent, slicePlanRelPath);
+  const priorTaskLines = await buildCarryForwardLines(basePath, milestoneId, sliceId, taskId);
+  const resumeSection = await buildResumeSection(basePath, milestoneId, sliceId);
+  const activeOverrides = await loadActiveOverrides(basePath);
+  const overridesSection = formatOverridesSection(activeOverrides);
+
+  return [
+    "[GSD Guided Execute Context]",
+    "Use this injected context as startup context for guided task execution. Treat the inlined task plan as the authoritative local execution contract. Use source artifacts to verify details and run checks.",
+    overridesSection, "",
+    "",
+    resumeSection,
+    "",
+    "## Carry-Forward Context",
+    ...priorTaskLines,
+    "",
+    taskPlanInline,
+    "",
+    slicePlanExcerpt,
+    "",
+    "## Backing Source Artifacts",
+    `- Slice plan: \`${slicePlanRelPath}\``,
+    `- Task plan source: \`${taskPlanRelPath}\``,
+  ].join("\n");
+}
+
+async function buildCarryForwardLines(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): Promise<string[]> {
+  const tasksDir = resolveTasksDir(basePath, milestoneId, sliceId);
+  if (!tasksDir) return ["- No prior task summaries in this slice."];
+
+  const currentNum = parseInt(taskId.replace(/^T/, ""), 10);
+  const sliceRel = relSlicePath(basePath, milestoneId, sliceId);
+  const summaryFiles = resolveTaskFiles(tasksDir, "SUMMARY")
+    .filter((file) => parseInt(file.replace(/^T/, ""), 10) < currentNum)
+    .sort();
+
+  if (summaryFiles.length === 0) return ["- No prior task summaries in this slice."];
+
+  return Promise.all(summaryFiles.map(async (file) => {
+    const absPath = join(tasksDir, file);
+    const content = await loadFile(absPath);
+    const relPath = `${sliceRel}/tasks/${file}`;
+    if (!content) return `- \`${relPath}\``;
+
+    const summary = parseSummary(content);
+    const provided = summary.frontmatter.provides.slice(0, 2).join("; ");
+    const decisions = summary.frontmatter.key_decisions.slice(0, 2).join("; ");
+    const patterns = summary.frontmatter.patterns_established.slice(0, 2).join("; ");
+    const diagnostics = extractMarkdownSection(content, "Diagnostics");
+    const parts = [summary.title || relPath];
+    if (summary.oneLiner) parts.push(summary.oneLiner);
+    if (provided) parts.push(`provides: ${provided}`);
+    if (decisions) parts.push(`decisions: ${decisions}`);
+    if (patterns) parts.push(`patterns: ${patterns}`);
+    if (diagnostics) parts.push(`diagnostics: ${oneLine(diagnostics)}`);
+    return `- \`${relPath}\` — ${parts.join(" | ")}`;
+  }));
+}
+
+async function buildResumeSection(basePath: string, milestoneId: string, sliceId: string): Promise<string> {
+  const continueFile = resolveSliceFile(basePath, milestoneId, sliceId, "CONTINUE");
+  const legacyDir = resolveSlicePath(basePath, milestoneId, sliceId);
+  const legacyPath = legacyDir ? join(legacyDir, "continue.md") : null;
+  const continueContent = continueFile ? await loadFile(continueFile) : null;
+  const legacyContent = !continueContent && legacyPath ? await loadFile(legacyPath) : null;
+  const resolvedContent = continueContent ?? legacyContent;
+  const resolvedRelPath = continueContent
+    ? relSliceFile(basePath, milestoneId, sliceId, "CONTINUE")
+    : (legacyPath ? `${relSlicePath(basePath, milestoneId, sliceId)}/continue.md` : null);
+
+  if (!resolvedContent || !resolvedRelPath) {
+    return ["## Resume State", "- No continue file present. Start from the top of the task plan."].join("\n");
+  }
+
+  const cont = parseContinue(resolvedContent);
+  const lines = [
+    "## Resume State",
+    `Source: \`${resolvedRelPath}\``,
+    `- Status: ${cont.frontmatter.status || "in_progress"}`,
+  ];
+  if (cont.frontmatter.step && cont.frontmatter.totalSteps) {
+    lines.push(`- Progress: step ${cont.frontmatter.step} of ${cont.frontmatter.totalSteps}`);
+  }
+  if (cont.completedWork) lines.push(`- Completed: ${oneLine(cont.completedWork)}`);
+  if (cont.remainingWork) lines.push(`- Remaining: ${oneLine(cont.remainingWork)}`);
+  if (cont.decisions) lines.push(`- Decisions: ${oneLine(cont.decisions)}`);
+  if (cont.nextAction) lines.push(`- Next action: ${oneLine(cont.nextAction)}`);
+  return lines.join("\n");
+}
+
+function extractSliceExecutionExcerpt(content: string | null, relPath: string): string {
+  if (!content) {
+    return ["## Slice Plan Excerpt", `Slice plan not found at dispatch time. Read \`${relPath}\` before running slice-level verification.`].join("\n");
+  }
+  const lines = content.split("\n");
+  const goalLine = lines.find((line) => line.startsWith("**Goal:**"))?.trim();
+  const demoLine = lines.find((line) => line.startsWith("**Demo:**"))?.trim();
+  const verification = extractMarkdownSection(content, "Verification");
+  const observability = extractMarkdownSection(content, "Observability / Diagnostics");
+  const parts = ["## Slice Plan Excerpt", `Source: \`${relPath}\``];
+  if (goalLine) parts.push(goalLine);
+  if (demoLine) parts.push(demoLine);
+  if (verification) parts.push("", "### Slice Verification", verification.trim());
+  if (observability) parts.push("", "### Slice Observability / Diagnostics", observability.trim());
+  return parts.join("\n");
+}
+
+function extractMarkdownSection(content: string, heading: string): string | null {
+  const match = new RegExp(`^## ${escapeRegExp(heading)}\\s*$`, "m").exec(content);
+  if (!match) return null;
+  const start = match.index + match[0].length;
+  const rest = content.slice(start);
+  const nextHeading = rest.match(/^##\s+/m);
+  const end = nextHeading?.index ?? rest.length;
+  return rest.slice(0, end).trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+// ─── Forensics Context Re-injection (#2941) ──────────────────────────────────
+
+/**
+ * Check for an active forensics session and return the prompt content
+ * so it can be re-injected on follow-up turns.
+ */
+export function buildForensicsContextInjection(basePath: string, prompt: string): string | null {
+  const marker = readForensicsMarker(basePath);
+  if (!marker) return null;
+
+  // Expire markers older than 2 hours to avoid stale context
+  const age = Date.now() - new Date(marker.createdAt).getTime();
+  if (age > 2 * 60 * 60 * 1000) {
+    clearForensicsMarker(basePath);
+    return null;
+  }
+
+  const trimmed = prompt.trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  if (trimmed && !RESUME_INTENT_PATTERNS.test(trimmed)) {
+    clearForensicsMarker(basePath);
+    return null;
+  }
+
+  return marker.promptContent;
+}
+
+/**
+ * Remove the active forensics marker file, e.g. when the investigation
+ * is complete or the session expires.
+ */
+export function clearForensicsMarker(basePath: string): void {
+  const markerPath = join(basePath, ".gsd", "runtime", "active-forensics.json");
+  if (existsSync(markerPath)) {
+    try {
+      unlinkSync(markerPath);
+    } catch (e) {
+      logWarning("bootstrap", `unlinkSync forensics marker failed: ${(e as Error).message}`);
+    }
+  }
+}

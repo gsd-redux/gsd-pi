@@ -1,0 +1,726 @@
+// GSD2 - Write gate regression tests.
+/**
+ * Unit tests for the CONTEXT.md write-gate (D031 guard chain).
+ *
+ * Exercises shouldBlockContextWrite() — a pure function that implements:
+ *   (a) toolName !== "write" → pass
+ *   (b) milestone context must resolve to a verified milestone
+ *   (c) path doesn't match /M\d+-CONTEXT\.md$/ → pass
+ *   (d) non-context files → pass
+ *   (e) else → block with actionable reason
+ */
+
+import test, { afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync, unlinkSync, existsSync, rmSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import {
+  isDepthVerified,
+  isDepthConfirmationAnswer,
+  isQueuePhaseActive,
+  shouldBlockContextWrite,
+  setQueuePhaseActive,
+} from '../index.ts';
+import {
+  markDepthVerified,
+  isMilestoneDepthVerified,
+  markApprovalGateVerified,
+  shouldBlockContextArtifactSave,
+  shouldBlockContextArtifactSaveInSnapshot,
+  shouldBlockRootArtifactSaveInSnapshot,
+  clearDiscussionFlowState,
+  resetWriteGateState,
+  loadWriteGateSnapshot,
+} from '../bootstrap/write-gate.ts';
+
+afterEach(() => {
+  clearDiscussionFlowState(process.cwd());
+});
+
+// ─── Scenario 1: Blocks CONTEXT.md write during discussion without depth verification (absolute path) ──
+
+test('write-gate: blocks CONTEXT.md write during discussion without depth verification (absolute path)', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '/Users/dev/project/.gsd/milestones/M001/M001-CONTEXT.md',
+    'M001',
+    false,
+  );
+  assert.strictEqual(result.block, true, 'should block the write');
+  assert.ok(result.reason, 'should provide a reason');
+});
+
+// ─── Scenario 2: Blocks CONTEXT.md write during discussion without depth verification (relative path) ──
+
+test('write-gate: blocks CONTEXT.md write during discussion without depth verification (relative path)', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M005/M005-CONTEXT.md',
+    'M005',
+    false,
+  );
+  assert.strictEqual(result.block, true, 'should block the write');
+  assert.ok(result.reason, 'should provide a reason');
+});
+
+// ─── Scenario 3: Allows CONTEXT.md write after depth verification ──
+
+test('write-gate: allows CONTEXT.md write after depth verification', () => {
+  clearDiscussionFlowState(process.cwd());
+  markDepthVerified('M001');
+  const result = shouldBlockContextWrite(
+    'write',
+    '/Users/dev/project/.gsd/milestones/M001/M001-CONTEXT.md',
+    'M001',
+  );
+  assert.strictEqual(result.block, false, 'should not block after depth verification');
+  assert.strictEqual(result.reason, undefined, 'should have no reason');
+});
+
+// ─── Scenario 4: Ambiguous session context no longer bypasses the gate ──
+
+test('write-gate: blocks CONTEXT.md write when milestoneId is ambiguous', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/M001-CONTEXT.md',
+    null,
+  );
+  assert.strictEqual(result.block, true, 'should block when milestone context is ambiguous');
+});
+
+// ─── Scenario 5: Allows non-CONTEXT.md writes during discussion ──
+
+test('write-gate: allows non-CONTEXT.md writes during discussion', () => {
+  // DISCUSSION.md
+  const r1 = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/M001-DISCUSSION.md',
+    'M001',
+  );
+  assert.strictEqual(r1.block, false, 'DISCUSSION.md should pass');
+
+  // Slice file
+  const r2 = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/slices/S01/S01-PLAN.md',
+    'M001',
+  );
+  assert.strictEqual(r2.block, false, 'slice plan should pass');
+
+  // Regular code file
+  const r3 = shouldBlockContextWrite(
+    'write',
+    'src/index.ts',
+    'M001',
+  );
+  assert.strictEqual(r3.block, false, 'regular code file should pass');
+});
+
+// ─── Scenario 6: Regex specificity — doesn't match S01-CONTEXT.md ──
+
+test('write-gate: regex does not match slice context files (S01-CONTEXT.md)', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/slices/S01/S01-CONTEXT.md',
+    'M001',
+  );
+  assert.strictEqual(result.block, false, 'S01-CONTEXT.md should not be blocked');
+});
+
+// ─── Scenario 7: Error message contains actionable instruction and anti-bypass language ──
+
+test('write-gate: blocked reason contains depth_verification keyword and anti-bypass language', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M999/M999-CONTEXT.md',
+    'M999',
+  );
+  assert.strictEqual(result.block, true);
+  assert.ok(result.reason!.includes('depth_verification'), 'reason should mention depth_verification question id');
+  assert.ok(result.reason!.includes('ask_user_questions'), 'reason should mention ask_user_questions tool');
+  assert.ok(result.reason!.includes('MUST NOT'), 'reason should include anti-bypass language');
+  assert.ok(result.reason!.includes('(Recommended)'), 'reason should specify the required confirmation option');
+});
+
+// ─── Scenario 8: Queue mode blocks CONTEXT.md write without depth verification ──
+
+test('write-gate: blocks CONTEXT.md write in queue mode without depth verification', () => {
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/M001-CONTEXT.md',
+    null,   // no milestoneId in queue mode
+    true,   // queue phase active
+  );
+  assert.strictEqual(result.block, true, 'should block in queue mode without depth verification');
+  assert.ok(result.reason, 'should provide a reason');
+});
+
+// ─── Scenario 9: Queue mode allows CONTEXT.md write after depth verification ──
+
+test('write-gate: allows CONTEXT.md write in queue mode after depth verification', () => {
+  clearDiscussionFlowState(process.cwd());
+  markDepthVerified('M001');
+  const result = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/M001-CONTEXT.md',
+    null,   // no milestoneId in queue mode
+    true,   // queue phase active
+  );
+  assert.strictEqual(result.block, false, 'should not block in queue mode after depth verification');
+});
+
+// ─── Scenario 10: depth verification is scoped per milestone, not global ──
+
+test('write-gate: markDepthVerified unlocks only the matching milestone', () => {
+  clearDiscussionFlowState(process.cwd());
+  markDepthVerified('M001');
+
+  const allowed = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M001/M001-CONTEXT.md',
+    null,
+  );
+  assert.strictEqual(allowed.block, false, 'should allow the verified milestone');
+
+  const blockedOther = shouldBlockContextWrite(
+    'write',
+    '.gsd/milestones/M002/M002-CONTEXT.md',
+    null,
+  );
+  assert.strictEqual(blockedOther.block, true, 'other milestones should remain blocked');
+  assert.strictEqual(isMilestoneDepthVerified('M001'), true);
+  assert.strictEqual(isMilestoneDepthVerified('M002'), false);
+});
+
+// ─── Scenario 11: gsd_summary_save CONTEXT contract is milestone-scoped ──
+
+test('write-gate: gsd_summary_save only blocks final milestone CONTEXT writes', () => {
+  clearDiscussionFlowState(process.cwd());
+
+  assert.strictEqual(
+    shouldBlockContextArtifactSave('CONTEXT-DRAFT', 'M001').block,
+    false,
+    'draft CONTEXT should be allowed',
+  );
+  assert.strictEqual(
+    shouldBlockContextArtifactSave('CONTEXT', 'M001', 'S01').block,
+    false,
+    'slice CONTEXT should be allowed',
+  );
+  assert.strictEqual(
+    shouldBlockContextArtifactSave('CONTEXT', 'M001').block,
+    true,
+    'final milestone CONTEXT should block before verification',
+  );
+
+  markDepthVerified('M001');
+  assert.strictEqual(
+    shouldBlockContextArtifactSave('CONTEXT', 'M001').block,
+    false,
+    'final milestone CONTEXT should pass after verification',
+  );
+});
+
+test('write-gate: root PROJECT/REQUIREMENTS final saves block behind pending approval gate', () => {
+  const snapshot = {
+    verifiedDepthMilestones: [],
+    verifiedApprovalGates: [],
+    activeQueuePhase: false,
+    pendingGateId: 'depth_verification_requirements_confirm',
+  };
+
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(snapshot, 'REQUIREMENTS').block,
+    true,
+    'final REQUIREMENTS.md must wait for approval',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(snapshot, 'PROJECT').block,
+    true,
+    'final PROJECT.md must wait for approval',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(snapshot, 'REQUIREMENTS-DRAFT').block,
+    false,
+    'draft requirements can still be saved',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot({ ...snapshot, pendingGateId: null }, 'REQUIREMENTS').block,
+    false,
+    'no pending approval gate means final root artifacts can save',
+  );
+});
+
+test('write-gate: deep root PROJECT/REQUIREMENTS final saves require verified approval', () => {
+  const snapshot = {
+    verifiedDepthMilestones: [],
+    verifiedApprovalGates: [],
+    activeQueuePhase: false,
+    pendingGateId: null,
+  };
+
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      snapshot,
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    true,
+    'deep PROJECT save is fail-closed without verified project approval',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_project_confirm'] },
+      'PROJECT',
+      { requireVerifiedApproval: true },
+    ).block,
+    false,
+    'verified project approval unlocks PROJECT',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_project_confirm'] },
+      'REQUIREMENTS',
+      { requireVerifiedApproval: true },
+    ).block,
+    true,
+    'project approval does not unlock REQUIREMENTS',
+  );
+  assert.strictEqual(
+    shouldBlockRootArtifactSaveInSnapshot(
+      { ...snapshot, verifiedApprovalGates: ['depth_verification_requirements_confirm'] },
+      'REQUIREMENTS',
+      { requireVerifiedApproval: true },
+    ).block,
+    false,
+    'verified requirements approval unlocks REQUIREMENTS',
+  );
+});
+
+test('write-gate: reopening a gate revokes its previous verified approval', () => {
+  const base = join(tmpdir(), `gsd-write-gate-reopen-${randomUUID()}`);
+  mkdirSync(base, { recursive: true });
+
+  try {
+    clearDiscussionFlowState(base);
+
+    markApprovalGateVerified('depth_verification_project_confirm', base);
+    assert.strictEqual(
+      shouldBlockRootArtifactSaveInSnapshot(
+        loadWriteGateSnapshot(base),
+        'PROJECT',
+        { requireVerifiedApproval: true },
+      ).block,
+      false,
+      'precondition: verified approval unlocks the final project artifact',
+    );
+
+    setPendingGate('depth_verification_project_confirm', base);
+    clearPendingGate(base);
+
+    assert.strictEqual(
+      shouldBlockRootArtifactSaveInSnapshot(
+        loadWriteGateSnapshot(base),
+        'PROJECT',
+        { requireVerifiedApproval: true },
+      ).block,
+      true,
+      'a re-asked gate must require a fresh approval',
+    );
+  } finally {
+    clearDiscussionFlowState(base);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Discussion gate enforcement tests (pending gate mechanism)
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+  isGateQuestionId,
+  shouldBlockPendingGate,
+  shouldBlockPendingGateBash,
+  setPendingGate,
+  clearPendingGate,
+  getPendingGate,
+} from '../bootstrap/write-gate.ts';
+
+// ─── Scenario 19: isGateQuestionId recognizes all gate patterns ──
+
+test('write-gate: isGateQuestionId recognizes all gate patterns', () => {
+  assert.strictEqual(isGateQuestionId('depth_verification'), true);
+  assert.strictEqual(isGateQuestionId('depth_verification_M002'), true);
+  assert.strictEqual(isGateQuestionId('depth_verification_confirm'), true);
+  // Non-gate question IDs
+  assert.strictEqual(isGateQuestionId('project_intent'), false);
+  assert.strictEqual(isGateQuestionId('feature_priority'), false);
+  assert.strictEqual(isGateQuestionId('layer1_scope_gate'), false);
+  assert.strictEqual(isGateQuestionId(''), false);
+});
+
+// ─── Scenario 20: setPendingGate / getPendingGate / clearPendingGate lifecycle ──
+
+test('write-gate: pending gate lifecycle (set, get, clear)', () => {
+  clearDiscussionFlowState(process.cwd());
+  assert.strictEqual(getPendingGate(), null, 'starts null');
+
+  setPendingGate('depth_verification', process.cwd());
+  assert.strictEqual(getPendingGate(), 'depth_verification', 'set correctly');
+
+  clearPendingGate(process.cwd());
+  assert.strictEqual(getPendingGate(), null, 'cleared correctly');
+
+  // clearDiscussionFlowState also clears pending gate
+  setPendingGate('depth_verification_M002', process.cwd());
+  clearDiscussionFlowState(process.cwd());
+  assert.strictEqual(getPendingGate(), null, 'clearDiscussionFlowState clears pending gate');
+});
+
+// ─── Scenario 21: shouldBlockPendingGate blocks non-safe tools when gate is pending ──
+
+test('write-gate: shouldBlockPendingGate blocks write/edit during pending gate', () => {
+  clearDiscussionFlowState(process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  // write should be blocked during discussion
+  const writeResult = shouldBlockPendingGate('write', 'M001', false);
+  assert.strictEqual(writeResult.block, true, 'write should be blocked');
+  assert.ok(writeResult.reason!.includes('depth_verification'), 'reason mentions the gate');
+
+  // edit should be blocked
+  const editResult = shouldBlockPendingGate('edit', 'M001', false);
+  assert.strictEqual(editResult.block, true, 'edit should be blocked');
+
+  // gsd tools should be blocked
+  const gsdResult = shouldBlockPendingGate('gsd_plan_milestone', 'M001', false);
+  assert.strictEqual(gsdResult.block, true, 'gsd tools should be blocked');
+});
+
+// ─── Scenario 22: shouldBlockPendingGate allows only re-asking when gate is pending ──
+
+test('write-gate: shouldBlockPendingGate blocks read-only tools and allows ask_user_questions during pending gate', () => {
+  clearDiscussionFlowState(process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  // ask_user_questions is always safe (model needs to re-ask)
+  assert.strictEqual(shouldBlockPendingGate('ask_user_questions', 'M001').block, false);
+  // read-only tools are blocked so the user-facing question remains visible
+  assert.strictEqual(shouldBlockPendingGate('read', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('grep', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('glob', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGate('ls', 'M001').block, true);
+});
+
+// ─── Scenario 23: shouldBlockPendingGate still blocks when the session is ambiguous ──
+
+test('write-gate: shouldBlockPendingGate blocks outside discussion when a gate is pending', () => {
+  clearDiscussionFlowState(process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  // No milestoneId and no queue phase — still block because the gate is pending
+  const result = shouldBlockPendingGate('write', null, false);
+  assert.strictEqual(result.block, true, 'should block even when milestoneId is null');
+});
+
+// ─── Scenario 24: shouldBlockPendingGate blocks in queue mode ──
+
+test('write-gate: shouldBlockPendingGate blocks in queue mode when gate is pending', () => {
+  clearDiscussionFlowState(process.cwd());
+  setQueuePhaseActive(true, process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  const result = shouldBlockPendingGate('write', null, true);
+  assert.strictEqual(result.block, true, 'should block in queue mode');
+});
+
+// ─── Scenario 25: shouldBlockPendingGateBash blocks read-only commands ──
+
+test('write-gate: shouldBlockPendingGateBash blocks read-only commands during pending gate', () => {
+  clearDiscussionFlowState(process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  assert.strictEqual(shouldBlockPendingGateBash('cat file.txt', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('git log --oneline', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('grep -r pattern .', 'M001').block, true);
+  assert.strictEqual(shouldBlockPendingGateBash('ls -la', 'M001').block, true);
+});
+
+// ─── Scenario 26: shouldBlockPendingGateBash blocks mutating commands ──
+
+test('write-gate: shouldBlockPendingGateBash blocks mutating commands during pending gate', () => {
+  clearDiscussionFlowState(process.cwd());
+  setPendingGate('depth_verification', process.cwd());
+
+  const result = shouldBlockPendingGateBash('npm run build', 'M001');
+  assert.strictEqual(result.block, true, 'mutating bash should be blocked');
+  assert.ok(result.reason!.includes('depth_verification'));
+});
+
+// ─── Scenario 27: no pending gate means no blocking ──
+
+test('write-gate: no pending gate means no blocking', () => {
+  clearDiscussionFlowState(process.cwd());
+
+  assert.strictEqual(shouldBlockPendingGate('write', 'M001').block, false);
+  assert.strictEqual(shouldBlockPendingGateBash('npm run build', 'M001').block, false);
+});
+
+// ─── Scenario 28: resetWriteGateState clears pending gate ──
+
+test('write-gate: resetWriteGateState clears pending gate', () => {
+  setPendingGate('depth_verification', process.cwd());
+  resetWriteGateState(process.cwd());
+  assert.strictEqual(getPendingGate(), null);
+});
+
+test('write-gate: in-memory state is scoped by basePath', () => {
+  const workspaceA = join(tmpdir(), `gsd-write-gate-isolation-a-${randomUUID()}`);
+  const workspaceB = join(tmpdir(), `gsd-write-gate-isolation-b-${randomUUID()}`);
+
+  try {
+    clearDiscussionFlowState(workspaceA);
+    clearDiscussionFlowState(workspaceB);
+
+    setPendingGate('depth_verification_M777', workspaceA);
+    assert.strictEqual(getPendingGate(workspaceA), 'depth_verification_M777', 'workspace A should see its pending gate');
+    assert.strictEqual(getPendingGate(workspaceB), null, 'workspace B should not see workspace A pending gate');
+
+    clearPendingGate(workspaceA);
+    setQueuePhaseActive(true, workspaceA);
+    assert.strictEqual(isQueuePhaseActive(workspaceA), true, 'workspace A should see queue mode active');
+    assert.strictEqual(isQueuePhaseActive(workspaceB), false, 'workspace B should not see workspace A queue mode');
+
+    markDepthVerified('M777', workspaceA);
+    assert.strictEqual(isMilestoneDepthVerified('M777', workspaceA), true, 'workspace A should see its verified milestone');
+    assert.strictEqual(isMilestoneDepthVerified('M777', workspaceB), false, 'workspace B should not see workspace A milestone verification');
+    assert.strictEqual(isDepthVerified(workspaceB), false, 'workspace B should have no verified depth state');
+  } finally {
+    clearDiscussionFlowState(workspaceA);
+    clearDiscussionFlowState(workspaceB);
+    rmSync(workspaceA, { recursive: true, force: true });
+    rmSync(workspaceB, { recursive: true, force: true });
+  }
+});
+
+// ─── Standard options fixture used across depth confirmation tests ──
+
+const STANDARD_OPTIONS = [
+  { label: 'Yes, you got it (Recommended)' },
+  { label: 'Not quite — let me clarify' },
+];
+
+// ─── Scenario 11: accepts first option (confirmation) with structural validation ──
+
+test('write-gate: isDepthConfirmationAnswer accepts first option with options present', () => {
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Yes, you got it (Recommended)', STANDARD_OPTIONS),
+    true,
+    'should accept exact match of first option label',
+  );
+});
+
+// ─── Scenario 12: rejects second option (decline) ──
+
+test('write-gate: isDepthConfirmationAnswer rejects decline option', () => {
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Not quite — let me clarify', STANDARD_OPTIONS),
+    false,
+    'should reject the clarification option',
+  );
+});
+
+// ─── Scenario 13: rejects "None of the above" ──
+
+test('write-gate: isDepthConfirmationAnswer rejects None of the above', () => {
+  assert.strictEqual(
+    isDepthConfirmationAnswer('None of the above', STANDARD_OPTIONS),
+    false,
+    'should reject None of the above',
+  );
+});
+
+// ─── Scenario 14: rejects garbage/empty input ──
+
+test('write-gate: isDepthConfirmationAnswer rejects garbage and edge cases', () => {
+  assert.strictEqual(isDepthConfirmationAnswer('discord', STANDARD_OPTIONS), false, 'garbage string');
+  assert.strictEqual(isDepthConfirmationAnswer('', STANDARD_OPTIONS), false, 'empty string');
+  assert.strictEqual(isDepthConfirmationAnswer(undefined, STANDARD_OPTIONS), false, 'undefined');
+  assert.strictEqual(isDepthConfirmationAnswer(null, STANDARD_OPTIONS), false, 'null');
+  assert.strictEqual(isDepthConfirmationAnswer(42, STANDARD_OPTIONS), false, 'number');
+});
+
+// ─── Scenario 15: handles array-wrapped selection ──
+
+test('write-gate: isDepthConfirmationAnswer handles array-wrapped selected value', () => {
+  assert.strictEqual(
+    isDepthConfirmationAnswer(['Yes, you got it (Recommended)'], STANDARD_OPTIONS),
+    true,
+    'should accept array-wrapped confirmation',
+  );
+  assert.strictEqual(
+    isDepthConfirmationAnswer(['Not quite — let me clarify'], STANDARD_OPTIONS),
+    false,
+    'should reject array-wrapped decline',
+  );
+  assert.strictEqual(
+    isDepthConfirmationAnswer([], STANDARD_OPTIONS),
+    false,
+    'should reject empty array',
+  );
+});
+
+// ─── Scenario 16: rejects free-form "Other" text that contains "(Recommended)" ──
+
+test('write-gate: isDepthConfirmationAnswer rejects free-form text containing Recommended', () => {
+  assert.strictEqual(
+    isDepthConfirmationAnswer('I think this is fine (Recommended)', STANDARD_OPTIONS),
+    false,
+    'free-form text with (Recommended) substring must not unlock gate',
+  );
+  assert.strictEqual(
+    isDepthConfirmationAnswer('(Recommended)', STANDARD_OPTIONS),
+    false,
+    'bare (Recommended) string must not unlock gate',
+  );
+});
+
+// ─── Scenario 17: works with changed label text (decoupled from specific copy) ──
+
+test('write-gate: isDepthConfirmationAnswer works with different label text', () => {
+  const customOptions = [
+    { label: 'Looks good, proceed' },
+    { label: 'Needs more discussion' },
+  ];
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Looks good, proceed', customOptions),
+    true,
+    'should accept first option regardless of label text',
+  );
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Needs more discussion', customOptions),
+    false,
+    'should reject second option',
+  );
+  // Old label should NOT work with new options
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Yes, you got it (Recommended)', customOptions),
+    false,
+    'old label text should not match new options',
+  );
+});
+
+// ─── Scenario 18: fail-closed when options not available (#4950) ──
+
+test('write-gate: isDepthConfirmationAnswer fails closed when options are missing (#4950)', () => {
+  // After #4950 the substring fallback was removed. Without options the gate
+  // can never be unlocked — every input must return false.
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Yes, you got it (Recommended)'),
+    false,
+    'no-options + Recommended substring must NOT unlock the gate',
+  );
+  assert.strictEqual(
+    isDepthConfirmationAnswer('Not quite — let me clarify'),
+    false,
+    'no-options + non-Recommended must NOT unlock the gate',
+  );
+});
+
+// ─── Scenario 29: loadWriteGateSnapshot returns clean state when persist file deleted (#4343) ──
+
+test('write-gate: loadWriteGateSnapshot returns empty default when persist file is deleted (#4343)', () => {
+  const base = join(tmpdir(), `gsd-write-gate-4343-${randomUUID()}`);
+  mkdirSync(join(base, '.gsd', 'runtime'), { recursive: true });
+  const stateFilePath = join(base, '.gsd', 'runtime', 'write-gate-state.json');
+  const originalEnv = process.env.GSD_PERSIST_WRITE_GATE_STATE;
+
+  try {
+    process.env.GSD_PERSIST_WRITE_GATE_STATE = '1';
+
+    // Write a state file with a pending gate and verified milestone
+    writeFileSync(stateFilePath, JSON.stringify({
+      verifiedDepthMilestones: ['M001'],
+      activeQueuePhase: false,
+      pendingGateId: 'depth_verification_M001',
+    }));
+    assert.ok(existsSync(stateFilePath), 'precondition: state file exists');
+
+    // While file exists, snapshot reflects its contents
+    const beforeDeletion = loadWriteGateSnapshot(base);
+    assert.strictEqual(beforeDeletion.pendingGateId, 'depth_verification_M001', 'pending gate from file');
+    assert.deepEqual(beforeDeletion.verifiedDepthMilestones, ['M001'], 'verified milestones from file');
+
+    // User deletes the state file to clear the HARD BLOCK
+    unlinkSync(stateFilePath);
+    assert.ok(!existsSync(stateFilePath), 'state file deleted');
+
+    // After deletion in persist mode, snapshot should be clean (not stale in-memory)
+    const afterDeletion = loadWriteGateSnapshot(base);
+    assert.strictEqual(afterDeletion.pendingGateId, null, 'pendingGateId cleared after file deletion');
+    assert.deepEqual(afterDeletion.verifiedDepthMilestones, [], 'verifiedDepthMilestones cleared after file deletion');
+    assert.strictEqual(afterDeletion.activeQueuePhase, false, 'activeQueuePhase cleared after file deletion');
+
+    // The CONTEXT artifact block check must also resolve to unblocked after deletion+verification
+    // (simulate the re-verify flow users would do: delete → depth verify → save)
+    const stillBlocked = shouldBlockContextArtifactSaveInSnapshot(afterDeletion, 'CONTEXT', 'M001', null);
+    assert.strictEqual(stillBlocked.block, true, 'still blocked without new depth verification');
+
+    const verifiedSnapshot = {
+      ...afterDeletion,
+      verifiedDepthMilestones: ['M001'],
+    };
+    const unblocked = shouldBlockContextArtifactSaveInSnapshot(verifiedSnapshot, 'CONTEXT', 'M001', null);
+    assert.strictEqual(unblocked.block, false, 'unblocked after fresh depth verification');
+  } finally {
+    if (originalEnv === undefined) {
+      delete process.env.GSD_PERSIST_WRITE_GATE_STATE;
+    } else {
+      process.env.GSD_PERSIST_WRITE_GATE_STATE = originalEnv;
+    }
+    clearDiscussionFlowState(base);
+    try {
+      rmSync(base, { recursive: true, force: true });
+    } catch { /* swallow */ }
+  }
+});
+
+// ─── Scenario 30: write-gate persistence recreates dangling external .gsd target ──
+
+test('write-gate: resetWriteGateState persists through dangling .gsd symlink', () => {
+  const base = join(tmpdir(), `gsd-write-gate-dangling-${randomUUID()}`);
+  const externalState = join(tmpdir(), `gsd-write-gate-external-${randomUUID()}`);
+  const stateFilePath = join(base, '.gsd', 'runtime', 'write-gate-state.json');
+  const originalEnv = process.env.GSD_PERSIST_WRITE_GATE_STATE;
+
+  try {
+    process.env.GSD_PERSIST_WRITE_GATE_STATE = '1';
+    mkdirSync(base, { recursive: true });
+    symlinkSync(externalState, join(base, '.gsd'), 'junction');
+    assert.strictEqual(existsSync(join(base, '.gsd')), false, 'precondition: .gsd symlink target is missing');
+
+    resetWriteGateState(base);
+
+    assert.ok(existsSync(externalState), 'missing external state target was recreated');
+    assert.ok(existsSync(stateFilePath), 'write-gate snapshot persisted under .gsd/runtime');
+    assert.deepEqual(loadWriteGateSnapshot(base), {
+      verifiedDepthMilestones: [],
+      verifiedApprovalGates: [],
+      activeQueuePhase: false,
+      pendingGateId: null,
+    });
+  } finally {
+    if (originalEnv === undefined) {
+      delete process.env.GSD_PERSIST_WRITE_GATE_STATE;
+    } else {
+      process.env.GSD_PERSIST_WRITE_GATE_STATE = originalEnv;
+    }
+    clearDiscussionFlowState(base);
+    try {
+      rmSync(base, { recursive: true, force: true });
+      rmSync(externalState, { recursive: true, force: true });
+    } catch { /* swallow */ }
+  }
+});

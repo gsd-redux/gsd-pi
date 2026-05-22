@@ -1,0 +1,270 @@
+/**
+ * GSD Parallel Merge — Worktree reconciliation for parallel milestones.
+ *
+ * Handles merging completed milestone worktrees back to main branch
+ * with safety checks for parallel execution context.
+ */
+
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { resolveGsdPathContract } from "./paths.js";
+import { getAutoWorktreePath } from "./auto-worktree.js";
+import { buildWorktreeLifecycleDeps } from "./auto.js";
+import {
+  mergeMilestoneStandalone,
+  type MergeStandaloneResult,
+} from "./worktree-lifecycle.js";
+import { MergeConflictError } from "./git-service.js";
+import { removeSessionStatus } from "./session-status-io.js";
+import type { WorkerInfo } from "./parallel-orchestrator.js";
+import { getErrorMessage } from "./error-utils.js";
+import { logWarning } from "./workflow-logger.js";
+
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+export interface MergeResult {
+  milestoneId: string;
+  success: boolean;
+  commitMessage?: string;
+  pushed?: boolean;
+  error?: string;
+  conflictFiles?: string[];
+}
+
+export type MergeOrder = "sequential" | "by-completion";
+
+// ─── Merge Queue ───────────────────────────────────────────────────────────
+
+/**
+ * Check whether a milestone is complete by querying the canonical project DB.
+ * Uses a subprocess to avoid disrupting the global DB singleton.
+ * Returns true when milestones.status = 'complete' in project gsd.db.
+ */
+export function isMilestoneCompleteInProjectDb(basePath: string, mid: string): boolean {
+  const workRoot = join(basePath, ".gsd", "worktrees", mid);
+  const dbPath = resolveGsdPathContract(workRoot, basePath).projectDb;
+  if (!existsSync(dbPath)) return false;
+
+  try {
+    const result = spawnSync(
+      "sqlite3",
+      [dbPath, `SELECT status FROM milestones WHERE id='${mid}' LIMIT 1`],
+      { timeout: 3000, encoding: "utf-8" },
+    );
+    return (result.stdout || "").trim() === "complete";
+  } catch (e) {
+    logWarning("parallel", `spawnSync milestone completion check failed for ${mid}: ${(e as Error).message}`);
+    return false;
+  }
+}
+
+/**
+ * Discover milestone IDs with status='complete' in the canonical DB,
+ * using worktree directories only to enumerate active parallel workers.
+ */
+function discoverDbCompletedMilestones(basePath: string): Set<string> {
+  const completed = new Set<string>();
+  const worktreeDir = join(basePath, ".gsd", "worktrees");
+  try {
+    for (const entry of readdirSync(worktreeDir)) {
+      if (entry.startsWith("M") && isMilestoneCompleteInProjectDb(basePath, entry)) {
+        completed.add(entry);
+      }
+    }
+  } catch (e) {
+    logWarning("parallel", `readdirSync for completed set failed: ${(e as Error).message}`);
+  }
+  return completed;
+}
+
+/**
+ * Determine safe merge order for completed milestones.
+ * Sequential: merge in milestone ID order (M001 before M002).
+ * By-completion: merge in the order milestones finished.
+ *
+ * When basePath is provided, also checks the canonical project DB as the
+ * source of truth. Workers with stale orchestrator state (e.g. "error")
+ * are included if their project DB row shows status='complete'.
+ * See: https://github.com/open-gsd/gsd-pi/issues/2812
+ */
+export function determineMergeOrder(
+  workers: WorkerInfo[],
+  order: MergeOrder = "sequential",
+  basePath?: string,
+): string[] {
+  // Start with workers the orchestrator already knows are stopped
+  const stoppedIds = new Set(
+    workers.filter(w => w.state === "stopped").map(w => w.milestoneId),
+  );
+
+  // When basePath is available, also check the project DB for milestones
+  // whose orchestrator state is stale but are actually complete (#2812)
+  const dbCompleted = basePath ? discoverDbCompletedMilestones(basePath) : new Set<string>();
+
+  // Union: milestone is mergeable if stopped OR DB-complete
+  const mergeableIds = new Set([...stoppedIds, ...dbCompleted]);
+
+  // Build the list from tracked workers + any DB-discovered milestones
+  // not tracked by the orchestrator at all
+  const workerMap = new Map(workers.map(w => [w.milestoneId, w]));
+  const allMergeable: WorkerInfo[] = [];
+  for (const mid of mergeableIds) {
+    const w = workerMap.get(mid);
+    if (w) {
+      allMergeable.push(w);
+    } else {
+      // Milestone discovered from project DB but not in workers list
+      allMergeable.push({
+        milestoneId: mid,
+        title: mid,
+        pid: 0,
+        process: null,
+        worktreePath: basePath ? join(basePath, ".gsd", "worktrees", mid) : "",
+        startedAt: 0,
+        state: "stopped",
+        cost: 0,
+      });
+    }
+  }
+
+  if (order === "by-completion") {
+    return allMergeable
+      .sort((a, b) => a.startedAt - b.startedAt) // earliest first
+      .map(w => w.milestoneId);
+  }
+  return allMergeable
+    .sort((a, b) => a.milestoneId.localeCompare(b.milestoneId))
+    .map(w => w.milestoneId);
+}
+
+/**
+ * Attempt to merge a single milestone's worktree back to main.
+ *
+ * Routes through `WorktreeLifecycle.mergeMilestoneStandalone` so parallel
+ * callers get the same projection-finalize / roadmap-fallback / secondary-
+ * teardown invariants as the single-loop path. Closes the parallel-merge
+ * bypass that ADR-016 names (issue #5618).
+ */
+export async function mergeCompletedMilestone(
+  basePath: string,
+  milestoneId: string,
+): Promise<MergeResult> {
+  // Resolve the worktree path explicitly; parallel-merge has no AutoSession
+  // to read it from. Only use the worktree path when git actually knows
+  // about it (`getAutoWorktreePath` returns non-null). When the directory
+  // exists on disk but isn't a registered git worktree (e.g. a stale
+  // session-status marker dir), fall back to the project root and let the
+  // standalone's mode detection pick branch-mode or skipped — using the
+  // un-registered dir as `worktreeBasePath` would cause `getCurrentBranch`
+  // to fail with a "Worktree HEAD diverged" error.
+  const registeredWtPath = getAutoWorktreePath(basePath, milestoneId);
+  const worktreeBasePath = registeredWtPath ?? basePath;
+
+  let result: MergeStandaloneResult;
+  try {
+    result = mergeMilestoneStandalone(buildWorktreeLifecycleDeps(), {
+      originalBasePath: basePath,
+      worktreeBasePath,
+      milestoneId,
+      // Parallel context never runs with degraded isolation — workers only
+      // exist when isolation succeeded. Pass `false` explicitly so the
+      // standalone's degraded-skip branch is not reached.
+      isolationDegraded: false,
+      notify: (msg, level) => {
+        // Surface user-visible messages from the standalone through the
+        // workflow logger so the parallel merge's progress is visible in
+        // the same channel as the rest of the parallel orchestration.
+        if (level === "error" || level === "warning") {
+          logWarning("parallel", `${milestoneId}: ${msg}`);
+        }
+      },
+    });
+  } catch (err) {
+    if (err instanceof MergeConflictError) {
+      return {
+        milestoneId,
+        success: false,
+        error: `Merge conflict: ${err.conflictedFiles.length} conflicting file(s)`,
+        conflictFiles: err.conflictedFiles,
+      };
+    }
+    return {
+      milestoneId,
+      success: false,
+      error: getErrorMessage(err),
+    };
+  }
+
+  if (!result.merged) {
+    return {
+      milestoneId,
+      success: false,
+      error:
+        result.mode === "skipped"
+          ? `Merge skipped for ${milestoneId} (mode=none or isolation degraded).`
+          : `No roadmap for ${milestoneId} — milestone branch preserved for manual merge.`,
+    };
+  }
+
+  // Clean up parallel session status — only on a real merge.
+  removeSessionStatus(basePath, milestoneId);
+
+  return {
+    milestoneId,
+    success: true,
+    commitMessage: result.commitMessage,
+    pushed: result.pushed,
+  };
+}
+
+/**
+ * Merge all completed milestones in sequence.
+ * Stops on first conflict and returns results so far.
+ */
+export async function mergeAllCompleted(
+  basePath: string,
+  workers: WorkerInfo[],
+  order: MergeOrder = "sequential",
+): Promise<MergeResult[]> {
+  const mergeOrder = determineMergeOrder(workers, order, basePath);
+  const results: MergeResult[] = [];
+
+  for (const mid of mergeOrder) {
+    const result = await mergeCompletedMilestone(basePath, mid);
+    results.push(result);
+
+    // Stop on first conflict — later merges may depend on this one
+    if (!result.success && result.conflictFiles) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Format merge results for display.
+ */
+export function formatMergeResults(results: MergeResult[]): string {
+  if (results.length === 0) return "No completed milestones to merge.";
+
+  const lines: string[] = ["# Merge Results\n"];
+
+  for (const r of results) {
+    if (r.success) {
+      const pushStatus = r.pushed ? " (pushed)" : "";
+      lines.push(`- **${r.milestoneId}** — merged successfully${pushStatus}`);
+    } else if (r.conflictFiles) {
+      lines.push(`- **${r.milestoneId}** — CONFLICT (${r.conflictFiles.length} file(s)):`);
+      for (const f of r.conflictFiles) {
+        lines.push(`  - \`${f}\``);
+      }
+      lines.push(`  Resolve conflicts manually and run \`/gsd parallel merge ${r.milestoneId}\` to retry.`);
+    } else {
+      lines.push(`- **${r.milestoneId}** — failed: ${r.error}`);
+    }
+  }
+
+  return lines.join("\n");
+}

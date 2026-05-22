@@ -1,0 +1,405 @@
+// GSD Extension — workflow-projections unit tests
+// Tests the pure rendering functions plus DB-backed projection recovery.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { regenerateIfMissing, renderPlanContent, renderStateProjection } from '../workflow-projections.ts';
+import type { SliceRow, TaskRow } from '../gsd-db.ts';
+import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from '../gsd-db.ts';
+import { clearPathCache, _clearGsdRootCache } from '../paths.ts';
+import { invalidateStateCache } from '../state.ts';
+import { clearParseCache } from '../files.ts';
+
+// ─── Test fixtures ────────────────────────────────────────────────────────
+
+function makeSlice(overrides: Partial<SliceRow> = {}): SliceRow {
+  return {
+    id: 'S01',
+    milestone_id: 'M001',
+    title: 'Auth Layer',
+    status: 'active',
+    risk: 'high',
+    depends: [],
+    demo: 'Login flow works end-to-end',
+    goal: 'Implement JWT authentication',
+    full_summary_md: '',
+    full_uat_md: '',
+    success_criteria: '',
+    proof_level: '',
+    integration_closure: '',
+    observability_impact: '',
+    created_at: '2026-01-01T00:00:00Z',
+    completed_at: null,
+    sequence: 1,
+    replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: '',
+    ...overrides,
+  };
+}
+
+function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
+  return {
+    id: 'T01',
+    slice_id: 'S01',
+    milestone_id: 'M001',
+    title: 'Create JWT middleware',
+    status: 'pending',
+    description: 'Implement JWT validation middleware',
+    estimate: '2h',
+    files: ['src/middleware/auth.ts'],
+    verify: 'npm test src/middleware/auth.test.ts',
+    one_liner: '',
+    narrative: '',
+    verification_result: '',
+    duration: '',
+    completed_at: null,
+    blocker_discovered: false,
+    deviations: '',
+    known_issues: '',
+    key_files: [],
+    key_decisions: [],
+    full_summary_md: '',
+    full_plan_md: '',
+    inputs: [],
+    expected_output: [],
+    observability_impact: '',
+    sequence: 1,
+    blocker_source: '',
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
+    ...overrides,
+  };
+}
+
+// ─── renderPlanContent: structure ────────────────────────────────────────
+
+test('workflow-projections: renderPlanContent starts with H1 containing slice id and title', () => {
+  const content = renderPlanContent(makeSlice(), []);
+  assert.ok(content.startsWith('# S01: Auth Layer'), `expected H1, got: ${content.slice(0, 60)}`);
+});
+
+test('workflow-projections: renderPlanContent includes Goal line', () => {
+  const content = renderPlanContent(makeSlice(), []);
+  assert.ok(content.includes('**Goal:** Implement JWT authentication'));
+});
+
+test('workflow-projections: renderPlanContent includes Demo line', () => {
+  const content = renderPlanContent(makeSlice(), []);
+  assert.ok(content.includes('**Demo:** After this: Login flow works end-to-end'));
+});
+
+test('workflow-projections: renderPlanContent falls back to TBD when goal and full_summary_md are empty', () => {
+  const slice = makeSlice({ goal: '', full_summary_md: '' });
+  const content = renderPlanContent(slice, []);
+  assert.ok(content.includes('**Goal:** TBD'));
+});
+
+test('workflow-projections: renderPlanContent falls back to TBD when goal is empty (full_summary_md ignored #2945)', () => {
+  const slice = makeSlice({ goal: '', full_summary_md: 'Fallback goal text' });
+  const content = renderPlanContent(slice, []);
+  // #2945: full_summary_md is no longer used as a fallback — it contains
+  // multi-line rendered markdown that corrupts single-line fields.
+  assert.ok(content.includes('**Goal:** TBD'), `expected TBD fallback, got: ${content}`);
+});
+
+test('workflow-projections: renderPlanContent includes ## Tasks section', () => {
+  const content = renderPlanContent(makeSlice(), []);
+  assert.ok(content.includes('## Tasks'));
+});
+
+// ─── renderPlanContent: task checkboxes ──────────────────────────────────
+
+test('workflow-projections: pending task renders with [ ] checkbox', () => {
+  const task = makeTask({ status: 'pending' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('- [ ] **T01:'), `expected unchecked, got: ${content}`);
+});
+
+test('workflow-projections: done task renders with [x] checkbox', () => {
+  const task = makeTask({ status: 'done' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('- [x] **T01:'), `expected checked, got: ${content}`);
+});
+
+test('workflow-projections: complete status renders with [x] checkbox', () => {
+  const task = makeTask({ status: 'complete' }); // 'complete' and 'done' both → checked
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('- [x] **T01:'));
+});
+
+// ─── renderPlanContent: task sublines ────────────────────────────────────
+
+test('workflow-projections: task with estimate renders Estimate subline', () => {
+  const task = makeTask({ estimate: '2h' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('  - Estimate: 2h'));
+});
+
+test('workflow-projections: task with empty estimate omits Estimate subline', () => {
+  const task = makeTask({ estimate: '' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(!content.includes('  - Estimate:'));
+});
+
+test('workflow-projections: task with files renders Files subline', () => {
+  const task = makeTask({ files: ['src/auth.ts', 'src/auth.test.ts'] });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('  - Files: src/auth.ts, src/auth.test.ts'));
+});
+
+test('workflow-projections: task with empty files array omits Files subline', () => {
+  const task = makeTask({ files: [] });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(!content.includes('  - Files:'));
+});
+
+test('workflow-projections: task with verify renders Verify subline', () => {
+  const task = makeTask({ verify: 'npm test' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('  - Verify: npm test'));
+});
+
+test('workflow-projections: task with no verify omits Verify subline', () => {
+  const task = makeTask({ verify: '' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(!content.includes('  - Verify:'));
+});
+
+test('workflow-projections: task with duration renders Duration subline', () => {
+  const task = makeTask({ duration: '45m' });
+  const content = renderPlanContent(makeSlice(), [task]);
+  assert.ok(content.includes('  - Duration: 45m'));
+});
+
+test('workflow-projections: multiple tasks rendered in order', () => {
+  const t1 = makeTask({ id: 'T01', title: 'First task', sequence: 1 });
+  const t2 = makeTask({ id: 'T02', title: 'Second task', sequence: 2 });
+  const content = renderPlanContent(makeSlice(), [t1, t2]);
+  const idxT1 = content.indexOf('**T01:');
+  const idxT2 = content.indexOf('**T02:');
+  assert.ok(idxT1 < idxT2, 'T01 should appear before T02');
+});
+
+// Regression for #6146: a deleted slice PLAN must be regenerated from the DB
+// with its per-task plan files. The simplified projection path only rewrote the
+// slice PLAN and silently dropped task plans.
+test('workflow-projections: regenerateIfMissing PLAN restores slice plan and task plan files', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projections-'));
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  mkdirSync(join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'tasks'), { recursive: true });
+  openDatabase(dbPath);
+  clearParseCache();
+  clearPathCache();
+  _clearGsdRootCache();
+  invalidateStateCache();
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Milestone', status: 'active' });
+    insertSlice({
+      id: 'S01',
+      milestoneId: 'M001',
+      title: 'Recoverable slice',
+      status: 'pending',
+      demo: 'Plans regenerate after deletion.',
+      planning: { goal: 'Recover deleted projections from DB.' },
+    });
+    insertTask({
+      id: 'T01',
+      sliceId: 'S01',
+      milestoneId: 'M001',
+      title: 'First task',
+      status: 'pending',
+      planning: { description: 'Do the first thing.', estimate: '1h' },
+    });
+    insertTask({
+      id: 'T02',
+      sliceId: 'S01',
+      milestoneId: 'M001',
+      title: 'Second task',
+      status: 'pending',
+      planning: { description: 'Do the second thing.', estimate: '2h' },
+    });
+
+    const slicePlanPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'S01-PLAN.md');
+    const t1PlanPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'tasks', 'T01-PLAN.md');
+    const t2PlanPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'tasks', 'T02-PLAN.md');
+
+    assert.ok(!existsSync(slicePlanPath), 'precondition: slice plan absent');
+
+    const regenerated = await regenerateIfMissing(base, 'M001', 'S01', 'PLAN');
+
+    assert.equal(regenerated, true, 'regenerateIfMissing reports the PLAN was rebuilt');
+    assert.ok(existsSync(slicePlanPath), 'slice PLAN restored on disk');
+    assert.ok(existsSync(t1PlanPath), 'T01 task plan restored');
+    assert.ok(existsSync(t2PlanPath), 'T02 task plan restored');
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection does not clobber non-empty STATE.md when manifest has milestones', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-stale-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(statePath, '# GSD State\n\n**Active Milestone:** M001: Existing\n');
+    writeFileSync(join(gsdDir, 'state-manifest.json'), JSON.stringify({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      milestones: [{ id: 'M001', title: 'Existing' }],
+      slices: [],
+      tasks: [],
+      decisions: [],
+      verification_evidence: [],
+    }));
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('M001: Existing'));
+    assert.ok(!content.includes('No milestones found'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection rewrites empty STATE.md when manifest has milestones', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-empty-state-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(statePath, '');
+    writeFileSync(join(gsdDir, 'state-manifest.json'), JSON.stringify({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      milestones: [{ id: 'M001', title: 'Existing' }],
+      slices: [],
+      tasks: [],
+      decisions: [],
+      verification_evidence: [],
+    }));
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('# GSD State'));
+    assert.ok(content.includes('**Active Milestone:** None'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection rewrites non-empty STATE.md when manifest is missing', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-missing-manifest-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(statePath, '# GSD State\n\n**Active Milestone:** M001: Existing\n');
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('# GSD State'));
+    assert.ok(content.includes('**Active Milestone:** None'));
+    assert.ok(!content.includes('M001: Existing'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection rewrites non-empty STATE.md when manifest is malformed', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-malformed-manifest-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(statePath, '# GSD State\n\n**Active Milestone:** M001: Existing\n');
+    writeFileSync(join(gsdDir, 'state-manifest.json'), '{not json');
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('# GSD State'));
+    assert.ok(content.includes('**Active Milestone:** None'));
+    assert.ok(!content.includes('M001: Existing'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection rewrites non-empty STATE.md when manifest milestones is not an array', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-non-array-milestones-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(statePath, '# GSD State\n\n**Active Milestone:** M001: Existing\n');
+    writeFileSync(join(gsdDir, 'state-manifest.json'), JSON.stringify({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      milestones: 'M001',
+      slices: [],
+      tasks: [],
+      decisions: [],
+      verification_evidence: [],
+    }));
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('# GSD State'));
+    assert.ok(content.includes('**Active Milestone:** None'));
+    assert.ok(!content.includes('M001: Existing'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('workflow-projections: renderStateProjection writes active milestone from DB when manifest matches', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projection-db-milestone-'));
+  const gsdDir = join(base, '.gsd');
+  const statePath = join(gsdDir, 'STATE.md');
+  openDatabase(':memory:');
+  try {
+    mkdirSync(gsdDir, { recursive: true });
+    writeFileSync(join(gsdDir, 'state-manifest.json'), JSON.stringify({
+      version: 1,
+      exported_at: new Date().toISOString(),
+      milestones: [{ id: 'M001', title: 'DB Milestone' }],
+      slices: [],
+      tasks: [],
+      decisions: [],
+      verification_evidence: [],
+    }));
+    insertMilestone({ id: 'M001', title: 'DB Milestone', status: 'active' });
+
+    await renderStateProjection(base);
+
+    const content = readFileSync(statePath, 'utf-8');
+    assert.ok(content.includes('**Active Milestone:** M001: DB Milestone'));
+    assert.ok(content.includes('**M001:** DB Milestone'));
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});

@@ -1,0 +1,80 @@
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import type { OAuthCredentials } from "./types.js";
+import { antigravityOAuthProvider } from "./google-antigravity.js";
+
+describe("Antigravity OAuth — provider structure", () => {
+	test("has correct id and name", () => {
+		assert.equal(antigravityOAuthProvider.id, "google-antigravity");
+		assert.equal(antigravityOAuthProvider.name, "Antigravity (Gemini 3, Claude, GPT-OSS)");
+	});
+
+	test("uses callback server", () => {
+		assert.equal(antigravityOAuthProvider.usesCallbackServer, true);
+	});
+
+	test("has required methods", () => {
+		assert.equal(typeof antigravityOAuthProvider.login, "function");
+		assert.equal(typeof antigravityOAuthProvider.refreshToken, "function");
+		assert.equal(typeof antigravityOAuthProvider.getApiKey, "function");
+	});
+
+	test("getApiKey returns JSON with token and projectId", () => {
+		const credentials: OAuthCredentials = {
+			access: "test-access-token",
+			refresh: "test-refresh-token",
+			expires: Date.now() + 3600000,
+			projectId: "test-project-123",
+			email: "test@example.com",
+		};
+		const apiKey = antigravityOAuthProvider.getApiKey(credentials);
+		assert.equal(typeof apiKey, "string");
+		const parsed = JSON.parse(apiKey);
+		assert.equal(parsed.token, "test-access-token");
+		assert.equal(parsed.projectId, "test-project-123");
+	});
+
+	test("refreshToken throws when projectId is missing", async () => {
+		const credentials: OAuthCredentials = {
+			access: "test-access-token",
+			refresh: "test-refresh-token",
+			expires: Date.now() + 3600000,
+		};
+		await assert.rejects(
+			antigravityOAuthProvider.refreshToken(credentials),
+			/Antigravity credentials missing projectId/,
+		);
+	});
+});
+
+describe("Antigravity OAuth — credential regression", () => {
+	test("module imports successfully", () => {
+		assert.ok(antigravityOAuthProvider);
+	});
+
+	test("refreshToken sends the desktop OAuth client credentials to Google", async (t) => {
+		const calls: RequestInit[] = [];
+		const originalFetch = globalThis.fetch;
+		t.after(() => {
+			globalThis.fetch = originalFetch;
+		});
+		globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+			calls.push(init ?? {});
+			return Response.json({ access_token: "new-access-token", expires_in: 3600 });
+		};
+
+		const credentials = await antigravityOAuthProvider.refreshToken({
+			access: "old-access-token",
+			refresh: "refresh-token",
+			expires: Date.now() + 3600000,
+			projectId: "test-project-123",
+		});
+
+		assert.equal(credentials.access, "new-access-token");
+		assert.equal(credentials.projectId, "test-project-123");
+		assert.ok(calls[0]?.body instanceof URLSearchParams);
+		const body = calls[0].body;
+		assert.equal(body.get("client_id"), "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com");
+		assert.equal(body.get("client_secret"), "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");
+	});
+});
