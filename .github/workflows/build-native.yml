@@ -146,8 +146,8 @@ jobs:
             echo "Prerelease detected: ${VERSION} → publishing with --tag next"
           else
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-            echo "tag_flag=" >> "$GITHUB_OUTPUT"
-            echo "Stable release: ${VERSION} → publishing with --tag latest (default)"
+            echo "tag_flag=--tag latest" >> "$GITHUB_OUTPUT"
+            echo "Stable release: ${VERSION} → publishing with --tag latest"
           fi
 
       - name: Publish platform packages
