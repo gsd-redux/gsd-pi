@@ -845,21 +845,8 @@ export function registerHooks(
     // turn used the host Edit tool to modify user source files.
     const dash = getAutoRuntimeSnapshot();
 
-    // ── Block ScheduleWakeup during auto-mode (#6328) ────────────────────
-    // Auto-mode intercepts agent_end and drives session lifecycle itself.
-    // ScheduleWakeup timers fire into a stale host context and never resume
-    // the auto loop, making the call a silent no-op. Block it with a clear
-    // message so the agent doesn't end a unit expecting a callback.
-    if (dash.active && toolName === "ScheduleWakeup") {
-      return {
-        block: true,
-        reason: [
-          "ScheduleWakeup is not compatible with auto-mode.",
-          "Auto-mode manages session lifecycle: wakeup timers have no effect inside an active auto-mode unit.",
-          "To wait for an external process, complete the current task and implement polling in a subsequent unit.",
-        ].join(" "),
-      };
-    }
+    // ScheduleWakeup is registered by the GSD extension so auto-mode can
+    // continue the same unit session after long external waits.
     const guidedUnit = getGuidedUnitContext(discussionBasePath);
     const activeUnitType = dash.currentUnit?.type ?? guidedUnit?.unitType;
     if (activeUnitType) {

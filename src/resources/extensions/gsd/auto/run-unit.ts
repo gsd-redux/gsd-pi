@@ -26,9 +26,12 @@ import { debugLog } from "../debug-logger.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import { resolveAutoSupervisorConfig } from "../preferences.js";
 import { readUnitRuntimeRecord, type AutoUnitRuntimeRecord } from "../unit-runtime.js";
+import { consumeAutoWakeup } from "./schedule-wakeup.js";
 
 const UNIT_FAILSAFE_BUFFER_MS = 30_000;
 const UNIT_FAILSAFE_RECHECK_MS = 30_000;
+const WAKEUP_SLEEP_CHUNK_MS = 1_000;
+const MAX_WAKEUPS_PER_UNIT = 100;
 
 export function shouldDeferUnitFailsafeTimeout(
   runtime: AutoUnitRuntimeRecord | null,
@@ -49,6 +52,17 @@ export function shouldDeferUnitFailsafeTimeout(
   if (runtime.lastProgressKind.includes("recovery")) return true;
   if (runtime.recoveryAttempts && runtime.recoveryAttempts > 0) return true;
   return progressAgeMs >= 0 && progressAgeMs <= opts.freshProgressMs;
+}
+
+async function sleepForScheduledWakeup(s: AutoSession, delayMs: number): Promise<boolean> {
+  const deadline = Date.now() + Math.max(0, delayMs);
+  while (Date.now() < deadline) {
+    if (!s.active || s.paused) return false;
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.min(WAKEUP_SLEEP_CHUNK_MS, deadline - Date.now())),
+    );
+  }
+  return s.active && !s.paused;
 }
 
 // Tracks the latest session-switch attempt so a late timeout settlement from an
@@ -226,56 +240,114 @@ export async function runUnit(
   let unitTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
   let result: UnitResult;
   try {
+    const awaitAgentEndWithTimeout = (agentEndPromise: Promise<UnitResult>): Promise<UnitResult> => {
+      const timeoutResult = new Promise<UnitResult>((resolve) => {
+        const settleOrDefer = () => {
+          let runtime: AutoUnitRuntimeRecord | null;
+          try {
+            runtime = readUnitRuntimeRecord(s.basePath, unitType, unitId);
+          } catch (error) {
+            debugLog("runUnit", {
+              phase: "unit-failsafe-runtime-read-failed",
+              unitType,
+              unitId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            resolve({
+              status: "cancelled",
+              errorContext: {
+                message: "Unit hard timeout — supervision may have failed; runtime progress could not be read",
+                category: "timeout",
+                isTransient: true,
+              },
+            });
+            return;
+          }
+          if (shouldDeferUnitFailsafeTimeout(runtime, {
+            nowMs: Date.now(),
+            currentUnitStartedAt: s.currentUnit?.startedAt,
+            freshProgressMs,
+          })) {
+            debugLog("runUnit", {
+              phase: "unit-failsafe-deferred",
+              unitType,
+              unitId,
+              runtimePhase: runtime?.phase,
+              lastProgressKind: runtime?.lastProgressKind,
+            });
+            unitTimeoutHandle = setTimeout(settleOrDefer, UNIT_FAILSAFE_RECHECK_MS);
+            return;
+          }
+          resolve({ status: "cancelled", errorContext: { message: "Unit hard timeout — supervision may have failed", category: "timeout", isTransient: true } });
+        };
+        unitTimeoutHandle = setTimeout(settleOrDefer, UNIT_HARD_TIMEOUT_MS);
+      });
+      return runWithTurnGeneration(capturedTurnGen, () =>
+        Promise.race([agentEndPromise, timeoutResult]),
+      );
+    };
+
     pi.sendMessage(
       { customType: "gsd-auto", content: prompt, display: s.verbose },
       { triggerTurn: true },
     );
 
     debugLog("runUnit", { phase: "awaiting-agent-end", unitType, unitId });
-    const timeoutResult = new Promise<UnitResult>((resolve) => {
-      const settleOrDefer = () => {
-        let runtime: AutoUnitRuntimeRecord | null;
-        try {
-          runtime = readUnitRuntimeRecord(s.basePath, unitType, unitId);
-        } catch (error) {
-          debugLog("runUnit", {
-            phase: "unit-failsafe-runtime-read-failed",
-            unitType,
-            unitId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          resolve({
-            status: "cancelled",
-            errorContext: {
-              message: "Unit hard timeout — supervision may have failed; runtime progress could not be read",
-              category: "timeout",
-              isTransient: true,
-            },
-          });
-          return;
-        }
-        if (shouldDeferUnitFailsafeTimeout(runtime, {
-          nowMs: Date.now(),
-          currentUnitStartedAt: s.currentUnit?.startedAt,
-          freshProgressMs,
-        })) {
-          debugLog("runUnit", {
-            phase: "unit-failsafe-deferred",
-            unitType,
-            unitId,
-            runtimePhase: runtime?.phase,
-            lastProgressKind: runtime?.lastProgressKind,
-          });
-          unitTimeoutHandle = setTimeout(settleOrDefer, UNIT_FAILSAFE_RECHECK_MS);
-          return;
-        }
-        resolve({ status: "cancelled", errorContext: { message: "Unit hard timeout — supervision may have failed", category: "timeout", isTransient: true } });
-      };
-      unitTimeoutHandle = setTimeout(settleOrDefer, UNIT_HARD_TIMEOUT_MS);
-    });
-    result = await runWithTurnGeneration(capturedTurnGen, () =>
-      Promise.race([unitPromise, timeoutResult]),
-    );
+    result = await awaitAgentEndWithTimeout(unitPromise);
+    if (unitTimeoutHandle) {
+      clearTimeout(unitTimeoutHandle);
+      unitTimeoutHandle = undefined;
+    }
+
+    let wakeupCount = 0;
+    while (result.status === "completed" && s.active && !s.paused) {
+      const wakeup = consumeAutoWakeup(s.basePath, unitType, unitId);
+      if (!wakeup) break;
+      wakeupCount += 1;
+      if (wakeupCount > MAX_WAKEUPS_PER_UNIT) {
+        result = {
+          status: "cancelled",
+          errorContext: {
+            message: `ScheduleWakeup limit exceeded for ${unitType} ${unitId}`,
+            category: "timeout",
+            isTransient: false,
+          },
+        };
+        break;
+      }
+      debugLog("runUnit", {
+        phase: "schedule-wakeup-wait",
+        unitType,
+        unitId,
+        delayMs: wakeup.delayMs,
+        reason: wakeup.reason,
+      });
+      const slept = await sleepForScheduledWakeup(s, wakeup.delayMs);
+      if (!slept) {
+        result = {
+          status: "cancelled",
+          errorContext: {
+            message: `ScheduleWakeup interrupted for ${unitType} ${unitId}`,
+            category: "aborted",
+            isTransient: true,
+          },
+        };
+        break;
+      }
+      const continuationPromise = new Promise<UnitResult>((resolve) => {
+        _setCurrentResolve(resolve);
+      });
+      pi.sendMessage(
+        { customType: "gsd-auto", content: wakeup.prompt, display: s.verbose },
+        { triggerTurn: true },
+      );
+      debugLog("runUnit", { phase: "schedule-wakeup-awaiting-agent-end", unitType, unitId });
+      result = await awaitAgentEndWithTimeout(continuationPromise);
+      if (unitTimeoutHandle) {
+        clearTimeout(unitTimeoutHandle);
+        unitTimeoutHandle = undefined;
+      }
+    }
   } finally {
     if (unitTimeoutHandle) clearTimeout(unitTimeoutHandle);
     ctx.ui.setWorkingMessage?.(undefined);

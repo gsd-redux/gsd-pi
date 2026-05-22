@@ -11,6 +11,7 @@ import { registerExecTools } from "./exec-tools.js";
 import { registerJournalTools } from "./journal-tools.js";
 import { registerMemoryTools } from "./memory-tools.js";
 import { registerQueryTools } from "./query-tools.js";
+import { registerScheduleWakeupTool } from "./schedule-wakeup-tool.js";
 import { registerHooks } from "./register-hooks.js";
 import { registerShortcuts } from "./register-shortcuts.js";
 import { writeCrashLog } from "./crash-log.js";
@@ -123,6 +124,7 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
     ["query-tools", () => registerQueryTools(pi)],
     ["memory-tools", () => registerMemoryTools(pi)],
     ["exec-tools", () => registerExecTools(pi)],
+    ["schedule-wakeup-tool", () => registerScheduleWakeupTool(pi)],
     ["shortcuts", () => registerShortcuts(pi)],
     // cmux is a library (no pi), so gsd sets up the event listeners on its
     // behalf using the shared event channel contract. Registration is

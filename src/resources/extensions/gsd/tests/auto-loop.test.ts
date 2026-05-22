@@ -21,6 +21,7 @@ import {
   isSessionSwitchAbortGraceActive,
 } from "../auto/resolve.js";
 import { runUnit, shouldDeferUnitFailsafeTimeout } from "../auto/run-unit.js";
+import { scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
 import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from "../unit-runtime.js";
 import { autoLoop } from "../auto/loop.js";
 import { runDispatch, runUnitPhase } from "../auto/phases.js";
@@ -185,6 +186,61 @@ test("resolveAgentEnd resolves a pending runUnit promise", async () => {
   const result = await resultPromise;
   assert.equal(result.status, "completed");
   assert.deepEqual(result.event, event);
+});
+
+test("runUnit honors ScheduleWakeup by continuing the same unit session", async () => {
+  _resetPendingResolve();
+  _resetAutoWakeupsForTest();
+
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const pi = makeMockPi();
+  const s = makeMockSession();
+  const firstEvent = makeEvent([{ role: "assistant", content: "submitted job" }]);
+  const secondEvent = makeEvent([{ role: "assistant", content: "job finished" }]);
+
+  const resultPromise = runUnit(
+    ctx,
+    pi,
+    s,
+    "execute-task",
+    "M001/S01/T01",
+    "submit external job",
+  );
+
+  await waitForMicrotasks(() => pi.calls.length === 1, "initial unit dispatch");
+  scheduleAutoWakeup({
+    basePath: s.basePath,
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    delayMs: 0,
+    prompt: "check external job and write the task summary if complete",
+    reason: "poll external job",
+    createdAt: Date.now(),
+  });
+  resolveAgentEnd(firstEvent);
+
+  await waitForMicrotasks(() => pi.calls.length === 2, "scheduled wakeup dispatch");
+  assert.equal((pi.calls[1] as any[])[0].content, "check external job and write the task summary if complete");
+  resolveAgentEnd(secondEvent);
+
+  const result = await resultPromise;
+  assert.equal(result.status, "completed");
+  assert.deepEqual(result.event, secondEvent);
+  assert.equal(pi.calls.length, 2);
 });
 
 test("runUnit suppresses the global working-message loader for auto dashboard runs", async () => {
