@@ -14,6 +14,14 @@ on:
         options:
           - "false"
           - "true"
+      publish_auth:
+        description: "npm publish auth mode"
+        required: false
+        default: "trusted"
+        type: choice
+        options:
+          - "trusted"
+          - "token"
 
 permissions:
   contents: read
@@ -115,10 +123,18 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
 
-      - name: Verify trusted publishing toolchain
+      - name: Verify npm publish toolchain
         run: |
-          node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 14)) { throw new Error('Trusted publishing requires Node >= 22.14.0'); }"
-          node -e "const v=require('child_process').execSync('npm --version',{encoding:'utf8'}).trim().split('.').map(Number); if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) { throw new Error('Trusted publishing requires npm >= 11.5.1'); }"
+          node -e "const [major, minor] = process.versions.node.split('.').map(Number); if (major < 22 || (major === 22 && minor < 14)) { throw new Error('npm trusted publishing requires Node >= 22.14.0'); }"
+          node -e "const v=require('child_process').execSync('npm --version',{encoding:'utf8'}).trim().split('.').map(Number); if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) { throw new Error('npm trusted publishing requires npm >= 11.5.1'); }"
+
+      - name: Select npm publish auth
+        run: |
+          if [ "${{ github.event.inputs.publish_auth || 'trusted' }}" = "token" ]; then
+            echo "Using NPM_TOKEN for npm publish bootstrap."
+          else
+            echo "Using npm trusted publishing for npm publish."
+          fi
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -151,6 +167,8 @@ jobs:
           fi
 
       - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}
         run: |
           for platform in darwin-arm64 darwin-x64 linux-x64-gnu linux-arm64-gnu win32-x64-msvc; do
             echo "Publishing @opengsd/engine-${platform}..."
@@ -220,6 +238,8 @@ jobs:
         run: npm run validate-pack
 
       - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ github.event.inputs.publish_auth == 'token' && secrets.NPM_TOKEN || '' }}
         run: |
           # --ignore-scripts: skip prepublishOnly since we built explicitly above
           if OUTPUT=$(npm publish --ignore-scripts ${{ steps.version-check.outputs.tag_flag }} 2>&1); then
