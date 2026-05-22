@@ -63,7 +63,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
 | CI | `ci.yml` | PR + push to main | Build, test, typecheck — **gate for all promotions** |
-| Prerelease Publish | `prerelease-publish.yml` | Manual dispatch | Publish approved `@dev` or `@next` prereleases |
+| NPM Publish | `npm-publish.yml` | Manual dispatch | Publish approved `@dev`, `@next`, or `@latest` releases |
 | Release Pipeline | `pipeline.yml` | After CI succeeds on main | Three-stage promotion |
 | Native Binaries | `build-native.yml` | `v*` tags | Cross-compile platform binaries |
 | Dev Cleanup | `cleanup-dev-versions.yml` | Weekly (Monday 06:00 UTC) | Unpublish `-dev.` versions older than 30 days |
@@ -76,7 +76,7 @@ docker run --rm -v $(pwd):/workspace ghcr.io/open-gsd/gsd-pi:latest --version
 
 **Pipeline optimization (v2.41):**
 - **Shallow clones** — CI lint and build jobs use `fetch-depth: 1` or `fetch-depth: 2` instead of full history, saving ~30-60s per job
-- **npm cache in pipeline** — prerelease verification and prod-release use `cache: 'npm'` on setup-node, saving ~1-2 min per job on repeat runs
+- **npm cache in pipeline** — prerelease verification and production release use `cache: 'npm'` on setup-node, saving ~1-2 min per job on repeat runs
 - **Exponential backoff** — npm registry propagation waits in `build-native.yml` replaced hardcoded `sleep 30` + fixed 15s retries with exponential backoff (5s → 10s → 20s → 30s cap), typically finishing in <15s when the registry is fast
 - **Security hardening** — pipeline.yml moved `${{ }}` expressions from `run:` blocks to `env:` variables to prevent command injection vectors
 ### Build-Relevant Change Detection
@@ -120,7 +120,7 @@ The pipeline only triggers after `ci.yml` passes. Key gating tests include:
 ### Approving a Prod Release
 
 1. A version reaches the Test stage automatically
-2. In GitHub Actions, the `prod-release` job will show "Waiting for review"
+2. In GitHub Actions, run **NPM Publish** with `channel=latest`; the `prod-release` job will show "Waiting for review"
 3. Click **Review deployments** → select `prod` → **Approve**
 4. The version is promoted to `@latest` and a GitHub Release is created
 
@@ -147,10 +147,11 @@ For `@dev` or `@next` rollbacks, the next successful merge will overwrite the ta
 
 | Setting | Value |
 |---------|-------|
+| npm Trusted Publisher workflow filename | `npm-publish.yml` |
 | Environment: `dev` | No protection rules |
 | Environment: `test` | No protection rules |
 | Environment: `prod` | Required reviewers: maintainers |
-| Secret: `NPM_TOKEN` | All environments |
+| Secret: `NPM_TOKEN` | Not required for `npm-publish.yml`; only token-fallback workflows need it |
 | Secret: `ANTHROPIC_API_KEY` | Prod environment only |
 | Secret: `OPENAI_API_KEY` | Prod environment only |
 | Variable: `RUN_LIVE_TESTS` | `false` (set to `true` to enable live LLM tests) |

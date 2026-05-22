@@ -1,8 +1,7 @@
 name: Pipeline
 
 # Rebuilds the CI builder Docker image when its build inputs change on main.
-# Prerelease and prod publishing live in separate manual workflows
-# (prerelease-publish.yml, prod-release.yml).
+# npm publishing lives in one trusted manual workflow (npm-publish.yml).
 
 on:
   workflow_run:
