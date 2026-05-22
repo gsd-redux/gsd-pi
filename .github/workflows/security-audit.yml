@@ -25,7 +25,7 @@ concurrency:
 jobs:
   npm-audit:
     name: npm audit (${{ matrix.workspace }})
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +111,7 @@ jobs:
 
   cargo-audit:
     name: cargo audit
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
 
