@@ -278,7 +278,7 @@ Examples:
     await handleInspect(ctx);
     return true;
   }
-  if (trimmed === "update") {
+  if (trimmed === "update" || trimmed === "upgrade") {
     await handleUpdate(ctx);
     return true;
   }

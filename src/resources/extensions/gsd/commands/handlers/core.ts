@@ -147,6 +147,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
     "  /gsd inspect        Show SQLite DB diagnostics (schema, row counts, recent entries)",
     "  /gsd update         Update GSD to the latest version via npm",
+    "  /gsd upgrade        Alias for /gsd update",
     "  /gsd language       Set or clear the global response language  [off|clear|<language>]",
   ];
   const full = ["full", "--full", "all"].includes(args.trim().toLowerCase());

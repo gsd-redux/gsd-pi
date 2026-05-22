@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { registerGSDCommand } from "../commands.ts";
+import { handleOpsCommand } from "../commands/handlers/ops.ts";
 
 function createMockPi() {
   const commands = new Map<string, any>();
@@ -44,12 +45,33 @@ test("/gsd update appears in subcommand completions", () => {
   assert.equal(updateEntry.label, "update");
 });
 
+test("/gsd upgrade appears in subcommand completions", () => {
+  const pi = createMockPi();
+  registerGSDCommand(pi as any);
+
+  const gsd = pi.commands.get("gsd");
+  assert.ok(gsd, "registerGSDCommand should register /gsd");
+
+  const completions = gsd.getArgumentCompletions("upgrade");
+  const upgradeEntry = completions.find((c: any) => c.value === "upgrade");
+  assert.ok(upgradeEntry, "upgrade should appear in completions");
+  assert.equal(upgradeEntry.label, "upgrade");
+});
+
 test("/gsd update appears in help description", () => {
   const pi = createMockPi();
   registerGSDCommand(pi as any);
 
   const gsd = pi.commands.get("gsd");
   assert.ok(gsd?.description?.includes("update"), "description should mention update");
+});
+
+test("/gsd upgrade appears in help description", () => {
+  const pi = createMockPi();
+  registerGSDCommand(pi as any);
+
+  const gsd = pi.commands.get("gsd");
+  assert.ok(gsd?.description?.includes("upgrade"), "description should mention upgrade");
 });
 
 test("/gsd update is listed in completions with correct description", () => {
@@ -63,6 +85,46 @@ test("/gsd update is listed in completions with correct description", () => {
   assert.ok(
     updateEntry.description.toLowerCase().includes("update"),
     "completion description should mention updating",
+  );
+});
+
+test("/gsd upgrade routes through the update handler", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalVersion = process.env.GSD_VERSION;
+  const ctx = createMockCtx();
+
+  try {
+    process.env.GSD_VERSION = "1.2.3";
+    globalThis.fetch = async () => Response.json({ version: "1.2.3" });
+
+    const handled = await handleOpsCommand("upgrade", ctx as any, createMockPi() as any);
+
+    assert.equal(handled, true);
+    assert.ok(
+      ctx.notifications.some((notification) => notification.message.includes("Already up to date")),
+      "upgrade should call the shared update handler",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalVersion === undefined) {
+      delete process.env.GSD_VERSION;
+    } else {
+      process.env.GSD_VERSION = originalVersion;
+    }
+  }
+});
+
+test("/gsd upgrade is listed in completions with correct description", () => {
+  const pi = createMockPi();
+  registerGSDCommand(pi as any);
+
+  const gsd = pi.commands.get("gsd");
+  const completions = gsd.getArgumentCompletions("");
+  const upgradeEntry = completions.find((c: any) => c.value === "upgrade");
+  assert.ok(upgradeEntry, "upgrade should appear in full completion list");
+  assert.ok(
+    upgradeEntry.description.toLowerCase().includes("opengsd"),
+    "completion description should mention the new package scope",
   );
 });
 

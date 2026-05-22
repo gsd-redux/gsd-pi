@@ -14,6 +14,7 @@ const DEFAULT_REGISTRY_URL = `https://registry.npmjs.org/@opengsd%2fgsd-pi/lates
 interface UpdateCheckCache {
   lastCheck: number
   latestVersion: string
+  packageName?: string
 }
 
 /**
@@ -31,19 +32,25 @@ export function compareSemver(a: string, b: string): number {
   return 0
 }
 
-export function readUpdateCache(cachePath: string = CACHE_FILE): UpdateCheckCache | null {
+export function readUpdateCache(cachePath: string = CACHE_FILE, packageName: string = NPM_PACKAGE_NAME): UpdateCheckCache | null {
   try {
     if (!existsSync(cachePath)) return null
-    return JSON.parse(readFileSync(cachePath, 'utf-8'))
+    const cache = JSON.parse(readFileSync(cachePath, 'utf-8')) as UpdateCheckCache
+    if (cache.packageName !== packageName) return null
+    return cache
   } catch {
     return null
   }
 }
 
-export function writeUpdateCache(cache: UpdateCheckCache, cachePath: string = CACHE_FILE): void {
+export function writeUpdateCache(
+  cache: Omit<UpdateCheckCache, 'packageName'> & { packageName?: string },
+  cachePath: string = CACHE_FILE,
+  packageName: string = NPM_PACKAGE_NAME,
+): void {
   try {
     mkdirSync(dirname(cachePath), { recursive: true })
-    writeFileSync(cachePath, JSON.stringify(cache))
+    writeFileSync(cachePath, JSON.stringify({ ...cache, packageName }))
   } catch {
     // Non-fatal — don't block startup if cache write fails
   }
@@ -102,10 +109,10 @@ export function resolveInstallCommand(pkg: string): string {
 }
 
 function printUpdateBanner(current: string, latest: string): void {
-  const installCmd = resolveInstallCommand('@opengsd/gsd-pi')
+  const installCmd = resolveInstallCommand('@opengsd/gsd-pi@latest')
   process.stderr.write(
     `  ${chalk.yellow('Update available:')} ${chalk.dim(`v${current}`)} → ${chalk.bold(`v${latest}`)}\n` +
-    `  ${chalk.dim('Run')} ${installCmd} ${chalk.dim('or')} /gsd update ${chalk.dim('to upgrade')}\n\n`,
+    `  ${chalk.dim('Run')} ${installCmd} ${chalk.dim('or')} /gsd upgrade ${chalk.dim('to upgrade')}\n\n`,
   )
 }
 
@@ -248,7 +255,7 @@ export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {})
       process.stderr.write(`\n  ${chalk.yellow(`Update failed. You can run: ${installCmd}`)}\n\n`)
     }
   } else {
-    process.stderr.write(`  ${chalk.dim('Skipped. Run')} gsd update ${chalk.dim('anytime to upgrade.')}\n\n`)
+    process.stderr.write(`  ${chalk.dim('Skipped. Run')} gsd upgrade ${chalk.dim('anytime to upgrade.')}\n\n`)
   }
 
   return false

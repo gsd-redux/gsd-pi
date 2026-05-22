@@ -45,6 +45,7 @@ const TOP_LEVEL_SUBCOMMANDS = [
   { cmd: "park", desc: "Park a milestone" },
   { cmd: "unpark", desc: "Reactivate a parked milestone" },
   { cmd: "update", desc: "Update GSD to the latest version" },
+  { cmd: "upgrade", desc: "Alias for update; installs the latest @opengsd package" },
   { cmd: "start", desc: "Start a workflow template" },
   { cmd: "templates", desc: "List available workflow templates" },
   { cmd: "extensions", desc: "Manage extensions" },

@@ -67,7 +67,17 @@ test('writeUpdateCache + readUpdateCache round-trips correctly', (t) => {
   const cache = { lastCheck: Date.now(), latestVersion: '3.0.0' }
   writeUpdateCache(cache, cachePath)
   const result = readUpdateCache(cachePath)
-  assert.deepEqual(result, cache)
+  assert.deepEqual(result, { ...cache, packageName: '@opengsd/gsd-pi' })
+})
+
+test('readUpdateCache ignores legacy cache entries without package identity', (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-update-cache-'))
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
+
+  const cachePath = join(tmp, '.update-check')
+  writeFileSync(cachePath, JSON.stringify({ lastCheck: Date.now(), latestVersion: '3.0.0' }))
+  const result = readUpdateCache(cachePath)
+  assert.equal(result, null)
 })
 
 test('writeUpdateCache creates parent directories', (t) => {
@@ -224,6 +234,32 @@ test('checkForUpdates uses cache and skips fetch when checked recently', async (
 
   // Should use cached version (10.0.0), not the server's (20.0.0)
   assert.equal(reportedLatest, '10.0.0')
+})
+
+test('checkForUpdates ignores fresh legacy gsd-pi cache and fetches scoped package version', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-update-'))
+  const cachePath = join(tmp, '.update-check')
+  writeFileSync(cachePath, JSON.stringify({ lastCheck: Date.now(), latestVersion: '3.0.0' }))
+
+  const registry = await startMockRegistry({ version: '1.0.1' })
+  t.after(async () => {
+    await registry.close()
+    rmSync(tmp, { recursive: true, force: true })
+  });
+
+  let called = false
+
+  await checkForUpdates({
+    currentVersion: '1.0.1',
+    cachePath,
+    registryUrl: registry.url,
+    checkIntervalMs: 60 * 60 * 1000,
+    fetchTimeoutMs: 5000,
+    onUpdate: () => { called = true },
+  })
+
+  assert.ok(!called, 'legacy 3.0.0 cache must not produce an update banner for @opengsd/gsd-pi')
+  assert.equal(readUpdateCache(cachePath)?.latestVersion, '1.0.1')
 })
 
 test('checkForUpdates skips notification when cache is fresh and versions match', async (t) => {

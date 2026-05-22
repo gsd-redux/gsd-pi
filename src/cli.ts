@@ -59,7 +59,7 @@ function exitIfManagedResourcesAreNewer(currentAgentDir: string): void {
   process.stderr.write(
     `[gsd] ${chalk.yellow('Version mismatch detected')}\n` +
     `[gsd] Synced resources are from ${chalk.bold(`v${managedVersion}`)}, but this \`gsd\` binary is ${chalk.dim(`v${currentVersion}`)}.\n` +
-    `[gsd] Run ${chalk.bold('npm install -g @opengsd/gsd-pi@latest')} or ${chalk.bold('gsd update')}, then try again.\n`,
+    `[gsd] Run ${chalk.bold('npm install -g @opengsd/gsd-pi@latest')} or ${chalk.bold('gsd upgrade')}, then try again.\n`,
   )
   process.exit(1)
 }
@@ -227,10 +227,10 @@ function ensureRtkBootstrap(): Promise<void> {
   return rtkBootstrapPromise
 }
 
-// `gsd update` — update to the latest version via npm.
+// `gsd update` / `gsd upgrade` — update to the latest version via npm.
 // MUST run before exitIfManagedResourcesAreNewer(): when the bundled resource
 // manifest is from a newer version than the running binary, every other
-// command is blocked — only `update` should bypass the gate so the user can
+// command is blocked — only self-upgrade commands should bypass the gate so the user can
 // actually upgrade out of the broken state. See shouldBypassManagedResourceMismatchGate.
 if (shouldBypassManagedResourceMismatchGate(cliFlags.messages[0])) {
   const { runUpdate } = await import('./update-cmd.js')
@@ -335,6 +335,7 @@ const subcommandsExemptFromEarlyTtyCheck = new Set([
   'remove',
   'sessions',
   'update',
+  'upgrade',
   'web',
   'worktree',
   'wt',

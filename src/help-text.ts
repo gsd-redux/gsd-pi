@@ -22,6 +22,14 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'Equivalent to: npm install -g @opengsd/gsd-pi@latest',
   ].join('\n'),
 
+  upgrade: [
+    'Usage: gsd upgrade',
+    '',
+    'Upgrade GSD to the latest @opengsd package.',
+    '',
+    'Equivalent to: npm install -g @opengsd/gsd-pi@latest',
+  ].join('\n'),
+
   sessions: [
     'Usage: gsd sessions',
     '',
@@ -194,6 +202,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  remove <source>          Remove an installed package source\n')
   process.stdout.write('  list                     List installed package sources\n')
   process.stdout.write('  update                   Update GSD to the latest version\n')
+  process.stdout.write('  upgrade                  Alias for update\n')
   process.stdout.write('  sessions                 List and resume a past session\n')
   process.stdout.write('  worktree <cmd>           Manage worktrees (list, merge, clean, remove)\n')
   process.stdout.write('  auto [args]              Run auto-mode without TUI (pipeable)\n')

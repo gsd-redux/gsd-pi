@@ -14,8 +14,52 @@ Older release history has been archived outside the active changelog so new work
 
 ## Install
 
+GSD installs and updates from the scoped npm package `@opengsd/gsd-pi`.
+
 ```bash
-npm install -g gsd-pi
+npm install -g @opengsd/gsd-pi@latest
+```
+
+The source repository is [`open-gsd/gsd-pi`](https://github.com/open-gsd/gsd-pi), but user installs should use npm rather than cloning the repo.
+
+## Upgrade From Older GSD-2 Installs
+
+If your existing `gsd` command came from the old package location, clear stale local update/resource state and install the scoped package directly:
+
+macOS / Linux:
+
+```bash
+rm -f ~/.gsd/.update-check ~/.gsd/agent/managed-resources.json
+npm install -g @opengsd/gsd-pi@latest
+```
+
+Windows PowerShell:
+
+```powershell
+Remove-Item "$env:USERPROFILE\.gsd\.update-check" -Force -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.gsd\agent\managed-resources.json" -Force -ErrorAction SilentlyContinue
+npm install -g @opengsd/gsd-pi@latest
+```
+
+Windows Command Prompt:
+
+```bat
+del "%USERPROFILE%\.gsd\.update-check" 2>nul
+del "%USERPROFILE%\.gsd\agent\managed-resources.json" 2>nul
+npm install -g @opengsd/gsd-pi@latest
+```
+
+Or run the installer from the new package on any OS:
+
+```bash
+npx @opengsd/gsd-pi@latest
+```
+
+After that, future upgrades can use either command:
+
+```bash
+gsd upgrade
+gsd update
 ```
 
 ## Quick Start

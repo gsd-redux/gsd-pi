@@ -189,12 +189,12 @@ test("loader MIN_NODE_MAJOR matches package.json engines field exactly", async (
   );
 });
 
-test("gsd update bypasses the managed-resource-mismatch gate; non-update commands trigger it", async (t) => {
+test("gsd update and upgrade bypass the managed-resource-mismatch gate; other commands trigger it", async (t) => {
   // Real fixture: write an agentDir whose managed-resources.json claims a
   // version newer than the running binary. The mismatch gate
   // (getNewerManagedResourceVersion) must fire — proving the gate is "armed".
-  // shouldBypassManagedResourceMismatchGate('update') must return true,
-  // proving 'update' bypasses it. cli.ts wires the predicate before the gate
+  // shouldBypassManagedResourceMismatchGate('update'|'upgrade') must return true,
+  // proving self-upgrade commands bypass it. cli.ts wires the predicate before the gate
   // call, so update escapes the gate.
   const { getNewerManagedResourceVersion } = await import("../resource-loader.ts");
   const { shouldBypassManagedResourceMismatchGate } = await import("../cli-policy.ts");
@@ -210,7 +210,7 @@ test("gsd update bypasses the managed-resource-mismatch gate; non-update command
   const currentVersion = "1.0.0";
   writeFileSync(
     join(fakeAgentDir, "managed-resources.json"),
-    JSON.stringify({ gsdVersion: futureVersion, syncedAt: Date.now() }),
+    JSON.stringify({ gsdVersion: futureVersion, packageName: "@opengsd/gsd-pi", syncedAt: Date.now() }),
   );
 
   // Gate is armed: returns the newer version (cli.ts would print mismatch + exit 1)
@@ -218,7 +218,7 @@ test("gsd update bypasses the managed-resource-mismatch gate; non-update command
   assert.strictEqual(newer, futureVersion, "gate must surface a newer version when manifest is ahead");
 
   // For non-update commands the predicate is false → cli.ts falls through to the gate.
-  for (const nonUpdate of [undefined, "auto", "config", "doctor", "web", "headless", "updates" /* near-miss */]) {
+  for (const nonUpdate of [undefined, "auto", "config", "doctor", "web", "headless", "updates", "upgrades" /* near-misses */]) {
     assert.strictEqual(
       shouldBypassManagedResourceMismatchGate(nonUpdate),
       false,
@@ -226,11 +226,58 @@ test("gsd update bypasses the managed-resource-mismatch gate; non-update command
     );
   }
 
-  // For 'update' the predicate is true → cli.ts dispatches runUpdate() before the gate.
+  // For self-upgrade commands the predicate is true → cli.ts dispatches runUpdate() before the gate.
   assert.strictEqual(
     shouldBypassManagedResourceMismatchGate("update"),
     true,
     "'update' must bypass the gate so the user can escape a version-mismatched install",
+  );
+  assert.strictEqual(
+    shouldBypassManagedResourceMismatchGate("upgrade"),
+    true,
+    "'upgrade' must bypass the gate so old users can escape a version-mismatched install",
+  );
+});
+
+test("managed resource skew ignores legacy manifests from the old npm package", async (t) => {
+  const { getNewerManagedResourceVersion } = await import("../resource-loader.ts");
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-legacy-resource-manifest-"));
+  const fakeAgentDir = join(tmp, "agent");
+  mkdirSync(fakeAgentDir, { recursive: true });
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeFileSync(
+    join(fakeAgentDir, "managed-resources.json"),
+    JSON.stringify({ gsdVersion: "3.0.0", syncedAt: Date.now() }),
+  );
+
+  assert.strictEqual(
+    getNewerManagedResourceVersion(fakeAgentDir, "1.0.1"),
+    null,
+    "old unscoped gsd-pi resource stamps must not block @opengsd/gsd-pi startup",
+  );
+});
+
+test("managed resource skew ignores manifests stamped by a different package", async (t) => {
+  const { getNewerManagedResourceVersion } = await import("../resource-loader.ts");
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-other-package-resource-manifest-"));
+  const fakeAgentDir = join(tmp, "agent");
+  mkdirSync(fakeAgentDir, { recursive: true });
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeFileSync(
+    join(fakeAgentDir, "managed-resources.json"),
+    JSON.stringify({ gsdVersion: "3.0.0", packageName: "gsd-pi", syncedAt: Date.now() }),
+  );
+
+  assert.strictEqual(
+    getNewerManagedResourceVersion(fakeAgentDir, "1.0.1"),
+    null,
+    "old gsd-pi resource stamps must be refreshed instead of treated as newer @opengsd resources",
   );
 });
 
@@ -245,7 +292,7 @@ test("managed resource skew ignores dev/build suffixes on the same release line"
 
   writeFileSync(
     join(fakeAgentDir, "managed-resources.json"),
-    JSON.stringify({ gsdVersion: "2.78.1", syncedAt: Date.now() }),
+    JSON.stringify({ gsdVersion: "2.78.1", packageName: "@opengsd/gsd-pi", syncedAt: Date.now() }),
   );
 
   assert.strictEqual(

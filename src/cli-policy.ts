@@ -6,7 +6,7 @@
  *
  * When the synced resource manifest claims a newer gsd version than the
  * running binary, exitIfManagedResourcesAreNewer() blocks every command
- * with a "Version mismatch detected" diagnostic. The `update` subcommand
+ * with a "Version mismatch detected" diagnostic. The `update`/`upgrade` subcommands
  * MUST bypass that gate so the user can recover by upgrading the binary —
  * otherwise they're stuck in a broken state with no escape hatch.
  *
@@ -14,5 +14,5 @@
  * predicate before calling exitIfManagedResourcesAreNewer().
  */
 export function shouldBypassManagedResourceMismatchGate(firstMessage: string | undefined): boolean {
-  return firstMessage === 'update'
+  return firstMessage === 'update' || firstMessage === 'upgrade'
 }

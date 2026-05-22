@@ -167,6 +167,12 @@ test("initResources manifest tracks all bundled extension subdirectories includi
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
     const installedDirs: string[] = manifest.installedExtensionDirs ?? [];
 
+    assert.equal(
+      manifest.packageName,
+      "@opengsd/gsd-pi",
+      "managed resource manifest should be scoped to the package that wrote it",
+    );
+
     // remote-questions uses mod.ts (not index.ts) as its entry point and has an
     // extension-manifest.json — it must still appear in the manifest so that
     // pruneRemovedBundledExtensions can track it across upgrades.

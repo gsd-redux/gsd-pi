@@ -33,6 +33,7 @@ const resourceFingerprintFileName = '.managed-resources-content-hash'
 
 interface ManagedResourceManifest {
   gsdVersion: string
+  packageName?: string
   syncedAt?: number
   /** Content fingerprint of bundled resources — detects same-version content changes. */
   contentHash?: string
@@ -79,6 +80,15 @@ function getBundledGsdVersion(): string {
   }
 }
 
+function getBundledPackageName(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8'))
+    return typeof pkg?.name === 'string' ? pkg.name : '@opengsd/gsd-pi'
+  } catch {
+    return '@opengsd/gsd-pi'
+  }
+}
+
 function writeManagedResourceManifest(agentDir: string): void {
   // Record root-level files and subdirectory extension names currently in the
   // bundled extensions source so that future upgrades can detect and prune any
@@ -108,6 +118,7 @@ function writeManagedResourceManifest(agentDir: string): void {
 
   const manifest: ManagedResourceManifest = {
     gsdVersion: getBundledGsdVersion(),
+    packageName: getBundledPackageName(),
     syncedAt: Date.now(),
     contentHash: getCurrentResourceFingerprint(),
     installedExtensionRootFiles,
@@ -119,10 +130,15 @@ function writeManagedResourceManifest(agentDir: string): void {
 export function readManagedResourceVersion(agentDir: string): string | null {
   try {
     const manifest = JSON.parse(readFileSync(getManagedResourceManifestPath(agentDir), 'utf-8')) as ManagedResourceManifest
+    if (!isCurrentPackageManifest(manifest)) return null
     return typeof manifest?.gsdVersion === 'string' ? manifest.gsdVersion : null
   } catch {
     return null
   }
+}
+
+function isCurrentPackageManifest(manifest: ManagedResourceManifest | null): boolean {
+  return manifest?.packageName === getBundledPackageName()
 }
 
 function readManagedResourceManifest(agentDir: string): ManagedResourceManifest | null {
@@ -196,7 +212,11 @@ function collectFileEntries(dir: string, root: string, out: string[]): void {
 
 
 export function getNewerManagedResourceVersion(agentDir: string, currentVersion: string): string | null {
-  const managedVersion = readManagedResourceVersion(agentDir)
+  const manifest = readManagedResourceManifest(agentDir)
+  if (!isCurrentPackageManifest(manifest)) {
+    return null
+  }
+  const managedVersion = typeof manifest?.gsdVersion === 'string' ? manifest.gsdVersion : null
   if (!managedVersion) {
     return null
   }
@@ -591,7 +611,7 @@ export function initResources(agentDir: string, skillsDir: string = join(homedir
   // Skip the full copy when both version AND content fingerprint match.
   // Version-only checks miss same-version content changes (npm link dev workflow,
   // hotfixes within a release). The content hash catches those at ~1ms cost.
-  if (manifest && manifest.gsdVersion === currentVersion) {
+  if (manifest && isCurrentPackageManifest(manifest) && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = getCurrentResourceFingerprint()
     const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
