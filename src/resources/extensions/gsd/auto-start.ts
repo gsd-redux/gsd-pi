@@ -143,6 +143,55 @@ export function _shouldAbortBootstrapForUnavailableDbForTest(
   return pathExists(gsdDbPath) && !dbAvailable;
 }
 
+export interface PreflightMilestoneQueueEntry {
+  id: string;
+  status: string | null;
+  hasContextDraft: boolean;
+}
+
+function isReadyPreflightMilestone(status: string | null): boolean {
+  return !status || (!isClosedStatus(status) && status !== "parked");
+}
+
+function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
+export function buildPreflightMilestoneQueueNotice(
+  entries: PreflightMilestoneQueueEntry[],
+): { message: string; level: "info" | "warning" } | null {
+  if (entries.length <= 1) return null;
+
+  const readyEntries = entries.filter((entry) => isReadyPreflightMilestone(entry.status));
+  const issues = readyEntries
+    .filter((entry) => entry.hasContextDraft)
+    .map((entry) => `${entry.id}: has CONTEXT-DRAFT.md (will pause for discussion)`);
+
+  const readyCount = readyEntries.length;
+  const folderCount = entries.length;
+  const readyLabel = readyCount === 0
+    ? "No ready milestones"
+    : `${readyCount} ready ${pluralize(readyCount, "milestone")}`;
+  const folderLabel = readyCount === folderCount
+    ? ""
+    : ` ${folderCount} milestone ${pluralize(folderCount, "folder")} total.`;
+
+  if (issues.length > 0) {
+    return {
+      message: `Pre-flight: ${readyLabel}.${folderLabel}\n${issues.map((i) => `  ⚠ ${i}`).join("\n")}`,
+      level: "warning",
+    };
+  }
+
+  const contextLabel = readyCount === 0
+    ? ""
+    : " Ready milestones have full context.";
+  return {
+    message: `Pre-flight: ${readyLabel}.${folderLabel}${contextLabel}`,
+    level: "info",
+  };
+}
+
 export async function openProjectDbIfPresent(basePath: string): Promise<void> {
   const gsdDbPath = resolveProjectRootDbPath(basePath);
   if (!existsSync(gsdDbPath) || isDbAvailable()) return;
@@ -1519,33 +1568,12 @@ export async function bootstrapAutoSession(
         const milestoneIds = readdirSync(msDir, { withFileTypes: true })
           .filter((d) => d.isDirectory() && /^M\d{3}/.test(d.name))
           .map((d) => d.name.match(/^(M\d{3})/)?.[1] ?? d.name);
-        if (milestoneIds.length > 1) {
-          const issues: string[] = [];
-          for (const id of milestoneIds) {
-            // Skip completed/parked milestones — a leftover CONTEXT-DRAFT.md
-            // on a finished milestone is harmless residue, not an actionable warning.
-            if (isDbAvailable()) {
-              const ms = getMilestone(id);
-              if (ms?.status === "complete" || ms?.status === "parked") continue;
-            }
-            const draft = resolveMilestoneFile(base, id, "CONTEXT-DRAFT");
-            if (draft)
-              issues.push(
-                `${id}: has CONTEXT-DRAFT.md (will pause for discussion)`,
-              );
-          }
-          if (issues.length > 0) {
-            ctx.ui.notify(
-              `Pre-flight: ${milestoneIds.length} milestones queued.\n${issues.map((i) => `  ⚠ ${i}`).join("\n")}`,
-              "warning",
-            );
-          } else {
-            ctx.ui.notify(
-              `Pre-flight: ${milestoneIds.length} milestones queued. All have full context.`,
-              "info",
-            );
-          }
-        }
+        const notice = buildPreflightMilestoneQueueNotice(milestoneIds.map((id) => ({
+          id,
+          status: isDbAvailable() ? getMilestone(id)?.status ?? null : null,
+          hasContextDraft: !!resolveMilestoneFile(base, id, "CONTEXT-DRAFT"),
+        })));
+        if (notice) ctx.ui.notify(notice.message, notice.level);
       }
     } catch (err) {
       /* non-fatal */

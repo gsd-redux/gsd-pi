@@ -24,6 +24,7 @@ import {
   getMilestone,
 } from "../gsd-db.ts";
 import { resolveMilestoneFile } from "../paths.ts";
+import { buildPreflightMilestoneQueueNotice } from "../auto-start.ts";
 
 describe("pre-flight CONTEXT-DRAFT filter (#2473)", () => {
   let tmpBase: string;
@@ -73,43 +74,53 @@ describe("pre-flight CONTEXT-DRAFT filter (#2473)", () => {
   });
 
   test("full pre-flight filter produces warnings only for active milestones", () => {
-    const milestoneIds = ["M001", "M002", "M003"];
-    const issues: string[] = [];
+    const notice = buildPreflightMilestoneQueueNotice(["M001", "M002", "M003"].map((id) => ({
+      id,
+      status: getMilestone(id)?.status ?? null,
+      hasContextDraft: !!resolveMilestoneFile(tmpBase, id, "CONTEXT-DRAFT"),
+    })));
 
-    for (const id of milestoneIds) {
-      // Replicate the fixed pre-flight logic from auto-start.ts
-      if (isDbAvailable()) {
-        const ms = getMilestone(id);
-        if (ms?.status === "complete" || ms?.status === "parked") continue;
-      }
-      const draft = resolveMilestoneFile(tmpBase, id, "CONTEXT-DRAFT");
-      if (draft) {
-        issues.push(`${id}: has CONTEXT-DRAFT.md (will pause for discussion)`);
-      }
-    }
-
-    assert.equal(issues.length, 1, "only one warning should be emitted");
-    assert.match(issues[0], /M002/, "warning should be for the active milestone only");
+    assert.equal(notice?.level, "warning");
+    assert.match(
+      notice?.message ?? "",
+      /^Pre-flight: 1 ready milestone\. 3 milestone folders total\./,
+      "folder count must not be presented as queued work",
+    );
+    assert.match(notice?.message ?? "", /M002/, "warning should be for the active milestone only");
+    assert.doesNotMatch(notice?.message ?? "", /3 milestones queued/);
   });
 
   test("when DB is unavailable, all milestones with CONTEXT-DRAFT produce warnings (safe fallback)", () => {
     closeDatabase();
     assert.ok(!isDbAvailable(), "DB should be unavailable after close");
 
-    const milestoneIds = ["M001", "M002", "M003"];
-    const issues: string[] = [];
+    const notice = buildPreflightMilestoneQueueNotice(["M001", "M002", "M003"].map((id) => ({
+      id,
+      status: null,
+      hasContextDraft: !!resolveMilestoneFile(tmpBase, id, "CONTEXT-DRAFT"),
+    })));
 
-    for (const id of milestoneIds) {
-      if (isDbAvailable()) {
-        const ms = getMilestone(id);
-        if (ms?.status === "complete" || ms?.status === "parked") continue;
-      }
-      const draft = resolveMilestoneFile(tmpBase, id, "CONTEXT-DRAFT");
-      if (draft) {
-        issues.push(`${id}: has CONTEXT-DRAFT.md (will pause for discussion)`);
-      }
-    }
+    assert.equal(notice?.level, "warning");
+    assert.match(notice?.message ?? "", /M001/);
+    assert.match(notice?.message ?? "", /M002/);
+    assert.match(notice?.message ?? "", /M003/);
+    assert.match(notice?.message ?? "", /^Pre-flight: 3 ready milestones\./);
+  });
 
-    assert.equal(issues.length, 3, "all milestones should warn when DB is unavailable");
+  test("full-context notice distinguishes ready work from total milestone folders", () => {
+    rmSync(join(gsd, "milestones", "M001", "M001-CONTEXT-DRAFT.md"), { force: true });
+    rmSync(join(gsd, "milestones", "M002", "M002-CONTEXT-DRAFT.md"), { force: true });
+    rmSync(join(gsd, "milestones", "M003", "M003-CONTEXT-DRAFT.md"), { force: true });
+
+    const notice = buildPreflightMilestoneQueueNotice(["M001", "M002", "M003"].map((id) => ({
+      id,
+      status: getMilestone(id)?.status ?? null,
+      hasContextDraft: !!resolveMilestoneFile(tmpBase, id, "CONTEXT-DRAFT"),
+    })));
+
+    assert.deepEqual(notice, {
+      level: "info",
+      message: "Pre-flight: 1 ready milestone. 3 milestone folders total. Ready milestones have full context.",
+    });
   });
 });
