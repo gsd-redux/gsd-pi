@@ -30,6 +30,14 @@ test("visualize only falls back when ctx.ui.custom() is unavailable", async () =
   assert.match(fallbackCtx.notices[0]!.message, /interactive terminal/i);
 });
 
+test("status routes to the visualizer overlay", async () => {
+  const successCtx = makeCtx(true);
+  const handled = await handleCoreCommand("status", successCtx as any);
+
+  assert.equal(handled, true);
+  assert.equal(successCtx.notices.length, 0, "status should use the visualizer overlay path");
+});
+
 test("show-config only falls back when ctx.ui.custom() is unavailable", async () => {
   const successCtx = makeCtx(true);
   const success = await handleCoreCommand("show-config", successCtx as any);

@@ -185,10 +185,10 @@ test("current GSD command family samples dispatch to correct outcomes after S02"
     assert.equal(outcome.command.message, "/gsd", "bare /gsd should preserve exact input")
   })
 
-  await t.test("/gsd status now dispatches to surface", () => {
+  await t.test("/gsd status now navigates to visualizer", () => {
     const outcome = dispatchBrowserSlashCommand("/gsd status")
-    assert.equal(outcome.kind, "surface", "/gsd status should dispatch to surface after T01")
-    assert.equal(outcome.surface, "gsd-status")
+    assert.equal(outcome.kind, "view-navigate", "/gsd status should dispatch to the visualizer view")
+    assert.equal(outcome.view, "visualize")
   })
 
   await t.test("/worktree list, /wt list, /kill, /exit still pass through", () => {
@@ -198,20 +198,20 @@ test("current GSD command family samples dispatch to correct outcomes after S02"
     assertPromptPassthrough("/exit")
   })
 
-  await t.test("/gsd status dispatches to surface regardless of streaming state", () => {
+  await t.test("/gsd status dispatches to visualizer regardless of streaming state", () => {
     const streaming = dispatchBrowserSlashCommand("/gsd status", { isStreaming: true })
-    assert.equal(streaming.kind, "surface", "/gsd status should be surface even when streaming")
-    assert.equal(streaming.surface, "gsd-status")
+    assert.equal(streaming.kind, "view-navigate", "/gsd status should navigate even when streaming")
+    assert.equal(streaming.view, "visualize")
 
     const idle = dispatchBrowserSlashCommand("/gsd status", { isStreaming: false })
-    assert.equal(idle.kind, "surface")
-    assert.equal(idle.surface, "gsd-status")
+    assert.equal(idle.kind, "view-navigate")
+    assert.equal(idle.view, "visualize")
   })
 })
 
 const EXPECTED_GSD_OUTCOMES = new Map<string, "surface" | "prompt" | "local" | "view-navigate">([
   // Surface commands (19)
-  ["status", "surface"],
+  ["status", "view-navigate"],
   ["visualize", "view-navigate"],
   ["forensics", "surface"],
   ["doctor", "surface"],
@@ -228,6 +228,7 @@ const EXPECTED_GSD_OUTCOMES = new Map<string, "surface" | "prompt" | "local" | "
   ["hooks", "surface"],
   ["mode", "surface"],
   ["steer", "surface"],
+  ["report", "surface"],
   ["export", "surface"],
   ["cleanup", "surface"],
   ["queue", "surface"],
@@ -248,8 +249,8 @@ const EXPECTED_GSD_OUTCOMES = new Map<string, "surface" | "prompt" | "local" | "
 test("every registered /gsd subcommand has an explicit browser dispatch outcome", async (t) => {
   assert.equal(
     EXPECTED_GSD_OUTCOMES.size,
-    30,
-    "EXPECTED_GSD_OUTCOMES must cover all 30 GSD subcommands (19 surface + 1 view-navigate + 9 passthrough + 1 help)",
+    31,
+    "EXPECTED_GSD_OUTCOMES must cover all 31 GSD subcommands (19 surface + 2 view-navigate + 9 passthrough + 1 help)",
   )
 
   for (const [subcommand, expectedKind] of EXPECTED_GSD_OUTCOMES) {
@@ -284,9 +285,9 @@ test("every registered /gsd subcommand has an explicit browser dispatch outcome"
     }
 
     if (expectedKind === "view-navigate") {
-      await t.test(`/gsd ${subcommand} navigates to the ${subcommand} view`, () => {
+      await t.test(`/gsd ${subcommand} navigates to the visualizer view`, () => {
         const outcome = dispatchBrowserSlashCommand(`/gsd ${subcommand}`) as any
-        assert.equal(outcome.view, subcommand, `/gsd ${subcommand} should navigate to the ${subcommand} view`)
+        assert.equal(outcome.view, "visualize", `/gsd ${subcommand} should navigate to the visualizer view`)
       })
     }
   }
@@ -325,6 +326,13 @@ test("GSD dispatch edge cases", async (t) => {
     assert.equal(outcome.surface, "gsd-export", "/gsd export should be the GSD milestone export surface")
   })
 
+  await t.test("/gsd report is the canonical GSD report surface", () => {
+    const outcome = dispatchBrowserSlashCommand("/gsd report --html --all")
+    assert.equal(outcome.kind, "surface")
+    assert.equal(outcome.surface, "gsd-report", "/gsd report should open the GSD report surface")
+    assert.equal(outcome.args, "--html --all", "/gsd report should preserve report flags")
+  })
+
   await t.test("/gsd forensics detailed preserves sub-args", () => {
     const outcome = dispatchBrowserSlashCommand("/gsd forensics detailed")
     assert.equal(outcome.kind, "surface")
@@ -333,7 +341,7 @@ test("GSD dispatch edge cases", async (t) => {
   })
 
   await t.test("GSD surface commands produce system terminal notice", () => {
-    const outcome = dispatchBrowserSlashCommand("/gsd status")
+    const outcome = dispatchBrowserSlashCommand("/gsd report")
     const notice = getBrowserSlashCommandTerminalNotice(outcome)
     assert.ok(notice, "surface outcome should produce a terminal notice")
     assert.equal(notice.type, "system")
@@ -369,10 +377,12 @@ test("every GSD surface dispatches through the contract wiring end-to-end", asyn
   }
 })
 
-test("/gsd visualize dispatches as view-navigate to the visualizer view", () => {
-  const outcome = dispatchBrowserSlashCommand("/gsd visualize")
-  assert.equal(outcome.kind, "view-navigate")
-  assert.equal(outcome.view, "visualize")
+test("/gsd status and /gsd visualize dispatch as view-navigate to the visualizer view", () => {
+  for (const command of ["/gsd status", "/gsd visualize"]) {
+    const outcome = dispatchBrowserSlashCommand(command)
+    assert.equal(outcome.kind, "view-navigate")
+    assert.equal(outcome.view, "visualize")
+  }
 })
 
 test("slash /settings and sidebar settings click open the same shared surface contract", () => {

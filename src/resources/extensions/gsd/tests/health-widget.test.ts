@@ -95,8 +95,8 @@ test("buildHealthLines: active state with ledger-driven spend shows spent summar
 
 test("health widget active hints include visualization and notifications", () => {
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd auto to run/);
-  assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd status for overview/);
-  assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd visualize to inspect/);
+  assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd status to inspect/);
+  assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd report for snapshots/);
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd notifications for history/);
   assert.match(HEALTH_WIDGET_ACTIVE_HINTS, /\/gsd help/);
 });

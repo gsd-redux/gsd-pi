@@ -1023,10 +1023,10 @@ test("assembled slash-command behavior keeps built-ins safe while preserving GSD
   assert.match(builtInReject.notice ?? "", /blocked instead of falling through to the model/i);
   assert.equal(builtInReject.status, null);
 
-  // /gsd status is now a browser surface (S02), verify that
+  // /gsd status is a browser-local visualizer navigation, verify that
   const gsdSurface = await submitBrowserInput("/gsd status");
-  assert.equal(gsdSurface.outcome.kind, "surface");
-  assert.equal(gsdSurface.outcome.surface, "gsd-status");
+  assert.equal(gsdSurface.outcome.kind, "view-navigate");
+  assert.equal(gsdSurface.outcome.view, "visualize");
   assert.equal(gsdSurface.status, null);
 
   // /gsd auto is a passthrough subcommand — reaches the bridge as a prompt

@@ -26,10 +26,11 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd stop          Stop auto-mode gracefully",
     "",
     "VISIBILITY",
-    `  /gsd status         Dashboard  (${formattedShortcutPair("dashboard")})`,
+    `  /gsd status         Interactive 10-tab TUI  (${formattedShortcutPair("dashboard")})`,
     `  /gsd parallel watch Parallel monitor  (${formattedShortcutPair("parallel")})`,
     `  /gsd notifications  Notification history  (${formattedShortcutPair("notifications")})`,
     "  /gsd visualize      Interactive 10-tab TUI",
+    "  /gsd report         Generate all HTML reports and open browser",
     "  /gsd brief <mode>   Visual HTML brief (diagram, plan, diff, recap, table, slides)",
     "  /gsd queue          Show queued/dispatched units",
     "",
@@ -77,7 +78,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd workflow       Custom workflow lifecycle  [new|run|list|validate|pause|resume]",
     "",
     "VISIBILITY",
-    `  /gsd status         Show progress dashboard  (${formattedShortcutPair("dashboard")})`,
+    `  /gsd status         Interactive 10-tab TUI  (${formattedShortcutPair("dashboard")})`,
     `  /gsd parallel watch Open parallel worker monitor  (${formattedShortcutPair("parallel")})`,
     "  /gsd widget         Cycle status widget  [full|small|min|off]",
     "  /gsd visualize      Interactive 10-tab TUI (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
@@ -137,7 +138,8 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "MAINTENANCE",
     "  /gsd doctor         Diagnose and repair .gsd/ state  [audit|fix|heal] [scope]",
     "  /gsd forensics      Examine execution logs and post-mortem analysis",
-    "  /gsd export         Export milestone/slice results  [--json|--markdown|--html] [--all]",
+    "  /gsd report         Generate all HTML reports and open browser  [--json|--markdown|--html] [--all]",
+    "  /gsd export         Alias for /gsd report",
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd closeout       Recover failed git closeout actions  [status|retry|resolve] [unit-id]",
     "  /gsd worktree       Manage worktrees from the TUI  [list|merge|clean|remove]",
@@ -461,7 +463,7 @@ export async function handleCoreCommand(
     return true;
   }
   if (trimmed === "status") {
-    await handleStatus(ctx);
+    await handleVisualize(ctx);
     return true;
   }
   if (trimmed === "visualize") {

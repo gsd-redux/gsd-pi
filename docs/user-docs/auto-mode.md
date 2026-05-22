@@ -297,7 +297,7 @@ After a milestone completes, GSD auto-generates a self-contained HTML report in 
 auto_report: true    # enabled by default
 ```
 
-Generate manually anytime with `/gsd export --html`, or generate reports for all milestones at once with `/gsd export --html --all` (v2.28).
+Generate all missing milestone reports and open the reports index anytime with `/gsd report`. Use `/gsd report --html` for a single active-milestone snapshot, or `/gsd report --html --all` for the explicit all-milestones form (v2.28).
 
 ### Failure Recovery (v2.28)
 

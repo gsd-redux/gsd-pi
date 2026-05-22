@@ -597,7 +597,6 @@ const IMPLEMENTED_BROWSER_COMMAND_SURFACES = new Set<BrowserSlashCommandSurface>
   "session",
   "export",
   // GSD subcommand surfaces (S02)
-  "gsd-status",
   "gsd-visualize",
   "gsd-forensics",
   "gsd-doctor",
@@ -614,6 +613,7 @@ const IMPLEMENTED_BROWSER_COMMAND_SURFACES = new Set<BrowserSlashCommandSurface>
   "gsd-hooks",
   "gsd-mode",
   "gsd-steer",
+  "gsd-report",
   "gsd-export",
   "gsd-cleanup",
   "gsd-queue",

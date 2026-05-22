@@ -4,7 +4,7 @@
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
-import { exec, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
 import {
   getLedger, getProjectTotals, aggregateByPhase, aggregateBySlice,
   aggregateByModel, formatCost, formatTokenCount, loadLedgerFromDisk,
@@ -139,9 +139,18 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
         const existingIds = new Set(existing?.entries.map(e => e.milestoneId) ?? []);
 
         const targets = data.milestones.filter(m => !existingIds.has(m.id));
+        const indexPath = join(gsdRoot(basePath), "reports", "index.html");
         if (targets.length === 0) {
+          if (existing && existing.entries.length > 0) {
+            ctx.ui.notify(
+              "All milestones already have report snapshots. Opening reports index in browser...",
+              "info",
+            );
+            openInBrowser(indexPath);
+            return;
+          }
           ctx.ui.notify(
-            "All milestones already have report snapshots. Run without --all to create a new snapshot for the active milestone.",
+            "No milestones found to report.",
             "info",
           );
           return;
@@ -184,7 +193,6 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
           paths.push(bn(outPath));
         }
 
-        const indexPath = join(gsdRoot(basePath), "reports", "index.html");
         ctx.ui.notify(
           `Generated ${paths.length} report snapshot${paths.length !== 1 ? "s" : ""}:\n${paths.map(p => `  ${p}`).join("\n")}\nOpening reports index in browser...`,
           "success",

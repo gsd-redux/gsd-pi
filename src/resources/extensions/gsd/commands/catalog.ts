@@ -14,7 +14,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|brief|queue|quick|discuss|capture|triage|dispatch|verdict|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|closeout|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|debug|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|new-project|parallel|cmux|park|unpark|init|setup|onboarding|inspect|extensions|update|fast|mcp|rethink|workflow|codebase|notifications|ship|do|session-report|backlog|pr-branch|add-tests|scan|language|worktree|eval-review";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|brief|report|queue|quick|discuss|capture|triage|dispatch|verdict|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|closeout|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|debug|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|new-project|parallel|cmux|park|unpark|init|setup|onboarding|inspect|extensions|update|fast|mcp|rethink|workflow|codebase|notifications|ship|do|session-report|backlog|pr-branch|add-tests|scan|language|worktree|eval-review";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -22,7 +22,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "auto", desc: "Autonomous mode — research, plan, execute, commit, repeat" },
   { cmd: "stop", desc: "Stop auto mode gracefully" },
   { cmd: "pause", desc: "Pause auto-mode (preserves state, /gsd auto to resume)" },
-  { cmd: "status", desc: "Progress dashboard" },
+  { cmd: "status", desc: "Open 10-tab workflow visualizer" },
   { cmd: "widget", desc: "Cycle widget: full → small → min → off" },
   { cmd: "visualize", desc: "Open 10-tab workflow visualizer (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)" },
   { cmd: "brief", desc: "Generate a visual HTML brief: diagram, plan, diff review, recap, table, or slides" },
@@ -40,7 +40,8 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "reset-slice", desc: "Reset a slice and all its tasks (DB + markdown)" },
   { cmd: "rate", desc: "Rate last unit's model tier (over/ok/under) — improves adaptive routing" },
   { cmd: "skip", desc: "Prevent a unit from auto-mode dispatch" },
-  { cmd: "export", desc: "Export milestone/slice results" },
+  { cmd: "report", desc: "Generate all HTML reports and open the reports index" },
+  { cmd: "export", desc: "Alias for /gsd report" },
   { cmd: "cleanup", desc: "Remove merged branches or snapshots" },
   { cmd: "closeout", desc: "Recover failed git closeout actions (status, retry, resolve)" },
   { cmd: "model", desc: "Switch the active session model or open a picker" },
@@ -184,6 +185,12 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "10", desc: "Show last 10 entries" },
     { cmd: "20", desc: "Show last 20 entries" },
     { cmd: "50", desc: "Show last 50 entries" },
+  ],
+  report: [
+    { cmd: "--json", desc: "Export as JSON" },
+    { cmd: "--markdown", desc: "Export as Markdown" },
+    { cmd: "--html", desc: "Export as HTML" },
+    { cmd: "--html --all", desc: "Export all milestones as HTML" },
   ],
   export: [
     { cmd: "--json", desc: "Export as JSON" },

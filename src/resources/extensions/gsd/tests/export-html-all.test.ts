@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { normalizeReportExportArgs } from "../commands/handlers/ops.ts";
 
 // Test: --all flag generates snapshots for milestones not yet in the index
 
@@ -82,7 +83,7 @@ test("handleExport --html --all sets milestone kind based on status", async () =
   assert.equal(activeKind, "manual", "active milestones get kind 'manual'");
 });
 
-test("export completions include --html and --html --all", async () => {
+test("report completions include --html and --html --all", async () => {
   const { registerGSDCommand } = await import("../commands.js");
 
   const commands = new Map<string, any>();
@@ -98,8 +99,18 @@ test("export completions include --html and --html --all", async () => {
   const gsd = commands.get("gsd");
   assert.ok(gsd, "should register /gsd command");
 
-  const completions = gsd.getArgumentCompletions("export --");
+  const completions = gsd.getArgumentCompletions("report --");
   const labels = completions.map((c: any) => c.label);
   assert.ok(labels.includes("--html"), "completions should include --html");
   assert.ok(labels.includes("--html --all"), "completions should include --html --all");
+});
+
+test("bare report command defaults to all HTML reports", () => {
+  assert.equal(
+    normalizeReportExportArgs("report"),
+    "--html --all",
+    "bare /gsd report should generate all HTML reports and open the reports index",
+  );
+  assert.equal(normalizeReportExportArgs("report --json"), "--json");
+  assert.equal(normalizeReportExportArgs("export"), "", "legacy /gsd export should keep its existing default");
 });
