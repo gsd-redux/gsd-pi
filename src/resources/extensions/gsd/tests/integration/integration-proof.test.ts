@@ -2,7 +2,7 @@
  * integration-proof.test.ts — End-to-end integration proof for M001.
  *
  * Proves all S01–S06 subsystems compose correctly:
- *   auto-migration → complete_task → complete_slice → deriveState crossval →
+ *   auto-migration → complete_task → complete_slice → DB deriveState →
  *   doctor zero-fix → rogue detection → DB recovery → undo/reset
  *
  * Requirement coverage:
@@ -10,7 +10,7 @@
  *   R002 (slice completion)     — step 3e
  *   R003 (auto-migration)       — step 3b
  *   R004 (markdown rendering)   — steps 3d, 3f
- *   R005 (deriveState crossval) — step 3g
+ *   R005 (DB deriveState)       — step 3g
  *   R006 (prompt migration)     — deferred to T02 grep
  *   R007 (hierarchy migration)  — step 3b
  *   R008 (rogue detection)      — step 3i
@@ -68,7 +68,6 @@ import { repairStaleRenders } from "../../state-reconciliation/drift/stale-rende
 // ── State derivation ──────────────────────────────────────────────────────
 import {
   deriveStateFromDb,
-  _deriveStateImpl,
   invalidateStateCache,
 } from "../../state.ts";
 
@@ -365,15 +364,12 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
     const sliceRow = getSlice("M001", "S01");
     assert.equal(sliceRow?.status, "complete", "S01 should be complete in DB");
 
-    // ── (g) deriveState cross-validation (R005) ──────────────────────
+    // ── (g) DB deriveState verification (R005) ───────────────────────
     invalidateStateCache();
     invalidateAllCaches();
     const dbState = await deriveStateFromDb(base);
-    const fileState = await _deriveStateImpl(base);
 
-    // DB state is authoritative (single-writer engine). Filesystem parser may not
-    // parse the new table-format roadmap projections, so cross-validation is relaxed
-    // to only check DB state correctness.
+    // DB state is authoritative (single-writer engine).
     assert.ok(dbState.activeMilestone?.id, "DB should have an active milestone");
     assert.ok(dbState.registry.length > 0, "DB registry should have entries");
 

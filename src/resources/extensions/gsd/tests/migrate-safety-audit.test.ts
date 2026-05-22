@@ -19,7 +19,7 @@ import {
   archiveLegacyPlanningDirectory,
   verifyMigrationProjection,
 } from "../migrate/audit.ts";
-import { executeMigrationWrite, importWrittenMigrationToDb } from "../migrate/command.ts";
+import { assertMigrationRuntimeReady, executeMigrationWrite, importWrittenMigrationToDb } from "../migrate/command.ts";
 import { writeGSDDirectory } from "../migrate/writer.ts";
 import { closeDatabase, getArtifact } from "../gsd-db.ts";
 import type { GSDProject } from "../migrate/types.ts";
@@ -199,6 +199,36 @@ test("executeMigrationWrite restores backup when DB import verification fails", 
   }
 });
 
+test("executeMigrationWrite restores backup when runtime readiness fails", async () => {
+  const base = makeBase("gsd-migrate-runtime-restore-");
+  try {
+    const planning = createPlanningSource(base);
+    write(join(base, ".gsd", "OLD.md"), "known-good state\n");
+
+    const project = projectFixture();
+    const preview = generatePreview(project);
+
+    await assert.rejects(
+      () => executeMigrationWrite(
+        planning,
+        base,
+        project,
+        preview,
+        new Date().toISOString(),
+        async () => {
+          throw new Error("migration runtime readiness failed: forced test failure");
+        },
+      ),
+      /migration runtime readiness failed/,
+    );
+
+    assert.equal(existsSync(join(base, ".gsd", "OLD.md")), true, "original .gsd restored");
+    assert.equal(existsSync(join(base, ".gsd", "migration", "MIGRATION.md")), false, "failed audit output removed");
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("executeMigrationWrite records audit artifacts and verifies DB-backed projection", async () => {
   const base = makeBase("gsd-migrate-success-");
   try {
@@ -219,6 +249,21 @@ test("executeMigrationWrite records audit artifacts and verifies DB-backed proje
     assert.ok(getArtifact("migration/manifest.json"), "migration manifest imported as DB artifact");
     assert.deepEqual(result.verification.db, { milestones: 1, slices: 1, tasks: 1 });
     assert.deepEqual(result.verification.markdown, { milestones: 1, slices: 1, tasks: 1 });
+    assert.equal(result.runtimeState.registry.length, 1, "runtime readiness returns DB-derived state");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("assertMigrationRuntimeReady fails when DB-backed deriveState cannot read migrated state", async () => {
+  const base = makeBase("gsd-migrate-runtime-ready-");
+  try {
+    const preview = generatePreview(projectFixture());
+
+    await assert.rejects(
+      () => assertMigrationRuntimeReady(base, preview),
+      /migration runtime readiness failed: DB unavailable/,
+    );
   } finally {
     cleanup(base);
   }

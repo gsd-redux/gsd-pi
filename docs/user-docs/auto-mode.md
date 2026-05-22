@@ -40,7 +40,7 @@ The SQLite database is the runtime source of truth for milestones, slices, tasks
 
 Markdown files in `.gsd/` are rendered projections for review, prompts, and git-friendly history. `.gsd/DECISIONS.md` is projected from architecture memories, and the Patterns/Lessons sections of `.gsd/KNOWLEDGE.md` are projected from memory rows; editing those projections does not override the database unless a command imports or saves the change through GSD. The Rules section of `KNOWLEDGE.md` remains manually authored and is preserved separately.
 
-In worktree mode, the project-root database remains authoritative runtime state, while artifact/projection writes render under the active worktree-local `.gsd/`. Those worktree markdown projections are not treated as runtime state fallbacks. If the database is unavailable, runtime state derivation refuses to silently rebuild from markdown. The legacy markdown derivation path is only enabled when `GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK=1`, which exists for tests and explicit recovery scenarios.
+In worktree mode, the project-root database remains authoritative runtime state, while artifact/projection writes render under the active worktree-local `.gsd/`. Those worktree markdown projections are not treated as runtime state fallbacks. If the database is unavailable, runtime state derivation refuses to rebuild from markdown; legacy markdown projects must be migrated with `/gsd migrate`.
 
 ### Single-Host Runtime Constraint
 

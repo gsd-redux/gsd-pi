@@ -117,7 +117,6 @@ test("collectBaseline returns the phase-zero report shape", async () => {
   assert.equal(report.metrics["process.prBodiesMissingTests"], 0);
   assert.equal(report.metrics["process.docsConflictCount"], 0);
   assert.equal(report.metrics["process.shipPathCount"], 3);
-  assert.equal(report.metrics["legacy.markdownFallbackUsed"], 0);
   assert.equal(report.metrics["legacy.workflowEngineUsed"], 0);
   assert.equal(report.metrics["legacy.uokFallbackUsed"], 0);
   assert.equal(report.metrics["legacy.mcpAliasUsed"], 0);
@@ -157,7 +156,6 @@ test("buildMetricIndex includes workspace and command metrics", () => {
       shipPathCount: 3,
     },
     legacy: {
-      markdownFallbackUsed: 1,
       workflowEngineUsed: 2,
       uokFallbackUsed: 3,
       mcpAliasUsed: 4,
@@ -185,7 +183,6 @@ test("buildMetricIndex includes workspace and command metrics", () => {
   assert.equal(metrics["testCompile.fileCount"], 17);
   assert.equal(metrics["process.prGeneratorConsumers"], 3);
   assert.equal(metrics["process.shipPathCount"], 3);
-  assert.equal(metrics["legacy.markdownFallbackUsed"], 1);
   assert.equal(metrics["legacy.workflowEngineUsed"], 2);
   assert.equal(metrics["legacy.uokFallbackUsed"], 3);
   assert.equal(metrics["legacy.mcpAliasUsed"], 4);

@@ -13,10 +13,6 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-// Compiled legacy state tests exercise markdown derivation through deriveState().
-// Production/runtime keeps this fallback disabled unless explicitly requested.
-process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK ??= '1';
-
 const GIT_TEST_ENV_DIR = join(tmpdir(), `gsd-test-git-env-${process.pid}`);
 mkdirSync(GIT_TEST_ENV_DIR, { recursive: true });
 process.env.GIT_CONFIG_GLOBAL = join(GIT_TEST_ENV_DIR, 'global.gitconfig');

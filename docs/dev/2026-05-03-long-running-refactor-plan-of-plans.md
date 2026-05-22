@@ -633,8 +633,8 @@ Baseline usage is documented in `docs/dev/refactor-baseline-runbook.md`.
 
 **Implemented so far:**
 
-- Added runtime counters and baseline dashboard fields for all six Phase 8 deprecated paths.
-- Wired `legacy.markdownFallbackUsed` to explicit markdown state derivation fallback.
+- Added runtime counters and baseline dashboard fields for the remaining Phase 8 deprecated paths.
+- Removed the explicit markdown state derivation fallback; legacy markdown projects must migrate to DB-authoritative state before runtime derivation.
 - Wired `legacy.workflowEngineUsed` to legacy workflow template dispatch paths.
 - Wired `legacy.uokFallbackUsed` to non-kernel UOK execution paths.
 - Wired `legacy.mcpAliasUsed` to execution through backward-compatible MCP tool aliases.
@@ -648,7 +648,6 @@ Baseline usage is documented in `docs/dev/refactor-baseline-runbook.md`.
 
 **Migration notes before deletion:**
 
-- Markdown state fallback: migrate projects to DB-authoritative state and keep markdown as projection/manual reference only. Do not remove fallback until `legacy.markdownFallbackUsed` stays at zero on representative runs.
 - Legacy workflow engines/templates: move active workflows to `auto-milestone` templates and keep legacy aliases documented until `legacy.workflowEngineUsed` is zero.
 - UOK fallback/parity wrappers: resolve blockers that require `legacy_fallback` or `GSD_UOK_FORCE_LEGACY`; removal is allowed only after kernel path telemetry shows no fallback use.
 - MCP tool aliases: update agents and prompts to canonical `gsd_*` tool names before alias removal. Alias wrappers now count actual alias execution.
@@ -672,7 +671,6 @@ Baseline usage is documented in `docs/dev/refactor-baseline-runbook.md`.
 
 **Metrics dashboard fields:**
 
-- `legacy.markdownFallbackUsed`
 - `legacy.workflowEngineUsed`
 - `legacy.uokFallbackUsed`
 - `legacy.mcpAliasUsed`

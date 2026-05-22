@@ -4,7 +4,6 @@
 import { readFile } from "node:fs/promises";
 
 export const LEGACY_COUNTERS = [
-  "legacy.markdownFallbackUsed",
   "legacy.workflowEngineUsed",
   "legacy.uokFallbackUsed",
   "legacy.mcpAliasUsed",

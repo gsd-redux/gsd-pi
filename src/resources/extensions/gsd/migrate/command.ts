@@ -27,7 +27,8 @@ import type { MigrationPreview, WrittenFiles } from "./writer.js";
 import { ensureDbOpen } from "../bootstrap/dynamic-tools.js";
 import { clearArtifacts, clearDecisions, clearRequirements, clearEngineHierarchy, transaction } from "../gsd-db.js";
 import { migrateFromMarkdown } from "../md-importer.js";
-import { invalidateStateCache } from "../state.js";
+import { deriveState, invalidateStateCache } from "../state.js";
+import type { GSDState } from "../types.js";
 import {
   archiveLegacyPlanningDirectory,
   verifyMigrationProjection,
@@ -53,6 +54,7 @@ export interface MigrationExecutionResult {
   imported: MigrationImportCounts;
   legacyArchive: LegacyArchiveResult;
   verification: MigrationProjectionVerification;
+  runtimeState: GSDState;
   audit: MigrationAuditResult;
 }
 
@@ -100,12 +102,36 @@ export async function importWrittenMigrationToDb(
   return counts;
 }
 
+export async function assertMigrationRuntimeReady(
+  basePath: string,
+  preview: MigrationPreview,
+): Promise<GSDState> {
+  invalidateStateCache();
+  const state = await deriveState(basePath);
+  const unavailableBlocker = state.blockers.find((blocker) => blocker.includes("DB unavailable"));
+  if (unavailableBlocker) {
+    throw new Error(`migration runtime readiness failed: ${unavailableBlocker}`);
+  }
+  if (state.registry.length !== preview.milestoneCount) {
+    throw new Error(
+      `migration runtime readiness failed: registry ${state.registry.length}/${preview.milestoneCount}`,
+    );
+  }
+  if (state.progress?.milestones?.total !== preview.milestoneCount) {
+    throw new Error(
+      `migration runtime readiness failed: milestone progress ${state.progress?.milestones?.total ?? 0}/${preview.milestoneCount}`,
+    );
+  }
+  return state;
+}
+
 export async function executeMigrationWrite(
   sourcePath: string,
   targetRoot: string,
   project: ReturnType<typeof transformToGSD>,
   preview: MigrationPreview,
   startedAt: string = new Date().toISOString(),
+  runtimeReady: typeof assertMigrationRuntimeReady = assertMigrationRuntimeReady,
 ): Promise<MigrationExecutionResult> {
   const backup = prepareMigrationTarget(targetRoot);
 
@@ -114,6 +140,7 @@ export async function executeMigrationWrite(
     const legacyArchive = await archiveLegacyPlanningDirectory(sourcePath, targetRoot);
     const imported = await importWrittenMigrationToDb(targetRoot, preview);
     const verification = await verifyMigrationProjection(targetRoot, preview);
+    const runtimeState = await runtimeReady(targetRoot, preview);
     const audit = await writeMigrationAudit({
       sourcePath,
       targetRoot,
@@ -127,7 +154,7 @@ export async function executeMigrationWrite(
       completedAt: new Date().toISOString(),
     });
 
-    return { backup, written, imported, legacyArchive, verification, audit };
+    return { backup, written, imported, legacyArchive, verification, runtimeState, audit };
   } catch (err) {
     restoreMigrationTarget(backup);
     throw err;

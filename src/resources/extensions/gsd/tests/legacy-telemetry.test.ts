@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,22 +15,18 @@ import {
   persistLegacyTelemetrySnapshot,
   resetLegacyTelemetry,
 } from "../legacy-telemetry.ts";
-import { closeDatabase } from "../gsd-db.ts";
-import { deriveState, invalidateStateCache } from "../state.ts";
 import { _resetLogs, peekLogs, setStderrLoggingEnabled } from "../workflow-logger.ts";
 
 test("legacy telemetry exposes every Phase 8 cleanup counter", () => {
   resetLegacyTelemetry();
 
   assert.deepEqual(listLegacyTelemetryCounters(), [
-    "legacy.markdownFallbackUsed",
     "legacy.workflowEngineUsed",
     "legacy.uokFallbackUsed",
     "legacy.mcpAliasUsed",
     "legacy.componentFormatUsed",
     "legacy.providerDefaultUsed",
   ]);
-  assert.equal(getLegacyTelemetry()["legacy.markdownFallbackUsed"], 0);
 });
 
 test("legacy telemetry increments positive finite amounts only", () => {
@@ -80,7 +76,6 @@ test("legacy telemetry can persist an opt-in snapshot file", () => {
     const report = JSON.parse(readFileSync(outputPath, "utf-8")) as ReturnType<typeof getLegacyTelemetryReport>;
     assert.equal(typeof report.ts, "string");
     assert.equal(report.counters["legacy.providerDefaultUsed"], 2);
-    assert.equal(report.counters["legacy.markdownFallbackUsed"], 0);
   } finally {
     if (previousOutput === undefined) delete process.env.GSD_LEGACY_TELEMETRY_FILE;
     else process.env.GSD_LEGACY_TELEMETRY_FILE = previousOutput;
@@ -104,7 +99,6 @@ test("legacy telemetry can persist a zero-use snapshot for deletion gates", () =
     const report = JSON.parse(readFileSync(outputPath, "utf-8")) as ReturnType<typeof getLegacyTelemetryReport>;
     assert.equal(typeof report.ts, "string");
     assert.deepEqual(report.counters, {
-      "legacy.markdownFallbackUsed": 0,
       "legacy.workflowEngineUsed": 0,
       "legacy.uokFallbackUsed": 0,
       "legacy.mcpAliasUsed": 0,
@@ -115,30 +109,6 @@ test("legacy telemetry can persist a zero-use snapshot for deletion gates", () =
     if (previousOutput === undefined) delete process.env.GSD_LEGACY_TELEMETRY_FILE;
     else process.env.GSD_LEGACY_TELEMETRY_FILE = previousOutput;
     resetLegacyTelemetry();
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test("deriveState increments markdown fallback telemetry on explicit legacy fallback", async () => {
-  const base = mkdtempSync(join(tmpdir(), "gsd-legacy-telemetry-"));
-  const originalFallback = process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK;
-  try {
-    closeDatabase();
-    resetLegacyTelemetry();
-    invalidateStateCache();
-    process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK = "1";
-    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
-    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# M001: Legacy\n");
-
-    const state = await deriveState(base);
-
-    assert.equal(state.activeMilestone?.id, "M001");
-    assert.equal(getLegacyTelemetry()["legacy.markdownFallbackUsed"], 1);
-  } finally {
-    invalidateStateCache();
-    resetLegacyTelemetry();
-    if (originalFallback === undefined) delete process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK;
-    else process.env.GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK = originalFallback;
     rmSync(base, { recursive: true, force: true });
   }
 });

@@ -3,30 +3,24 @@
 // Regression coverage for the auto-mode loop bug observed on projects whose
 // .gsd/ is a symlink into ~/.gsd/projects/<hash>/ (the external-state layout).
 //
-// Two assertions:
-//   1. deriveState's cache key is the canonical project root when callers
-//      opt into projectRootForReads — so two derive calls that should refer
-//      to the same canonical state share a single cache entry, regardless of
-//      whether the caller passed the worktree path or the project-root path.
-//   2. _deriveStateImpl's projectRootForReads option routes legacy markdown
-//      reads through the canonical project root, finding files that live in
-//      the symlink target rather than the worktree-local empty .gsd/.
+// Assertion:
+//   deriveState's cache key is the canonical project root when callers opt into
+//   projectRootForReads, so calls that refer to the same canonical state share a
+//   single cache entry regardless of path form.
 //
 // Per project rule #11: regression test using node:test + node:assert/strict,
 // no source-grep assertions. The first test would fail on main without the
 // cache-key fix in state.ts (lookup vs write keys would diverge across
-// path-form alternation, producing cache misses). The second test would
-// fail on main because _deriveStateImpl doesn't accept the option at all.
+// path-form alternation, producing cache misses).
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
   deriveState,
-  _deriveStateImpl,
   invalidateStateCache,
   type DeriveStateOptions,
 } from "../state.ts";
@@ -127,50 +121,7 @@ test("deriveState: cache key is canonical when projectRootForReads is supplied",
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Test 2: _deriveStateImpl reads from canonical root via projectRootForReads
-// ═══════════════════════════════════════════════════════════════════════════
-
-test("_deriveStateImpl: projectRootForReads routes legacy markdown reads to the canonical .gsd/", async (t) => {
-  const fx = makeSymlinkedFixture("symlink-md");
-  t.after(() => cleanupFixture(fx));
-  // No DB opened — exercise the markdown fallback.
-
-  // Seed the external state dir (the symlink target) with a roadmap so the
-  // legacy filesystem state derivation has a milestone to find.
-  const m1Dir = join(fx.externalState, "milestones", "M001");
-  mkdirSync(m1Dir, { recursive: true });
-  writeFileSync(
-    join(m1Dir, "M001-CONTEXT.md"),
-    "# M001: Symlinked legacy md test\n\nTest project.\n",
-    "utf-8",
-  );
-  writeFileSync(
-    join(m1Dir, "M001-ROADMAP.md"),
-    [
-      "# M001 Roadmap",
-      "",
-      "## Slices",
-      "",
-      "- [ ] **S01: First slice** — depends:",
-      "",
-    ].join("\n"),
-    "utf-8",
-  );
-
-  invalidateStateCache();
-
-  // Calling _deriveStateImpl with the worktree path AND projectRootForReads
-  // pointing at the project root must consult the canonical .gsd/ (via the
-  // symlink target externalState), find M001/S01, and report planning phase
-  // because no slice plan file exists yet.
-  const state = await _deriveStateImpl(fx.worktreePath, { projectRootForReads: fx.projectRoot });
-  assert.equal(state.activeMilestone?.id, "M001", "must find M001 via canonical .gsd/ reads");
-  assert.equal(state.activeSlice?.id, "S01", "must find S01 from the roadmap");
-  assert.equal(state.phase, "planning", "no slice PLAN.md yet → planning phase");
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test 3: type-safety guard for the deriveState opts overload (compile-time)
+// Test 2: type-safety guard for the deriveState opts overload (compile-time)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // The DeriveStateOptions parameter is typed as an object literal so accidental
