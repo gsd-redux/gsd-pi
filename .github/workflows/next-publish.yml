@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: next
     container:
-      image: ghcr.io/gsd-redux/gsd-ci-builder:latest
+      image: ghcr.io/open-gsd/gsd-ci-builder:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

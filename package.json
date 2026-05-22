@@ -104,7 +104,7 @@
     "release:bump": "node scripts/bump-version.mjs",
     "release:update-changelog": "node scripts/update-changelog.mjs",
     "docker:build-runtime": "docker build --target runtime -t ghcr.io/open-gsd/gsd-pi .",
-    "docker:build-builder": "docker build --target builder -t ghcr.io/gsd-redux/gsd-ci-builder .",
+    "docker:build-builder": "docker build --target builder -t ghcr.io/open-gsd/gsd-ci-builder .",
     "prepublishOnly": "npm run sync-pkg-version && npm run sync-platform-versions && node scripts/prepublish-check.mjs && npm run build && npm run typecheck:extensions && npm run validate-pack",
     "test:live-regression": "node --experimental-strip-types tests/live-regression/run.ts",
     "test:e2e": "node --experimental-strip-types --test --test-concurrency=1 \"tests/e2e/*.e2e.test.ts\"",

@@ -1,6 +1,6 @@
 name: Pipeline
 
-# Rebuilds the CI builder Docker image when Dockerfile changes on main.
+# Rebuilds the CI builder Docker image when its build inputs change on main.
 # Dev and prod publishing live in separate workflows (dev-publish.yml,
 # prod-release.yml) — both manual "Run workflow" triggers.
 
@@ -31,12 +31,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
 
-      - name: Check for Dockerfile changes
+      - name: Check for builder image changes
         id: check
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          CHANGED=$(git diff --name-only "${HEAD_SHA}~1" "${HEAD_SHA}" -- Dockerfile || echo "")
+          CHANGED=$(git diff --name-only "${HEAD_SHA}~1" "${HEAD_SHA}" -- Dockerfile package.json .github/workflows/pipeline.yml || echo "")
           echo "changed=$([[ -n "$CHANGED" ]] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -51,6 +51,6 @@ jobs:
         if: steps.check.outputs.changed == 'true'
         run: |
           docker build --target builder \
-            -t ghcr.io/gsd-redux/gsd-ci-builder:latest \
+            -t ghcr.io/open-gsd/gsd-ci-builder:latest \
             .
-          docker push ghcr.io/gsd-redux/gsd-ci-builder:latest
+          docker push ghcr.io/open-gsd/gsd-ci-builder:latest
