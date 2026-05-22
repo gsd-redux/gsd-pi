@@ -69,7 +69,6 @@ import {
   ExportPanel,
   CleanupPanel,
   QueuePanel,
-  StatusPanel,
 } from "./remaining-command-panels"
 import {
   formatCost,
@@ -2161,10 +2160,10 @@ export function CommandSurface() {
       case "gsd-steer": return <SteerPanel />
       case "gsd-hooks": return <HooksPanel />
       case "gsd-inspect": return <InspectPanel />
+      case "gsd-report":
       case "gsd-export": return <ExportPanel />
       case "gsd-cleanup": return <CleanupPanel />
       case "gsd-queue": return <QueuePanel />
-      case "gsd-status": return <StatusPanel />
       default:
         // Safety net for any unknown GSD surface
         if (commandSurface.section?.startsWith("gsd-")) {

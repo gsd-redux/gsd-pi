@@ -16,7 +16,6 @@ export type BrowserSlashCommandSurface =
   | "session"
   | "export"
   // GSD subcommand surfaces (S02)
-  | "gsd-status"
   | "gsd-visualize"
   | "gsd-forensics"
   | "gsd-doctor"
@@ -33,6 +32,7 @@ export type BrowserSlashCommandSurface =
   | "gsd-hooks"
   | "gsd-mode"
   | "gsd-steer"
+  | "gsd-report"
   | "gsd-export"
   | "gsd-cleanup"
   | "gsd-queue"
@@ -116,7 +116,6 @@ const SURFACE_COMMANDS = new Map<string, BrowserSlashCommandSurface>([
 // --- GSD subcommand dispatch (S02) ---
 
 const GSD_SURFACE_SUBCOMMANDS = new Map<string, BrowserSlashCommandSurface>([
-  ["status", "gsd-status"],
   ["visualize", "gsd-visualize"],
   ["forensics", "gsd-forensics"],
   ["doctor", "gsd-doctor"],
@@ -134,6 +133,7 @@ const GSD_SURFACE_SUBCOMMANDS = new Map<string, BrowserSlashCommandSurface>([
   ["hooks", "gsd-hooks"],
   ["mode", "gsd-mode"],
   ["steer", "gsd-steer"],
+  ["report", "gsd-report"],
   ["export", "gsd-export"],
   ["cleanup", "gsd-cleanup"],
   ["queue", "gsd-queue"],
@@ -157,7 +157,7 @@ Workflow:    next · auto · stop · pause · skip · queue · quick · capture 
 Diagnostics: status · visualize · forensics · doctor · skill-health · inspect
 Context:     knowledge · history · undo · discuss
 Settings:    model · prefs · config · hooks · mode · steer
-Advanced:    export · cleanup · run-hook · migrate · remote
+Advanced:    report · export · cleanup · run-hook · migrate · remote
 
 Type /gsd <subcommand> to run. Use /gsd help for this message.`
 
@@ -195,8 +195,8 @@ function dispatchGSDSubcommand(
     }
   }
 
-  // `/gsd visualize` — navigate to the visualizer view directly
-  if (subcommand === "visualize") {
+  // `/gsd status` and `/gsd visualize` — navigate to the visualizer view directly
+  if (subcommand === "status" || subcommand === "visualize") {
     return {
       kind: "view-navigate",
       input,

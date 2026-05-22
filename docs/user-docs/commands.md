@@ -12,7 +12,7 @@
 | `/gsd pause` | Pause auto-mode (preserves state, `/gsd auto` to resume) |
 | `/gsd steer` | Hard-steer plan documents during execution |
 | `/gsd discuss` | Discuss architecture and decisions (works alongside auto mode) |
-| `/gsd status` | Progress dashboard |
+| `/gsd status` | Open workflow visualizer |
 | `/gsd widget` | Cycle dashboard widget: full / small / min / off |
 | `/gsd queue` | Queue and reorder future milestones (`pending`, `queued`, and legacy `planned`; safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
@@ -29,8 +29,9 @@
 | `/gsd worktree` (`/gsd wt`) | Manage GSD worktrees from the TUI |
 | `/gsd visualize` | Open workflow visualizer (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export) |
 | `/gsd brief <mode> [topic] [--slides]` | Generate a self-contained visual HTML brief. Modes: `diagram`, `plan`, `diff`, `recap`, `table`, `slides`. |
-| `/gsd export --html` | Generate self-contained HTML report for current or completed milestone |
-| `/gsd export --html --all` | Generate retrospective reports for all milestones at once |
+| `/gsd report` | Generate HTML reports for all milestones and open the reports index in a browser |
+| `/gsd report --html` | Generate self-contained HTML report for current or completed milestone |
+| `/gsd report --html --all` | Generate retrospective reports for all milestones at once |
 | `/gsd update` | Update GSD to the latest version in-session |
 | `/gsd knowledge` | Add persistent project knowledge. Rules remain manually maintained in `KNOWLEDGE.md`; patterns and lessons are memory-backed and projected into the file on the next session start. |
 | `/gsd eval-review <sliceId>` | Audit a slice's AI evaluation strategy and write a scored `<sliceId>-EVAL-REVIEW.md`. Flags: `--force` overwrites; `--show` prints the existing audit. See [eval-review](eval-review.md). |
@@ -433,16 +434,19 @@ The server registers all tools from the agent session and maps MCP `tools/list` 
 
 If already up to date, it reports so and takes no action.
 
-## Export
+## Report
 
-`/gsd export` generates reports of milestone work.
+`/gsd report` generates HTML reports for all milestones and opens the reports index in a browser. `/gsd export` remains available as an alias.
 
 ```bash
+# Generate all missing milestone reports and open the reports index
+/gsd report
+
 # Generate HTML report for the active milestone
-/gsd export --html
+/gsd report --html
 
 # Generate retrospective reports for ALL milestones at once
-/gsd export --html --all
+/gsd report --html --all
 ```
 
 Reports are saved to `.gsd/reports/` with a browseable `index.html` that links to all generated snapshots.

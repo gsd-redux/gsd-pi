@@ -1703,8 +1703,8 @@ export async function stopAuto(
         detail: displayReason || "Auto-mode stopped.",
         nextAction: status === "blocked"
           ? "Fix the blocker, then run /gsd auto to resume."
-          : "Run /gsd status for the current project state, or /gsd auto to continue.",
-        commands: ["/gsd status for overview", "/gsd auto to run", "/gsd visualize to inspect", "/gsd notifications for history"],
+          : "Run /gsd status to inspect the current project state, or /gsd auto to continue.",
+        commands: ["/gsd status to inspect", "/gsd auto to run", "/gsd report for snapshots", "/gsd notifications for history"],
       });
       if (ctx) initHealthWidget(ctx);
     }

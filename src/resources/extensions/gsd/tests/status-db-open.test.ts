@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import { handleCoreCommand } from "../commands/handlers/core.ts";
 import { buildQuickCommitInstruction } from "../quick.ts";
 
-describe("status opens DB before deriveState (#3691)", () => {
-  test("core handler routes status command", async () => {
+describe("status command routing", () => {
+  test("core handler routes status command to visualizer fallback in non-UI contexts", async () => {
     const notifications: Array<{ message: string; level: string }> = [];
     const ctx = {
       ui: {
@@ -23,7 +23,7 @@ describe("status opens DB before deriveState (#3691)", () => {
     const handled = await handleCoreCommand("status", ctx as any);
 
     assert.equal(handled, true);
-    assert.ok(notifications.length >= 0);
+    assert.match(notifications[0]?.message ?? "", /interactive terminal/i);
   });
 
   test("quick task commit instructions handle external .gsd roots without staging quick files", () => {

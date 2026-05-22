@@ -18,7 +18,7 @@ import {
 } from "./health-widget-core.js";
 
 export const HEALTH_WIDGET_ACTIVE_HINTS =
-  "  /gsd auto to run  ·  /gsd status for overview  ·  /gsd visualize to inspect  ·  /gsd notifications for history  ·  /gsd help";
+  "  /gsd auto to run  ·  /gsd status to inspect  ·  /gsd report for snapshots  ·  /gsd notifications for history  ·  /gsd help";
 
 // ── Data loader ────────────────────────────────────────────────────────────────
 

@@ -42,7 +42,6 @@ export type CommandSurfaceSection =
   | "integrations"
   | "experimental"
   // GSD subcommand surfaces (S02)
-  | "gsd-status"
   | "gsd-visualize"
   | "gsd-forensics"
   | "gsd-doctor"
@@ -59,6 +58,7 @@ export type CommandSurfaceSection =
   | "gsd-hooks"
   | "gsd-mode"
   | "gsd-steer"
+  | "gsd-report"
   | "gsd-export"
   | "gsd-cleanup"
   | "gsd-queue"
@@ -672,7 +672,6 @@ export function commandSurfaceSectionForRequest(request: CommandSurfaceOpenReque
     case "compact":
       return "compact"
     // GSD subcommand surfaces (S02)
-    case "gsd-status": return "gsd-status"
     case "gsd-visualize": return "gsd-visualize"
     case "gsd-forensics": return "gsd-forensics"
     case "gsd-doctor": return "gsd-doctor"
@@ -689,6 +688,7 @@ export function commandSurfaceSectionForRequest(request: CommandSurfaceOpenReque
     case "gsd-hooks": return "gsd-hooks"
     case "gsd-mode": return "gsd-mode"
     case "gsd-steer": return "gsd-steer"
+    case "gsd-report": return "gsd-report"
     case "gsd-export": return "gsd-export"
     case "gsd-cleanup": return "gsd-cleanup"
     case "gsd-queue": return "gsd-queue"

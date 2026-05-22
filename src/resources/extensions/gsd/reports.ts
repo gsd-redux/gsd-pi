@@ -11,7 +11,7 @@
  *     final-20260201T090000.html   full-project final snapshot
  *
  * Auto-triggered: after each milestone completion (when auto_report: true).
- * Manual: /gsd export --html
+ * Manual: /gsd report --html
  */
 
 import { readFileSync, mkdirSync, existsSync } from 'node:fs';
@@ -318,7 +318,7 @@ function buildIndexHtml(index: ReportsIndex): string {
       <h2>Progression <span class="sec-count">${entries.length}</span></h2>
       ${sorted.length > 0
         ? `<div class="cards-grid">${cardHtml}</div>`
-        : '<p class="empty">No reports generated yet. Run <code>/gsd export --html</code> or enable <code>auto_report: true</code>.</p>'}
+        : '<p class="empty">No reports generated yet. Run <code>/gsd report --html</code> or enable <code>auto_report: true</code>.</p>'}
     </section>
   </main>
 </div>

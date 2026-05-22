@@ -56,6 +56,14 @@ async function handleCompletedMilestoneRecovery(
   return true;
 }
 
+export function normalizeReportExportArgs(trimmed: string): string | null {
+  if (trimmed === "report") return "--html --all";
+  if (trimmed.startsWith("report ")) return trimmed.replace(/^report\s*/, "").trim();
+  if (trimmed === "export") return "";
+  if (trimmed.startsWith("export ")) return trimmed.replace(/^export\s*/, "").trim();
+  return null;
+}
+
 export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
   const directDispatchAlias = new Map<string, string>([
     ["research-milestone", "research"],
@@ -147,8 +155,9 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleCloseout(trimmed.replace(/^closeout\s*/, "").trim(), ctx, projectRoot());
     return true;
   }
-  if (trimmed === "export" || trimmed.startsWith("export ")) {
-    await handleExport(trimmed.replace(/^export\s*/, "").trim(), ctx, projectRoot());
+  const reportExportArgs = normalizeReportExportArgs(trimmed);
+  if (reportExportArgs !== null) {
+    await handleExport(reportExportArgs, ctx, projectRoot());
     return true;
   }
   if (trimmed === "cleanup projects" || trimmed.startsWith("cleanup projects ")) {
