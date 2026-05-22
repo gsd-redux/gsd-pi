@@ -728,6 +728,32 @@ export interface StaleEntry {
   reason: string;
 }
 
+type LegacyParsers = {
+  parseRoadmap: Function;
+  parsePlan: Function;
+};
+
+function isMissingLegacyParserJs(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "MODULE_NOT_FOUND" &&
+    String((error as { message?: unknown }).message ?? "").includes("./parsers-legacy.js")
+  );
+}
+
+function loadLegacyParsers(): LegacyParsers {
+  const _require = createRequire(import.meta.url);
+  try {
+    // Prefer compiled JS for packaged/runtime installs; TS exists only in source/dev contexts.
+    return _require("./parsers-legacy.js") as LegacyParsers;
+  } catch (error) {
+    if (!isMissingLegacyParserJs(error)) throw error;
+    return _require("./parsers-legacy.ts") as LegacyParsers;
+  }
+}
+
 /**
  * Detect stale renders by comparing DB state against file content.
  *
@@ -742,17 +768,7 @@ export interface StaleEntry {
  */
 export function detectStaleRenders(basePath: string): StaleEntry[] {
   // Lazy-load parsers — intentional disk-vs-DB comparison requires parsers
-  const _require = createRequire(import.meta.url);
-  let parseRoadmap: Function, parsePlan: Function;
-  try {
-    // Prefer compiled JS for packaged/runtime installs; TS exists only in source/dev contexts.
-    const m = _require("./parsers-legacy.js");
-    parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
-  } catch (e) {
-    logWarning("renderer", `parsers-legacy.js require failed, falling back to .ts: ${(e as Error).message}`);
-    const m = _require("./parsers-legacy.ts");
-    parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
-  }
+  const { parseRoadmap, parsePlan } = loadLegacyParsers();
 
   const stale: StaleEntry[] = [];
   const milestones = getAllMilestones();

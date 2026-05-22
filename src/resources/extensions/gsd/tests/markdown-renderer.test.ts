@@ -37,6 +37,7 @@ import {
 } from '../files.ts';
 import { clearPathCache, _clearGsdRootCache } from '../paths.ts';
 import { invalidateStateCache } from '../state.ts';
+import { _resetLogs, peekLogs } from '../workflow-logger.ts';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -974,6 +975,29 @@ test('── markdown-renderer: stderr warning on missing content ──', async
   assert.ok(!ok, 'returns false when no slices in DB');
 
   closeDatabase();
+});
+
+test('── markdown-renderer: detectStaleRenders uses source parser fallback quietly ──', () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+  _resetLogs();
+
+  try {
+    const stale = detectStaleRenders(tmpDir);
+
+    assert.deepStrictEqual(stale, [], 'empty DB has no stale renders');
+    assert.deepStrictEqual(
+      peekLogs().filter((entry) => entry.component === 'renderer'),
+      [],
+      'missing compiled parser JS in source checkout should not emit renderer warnings',
+    );
+  } finally {
+    closeDatabase();
+    _resetLogs();
+    cleanupDir(tmpDir);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
