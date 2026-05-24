@@ -1236,6 +1236,7 @@ test("hasImplementationArtifacts returns unknown for empty integration self-diff
 test("hasImplementationArtifacts uses milestone path history instead of rolling depth (#4699)", () => {
   const base = makeGitBase();
   try {
+    execFileSync("git", ["checkout", "-b", "milestone/M001"], { cwd: base, stdio: "ignore" });
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
     mkdirSync(join(base, "src"), { recursive: true });
     writeFileSync(join(base, "src", "feature.ts"), "export function feature() {}");

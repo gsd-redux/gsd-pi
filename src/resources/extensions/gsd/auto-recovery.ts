@@ -40,6 +40,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+
+/** Large enough for unbounded milestone-history git log scans in big repos. */
+const GIT_LOG_MAX_BUFFER = 16 * 1024 * 1024;
 import { dirname, join } from "node:path";
 import {
   resolveExpectedArtifactPath,
@@ -409,7 +412,7 @@ function getChangedFilesSinceBranch(basePath: string, targetBranch: string): { o
     if (mergeBase) {
       const result = execFileSync(
         "git", ["diff", "--name-only", mergeBase, "HEAD"],
-        { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+        { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8", maxBuffer: GIT_LOG_MAX_BUFFER },
       ).trim();
       return { ok: true, files: result ? result.split("\n").filter(Boolean) : [] };
     }
@@ -568,6 +571,7 @@ function getCommitRecords(basePath: string): Array<{ hash: string; parents: stri
     cwd: basePath,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+    maxBuffer: GIT_LOG_MAX_BUFFER,
   });
   return logOutput
     .split("\x1e")
@@ -595,6 +599,7 @@ function scanGsdTaggedCommits(
       cwd: basePath,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
+      maxBuffer: GIT_LOG_MAX_BUFFER,
     });
     const records = logOutput
       .split("\x1e")

@@ -1,15 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-const mcpServerUrl = new URL('../mcp-server.js', import.meta.url).href
+
+// Keep a relative .js specifier so resolve-ts can redirect to ../mcp-server.ts.
+const mcpServerSpecifier = '../mcp-server.js'
 
 test('mcp-server module imports without errors', async () => {
-  const mod = await import(mcpServerUrl)
+  const mod = await import(mcpServerSpecifier)
   assert.ok(mod, 'module should be importable')
   assert.strictEqual(typeof mod.startMcpServer, 'function', 'startMcpServer should be a function')
 })
 
 test('startMcpServer accepts the correct argument shape', async () => {
-  const { startMcpServer } = await import(mcpServerUrl)
+  const { startMcpServer } = await import(mcpServerSpecifier)
 
   assert.strictEqual(typeof startMcpServer, 'function')
   assert.strictEqual(startMcpServer.length, 1, 'startMcpServer should accept one argument')
