@@ -1112,12 +1112,38 @@ export function checkoutBranchWithStashGuard(
     try {
       popStashByRef(basePath, stashMarker);
     } catch (popErr) {
+      const alreadyExists = stashAlreadyExistsFilesFromError(popErr);
+      const gsdAlreadyExists = alreadyExists.filter((f) => f.startsWith(".gsd/"));
+      const nonGsdAlreadyExists = alreadyExists.filter((f) => !f.startsWith(".gsd/"));
       const msg = popErr instanceof Error ? popErr.message : String(popErr);
+      const isUntrackedRestoreFailure = msg.includes("could not restore untracked files from stash");
+      const stashRef = stashRefFromError(popErr);
+
+      if (isUntrackedRestoreFailure && gsdAlreadyExists.length > 0 && nonGsdAlreadyExists.length === 0) {
+        for (const f of gsdAlreadyExists) {
+          execFileSync("git", ["checkout", "HEAD", "--", f], {
+            cwd: basePath,
+            stdio: ["ignore", "pipe", "pipe"],
+            encoding: "utf-8",
+          });
+          nativeAddPaths(basePath, [f]);
+        }
+        if (stashRef) {
+          execFileSync("git", ["stash", "drop", stashRef], {
+            cwd: basePath,
+            stdio: ["ignore", "pipe", "pipe"],
+            encoding: "utf-8",
+          });
+        } else {
+          logWarning("worktree", "recorded stash entry could not be resolved; skipping automatic drop");
+        }
+        return;
+      }
+
       const wrapped = new Error(
         `checkout to '${branch}' succeeded but stash restore failed; working tree changes remain in the stash list. Original error: ${msg}`,
       );
-      const ref = (popErr as { stashRef?: string } | null)?.stashRef;
-      if (ref) (wrapped as { stashRef?: string }).stashRef = ref;
+      if (stashRef) (wrapped as { stashRef?: string }).stashRef = stashRef;
       throw wrapped;
     }
   }

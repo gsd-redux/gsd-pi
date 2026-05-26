@@ -1,7 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -83,5 +83,27 @@ describe("checkoutBranchWithStashGuard", () => {
     assert.equal(branch, "milestone/B");
     const stashList = git(["stash", "list"], repo).trim();
     assert.match(stashList, /gsd: checkout stash/);
+  });
+
+  test("auto-resolves .gsd untracked restore collisions after checkout", (t) => {
+    const repo = createRepo(t);
+    git(["checkout", "-b", "milestone/M001"], repo);
+    mkdirSync(join(repo, ".gsd"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "PROJECT.md"), "tracked on milestone\n");
+    git(["add", ".gsd/PROJECT.md"], repo);
+    git(["commit", "-m", "track gsd state"], repo);
+    git(["checkout", "main"], repo);
+
+    mkdirSync(join(repo, ".gsd"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "PROJECT.md"), "untracked on main\n");
+
+    checkoutBranchWithStashGuard(repo, "milestone/M001", "test-gsd-untracked-collision");
+
+    const branch = git(["branch", "--show-current"], repo).trim();
+    assert.equal(branch, "milestone/M001");
+    const content = readFileSync(join(repo, ".gsd", "PROJECT.md"), "utf8");
+    assert.equal(content, "tracked on milestone\n");
+    const stashList = git(["stash", "list"], repo).trim();
+    assert.equal(stashList, "");
   });
 });
