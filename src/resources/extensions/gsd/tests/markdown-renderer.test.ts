@@ -63,6 +63,14 @@ function clearAllCaches(): void {
   invalidateStateCache();
 }
 
+function canonicalPathForAssert(filePath: string): string {
+  try {
+    return fs.realpathSync(filePath);
+  } catch {
+    return filePath;
+  }
+}
+
 /**
  * Create on-disk directory structure for a milestone/slice/task tree
  * so that path resolvers work correctly.
@@ -1137,15 +1145,17 @@ test('── markdown-renderer: repairStaleRenders reads worktree roadmap projec
     const projectionRoadmapPath = path.join(projectionMilestoneDir, 'M001-ROADMAP.md');
     fs.writeFileSync(projectRoadmapPath, staleRoadmap);
     fs.writeFileSync(projectionRoadmapPath, staleRoadmap);
+    const projectRoadmapComparePath = canonicalPathForAssert(projectRoadmapPath);
+    const projectionRoadmapComparePath = canonicalPathForAssert(projectionRoadmapPath);
     clearAllCaches();
 
     const staleBefore = detectStaleRenders(worktreeDir);
     assert.ok(
-      staleBefore.some(s => s.path === projectionRoadmapPath && s.reason.includes('S01')),
+      staleBefore.some(s => s.path === projectionRoadmapComparePath && s.reason.includes('S01')),
       'worktree projection roadmap should be detected as stale',
     );
     assert.ok(
-      staleBefore.every(s => s.path !== projectRoadmapPath),
+      staleBefore.every(s => s.path !== projectRoadmapComparePath),
       'project mirror roadmap should not be used for worktree stale detection',
     );
 
@@ -1185,11 +1195,12 @@ test('── markdown-renderer: repairStaleRenders handles descriptor roadmap pr
     ]);
     const descriptorRoadmapPath = path.join(projectionMilestoneDir, 'M001-ROADMAP.md');
     fs.writeFileSync(descriptorRoadmapPath, staleRoadmap);
+    const descriptorRoadmapComparePath = canonicalPathForAssert(descriptorRoadmapPath);
     clearAllCaches();
 
     const staleBefore = detectStaleRenders(worktreeDir);
     assert.ok(
-      staleBefore.some(s => s.path === descriptorRoadmapPath && s.reason.includes('S01')),
+      staleBefore.some(s => s.path === descriptorRoadmapComparePath && s.reason.includes('S01')),
       'descriptor worktree projection roadmap should be detected as stale',
     );
 
@@ -1226,11 +1237,12 @@ test('── markdown-renderer: repairStaleRenders handles legacy descriptor roa
     ]);
     const legacyRoadmapPath = path.join(milestoneDir, 'M001-legacy-descriptor-ROADMAP.md');
     fs.writeFileSync(legacyRoadmapPath, staleRoadmap);
+    const legacyRoadmapComparePath = canonicalPathForAssert(legacyRoadmapPath);
     clearAllCaches();
 
     const staleBefore = detectStaleRenders(tmpDir);
     assert.ok(
-      staleBefore.some(s => s.path === legacyRoadmapPath && s.reason.includes('S01')),
+      staleBefore.some(s => s.path === legacyRoadmapComparePath && s.reason.includes('S01')),
       'legacy descriptor roadmap filename should be detected as stale',
     );
 

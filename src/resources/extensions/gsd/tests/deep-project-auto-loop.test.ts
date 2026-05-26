@@ -280,6 +280,7 @@ test("deep project setup: bootstrap can start auto-mode without an active milest
         registerAutoWorkerForSession: () => {},
         lockBase: () => base,
         buildLifecycle: () => ({
+          enterMilestone: () => ({ ok: true, mode: "none", path: base }),
           adoptSessionRoot: (sessionBase: string, originalBase?: string) => {
             s.basePath = sessionBase;
             if (originalBase !== undefined) {
@@ -395,6 +396,7 @@ test("deep project setup: bootstrap continues queued M002 without milestone cont
         registerAutoWorkerForSession: () => {},
         lockBase: () => base,
         buildLifecycle: () => ({
+          enterMilestone: () => ({ ok: true, mode: "none", path: base }),
           adoptSessionRoot: (sessionBase: string, originalBase?: string) => {
             s.basePath = sessionBase;
             if (originalBase !== undefined) {
@@ -812,7 +814,9 @@ test("deep project setup: new-project --deep uses cwd when nested inside a paren
 test("deep project setup: new-project asks interview stages in foreground", async () => {
   const base = makeBase();
   const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const previousGsdHome = process.env.GSD_HOME;
   process.env.GSD_WORKFLOW_PATH = join(base, "GSD-WORKFLOW.md");
+  process.env.GSD_HOME = join(base, ".test-gsd-home");
   writeFileSync(process.env.GSD_WORKFLOW_PATH, "# Test Workflow\n");
 
   try {
@@ -882,6 +886,11 @@ test("deep project setup: new-project asks interview stages in foreground", asyn
       delete process.env.GSD_WORKFLOW_PATH;
     } else {
       process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
+    }
+    if (previousGsdHome === undefined) {
+      delete process.env.GSD_HOME;
+    } else {
+      process.env.GSD_HOME = previousGsdHome;
     }
     rmSync(base, { recursive: true, force: true });
   }
@@ -959,7 +968,9 @@ test("deep project setup: unrelated agent_end sessions do not advance pending se
   const base = makeBase();
   const otherBase = makeBase();
   const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const previousGsdHome = process.env.GSD_HOME;
   process.env.GSD_WORKFLOW_PATH = join(base, "GSD-WORKFLOW.md");
+  process.env.GSD_HOME = join(base, ".test-gsd-home");
   writeFileSync(process.env.GSD_WORKFLOW_PATH, "# Test Workflow\n");
 
   try {
@@ -999,6 +1010,11 @@ test("deep project setup: unrelated agent_end sessions do not advance pending se
     } else {
       process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
     }
+    if (previousGsdHome === undefined) {
+      delete process.env.GSD_HOME;
+    } else {
+      process.env.GSD_HOME = previousGsdHome;
+    }
     rmSync(base, { recursive: true, force: true });
     rmSync(otherBase, { recursive: true, force: true });
   }
@@ -1007,7 +1023,9 @@ test("deep project setup: unrelated agent_end sessions do not advance pending se
 test("deep project setup: same project advances when agent_end session id changes", async () => {
   const base = makeBase();
   const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const previousGsdHome = process.env.GSD_HOME;
   process.env.GSD_WORKFLOW_PATH = join(base, "GSD-WORKFLOW.md");
+  process.env.GSD_HOME = join(base, ".test-gsd-home");
   writeFileSync(process.env.GSD_WORKFLOW_PATH, "# Test Workflow\n");
 
   try {
@@ -1038,6 +1056,11 @@ test("deep project setup: same project advances when agent_end session id change
       delete process.env.GSD_WORKFLOW_PATH;
     } else {
       process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
+    }
+    if (previousGsdHome === undefined) {
+      delete process.env.GSD_HOME;
+    } else {
+      process.env.GSD_HOME = previousGsdHome;
     }
     rmSync(base, { recursive: true, force: true });
   }
@@ -1276,10 +1299,12 @@ test("deep project setup: research-project supervision timeout is capped narrowl
 test("deep project setup: empty legacy pseudo-milestone dirs do not block first real milestone", async () => {
   const base = makeBase();
   const previousWorkflowPath = process.env.GSD_WORKFLOW_PATH;
+  const previousGsdHome = process.env.GSD_HOME;
   const workflowPath = join(base, "GSD-WORKFLOW.md");
   try {
     writeFileSync(workflowPath, "# Test Workflow\n");
     process.env.GSD_WORKFLOW_PATH = workflowPath;
+    process.env.GSD_HOME = join(base, ".test-gsd-home");
 
     const validProject = readFileSync(
       new URL("../schemas/__fixtures__/valid-project.md", import.meta.url),
@@ -1312,6 +1337,8 @@ test("deep project setup: empty legacy pseudo-milestone dirs do not block first 
   } finally {
     if (previousWorkflowPath === undefined) delete process.env.GSD_WORKFLOW_PATH;
     else process.env.GSD_WORKFLOW_PATH = previousWorkflowPath;
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
     clearPendingAutoStart(base);
     try {
       const { closeDatabase } = await import("../gsd-db.ts");

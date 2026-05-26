@@ -194,12 +194,22 @@ test("getAllKeyStatuses detects multiple keys", () => {
 });
 
 test("getAllKeyStatuses detects empty keys as not configured", () => {
-  const auth = makeAuth({ groq: { type: "api_key", key: "" } });
-  const statuses = getAllKeyStatuses(auth);
-  const groq = statuses.find((s) => s.provider.id === "groq");
-  assert.equal(groq?.configured, false);
-  // Empty-key entries are filtered out, so provider appears unconfigured
-  assert.equal(groq?.source, "none");
+  const original = process.env.GROQ_API_KEY;
+  delete process.env.GROQ_API_KEY;
+  try {
+    const auth = makeAuth({ groq: { type: "api_key", key: "" } });
+    const statuses = getAllKeyStatuses(auth);
+    const groq = statuses.find((s) => s.provider.id === "groq");
+    assert.equal(groq?.configured, false);
+    // Empty-key entries are filtered out, so provider appears unconfigured
+    assert.equal(groq?.source, "none");
+  } finally {
+    if (original === undefined) {
+      delete process.env.GROQ_API_KEY;
+    } else {
+      process.env.GROQ_API_KEY = original;
+    }
+  }
 });
 
 test("getAllKeyStatuses finds valid keys even when empty-key entry exists at index 0", () => {

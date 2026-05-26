@@ -46,6 +46,14 @@ function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
 }
 
+function canonicalPathForAssert(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Test 1: ROADMAP DB→render→parse round-trip parity
 // ═══════════════════════════════════════════════════════════════════════════
@@ -340,7 +348,7 @@ console.log('\n=== planning-crossval Test 4: ROADMAP worktree projection path ==
 
     const rendered = await renderRoadmapFromDb(worktreeBase, 'M001');
 
-    assertEq(rendered.roadmapPath, worktreeRoadmapPath, 'T4: roadmap path uses worktree projection');
+    assertEq(rendered.roadmapPath, canonicalPathForAssert(worktreeRoadmapPath), 'T4: roadmap path uses worktree projection');
     assertTrue(existsSync(worktreeRoadmapPath), 'T4: worktree roadmap exists');
     assertEq(readFileSync(projectRoadmapPath, 'utf-8'), '# stale project roadmap\n', 'T4: project roadmap remains stale');
   } finally {
@@ -377,7 +385,7 @@ console.log('\n=== planning-crossval Test 5: ROADMAP existing projection file pa
 
     const rendered = await renderRoadmapFromDb(worktreeBase, 'M001');
 
-    assertEq(rendered.roadmapPath, worktreeRoadmapPath, 'T5: existing roadmap path remains absolute');
+    assertEq(rendered.roadmapPath, canonicalPathForAssert(worktreeRoadmapPath), 'T5: existing roadmap path remains absolute');
     assertTrue(existsSync(worktreeRoadmapPath), 'T5: worktree roadmap still exists');
   } finally {
     process.chdir(originalCwd);
@@ -414,7 +422,7 @@ console.log('\n=== planning-crossval Test 6: ROADMAP descriptor projection dir =
 
     const rendered = await renderRoadmapFromDb(worktreeBase, 'M001');
 
-    assertEq(rendered.roadmapPath, descriptorRoadmapPath, 'T6: roadmap path uses descriptor milestone dir');
+    assertEq(rendered.roadmapPath, canonicalPathForAssert(descriptorRoadmapPath), 'T6: roadmap path uses descriptor milestone dir');
     assertTrue(existsSync(descriptorRoadmapPath), 'T6: descriptor roadmap exists');
     assertEq(existsSync(bareMilestoneDir), false, 'T6: bare duplicate milestone dir is not created');
   } finally {

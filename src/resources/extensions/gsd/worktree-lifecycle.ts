@@ -632,7 +632,7 @@ export function _enterMilestoneCore(
   // Handles the case where originalBasePath is falsy and basePath is itself
   // a worktree path — prevents double-nested worktree paths (#3729).
   const basePath = resolveWorktreeProjectRoot(s.basePath, s.originalBasePath);
-  const mode = getIsolationMode(basePath);
+  const mode = lifecycleGetIsolationMode(deps, basePath);
 
   if (s.isolationDegraded) {
     if (mode === "worktree") {
@@ -1296,7 +1296,7 @@ export function mergeMilestoneStandalone(
     };
   }
 
-  const mode = getIsolationMode(originalBasePath || worktreeBasePath);
+  const mode = lifecycleGetIsolationMode(deps, originalBasePath || worktreeBasePath);
   debugLog("WorktreeLifecycle", {
     action: "mergeAndExit",
     milestoneId,

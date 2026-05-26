@@ -267,6 +267,7 @@ import {
   type WorktreeLifecycleDeps,
 } from "./worktree-lifecycle.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
+import { normalizeWorktreePathForCompare } from "./worktree-root.js";
 import { reorderForCaching } from "./prompt-ordering.js";
 import { initTokenCounter } from "./token-counter.js";
 
@@ -1513,7 +1514,7 @@ export async function stopAuto(
     // ── Step 7: Restore basePath and chdir (ADR-016 phase 3, #5693) ──
     // `restoreToProjectRoot` owns both s.basePath restore and process.chdir;
     // no paired chdir is needed at the call site.
-    if (s.originalBasePath) {
+    if (needsProjectRootRestore()) {
       try {
         buildLifecycle().restoreToProjectRoot();
       } catch (e) {
@@ -1961,6 +1962,19 @@ export function buildWorktreeLifecycleDeps(): WorktreeLifecycleDeps {
 
 function buildLifecycle(): WorktreeLifecycle {
   return new WorktreeLifecycle(s, buildWorktreeLifecycleDeps());
+}
+
+function needsProjectRootRestore(): boolean {
+  if (!s.originalBasePath) return false;
+  const target = normalizeWorktreePathForCompare(s.originalBasePath);
+  const sessionBase = s.basePath ? normalizeWorktreePathForCompare(s.basePath) : "";
+  let cwd = "";
+  try {
+    cwd = normalizeWorktreePathForCompare(process.cwd());
+  } catch {
+    return true;
+  }
+  return sessionBase !== target || cwd !== target;
 }
 
 /**

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -49,7 +49,7 @@ test("prompt golden fixtures meet Phase 2 reduction gate", async (t) => {
   let baselineChars = 0;
   let currentChars = 0;
   for (const fixture of promptGoldenUnits) {
-    const chars = prompts[fixture.unitType].length;
+    const chars = normalizePromptForMetrics(prompts[fixture.unitType], base).length;
     baselineChars += fixture.phase2StartChars;
     currentChars += chars;
     assert.ok(
@@ -80,6 +80,21 @@ function promptMetric(prompt: string): { chars: number; bytes: number; lines: nu
     lines: prompt.length === 0 ? 0 : prompt.split(/\r\n|\r|\n/).length,
     sha256: createHash("sha256").update(prompt).digest("hex"),
   };
+}
+
+function normalizePromptForMetrics(prompt: string, base: string): string {
+  const variants = new Set([base]);
+  try {
+    variants.add(realpathSync(base));
+  } catch {
+    // Keep the raw fixture root variant when realpath is unavailable.
+  }
+
+  let normalized = prompt;
+  for (const variant of [...variants].sort((a, b) => b.length - a.length)) {
+    normalized = normalized.split(variant).join("<FIXTURE_ROOT>");
+  }
+  return normalized;
 }
 
 async function loadPromptBuilders(base: string): Promise<{
