@@ -1,6 +1,6 @@
 {
   "name": "@opengsd/gsd-pi",
-  "version": "1.0.2",
+  "version": "1.0.2-dev",
   "description": "GSD Pi local-first coding agent",
   "license": "MIT",
   "repository": {
