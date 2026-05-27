@@ -1,11 +1,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
-import { gsdRoot, _clearGsdRootCache } from "../../paths.ts";
+import { gsdRoot, milestonesDir, _clearGsdRootCache } from "../../paths.ts";
 /** Create a tmp dir and resolve symlinks + 8.3 short names (macOS /var→/private/var, Windows RUNNER~1→runneradmin). */
 function tmp(): string {
   const p = mkdtempSync(join(tmpdir(), "gsd-paths-test-"));
@@ -94,5 +94,23 @@ describe('paths', () => {
       const result = gsdRoot(inner);
       assert.deepStrictEqual(result, join(inner, ".gsd"), "precedence: nearest .gsd wins over ancestor");
     } finally { cleanup(outer); }
+  });
+
+  test('Case 7: milestonesDir returns worktree .gsd when called from worktree path', () => {
+    const root = tmp();
+    try {
+      initGit(root);
+      mkdirSync(join(root, ".gsd"));
+      const wtRoot = join(root, ".gsd", "worktrees", "M001");
+      mkdirSync(wtRoot, { recursive: true });
+      mkdirSync(join(wtRoot, ".gsd"));
+      writeFileSync(join(wtRoot, ".git"), `gitdir: ${join(root, ".git")}\n`, "utf-8");
+      _clearGsdRootCache();
+      const result = milestonesDir(wtRoot);
+      assert.ok(result.includes(join("worktrees", "M001", ".gsd")),
+        "milestonesDir from worktree path must include worktrees/M001/.gsd");
+      assert.ok(result.endsWith("milestones"),
+        "milestonesDir must end with /milestones");
+    } finally { cleanup(root); }
   });
 });
