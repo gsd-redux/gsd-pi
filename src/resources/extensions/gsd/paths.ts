@@ -556,7 +556,7 @@ function probeGsdRoot(rawBasePath: string): string {
   return local;
 }
 export function milestonesDir(basePath: string): string {
-  return join(gsdRoot(basePath), "milestones");
+  return join(gsdProjectionRoot(basePath), "milestones");
 }
 
 export function resolveRuntimeFile(basePath: string): string {
