@@ -16,6 +16,7 @@ import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAllMilestones, isDbAvailable } from "./gsd-db.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -736,6 +737,31 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — orphan milestone directory check failed
+  }
+
+  // ── DB milestones with missing directories (#202) ─────────────────────
+  // Detect the inverse mismatch: a milestone row exists in DB, but its
+  // milestone directory is missing from disk. This stale DB state can cause
+  // incorrect "resume existing milestone" behavior.
+  try {
+    if (isDbAvailable()) {
+      for (const milestone of getAllMilestones()) {
+        const milestoneDir = join(milestonesDir(basePath), milestone.id);
+        if (!existsSync(milestoneDir)) {
+          issues.push({
+            severity: "warning",
+            code: "db_milestone_missing_dir",
+            scope: "milestone",
+            unitId: milestone.id,
+            message: `Milestone ${milestone.id} exists in DB but .gsd/milestones/${milestone.id} is missing on disk. This stale DB row can force incorrect milestone continuation.`,
+            file: ".gsd/gsd.db",
+            fixable: false,
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — DB milestone directory drift check failed
   }
 }
 
