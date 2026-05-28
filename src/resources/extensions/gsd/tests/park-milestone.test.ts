@@ -260,4 +260,30 @@ test('discardMilestone removes DB rows, worktree, and milestone branch', () => {
     }
 });
 
+test('discardMilestone removes DB rows even when milestone directory is already missing', () => {
+    const base = createFixtureBase();
+    try {
+      createMilestone(base, 'M001', { withRoadmap: true });
+      clearCaches();
+
+      const mDir = join(base, '.gsd', 'milestones', 'M001');
+      rmSync(mDir, { recursive: true, force: true });
+      assert.ok(!existsSync(mDir), 'milestone dir missing before discard');
+
+      assert.ok(openDatabase(join(base, '.gsd', 'gsd.db')), 'database opens');
+      insertMilestone({ id: 'M001', title: 'Discard me', status: 'active' });
+      insertSlice({ milestoneId: 'M001', id: 'S01', title: 'Only slice', status: 'pending' });
+      insertTask({ milestoneId: 'M001', sliceId: 'S01', id: 'T01', title: 'Only task', status: 'pending' });
+
+      const success = discardMilestone(base, 'M001');
+      assert.ok(success, 'discardMilestone returns true when directory is already missing');
+
+      assert.equal(getMilestone('M001'), null, 'milestone row removed from DB');
+      assert.equal(getMilestoneSlices('M001').length, 0, 'slice rows removed from DB');
+      assert.equal(getSliceTasks('M001', 'S01').length, 0, 'task rows removed from DB');
+    } finally {
+      cleanup(base);
+    }
+});
+
 });
