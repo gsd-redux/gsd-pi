@@ -16,6 +16,7 @@ import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAllMilestones } from "./gsd-db.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -736,6 +737,30 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — orphan milestone directory check failed
+  }
+
+  // ── DB milestones with missing directories ────────────────────────────
+  // Detect inverse drift: milestone row exists in DB but milestone directory
+  // is missing on disk. This can happen after manual filesystem deletion and
+  // causes plan/discuss flows to treat a deleted milestone as active.
+  try {
+    const dbMilestones = getAllMilestones();
+    for (const milestone of dbMilestones) {
+      const mPath = join(milestonesDir(basePath), milestone.id);
+      if (!existsSync(mPath)) {
+        issues.push({
+          severity: "warning",
+          code: "db_milestone_missing_dir",
+          scope: "milestone",
+          unitId: milestone.id,
+          message: `Milestone ${milestone.id} exists in DB but its directory is missing on disk.`,
+          file: `.gsd/milestones/${milestone.id}`,
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — DB milestone directory drift check failed
   }
 }
 
