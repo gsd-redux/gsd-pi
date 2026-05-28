@@ -16,6 +16,7 @@ import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAllMilestones, isDbAvailable } from "./gsd-db.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -736,6 +737,27 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — orphan milestone directory check failed
+  }
+
+  // ── DB milestones missing filesystem directories (#202) ───────────────
+  try {
+    if (isDbAvailable()) {
+      for (const milestone of getAllMilestones()) {
+        const mPath = join(milestonesDir(basePath), milestone.id);
+        if (existsSync(mPath)) continue;
+        issues.push({
+          severity: "warning",
+          code: "orphan_milestone_dir",
+          scope: "milestone",
+          unitId: milestone.id,
+          message: `Milestone ${milestone.id} exists in DB but its milestone directory is missing on disk (${mPath}). This stale DB state can cause incorrect milestone continuation behavior.`,
+          file: `.gsd/milestones/${milestone.id}`,
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — DB/filesystem milestone drift check failed
   }
 }
 
