@@ -113,4 +113,18 @@ describe("gsd_doctor orphan milestone directory check (#4996)", () => {
     assert.equal(missingDir?.severity, "warning");
     assert.equal(missingDir?.fixable, false);
   });
+
+  it("(f) queued DB milestone row whose directory is missing is NOT reported", async () => {
+    base = makeBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({ id: "M005", status: "queued" });
+
+    const issues: DoctorIssue[] = [];
+    const fixes: string[] = [];
+    await checkRuntimeHealth(base, issues, fixes, () => false);
+
+    const missingDir = issues.find(i => i.code === "db_milestone_missing_dir" && i.unitId === "M005");
+    assert.ok(!missingDir, "queued DB milestone rows without directories are in-flight ID reservations");
+  });
 });

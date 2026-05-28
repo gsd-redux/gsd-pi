@@ -746,6 +746,7 @@ export async function checkRuntimeHealth(
   try {
     if (isDbAvailable()) {
       for (const milestone of getAllMilestones()) {
+        if (milestone.status === "queued") continue;
         if (resolveMilestonePath(basePath, milestone.id)) continue;
         issues.push({
           severity: "warning",
