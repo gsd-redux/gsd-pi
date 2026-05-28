@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { cleanNumberedGsdVariants } from "./repo-identity.js";
-import { milestonesDir, gsdRoot, resolveGsdRootFile } from "./paths.js";
+import { milestonesDir, gsdRoot, resolveGsdRootFile, resolveMilestonePath } from "./paths.js";
 import { deriveState, isGhostMilestone, isReusableGhostMilestone } from "./state.js";
 import { saveFile } from "./files.js";
 import { nativeIsRepo, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
@@ -16,6 +16,7 @@ import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAllMilestones, isDbAvailable } from "./gsd-db.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -736,6 +737,29 @@ export async function checkRuntimeHealth(
     }
   } catch {
     // Non-fatal — orphan milestone directory check failed
+  }
+
+  // ── DB milestone rows with missing directories (#202) ─────────────────
+  // Detect the inverse orphan direction: DB rows whose milestone directory
+  // is missing on disk. This stale state can cause planning/resume flows to
+  // keep selecting milestones that no longer have filesystem artifacts.
+  try {
+    if (isDbAvailable()) {
+      for (const milestone of getAllMilestones()) {
+        if (resolveMilestonePath(basePath, milestone.id)) continue;
+        issues.push({
+          severity: "warning",
+          code: "db_milestone_missing_dir",
+          scope: "milestone",
+          unitId: milestone.id,
+          message: `Milestone ${milestone.id} exists in DB but its directory is missing on disk. Discard or repair this milestone to restore consistency.`,
+          file: `.gsd/milestones/${milestone.id}`,
+          fixable: false,
+        });
+      }
+    }
+  } catch {
+    // Non-fatal — DB milestone/directory drift check failed
   }
 }
 
