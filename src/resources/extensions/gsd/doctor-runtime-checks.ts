@@ -16,6 +16,7 @@ import { recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAllMilestones, isDbAvailable } from "./gsd-db.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -708,6 +709,7 @@ export async function checkRuntimeHealth(
   // for a phantom forward-reference. Surface as a fixable warning.
   try {
     const milestoneIds = findMilestoneIds(basePath);
+    const milestoneIdSet = new Set(milestoneIds);
     const hasDbFile = existsSync(join(root, "gsd.db"));
     for (const mid of milestoneIds) {
       const isOrphan = isReusableGhostMilestone(basePath, mid)
@@ -732,6 +734,23 @@ export async function checkRuntimeHealth(
             // Non-fatal — leave for manual cleanup
           }
         }
+      }
+    }
+
+    // Inverse orphan direction: DB milestone row exists but milestone directory
+    // is missing on disk, which can happen after manual filesystem deletion.
+    if (isDbAvailable()) {
+      for (const row of getAllMilestones()) {
+        if (milestoneIdSet.has(row.id)) continue;
+        issues.push({
+          severity: "warning",
+          code: "orphan_milestone_dir",
+          scope: "milestone",
+          unitId: row.id,
+          message: `Milestone ${row.id} exists in DB but its directory is missing on disk (.gsd/milestones/${row.id}).`,
+          file: ".gsd/gsd.db",
+          fixable: false,
+        });
       }
     }
   } catch {
