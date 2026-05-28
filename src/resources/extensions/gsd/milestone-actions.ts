@@ -154,7 +154,9 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
     saveQueueOrder(basePath, order.filter(id => id !== milestoneId));
   }
 
-  if (isDbAvailable()) {
+  const dbAvailable = isDbAvailable();
+  const hadDbMilestone = dbAvailable && getMilestone(milestoneId) !== null;
+  if (dbAvailable) {
     try {
       deleteMilestone(milestoneId);
     } catch (err) {
@@ -163,7 +165,7 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   }
 
   invalidateAllCaches();
-  return hasMilestoneDir || isDbAvailable();
+  return hasMilestoneDir || hadDbMilestone;
 }
 
 // ─── Query ─────────────────────────────────────────────────────────────────

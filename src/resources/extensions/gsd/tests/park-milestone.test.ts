@@ -287,4 +287,17 @@ test('discardMilestone removes DB rows when milestone directory is already missi
     }
 });
 
+test('discardMilestone returns false for a missing milestone when DB is open', () => {
+    const base = createFixtureBase();
+    try {
+      assert.ok(openDatabase(join(base, '.gsd', 'gsd.db')), 'database opens');
+      assert.equal(getMilestone('M404'), null, 'milestone does not exist in DB before discard');
+
+      const success = discardMilestone(base, 'M404');
+      assert.equal(success, false, 'discardMilestone returns false for a missing milestone');
+    } finally {
+      cleanup(base);
+    }
+});
+
 });
