@@ -82,6 +82,7 @@ export type DoctorIssueCode =
   // Engine health checks (Phase 4)
   | "db_orphaned_task"
   | "db_orphaned_slice"
+  | "db_orphaned_milestone_dir"
   | "db_done_task_no_summary"
   | "db_duplicate_id"
   | "db_unavailable"
