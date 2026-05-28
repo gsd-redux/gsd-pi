@@ -17,6 +17,7 @@ import {
   resolveMilestonePath,
   resolveMilestoneFile,
   buildMilestoneFileName,
+  milestonesDir,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
@@ -132,9 +133,11 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
  */
 export function discardMilestone(basePath: string, milestoneId: string): boolean {
   assertNotAutoActive("discard milestone");
+  const dbAvailable = isDbAvailable();
   const mDir = resolveMilestonePath(basePath, milestoneId);
-  if (!mDir) return false;
-  const hasMilestoneDir = existsSync(mDir);
+  if (!mDir && (!dbAvailable || !getMilestone(milestoneId))) return false;
+  const milestoneDir = mDir ?? join(milestonesDir(basePath), milestoneId);
+  const hasMilestoneDir = existsSync(milestoneDir);
 
   try {
     removeWorktree(basePath, milestoneId, {
@@ -146,7 +149,7 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   }
 
   if (hasMilestoneDir) {
-    rmSync(mDir, { recursive: true, force: true });
+    rmSync(milestoneDir, { recursive: true, force: true });
   }
 
   // Prune from queue order if present
@@ -155,7 +158,7 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
     saveQueueOrder(basePath, order.filter(id => id !== milestoneId));
   }
 
-  if (isDbAvailable()) {
+  if (dbAvailable) {
     try {
       deleteMilestone(milestoneId);
     } catch (err) {
