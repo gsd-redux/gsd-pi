@@ -3,7 +3,7 @@ import { basename, dirname, join } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { cleanNumberedGsdVariants } from "./repo-identity.js";
-import { milestonesDir, gsdRoot, resolveGsdRootFile } from "./paths.js";
+import { milestonesDir, gsdRoot, resolveGsdRootFile, resolveMilestonePath } from "./paths.js";
 import { deriveState, isGhostMilestone, isReusableGhostMilestone } from "./state.js";
 import { saveFile } from "./files.js";
 import { nativeIsRepo, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
@@ -746,8 +746,7 @@ export async function checkRuntimeHealth(
   try {
     const dbMilestones = getAllMilestones();
     for (const milestone of dbMilestones) {
-      const mPath = join(milestonesDir(basePath), milestone.id);
-      if (!existsSync(mPath)) {
+      if (!resolveMilestonePath(basePath, milestone.id)) {
         issues.push({
           severity: "warning",
           code: "db_milestone_missing_dir",
