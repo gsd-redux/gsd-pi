@@ -133,7 +133,9 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
 export function discardMilestone(basePath: string, milestoneId: string): boolean {
   assertNotAutoActive("discard milestone");
   const mDir = resolveMilestonePath(basePath, milestoneId);
-  if (!mDir || !existsSync(mDir)) return false;
+  if (!mDir) return false;
+  const hasMilestoneDir = existsSync(mDir);
+  let dbCleanupSucceeded = false;
 
   try {
     removeWorktree(basePath, milestoneId, {
@@ -144,7 +146,9 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
     logWarning("engine", `discardMilestone worktree cleanup failed for ${milestoneId}: ${(err as Error).message}`);
   }
 
-  rmSync(mDir, { recursive: true, force: true });
+  if (hasMilestoneDir) {
+    rmSync(mDir, { recursive: true, force: true });
+  }
 
   // Prune from queue order if present
   const order = loadQueueOrder(basePath);
@@ -155,13 +159,14 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   if (isDbAvailable()) {
     try {
       deleteMilestone(milestoneId);
+      dbCleanupSucceeded = true;
     } catch (err) {
       logWarning("engine", `discardMilestone DB cleanup failed for ${milestoneId}: ${(err as Error).message}`);
     }
   }
 
   invalidateAllCaches();
-  return true;
+  return hasMilestoneDir || dbCleanupSucceeded;
 }
 
 // ─── Query ─────────────────────────────────────────────────────────────────
