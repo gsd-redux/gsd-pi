@@ -24,6 +24,13 @@ function restoreDir(currentDir, relativeDir = '') {
   }
 }
 
+// Restore externals pruned from node_modules for the publish tarball. This is
+// independent of the workspace:* backup below and must run even when no
+// workspace ranges were rewritten.
+spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'prune-bundled-externals.cjs'), 'restore'], {
+  stdio: 'inherit',
+});
+
 if (!fs.existsSync(BACKUP_DIR)) {
   process.exit(0);
 }

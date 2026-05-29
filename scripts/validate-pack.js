@@ -201,6 +201,10 @@ try {
     cwd: ROOT,
     stdio: 'inherit',
   });
+  execFileSync(process.execPath, [join(__dirname, 'prune-bundled-externals.cjs')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
 
   console.log('==> Packing tarball...');
   const packOutput = runNpm(['pack', '--json', '--ignore-scripts']);
