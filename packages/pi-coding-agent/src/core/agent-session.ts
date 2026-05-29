@@ -874,6 +874,8 @@ export class AgentSession {
 	dispose(): void {
 		this._extensionErrorUnsubscriber?.();
 		this._extensionErrorUnsubscriber = undefined;
+		this._hooksRunner?.dispose();
+		this._hooksRunner = undefined;
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 	}
@@ -2478,6 +2480,7 @@ export class AgentSession {
 
 		// Layer 0: wire shell hooks from settings.json
 		if (this._extensionRunner) {
+			this._hooksRunner?.dispose();
 			this._hooksRunner = createHooksRunner({
 				extensionRunner: this._extensionRunner,
 				cwd: this._cwd,
@@ -2499,6 +2502,9 @@ export class AgentSession {
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner?.getFlagValues();
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
+		if (this._hooksRunner) {
+			await this._hooksRunner.fireSessionEnd("programmatic");
+		}
 		this.settingsManager.reload();
 		resetApiProviders();
 		await this._resourceLoader.reload();

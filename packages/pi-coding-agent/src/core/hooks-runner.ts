@@ -252,7 +252,10 @@ export function createHooksRunner(options: HooksRunnerOptions): HooksRunner {
 
 	// Base fields merged into every dispatched payload so consumers can key by
 	// session and determine project context without scanning.
-	const sessionId = (extensionRunner as unknown as { sessionManager?: { getSessionId?: () => string } })
+	interface RunnerWithSessionId {
+		sessionManager?: { getSessionId?(): string };
+	}
+	const sessionId = (extensionRunner as unknown as RunnerWithSessionId)
 		?.sessionManager?.getSessionId?.() ?? "";
 	const basePayload: Record<string, unknown> = { session_id: sessionId, cwd };
 

@@ -125,4 +125,41 @@ describe("AgentSession hooks wiring — regression for hooks-issue.md", () => {
 			"_hooksRunner must be re-created after reload() even with no extensions",
 		);
 	});
+
+	it("old _hooksRunner is disposed before new one is created on reload", async () => {
+		const session = await createSession({});
+		const firstRunner = (session as any)._hooksRunner;
+		assert.notEqual(firstRunner, undefined, "_hooksRunner must exist before reload");
+
+		let disposed = false;
+		const origDispose = firstRunner.dispose.bind(firstRunner);
+		firstRunner.dispose = () => { disposed = true; origDispose(); };
+
+		await session.reload();
+
+		assert.ok(disposed, "old _hooksRunner.dispose() must be called during reload");
+		const secondRunner = (session as any)._hooksRunner;
+		assert.notEqual(secondRunner, undefined, "new _hooksRunner must exist after reload");
+		assert.notStrictEqual(secondRunner, firstRunner, "new runner must be a different instance");
+	});
+
+	it("fireSessionEnd is called during reload before the runner is replaced", async () => {
+		const session = await createSession({});
+		const firstRunner = (session as any)._hooksRunner;
+		assert.notEqual(firstRunner, undefined, "_hooksRunner must exist before reload");
+
+		let endFired = false;
+		let endReason: string | undefined;
+		const origFireEnd = firstRunner.fireSessionEnd.bind(firstRunner);
+		firstRunner.fireSessionEnd = async (reason: string) => {
+			endFired = true;
+			endReason = reason;
+			return origFireEnd(reason);
+		};
+
+		await session.reload();
+
+		assert.ok(endFired, "fireSessionEnd must be called during reload");
+		assert.equal(endReason, "programmatic", "reason must be 'programmatic' for reload");
+	});
 });
