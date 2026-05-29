@@ -250,7 +250,14 @@ type HandlerFn = (event: unknown, ctx: unknown) => Promise<unknown>;
 export function createHooksRunner(options: HooksRunnerOptions): HooksRunner {
 	const { extensionRunner, cwd, onInvocation } = options;
 
+	// Base fields merged into every dispatched payload so consumers can key by
+	// session and determine project context without scanning.
+	const sessionId = (extensionRunner as unknown as { sessionManager?: { getSessionId?: () => string } })
+		?.sessionManager?.getSessionId?.() ?? "";
+	const basePayload: Record<string, unknown> = { session_id: sessionId, cwd };
+
 	const dispatch = async (name: HookName, payload: Record<string, unknown>) => {
+		const merged = { ...basePayload, ...payload };
 		const hooks = collectHooks(
 			name,
 			options.getGlobalSettings(),
@@ -258,7 +265,7 @@ export function createHooksRunner(options: HooksRunnerOptions): HooksRunner {
 			cwd,
 		);
 		if (hooks.length === 0) return undefined;
-		return runChain(name, payload, hooks, cwd, onInvocation);
+		return runChain(name, merged, hooks, cwd, onInvocation);
 	};
 
 	const handlers = new Map<string, HandlerFn[]>();

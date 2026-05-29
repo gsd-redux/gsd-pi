@@ -83,6 +83,7 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import { emitTokenTelemetry } from "./token-telemetry.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
+import { createHooksRunner, type HooksRunner } from "./hooks-runner.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -275,6 +276,7 @@ export class AgentSession {
 
 	// Extension system
 	private _extensionRunner: ExtensionRunner | undefined = undefined;
+	private _hooksRunner: HooksRunner | undefined = undefined;
 	private _turnIndex = 0;
 	private _processingAgentEnd = false;
 	/** True while newSession()/switchSession() is in progress; signals agent_end
@@ -2147,6 +2149,10 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start" });
 			await this.extendResourcesFromExtensions("startup");
 		}
+		// Layer 0: fire shell-hook SessionStart
+		if (this._hooksRunner) {
+			await this._hooksRunner.fireSessionStart();
+		}
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -2455,13 +2461,29 @@ export class AgentSession {
 						this.sessionManager,
 						this._modelRegistry,
 					)
-				: undefined;
+				: new ExtensionRunner(
+						[],
+						extensionsResult.runtime,
+						this._cwd,
+						this.sessionManager,
+						this._modelRegistry,
+					);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
 		}
 		if (this._extensionRunner) {
 			this._bindExtensionCore(this._extensionRunner);
 			this._applyExtensionBindings(this._extensionRunner);
+		}
+
+		// Layer 0: wire shell hooks from settings.json
+		if (this._extensionRunner) {
+			this._hooksRunner = createHooksRunner({
+				extensionRunner: this._extensionRunner,
+				cwd: this._cwd,
+				getGlobalSettings: () => this.settingsManager.getGlobalSettings(),
+				getProjectSettings: () => this.settingsManager.getProjectSettings(),
+			});
 		}
 
 		const defaultActiveToolNames = this._baseToolsOverride
@@ -2495,6 +2517,10 @@ export class AgentSession {
 		if (this._extensionRunner && hasBindings) {
 			await this._extensionRunner.emit({ type: "session_start" });
 			await this.extendResourcesFromExtensions("reload");
+		}
+		// Layer 0: re-fire shell-hook SessionStart after reload
+		if (this._hooksRunner) {
+			await this._hooksRunner.fireSessionStart();
 		}
 	}
 

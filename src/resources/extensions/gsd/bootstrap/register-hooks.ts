@@ -517,6 +517,18 @@ export function registerHooks(
       const prefs = loadEffectiveGSDPreferences(basePath);
       process.env.GSD_SHOW_TOKEN_COST = prefs?.preferences.show_token_cost ? "1" : "";
     } catch { /* non-fatal */ }
+
+    // Enumerate configured MCP servers and surface awareness to the agent.
+    // Without this, the agent starts blind to available MCP integrations.
+    try {
+      const { readMcpServerConfigs } = await import("../../mcp-client/manager.js");
+      const servers = readMcpServerConfigs({ projectDir: basePath });
+      if (servers.length > 0) {
+        const names = servers.map((s) => s.name);
+        ctx.ui.setStatus("mcp-servers", `MCP servers: ${names.join(", ")}`);
+      }
+    } catch { /* non-fatal — MCP subsystem may not be available */ }
+
     await installWelcomeHeader(ctx);
     await loadToolApiKeysForSession();
     if (isAutoActive()) {
