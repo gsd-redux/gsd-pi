@@ -107,7 +107,7 @@
     "verify:version-sync": "node scripts/verify-version-sync.cjs",
     "validate-pack": "node scripts/validate-pack.js",
     "prepack": "node scripts/prepack-resolve-workspace.cjs && node scripts/materialize-bundled-deps.cjs && node scripts/prune-bundled-externals.cjs",
-    "postpack": "node scripts/prune-bundled-externals.cjs restore && node scripts/postpack-restore-workspace.cjs",
+    "postpack": "node scripts/postpack-restore-workspace.cjs",
     "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
     "audit:test-confidence": "node scripts/audit-test-confidence.mjs",
     "audit:test-gaps": "node scripts/audit-test-gaps.mjs",
