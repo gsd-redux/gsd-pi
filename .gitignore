@@ -21,6 +21,7 @@ coverage/
 *.tgz
 .gsd*.tgz
 .prepack-backup/
+.prepack-prune-backup/
 .package.json.prepack.bak
 bun.lock
 
