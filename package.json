@@ -20,7 +20,9 @@
   "files": [
     "dist",
     "dist/web",
-    "packages",
+    "packages/*/dist/**",
+    "packages/*/package.json",
+    "packages/*/README.md",
     "pkg",
     "src/resources",
     "scripts/postinstall.js",
@@ -230,20 +232,5 @@
     "c8": {
       "yargs": "^18.0.0"
     }
-  },
-  "bundleDependencies": [
-    "@gsd/agent-core",
-    "@gsd/agent-modes",
-    "@gsd/native",
-    "@gsd/pi-agent-core",
-    "@gsd/pi-ai",
-    "@gsd/pi-coding-agent",
-    "@gsd/pi-tui",
-    "@modelcontextprotocol/sdk",
-    "minimatch",
-    "picomatch",
-    "proper-lockfile",
-    "undici",
-    "yaml"
-  ]
+  }
 }

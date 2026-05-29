@@ -217,6 +217,42 @@ try {
   const stats = statSync(tarball);
   console.log(`==> Tarball: ${tarballName} (${formatBytes(stats.size)} compressed)`);
 
+  // --- Guard: fail loudly on tarball bloat ---
+  // The npm->pnpm migration repeatedly shipped a 537MB / 85k-file tarball because
+  // npm's bundle walker followed the pnpm virtual store (node_modules/.pnpm) and the
+  // nested packages/*/node_modules trees. These assertions turn that silent bloat
+  // into a hard failure before publish. Thresholds sit well above the legitimate
+  // bundled payload (~15k files / ~220MB unpacked) with headroom for growth.
+  const MAX_ENTRY_COUNT = 30000;
+  const MAX_UNPACKED_BYTES = 350 * 1024 * 1024;
+  const entryCount = packEntry?.entryCount ?? 0;
+  const unpackedSize = packEntry?.unpackedSize ?? 0;
+  const allPackedPaths = Array.isArray(packEntry?.files)
+    ? packEntry.files.map((entry) => entry?.path).filter(Boolean)
+    : [];
+  const pnpmStorePaths = allPackedPaths.filter((p) => p.startsWith('node_modules/.pnpm/'));
+  const nestedNmPaths = allPackedPaths.filter((p) => /^packages\/[^/]+\/node_modules\//.test(p));
+  const bloatErrors = [];
+  if (entryCount > MAX_ENTRY_COUNT) {
+    bloatErrors.push(`entry count ${entryCount} exceeds ${MAX_ENTRY_COUNT} (pnpm store or nested node_modules likely leaked)`);
+  }
+  if (unpackedSize > MAX_UNPACKED_BYTES) {
+    bloatErrors.push(`unpacked size ${formatBytes(unpackedSize)} exceeds ${formatBytes(MAX_UNPACKED_BYTES)}`);
+  }
+  if (pnpmStorePaths.length > 500) {
+    bloatErrors.push(`${pnpmStorePaths.length} node_modules/.pnpm/* entries packed (e.g. ${pnpmStorePaths[0]}) — bundled deps are dragging in the pnpm virtual store`);
+  }
+  if (nestedNmPaths.length > 0) {
+    bloatErrors.push(`${nestedNmPaths.length} packages/*/node_modules/* entries packed (e.g. ${nestedNmPaths[0]}) — files[] is shipping workspace node_modules`);
+  }
+  if (bloatErrors.length) {
+    console.log('ERROR: Tarball bloat guard tripped:');
+    for (const e of bloatErrors) console.log(`    ${e}`);
+    console.log('    See scripts/materialize-bundled-deps.cjs (@gsd flatten) and package.json "files".');
+    process.exit(1);
+  }
+  console.log(`    Size guard OK: ${entryCount} entries, ${formatBytes(unpackedSize)} unpacked, ${pnpmStorePaths.length} .pnpm entries.`);
+
   // npm install can consume/delete a cwd-local tarball; keep a temp copy for later smoke tests.
   const packedTarballPath = tarball;
   tarball = join(mkdtempSync(join(tmpdir(), 'validate-pack-tarball-')), tarballName);
