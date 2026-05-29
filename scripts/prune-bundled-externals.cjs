@@ -127,6 +127,7 @@ function restorePackageNodeModules() {
 }
 
 function prune() {
+  if (fs.existsSync(BACKUP_DIR)) restore();
   if (!fs.existsSync(NODE_MODULES)) return;
   const keep = computeKeepClosure();
   const manifest = [];
