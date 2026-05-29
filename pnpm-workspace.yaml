@@ -7,6 +7,13 @@ autoInstallPeers: true
 strictPeerDependencies: false
 engineStrict: true
 
+# Publish a flat, npm-style node_modules (no `.pnpm` virtual store, no per-package
+# nested trees). The isolated layout caused `npm pack` to sweep the entire `.pnpm`
+# store and every bundled workspace package's node_modules into the tarball, blowing
+# the file count past npm's publish limit ("too many files"; ~76k files vs the
+# ~9.6k npm-era baseline). Hoisted matches the pre-pnpm-migration layout.
+nodeLinker: hoisted
+
 # npm registry rejects tarballs containing hard-linked files (E415). pnpm hard-links
 # by default; copy mode breaks those links so bundledDependencies pack cleanly.
 packageImportMethod: copy
