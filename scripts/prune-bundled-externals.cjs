@@ -95,6 +95,37 @@ function listInstalledPackages() {
   return out;
 }
 
+// pnpm leaves per-workspace-package node_modules (cross-package @gsd/* links and
+// version-conflicting externals) under packages/*. The "files" array ships these
+// verbatim, and `npm pack` follows them, re-shipping heavy deps (e.g. @anthropic-ai/sdk,
+// zod) and duplicate @gsd/* copies. At runtime every workspace package resolves its
+// dependencies from the hoisted root node_modules (and the install-time
+// link-workspace-packages step), so these nested trees are redundant in the tarball.
+const PACKAGES_DIR = path.join(ROOT, 'packages');
+const PKG_NM_BACKUP = path.join(BACKUP_DIR, '__packages_node_modules__');
+
+function prunePackageNodeModules(manifest) {
+  if (!fs.existsSync(PACKAGES_DIR)) return;
+  for (const pkgDir of fs.readdirSync(PACKAGES_DIR)) {
+    const nm = path.join(PACKAGES_DIR, pkgDir, 'node_modules');
+    if (!fs.existsSync(nm)) continue;
+    const dst = path.join(PKG_NM_BACKUP, pkgDir);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.renameSync(nm, dst);
+    manifest.push(`packages/${pkgDir}/node_modules`);
+  }
+}
+
+function restorePackageNodeModules() {
+  if (!fs.existsSync(PKG_NM_BACKUP)) return;
+  for (const pkgDir of fs.readdirSync(PKG_NM_BACKUP)) {
+    const src = path.join(PKG_NM_BACKUP, pkgDir);
+    const dst = path.join(PACKAGES_DIR, pkgDir, 'node_modules');
+    if (fs.existsSync(dst)) fs.rmSync(dst, { recursive: true, force: true });
+    fs.renameSync(src, dst);
+  }
+}
+
 function prune() {
   if (!fs.existsSync(NODE_MODULES)) return;
   const keep = computeKeepClosure();
@@ -114,17 +145,20 @@ function prune() {
     fs.renameSync(src, dst);
     manifest.push(dep);
   }
+  prunePackageNodeModules(manifest);
   if (manifest.length > 0) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
     fs.writeFileSync(
       path.join(BACKUP_DIR, 'pruned-externals.json'),
       `${JSON.stringify(manifest, null, 2)}\n`,
     );
-    console.log(`[prune-bundled-externals] Pruned ${manifest.length} external packages from the publish tarball (they install from the registry)`);
+    console.log(`[prune-bundled-externals] Pruned ${manifest.length} entries from the publish tarball (resolved from the registry / hoisted root at install time)`);
   }
 }
 
 function restore() {
   if (!fs.existsSync(BACKUP_DIR)) return;
+  restorePackageNodeModules();
   for (const dep of listBackupPackages()) {
     const src = path.join(BACKUP_DIR, dep);
     const dst = path.join(NODE_MODULES, dep);
@@ -135,13 +169,14 @@ function restore() {
     fs.renameSync(src, dst);
   }
   fs.rmSync(BACKUP_DIR, { recursive: true, force: true });
-  console.log('[prune-bundled-externals] Restored pruned external packages');
+  console.log('[prune-bundled-externals] Restored pruned packages');
 }
 
 function listBackupPackages() {
   const out = [];
   for (const entry of fs.readdirSync(BACKUP_DIR)) {
     if (entry === 'pruned-externals.json') continue;
+    if (entry === '__packages_node_modules__') continue; // restored separately
     if (isScope(entry)) {
       for (const child of fs.readdirSync(path.join(BACKUP_DIR, entry))) out.push(`${entry}/${child}`);
     } else {
