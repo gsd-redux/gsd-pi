@@ -601,6 +601,7 @@ export async function runPostUnitVerification(
     // ── Post-execution checks (run after main verification passes for execute-task units) ──
     let postExecChecks: PostExecutionCheckJSON[] | undefined;
     let postExecBlockingFailure = false;
+    let firstPostExecBlockingCheck: PostExecutionCheckJSON | undefined;
 
     if (result.passed && mid && sid && tid) {
       // Check preferences — respect enhanced_verification and enhanced_verification_post
@@ -694,9 +695,11 @@ export async function runPostUnitVerification(
             // Check for blocking failures
             if (postExecResult.status === "fail") {
               postExecBlockingFailure = true;
-              const blockingCount = postExecResult.checks.filter(
+              const blockingChecks = postExecResult.checks.filter(
                 (c) => !c.passed && c.blocking
-              ).length;
+              );
+              firstPostExecBlockingCheck = blockingChecks[0];
+              const blockingCount = blockingChecks.length;
               ctx.ui.notify(
                 `Post-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
                 "error"
@@ -811,12 +814,15 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
+      const postExecFailureDetail = firstPostExecBlockingCheck
+        ? `[${firstPostExecBlockingCheck.category}] ${firstPostExecBlockingCheck.target}: ${firstPostExecBlockingCheck.message}`
+        : "unknown post-execution blocking failure";
       ctx.ui.notify(
-        `Post-execution checks failed — cross-task consistency issue detected, pausing for human review`,
+        `Post-execution checks failed — ${postExecFailureDetail}. Pausing for human review.`,
         "error",
       );
       await pauseAuto(ctx, pi, {
-        message: "Post-execution checks failed: cross-task consistency issue detected.",
+        message: `Post-execution checks failed: ${postExecFailureDetail}.`,
         category: "unknown",
       });
       return "pause";
