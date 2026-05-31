@@ -601,6 +601,7 @@ export async function runPostUnitVerification(
     // ── Post-execution checks (run after main verification passes for execute-task units) ──
     let postExecChecks: PostExecutionCheckJSON[] | undefined;
     let postExecBlockingFailure = false;
+    let postExecFailureSummary: string | undefined;
 
     if (result.passed && mid && sid && tid) {
       // Check preferences — respect enhanced_verification and enhanced_verification_post
@@ -694,9 +695,13 @@ export async function runPostUnitVerification(
             // Check for blocking failures
             if (postExecResult.status === "fail") {
               postExecBlockingFailure = true;
-              const blockingCount = postExecResult.checks.filter(
-                (c) => !c.passed && c.blocking
-              ).length;
+              const failedChecks = postExecResult.checks.filter((c) => !c.passed);
+              const blockingCount = failedChecks.filter((c) => c.blocking).length;
+              const primaryFailure =
+                failedChecks.find((c) => c.blocking) ?? failedChecks[0];
+              if (primaryFailure) {
+                postExecFailureSummary = `[${primaryFailure.category}] ${primaryFailure.target}: ${primaryFailure.message}`;
+              }
               ctx.ui.notify(
                 `Post-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
                 "error"
@@ -709,6 +714,10 @@ export async function runPostUnitVerification(
               // Strict mode: treat warnings as blocking
               if (prefs?.enhanced_verification_strict === true) {
                 postExecBlockingFailure = true;
+                const warningCheck = postExecResult.checks.find((c) => !c.passed);
+                if (warningCheck) {
+                  postExecFailureSummary = `[${warningCheck.category}] ${warningCheck.target}: ${warningCheck.message}`;
+                }
               }
             }
           }
@@ -811,12 +820,13 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
+      const postExecFailureDetail = postExecFailureSummary ?? "specific failing check unavailable";
       ctx.ui.notify(
-        `Post-execution checks failed — cross-task consistency issue detected, pausing for human review`,
+        `Post-execution checks failed — ${postExecFailureDetail}; pausing for human review`,
         "error",
       );
       await pauseAuto(ctx, pi, {
-        message: "Post-execution checks failed: cross-task consistency issue detected.",
+        message: `Post-execution checks failed: ${postExecFailureDetail}.`,
         category: "unknown",
       });
       return "pause";
