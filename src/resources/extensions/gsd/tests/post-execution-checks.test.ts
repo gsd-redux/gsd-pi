@@ -451,6 +451,28 @@ describe("checkImportResolution", () => {
     }
   });
 
+  test("ignores generated SvelteKit $types imports", () => {
+    tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    mkdirSync(join(tempDir, "src", "routes"), { recursive: true });
+    writeFileSync(
+      join(tempDir, "src", "routes", "+page.svelte.ts"),
+      "import type { PageLoad } from './$types';\nexport const load: PageLoad = async () => ({})"
+    );
+
+    try {
+      const task = createTask({
+        id: "T01",
+        key_files: ["src/routes/+page.svelte.ts"],
+      });
+
+      const results = checkImportResolution(task, [], tempDir);
+      assert.deepEqual(results, []);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("fails when import doesn't resolve", () => {
     tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
