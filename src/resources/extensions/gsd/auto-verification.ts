@@ -601,6 +601,7 @@ export async function runPostUnitVerification(
     // ── Post-execution checks (run after main verification passes for execute-task units) ──
     let postExecChecks: PostExecutionCheckJSON[] | undefined;
     let postExecBlockingFailure = false;
+    let postExecPauseDetail: string | null = null;
 
     if (result.passed && mid && sid && tid) {
       // Check preferences — respect enhanced_verification and enhanced_verification_post
@@ -697,6 +698,10 @@ export async function runPostUnitVerification(
               const blockingCount = postExecResult.checks.filter(
                 (c) => !c.passed && c.blocking
               ).length;
+              const firstBlocking = postExecResult.checks.find((c) => !c.passed && c.blocking);
+              if (firstBlocking) {
+                postExecPauseDetail = `[${firstBlocking.category}] ${firstBlocking.target}: ${firstBlocking.message}`;
+              }
               ctx.ui.notify(
                 `Post-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
                 "error"
@@ -811,12 +816,13 @@ export async function runPostUnitVerification(
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
+      const pauseDetail = postExecPauseDetail ?? "post-execution blocking check failed";
       ctx.ui.notify(
-        `Post-execution checks failed — cross-task consistency issue detected, pausing for human review`,
+        `Post-execution checks failed — ${pauseDetail}. Pausing for human review.`,
         "error",
       );
       await pauseAuto(ctx, pi, {
-        message: "Post-execution checks failed: cross-task consistency issue detected.",
+        message: `Post-execution checks failed: ${pauseDetail}.`,
         category: "unknown",
       });
       return "pause";
