@@ -712,6 +712,9 @@ export async function runPostUnitVerification(
               // Strict mode: treat warnings as blocking
               if (prefs?.enhanced_verification_strict === true) {
                 postExecBlockingFailure = true;
+                firstPostExecBlockingCheck = postExecResult.checks.find(
+                  (c) => (!c.passed && !c.blocking) || (c.passed && c.category === "pattern")
+                );
               }
             }
           }

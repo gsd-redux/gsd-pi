@@ -238,6 +238,43 @@ function createPostExecFailureTask(): void {
   });
 }
 
+function createPostExecWarningTask(): void {
+  insertMilestone({ id: "M001" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Test Slice",
+    risk: "low",
+  });
+
+  const srcDir = join(tempDir, "src");
+  mkdirSync(srcDir, { recursive: true });
+  writeFileSync(
+    join(srcDir, "style.ts"),
+    "export async function loadUser() {\n  await Promise.resolve();\n  return fetch('/user').then((response) => response.json());\n}\n",
+    "utf-8",
+  );
+
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task with style warning",
+    status: "pending",
+    keyFiles: ["src/style.ts"],
+    planning: {
+      description: "Task that introduces a post-execution warning in key files",
+      estimate: "1h",
+      files: ["src/style.ts"],
+      verify: "echo pass",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "",
+    },
+    sequence: 0,
+  });
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("Post-execution blocking failure retry bypass", () => {
@@ -379,7 +416,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(result, "pause");
     assert.equal(pauseAutoMock.mock.callCount(), 1);
 
-    const pauseCall = pauseAutoMock.mock.calls[0];
+    const pauseCall = pauseAutoMock.mock.calls[0] as { arguments: unknown[] };
     const pauseContext = pauseCall.arguments[2] as { message?: string } | undefined;
     assert.ok(pauseContext?.message?.includes("[import] src/broken.ts:1"));
     assert.ok(pauseContext?.message?.includes("does not resolve to an existing file"));
@@ -390,6 +427,43 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(
       notifyMessages.some((message: string) =>
         message.includes("Post-execution checks failed — [import] src/broken.ts:1")
+      )
+    );
+  });
+
+  test("strict post-exec warning pause message includes warning check details", async () => {
+    createPostExecWarningTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: true,
+      enhanced_verification_strict: true,
+      verification_auto_fix: true,
+      verification_max_retries: 3,
+    });
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+
+    const vctx: VerificationContext = { s, ctx, pi };
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+
+    const pauseCall = pauseAutoMock.mock.calls[0] as { arguments: unknown[] };
+    const pauseContext = pauseCall.arguments[2] as { message?: string } | undefined;
+    assert.ok(pauseContext?.message?.includes("[pattern] src/style.ts"));
+    assert.ok(pauseContext?.message?.includes("mixes async/await with .then()"));
+    assert.ok(!pauseContext?.message?.includes("unknown post-execution blocking failure"));
+
+    const notifyMessages = ctx.ui.notify.mock.calls.map(
+      (c: { arguments: unknown[] }) => String(c.arguments[0])
+    );
+    assert.ok(
+      notifyMessages.some((message: string) =>
+        message.includes("Post-execution checks failed — [pattern] src/style.ts")
       )
     );
   });
