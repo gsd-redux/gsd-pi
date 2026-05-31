@@ -318,10 +318,15 @@ export function checkImportResolution(
     const imports = extractRelativeImports(source);
 
     for (const { importPath, lineNum } of imports) {
-      // React Router generated +types modules may not exist on disk during
+      // Framework-generated types modules may not exist on disk during
       // post-exec checks (generated during framework build). Don't block task
       // completion on these imports.
-      if (/^\.{1,2}\/\+types\//.test(importPath)) {
+      // - React Router: ./+types/<route>
+      // - SvelteKit: ./$types or ./$types/<route>
+      if (
+        /^\.{1,2}\/\+types\//.test(importPath) ||
+        /^\.{1,2}\/\$types(?:$|\/)/.test(importPath)
+      ) {
         continue;
       }
 
