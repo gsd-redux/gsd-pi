@@ -359,13 +359,8 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(messages.some((m: string) => m.includes("Verification failed") && m.includes("auto-fix attempt 1/2")));
   });
 
-  test("post-exec failure notification mentions cross-task consistency", async () => {
-    // This test verifies that the notification for post-exec failures includes
-    // the appropriate message about cross-task consistency issues.
-    // The actual post-exec failure would require specific file/output state
-    // that's harder to set up in a unit test, but we can verify the code path exists.
-    
-    createBasicTask();
+  test("post-exec failure pause surfaces the failing check detail", async () => {
+    createPostExecFailureTask();
     writePreferences({
       enhanced_verification: true,
       enhanced_verification_post: true,
@@ -381,9 +376,22 @@ describe("Post-execution blocking failure retry bypass", () => {
     const vctx: VerificationContext = { s, ctx, pi };
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
-    // The verification should pass with our simple "echo pass" task
-    // This test mainly confirms the wiring is correct
-    assert.equal(result, "continue");
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+
+    const pauseArgs = pauseAutoMock.mock.calls[0]?.arguments;
+    assert.ok(pauseArgs, "pauseAuto should be called with pause context");
+    const pauseContext = pauseArgs?.[2] as { message?: string } | undefined;
+    assert.ok(
+      pauseContext?.message?.includes("[import] src/broken.ts:1"),
+      "pause message should include failing post-exec category and target",
+    );
+
+    const messages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) => String(c.arguments[0]));
+    assert.ok(
+      messages.some((m: string) => m.includes("Post-execution checks failed — [import] src/broken.ts:1")),
+      "notification should include failing post-exec category and target",
+    );
   });
 
   test("uok gate runner persists post-execution gate failures when enabled", async () => {
