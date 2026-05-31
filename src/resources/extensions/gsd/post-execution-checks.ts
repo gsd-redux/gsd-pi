@@ -318,10 +318,9 @@ export function checkImportResolution(
     const imports = extractRelativeImports(source);
 
     for (const { importPath, lineNum } of imports) {
-      // React Router generated +types modules may not exist on disk during
-      // post-exec checks (generated during framework build). Don't block task
-      // completion on these imports.
-      if (/^\.{1,2}\/\+types\//.test(importPath)) {
+      // Framework-generated type modules may not exist on disk during
+      // post-exec checks. Don't block task completion on these imports.
+      if (isGeneratedTypeImport(importPath)) {
         continue;
       }
 
@@ -340,6 +339,20 @@ export function checkImportResolution(
   }
 
   return results;
+}
+
+function isGeneratedTypeImport(importPath: string): boolean {
+  // React Router generated route types.
+  if (/^\.{1,2}\/\+types(?:\/|$)/.test(importPath)) {
+    return true;
+  }
+
+  // SvelteKit generated route types imported as "./$types" (or with extension).
+  if (/^\.{1,2}\/\$types(?:$|\.[^/]+$)/.test(importPath)) {
+    return true;
+  }
+
+  return false;
 }
 
 // ─── Cross-Task Signature Check ──────────────────────────────────────────────
