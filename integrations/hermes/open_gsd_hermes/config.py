@@ -20,7 +20,7 @@ class GsdConfig:
     poll_interval_seconds: int = 12
     cache_ttl_seconds: int = 45
     notification_level: str = "normal"
-    gsd_version_min: str = "1.0"
+    gsd_version_min: str = "2.53"
     gsd_version_max: str = "3.0"
     hermes_memory_path: str | None = None
 
@@ -36,7 +36,7 @@ class GsdConfig:
             poll_interval_seconds=int(gsd.get("poll_interval_seconds", 12)),
             cache_ttl_seconds=int(gsd.get("cache_ttl_seconds", 45)),
             notification_level=str(gsd.get("notification_level", "normal")),
-            gsd_version_min=str(gsd.get("gsd_version_min", "1.0")),
+            gsd_version_min=str(gsd.get("gsd_version_min", "2.53")),
             gsd_version_max=str(gsd.get("gsd_version_max", "3.0")),
             hermes_memory_path=gsd.get("hermes_memory_path"),
         )

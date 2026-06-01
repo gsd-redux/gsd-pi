@@ -28,7 +28,7 @@ First usable outcome (6a): from Slack/Telegram, a user can `/gsd bind`, `/gsd au
 |------|----------|
 | Success criterion | Full platform play: gateway + cron + supervision |
 | Hermes integration | Deep general plugin: slash commands, `pre_llm_call` injection, memory provider (6c), background supervisor |
-| Project binding | Tiered: cron explicit → channel/thread map → `/gsd bind` → profile default → fail closed |
+| Project binding | Tiered: cron explicit → slash argument → `/gsd bind` session binding → channel/thread map → profile default → fail closed |
 | Read path | MCP sidecar (6a) → `gsd read --json` CLI (6c); TTL cache ~45s |
 | Execution | Gateway: MCP `gsd_execute`/`gsd_status`; Cron: `gsd headless auto` |
 | Plugin home | Start in `integrations/hermes/`; extract `open-gsd-hermes` pip package at 6c |

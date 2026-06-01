@@ -142,9 +142,12 @@ class GsdCommandRouter:
         ctx = self._get_supervisor_ctx()
         try:
             try:
-                project_dir = resolve_project_dir(
-                    self._config, self._binding_ctx()
-                )
+                if ctx.session_id and ctx.project_dir:
+                    project_dir = resolve_explicit_project_dir(ctx.project_dir)
+                else:
+                    project_dir = resolve_project_dir(
+                        self._config, self._binding_ctx()
+                    )
             except BindingError as e:
                 result = str(e)
             else:

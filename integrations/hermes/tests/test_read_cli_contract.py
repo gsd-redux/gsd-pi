@@ -7,6 +7,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 FIXTURE = Path(__file__).parent / "fixtures" / "minimal-project"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GSD_CLI = os.environ.get("GSD_CLI_PATH", "node")
@@ -23,7 +25,7 @@ def _gsd_cmd(*args: str) -> list[str]:
 
 def test_read_cli_progress_fixture() -> None:
     if not Path(GSD_LOADER).exists():
-        return
+        pytest.skip(f"GSD loader not built: {GSD_LOADER}")
 
     result = subprocess.run(
         _gsd_cmd(

@@ -76,7 +76,7 @@ class SupervisorFsm:
 
     def stop(self) -> None:
         self._stop.set()
-        if self._thread:
+        if self._thread and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
         self._thread = None
 
@@ -100,11 +100,19 @@ class SupervisorFsm:
             return
 
         status = self._client.status(ctx.session_id)
-        progress = self._client.progress(ctx.project_dir)
+        try:
+            progress = self._client.progress(ctx.project_dir)
+        except Exception:
+            progress = None
         ctx.last_status = status
+        blocker_notification: SessionStatus | None = None
         terminal_notification: tuple[str, str | None] | None = None
 
         new_state = self._map_status(status.status)
+        pending_blocker_id = (
+            (status.pending_blocker or {}).get("id")
+            or (status.pending_blocker or {}).get("blockerId")
+        )
         if (
             status.pending_blocker
             and new_state not in TERMINAL
@@ -115,21 +123,30 @@ class SupervisorFsm:
         if new_state != ctx.state:
             ctx.state = new_state
             if new_state == SupervisorState.BLOCKED:
-                ctx.pending_blocker_id = (
-                    (status.pending_blocker or {}).get("id")
-                    or (status.pending_blocker or {}).get("blockerId")
-                )
-                self._notifications.notify_blocker(status)
+                blocker_notification = status
             elif new_state in TERMINAL and not ctx.notified_terminal:
                 ctx.notified_terminal = True
                 terminal_notification = (status.status, status.error)
+        elif (
+            new_state == SupervisorState.BLOCKED
+            and pending_blocker_id
+            and pending_blocker_id != ctx.pending_blocker_id
+        ):
+            blocker_notification = status
 
-        self._diff_progress(ctx, progress)
+        if new_state == SupervisorState.BLOCKED:
+            ctx.pending_blocker_id = pending_blocker_id
+
+        if progress is not None:
+            self._diff_progress(ctx, progress)
+            ctx.last_progress = progress
+        if terminal_notification:
+            stop_event.set()
+        self._set_context(ctx)
+        if blocker_notification:
+            self._notifications.notify_blocker(blocker_notification)
         if terminal_notification:
             self._notifications.notify_terminal(*terminal_notification)
-            stop_event.set()
-        ctx.last_progress = progress
-        self._set_context(ctx)
 
     def _map_status(self, raw: str) -> SupervisorState:
         mapping = {

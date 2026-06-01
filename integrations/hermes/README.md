@@ -29,5 +29,5 @@ bash integrations/hermes/scripts/preflight.sh
 
 ## Requirements
 
-- `gsd >=1.0,<3` (override `gsd_version_min` in `~/.hermes/gsd.yaml` per release train)
+- `gsd >=2.53,<3` (override `gsd_version_min` in `~/.hermes/gsd.yaml` per release train)
 - `gsd-mcp-server` on PATH or configured in `gsd.yaml`

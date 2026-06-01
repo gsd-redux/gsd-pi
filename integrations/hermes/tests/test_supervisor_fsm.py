@@ -6,6 +6,8 @@ import asyncio
 import threading
 from unittest.mock import MagicMock
 
+import pytest
+
 from open_gsd_hermes.binding import SessionBindStore
 from open_gsd_hermes.commands import GsdCommandRouter
 from open_gsd_hermes.config import GsdConfig
@@ -250,6 +252,42 @@ def test_cancel_sends_terminal_notification_after_successful_mcp_cancel(tmp_path
     assert stored == [ctx]
 
 
+def test_cancel_prefers_supervisor_project_for_active_session(tmp_path) -> None:
+    current_project = tmp_path / "current"
+    current_project.mkdir()
+    (current_project / ".gsd").mkdir()
+    running_project = tmp_path / "running"
+    running_project.mkdir()
+    (running_project / ".gsd").mkdir()
+    supervisor = MockSupervisor()
+    client = MagicMock()
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir=str(running_project),
+        state=SupervisorState.RUNNING,
+    )
+    stored: list[SupervisorContext] = []
+    router = GsdCommandRouter(
+        GsdConfig(default_project=str(current_project)),
+        client,
+        SessionBindStore(),
+        supervisor,  # type: ignore[arg-type]
+        lambda: "session-key",
+        lambda: BindingContext(),
+        lambda: ctx,
+        stored.append,
+        lambda: (None, None),
+    )
+
+    result = asyncio.run(router._cmd_cancel([]))
+
+    assert result == "Cancel requested."
+    client.cancel.assert_called_once_with(
+        session_id="s1",
+        project_dir=str(running_project),
+    )
+
+
 def test_cancel_stops_supervisor_when_binding_resolution_fails(tmp_path) -> None:
     supervisor = MockSupervisor()
     client = MagicMock()
@@ -275,7 +313,7 @@ def test_cancel_stops_supervisor_when_binding_resolution_fails(tmp_path) -> None
 
     result = asyncio.run(router._cmd_cancel([]))
 
-    assert result.startswith("No GSD project bound.")
+    assert "is not a GSD project" in result
     client.cancel.assert_not_called()
     client.cancel_by_project.assert_not_called()
     assert supervisor.calls == ["stop"]
@@ -423,6 +461,88 @@ def test_supervisor_terminal_status_takes_precedence_over_pending_blocker() -> N
     assert fsm._stop.is_set()
     assert stored == [ctx]
     assert sent == ["✅ GSD auto mode finished."]
+
+
+def test_supervisor_notifies_new_blocker_while_already_blocked() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.BLOCKED,
+        pending_blocker_id="b1",
+    )
+    client = MockClient()
+    client._status = SessionStatus(
+        status="running",
+        pending_blocker={"id": "b2", "question": "Choose option?"},
+    )
+    notifications = MagicMock()
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,  # type: ignore[arg-type]
+        notifications,
+        lambda: ctx,
+        lambda c: None,
+    )
+
+    fsm._tick()
+
+    assert ctx.pending_blocker_id == "b2"
+    notifications.notify_blocker.assert_called_once_with(client._status)
+
+
+def test_supervisor_terminal_status_notifies_even_when_progress_fails() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.RUNNING,
+    )
+    client = MagicMock()
+    client.status.return_value = SessionStatus(status="complete")
+    client.progress.side_effect = RuntimeError("read failed")
+    notifications = MagicMock()
+    stored: list[SupervisorContext] = []
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,
+        notifications,
+        lambda: ctx,
+        stored.append,
+    )
+
+    fsm._tick()
+
+    assert fsm._stop.is_set()
+    assert ctx.state == SupervisorState.COMPLETE
+    assert ctx.notified_terminal
+    assert stored == [ctx]
+    notifications.notify_terminal.assert_called_once_with("complete", None)
+
+
+def test_supervisor_terminal_notification_failure_still_stops() -> None:
+    ctx = SupervisorContext(
+        session_id="s1",
+        project_dir="/tmp/p",
+        state=SupervisorState.RUNNING,
+    )
+    client = MockClient()
+    client._status = SessionStatus(status="complete")
+    notifications = MagicMock()
+    notifications.notify_terminal.side_effect = RuntimeError("dispatch failed")
+    stored: list[SupervisorContext] = []
+    fsm = SupervisorFsm(
+        GsdConfig(),
+        client,  # type: ignore[arg-type]
+        notifications,
+        lambda: ctx,
+        stored.append,
+    )
+
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        fsm._tick()
+
+    assert fsm._stop.is_set()
+    assert ctx.notified_terminal
+    assert stored == [ctx]
 
 
 def test_supervisor_keeps_cache_when_progress_unchanged() -> None:

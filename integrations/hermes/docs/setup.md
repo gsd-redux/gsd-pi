@@ -1,6 +1,6 @@
 # Hermes × GSD Gateway Setup Checklist
 
-Manual validation before releasing `open-gsd-hermes` 1.0.x. Complete **local preflight** first, then run the **Slack** or **Telegram** gateway walkthrough on a real GSD project.
+Manual validation before releasing `open-gsd-hermes` 1.2.x. Complete **local preflight** first, then run the **Slack** or **Telegram** gateway walkthrough on a real GSD project.
 
 ---
 
@@ -25,7 +25,7 @@ Run before touching Slack or Telegram.
 | Step | Command / check | Pass criteria |
 |------|-----------------|---------------|
 | P1 | `bash integrations/hermes/scripts/preflight.sh` | All checks ✓, exit 0 |
-| P2 | `gsd --version` | Semver in `>=1.0,<3` (or your configured `gsd_version_min`) |
+| P2 | `gsd --version` | Semver in `>=2.53,<3` (or your configured `gsd_version_min`) |
 | P3 | `which gsd-mcp-server` | Binary on PATH or path set in `~/.hermes/gsd.yaml` |
 | P4 | `gsd read progress --json --project <your-project>` | JSON with `"integration_version": 1` and `activeMilestone` |
 | P5 | Project has `.gsd/` (or `.planning/`) with `STATE.md` | `read progress` shows phase/milestone |
@@ -57,7 +57,7 @@ Restart the Hermes gateway after enabling the plugin.
 ```yaml
 gsd:
   # Use absolute paths in production
-  cli_path: /usr/local/bin/gsd          # or: node /path/to/gsd-pi/dist/loader.js
+  cli_path: /usr/local/bin/gsd          # or an executable wrapper around dist/loader.js
   mcp_server_path: /usr/local/bin/gsd-mcp-server
   credential_source: gsd                # 6a: GSD-managed API keys
   default_project: ~/code/myapp         # optional fallback
@@ -71,7 +71,7 @@ gsd:
       "123456789": ~/code/myapp         # Telegram chat ID (see below)
 ```
 
-**Binding tiers (first match wins):** cron explicit → channel map → `/gsd bind` → `default_project` → cwd heuristic.
+**Binding tiers (first match wins):** cron explicit → slash argument → `/gsd bind` session binding → channel map → `default_project` → cwd heuristic.
 
 **Credentials:** With `credential_source: gsd`, ensure GSD’s normal provider keys are configured (`~/.gsd/` or env). Hermes passthrough (`credential_source: hermes`) is 6b+.
 
