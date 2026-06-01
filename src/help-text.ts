@@ -129,6 +129,24 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  gsd graph diff                         Show changes since last snapshot',
   ].join('\n'),
 
+  hermes: [
+    'Usage: gsd hermes install [options]',
+    '',
+    'Install the bundled open-gsd-hermes plugin into Hermes Agent.',
+    '',
+    'Options:',
+    '  --hermes-home <path>    Hermes home (default: $HERMES_HOME or ~/.hermes)',
+    '  --project <path>        Default GSD project to write into gsd.yaml',
+    '  --plugin-source <path>  Override bundled integrations/hermes source',
+    '  --skip-pip             Copy plugin only; do not pip install editable package',
+    '  --skip-enable          Do not run hermes plugins enable',
+    '  --dry-run              Print intended actions without writing',
+    '',
+    'Examples:',
+    '  gsd hermes install --project ~/code/myapp',
+    '  HERMES_HOME=~/.hermes gsd hermes install --skip-enable',
+  ].join('\n'),
+
   read: [
     'Usage: gsd read <progress|roadmap|memory> --json --project <path>',
     '',
@@ -227,6 +245,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  auto [args]              Run auto-mode without TUI (pipeable)\n')
   process.stdout.write('  headless [cmd] [args]    Run /gsd commands without TUI (default: auto)\n')
   process.stdout.write('  graph <subcommand>       Manage knowledge graph (build, query, status, diff)\n')
+  process.stdout.write('  hermes install           Install the Hermes Agent plugin\n')
   process.stdout.write('\nRun gsd <subcommand> --help for subcommand-specific help.\n')
 }
 

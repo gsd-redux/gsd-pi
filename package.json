@@ -26,6 +26,7 @@
     "packages/*/README.md",
     "pkg",
     "src/resources",
+    "integrations/hermes",
     "scripts/postinstall.js",
     "scripts/install.js",
     "scripts/install",

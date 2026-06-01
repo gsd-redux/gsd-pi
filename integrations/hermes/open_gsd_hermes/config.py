@@ -43,7 +43,11 @@ class GsdConfig:
 
 
 def config_path() -> Path:
-    return Path(os.environ.get("HERMES_GSD_CONFIG", Path.home() / ".hermes" / "gsd.yaml"))
+    explicit = os.environ.get("HERMES_GSD_CONFIG")
+    if explicit:
+        return Path(explicit).expanduser()
+    hermes_home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    return hermes_home.expanduser() / "gsd.yaml"
 
 
 def load_config(path: Path | None = None) -> GsdConfig:

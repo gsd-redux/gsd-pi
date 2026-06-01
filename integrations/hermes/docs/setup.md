@@ -7,11 +7,15 @@ Manual validation before releasing `open-gsd-hermes` 1.2.x. Complete **local pre
 ## Quick start
 
 ```bash
-# From gsd-pi repo root
-npm run build:core                                    # dist/loader.js for read CLI
+# End-user path after installing/upgrading @opengsd/gsd-pi
+gsd hermes install --project /absolute/path/to/your/project
+hermes plugins list                                  # open-gsd-hermes should be enabled
+hermes gateway restart                               # or restart your Hermes CLI/gateway process
+
+# Source-checkout validation path
+npm run build:core                                   # dist/loader.js for read CLI
 pip install -e integrations/hermes[dev]
-bash integrations/hermes/scripts/preflight.sh         # local gates (no Hermes)
-hermes plugins enable open-gsd-hermes                 # in your Hermes install
+bash integrations/hermes/scripts/preflight.sh        # local gates (no Hermes)
 ```
 
 Record results in the [Sign-off](#sign-off) section at the bottom.
@@ -44,8 +48,20 @@ node dist/loader.js read progress --json \
 
 ### Install plugin
 
+Preferred end-user path:
+
+```bash
+gsd hermes install --project /absolute/path/to/your/project
+hermes plugins list   # should show open-gsd-hermes enabled
+```
+
+Manual source-checkout path:
+
 ```bash
 pip install -e /path/to/gsd-pi/integrations/hermes
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+mkdir -p "$HERMES_HOME/plugins"
+cp -R /path/to/gsd-pi/integrations/hermes "$HERMES_HOME/plugins/open-gsd-hermes"
 hermes plugins enable open-gsd-hermes
 hermes plugins list   # should show open-gsd-hermes enabled
 ```
