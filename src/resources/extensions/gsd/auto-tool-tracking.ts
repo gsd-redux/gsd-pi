@@ -136,6 +136,11 @@ export const DETERMINISTIC_POLICY_ERROR_STRINGS = [
   // "Cannot write to milestone CONTEXT.md without depth verification." for direct
   // write tool calls to *-CONTEXT.md paths (different code path than gsd_summary_save).
   "CONTEXT.md without depth verification",
+  // Section-close gate units (execute-task, complete-slice, validate-milestone) that
+  // reach for gsd_save_gate_result get the calm redirect from softGateToolRedirect
+  // (auto-unit-tool-scope.ts) instead of a HARD BLOCK. Still deterministic — those
+  // phases never own that tool, so a retry hits the same redirect every time.
+  "closes its quality gates by writing summary sections",
 ] as const;
 
 /**

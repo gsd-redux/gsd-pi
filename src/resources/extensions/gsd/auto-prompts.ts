@@ -3680,6 +3680,25 @@ export async function buildReactiveExecutePrompt(
 // See gate-registry.ts for the full ownership map.
 
 /**
+ * Adapt gate-registry guidance for section-close phases.
+ *
+ * The registry guidance is written in verdict vocabulary ("Return verdict
+ * 'omitted' …") because the same text also feeds the gate-evaluate subagent
+ * loop, which DOES emit verdicts via gsd_save_gate_result. Units rendered by
+ * renderGatesToCloseBlock close gates by writing artifact sections instead, so
+ * the verdict phrasing nudges the executor toward a tool call that the unit
+ * contract blocks. Rewrite that phrasing to section language at render time so
+ * the canonical registry text stays untouched for the gate-evaluate path.
+ */
+function sectionModeGuidance(guidance: string): string {
+  return guidance.replace(
+    /Return verdict '([^']+)'/g,
+    (_match, verdict: string) =>
+      verdict === "omitted" ? "Leave the section empty" : `Record a \`${verdict}\``,
+  );
+}
+
+/**
  * Render a "Gates to Close" block for turns like `complete-slice` and
  * `validate-milestone` that own gates which are closed as a side-effect
  * of writing artifact sections (not via a dedicated gate-evaluate
@@ -3702,12 +3721,16 @@ function renderGatesToCloseBlock(
     "These quality gates are still pending for this unit. You MUST address every one before calling the closing tool — the handler closes the DB row based on whether the corresponding artifact section is present.",
   );
   lines.push("");
+  lines.push(
+    "**Do NOT call `gsd_save_gate_result` (or any gate-result tool) for these gates** — that tool belongs to a different phase and the call will be blocked. You close each gate purely by writing its named section: a populated section records `pass`, an empty section records `omitted`, and the completion handler persists the verdict for you. Treat any \"return verdict\" wording in the guidance below as describing that section outcome, not as an instruction to call a tool.",
+  );
+  lines.push("");
   for (const def of applicable) {
     lines.push(`### ${def.id} — ${def.promptSection}`);
     lines.push("");
     lines.push(`**Question:** ${def.question}`);
     lines.push("");
-    lines.push(def.guidance);
+    lines.push(sectionModeGuidance(def.guidance));
     if (opts.allowOmit) {
       lines.push("");
       lines.push(

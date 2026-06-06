@@ -35,6 +35,24 @@ const EXECUTE_TASK_UNIT_TYPES = new Set([
   "reactive-execute",
 ]);
 
+// Units that OWN quality gates but close them by writing artifact sections —
+// the unit's completion-tool handler (gsd_task_complete, gsd_slice_complete,
+// gsd_validate_milestone) persists each verdict from the section content. The
+// gsd_save_gate_result tool belongs to the separate gate-evaluate phase. A
+// model in one of these units is nudged toward gsd_save_gate_result by the
+// "return verdict" vocabulary in the gate guidance, but calling it here would
+// double-write the exact rows the completion handler already closes. We still
+// block it, but with a calm redirect (softGateToolRedirect) instead of the
+// HARD BLOCK wall, since the outcome is unaffected and the correct path is
+// clear. See gate-registry.ts ownerTurn fields and complete-task.ts gate close.
+const SECTION_CLOSE_GATE_UNIT_TYPES = new Set([
+  "execute-task",
+  "execute-task-simple",
+  "reactive-execute",
+  "complete-slice",
+  "validate-milestone",
+]);
+
 const EXTRA_SCOPED_GSD_LIFECYCLE_TOOLS = [
   "gsd_skip_slice",
   "gsd_slice_reopen",
@@ -52,6 +70,8 @@ const SCOPED_GSD_LIFECYCLE_TOOLS = new Set(
 );
 
 export const GSD_PHASE_SCOPE_DISPLAY_REASON = "This GSD phase only allows its scoped workflow tools.";
+export const GSD_SECTION_CLOSE_GATE_DISPLAY_REASON =
+  "Gates here close by writing summary sections — gsd_save_gate_result isn't needed.";
 
 type AutoUnitToolScopeResult = {
   block: boolean;
@@ -87,6 +107,27 @@ function hardBlock(unitType: string, what: string): AutoUnitToolScopeResult {
     block: true,
     reason: hardBlockReason(unitType, what),
     displayReason: GSD_PHASE_SCOPE_DISPLAY_REASON,
+  };
+}
+
+// Calm, instructive block for the known-benign case: a section-close gate unit
+// reaching for gsd_save_gate_result. Still blocks (calling it would double-write
+// the rows the completion handler already closes) but replaces the alarming
+// HARD BLOCK wall with a one-line redirect to the correct section-write path.
+// The "closes its quality gates by writing summary sections" phrase is a stable
+// marker registered in auto-tool-tracking.ts so this stays classified as a
+// deterministic (expected, non-retryable) policy outcome, not a real error.
+function softGateToolRedirect(unitType: string): AutoUnitToolScopeResult {
+  return {
+    block: true,
+    reason: [
+      `Skip this call — the "${unitType}" phase closes its quality gates by writing summary sections,`,
+      "not by calling gsd_save_gate_result (that tool belongs to the gate-evaluate phase).",
+      "Record each gate by filling its named section in your summary: a populated section records `pass`,",
+      "an empty one records `omitted`. Then call your completion tool and the handler persists every verdict.",
+      "This is expected, not an error — continue without gsd_save_gate_result.",
+    ].join(" "),
+    displayReason: GSD_SECTION_CLOSE_GATE_DISPLAY_REASON,
   };
 }
 
@@ -169,6 +210,10 @@ export function shouldBlockAutoUnitToolCall(
       unitType,
       `GSD lifecycle tool "${canonicalTool}" is not permitted; ${forbiddenReason} Fix unit-tool-contracts.ts or the ${unitType} prompt.`,
     );
+  }
+
+  if (canonicalTool === "gsd_save_gate_result" && SECTION_CLOSE_GATE_UNIT_TYPES.has(unitType)) {
+    return softGateToolRedirect(unitType);
   }
 
   return hardBlock(
