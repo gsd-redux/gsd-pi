@@ -711,17 +711,11 @@ jobs:
             --latest
 
       - name: Post to Discord
-        if: ${{ env.DISCORD_WEBHOOK != '' }}
         env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}
-        run: |
-          NOTES=$(cat release-metadata/release-notes.md)
-          # allowed_mentions disables @everyone/@here/role pings — release notes
-          # are derived from commit subjects and must not be able to mass-ping.
-          curl -s -X POST "$DISCORD_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i @opengsd/gsd-pi@${RELEASE_VERSION}\`" '{content:$c, allowed_mentions:{parse:[]}}')"
+        run: node scripts/release-discord-summary.cjs --tag "v${RELEASE_VERSION}" --post --allow-missing-webhook
 
       - name: Log in to GHCR
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
