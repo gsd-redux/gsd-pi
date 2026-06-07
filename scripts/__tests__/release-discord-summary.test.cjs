@@ -38,7 +38,11 @@ const sampleRelease = {
 describe('release Discord summary', () => {
   test('builds a payload with a preserved full changelog URL', () => {
     const payload = buildDiscordReleasePayload({
-      release: sampleRelease,
+      release: {
+        ...sampleRelease,
+        html_url: sampleRelease.url,
+        url: 'https://api.github.com/repos/open-gsd/gsd-pi/releases/123',
+      },
       packageName: '@opengsd/gsd-pi',
       maxContent: 1850,
     });

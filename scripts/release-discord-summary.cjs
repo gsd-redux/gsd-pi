@@ -37,7 +37,7 @@ function releaseName(release) {
 }
 
 function releaseUrl(release) {
-  return release.url || release.html_url || '';
+  return release.html_url || release.url || '';
 }
 
 function releaseIsPrerelease(release) {
