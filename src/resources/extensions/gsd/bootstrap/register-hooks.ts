@@ -818,14 +818,10 @@ export function registerHooks(
     clearDeferredApprovalGate();
     await resetAskUserQuestionsTurnCache();
     clearDiscussionFlowState(basePath);
-    // A fresh conversation (/clear, /new) destroys any in-flight discuss→auto
-    // handoff: the interview turns are gone, so the pending entry can never be
-    // answered. Without this, a discussion that already saved CONTEXT is
-    // immortal — the guided-flow staleness heuristic requires the CONTEXT file
-    // to be absent — and every subsequent /gsd dead-ends on "Discussion already
-    // in progress". Resume ("resume" reason) restores the interview transcript,
-    // so the entry stays. Auto-mode's own newSession() calls are safe: the
-    // handoff consumes the entry on agent_end before auto-mode dispatches.
+    // /clear or /new destroys the conversation holding a discuss interview, so
+    // its pending discuss→auto handoff can never be answered — clear it. Resume
+    // restores the interview transcript, so the entry survives. Auto-mode's own
+    // newSession() calls are safe: the handoff consumes the entry on agent_end.
     if (event.reason === "new") {
       clearPendingAutoStart(basePath);
     }
