@@ -39,6 +39,9 @@ interface HierarchyScan {
   milestones: Set<string>;
   slices: Set<string>;
   tasks: Set<string>;
+  // Markdown milestones whose dir has no ROADMAP (CONTEXT/CONTEXT-DRAFT only
+  // or empty). Always empty for DB scans.
+  milestonesWithoutRoadmap: Set<string>;
 }
 
 function zeroCounts(): HierarchyCounts {
@@ -46,7 +49,13 @@ function zeroCounts(): HierarchyCounts {
 }
 
 function emptyScan(): HierarchyScan {
-  return { counts: zeroCounts(), milestones: new Set(), slices: new Set(), tasks: new Set() };
+  return {
+    counts: zeroCounts(),
+    milestones: new Set(),
+    slices: new Set(),
+    tasks: new Set(),
+    milestonesWithoutRoadmap: new Set(),
+  };
 }
 
 function sameCounts(a: HierarchyCounts, b: HierarchyCounts): boolean {
@@ -109,7 +118,10 @@ export function scanMarkdownHierarchy(basePath: string): HierarchyScan {
     scan.milestones.add(milestoneId);
 
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-    if (!roadmapPath || !existsSync(roadmapPath)) continue;
+    if (!roadmapPath || !existsSync(roadmapPath)) {
+      scan.milestonesWithoutRoadmap.add(milestoneId);
+      continue;
+    }
 
     const roadmap = parseRoadmap(readFileSync(roadmapPath, "utf-8"));
     scan.counts.slices += roadmap.slices.length;
@@ -164,7 +176,6 @@ export async function checkMarkdownHierarchyAgainstDb(
   basePath: string,
 ): Promise<MigrationAutoCheckResult> {
   const markdownScan = scanMarkdownHierarchy(basePath);
-  const markdown = markdownScan.counts;
 
   // Always open the DB before deciding. An empty markdown tree does NOT imply
   // an empty project — the DB may hold authoritative rows whose markdown was
@@ -183,6 +194,20 @@ export async function checkMarkdownHierarchyAgainstDb(
 
   const dbScan = scanDbHierarchy();
   const beforeDb = dbScan.counts;
+
+  // Discussion-phase scratch: a milestone dir with no ROADMAP and no DB row is
+  // a pre-registration discussion artifact (CONTEXT/CONTEXT-DRAFT only — the
+  // queued DB row is inserted only at discussion handoff). Treating it as
+  // drift would warn on every live discussion and recommend
+  // `/gsd recover --confirm`, an import that materializes abandoned-discussion
+  // dirs as ghost active milestones. Exclude such dirs from this comparison
+  // only; recover preflights use the raw scans and still see them.
+  for (const id of markdownScan.milestonesWithoutRoadmap) {
+    if (dbScan.milestones.has(id)) continue;
+    markdownScan.milestones.delete(id);
+    markdownScan.counts.milestones--;
+  }
+  const markdown = markdownScan.counts;
 
   const markdownEmpty = sameCounts(markdown, zeroCounts());
   const dbEmpty = sameCounts(beforeDb, zeroCounts());

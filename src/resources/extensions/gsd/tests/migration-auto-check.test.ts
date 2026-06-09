@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { copyFileSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -283,6 +283,90 @@ test("migration auto-check refreshes a stale open DB handle before comparing", a
     assert.equal(result.reason, "in-sync");
     assert.deepEqual(result.markdown, { milestones: 1, slices: 1, tasks: 1 });
     assert.deepEqual(result.beforeDb, { milestones: 1, slices: 1, tasks: 1 });
+  } finally {
+    cleanup(base);
+  }
+});
+
+function writeScratchMilestoneDir(base: string, milestoneId: string, file?: string): void {
+  const dir = join(base, ".gsd", "milestones", milestoneId);
+  mkdirSync(dir, { recursive: true });
+  if (file) writeFileSync(join(dir, file), `# ${milestoneId} discussion context\n`);
+}
+
+test("migration auto-check ignores discussion-scratch milestone dirs (CONTEXT only, no DB row)", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory(projectFixture(), base); // markdown: M001 / S01 / T01
+    assert.equal(await ensureDbOpen(base), true);
+    insertMilestone({ id: "M001", title: "Legacy Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Legacy Slice", status: "pending", risk: "medium", depends: [], demo: "Legacy slice demo", sequence: 1 });
+    insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Legacy Task", status: "pending" });
+
+    // Mid-discussion artifacts: dirs with no ROADMAP and no DB row. The queued
+    // DB row is only inserted at discussion handoff, so these are expected to
+    // be DB-less — not drift, and recover must not be recommended (it would
+    // import them as ghost active milestones).
+    writeScratchMilestoneDir(base, "M002", "M002-CONTEXT.md");
+    writeScratchMilestoneDir(base, "M003", "M003-CONTEXT-DRAFT.md");
+    writeScratchMilestoneDir(base, "M004"); // empty dir
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "none");
+    assert.equal(result.reason, "in-sync");
+    assert.deepEqual(result.markdown, { milestones: 1, slices: 1, tasks: 1 });
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("migration auto-check stays quiet mid-first-discussion (scratch dir over empty DB)", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory({ projectContent: "# P\n", decisionsContent: "", requirements: [], milestones: [] }, base);
+    assert.equal(await ensureDbOpen(base), true);
+    writeScratchMilestoneDir(base, "M001", "M001-CONTEXT.md");
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "none");
+    assert.equal(result.reason, "no-markdown");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("migration auto-check still reports real drift with scratch dirs excluded from counts", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory(projectFixture(), base); // markdown: M001 / S01 / T01, DB empty
+    assert.equal(await ensureDbOpen(base), true);
+    writeScratchMilestoneDir(base, "M002", "M002-CONTEXT.md");
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "recovery-required");
+    assert.equal(result.reason, "db-empty");
+    assert.equal(result.recoveryCommand, "/gsd recover --confirm");
+    // The scratch dir must not inflate the reported markdown count.
+    assert.deepEqual(result.markdown, { milestones: 1, slices: 1, tasks: 1 });
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("migration auto-check still compares a roadmapless milestone that HAS a DB row", async () => {
+  const base = makeBase();
+  try {
+    await writeGSDDirectory({ projectContent: "# P\n", decisionsContent: "", requirements: [], milestones: [] }, base);
+    assert.equal(await ensureDbOpen(base), true);
+    // Post-handoff queued milestone: CONTEXT-only dir WITH a DB row. It must
+    // stay in the comparison (both sides have it → in-sync).
+    insertMilestone({ id: "M001", title: "M001", status: "queued" });
+    writeScratchMilestoneDir(base, "M001", "M001-CONTEXT.md");
+
+    const result = await checkMarkdownHierarchyAgainstDb(base);
+    assert.equal(result.action, "none");
+    assert.equal(result.reason, "in-sync");
+    assert.deepEqual(result.markdown, { milestones: 1, slices: 0, tasks: 0 });
   } finally {
     cleanup(base);
   }
