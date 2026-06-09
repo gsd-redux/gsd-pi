@@ -61,6 +61,7 @@ import { filterToolsForProvider } from "../model-router.js";
 import { mcpToolMatchesBaseName } from "../mcp-tool-name.js";
 import { RUN_UAT_READ_ONLY_TOOL_NAMES, RUN_UAT_WORKFLOW_TOOL_NAMES } from "../tool-presentation-plan.js";
 import { supportsSourceObservationsForUnit } from "../source-observations.js";
+import { clearPendingAutoStart } from "../pending-auto-start.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -808,7 +809,7 @@ export function registerHooks(
     }
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
+  pi.on("session_switch", async (event, ctx) => {
     const basePath = contextBasePath(ctx);
     const preserveCloseoutSurface = isAutoCompletionStopInProgress();
     initSessionNotifications(ctx);
@@ -817,6 +818,17 @@ export function registerHooks(
     clearDeferredApprovalGate();
     await resetAskUserQuestionsTurnCache();
     clearDiscussionFlowState(basePath);
+    // A fresh conversation (/clear, /new) destroys any in-flight discuss→auto
+    // handoff: the interview turns are gone, so the pending entry can never be
+    // answered. Without this, a discussion that already saved CONTEXT is
+    // immortal — the guided-flow staleness heuristic requires the CONTEXT file
+    // to be absent — and every subsequent /gsd dead-ends on "Discussion already
+    // in progress". Resume ("resume" reason) restores the interview transcript,
+    // so the entry stays. Auto-mode's own newSession() calls are safe: the
+    // handoff consumes the entry on agent_end before auto-mode dispatches.
+    if (event.reason === "new") {
+      clearPendingAutoStart(basePath);
+    }
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
     await applyCompactionThresholdOverride(ctx);
