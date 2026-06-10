@@ -72,6 +72,8 @@ Tools are scoped to the discuss allowlist for `discuss-milestone` (see `DISCUSS_
 
 **Re-dispatch guard:** If `hasPendingAutoStart(basePath)` and discussion is still in flight, `showSmartEntry` returns early (“Discussion already in progress”) unless the pending entry is stale (>30s, no CONTEXT/ROADMAP/manifest).
 
+`/clear` and `/new` destroy the conversation holding the interview, so its pending handoff can never be answered. The `session_switch` hook (`bootstrap/register-hooks.ts`) calls `clearPendingAutoStart(basePath)` when `event.reason === "new"`, deterministically removing the entry — without this, a discussion interrupted **after** its CONTEXT file was written stays pinned forever (the >30s staleness heuristic requires CONTEXT to be absent), dead-ending every later `/gsd` on “Discussion already in progress”. `reason === "resume"` keeps the entry because the restored transcript still contains the question. Auto-mode’s own `newSession()` calls are unaffected: the handoff consumes the entry on `agent_end` before any dispatch.
+
 ## Established project interview (intended)
 
 Applies when M001+ already exist (typical “Start new milestone” after shipping work).
@@ -219,6 +221,7 @@ If two bubbles share one timestamp → model sub-turn (prompt compliance). If tw
 | `src/resources/extensions/gsd/prompts/guided-discuss-milestone.md` | Established milestone interview |
 | `src/resources/extensions/gsd/prompts/discuss.md` | Greenfield bootstrap discuss |
 | `src/resources/extensions/gsd/bootstrap/agent-end-recovery.ts` | Post-turn guards |
+| `src/resources/extensions/gsd/bootstrap/register-hooks.ts` | `session_switch` clears `pendingAutoStart` on `/clear`/`/new` |
 | `packages/gsd-agent-modes/.../chat-controller.ts` | Sub-turn → multiple UI segments |
 | `src/resources/extensions/gsd/tests/new-milestone-discuss-routing.test.ts` | Routing regression tests |
 
