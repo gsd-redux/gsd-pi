@@ -589,3 +589,63 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI scrollback duplicate regression (#592)", () => {
+	it("full re-renders when buffer grows with a change before the viewport (mid-buffer reflow)", async () => {
+		// Regression for: scrollback-clamp path re-emitted the viewport boundary line when a
+		// mid-stream code-fence reflow inserted a line above the live viewport and grew the buffer.
+		// Fix: newLines.length > previousLines.length in the firstChanged < viewportTop branch
+		// bails out to fullRender(true) instead of the partial repaint.
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		// 8 lines — more than the 5-row terminal height, so 3 lines live in scrollback.
+		// After render: viewport top = 8 - 5 = 3, viewport shows lines 3-7.
+		component.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "Line 7"];
+		tui.start();
+		await terminal.waitForRender();
+
+		const initialRedraws = tui.fullRedraws;
+
+		// Insert a new line at position 1 (before the viewport top at 3).
+		// newLines.length = 9 > previousLines.length = 8 → buffer grew.
+		// firstChanged = 1 < previousContentViewportTop = 3 → change is above the live viewport.
+		// Without the fix the clamped partial-repaint path would re-emit "Line 3" (the viewport
+		// boundary) producing a duplicate: stale copy frozen in scrollback + fresh copy from repaint.
+		// With the fix a clean fullRender(true) is issued instead.
+		component.lines = [
+			"Line 0",
+			"INSERTED",
+			"Line 1",
+			"Line 2",
+			"Line 3",
+			"Line 4",
+			"Line 5",
+			"Line 6",
+			"Line 7",
+		];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > initialRedraws, "Buffer growth before viewport top must trigger a full redraw");
+
+		// New viewport top = 9 - 5 = 4, so viewport shows lines 4-8 of the new content.
+		const viewport = terminal.getViewport();
+		assert.deepStrictEqual(
+			viewport,
+			["Line 3", "Line 4", "Line 5", "Line 6", "Line 7"],
+			"Viewport must show the correct five lines with no duplicates after mid-buffer reflow",
+		);
+
+		// "Line 3" is the former boundary line — it must appear exactly once (not duplicated).
+		assert.strictEqual(
+			viewport.filter((l) => l.trim() === "Line 3").length,
+			1,
+			"Viewport boundary line must not be duplicated after buffer-growth reflow",
+		);
+
+		tui.stop();
+	});
+});
