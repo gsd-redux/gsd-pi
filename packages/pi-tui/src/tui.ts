@@ -1402,6 +1402,18 @@ export class TUI extends Container {
 		const previousContentViewportTop = getViewportTop(this.previousLines.length);
 		let clampedToViewport = false;
 		if (firstChanged < previousContentViewportTop) {
+			if (appendedLines) {
+				// A reflow that inserts a line above the live viewport (e.g. markdown re-lexing
+				// a code fence mid-stream) cannot be handled by the scroll-clamp fast path:
+				// the shifted line would remain frozen in scrollback AND be repainted in the
+				// live region, producing a verbatim duplicate.  Fall back to a full repaint —
+				// the same escape hatch used when extraLines > height.
+				logRedraw(
+					`firstChanged < viewportTop with buffer growth (${firstChanged} < ${previousContentViewportTop}) — full repaint`,
+				);
+				fullRender(true);
+				return;
+			}
 			const newViewportTop = getViewportTop(newLines.length);
 			const clampedFirst = Math.max(0, Math.min(previousContentViewportTop, newViewportTop));
 			logRedraw(

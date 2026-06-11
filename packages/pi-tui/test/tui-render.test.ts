@@ -588,4 +588,50 @@ describe("TUI differential rendering", () => {
 
 		tui.stop();
 	});
+
+	it("does not duplicate the line before a code fence when a mid-buffer insertion crosses the scrollback boundary", async () => {
+		// Regression for #592: streaming markdown re-lexes a code fence, inserting a spacer
+		// line in the scrollback area (firstChanged < previousContentViewportTop && appendedLines).
+		// The scroll-clamp fast path would leave the shifted line frozen in scrollback AND
+		// repaint it in the live region, producing a verbatim duplicate.
+		const terminal = new VirtualTerminal(20, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		// 8 lines > 5 rows → viewport shows lines[3..7], lines[0..2] are in scrollback.
+		// previousContentViewportTop = 8 - 5 = 3.
+		component.lines = ["L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7"];
+		tui.start();
+		await terminal.waitForRender();
+
+		const initialRedraws = tui.fullRedraws;
+
+		// Insert a line at index 2 (scrollback region) simulating the fence-spacer insertion.
+		// firstChanged = 2 < previousContentViewportTop = 3, and appendedLines = true (9 > 8).
+		component.lines = ["L0", "L1", "INSERTED", "L2", "L3", "L4", "L5", "L6", "L7"];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		// Fix must have triggered a full repaint (not the scroll-clamp fast path).
+		assert.ok(
+			tui.fullRedraws > initialRedraws,
+			"Mid-buffer insertion crossing scrollback boundary should trigger full repaint",
+		);
+
+		// Viewport must show correct content — no stale duplicate of L2.
+		const viewport = terminal.getViewport();
+		const allText = viewport.join("\n");
+		const l2Count = viewport.filter((line) => line.trim() === "L2").length;
+		assert.strictEqual(l2Count, 1, `L2 must appear exactly once in viewport, got: ${allText}`);
+
+		// With 9 lines and height 5, viewport = lines[4..8] = L3, L4, L5, L6, L7.
+		assert.deepStrictEqual(
+			viewport,
+			["L3", "L4", "L5", "L6", "L7"],
+			`Unexpected viewport after mid-buffer insertion: ${allText}`,
+		);
+
+		tui.stop();
+	});
 });
