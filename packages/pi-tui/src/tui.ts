@@ -1402,6 +1402,17 @@ export class TUI extends Container {
 		const previousContentViewportTop = getViewportTop(this.previousLines.length);
 		let clampedToViewport = false;
 		if (firstChanged < previousContentViewportTop) {
+			// A reflow that inserts a line above the live viewport (buffer grew) shifts the
+			// boundary line: clamping firstChanged would leave a stale copy frozen in scrollback
+			// and repaint the same line in the live region, producing a verbatim duplicate.
+			// Fall back to a full repaint instead.
+			if (newLines.length > this.previousLines.length) {
+				logRedraw(
+					`firstChanged < viewportTop and buffer grew — reflow into scrollback (${firstChanged} < ${previousContentViewportTop}), full repaint`,
+				);
+				fullRender(true);
+				return;
+			}
 			const newViewportTop = getViewportTop(newLines.length);
 			const clampedFirst = Math.max(0, Math.min(previousContentViewportTop, newViewportTop));
 			logRedraw(
