@@ -25,7 +25,7 @@ import {
   type IterationData,
 } from "./types.js";
 import { _clearCurrentResolve } from "./resolve.js";
-import { runGuards, runFinalize } from "./phases.js";
+import { runGuards, runFinalize, resetSessionTimeoutState } from "./phases.js";
 import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
@@ -385,6 +385,7 @@ export async function autoLoop(
   options?: AutoLoopOptions,
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
+  resetSessionTimeoutState();
   let iteration = 0;
   const dispatchContract = options?.dispatchContract ?? "legacy-direct";
   const unitDispatchDeps = createExecutionGraphUnitDispatchDeps();
