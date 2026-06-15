@@ -370,8 +370,6 @@ async function validateSourceWriteWorktreeSafety(
     s.isolationDegraded,
     s.strandedRecoveryIsolationMode,
   );
-  if (isolationMode !== "worktree") return null;
-
   const safety = createWorktreeSafetyModule();
   const result = safety.validateUnitRoot({
     unitType,
