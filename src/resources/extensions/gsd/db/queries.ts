@@ -270,6 +270,35 @@ export function getMilestoneSlices(milestoneId: string): SliceRow[] {
   return rows.map(rowToSlice);
 }
 
+/**
+ * Load slices for many milestones in a single query. Returns a Map keyed by
+ * milestone_id, preserving `ORDER BY sequence, id` within each bucket.
+ */
+export function getSlicesByMilestoneIds(milestoneIds: readonly string[]): Map<string, SliceRow[]> {
+  const db = getDbOrNull();
+  if (!db || milestoneIds.length === 0) return new Map();
+  const idList = [...milestoneIds];
+  const placeholders = idList.map((_, i) => `:mid${i}`).join(",");
+  const params: Record<string, unknown> = {};
+  idList.forEach((id, i) => {
+    params[`:mid${i}`] = id;
+  });
+  const rows = db
+    .prepare(`SELECT * FROM slices WHERE milestone_id IN (${placeholders}) ORDER BY milestone_id, sequence, id`)
+    .all(params) as Record<string, unknown>[];
+  const byMilestone = new Map<string, SliceRow[]>();
+  for (const row of rows) {
+    const slice = rowToSlice(row);
+    const bucket = byMilestone.get(slice.milestone_id);
+    if (bucket) {
+      bucket.push(slice);
+    } else {
+      byMilestone.set(slice.milestone_id, [slice]);
+    }
+  }
+  return byMilestone;
+}
+
 /** Dispatch-eligibility shape consumed by decision-path callers (ADR-017). */
 export interface MilestoneSliceSummary {
   id: string;

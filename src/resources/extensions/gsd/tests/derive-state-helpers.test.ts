@@ -569,6 +569,42 @@ describe('derive-state-helpers', () => {
     }
   });
 
+  // ─── Batch slice query: multi-milestone slices loaded in one query ─────
+  test('buildRegistryAndFindActive: batched slice query preserves ordering across milestones', async () => {
+    const base = createFixtureBase();
+    try {
+      // M001 is complete so the loop advances past it.
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
+      writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Summary\n\nDone.');
+      // M002 is an active milestone with no slices (queued shell) — should be deferred.
+      writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002: Shell\n\nShell milestone.');
+      // M003 is the real active milestone with slices in non-trivial sequence order.
+      writeFile(base, 'milestones/M003/M003-CONTEXT.md', '# M003: Real\n\nReal milestone.');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'Complete', status: 'complete' });
+      insertMilestone({ id: 'M002', title: 'Shell', status: 'active' });
+      insertMilestone({ id: 'M003', title: 'Real', status: 'active' });
+      // Slices intentionally inserted with out-of-order sequences to prove ordering.
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'M1 Second', status: 'complete', risk: 'low', depends: [], sequence: 2 });
+      insertSlice({ id: 'S02', milestoneId: 'M001', title: 'M1 First', status: 'complete', risk: 'low', depends: [], sequence: 1 });
+      insertSlice({ id: 'S03', milestoneId: 'M003', title: 'M3 Second', status: 'active', risk: 'low', depends: [], sequence: 5 });
+      insertSlice({ id: 'S04', milestoneId: 'M003', title: 'M3 First', status: 'active', risk: 'low', depends: [], sequence: 3 });
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      assert.equal(state.activeMilestone?.id, 'M003', 'batched: M003 is active after complete M001 and shell M002');
+      assert.equal(state.activeSlice?.id, 'S04', 'batched: first slice by sequence is active');
+      assert.equal(state.registry.find(e => e.id === 'M001')?.status, 'complete', 'batched: M001 complete');
+      assert.equal(state.registry.find(e => e.id === 'M002')?.status, 'pending', 'batched: shell M002 deferred to pending');
+      assert.equal(state.registry.find(e => e.id === 'M003')?.status, 'active', 'batched: M003 active');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
   // ─── Deferred queued shell: shell milestone deferred, real one promoted ──
   test('buildRegistryAndFindActive: queued shell deferred, later real milestone becomes active (#3470)', async () => {
     const base = createFixtureBase();

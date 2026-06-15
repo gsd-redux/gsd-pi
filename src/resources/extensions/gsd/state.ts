@@ -60,6 +60,7 @@ import {
   getAllMilestones,
   getMilestone,
   getMilestoneSlices,
+  getSlicesByMilestoneIds,
   getSliceTasks,
   getReplanHistory,
   getSlice,
@@ -477,13 +478,18 @@ async function buildRegistryAndFindActive(
   let activeMilestoneHasDraft = false;
   let firstDeferredQueuedShell: { id: string; title: string; deps: string[]; hasDraftContext: boolean } | null = null;
 
+  const activeMilestoneIds = milestones
+    .filter((m) => !parkedMilestoneIds.has(m.id))
+    .map((m) => m.id);
+  const slicesByMilestone = getSlicesByMilestoneIds(activeMilestoneIds);
+
   for (const m of milestones) {
     if (parkedMilestoneIds.has(m.id)) {
       registry.push({ id: m.id, title: stripMilestonePrefix(m.title) || m.id, status: 'parked' });
       continue;
     }
 
-    const slices = getMilestoneSlices(m.id);
+    const slices = slicesByMilestone.get(m.id) ?? [];
 
     // DB-authoritative completeness (#4179): only trust completeMilestoneIds,
     // which is itself derived from DB status. SUMMARY-file presence alone must

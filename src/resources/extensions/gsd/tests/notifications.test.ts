@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
+import { playQuestionBell } from "../../ask-user-questions.js";
+import { stopAuto } from "../auto.js";
+import { autoSession } from "../auto-runtime-state.js";
 import {
   buildDesktopNotificationCommand,
   shouldSendDesktopNotification,
@@ -58,18 +63,68 @@ test("playNotificationBell is silent when disabled", () => {
   assert.equal(output, "");
 });
 
-test("ask_user_questions plays local bell before waiting for an answer", () => {
-  const source = readFileSync(new URL("../../ask-user-questions.ts", import.meta.url), "utf-8");
+test("playQuestionBell writes a terminal bell when local bell is enabled", async () => {
+  let output = "";
+  const stream = { write: (chunk: string) => { output += chunk; } };
 
-  assert.match(source, /playNotificationBell\("question"\)/);
-  assert.match(source, /await playQuestionBell\(\)/);
+  await playQuestionBell({ enabled: true, local_bell: true }, stream);
+
+  assert.equal(output, "\u0007");
 });
 
-test("stopAuto plays local bell for auto-mode stop notifications", () => {
-  const source = readFileSync(new URL("../auto.ts", import.meta.url), "utf-8");
+test("playQuestionBell is silent when local bell is disabled", async () => {
+  let output = "";
+  const stream = { write: (chunk: string) => { output += chunk; } };
 
-  assert.match(source, /import \{[^}]*playNotificationBell[^}]*\} from "\.\/notifications\.js"/);
-  assert.match(source, /playNotificationBell\("stop", loadedPreferences\?\.notifications\)/);
+  await playQuestionBell({ enabled: true, local_bell: false }, stream);
+
+  assert.equal(output, "");
+});
+
+test("stopAuto plays local bell for auto-mode stop notifications", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-stop-bell-"));
+  const previousCwd = process.cwd();
+  const previousStderrWrite = process.stderr.write;
+  const previousStderrIsTTY = process.stderr.isTTY;
+  let bellOutput = "";
+
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = base;
+
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\nnotifications:\n  enabled: true\n  local_bell: true\n---\n",
+    "utf-8",
+  );
+
+  process.stderr.isTTY = true;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    if (typeof chunk === "string") {
+      bellOutput += chunk;
+    }
+    return true;
+  }) as typeof process.stderr.write;
+
+  try {
+    await stopAuto(
+      { hasUI: false, ui: { notify: () => {}, setStatus: () => {}, setWidget: () => {}, setHeader: () => {} } } as any,
+      undefined,
+      "test stop",
+    );
+
+    assert.ok(
+      bellOutput.includes("\u0007"),
+      "stopAuto must write a terminal bell to stderr when the local bell preference is enabled",
+    );
+  } finally {
+    process.stderr.write = previousStderrWrite;
+    process.stderr.isTTY = previousStderrIsTTY;
+    autoSession.reset();
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("buildDesktopNotificationCommand falls back to osascript on macOS when terminal-notifier is absent", () => {
