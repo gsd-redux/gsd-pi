@@ -10,7 +10,7 @@ import type {
 } from "./types.js";
 import { ExecutionGraphScheduler } from "../uok/execution-graph.js";
 import type { UokGraphNode } from "../uok/contracts.js";
-import { runUnitPhase } from "./phases.js";
+import { runUnitPhase } from "./unit-phase.js";
 import { decideDispatchNodeKind } from "./workflow-kernel.js";
 
 export type DispatchContract = "legacy-direct" | "uok-scheduler";

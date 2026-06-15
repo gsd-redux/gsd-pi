@@ -10,7 +10,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { _resolveDispatchGuardBasePath, _resolveReportBasePath } from "../auto/phases.ts";
+import { _resolveDispatchGuardBasePath, _resolveReportBasePath } from "../auto/phase-helpers.ts";
 
 describe("_resolveReportBasePath", () => {
   test("uses originalBasePath when set (worktree scenario)", () => {
