@@ -696,24 +696,20 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const activeBasePath = this.getLiveDispatchBasePath();
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
-    // Enforce the milestone-branch identity only when the framework
-    // guarantees the checkout is on `milestone/<MID>` (configured worktree
-    // and branch isolation, plus stranded recovery). A degraded session is
-    // exempt: `degradeToBranchMode` may continue on the current branch when
-    // the milestone-branch checkout fails, so asserting the milestone branch
-    // would falsely stop every degraded dispatch.
     const buildExpectedBranch = (mode: ReturnType<typeof getIsolationMode>) =>
-      milestoneId && !this.s.isolationDegraded && (mode === "worktree" || mode === "branch")
-        ? autoWorktreeBranch(milestoneId)
-        : null;
-    // The milestone lease is NOT validated here. This gate runs inside
-    // advance(), before the loop's authoritative ensureDispatchLease() claims
-    // the lease for the upcoming dispatch, so the token is still unset on the
-    // first dispatch of every isolation mode whose root needs no repair
-    // (none, configured branch). ensureDispatchLease() is the fail-closed
-    // enforcement point — it claims/reclaims the lease, resolves dead holders,
-    // and stops auto on a genuine conflict before the unit is invoked. Adding
-    // a premature lease check here only produced false lease-lost stops.
+      mode !== "none" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
+    // The milestone lease coordinates concurrent workers on an isolated
+    // milestone worktree/branch. `none` mode has no per-milestone isolation
+    // and does not reliably claim a lease, so requiring one there would
+    // falsely fail dispatch; enforce it only in isolated modes.
+    const buildLease = (mode: ReturnType<typeof getIsolationMode>) =>
+      milestoneId && this.s.workerId
+        ? {
+            required: writeScope === "source-writing" && mode !== "none",
+            held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
+            owner: this.s.workerId,
+          }
+        : undefined;
     let result = safety.validateUnitRoot({
       unitType,
       unitId,
@@ -723,6 +719,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId,
       isolationMode,
       expectedBranch: buildExpectedBranch(isolationMode),
+      lease: buildLease(isolationMode),
     });
     if (!result.ok) {
       const repaired = await repairAutoWorktreeSafetyFailure({
@@ -750,6 +747,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
             milestoneId,
             isolationMode: revalidatedMode,
             expectedBranch: buildExpectedBranch(revalidatedMode),
+            lease: buildLease(revalidatedMode),
           });
         },
       });

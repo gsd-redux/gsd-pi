@@ -102,21 +102,6 @@ export async function validateSourceWriteWorktreeSafety(
     s.strandedRecoveryIsolationMode,
   );
   const safety = createWorktreeSafetyModule();
-  // The milestone-branch identity is only enforced when the framework
-  // guarantees the checkout is on `milestone/<MID>` (configured worktree
-  // and branch isolation, plus stranded recovery). A degraded session is
-  // exempt because `degradeToBranchMode` may continue on the current branch
-  // when the milestone-branch checkout fails.
-  const expectedBranch =
-    milestoneId && !s.isolationDegraded && (isolationMode === "worktree" || isolationMode === "branch")
-      ? deps.autoWorktreeBranch(milestoneId)
-      : null;
-  // The milestone lease is NOT validated here. This gate runs inside
-  // advance(), before the loop's authoritative ensureDispatchLease() claims
-  // the lease for the upcoming dispatch, so the token is still unset on the
-  // first dispatch of every isolation mode whose root needs no repair
-  // (none, configured branch). ensureDispatchLease() is the fail-closed
-  // enforcement point.
   const result = safety.validateUnitRoot({
     unitType,
     unitId,
@@ -125,8 +110,23 @@ export async function validateSourceWriteWorktreeSafety(
     unitRoot: s.basePath,
     milestoneId,
     isolationMode,
-    expectedBranch,
+    expectedBranch:
+      isolationMode !== "none" && milestoneId ? deps.autoWorktreeBranch(milestoneId) : null,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
+    // The milestone lease coordinates concurrent workers on an isolated
+    // milestone worktree/branch, which is established by enterMilestone in
+    // worktree/branch modes. `none` mode has no per-milestone isolation and
+    // does not reliably claim a lease (e.g. a fresh headless resume of an
+    // already-active milestone never re-enters it), so requiring a held lease
+    // there would falsely fail dispatch. Enforce the lease only in isolated
+    // modes; none-mode safety still validates the unit root.
+    lease: s.workerId
+      ? {
+          required: isolationMode !== "none",
+          held: s.currentMilestoneId === milestoneId && s.milestoneLeaseToken !== null,
+          owner: s.workerId,
+        }
+      : undefined,
   });
 
   if (result.ok) return null;
