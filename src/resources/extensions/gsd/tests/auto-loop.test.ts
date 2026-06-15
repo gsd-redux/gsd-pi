@@ -3,6 +3,7 @@
 
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ import { runUnit, shouldDeferUnitFailsafeTimeout } from "../auto/run-unit.js";
 import { scheduleAutoWakeup, _resetAutoWakeupsForTest } from "../auto/schedule-wakeup.js";
 import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from "../unit-runtime.js";
 import { autoLoop as rawAutoLoop } from "../auto/loop.js";
-import { runPreDispatch, runDispatch, runUnitPhase } from "../auto/phases.js";
+import { runPreDispatch, runDispatch, runUnitPhase, resetSessionTimeoutState } from "../auto/phases.js";
 import { detectStuck } from "../auto/detect-stuck.js";
 import type { UnitResult, AgentEndEvent, LoopState } from "../auto/types.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
@@ -4062,6 +4063,153 @@ test("runUnitPhase pauses transient aborted cancellations instead of hard-stoppi
   assert.equal((result as any).reason, "unit-aborted-pause");
   assert.equal(deps.callLog.includes("pauseAuto"), true);
   assert.equal(deps.callLog.includes("stopAuto"), false);
+});
+
+test("resetSessionTimeoutState gives a new auto session a fresh session-creation timeout budget", async (t) => {
+  _resetPendingResolve();
+
+  // runUnitPhase schedules an auto-resume setTimeout on transient session
+  // timeouts. Capture and clear those timers so the test process can exit
+  // promptly while still exercising the real production path.
+  const originalSetTimeout = globalThis.setTimeout;
+  const timerHandles: ReturnType<typeof originalSetTimeout>[] = [];
+  globalThis.setTimeout = ((callback: any, delay?: number, ...args: any[]) => {
+    const handle = originalSetTimeout(callback, delay ?? 0, ...args);
+    timerHandles.push(handle);
+    return handle;
+  }) as any;
+
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-session-timeout-reset-"));
+  execSync("git init", { cwd: basePath });
+  execSync('git -c user.email=test@test.com -c user.name=Test commit --allow-empty -m init', { cwd: basePath });
+
+  t.after(() => {
+    for (const handle of timerHandles) clearTimeout(handle);
+    globalThis.setTimeout = originalSetTimeout;
+    rmSync(basePath, { recursive: true, force: true });
+  });
+
+  const ctx = {
+    ...makeMockCtx(),
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+    },
+    sessionManager: {
+      getEntries: () => [],
+    },
+    modelRegistry: {
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => true,
+    },
+  } as any;
+  const notifications: Array<{ message: string; level?: string }> = [];
+  ctx.ui.notify = (message: string, level?: string) => {
+    notifications.push({ message, level });
+  };
+  const pi = makeMockPi();
+  const s = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+  });
+  const deps = makeMockDeps();
+
+  async function runTimeoutUnit(iteration: number): Promise<string | undefined> {
+    notifications.length = 0;
+    const callsBefore = pi.calls.length;
+    let seq = 0;
+    const phasePromise = runUnitPhase(
+      { ctx, pi, s, deps, prefs: undefined, iteration, flowId: `flow-${iteration}`, nextSeq: () => ++seq },
+      {
+        unitType: "plan-slice",
+        unitId: "M001/S01",
+        prompt: "plan the slice",
+        finalPrompt: "plan the slice",
+        pauseAfterUatDispatch: false,
+        state: {
+          phase: "planning",
+          activeMilestone: { id: "M001", title: "Milestone" },
+          activeSlice: { id: "S01", title: "Slice" },
+          activeTask: null,
+          registry: [{ id: "M001", title: "Milestone", status: "active" }],
+          recentDecisions: [],
+          blockers: [],
+          nextAction: "",
+          progress: { milestones: { done: 0, total: 1 } },
+          requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+        } as any,
+        mid: "M001",
+        midTitle: "Milestone",
+        isRetry: false,
+        previousTier: undefined,
+      },
+      makeLoopState(),
+    );
+
+    // Wait until runUnit has dispatched the prompt, then resolve the unit
+    // as a session-creation timeout. This avoids the 120s real timeout and
+    // the mock-timer interaction that runUnitPhase's pre-flight setup makes
+    // fragile.
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (pi.calls.length > callsBefore) return resolve();
+        setTimeout(check, 5);
+      };
+      check();
+    });
+    resolveAgentEndCancelled({
+      message: "Session creation timed out",
+      category: "timeout",
+      isTransient: true,
+    });
+
+    const result = await phasePromise;
+    return (result as any).reason;
+  }
+
+  // Start from a known state in case a previous test left the counter raised.
+  resetSessionTimeoutState();
+
+  // Exhaust the per-process timeout budget in the first "session".
+  for (let i = 1; i <= 4; i++) {
+    const reason = await runTimeoutUnit(i);
+    assert.equal(reason, "session-timeout");
+  }
+  const lastBudgetNotification = notifications.find((n) =>
+    n.message.includes("Session creation timed out")
+  );
+  assert.ok(lastBudgetNotification, "expected a session-creation timeout notification");
+  assert.match(
+    lastBudgetNotification.message,
+    /Pausing for manual review/,
+    "fourth consecutive timeout should exhaust the auto-resume budget",
+  );
+
+  // Simulate a new auto-mode session starting. autoLoop() must reset the
+  // module-level counter so the next timeout is treated as the first in the
+  // new session rather than inheriting the exhausted budget.
+  const freshSession = makeLoopSession({
+    basePath,
+    canonicalProjectRoot: basePath,
+    originalBasePath: basePath,
+    active: false,
+  });
+  freshSession.orchestration = createLoopTestOrchestration(ctx, pi, freshSession, deps);
+  await rawAutoLoop(ctx, pi, freshSession, deps);
+
+  const reasonAfterReset = await runTimeoutUnit(5);
+  assert.equal(reasonAfterReset, "session-timeout");
+  const notificationAfterReset = notifications.find((n) =>
+    n.message.includes("Auto-resuming")
+  );
+  assert.ok(notificationAfterReset, "expected an auto-resume notification after reset");
+  assert.match(
+    notificationAfterReset.message,
+    /Auto-resuming/,
+    "after autoLoop entry the timeout budget should be fresh so the first timeout auto-resumes",
+  );
 });
 
 test("runUnitPhase treats setup-race cancellations as pause-induced when session is already paused", async (t) => {
