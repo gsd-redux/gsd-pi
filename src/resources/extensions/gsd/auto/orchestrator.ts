@@ -696,8 +696,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const activeBasePath = this.getLiveDispatchBasePath();
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
+    // Enforce the milestone-branch identity only when the framework
+    // guarantees the checkout is on `milestone/<MID>` (configured worktree
+    // and branch isolation, plus stranded recovery). A degraded session is
+    // exempt: `degradeToBranchMode` may continue on the current branch when
+    // the milestone-branch checkout fails, so asserting the milestone branch
+    // would falsely stop every degraded dispatch.
     const expectedBranch =
-      milestoneId && (isolationMode === "worktree" || isolationMode === "branch")
+      milestoneId && !this.s.isolationDegraded && (isolationMode === "worktree" || isolationMode === "branch")
         ? autoWorktreeBranch(milestoneId)
         : null;
     const lease = milestoneId && this.s.workerId

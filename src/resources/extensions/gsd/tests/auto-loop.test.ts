@@ -5758,11 +5758,15 @@ test("dispatch Worktree Safety honors stranded branch recovery instead of demand
   // Bootstrap adopted stranded work by checking out the milestone branch in
   // the project root (strandedRecoveryIsolationMode = "branch"). Isolation is
   // NOT degraded — the adoption is intentional. The safety gate must validate
-  // against the effective branch mode, not the configured worktree mode.
+  // against the effective branch mode, including the milestone-branch
+  // identity, so the project root sits on the adopted branch (the mock
+  // autoWorktreeBranch resolves to "auto/M001").
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-wt-safety-stranded-"));
   execSync("git init --initial-branch=main", { cwd: projectRoot, stdio: "ignore" });
   execSync("git config user.email test@test.com", { cwd: projectRoot, stdio: "ignore" });
   execSync("git config user.name Test", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git commit --allow-empty -m init", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git checkout -b auto/M001", { cwd: projectRoot, stdio: "ignore" });
   t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
   const s = makeLoopSession({

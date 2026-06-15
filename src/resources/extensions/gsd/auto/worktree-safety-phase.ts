@@ -110,8 +110,16 @@ export async function validateSourceWriteWorktreeSafety(
     unitRoot: s.basePath,
     milestoneId,
     isolationMode,
+    // Enforce the milestone-branch identity only when the framework
+    // guarantees the checkout is on `milestone/<MID>`: configured worktree
+    // and branch isolation, plus stranded recovery (which only persists its
+    // mode after a successful milestone-branch checkout). A *degraded*
+    // session is exempt — `degradeToBranchMode` falls back to "Continuing on
+    // current branch" when the milestone-branch checkout itself fails, so the
+    // session may legitimately sit on the original branch. Asserting the
+    // milestone branch there would falsely stop every degraded dispatch.
     expectedBranch:
-      milestoneId && (isolationMode === "worktree" || isolationMode === "branch")
+      milestoneId && !s.isolationDegraded && (isolationMode === "worktree" || isolationMode === "branch")
         ? deps.autoWorktreeBranch(milestoneId)
         : null,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
