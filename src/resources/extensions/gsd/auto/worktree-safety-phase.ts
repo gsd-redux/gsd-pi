@@ -123,13 +123,11 @@ export async function validateSourceWriteWorktreeSafety(
         ? deps.autoWorktreeBranch(milestoneId)
         : null,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
-    lease: s.workerId
-      ? {
-          required: true,
-          held: s.currentMilestoneId === milestoneId && s.milestoneLeaseToken !== null,
-          owner: s.workerId,
-        }
-      : undefined,
+    // The milestone lease is enforced by the loop's ensureDispatchLease()
+    // immediately before the unit is invoked, not here. This safety gate runs
+    // earlier in the iteration (before the lease is claimed), so requiring the
+    // lease at this point falsely stopped the first dispatch under non-worktree
+    // isolation where no root repair claims the lease first.
   });
 
   if (result.ok) return null;

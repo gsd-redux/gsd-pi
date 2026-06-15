@@ -706,13 +706,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId && !this.s.isolationDegraded && (isolationMode === "worktree" || isolationMode === "branch")
         ? autoWorktreeBranch(milestoneId)
         : null;
-    const lease = milestoneId && this.s.workerId
-      ? {
-          required: writeScope === "source-writing",
-          held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
-          owner: this.s.workerId,
-        }
-      : undefined;
+    // The milestone lease is NOT validated here. This gate runs inside
+    // advance(), before the loop's authoritative ensureDispatchLease() claims
+    // the lease for the upcoming dispatch, so the token is still unset on the
+    // first dispatch of every isolation mode whose root needs no repair
+    // (none, configured branch). ensureDispatchLease() is the fail-closed
+    // enforcement point — it claims/reclaims the lease, resolves dead holders,
+    // and stops auto on a genuine conflict before the unit is invoked. Adding
+    // a premature lease check here only produced false lease-lost stops.
     let result = safety.validateUnitRoot({
       unitType,
       unitId,
@@ -722,7 +723,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId,
       isolationMode,
       expectedBranch,
-      lease,
     });
     if (!result.ok) {
       const repaired = await repairAutoWorktreeSafetyFailure({
@@ -748,7 +748,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           milestoneId,
           isolationMode: this.getEffectiveUnitIsolationMode(this.runtimeBasePath),
           expectedBranch,
-          lease,
         }),
       });
       result = repaired.result;
