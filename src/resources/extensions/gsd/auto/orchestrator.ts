@@ -698,10 +698,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const milestoneId = snapshot.activeMilestone?.id ?? null;
     const buildExpectedBranch = (mode: ReturnType<typeof getIsolationMode>) =>
       mode !== "none" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
-    const buildLease = () =>
+    // The milestone lease coordinates concurrent workers on an isolated
+    // milestone worktree/branch. `none` mode has no per-milestone isolation
+    // and does not reliably claim a lease, so requiring one there would
+    // falsely fail dispatch; enforce it only in isolated modes.
+    const buildLease = (mode: ReturnType<typeof getIsolationMode>) =>
       milestoneId && this.s.workerId
         ? {
-            required: writeScope === "source-writing",
+            required: writeScope === "source-writing" && mode !== "none",
             held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
             owner: this.s.workerId,
           }
@@ -715,7 +719,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId,
       isolationMode,
       expectedBranch: buildExpectedBranch(isolationMode),
-      lease: buildLease(),
+      lease: buildLease(isolationMode),
     });
     if (!result.ok) {
       const repaired = await repairAutoWorktreeSafetyFailure({
@@ -743,7 +747,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
             milestoneId,
             isolationMode: revalidatedMode,
             expectedBranch: buildExpectedBranch(revalidatedMode),
-            lease: buildLease(),
+            lease: buildLease(revalidatedMode),
           });
         },
       });

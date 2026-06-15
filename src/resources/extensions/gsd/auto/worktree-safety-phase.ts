@@ -113,9 +113,16 @@ export async function validateSourceWriteWorktreeSafety(
     expectedBranch:
       isolationMode !== "none" && milestoneId ? deps.autoWorktreeBranch(milestoneId) : null,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
+    // The milestone lease coordinates concurrent workers on an isolated
+    // milestone worktree/branch, which is established by enterMilestone in
+    // worktree/branch modes. `none` mode has no per-milestone isolation and
+    // does not reliably claim a lease (e.g. a fresh headless resume of an
+    // already-active milestone never re-enters it), so requiring a held lease
+    // there would falsely fail dispatch. Enforce the lease only in isolated
+    // modes; none-mode safety still validates the unit root.
     lease: s.workerId
       ? {
-          required: true,
+          required: isolationMode !== "none",
           held: s.currentMilestoneId === milestoneId && s.milestoneLeaseToken !== null,
           owner: s.workerId,
         }
