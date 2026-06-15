@@ -696,14 +696,16 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const activeBasePath = this.getLiveDispatchBasePath();
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
-    const expectedBranch = isolationMode === "worktree" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
-    const lease = milestoneId && this.s.workerId
-      ? {
-          required: writeScope === "source-writing",
-          held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
-          owner: this.s.workerId,
-        }
-      : undefined;
+    const buildExpectedBranch = (mode: ReturnType<typeof getIsolationMode>) =>
+      mode === "worktree" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
+    const buildLease = () =>
+      milestoneId && this.s.workerId
+        ? {
+            required: writeScope === "source-writing",
+            held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
+            owner: this.s.workerId,
+          }
+        : undefined;
     let result = safety.validateUnitRoot({
       unitType,
       unitId,
@@ -712,8 +714,8 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       unitRoot: activeBasePath,
       milestoneId,
       isolationMode,
-      expectedBranch,
-      lease,
+      expectedBranch: buildExpectedBranch(isolationMode),
+      lease: buildLease(),
     });
     if (!result.ok) {
       const repaired = await repairAutoWorktreeSafetyFailure({
@@ -730,17 +732,20 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           this.rebuildScope(this.s.basePath, this.s.currentMilestoneId);
           return { ok: true };
         },
-        revalidate: () => safety.validateUnitRoot({
-          unitType,
-          unitId,
-          writeScope,
-          projectRoot: this.runtimeBasePath,
-          unitRoot: this.getLiveDispatchBasePath(),
-          milestoneId,
-          isolationMode: this.getEffectiveUnitIsolationMode(this.runtimeBasePath),
-          expectedBranch,
-          lease,
-        }),
+        revalidate: () => {
+          const revalidatedMode = this.getEffectiveUnitIsolationMode(this.runtimeBasePath);
+          return safety.validateUnitRoot({
+            unitType,
+            unitId,
+            writeScope,
+            projectRoot: this.runtimeBasePath,
+            unitRoot: this.getLiveDispatchBasePath(),
+            milestoneId,
+            isolationMode: revalidatedMode,
+            expectedBranch: buildExpectedBranch(revalidatedMode),
+            lease: buildLease(),
+          });
+        },
       });
       result = repaired.result;
       if (result.ok) {
