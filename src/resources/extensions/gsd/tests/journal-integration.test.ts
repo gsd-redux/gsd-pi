@@ -15,6 +15,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+/** Create a temp project root with a git repo for phase-function tests. */
+function makeTestBase(prefix: string): string {
+  const base = mkdtempSync(join(tmpdir(), prefix));
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "README.md"), "# test\n");
+  execFileSync("git", ["add", "README.md"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "chore: seed"], { cwd: base, stdio: "ignore" });
+  return base;
+}
+
 import type { JournalEntry } from "../journal.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
@@ -182,7 +194,7 @@ function makeSession() {
     verbose: false,
     stepMode: false,
     paused: false,
-    basePath: "/tmp/project",
+    basePath: makeTestBase("gsd-journal-session-"),
     originalBasePath: "",
     currentMilestoneId: "M001",
     currentUnit: null,
@@ -296,10 +308,18 @@ test("runDispatch emits dispatch-stop when dispatch returns stop action", async 
   assert.equal(stopEvents[0].flowId, ic.flowId);
 });
 
-test("runDispatch checks prior-slice completion against the project root in worktree mode", async () => {
+test("runDispatch checks prior-slice completion against the project root in worktree mode", async (t) => {
   const capture = createEventCapture();
   const guardCalls: Array<{ fn: string; args: unknown[] }> = [];
+  const projectRoot = makeTestBase("gsd-wt-prior-slice-");
+  const milestoneId = "M029-xoklo9";
+  const worktreeRoot = join(projectRoot, ".gsd", "worktrees", milestoneId);
+  execFileSync("git", ["worktree", "add", "-b", `auto/${milestoneId}`, worktreeRoot], { cwd: projectRoot, stdio: "ignore" });
+  t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
+
   const deps = makeMockDeps(capture, {
+    getIsolationMode: () => "worktree",
+    autoWorktreeBranch: (mid: string) => `auto/${mid}`,
     getMainBranch: (basePath: string) => {
       guardCalls.push({ fn: "getMainBranch", args: [basePath] });
       return "main";
@@ -320,19 +340,21 @@ test("runDispatch checks prior-slice completion against the project root in work
   const ic = makeIC(deps, {
     s: {
       ...makeSession(),
-      basePath: "/tmp/project/.gsd/worktrees/M029-xoklo9",
-      originalBasePath: "/tmp/project",
+      basePath: worktreeRoot,
+      originalBasePath: projectRoot,
+      canonicalProjectRoot: projectRoot,
+      currentMilestoneId: milestoneId,
     } as any,
   });
   const preData: PreDispatchData = {
     state: {
       phase: "executing",
-      activeMilestone: { id: "M029-xoklo9", title: "Test", status: "active" },
+      activeMilestone: { id: milestoneId, title: "Test", status: "active" },
       activeSlice: { id: "S01", title: "Slice 1" },
-      registry: [{ id: "M029-xoklo9", status: "active" }],
+      registry: [{ id: milestoneId, status: "active" }],
       blockers: [],
     } as any,
-    mid: "M029-xoklo9",
+    mid: milestoneId,
     midTitle: "Test Milestone",
   };
 
@@ -342,12 +364,12 @@ test("runDispatch checks prior-slice completion against the project root in work
     consecutiveFinalizeTimeouts: 0,
   });
 
-  assert.equal(result.action, "next");
+  assert.equal(result.action, "next", "dispatch must proceed under worktree isolation");
   assert.deepEqual(guardCalls, [
-    { fn: "getMainBranch", args: ["/tmp/project"] },
+    { fn: "getMainBranch", args: [projectRoot] },
     {
       fn: "getPriorSliceCompletionBlocker",
-      args: ["/tmp/project", "main", "execute-task", "M001/S01/T01"],
+      args: [projectRoot, "main", "execute-task", "M001/S01/T01"],
     },
   ]);
 });
@@ -434,6 +456,9 @@ test("runDispatch pauses when execute-task artifacts exist but DB status is stil
   const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
   const tasksDir = join(sliceDir, "tasks");
   mkdirSync(tasksDir, { recursive: true });
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "in_progress" });
@@ -517,6 +542,9 @@ test("runDispatch pauses at Level 2 when execute-task artifacts exist but DB sta
   const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
   const tasksDir = join(sliceDir, "tasks");
   mkdirSync(tasksDir, { recursive: true });
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "in_progress" });
@@ -888,7 +916,7 @@ test("runUnitPhase increments unitDispatchCount for repeated artifact-missing re
 
 test("runUnitPhase pre-dispatch model validation failures do not emit unit-start or dispatch runtime state", async (t) => {
   const capture = createEventCapture();
-  const base = mkdtempSync(join(tmpdir(), `gsd-pre-dispatch-block-${randomUUID()}`));
+  const base = makeTestBase(`gsd-pre-dispatch-block-${randomUUID()}`);
   t.after(() => rmSync(base, { recursive: true, force: true }));
 
   const deps = makeMockDeps(capture, {
@@ -1084,7 +1112,7 @@ test("terminal event is emitted on blocked state", async () => {
 });
 
 test("#4671: plan-v2 missing CONTEXT.md reaches dispatch recovery instead of pausing", async () => {
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-4671-predispatch-"));
+  const basePath = makeTestBase("gsd-4671-predispatch-");
   mkdirSync(join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
   openDatabase(join(basePath, ".gsd", "gsd.db"));
   try {
@@ -1141,7 +1169,7 @@ test("#4671: plan-v2 missing CONTEXT.md reaches dispatch recovery instead of pau
 });
 
 test("plan-v2 empty graph rederives state before pausing", async () => {
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-plan-v2-empty-graph-"));
+  const basePath = makeTestBase("gsd-plan-v2-empty-graph-");
   mkdirSync(join(basePath, ".gsd", "milestones", "M001"), { recursive: true });
   writeFileSync(
     join(basePath, ".gsd", "milestones", "M001", "M001-CONTEXT.md"),
@@ -1204,7 +1232,7 @@ test("plan-v2 empty graph rederives state before pausing", async () => {
 });
 
 test("plan-v2 empty graph pauses after one failed rederive", async () => {
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-plan-v2-empty-graph-pause-"));
+  const basePath = makeTestBase("gsd-plan-v2-empty-graph-pause-");
   mkdirSync(join(basePath, ".gsd", "milestones", "M001"), { recursive: true });
   writeFileSync(
     join(basePath, ".gsd", "milestones", "M001", "M001-CONTEXT.md"),
@@ -1394,7 +1422,7 @@ test("session-failed cancellations close out and emit unit-end before hard stop"
 test("runFinalize pauses and emits unit-end when pre-verification times out", async () => {
   const capture = createEventCapture();
   let pauseCalls = 0;
-  const basePath = mkdtempSync(join(tmpdir(), "gsd-finalize-timeout-"));
+  const basePath = makeTestBase("gsd-finalize-timeout-");
 
   const deps = makeMockDeps(capture, {
     pauseAuto: async () => { pauseCalls++; },
