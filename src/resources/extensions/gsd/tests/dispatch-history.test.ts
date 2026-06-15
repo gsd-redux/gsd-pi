@@ -262,7 +262,7 @@ test("#482 regression: a re-dispatch loop spanning a session restart is detected
   assert.match(verdict?.reason ?? "", /execute-task:M001\/S01\/T01 derived 3 consecutive times/);
 });
 
-test("rehydrate attaches latest ledger error so repeat-error detection fires after restart", (t) => {
+test("rehydrate mirrors recordDispatch error attachment so repeat-error detection fires after the next dispatch", (t) => {
   const f = makeLedgerFixture(t);
   // Session 1: two failed dispatches for the same unit, same error summary.
   for (let i = 0; i < 2; i++) {
@@ -270,14 +270,22 @@ test("rehydrate attaches latest ledger error so repeat-error detection fires aft
     markFailed(id, { errorSummary: "boom: deterministic failure" });
   }
 
-  // Session 2: fresh history rehydrates from the ledger. Both rehydrated
-  // entries must carry the persisted error so Rule 1 fires immediately.
+  // Session 2: fresh history rehydrates from the ledger. Just like the live
+  // recordDispatch path, the first occurrence of a unit skips the ledger
+  // lookup; only repeats carry the error. So rehydration alone does not trip
+  // Rule 1 — keeping the post-restart window no more aggressive than the live
+  // one (Rule 1 has no retry-budget suppression).
   const restarted = historyFor(f.base);
   const count = restarted.rehydrate();
   assert.equal(count, 2);
   const window = restarted.getRecentWindow();
-  assert.equal(window[0].error, "boom: deterministic failure");
+  assert.equal(window[0].error, undefined);
   assert.equal(window[1].error, "boom: deterministic failure");
+  assert.equal(restarted.detectStuck(), null);
+
+  // The next dispatch of the same unit attaches the error again, giving two
+  // consecutive matching errors → Rule 1 fires, exactly as in the live path.
+  restarted.recordDispatch("execute-task", "M001/S01/T01");
   const verdict = restarted.detectStuck();
   assert.equal(verdict?.stuck, true);
   assert.match(verdict?.reason ?? "", /Same error repeated/);

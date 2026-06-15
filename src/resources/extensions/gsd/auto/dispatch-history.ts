@@ -133,12 +133,17 @@ export function createDispatchHistory(options: DispatchHistoryOptions): Dispatch
       try {
         const persisted = getRecentUnitKeysForProjectRoot(scopeId, windowSize);
         if (persisted.length === 0) return 0;
-        window = persisted.map(({ key }) => {
+        const rebuilt: WindowEntry[] = [];
+        for (const { key } of persisted) {
           const normalized = normalizeDispatchKey(key);
           const parsed = parseDispatchKey(normalized);
-          const error = parsed ? lookupLatestLedgerError(parsed.unitType, parsed.unitId) : undefined;
-          return { key: normalized, error };
-        });
+          const error =
+            parsed && rebuilt.some((entry) => entry.key === normalized)
+              ? lookupLatestLedgerError(parsed.unitType, parsed.unitId)
+              : undefined;
+          rebuilt.push({ key: normalized, error });
+        }
+        window = rebuilt;
         while (window.length > windowSize) window.shift();
         return window.length;
       } catch (err) {
