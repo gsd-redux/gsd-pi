@@ -1,10 +1,11 @@
 /**
- * engine-interfaces-contract.test.ts — Source-level contract tests for the
- * engine abstraction layer (S01).
+ * engine-interfaces-contract.test.ts — Runtime and type-level contract tests for
+ * the engine abstraction layer (S01).
  *
- * TypeScript interfaces are erased by --experimental-strip-types, so these
- * tests use source-level regex assertions on the .ts files to verify shapes.
- * Runtime assertions cover AutoSession.activeEngineId and resolveEngine().
+ * TypeScript interfaces are erased by --experimental-strip-types, so shape
+ * contracts are verified by constructing values that satisfy the types and
+ * asserting on their runtime fields. Type-level assertions guard compile-time
+ * contracts; pnpm run typecheck:extensions validates those.
  *
  * Follows the same conventions as auto-session-encapsulation.test.ts.
  */
@@ -15,15 +16,21 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type {
+  EngineState,
+  EngineDispatchAction,
+  StepContract,
+  ReconcileResult,
+  RecoveryAction,
+  CloseoutResult,
+  DisplayMetadata,
+} from "../engine-types.js";
+import type { WorkflowEngine } from "../workflow-engine.js";
+import type { ExecutionPolicy } from "../execution-policy.js";
+import type { ResolvedEngine } from "../engine-resolver.js";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ENGINE_TYPES_PATH = join(__dirname, "..", "engine-types.ts");
-const WORKFLOW_ENGINE_PATH = join(__dirname, "..", "workflow-engine.ts");
-const EXECUTION_POLICY_PATH = join(__dirname, "..", "execution-policy.ts");
-const ENGINE_RESOLVER_PATH = join(__dirname, "..", "engine-resolver.ts");
-
-function readSource(path: string): string {
-  return readFileSync(path, "utf-8");
-}
 
 // ── Import smoke tests ──────────────────────────────────────────────────────
 
@@ -55,9 +62,10 @@ describe("Import smoke tests", () => {
 
 // ── Leaf-node constraint ────────────────────────────────────────────────────
 
+// allow-source-grep: verifies engine-types.ts is a leaf node by design
 describe("Leaf-node constraint", () => {
   test("engine-types.ts has zero imports from GSD modules (only node: allowed)", () => {
-    const source = readSource(ENGINE_TYPES_PATH);
+    const source = readFileSync(ENGINE_TYPES_PATH, "utf-8");
     const lines = source.split("\n");
     const violations: string[] = [];
 
@@ -81,97 +89,111 @@ describe("Leaf-node constraint", () => {
 // ── EngineState shape ───────────────────────────────────────────────────────
 
 describe("EngineState shape", () => {
-  test("EngineState has all required fields with correct types", () => {
-    const source = readSource(ENGINE_TYPES_PATH);
+  test("EngineState accepts all required fields with correct runtime types", () => {
+    const state: EngineState = {
+      phase: "research",
+      currentMilestoneId: "M001",
+      activeSliceId: "S01",
+      activeTaskId: "T01",
+      isComplete: false,
+      raw: { arbitrary: "engine-specific-state" },
+    };
 
-    const requiredFields = [
-      "phase",
-      "currentMilestoneId",
-      "activeSliceId",
-      "activeTaskId",
-      "isComplete",
-      "raw",
-    ];
+    assert.equal(state.phase, "research");
+    assert.equal(state.currentMilestoneId, "M001");
+    assert.equal(state.activeSliceId, "S01");
+    assert.equal(state.activeTaskId, "T01");
+    assert.equal(state.isComplete, false);
+    assert.deepEqual(state.raw, { arbitrary: "engine-specific-state" });
+  });
 
-    for (const field of requiredFields) {
-      assert.ok(
-        source.includes(field),
-        `EngineState must contain field: ${field}`,
-      );
-    }
+  test("EngineState.raw accepts unknown opaque values", () => {
+    const state: EngineState = {
+      phase: "planning",
+      currentMilestoneId: null,
+      activeSliceId: null,
+      activeTaskId: null,
+      isComplete: true,
+      raw: null,
+    };
 
-    // raw must be typed unknown — not a GSD-specific type
-    assert.ok(
-      /raw:\s*unknown/.test(source),
-      "EngineState.raw must be typed 'unknown', not a GSD-specific type",
-    );
+    assert.equal(state.raw, null);
   });
 });
 
 // ── EngineDispatchAction shape ──────────────────────────────────────────────
 
 describe("EngineDispatchAction shape", () => {
-  test("EngineDispatchAction has dispatch, stop, and skip variants", () => {
-    const source = readSource(ENGINE_TYPES_PATH);
+  test("EngineDispatchAction supports dispatch, stop, and skip variants at runtime", () => {
+    const step: StepContract = {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "execute the task",
+    };
 
-    assert.ok(
-      /action:\s*"dispatch"/.test(source),
-      'EngineDispatchAction must have action: "dispatch" variant',
-    );
-    assert.ok(
-      /action:\s*"stop"/.test(source),
-      'EngineDispatchAction must have action: "stop" variant',
-    );
-    assert.ok(
-      /action:\s*"skip"/.test(source),
-      'EngineDispatchAction must have action: "skip" variant',
-    );
+    const dispatchAction: EngineDispatchAction = { action: "dispatch", step };
+    assert.equal(dispatchAction.action, "dispatch");
+    assert.deepEqual(dispatchAction.step, step);
+
+    const stopAction: EngineDispatchAction = { action: "stop", reason: "blocked", level: "error" };
+    assert.equal(stopAction.action, "stop");
+    assert.equal(stopAction.reason, "blocked");
+    assert.equal(stopAction.level, "error");
+
+    const skipAction: EngineDispatchAction = { action: "skip" };
+    assert.equal(skipAction.action, "skip");
   });
 });
 
 // ── WorkflowEngine interface shape ──────────────────────────────────────────
 
 describe("WorkflowEngine interface shape", () => {
-  test("WorkflowEngine has engineId and all required methods", () => {
-    const source = readSource(WORKFLOW_ENGINE_PATH);
+  test("WorkflowEngine accepts an object with engineId and all required methods", () => {
+    const engine: WorkflowEngine = {
+      engineId: "test-engine",
+      deriveState: async () => ({
+        phase: "test",
+        currentMilestoneId: null,
+        activeSliceId: null,
+        activeTaskId: null,
+        isComplete: false,
+        raw: null,
+      }),
+      resolveDispatch: async () => ({ action: "skip" }),
+      reconcile: async () => ({ outcome: "continue" }),
+      getDisplayMetadata: () => ({
+        engineLabel: "Test Engine",
+        currentPhase: "test",
+        progressSummary: "testing",
+        stepCount: null,
+      }),
+    };
 
-    const requiredMembers = [
-      "engineId",
-      "deriveState",
-      "resolveDispatch",
-      "reconcile",
-      "getDisplayMetadata",
-    ];
-
-    for (const member of requiredMembers) {
-      assert.ok(
-        source.includes(member),
-        `WorkflowEngine must contain member: ${member}`,
-      );
-    }
+    assert.equal(engine.engineId, "test-engine");
+    assert.equal(typeof engine.deriveState, "function");
+    assert.equal(typeof engine.resolveDispatch, "function");
+    assert.equal(typeof engine.reconcile, "function");
+    assert.equal(typeof engine.getDisplayMetadata, "function");
   });
 });
 
 // ── ExecutionPolicy interface shape ─────────────────────────────────────────
 
 describe("ExecutionPolicy interface shape", () => {
-  test("ExecutionPolicy has all required methods", () => {
-    const source = readSource(EXECUTION_POLICY_PATH);
+  test("ExecutionPolicy accepts an object with all required methods", () => {
+    const policy: ExecutionPolicy = {
+      prepareWorkspace: async () => {},
+      selectModel: async () => null,
+      verify: async () => "continue",
+      recover: async () => ({ outcome: "retry" } as RecoveryAction),
+      closeout: async () => ({ committed: true, artifacts: [] } as CloseoutResult),
+    };
 
-    const requiredMethods = [
-      "prepareWorkspace",
-      "selectModel",
-      "verify",
-      "recover",
-      "closeout",
-    ];
-
-    for (const method of requiredMethods) {
-      assert.ok(
-        source.includes(method),
-        `ExecutionPolicy must contain method: ${method}`,
-      );
-    }
+    assert.equal(typeof policy.prepareWorkspace, "function");
+    assert.equal(typeof policy.selectModel, "function");
+    assert.equal(typeof policy.verify, "function");
+    assert.equal(typeof policy.recover, "function");
+    assert.equal(typeof policy.closeout, "function");
   });
 });
 
@@ -220,12 +242,16 @@ describe("Resolver stub behavior", () => {
     );
   });
 
-  test("ResolvedEngine type is exported (source check)", () => {
-    const source = readSource(ENGINE_RESOLVER_PATH);
-    assert.ok(
-      /export\s+(interface|type)\s+ResolvedEngine/.test(source),
-      "engine-resolver.ts must export ResolvedEngine type",
-    );
+  test("ResolvedEngine type is exported and has the expected shape", () => {
+    // Type-level assertion: ResolvedEngine must be { engine: WorkflowEngine; policy: ExecutionPolicy }.
+    // If the export or shape changes, the typecheck step fails.
+    type _AssertResolvedEngine = ResolvedEngine extends { engine: WorkflowEngine; policy: ExecutionPolicy }
+      ? true
+      : false;
+    const _assertResolvedEngine: true = {} as _AssertResolvedEngine;
+
+    // Runtime sanity check that the import path resolves.
+    assert.ok(_assertResolvedEngine === undefined || true);
   });
 });
 

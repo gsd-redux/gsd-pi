@@ -4,7 +4,12 @@
 import { execFileSync } from "node:child_process";
 import type { NotificationPreferences } from "./types.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { sendRemoteNotification } from "../remote-questions/notify.js";
+import { sendRemoteNotification as _sendRemoteNotification } from "../remote-questions/notify.js";
+
+/** Swappable dispatcher for remote notifications — exported so tests can mock it. */
+export const remoteNotificationDispatcher = {
+  send: _sendRemoteNotification,
+};
 
 export type NotifyLevel = "info" | "success" | "warning" | "error";
 export type NotificationKind = "complete" | "error" | "budget" | "milestone" | "attention";
@@ -30,28 +35,30 @@ export function sendDesktopNotification(
   level: NotifyLevel = "info",
   kind: NotificationKind = "complete",
   projectName?: string,
+  deps: { notifications?: NotificationPreferences } = {},
 ): void {
   // When a projectName is provided and the title is the default "GSD",
   // replace it with a project-qualified title for multi-project clarity.
   if (projectName && title === "GSD") {
     title = formatNotificationTitle(projectName);
   }
-  const loaded = loadEffectiveGSDPreferences()?.preferences;
+  const loadedPreferences = loadEffectiveGSDPreferences()?.preferences;
+  const notifications = deps.notifications ?? loadedPreferences?.notifications;
 
   // Remote notifications fire independently of desktop preferences.
   // sendRemoteNotification handles "not configured" gracefully (early return).
-  void sendRemoteNotification(title, message).catch(() => {});
+  void remoteNotificationDispatcher.send(title, message).catch(() => {});
 
-  if (!shouldSendDesktopNotification(kind, loaded?.notifications)) return;
+  if (!shouldSendDesktopNotification(kind, notifications)) return;
 
   // cmux delivery and desktop delivery are independent — if cmux import or
   // delivery fails, we must still attempt the native desktop notification.
   const runCmux = async () => {
     try {
       const { CmuxClient, emitOsc777Notification, resolveCmuxConfig } = await import("../cmux/index.js");
-      const cmux = resolveCmuxConfig(loaded);
+      const cmux = resolveCmuxConfig(loadedPreferences);
       if (cmux.notifications) {
-        const delivered = CmuxClient.fromPreferences(loaded).notify(title, message);
+        const delivered = CmuxClient.fromPreferences(loadedPreferences).notify(title, message);
         if (delivered) return true;
         emitOsc777Notification(title, message);
       }
