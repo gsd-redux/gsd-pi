@@ -17,10 +17,8 @@ import {
   shouldDeferTransientErrorToCoreRetry,
   suppressTerminalDeletedWorktreeMessageEnd,
 } from "../bootstrap/agent-end-recovery.ts";
-import {
-  _buildCancelledUnitStopReason,
-  _classifyZeroToolProviderMessageForTest,
-} from "../auto/phases.ts";
+import { _buildCancelledUnitStopReason } from "../auto/phase-helpers.ts";
+import { _classifyZeroToolProviderMessageForTest } from "../auto/unit-phase.ts";
 import { autoSession } from "../auto-runtime-state.ts";
 import { getNextFallbackModel } from "../preferences.ts";
 // Zero-import module — imported by path rather than through the package

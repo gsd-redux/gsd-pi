@@ -14,7 +14,7 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AutoSession } from "../auto/session.ts";
-import { runPreDispatch } from "../auto/phases.ts";
+import { runPreDispatch } from "../auto/pre-dispatch.ts";
 
 test("milestone transition archives completed units and rebuilds state", async () => {
   const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cu-reset-")));

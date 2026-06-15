@@ -30,7 +30,7 @@
  */
 
 import { createTestContext } from "./test-helpers.ts";
-import { runPreDispatch } from "../auto/phases.ts";
+import { runPreDispatch } from "../auto/pre-dispatch.ts";
 import {
   openDatabase,
   closeDatabase,

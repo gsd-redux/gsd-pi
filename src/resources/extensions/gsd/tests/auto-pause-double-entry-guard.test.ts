@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { capturePauseAutoUnitIdentity, pauseAuto, isAutoActive } from "../auto.ts";
 import { _resetPendingResolve, _setCurrentResolve } from "../auto/resolve.ts";
 import { autoSession } from "../auto-runtime-state.ts";
-import { _isPauseOriginCancelledResult } from "../auto/phases.ts";
+import { _isPauseOriginCancelledResult } from "../auto/phase-helpers.ts";
 
 test("pauseAuto sets s.active = false synchronously before first await (blocks concurrent re-entry)", async () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-double-pause-guard-"));

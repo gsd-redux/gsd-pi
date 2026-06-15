@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { _runMilestoneMergeWithStashRestore } from "../auto/phases.js";
+import { _runMilestoneMergeWithStashRestore } from "../auto/closeout.js";
 import type { IterationContext } from "../auto/types.js";
 import { MergeConflictError } from "../git-service.js";
 import type {

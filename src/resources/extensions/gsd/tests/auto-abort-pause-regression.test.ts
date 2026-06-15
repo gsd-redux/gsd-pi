@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { _buildAbortedPauseContext, isUserInitiatedAbortMessage } from "../bootstrap/agent-end-recovery.js";
-import { _buildCancelledUnitStopReason, _isPauseOriginCancelledResult } from "../auto/phases.js";
+import { _buildCancelledUnitStopReason, _isPauseOriginCancelledResult } from "../auto/phase-helpers.js";
 
 test("aborted agent_end maps errorMessage into structured aborted pause context", () => {
   const withMessage = _buildAbortedPauseContext({ errorMessage: "provider aborted request" });

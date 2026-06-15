@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runPreDispatch } from "../auto/phases.ts";
+import { runPreDispatch } from "../auto/pre-dispatch.ts";
 
 test("blocked remediation warning uses /gsd dispatch reassess and hides internal tool name", async () => {
   const notifications: Array<{ message: string; level?: string }> = [];
