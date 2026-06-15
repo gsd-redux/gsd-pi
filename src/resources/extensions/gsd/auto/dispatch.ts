@@ -3,8 +3,7 @@
 
 import type { DispatchAction } from "../auto-dispatch.js";
 import { detectStuck } from "./detect-stuck.js";
-import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
-import { getLatestForUnit } from "../db/unit-dispatches.js";
+import { STUCK_WINDOW_SIZE, lookupLatestLedgerError } from "./dispatch-history.js";
 import {
   verifyExpectedArtifact,
   diagnoseExpectedArtifact,
@@ -300,8 +299,17 @@ export async function runDispatch(
   // Always record this dispatch in the sliding window and run detection so
   // Rules 1/3/4 can catch retry loops with repeated failure content (#5719).
   // Rules 2/2b suppress legitimate retry backoff through the dispatch ledger.
-  const latestDispatch = getLatestForUnit(derivedKey);
-  const recentError = latestDispatch?.error_summary ?? undefined;
+  //
+  // Mirror DispatchHistory.recordDispatch: attach the latest ledger error
+  // only on a repeat (the key already exists in the window) so a first
+  // dispatch never trips the repeat-error rule, and first-dispatch advances
+  // (the common path) pay zero DB cost. The ledger keys rows by the bare unit
+  // id with the unit type in its own column, so look up by (unitType, unitId)
+  // — the compound `derivedKey` would miss the row and silently drop
+  // repeat-error detection here. derivedKey stays the window-entry key.
+  const recentError = loopState.recentUnits.some((entry) => entry.key === derivedKey)
+    ? lookupLatestLedgerError(unitType, unitId)
+    : undefined;
   loopState.recentUnits.push({ key: derivedKey, error: recentError });
   while (loopState.recentUnits.length > STUCK_WINDOW_SIZE) {
     loopState.recentUnits.shift();

@@ -23,6 +23,7 @@ import { recordDispatchClaim, markFailed, markCanceled } from "../db/unit-dispat
 import {
   buildDispatchKey,
   createDispatchHistory,
+  lookupLatestLedgerError,
   normalizeDispatchKey,
   parseDispatchKey,
   STUCK_WINDOW_SIZE,
@@ -155,6 +156,31 @@ test("recordDispatch attaches the latest ledger error on repeats so repeat-error
   const verdict = history.detectStuck();
   assert.equal(verdict?.stuck, true);
   assert.match(verdict?.reason ?? "", /Same error repeated/);
+});
+
+test("lookupLatestLedgerError matches the bare unit id, not the compound key", (t) => {
+  const f = makeLedgerFixture(t);
+  const dispatchId = f.claim("execute-task", "M001/S01/T01");
+  markFailed(dispatchId, { errorSummary: "boom: deterministic failure" });
+
+  // The ledger keys rows by the bare unit id with the unit type in its own
+  // column. The shared lookup (also used by dispatch.ts's runDispatch path)
+  // must use the bare id; a compound `unitType/unitId` value misses entirely,
+  // which previously silently dropped repeat-error detection on that path.
+  assert.equal(
+    lookupLatestLedgerError("execute-task", "M001/S01/T01"),
+    "boom: deterministic failure",
+  );
+  assert.equal(
+    lookupLatestLedgerError("execute-task", "execute-task/M001/S01/T01"),
+    undefined,
+    "a compound key must not match the bare-id ledger row",
+  );
+  assert.equal(
+    lookupLatestLedgerError("plan-slice", "M001/S01/T01"),
+    undefined,
+    "a different unit type on the same id must not be attached",
+  );
 });
 
 test("recordDispatch never attaches another unit type's ledger error for the same unit id", (t) => {

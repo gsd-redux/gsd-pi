@@ -84,12 +84,18 @@ export interface DispatchHistoryOptions {
   windowSize?: number;
 }
 
-function lookupLatestLedgerError(unitType: string, unitId: string): string | undefined {
+/**
+ * Fetch the latest dispatch ledger error for a unit, the single canonical
+ * lookup shared by the DispatchHistory window and the legacy
+ * `loopState.recentUnits` path in dispatch.ts. The ledger keys rows by the
+ * bare unit id with the unit type in its own column, so the lookup must use
+ * the bare id and require a unit_type match (a compound `type/id` key would
+ * miss the row, and another unit type's error on the same id must never be
+ * attached — it would trip the repeat-error rule spuriously).
+ */
+export function lookupLatestLedgerError(unitType: string, unitId: string): string | undefined {
   try {
     const row = getLatestForUnit(unitId);
-    // The ledger keys rows by bare unit id; require a unit_type match so
-    // another unit type's error on the same id is never attached (it would
-    // trip the repeat-error rule spuriously).
     if (!row || row.unit_type !== unitType) return undefined;
     return row.error_summary ?? undefined;
   } catch {
