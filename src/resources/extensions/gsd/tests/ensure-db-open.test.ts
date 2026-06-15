@@ -11,7 +11,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { closeDatabase, isDbAvailable, getDecisionById, SCHEMA_VERSION, _getAdapter } from '../gsd-db.ts';
+import { formatWorkflowDatabaseOpenFailure } from '../bootstrap/dynamic-tools.ts';
 
 const _require = createRequire(import.meta.url);
 
@@ -288,6 +291,102 @@ function createLegacyV15Db(dbPath: string): void {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('ensure-db-open', () => {
+  test('formatWorkflowDatabaseOpenFailure: open failure without provider gives actionable SQLite guidance', () => {
+    const message = formatWorkflowDatabaseOpenFailure(
+      {
+        ok: false,
+        reason: 'open-failed',
+        location: {
+          projectRoot: '/tmp/example',
+          projectGsd: '/tmp/example/.gsd',
+          projectDb: '/tmp/example/.gsd/gsd.db',
+        },
+      },
+      {
+        available: false,
+        provider: null,
+        attempted: true,
+        lastError: null,
+        lastPhase: null,
+      },
+      '22.15.0',
+    );
+
+    assert.match(message, /\/tmp\/example\/\.gsd\/gsd\.db/);
+    assert.match(message, /No SQLite provider available/);
+    assert.match(message, /node:sqlite/);
+    assert.match(message, /better-sqlite3/);
+  });
+
+  test('formatWorkflowDatabaseOpenFailure: old Node includes upgrade guidance', () => {
+    const message = formatWorkflowDatabaseOpenFailure(
+      {
+        ok: false,
+        reason: 'open-failed',
+        location: {
+          projectRoot: '/tmp/example',
+          projectGsd: '/tmp/example/.gsd',
+          projectDb: '/tmp/example/.gsd/gsd.db',
+        },
+      },
+      {
+        available: false,
+        provider: null,
+        attempted: true,
+        lastError: null,
+        lastPhase: null,
+      },
+      '20.11.1',
+    );
+
+    assert.match(message, />= 22\.0\.0/);
+    assert.match(message, /current: v20\.11\.1/);
+  });
+
+  test('ensureDbOpen: source-mode runtime without node:sqlite records actionable guidance', () => {
+    const loaderPath = fileURLToPath(new URL('./resolve-ts.mjs', import.meta.url));
+    const script = `
+      const fs = require('node:fs');
+      const os = require('node:os');
+      const path = require('node:path');
+      const { pathToFileURL } = require('node:url');
+      (async () => {
+        const base = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-missing-sqlite-'));
+        try {
+          fs.mkdirSync(path.join(base, '.gsd'), { recursive: true });
+          const dynamicTools = await import(pathToFileURL(path.resolve('src/resources/extensions/gsd/bootstrap/dynamic-tools.ts')).href);
+          const logger = await import(pathToFileURL(path.resolve('src/resources/extensions/gsd/workflow-logger.ts')).href);
+          await dynamicTools.ensureDbOpen(base);
+          const messages = logger.peekLogs().map((entry) => entry.message);
+          console.log(JSON.stringify(messages));
+        } finally {
+          fs.rmSync(base, { recursive: true, force: true });
+        }
+      })().catch((error) => {
+        console.error(error.stack || error.message || String(error));
+        process.exit(1);
+      });
+    `;
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--no-experimental-sqlite',
+        '--import',
+        loaderPath,
+        '--experimental-strip-types',
+        '-e',
+        script,
+      ],
+      { cwd: process.cwd(), encoding: 'utf-8' },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const messages = JSON.parse(result.stdout.trim()) as string[];
+    assert.ok(messages.some((message) => /No SQLite provider available/.test(message)), result.stdout);
+    assert.ok(messages.some((message) => /node:sqlite/.test(message)), result.stdout);
+    assert.ok(messages.some((message) => /better-sqlite3/.test(message)), result.stdout);
+  });
+
   test('ensureDbOpen: creates empty DB without importing Markdown', async () => {
     const tmpDir = makeTmpDir();
     const gsdDir = path.join(tmpDir, '.gsd');

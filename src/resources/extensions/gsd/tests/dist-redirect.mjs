@@ -7,6 +7,10 @@ const require = createRequire(import.meta.url);
 const ROOT = new URL("../../../../../", import.meta.url);
 
 export function resolve(specifier, context, nextResolve) {
+  if (specifier.startsWith('node:')) {
+    return { url: specifier, format: 'builtin', shortCircuit: true };
+  }
+
   // 1. Redirect all workspace package bare imports to source.
   //    CI portability runs don't build any packages/ dist artifacts, so every
   //    @gsd/* specifier (including transitive ones pulled in by pi-coding-agent
@@ -100,6 +104,10 @@ export function resolve(specifier, context, nextResolve) {
 }
 
 export function load(url, context, nextLoad) {
+  if (url.startsWith('node:') || context.format === 'builtin') {
+    return { format: 'builtin', source: '', shortCircuit: true };
+  }
+
   // jiti/CJS may still enter through stale packages/*/dist/index.js — redirect to src.
   if (url.includes('/packages/pi-ai/dist/index.js')) {
     url = url.replace('/dist/index.js', '/src/index.ts');

@@ -8,7 +8,12 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";
-import { openWorkflowDatabase } from "../db-workspace.js";
+import {
+  getWorkflowDatabaseStatus,
+  openWorkflowDatabase,
+  type WorkflowDatabaseOpenResult,
+  type WorkflowDatabaseStatus,
+} from "../db-workspace.js";
 import { getAutoWorktreePath } from "../auto-worktree.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { worktreesDirs } from "../worktree-placement.js";
@@ -69,15 +74,59 @@ export function resolveWorkflowToolBasePath(
 
 export { resolveProjectRootDbPath } from "../db-workspace.js";
 
+type WorkflowDatabaseOpenFailure = Extract<WorkflowDatabaseOpenResult, { ok: false }>;
+
+function sqliteProviderHint(status: WorkflowDatabaseStatus, nodeVersion: string): string {
+  if (status.provider) return `Provider: ${status.provider}.`;
+
+  const major = Number.parseInt(nodeVersion.split(".")[0] ?? "", 10);
+  if (Number.isFinite(major) && major < 22) {
+    return (
+      `No SQLite provider available. Upgrade Node to >= 22.0.0 (current: v${nodeVersion}), ` +
+      "use the packaged GSD runtime, or install/restore better-sqlite3 in this runtime."
+    );
+  }
+
+  return (
+    "No SQLite provider available. Use a Node build with node:sqlite enabled, " +
+    "run the packaged GSD runtime, or install/restore better-sqlite3 in this runtime."
+  );
+}
+
+function dbOpenPhaseHint(status: WorkflowDatabaseStatus): string {
+  if (status.lastPhase === "open") return "The database file could not be opened";
+  if (status.lastPhase === "initSchema") return "The database schema could not be initialized";
+  if (status.lastPhase === "vacuum-recovery") return "Corruption recovery (VACUUM) failed";
+  if (status.attempted) return "The database could not be opened";
+  return "The database provider could not be loaded";
+}
+
+export function formatWorkflowDatabaseOpenFailure(
+  result: WorkflowDatabaseOpenFailure,
+  status: WorkflowDatabaseStatus = getWorkflowDatabaseStatus(),
+  nodeVersion: string = process.versions.node,
+): string {
+  if (result.reason === "missing-gsd-dir") {
+    return `ensureDbOpen failed — no .gsd directory found at ${result.location.projectGsd}`;
+  }
+
+  if (result.reason === "missing-database") {
+    return `ensureDbOpen failed — no GSD database found at ${result.location.projectDb}`;
+  }
+
+  const detail = result.error?.message ?? status.lastError?.message ?? "";
+  const detailSuffix = detail ? ` (${detail})` : "";
+  return (
+    `ensureDbOpen failed for ${result.location.projectDb}: ` +
+    `${dbOpenPhaseHint(status)}${detailSuffix}. ${sqliteProviderHint(status, nodeVersion)}`
+  );
+}
+
 export async function ensureDbOpen(basePath: string = safeWorkspaceCwd()): Promise<boolean> {
   const result = openWorkflowDatabase(basePath);
   if (result.ok) return true;
 
-  if (result.reason === "missing-gsd-dir") {
-    logWarning("bootstrap", "ensureDbOpen failed — no .gsd directory found");
-  } else {
-    logWarning("bootstrap", `ensureDbOpen failed: ${result.error?.message ?? "open failed"}`);
-  }
+  logWarning("bootstrap", formatWorkflowDatabaseOpenFailure(result));
   return false;
 }
 

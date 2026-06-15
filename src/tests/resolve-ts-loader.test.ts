@@ -1,5 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 
 import { load as loadWithTestLoader, resolve as resolveWithTestLoader } from "../resources/extensions/gsd/tests/dist-redirect.mjs"
 
@@ -47,4 +49,25 @@ test("resolve-ts loader transpiles pi-coding-agent source files that strip-only 
   assert.equal(loaded.shortCircuit, true)
   assert.match(loaded.source, /class Agent/, "transpiled source should include the Agent class")
   assert.doesNotMatch(loaded.source, /private readonly listeners/, "TypeScript field modifiers should be removed")
+})
+
+test("resolve-ts loader allows source-mode DB provider to require node:sqlite", () => {
+  const loaderPath = fileURLToPath(
+    new URL("../resources/extensions/gsd/tests/resolve-ts.mjs", import.meta.url),
+  )
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      loaderPath,
+      "--experimental-strip-types",
+      "-e",
+      "const sqlite = require('node:sqlite'); console.log(typeof sqlite.DatabaseSync)",
+    ],
+    { encoding: "utf-8" },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout.trim(), "function")
 })
