@@ -688,9 +688,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         reason: `No Unit manifest is registered for ${unitType}`,
       };
     }
-    if (isolationMode !== "worktree") {
-      return { ok: true, reason: "not-required" };
-    }
     const writeScope =
       manifest.tools.mode === "all" || manifest.tools.mode === "docs"
         ? "source-writing"
@@ -700,6 +697,13 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
     const expectedBranch = milestoneId ? autoWorktreeBranch(milestoneId) : null;
+    const lease = milestoneId
+      ? {
+          required: writeScope === "source-writing",
+          held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
+          owner: this.s.workerId,
+        }
+      : undefined;
     let result = safety.validateUnitRoot({
       unitType,
       unitId,
@@ -709,6 +713,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId,
       isolationMode,
       expectedBranch,
+      lease,
     });
     if (!result.ok) {
       const repaired = await repairAutoWorktreeSafetyFailure({
@@ -734,6 +739,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           milestoneId,
           isolationMode: this.getEffectiveUnitIsolationMode(this.runtimeBasePath),
           expectedBranch,
+          lease,
         }),
       });
       result = repaired.result;
