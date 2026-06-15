@@ -82,7 +82,7 @@
     "test:packages": "pnpm run test:compile && pnpm run test:packages:compiled",
     "test:packages:compiled": "node scripts/run-package-tests.cjs",
     "verify:workspace-coverage": "node scripts/verify-workspace-coverage.cjs",
-    "verify:pi-boundary": "node scripts/verify-pi-boundary.cjs",
+    "verify:pi-boundary": "node scripts/verify-pi-boundary.cjs && bash scripts/check-mcp-bridge-boundary.sh",
     "verify:pi-patches": "node scripts/verify-pi-patches.cjs",
     "test:pi-claude-schemas": "pnpm exec vitest run packages/pi-ai/test/google-shared-convert-tools.test.ts && node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/claude-tool-schema-golden.test.ts",
     "test:marketplace": "node scripts/with-env.mjs GSD_TEST_CLONE_MARKETPLACES=1 -- node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/claude-import-tui.test.ts src/resources/extensions/gsd/tests/plugin-importer-live.test.ts src/tests/marketplace-discovery.test.ts",
