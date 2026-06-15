@@ -113,6 +113,9 @@ export {
   closeDatabase,
   getAllMilestones,
   getDb,
+  getGateResults,
+  getMilestoneSlices,
+  getPendingGates,
   getSliceTasks,
   insertDecision,
   insertMilestone,
@@ -160,6 +163,9 @@ interface GsdMcpBridge {
   closeDatabase: (...args: any[]) => any;
   getAllMilestones: (...args: any[]) => any;
   getDb: (...args: any[]) => any;
+  getGateResults: (...args: any[]) => any;
+  getMilestoneSlices: (...args: any[]) => any;
+  getPendingGates: (...args: any[]) => any;
   getSliceTasks: (...args: any[]) => any;
   insertDecision: (...args: any[]) => any;
   insertMilestone: (...args: any[]) => any;
