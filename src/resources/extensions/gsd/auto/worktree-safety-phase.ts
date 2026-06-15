@@ -102,6 +102,21 @@ export async function validateSourceWriteWorktreeSafety(
     s.strandedRecoveryIsolationMode,
   );
   const safety = createWorktreeSafetyModule();
+  // The milestone-branch identity is only enforced when the framework
+  // guarantees the checkout is on `milestone/<MID>` (configured worktree
+  // and branch isolation, plus stranded recovery). A degraded session is
+  // exempt because `degradeToBranchMode` may continue on the current branch
+  // when the milestone-branch checkout fails.
+  const expectedBranch =
+    milestoneId && !s.isolationDegraded && (isolationMode === "worktree" || isolationMode === "branch")
+      ? deps.autoWorktreeBranch(milestoneId)
+      : null;
+  // The milestone lease is NOT validated here. This gate runs inside
+  // advance(), before the loop's authoritative ensureDispatchLease() claims
+  // the lease for the upcoming dispatch, so the token is still unset on the
+  // first dispatch of every isolation mode whose root needs no repair
+  // (none, configured branch). ensureDispatchLease() is the fail-closed
+  // enforcement point.
   const result = safety.validateUnitRoot({
     unitType,
     unitId,
@@ -110,16 +125,8 @@ export async function validateSourceWriteWorktreeSafety(
     unitRoot: s.basePath,
     milestoneId,
     isolationMode,
-    expectedBranch:
-      isolationMode !== "none" && milestoneId ? deps.autoWorktreeBranch(milestoneId) : null,
+    expectedBranch,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
-    lease: s.workerId
-      ? {
-          required: true,
-          held: s.currentMilestoneId === milestoneId && s.milestoneLeaseToken !== null,
-          owner: s.workerId,
-        }
-      : undefined,
   });
 
   if (result.ok) return null;
