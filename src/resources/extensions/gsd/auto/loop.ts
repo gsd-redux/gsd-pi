@@ -25,7 +25,9 @@ import {
   type IterationData,
 } from "./types.js";
 import { _clearCurrentResolve } from "./resolve.js";
-import { runGuards, runFinalize, resetSessionTimeoutState } from "./phases.js";
+import { runGuards } from "./phases.js";
+import { runFinalize } from "./finalize.js";
+import { resetSessionTimeoutState } from "./unit-phase.js";
 import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";

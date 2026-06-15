@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { runDispatch, runPreDispatch } from "../auto/phases.ts";
+import { runDispatch } from "../auto/dispatch.ts";
+import { runPreDispatch } from "../auto/pre-dispatch.ts";
 import { AutoSession } from "../auto/session.ts";
 import { resolveUnitSupervisionTimeouts } from "../auto-timers.ts";
 import { bootstrapAutoSession } from "../auto-start.ts";

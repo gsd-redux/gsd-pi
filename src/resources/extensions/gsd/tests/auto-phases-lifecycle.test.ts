@@ -7,7 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { resolveDispatchRecoveryAttempts, runFinalize } from "../auto/phases.ts";
+import { resolveDispatchRecoveryAttempts } from "../auto/unit-phase.ts";
+import { runFinalize } from "../auto/finalize.ts";
 import { AutoSession } from "../auto/session.ts";
 import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "../unit-runtime.ts";
 import { captureRootDirtySnapshot } from "../root-write-leak-guard.ts";

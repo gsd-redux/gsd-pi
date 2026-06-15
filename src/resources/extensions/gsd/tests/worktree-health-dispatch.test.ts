@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { PROJECT_FILES, classifyProject } from "../detection.js";
-import { _shouldProceedWithInvalidRepoClassificationForTest } from "../auto/phases.ts";
+import { _shouldProceedWithInvalidRepoClassificationForTest } from "../auto/unit-phase.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

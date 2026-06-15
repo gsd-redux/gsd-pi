@@ -3,7 +3,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldDegradeEmptyWorktreeToProjectRoot } from "../auto/phases.ts";
+import { shouldDegradeEmptyWorktreeToProjectRoot } from "../auto/worktree-safety-phase.ts";
 import type { ProjectClassification } from "../detection.ts";
 
 function classification(kind: ProjectClassification["kind"]): ProjectClassification {

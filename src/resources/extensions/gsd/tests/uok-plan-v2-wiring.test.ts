@@ -22,7 +22,7 @@ import {
   _needsPlanV2GateForTest,
   _runPlanV2GateForTest,
 } from "../guided-flow.ts";
-import { shouldRunPlanV2Gate } from "../auto/phases.ts";
+import { shouldRunPlanV2Gate } from "../auto/phase-helpers.ts";
 import { resolveUokFlags } from "../uok/flags.ts";
 
 const MILESTONE_ID = "M001";

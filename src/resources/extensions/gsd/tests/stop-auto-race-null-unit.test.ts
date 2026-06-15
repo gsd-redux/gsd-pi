@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { _resolveCurrentUnitStartedAtForTest } from "../auto/phases.ts";
+import { _resolveCurrentUnitStartedAtForTest } from "../auto/phase-helpers.ts";
 
 test("unit started-at resolver tolerates stopAuto clearing currentUnit", () => {
   assert.equal(_resolveCurrentUnitStartedAtForTest(null), undefined);

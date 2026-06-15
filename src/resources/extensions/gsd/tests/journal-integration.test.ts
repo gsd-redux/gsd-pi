@@ -32,7 +32,10 @@ import type { LoopDeps } from "../auto/loop-deps.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import type { IterationContext, LoopState, PreDispatchData, IterationData } from "../auto/types.js";
 import type { SessionLockStatus } from "../session-lock.js";
-import { runDispatch, runUnitPhase, runPreDispatch, runFinalize } from "../auto/phases.js";
+import { runDispatch } from "../auto/dispatch.js";
+import { runUnitPhase } from "../auto/unit-phase.js";
+import { runPreDispatch } from "../auto/pre-dispatch.js";
+import { runFinalize } from "../auto/finalize.js";
 import { readUnitRuntimeRecord } from "../unit-runtime.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import {
