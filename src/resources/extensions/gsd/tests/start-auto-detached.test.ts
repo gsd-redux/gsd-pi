@@ -339,7 +339,7 @@ test("resume path only hard-exits on blocked stop, not blocked pause (#6154)", (
   );
 });
 
-test("prepareForUnit skips worktree safety when isolation is not worktree (#6154)", () => {
+test("prepareForUnit enforces worktree safety for all isolation modes (#6154)", () => {
   const orchSrc = readGsdFile("auto/orchestrator.ts");
   const prepareForUnitIdx = orchSrc.indexOf("private async prepareWorktreeForUnit(");
   const prepareForUnitBody = orchSrc.slice(prepareForUnitIdx, orchSrc.indexOf("private classifyAndRecover(", prepareForUnitIdx));
@@ -350,8 +350,12 @@ test("prepareForUnit skips worktree safety when isolation is not worktree (#6154
     "prepareForUnit should resolve the effective isolation mode once",
   );
   assert.ok(
-    prepareForUnitBody.includes('if (isolationMode !== "worktree")'),
-    "prepareForUnit should bypass worktree safety validation outside worktree isolation mode",
+    prepareForUnitBody.includes('const writeScope ='),
+    "prepareForUnit should classify the unit's write scope before validating",
+  );
+  assert.ok(
+    !prepareForUnitBody.includes('if (isolationMode !== "worktree")'),
+    "prepareForUnit must not bypass worktree safety outside worktree isolation mode",
   );
 });
 

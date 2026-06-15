@@ -576,14 +576,14 @@ describe('derive-state-helpers', () => {
       // M001 is complete so the loop advances past it.
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
       writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Summary\n\nDone.');
-      // M002 is an active milestone with no slices (queued shell) — should be deferred.
-      writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002: Shell\n\nShell milestone.');
+      // M002 is a queued shell milestone with no context and no slices — should be deferred.
+      mkdirSync(join(base, '.gsd', 'milestones', 'M002'), { recursive: true });
       // M003 is the real active milestone with slices in non-trivial sequence order.
       writeFile(base, 'milestones/M003/M003-CONTEXT.md', '# M003: Real\n\nReal milestone.');
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Complete', status: 'complete' });
-      insertMilestone({ id: 'M002', title: 'Shell', status: 'active' });
+      insertMilestone({ id: 'M002', title: 'Shell', status: 'queued' });
       insertMilestone({ id: 'M003', title: 'Real', status: 'active' });
       // Slices intentionally inserted with out-of-order sequences to prove ordering.
       insertSlice({ id: 'S01', milestoneId: 'M001', title: 'M1 Second', status: 'complete', risk: 'low', depends: [], sequence: 2 });

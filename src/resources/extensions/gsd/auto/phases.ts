@@ -379,7 +379,7 @@ async function validateSourceWriteWorktreeSafety(
     unitRoot: s.basePath,
     milestoneId,
     isolationMode,
-    expectedBranch: milestoneId ? deps.autoWorktreeBranch(milestoneId) : null,
+    expectedBranch: isolationMode === "worktree" && milestoneId ? deps.autoWorktreeBranch(milestoneId) : null,
     emptyWorktreeWithProjectContent: resolveEmptyWorktreeWithProjectContent(s.basePath, projectRoot),
     lease: s.workerId
       ? {
