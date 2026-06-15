@@ -15,7 +15,7 @@ Planned against commit `2c63ab9d`.
 | 005 | Convert source-grep tests to behavioral tests | P2 | M | — | DONE |
 | 006 | Add `CloseoutGitVerdict` tests for auto-mode closeout paths | P2 | M | — | DONE |
 | 007 | Stabilize MCP-server to GSD-extension bridge seam | P2 | M | — | DONE |
-| 008 | Extract auto-loop phase modules from `auto/phases.ts` | P3 | L | 001, 002, 003 | TODO |
+| 008 | Extract auto-loop phase modules from `auto/phases.ts` | P3 | L | 001, 002, 003 | DONE |
 
 ## Dependency notes
 
