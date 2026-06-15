@@ -10,6 +10,7 @@
  */
 
 import type { ExtensionAPI, Theme } from "@gsd/pi-coding-agent";
+import type { NotificationPreferences } from "./gsd/types.js";
 import { sanitizeError } from "./shared/sanitize.js";
 import { Text } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -261,10 +262,14 @@ function formatForLLM(result: RoundResult): string {
 	return JSON.stringify({ answers });
 }
 
-async function playQuestionBell(): Promise<void> {
+/** @internal Exported for testing only. */
+export async function playQuestionBell(
+	preferences?: NotificationPreferences,
+	stream?: { isTTY?: boolean; write(chunk: string): unknown },
+): Promise<void> {
 	try {
 		const { playNotificationBell } = await import("./gsd/notifications.js");
-		playNotificationBell("question");
+		playNotificationBell("question", preferences, stream);
 	} catch {
 		// Best-effort: question rendering must never depend on alert delivery.
 	}

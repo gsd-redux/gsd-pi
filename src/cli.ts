@@ -20,6 +20,7 @@ import { printHelp, printSubcommandHelp } from './help-text.js'
 import { applySecurityOverrides } from './security-overrides.js'
 import { validateConfiguredModel } from './startup-model-validation.js'
 import { migrateAnthropicDefaultToClaudeCode } from './provider-migrations.js'
+import { applyModelOverride } from './cli-model-override.js'
 import {
   buildHeadlessAutoArgs,
   parseCliArgs,
@@ -150,28 +151,6 @@ async function reapplyValidatedModelOnFallback(
     await session.setModel(correctModel)
   } catch {
     // Provider not ready — leave session on its current model
-  }
-}
-
-/**
- * Apply the --model CLI flag override to the active session.
- * Searches available models by exact id or provider/id pattern and warns
- * on stderr when the requested model is not found in the registry.
- */
-function applyModelOverride(
-  session: { setModel(model: { provider: string; id: string }): unknown | Promise<unknown> },
-  modelRegistry: ModelRegistryInstance,
-  modelFlag: string | undefined,
-): void {
-  if (!modelFlag) return
-  const available = modelRegistry.getAvailable()
-  const match =
-    available.find((m) => m.id === modelFlag) ||
-    available.find((m) => `${m.provider}/${m.id}` === modelFlag)
-  if (match) {
-    void session.setModel(match)
-  } else {
-    process.stderr.write(`[gsd] Warning: Model "${modelFlag}" not found. Using configured default.\n`)
   }
 }
 
