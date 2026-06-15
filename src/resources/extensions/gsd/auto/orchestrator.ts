@@ -697,7 +697,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
     const buildExpectedBranch = (mode: ReturnType<typeof getIsolationMode>) =>
-      mode === "worktree" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
+      mode !== "none" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
     const buildLease = () =>
       milestoneId && this.s.workerId
         ? {
