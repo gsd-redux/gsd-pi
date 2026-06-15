@@ -233,4 +233,3 @@ Join the [GSD Discord community](https://discord.gg/8NnkKuepmQ).
 ## License
 
 MIT
-# no-mistakes trigger
