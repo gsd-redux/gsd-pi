@@ -696,7 +696,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const activeBasePath = this.getLiveDispatchBasePath();
     const snapshot = await deriveState(activeBasePath);
     const milestoneId = snapshot.activeMilestone?.id ?? null;
-    const expectedBranch = isolationMode === "worktree" && milestoneId ? autoWorktreeBranch(milestoneId) : null;
+    const expectedBranch =
+      milestoneId && (isolationMode === "worktree" || isolationMode === "branch")
+        ? autoWorktreeBranch(milestoneId)
+        : null;
     const lease = milestoneId && this.s.workerId
       ? {
           required: writeScope === "source-writing",
