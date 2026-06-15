@@ -82,3 +82,6 @@ preflight-script.ts
 RELEASE-GUIDE.md
 TODOS.md
 AGENTS.md
+
+# opencode local config
+.opencode/
