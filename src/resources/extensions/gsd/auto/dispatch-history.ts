@@ -28,7 +28,7 @@
  */
 
 import type { WindowEntry } from "./types.js";
-import { buildDispatchKey, normalizeDispatchKey } from "./dispatch-key.js";
+import { buildDispatchKey, normalizeDispatchKey, parseDispatchKey } from "./dispatch-key.js";
 import { detectStuck } from "./detect-stuck.js";
 import {
   getLatestForUnit,
@@ -133,7 +133,12 @@ export function createDispatchHistory(options: DispatchHistoryOptions): Dispatch
       try {
         const persisted = getRecentUnitKeysForProjectRoot(scopeId, windowSize);
         if (persisted.length === 0) return 0;
-        window = persisted.map(({ key }) => ({ key: normalizeDispatchKey(key) }));
+        window = persisted.map(({ key }) => {
+          const normalized = normalizeDispatchKey(key);
+          const parsed = parseDispatchKey(normalized);
+          const error = parsed ? lookupLatestLedgerError(parsed.unitType, parsed.unitId) : undefined;
+          return { key: normalized, error };
+        });
         while (window.length > windowSize) window.shift();
         return window.length;
       } catch (err) {
