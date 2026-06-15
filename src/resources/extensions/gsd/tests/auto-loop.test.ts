@@ -5698,10 +5698,12 @@ test("dispatch Worktree Safety honors degraded branch fallback instead of demand
   execSync("git init --initial-branch=main", { cwd: projectRoot, stdio: "ignore" });
   execSync("git config user.email test@test.com", { cwd: projectRoot, stdio: "ignore" });
   execSync("git config user.name Test", { cwd: projectRoot, stdio: "ignore" });
-  // The lifecycle fallback checks out `milestone/<MID>` in the project root,
-  // so the safety gate's branch verification expects that branch here too.
+  // The lifecycle fallback checks out the milestone branch in the project
+  // root, so the safety gate's branch verification expects that branch here
+  // too. expectedBranch comes from deps.autoWorktreeBranch (mocked to
+  // "auto/M001"), so the fixture repo must be on that same branch.
   execSync("git commit --allow-empty -m init", { cwd: projectRoot, stdio: "ignore" });
-  execSync("git checkout -b milestone/M001", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git checkout -b auto/M001", { cwd: projectRoot, stdio: "ignore" });
   t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
   const s = makeLoopSession({
@@ -5768,9 +5770,11 @@ test("dispatch Worktree Safety honors stranded branch recovery instead of demand
   execSync("git config user.email test@test.com", { cwd: projectRoot, stdio: "ignore" });
   execSync("git config user.name Test", { cwd: projectRoot, stdio: "ignore" });
   // Stranded recovery adopts the milestone branch in the project root, so the
-  // safety gate's branch verification expects `milestone/<MID>` here too.
+  // safety gate's branch verification expects that branch here too.
+  // expectedBranch comes from deps.autoWorktreeBranch (mocked to "auto/M001"),
+  // so the fixture repo must be on that same branch.
   execSync("git commit --allow-empty -m init", { cwd: projectRoot, stdio: "ignore" });
-  execSync("git checkout -b milestone/M001", { cwd: projectRoot, stdio: "ignore" });
+  execSync("git checkout -b auto/M001", { cwd: projectRoot, stdio: "ignore" });
   t.after(() => rmSync(projectRoot, { recursive: true, force: true }));
 
   const s = makeLoopSession({
