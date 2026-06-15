@@ -18,6 +18,47 @@ import {
 
 import { logAliasUsage } from "./alias-telemetry.js";
 
+/** Local mirror of src/resources/extensions/gsd/mcp-bridge.ts.
+ *  Kept here so packages/mcp-server/tsconfig.json rootDir boundary is not crossed.
+ */
+interface GsdMcpBridge {
+  loadWriteGateSnapshot: (...args: any[]) => any;
+  shouldBlockPendingGateInSnapshot: (...args: any[]) => any;
+  shouldBlockQueueExecutionInSnapshot: (...args: any[]) => any;
+  ensureDbOpen: (...args: any[]) => any;
+  _getAdapter: (...args: any[]) => any;
+  checkpointDatabase: (...args: any[]) => any;
+  closeDatabase: (...args: any[]) => any;
+  getAllMilestones: (...args: any[]) => any;
+  getDb: (...args: any[]) => any;
+  getGateResults: (...args: any[]) => any;
+  getMilestoneSlices: (...args: any[]) => any;
+  getPendingGates: (...args: any[]) => any;
+  getSliceTasks: (...args: any[]) => any;
+  insertDecision: (...args: any[]) => any;
+  insertMilestone: (...args: any[]) => any;
+  insertSlice: (...args: any[]) => any;
+  openDatabase: (...args: any[]) => any;
+  upsertMilestonePlanning: (...args: any[]) => any;
+  invalidateStateCache: (...args: any[]) => any;
+  isReusableGhostMilestone: (...args: any[]) => any;
+  loadEffectiveGSDPreferences: (...args: any[]) => any;
+  saveDecisionToDb: (...args: any[]) => any;
+  saveRequirementToDb: (...args: any[]) => any;
+  updateRequirementInDb: (...args: any[]) => any;
+  rebuildState: (...args: any[]) => any;
+  queryJournal: (...args: any[]) => any;
+  claimReservedId: (...args: any[]) => any;
+  findMilestoneIds: (...args: any[]) => any;
+  getReservedMilestoneIds: (...args: any[]) => any;
+  milestoneIdSort: (...args: any[]) => any;
+  nextMilestoneId: (...args: any[]) => any;
+}
+
+async function importBridgeModule(): Promise<GsdMcpBridge> {
+  return importLocalModule<GsdMcpBridge>("../../../src/resources/extensions/gsd/mcp-bridge.js");
+}
+
 type WorkflowToolExecutors = {
   SUPPORTED_SUMMARY_ARTIFACT_TYPES: readonly string[];
   executeMilestoneStatus: (params: { milestoneId: string }, basePath?: string) => Promise<unknown>;
@@ -618,7 +659,7 @@ function getWriteGateModuleCandidates(): string[] {
   }
 
   candidates.push(
-    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/bootstrap/write-gate.js")
+    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/mcp-bridge.js")
       .map((p) => new URL(p, import.meta.url).href),
   );
 
@@ -679,11 +720,9 @@ async function importLocalModule<T>(relativePath: string): Promise<T> {
 }
 
 async function loadProjectPreferences(projectDir: string): Promise<unknown | null> {
-  const { loadEffectiveGSDPreferences } = await importLocalModule<any>(
-    "../../../src/resources/extensions/gsd/preferences.js",
-  );
+  const bridge = await importBridgeModule();
   try {
-    return loadEffectiveGSDPreferences(projectDir).preferences;
+    return bridge.loadEffectiveGSDPreferences(projectDir).preferences;
   } catch {
     return null;
   }
@@ -895,10 +934,8 @@ async function runSerializedWorkflowDbOperation<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   return runSerializedWorkflowOperation(async () => {
-    const { ensureDbOpen } = await importLocalModule<WorkflowDbBootstrapModule>(
-      "../../../src/resources/extensions/gsd/bootstrap/dynamic-tools.js",
-    );
-    const dbAvailable = await ensureDbOpen(projectDir);
+    const bridge = await importBridgeModule();
+    const dbAvailable = await bridge.ensureDbOpen(projectDir);
     if (!dbAvailable) {
       throw new Error("GSD database is not available");
     }
@@ -1077,36 +1114,33 @@ async function inferSaveGateResultScope(
   if (stringValue(out.milestoneId) && stringValue(out.sliceId)) return out;
   if (!gateId) return out;
 
-  const { ensureDbOpen } = await importLocalModule<WorkflowDbBootstrapModule>(
-    "../../../src/resources/extensions/gsd/bootstrap/dynamic-tools.js",
-  );
-  if (!(await ensureDbOpen(projectDir))) return out;
+  const bridge = await importBridgeModule();
+  if (!(await bridge.ensureDbOpen(projectDir))) return out;
 
-  const db = await importLocalModule<GateDbModule>("../../../src/resources/extensions/gsd/gsd-db.js");
-  if (!db.getMilestoneSlices || !db.getPendingGates || !db.getGateResults) return out;
+  if (!bridge.getMilestoneSlices || !bridge.getPendingGates || !bridge.getGateResults) return out;
 
   const milestoneFilter = stringValue(out.milestoneId);
   const sliceFilter = stringValue(out.sliceId);
   const milestones = milestoneFilter
     ? [{ id: milestoneFilter }]
-    : (db.getAllMilestones?.() ?? []).filter((milestone) => stringValue(milestone.id));
+    : (bridge.getAllMilestones?.() ?? []).filter((milestone: unknown) => stringValue((milestone as { id?: unknown }).id));
 
   const candidates: Array<{ milestoneId: string; sliceId: string; taskId?: string }> = [];
   for (const milestone of milestones) {
     const milestoneId = stringValue(milestone.id);
     if (!milestoneId) continue;
-    const slices = db.getMilestoneSlices(milestoneId)
-      .filter((slice) => {
-        const sliceId = stringValue(slice.id);
+    const slices = bridge.getMilestoneSlices(milestoneId)
+      .filter((slice: unknown) => {
+        const sliceId = stringValue((slice as { id?: unknown }).id);
         return sliceId && (!sliceFilter || sliceId === sliceFilter);
       });
 
     for (const slice of slices) {
-      const sliceId = stringValue(slice.id);
+      const sliceId = stringValue((slice as { id?: unknown }).id);
       if (!sliceId) continue;
       const rows = [
-        ...db.getPendingGates(milestoneId, sliceId),
-        ...db.getGateResults(milestoneId, sliceId),
+        ...bridge.getPendingGates(milestoneId, sliceId),
+        ...bridge.getGateResults(milestoneId, sliceId),
       ];
       for (const row of rows) {
         if (stringValue(row.gate_id)?.toUpperCase() !== gateId) continue;
@@ -1146,8 +1180,8 @@ async function handleSaveGateResult(
 
 async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
   try {
-    const { insertMilestone } = await importLocalModule<any>("../../../src/resources/extensions/gsd/gsd-db.js");
-    insertMilestone({ id: milestoneId, status: "queued" });
+    const bridge = await importBridgeModule();
+    bridge.insertMilestone({ id: milestoneId, status: "queued" });
   } catch {
     // Ignore pre-existing rows or transient DB availability issues.
   }
@@ -1155,8 +1189,8 @@ async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
 
 async function findDatabaseMilestoneIds(): Promise<string[]> {
   try {
-    const { getAllMilestones } = await importLocalModule<any>("../../../src/resources/extensions/gsd/gsd-db.js");
-    return (getAllMilestones?.() ?? [])
+    const bridge = await importBridgeModule();
+    return (bridge.getAllMilestones?.() ?? [])
       .map((milestone: unknown) => {
         const id = (milestone as { id?: unknown })?.id;
         return typeof id === "string" ? id : null;
@@ -1176,13 +1210,14 @@ async function findDatabaseMilestoneIds(): Promise<string[]> {
  * from an earlier call to this same tool.
  */
 async function generateOrReuseMilestoneId(projectDir: string): Promise<string> {
+  const bridge = await importBridgeModule();
   const {
     claimReservedId,
     findMilestoneIds,
     getReservedMilestoneIds,
     nextMilestoneId,
     milestoneIdSort,
-  } = await importLocalModule<any>("../../../src/resources/extensions/gsd/milestone-ids.js");
+  } = bridge;
 
   const reserved = claimReservedId();
   if (reserved) {
@@ -1199,9 +1234,7 @@ async function generateOrReuseMilestoneId(projectDir: string): Promise<string> {
   ];
 
   // Attempt ghost-ID reuse before falling back to max+1.
-  const { isReusableGhostMilestone } = await importLocalModule<any>(
-    "../../../src/resources/extensions/gsd/state.js",
-  );
+  const { isReusableGhostMilestone } = bridge;
   const sorted = [...allIds].sort(milestoneIdSort);
   for (const candidate of sorted) {
     if (isReusableGhostMilestone(projectDir, candidate)) {
@@ -1210,9 +1243,7 @@ async function generateOrReuseMilestoneId(projectDir: string): Promise<string> {
     }
   }
 
-  const prefsMod = await importLocalModule<any>(
-    "../../../src/resources/extensions/gsd/preferences.js",
-  ).catch(() => null);
+  const prefsMod = await importBridgeModule().catch(() => null);
   // Graceful degradation: a corrupt preferences file should not crash
   // milestone-id generation. Fall back to non-unique IDs if anything
   // throws here — matches the pre-fix behavior for missing prefs.
@@ -1990,8 +2021,8 @@ export function registerWorkflowTools(
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_decision_save", projectDir);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { saveDecisionToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return saveDecisionToDb(params, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.saveDecisionToDb(params, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Saved decision ${result.id}` }] };
     },
@@ -2007,8 +2038,8 @@ export function registerWorkflowTools(
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_decision_save", projectDir);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { saveDecisionToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return saveDecisionToDb(params, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.saveDecisionToDb(params, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Saved decision ${result.id}` }] };
     },
@@ -2023,8 +2054,8 @@ export function registerWorkflowTools(
       const { projectDir, id, ...updates } = parsed;
       await enforceWorkflowWriteGate("gsd_requirement_update", projectDir);
       await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { updateRequirementInDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return updateRequirementInDb(id, updates, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.updateRequirementInDb(id, updates, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Updated requirement ${id}` }] };
     },
@@ -2040,8 +2071,8 @@ export function registerWorkflowTools(
       const { projectDir, id, ...updates } = parsed;
       await enforceWorkflowWriteGate("gsd_requirement_update", projectDir);
       await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { updateRequirementInDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return updateRequirementInDb(id, updates, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.updateRequirementInDb(id, updates, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Updated requirement ${id}` }] };
     },
@@ -2056,8 +2087,8 @@ export function registerWorkflowTools(
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_requirement_save", projectDir);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { saveRequirementToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return saveRequirementToDb(params, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.saveRequirementToDb(params, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Saved requirement ${result.id}` }] };
     },
@@ -2073,8 +2104,8 @@ export function registerWorkflowTools(
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_requirement_save", projectDir);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { saveRequirementToDb } = await importLocalModule<any>("../../../src/resources/extensions/gsd/db-writer.js");
-        return saveRequirementToDb(params, projectDir);
+        const bridge = await importBridgeModule();
+        return bridge.saveRequirementToDb(params, projectDir);
       });
       return { content: [{ type: "text" as const, text: `Saved requirement ${result.id}` }] };
     },
@@ -2265,15 +2296,14 @@ export function registerWorkflowTools(
       await enforceWorkflowWriteGate("gsd_skip_slice", projectDir, milestoneId);
       await runSerializedWorkflowDbOperation(projectDir, async () => {
         const { handleSkipSlice } = await importLocalModule<any>("../../../src/resources/extensions/gsd/tools/skip-slice.js");
-        const { invalidateStateCache } = await importLocalModule<any>("../../../src/resources/extensions/gsd/state.js");
-        const { rebuildState } = await importLocalModule<any>("../../../src/resources/extensions/gsd/doctor.js");
+        const bridge = await importBridgeModule();
         const result = handleSkipSlice({ milestoneId, sliceId, reason });
         if (result.error) {
           throw new Error(result.error);
         }
 
-        invalidateStateCache();
-        await rebuildState(projectDir);
+        bridge.invalidateStateCache();
+        await bridge.rebuildState(projectDir);
       });
       return {
         content: [{ type: "text" as const, text: `Skipped slice ${sliceId} (${milestoneId}). Reason: ${reason ?? "User-directed skip"}.` }],
@@ -2543,10 +2573,8 @@ export function registerWorkflowTools(
     async (args: Record<string, unknown>) => {
       const { projectDir } = parseWorkflowArgs(checkpointDbSchema, args);
       await runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { checkpointDatabase } = await importLocalModule<any>(
-          "../../../src/resources/extensions/gsd/gsd-db.js",
-        );
-        checkpointDatabase();
+        const bridge = await importBridgeModule();
+        bridge.checkpointDatabase();
       });
       return {
         content: [{
@@ -2564,8 +2592,8 @@ export function registerWorkflowTools(
     journalQueryParams,
     async (args: Record<string, unknown>) => {
       const { projectDir, limit, ...filters } = parseWorkflowArgs(journalQuerySchema, args);
-      const { queryJournal } = await importLocalModule<any>("../../../src/resources/extensions/gsd/journal.js");
-      const entries = queryJournal(projectDir, filters).slice(0, limit ?? 100);
+      const bridge = await importBridgeModule();
+      const entries = bridge.queryJournal(projectDir, filters).slice(0, limit ?? 100);
       if (entries.length === 0) {
         return { content: [{ type: "text" as const, text: "No matching journal entries found." }] };
       }

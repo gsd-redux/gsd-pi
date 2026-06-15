@@ -21,7 +21,7 @@ import {
   insertSlice,
   openDatabase,
   upsertMilestonePlanning,
-} from "../../../src/resources/extensions/gsd/gsd-db.ts";
+} from "../../../src/resources/extensions/gsd/mcp-bridge.ts";
 import { buildReassessRoadmapPrompt } from "../../../src/resources/extensions/gsd/auto-prompts.ts";
 import { invalidateAllCaches } from "../../../src/resources/extensions/gsd/cache.ts";
 import { resolveToolPresentationPlan } from "../../../src/resources/extensions/gsd/tool-presentation-plan.ts";
