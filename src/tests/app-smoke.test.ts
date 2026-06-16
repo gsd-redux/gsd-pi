@@ -170,6 +170,34 @@ test("requireGit returns false when exec throws and true when it succeeds", asyn
   assert.strictEqual(calls.length, 1, "success path also invokes exec exactly once");
 });
 
+test("gitAvailableOnPath finds git via a $PATH scan without spawning a subprocess", async (t) => {
+  const { gitAvailableOnPath } = await import("../runtime-checks.ts");
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const dir = mkdtempSync(join(tmpdir(), "gitpath-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  // Empty PATH → not found.
+  assert.strictEqual(gitAvailableOnPath({ PATH: "" }, "linux"), false, "empty PATH means no git");
+
+  // PATH points at a dir with no git → not found.
+  assert.strictEqual(gitAvailableOnPath({ PATH: dir }, "linux"), false, "no git binary in dir");
+
+  // Drop a fake `git` into the dir → found, with NO subprocess spawned.
+  writeFileSync(join(dir, "git"), "#!/bin/sh\n");
+  assert.strictEqual(gitAvailableOnPath({ PATH: dir }, "linux"), true, "git present on PATH is found");
+
+  // Windows: respects PATHEXT and looks for git.exe.
+  writeFileSync(join(dir, "git.exe"), "");
+  assert.strictEqual(
+    gitAvailableOnPath({ Path: dir, PATHEXT: ".EXE;.CMD" }, "win32"),
+    true,
+    "win32 finds git.exe via PATHEXT",
+  );
+});
+
 test("loader MIN_NODE_MAJOR matches package.json engines field exactly", async () => {
   // Imports the actual exported constant from runtime-checks.ts (the same
   // module loader.ts consumes) and asserts STRICT equality with the major

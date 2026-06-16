@@ -38,6 +38,7 @@ export interface SettingsConfig {
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
 	toolsExpanded: boolean;
+	toolRailAnimation: boolean;
 	collapseChangelog: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
 	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
@@ -65,6 +66,7 @@ export interface SettingsCallbacks {
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onToolsExpandedChange: (expanded: boolean) => void;
+	onToolRailAnimationChange: (enabled: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
@@ -196,6 +198,13 @@ export class SettingsSelectorComponent extends Container {
 				description: "Expand tool output cards by default",
 				currentValue: config.toolsExpanded ? "expanded" : "collapsed",
 				values: ["expanded", "collapsed"],
+			},
+			{
+				id: "tool-rail-animation",
+				label: "Tool rail animation",
+				description: "Animate the rail on running tool cards (off = static, no re-render timer)",
+				currentValue: config.toolRailAnimation ? "true" : "false",
+				values: ["true", "false"],
 			},
 			{
 				id: "collapse-changelog",
@@ -426,6 +435,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "tools-expanded":
 						callbacks.onToolsExpandedChange(newValue === "expanded");
+						break;
+					case "tool-rail-animation":
+						callbacks.onToolRailAnimationChange(newValue === "true");
 						break;
 					case "collapse-changelog":
 						callbacks.onCollapseChangelogChange(newValue === "true");

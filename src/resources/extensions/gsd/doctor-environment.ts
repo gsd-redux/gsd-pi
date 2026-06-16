@@ -10,7 +10,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import { join } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
@@ -76,46 +76,45 @@ function commandExists(name: string, cwd: string): boolean {
 /**
  * Check that Node.js version meets the project's engines requirement.
  */
-function checkNodeVersion(basePath: string): EnvironmentCheckResult | null {
+function readPackageEngineNode(basePath: string): string | null {
   const pkgPath = join(basePath, "package.json");
   if (!existsSync(pkgPath)) return null;
-
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    const required = pkg.engines?.node;
-    if (!required) return null;
-
-    const currentVersion = tryExec("node --version", basePath);
-    if (!currentVersion) {
-      return { name: "node_version", status: "error", message: "Node.js not found in PATH" };
-    }
-
-    // Parse semver requirement (handles >=X.Y.Z format)
-    const reqMatch = required.match(/>=?\s*(\d+)(?:\.(\d+))?/);
-    if (!reqMatch) return null;
-
-    const reqMajor = parseInt(reqMatch[1], 10);
-    const reqMinor = parseInt(reqMatch[2] ?? "0", 10);
-
-    const curMatch = currentVersion.match(/v?(\d+)\.(\d+)/);
-    if (!curMatch) return null;
-
-    const curMajor = parseInt(curMatch[1], 10);
-    const curMinor = parseInt(curMatch[2], 10);
-
-    if (curMajor < reqMajor || (curMajor === reqMajor && curMinor < reqMinor)) {
-      return {
-        name: "node_version",
-        status: "warning",
-        message: `Node.js ${currentVersion} does not meet requirement "${required}"`,
-        detail: `Current: ${currentVersion}, Required: ${required}`,
-      };
-    }
-
-    return { name: "node_version", status: "ok", message: `Node.js ${currentVersion}` };
+    return pkg.engines?.node ?? null;
   } catch {
     return null;
   }
+}
+
+function buildNodeVersionResult(required: string, currentVersion: string | null): EnvironmentCheckResult | null {
+  if (!currentVersion) {
+    return { name: "node_version", status: "error", message: "Node.js not found in PATH" };
+  }
+  // Parse semver requirement (handles >=X.Y.Z format)
+  const reqMatch = required.match(/>=?\s*(\d+)(?:\.(\d+))?/);
+  if (!reqMatch) return null;
+  const reqMajor = parseInt(reqMatch[1], 10);
+  const reqMinor = parseInt(reqMatch[2] ?? "0", 10);
+  const curMatch = currentVersion.match(/v?(\d+)\.(\d+)/);
+  if (!curMatch) return null;
+  const curMajor = parseInt(curMatch[1], 10);
+  const curMinor = parseInt(curMatch[2], 10);
+  if (curMajor < reqMajor || (curMajor === reqMajor && curMinor < reqMinor)) {
+    return {
+      name: "node_version",
+      status: "warning",
+      message: `Node.js ${currentVersion} does not meet requirement "${required}"`,
+      detail: `Current: ${currentVersion}, Required: ${required}`,
+    };
+  }
+  return { name: "node_version", status: "ok", message: `Node.js ${currentVersion}` };
+}
+
+function checkNodeVersion(basePath: string): EnvironmentCheckResult | null {
+  const required = readPackageEngineNode(basePath);
+  if (!required) return null;
+  return buildNodeVersionResult(required, tryExec("node --version", basePath));
 }
 
 /**
@@ -217,28 +216,19 @@ function checkEnvFiles(basePath: string): EnvironmentCheckResult | null {
  * Check for port conflicts on common dev server ports.
  * Only checks ports that appear in package.json scripts.
  */
-function checkPortConflicts(basePath: string): EnvironmentCheckResult[] {
-  // Only run on macOS/Linux — lsof is not available on Windows
-  if (process.platform === "win32") return [];
-
-  const results: EnvironmentCheckResult[] = [];
-
-  // Try to detect ports from package.json scripts
+// Detect the dev ports worth checking from package.json scripts, falling back to
+// common defaults. Returns an empty set when there's no Node project (no
+// package.json) or a parse failure — the caller then skips port checks entirely,
+// avoiding false positives from system services (e.g. macOS AirPlay on 5000, #1381).
+function collectPortsToCheck(basePath: string): Set<number> {
   const portsToCheck = new Set<number>();
   const pkgPath = join(basePath, "package.json");
-
-  if (!existsSync(pkgPath)) {
-    // No package.json — this isn't a Node.js project. Skip port checks
-    // entirely to avoid false positives from system services (e.g., macOS
-    // AirPlay Receiver on port 5000). (#1381)
-    return [];
-  }
+  if (!existsSync(pkgPath)) return portsToCheck;
 
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
     const scripts = pkg.scripts ?? {};
     const scriptText = Object.values(scripts).join(" ");
-
     // Look for --port NNNN, -p NNNN, PORT=NNNN, :NNNN patterns
     const portMatches = scriptText.matchAll(/(?:--port\s+|(?:^|[^a-z])PORT[=:]\s*|-p\s+|:)(\d{4,5})\b/gi);
     for (const m of portMatches) {
@@ -246,48 +236,66 @@ function checkPortConflicts(basePath: string): EnvironmentCheckResult[] {
       if (port >= 1024 && port <= 65535) portsToCheck.add(port);
     }
   } catch {
-    // parse failed — skip port checks rather than using defaults
-    return [];
+    return new Set();
   }
 
-  // If no ports found in scripts, check common defaults.
-  // Filter out port 5000 on macOS — AirPlay Receiver uses it by default (#1381).
   if (portsToCheck.size === 0) {
     for (const p of DEFAULT_DEV_PORTS) {
       if (p === 5000 && process.platform === "darwin") continue;
       portsToCheck.add(p);
     }
   }
+  return portsToCheck;
+}
 
+// Parse a single `lsof -nP -iTCP -sTCP:LISTEN` scan and report which of the
+// requested ports are in use. Replaces the old per-port lsof loop (up to ~14
+// system-wide socket scans, ~350ms) with one scan + an in-memory lookup.
+function buildPortConflictResults(
+  lsofOut: string | null,
+  portsToCheck: Set<number>,
+): EnvironmentCheckResult[] {
+  const results: EnvironmentCheckResult[] = [];
+  const listening = new Map<number, { pid: string; command: string }>();
+  if (lsofOut) {
+    for (const line of lsofOut.split("\n")) {
+      // COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+      // e.g. `node 12345 user 23u IPv4 0x.. 0t0 TCP *:3000 (LISTEN)`
+      const portMatch = line.match(/:(\d+)(?:\s+\(LISTEN\))?\s*$/);
+      if (!portMatch) continue;
+      const port = parseInt(portMatch[1], 10);
+      if (!Number.isFinite(port) || listening.has(port)) continue;
+      const cols = line.split(/\s+/);
+      listening.set(port, { command: cols[0] ?? "unknown", pid: cols[1] ?? "?" });
+    }
+  }
   for (const port of portsToCheck) {
-    const result = tryExec(`lsof -i :${port} -sTCP:LISTEN -t`, basePath);
-    if (result && result.length > 0) {
-      // Get process name
-      const nameResult = tryExec(`lsof -i :${port} -sTCP:LISTEN -Fp | head -2`, basePath);
-      const processName = nameResult?.match(/p(\d+)\n?c?(.+)?/)?.[2] ?? "unknown";
-
+    const hit = listening.get(port);
+    if (hit) {
       results.push({
         name: "port_conflict",
         status: "warning",
-        message: `Port ${port} is already in use by ${processName} (PID ${result.split("\n")[0]})`,
+        message: `Port ${port} is already in use by ${hit.command} (PID ${hit.pid})`,
         detail: `Kill the process or use a different port`,
       });
     }
   }
-
   return results;
+}
+
+function checkPortConflicts(basePath: string): EnvironmentCheckResult[] {
+  // Only run on macOS/Linux — lsof is not available on Windows
+  if (process.platform === "win32") return [];
+  const portsToCheck = collectPortsToCheck(basePath);
+  if (portsToCheck.size === 0) return [];
+  return buildPortConflictResults(tryExec("lsof -nP -iTCP -sTCP:LISTEN", basePath), portsToCheck);
 }
 
 /**
  * Check available disk space on the working directory partition.
  */
-function checkDiskSpace(basePath: string): EnvironmentCheckResult | null {
-  // Only run on macOS/Linux
-  if (process.platform === "win32") return null;
-
-  const dfOutput = tryExec(`df -k "${basePath}" | tail -1`, basePath);
+function buildDiskSpaceResult(dfOutput: string | null): EnvironmentCheckResult | null {
   if (!dfOutput) return null;
-
   try {
     // df output: filesystem blocks used avail capacity mount
     const parts = dfOutput.split(/\s+/);
@@ -306,32 +314,34 @@ function checkDiskSpace(basePath: string): EnvironmentCheckResult | null {
         detail: `Free up space — builds and git operations may fail`,
       };
     }
-
     if (availBytes < MIN_DISK_BYTES * 4) {
-      return {
-        name: "disk_space",
-        status: "warning",
-        message: `Disk space getting low: ${availGB}GB free`,
-      };
+      return { name: "disk_space", status: "warning", message: `Disk space getting low: ${availGB}GB free` };
     }
-
     return { name: "disk_space", status: "ok", message: `${availGB}GB free` };
   } catch {
     return null;
   }
 }
 
+function checkDiskSpace(basePath: string): EnvironmentCheckResult | null {
+  // Only run on macOS/Linux
+  if (process.platform === "win32") return null;
+  return buildDiskSpaceResult(tryExec(`df -k "${basePath}" | tail -1`, basePath));
+}
+
 /**
  * Check if Docker is available when project has a Dockerfile.
  */
-function checkDocker(basePath: string): EnvironmentCheckResult | null {
-  const hasDockerfile = existsSync(join(basePath, "Dockerfile")) ||
+function hasDockerConfig(basePath: string): boolean {
+  return existsSync(join(basePath, "Dockerfile")) ||
     existsSync(join(basePath, "docker-compose.yml")) ||
     existsSync(join(basePath, "docker-compose.yaml")) ||
     existsSync(join(basePath, "compose.yml")) ||
     existsSync(join(basePath, "compose.yaml"));
+}
 
-  if (!hasDockerfile) return null;
+function checkDocker(basePath: string): EnvironmentCheckResult | null {
+  if (!hasDockerConfig(basePath)) return null;
 
   if (!commandExists("docker", basePath)) {
     return {
@@ -357,78 +367,68 @@ function checkDocker(basePath: string): EnvironmentCheckResult | null {
 /**
  * Check for common project tools that should be available.
  */
-function checkProjectTools(basePath: string): EnvironmentCheckResult[] {
-  const results: EnvironmentCheckResult[] = [];
+interface ProjectToolSpec {
+  packageManager: string | null; // non-npm manager that must be on PATH, or null
+  needsTsc: boolean;
+  needsPython: boolean;
+  needsCargo: boolean;
+  needsGo: boolean;
+}
+
+// Decide which project tools to verify from package.json + marker files (pure fs).
+// The actual `command -v` probes are left to the sync/async checkers so both share
+// this logic.
+function readProjectToolSpec(basePath: string): ProjectToolSpec | null {
   const pkgPath = join(basePath, "package.json");
-
-  if (!existsSync(pkgPath)) return results;
-
+  if (!existsSync(pkgPath)) return null;
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
-    const allDeps = {
-      ...(pkg.dependencies ?? {}),
-      ...(pkg.devDependencies ?? {}),
+    const allDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    let packageManager: string | null = null;
+    if (pkg.packageManager) {
+      const managerName = String(pkg.packageManager).split("@")[0];
+      if (managerName && managerName !== "npm") packageManager = managerName;
+    }
+    return {
+      packageManager,
+      needsTsc: Boolean(allDeps["typescript"]) && !existsSync(join(basePath, "node_modules", ".bin", "tsc")),
+      needsPython: existsSync(join(basePath, "pyproject.toml")) || existsSync(join(basePath, "requirements.txt")),
+      needsCargo: existsSync(join(basePath, "Cargo.toml")),
+      needsGo: existsSync(join(basePath, "go.mod")),
     };
-
-    // Check for package manager
-    const packageManager = pkg.packageManager;
-    if (packageManager) {
-      const managerName = packageManager.split("@")[0];
-      if (managerName && managerName !== "npm" && !commandExists(managerName, basePath)) {
-        results.push({
-          name: "package_manager",
-          status: "warning",
-          message: `Project requires ${managerName} but it's not installed`,
-          detail: `Install with: npm install -g ${managerName}`,
-        });
-      }
-    }
-
-    // Check for TypeScript if it's a dependency
-    if (allDeps["typescript"] && !existsSync(join(basePath, "node_modules", ".bin", "tsc"))) {
-      results.push({
-        name: "typescript",
-        status: "warning",
-        message: "TypeScript is a dependency but tsc is not available (run npm install)",
-      });
-    }
-
-    // Check for Python if pyproject.toml or requirements.txt exists
-    if (existsSync(join(basePath, "pyproject.toml")) || existsSync(join(basePath, "requirements.txt"))) {
-      if (detectPythonExecutable() === null) {
-        results.push({
-          name: "python",
-          status: "warning",
-          message: "Project has Python config but python is not installed",
-        });
-      }
-    }
-
-    // Check for Rust if Cargo.toml exists
-    if (existsSync(join(basePath, "Cargo.toml"))) {
-      if (!commandExists("cargo", basePath)) {
-        results.push({
-          name: "cargo",
-          status: "warning",
-          message: "Project has Cargo.toml but cargo is not installed",
-        });
-      }
-    }
-
-    // Check for Go if go.mod exists
-    if (existsSync(join(basePath, "go.mod"))) {
-      if (!commandExists("go", basePath)) {
-        results.push({
-          name: "go",
-          status: "warning",
-          message: "Project has go.mod but go is not installed",
-        });
-      }
-    }
   } catch {
-    // parse failed — skip
+    return null;
   }
+}
 
+function checkProjectTools(basePath: string): EnvironmentCheckResult[] {
+  const spec = readProjectToolSpec(basePath);
+  if (!spec) return [];
+  const results: EnvironmentCheckResult[] = [];
+  if (spec.packageManager && !commandExists(spec.packageManager, basePath)) {
+    results.push({
+      name: "package_manager",
+      status: "warning",
+      message: `Project requires ${spec.packageManager} but it's not installed`,
+      detail: `Install with: npm install -g ${spec.packageManager}`,
+    });
+  }
+  if (spec.needsTsc) {
+    results.push({
+      name: "typescript",
+      status: "warning",
+      message: "TypeScript is a dependency but tsc is not available (run npm install)",
+    });
+  }
+  if (spec.needsPython && detectPythonExecutable() === null) {
+    results.push({ name: "python", status: "warning", message: "Project has Python config but python is not installed" });
+  }
+  if (spec.needsCargo && !commandExists("cargo", basePath)) {
+    results.push({ name: "cargo", status: "warning", message: "Project has Cargo.toml but cargo is not installed" });
+  }
+  if (spec.needsGo && !commandExists("go", basePath)) {
+    results.push({ name: "go", status: "warning", message: "Project has go.mod but go is not installed" });
+  }
   return results;
 }
 
@@ -517,6 +517,131 @@ function checkTestHealth(basePath: string): EnvironmentCheckResult | null {
  * Run all environment health checks. Returns structured results for
  * integration with the doctor pipeline.
  */
+// ── Async variants ─────────────────────────────────────────────────────────
+// The always-on health widget refreshes off the first-paint path, but the sync
+// `runEnvironmentChecks` blocks the event loop on its subprocess checks (~300ms,
+// and again every 60s). These async siblings run the same checks via non-blocking
+// `execFile` and fan the independent ones out concurrently, so the UI thread never
+// stalls. The sync API above is unchanged for /gsd doctor and the dashboards.
+
+function tryExecAsync(cmd: string, cwd: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const isWin = process.platform === "win32";
+    const child = execFile(
+      isWin ? "cmd" : "sh",
+      isWin ? ["/c", cmd] : ["-c", cmd],
+      { cwd, timeout: CMD_TIMEOUT, encoding: "utf-8" },
+      (err, stdout) => resolve(err ? null : String(stdout).trim()),
+    );
+    child.on("error", () => resolve(null));
+  });
+}
+
+async function commandExistsAsync(name: string, cwd: string): Promise<boolean> {
+  const whichCmd = process.platform === "win32" ? `where ${name}` : `command -v ${name}`;
+  return (await tryExecAsync(whichCmd, cwd)) !== null;
+}
+
+async function checkNodeVersionAsync(basePath: string): Promise<EnvironmentCheckResult | null> {
+  const required = readPackageEngineNode(basePath);
+  if (!required) return null;
+  const currentVersion = await tryExecAsync("node --version", basePath);
+  return buildNodeVersionResult(required, currentVersion);
+}
+
+async function checkPortConflictsAsync(basePath: string): Promise<EnvironmentCheckResult[]> {
+  if (process.platform === "win32") return [];
+  const portsToCheck = collectPortsToCheck(basePath);
+  if (portsToCheck.size === 0) return [];
+  const lsofOut = await tryExecAsync("lsof -nP -iTCP -sTCP:LISTEN", basePath);
+  return buildPortConflictResults(lsofOut, portsToCheck);
+}
+
+async function checkDiskSpaceAsync(basePath: string): Promise<EnvironmentCheckResult | null> {
+  if (process.platform === "win32") return null;
+  return buildDiskSpaceResult(await tryExecAsync(`df -k "${basePath}" | tail -1`, basePath));
+}
+
+async function checkDockerAsync(basePath: string): Promise<EnvironmentCheckResult | null> {
+  if (!hasDockerConfig(basePath)) return null;
+  if (!(await commandExistsAsync("docker", basePath))) {
+    return { name: "docker", status: "warning", message: "Project has Docker files but docker is not installed" };
+  }
+  const info = await tryExecAsync("docker info --format '{{.ServerVersion}}'", basePath);
+  if (!info) {
+    return {
+      name: "docker",
+      status: "warning",
+      message: "Docker is installed but daemon is not running",
+      detail: "Start Docker Desktop or the docker daemon",
+    };
+  }
+  return { name: "docker", status: "ok", message: `Docker ${info}` };
+}
+
+async function checkProjectToolsAsync(basePath: string): Promise<EnvironmentCheckResult[]> {
+  const spec = readProjectToolSpec(basePath);
+  if (!spec) return [];
+  const results: EnvironmentCheckResult[] = [];
+  if (spec.packageManager && !(await commandExistsAsync(spec.packageManager, basePath))) {
+    results.push({
+      name: "package_manager",
+      status: "warning",
+      message: `Project requires ${spec.packageManager} but it's not installed`,
+      detail: `Install with: npm install -g ${spec.packageManager}`,
+    });
+  }
+  if (spec.needsTsc) {
+    results.push({
+      name: "typescript",
+      status: "warning",
+      message: "TypeScript is a dependency but tsc is not available (run npm install)",
+    });
+  }
+  if (spec.needsPython && detectPythonExecutable() === null) {
+    results.push({ name: "python", status: "warning", message: "Project has Python config but python is not installed" });
+  }
+  if (spec.needsCargo && !(await commandExistsAsync("cargo", basePath))) {
+    results.push({ name: "cargo", status: "warning", message: "Project has Cargo.toml but cargo is not installed" });
+  }
+  if (spec.needsGo && !(await commandExistsAsync("go", basePath))) {
+    results.push({ name: "go", status: "warning", message: "Project has go.mod but go is not installed" });
+  }
+  return results;
+}
+
+/**
+ * Non-blocking equivalent of `runEnvironmentChecks` for the health-widget
+ * background refresh. Cheap fs checks run inline; the subprocess-backed checks
+ * fan out concurrently so the whole suite costs ~max(check), not the sum.
+ */
+export async function runEnvironmentChecksAsync(basePath: string): Promise<EnvironmentCheckResult[]> {
+  const results: EnvironmentCheckResult[] = [];
+
+  // fs-only checks — already cheap and synchronous.
+  const depsCheck = checkDependenciesInstalled(basePath);
+  if (depsCheck) results.push(depsCheck);
+  const envCheck = checkEnvFiles(basePath);
+  if (envCheck) results.push(envCheck);
+
+  // subprocess-backed checks — run concurrently, off the event-loop critical path.
+  const [nodeCheck, portChecks, diskCheck, dockerCheck, toolChecks] = await Promise.all([
+    checkNodeVersionAsync(basePath),
+    checkPortConflictsAsync(basePath),
+    checkDiskSpaceAsync(basePath),
+    checkDockerAsync(basePath),
+    checkProjectToolsAsync(basePath),
+  ]);
+
+  if (nodeCheck) results.push(nodeCheck);
+  results.push(...portChecks);
+  if (diskCheck) results.push(diskCheck);
+  if (dockerCheck) results.push(dockerCheck);
+  results.push(...toolChecks);
+
+  return results;
+}
+
 export function runEnvironmentChecks(basePath: string): EnvironmentCheckResult[] {
   const results: EnvironmentCheckResult[] = [];
 

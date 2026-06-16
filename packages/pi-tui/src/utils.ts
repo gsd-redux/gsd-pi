@@ -186,14 +186,12 @@ function truncateFragmentToWidth(text: string, maxWidth: number): { text: string
 			continue;
 		}
 
-		let end = i;
-		while (end < text.length && text[end] !== "\t") {
-			const nextAnsi = extractAnsiCode(text, end);
-			if (nextAnsi) {
-				break;
-			}
-			end++;
-		}
+		// Scan a run of plain text up to the next escape sequence or tab. Both
+		// boundaries are found with a single native indexOf instead of probing
+		// extractAnsiCode at every character.
+		const nextEsc = nextEscapeIndex(text, i);
+		const nextTab = text.indexOf("\t", i);
+		const end = nextTab === -1 ? nextEsc : Math.min(nextEsc, nextTab);
 
 		for (const { segment } of segmenter.segment(text.slice(i, end))) {
 			const w = graphemeWidth(segment);
@@ -242,7 +240,39 @@ function finalizeTruncatedResult(
  * Based on code from the string-width library, but includes a possible-emoji
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
+// Memoized widths for non-trivial graphemes. The uncached path runs up to three
+// Unicode-property regexes (the \p{RGI_Emoji} test is the single hottest cost on
+// the render path per live CPU profile), and transcripts reuse the same emoji /
+// CJK / combining clusters constantly, so caching by grapheme turns that into a
+// one-time cost per distinct cluster. ASCII is handled by the fast path and never
+// reaches the cache. FIFO eviction mirrors widthCache.
+const GRAPHEME_WIDTH_CACHE_SIZE = 1024;
+const graphemeWidthCache = new Map<string, number>();
+
 function graphemeWidth(segment: string): number {
+	// ASCII fast path. A single printable-ASCII code unit (0x20-0x7e) is always
+	// width 1: it is never zero-width (Control is 0x00-0x1f/0x7f), never an emoji
+	// (all emoji blocks start far above 0x7e), never a leading non-printing char,
+	// and never East-Asian wide. Transcript text is overwhelmingly ASCII, and
+	// graphemeWidth is the hottest function on the render path (live CPU profile),
+	// so skipping the three Unicode-property regexes here is the biggest single win.
+	if (segment.length === 1) {
+		const c = segment.charCodeAt(0);
+		if (c >= 0x20 && c <= 0x7e) return 1;
+	}
+
+	const cached = graphemeWidthCache.get(segment);
+	if (cached !== undefined) return cached;
+	const width = graphemeWidthUncached(segment);
+	if (graphemeWidthCache.size >= GRAPHEME_WIDTH_CACHE_SIZE) {
+		const firstKey = graphemeWidthCache.keys().next().value;
+		if (firstKey !== undefined) graphemeWidthCache.delete(firstKey);
+	}
+	graphemeWidthCache.set(segment, width);
+	return width;
+}
+
+function graphemeWidthUncached(segment: string): number {
 	// Zero-width clusters
 	if (zeroWidthRegex.test(segment)) {
 		return 0;
@@ -327,8 +357,13 @@ export function visibleWidth(str: string): number {
 				i += ansi.length;
 				continue;
 			}
-			stripped += clean[i];
-			i++;
+			// Copy the whole run of plain text up to the next escape sequence in one
+			// slice instead of appending a character at a time. clean[i] is a
+			// non-sequence char here (including a lone/malformed ESC), so it is part
+			// of the visible run.
+			const end = nextEscapeIndex(clean, i);
+			stripped += clean.slice(i, end);
+			i = end;
 		}
 		clean = stripped;
 	}
@@ -384,7 +419,12 @@ export function extractAnsiCode(str: string, pos: number): { code: string; lengt
 	// CSI sequence: ESC [ ... m/G/K/H/J
 	if (next === "[") {
 		let j = pos + 2;
-		while (j < str.length && !/[mGKHJ]/.test(str[j]!)) j++;
+		while (j < str.length) {
+			const code = str.charCodeAt(j);
+			// CSI final bytes m/G/K/H/J (109/71/75/72/74)
+			if (code === 109 || code === 71 || code === 75 || code === 72 || code === 74) break;
+			j++;
+		}
 		if (j < str.length) return { code: str.substring(pos, j + 1), length: j + 1 - pos };
 		return null;
 	}
@@ -414,6 +454,50 @@ export function extractAnsiCode(str: string, pos: number): { code: string; lengt
 	}
 
 	return null;
+}
+
+/**
+ * Index that ends the run of plain text beginning at `from` — i.e. the next ESC
+ * (0x1b) strictly after `from`, or `str.length` if none remains.
+ *
+ * The hot scanners walk a styled line by alternating "consume an escape
+ * sequence" with "consume a run of plain text". They enter this function only
+ * once `from` is known NOT to start a recognised sequence (extractAnsiCode
+ * returned null there), so `from` itself belongs to the text run even when it is
+ * a lone/malformed ESC byte. The previous per-character form advanced `end` from
+ * `from` and stopped at the FIRST position whose char began a sequence — which
+ * for a malformed ESC at `from` meant it advanced past it. We therefore search
+ * from `from + 1`, so a malformed ESC at `from` is included in the text run
+ * exactly as before (rather than returning `from` and stalling the caller).
+ *
+ * String#indexOf does this boundary search in one native call with no
+ * per-character { code, length } allocation; behaviour is otherwise identical.
+ */
+function nextEscapeIndex(str: string, from: number): number {
+	const idx = str.indexOf("\x1b", from + 1);
+	return idx === -1 ? str.length : idx;
+}
+
+/**
+ * Parameters of an SGR sequence (`\x1b[<params>m`), or null if `ansiCode` is not
+ * a well-formed SGR code. Equivalent to the capture group of /\x1b\[([\d;]*)m/
+ * but allocation-free: the AnsiCodeTracker runs this per styling code while
+ * wrapping, and the regex form allocated a match array every call.
+ *
+ * Callers guarantee `ansiCode` ends with "m". We require the `\x1b[` prefix and
+ * that every byte between it and the final `m` is a digit or `;`, so malformed
+ * finals such as `\x1b[?25m` or `\x1b[Km` are rejected exactly as the regex did.
+ */
+function sgrParams(ansiCode: string): string | null {
+	if (ansiCode.charCodeAt(0) !== 0x1b || ansiCode.charCodeAt(1) !== 0x5b /* [ */) return null;
+	const end = ansiCode.length - 1; // index of the trailing 'm'
+	for (let k = 2; k < end; k++) {
+		const c = ansiCode.charCodeAt(k);
+		const isDigit = c >= 0x30 && c <= 0x39;
+		const isSemicolon = c === 0x3b;
+		if (!isDigit && !isSemicolon) return null;
+	}
+	return ansiCode.slice(2, end);
 }
 
 type Osc8Terminator = "\x07" | "\x1b\\";
@@ -484,11 +568,14 @@ class AnsiCodeTracker {
 			return;
 		}
 
-		// Extract the parameters between \x1b[ and m
-		const match = ansiCode.match(/\x1b\[([\d;]*)m/);
-		if (!match) return;
+		// Extract the parameters between \x1b[ and the trailing m. Equivalent to
+		// matching /\x1b\[([\d;]*)m/ but without allocating a RegExp match array on
+		// every SGR code: require the \x1b[ prefix, validate the middle is only
+		// digits/semicolons (so e.g. \x1b[?25m and \x1b[Km are rejected exactly as
+		// the regex did), then slice. ansiCode already ends with "m" here.
+		const params = sgrParams(ansiCode);
+		if (params === null) return;
 
-		const params = match[1];
 		if (params === "" || params === "0") {
 			// Full reset
 			this.reset();
@@ -886,12 +973,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 			i += ansiResult.length;
 		} else {
 			// Find the next ANSI code or end of string
-			let end = i;
-			while (end < word.length) {
-				const nextAnsi = extractAnsiCode(word, end);
-				if (nextAnsi) break;
-				end++;
-			}
+			const end = nextEscapeIndex(word, i);
 			// Segment this non-ANSI portion into graphemes
 			const textPortion = word.slice(i, end);
 			for (const seg of segmenter.segment(textPortion)) {
@@ -1079,14 +1161,11 @@ function truncateToWidthJs(
 				continue;
 			}
 
-			let end = i;
-			while (end < text.length && text[end] !== "\t") {
-				const nextAnsi = extractAnsiCode(text, end);
-				if (nextAnsi) {
-					break;
-				}
-				end++;
-			}
+			// Plain-text run up to the next escape sequence or tab, found via a
+			// single native indexOf rather than probing extractAnsiCode per char.
+			const nextEsc = nextEscapeIndex(text, i);
+			const nextTab = text.indexOf("\t", i);
+			const end = nextTab === -1 ? nextEsc : Math.min(nextEsc, nextTab);
 
 			for (const { segment } of segmenter.segment(text.slice(i, end))) {
 				const width = graphemeWidth(segment);
@@ -1155,8 +1234,7 @@ export function sliceWithWidth(
 			continue;
 		}
 
-		let textEnd = i;
-		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
+		const textEnd = nextEscapeIndex(line, i);
 
 		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
@@ -1223,8 +1301,7 @@ export function extractSegments(
 			continue;
 		}
 
-		let textEnd = i;
-		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
+		const textEnd = nextEscapeIndex(line, i);
 
 		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);

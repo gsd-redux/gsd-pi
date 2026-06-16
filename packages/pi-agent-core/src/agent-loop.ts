@@ -785,7 +785,7 @@ async function executePreparedToolCall(
 	const updateEvents: Promise<void>[] = [];
 
 	try {
-		const result = await prepared.tool.execute(
+		const execution = prepared.tool.execute(
 			prepared.toolCall.id,
 			prepared.args as never,
 			signal,
@@ -803,14 +803,60 @@ async function executePreparedToolCall(
 				);
 			},
 		);
+		// A cooperative tool returns promptly when its signal aborts. A hung or
+		// signal-deaf tool (a deadlocked MCP server, a D-state child the tool never
+		// reaps) would otherwise leave `execution` pending forever — blocking the
+		// whole tool batch, so no tool_execution_end is ever emitted and the UI card
+		// stays "running" indefinitely (a real CPU drain downstream). Race the
+		// execution against abort: once aborted, stop awaiting the tool and finalize
+		// it as aborted. The tool's own promise keeps running in the background, but
+		// the turn completes and every tool_execution_start gets a paired _end.
+		const outcome: ExecutedToolCallOutcome = signal
+			? await raceToolExecutionAgainstAbort(execution, signal)
+			: { result: await execution, isError: false };
 		await Promise.all(updateEvents);
-		return { result, isError: false };
+		return outcome;
 	} catch (error) {
 		await Promise.all(updateEvents);
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
 		};
+	}
+}
+
+/**
+ * Await a tool's execution unless `signal` aborts first. On abort, resolve with a
+ * synthetic aborted result instead of blocking on a tool that ignores the signal.
+ * Only abort short-circuits the wait — there is no general timeout, so legitimately
+ * long-running cooperative tools are unaffected.
+ */
+async function raceToolExecutionAgainstAbort(
+	execution: Promise<AgentToolResult<any>>,
+	signal: AbortSignal,
+): Promise<ExecutedToolCallOutcome> {
+	if (signal.aborted) {
+		return { result: createErrorToolResult("Operation aborted"), isError: true };
+	}
+	// If abort wins the race, `execution` is abandoned but still pending; swallow any
+	// later settlement so a background rejection does not surface as an unhandled
+	// rejection after the turn has moved on.
+	const guardedExecution = execution.then(
+		(result) => ({ result, isError: false }) satisfies ExecutedToolCallOutcome,
+		(error) => ({
+			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			isError: true,
+		}),
+	);
+	let onAbort: (() => void) | undefined;
+	const abortPromise = new Promise<ExecutedToolCallOutcome>((resolve) => {
+		onAbort = () => resolve({ result: createErrorToolResult("Operation aborted"), isError: true });
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		return await Promise.race([guardedExecution, abortPromise]);
+	} finally {
+		if (onAbort) signal.removeEventListener("abort", onAbort);
 	}
 }
 

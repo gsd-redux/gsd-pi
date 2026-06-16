@@ -921,33 +921,60 @@ const LIGHTWEIGHT_KEYWORDS = new Set([
 	"while",
 ]);
 
+// charCode classifiers for lightweightHighlightLine. Every class the highlighter
+// uses is ASCII, so a charCode comparison is exactly equivalent to the original
+// /[A-Za-z_$]/, /[A-Za-z0-9_$]/, /\d/ and /[\d._]/ tests — but allocation-free.
+// This function is the single hottest node on the tool-output / diff render path
+// (live CPU profile), and the per-character RegExp.test() calls dominated it, so
+// the same charCode technique used for graphemeWidth applies here.
+function isIdentStartCode(c: number): boolean {
+	// A-Z (65-90), a-z (97-122), _ (95), $ (36)
+	return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+}
+function isIdentPartCode(c: number): boolean {
+	// identifier-start plus 0-9 (48-57)
+	return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95 || c === 36;
+}
+function isNumStartCode(c: number): boolean {
+	// 0-9 (48-57)
+	return c >= 48 && c <= 57;
+}
+function isNumPartCode(c: number): boolean {
+	// 0-9 (48-57), . (46), _ (95)
+	return (c >= 48 && c <= 57) || c === 46 || c === 95;
+}
+
 function lightweightHighlightLine(line: string): string {
 	let out = "";
 	let i = 0;
-	while (i < line.length) {
-		const ch = line[i];
-		const next = line[i + 1];
-		if (ch === "/" && next === "/") {
+	const len = line.length;
+	while (i < len) {
+		const code = line.charCodeAt(i);
+		// `//` line comment
+		if (code === 47 /* / */ && line.charCodeAt(i + 1) === 47) {
 			out += theme.fg("syntaxComment", line.slice(i));
 			break;
 		}
-		if (ch === "#") {
+		// `#` line comment
+		if (code === 35 /* # */) {
 			out += theme.fg("syntaxComment", line.slice(i));
 			break;
 		}
-		if (ch === '"' || ch === "'" || ch === "`") {
-			const quote = ch;
+		// string literal: " ' `
+		if (code === 34 || code === 39 || code === 96) {
+			const quote = code;
 			let j = i + 1;
-			while (j < line.length) {
-				if (line[j] === "\\") {
-					if (j + 1 >= line.length) {
-						j = line.length;
+			while (j < len) {
+				const cj = line.charCodeAt(j);
+				if (cj === 92 /* \ */) {
+					if (j + 1 >= len) {
+						j = len;
 						break;
 					}
 					j += 2;
 					continue;
 				}
-				if (line[j] === quote) {
+				if (cj === quote) {
 					j++;
 					break;
 				}
@@ -957,9 +984,10 @@ function lightweightHighlightLine(line: string): string {
 			i = j;
 			continue;
 		}
-		if (/[A-Za-z_$]/.test(ch ?? "")) {
+		// identifier / keyword
+		if (isIdentStartCode(code)) {
 			let j = i + 1;
-			while (j < line.length && /[A-Za-z0-9_$]/.test(line[j] ?? "")) j++;
+			while (j < len && isIdentPartCode(line.charCodeAt(j))) j++;
 			const word = line.slice(i, j);
 			out += LIGHTWEIGHT_KEYWORDS.has(word)
 				? theme.fg("syntaxKeyword", word)
@@ -967,14 +995,15 @@ function lightweightHighlightLine(line: string): string {
 			i = j;
 			continue;
 		}
-		if (/\d/.test(ch ?? "")) {
+		// number
+		if (isNumStartCode(code)) {
 			let j = i + 1;
-			while (j < line.length && /[\d._]/.test(line[j] ?? "")) j++;
+			while (j < len && isNumPartCode(line.charCodeAt(j))) j++;
 			out += theme.fg("syntaxNumber", line.slice(i, j));
 			i = j;
 			continue;
 		}
-		out += ch;
+		out += line[i];
 		i++;
 	}
 	return out;

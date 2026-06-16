@@ -236,6 +236,90 @@ describe("agentLoop with AgentMessage", () => {
 		expect(convertedMessages.length).toBe(2);
 	});
 
+	it("emits tool_execution_end and completes the turn when a hung, signal-deaf tool is aborted", async () => {
+		// Regression: a tool whose execute() never settles (a deadlocked MCP server,
+		// a D-state child) and that ignores its abort signal used to block the whole
+		// tool batch forever — no tool_execution_end was emitted, so a downstream UI
+		// card stayed "running" indefinitely (a real CPU drain). On abort, the loop
+		// must stop awaiting the hung tool, finalize it, and emit its _end.
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "hang",
+			label: "Hang",
+			description: "A tool that never resolves and ignores the abort signal",
+			parameters: toolSchema,
+			// Deliberately ignores `signal` and never resolves.
+			execute(_toolCallId, _params) {
+				return new Promise(() => {});
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+		const userPrompt: AgentMessage = createUserMessage("hang please");
+		const config: AgentLoopConfig = { model: createModel(), convertToLlm: identityConverter };
+
+		const controller = new AbortController();
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					stream.push({
+						type: "done",
+						reason: "toolUse",
+						message: createAssistantMessage(
+							[{ type: "toolCall", id: "tool-1", name: "hang", arguments: { value: "x" } }],
+							"toolUse",
+						),
+					});
+				} else {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage([{ type: "text", text: "done" }]) });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([userPrompt], context, config, controller.signal, streamFn);
+
+		// Abort shortly after the tool starts running.
+		const started = new Promise<void>((resolve) => {
+			(async () => {
+				for await (const event of stream) {
+					events.push(event);
+					if (event.type === "tool_execution_start") {
+						resolve();
+						// Give the hung tool a tick, then abort.
+						setTimeout(() => controller.abort(), 10);
+					}
+				}
+			})();
+		});
+		await started;
+
+		// The whole loop must drain (not hang) within a sane bound.
+		const drained = (async () => {
+			const start = Date.now();
+			while (!events.some((e) => e.type === "tool_execution_end") && Date.now() - start < 3000) {
+				await new Promise((r) => setTimeout(r, 10));
+			}
+		})();
+		await drained;
+
+		const toolStart = events.find((e) => e.type === "tool_execution_start");
+		const toolEnd = events.find((e) => e.type === "tool_execution_end");
+		expect(toolStart).toBeDefined();
+		expect(toolEnd, "a hung+aborted tool must still emit tool_execution_end").toBeDefined();
+		if (toolEnd?.type === "tool_execution_end") {
+			expect(toolEnd.isError).toBe(true);
+		}
+	});
+
 	it("should handle tool calls and results", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];

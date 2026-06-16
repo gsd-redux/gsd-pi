@@ -88,6 +88,7 @@ export function showSettingsSelector(host: InteractiveModeDelegateHost): void {
 					availableThemes: getAvailableThemes(),
 					hideThinkingBlock: host.hideThinkingBlock,
 					toolsExpanded: host.toolOutputExpanded,
+					toolRailAnimation: host.settingsManager.getToolRailAnimation(),
 					collapseChangelog: host.settingsManager.getCollapseChangelog(),
 					doubleEscapeAction: host.settingsManager.getDoubleEscapeAction(),
 					treeFilterMode: host.settingsManager.getTreeFilterMode(),
@@ -169,6 +170,9 @@ export function showSettingsSelector(host: InteractiveModeDelegateHost): void {
 					onToolsExpandedChange: (expanded) => {
 						host.settingsManager.setToolsExpanded(expanded);
 						host.setToolsExpanded(expanded);
+					},
+					onToolRailAnimationChange: (enabled) => {
+						host.setToolRailAnimation(enabled);
 					},
 					onCollapseChangelogChange: (collapsed) => {
 						host.settingsManager.setCollapseChangelog(collapsed);

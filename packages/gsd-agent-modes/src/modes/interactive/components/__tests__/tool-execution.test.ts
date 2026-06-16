@@ -1,11 +1,12 @@
 // Project/App: gsd-pi
 // File Purpose: Tests for interactive terminal tool execution rendering.
-import { afterEach, beforeEach, describe, test } from "node:test";
+import { afterEach, beforeEach, describe, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { isImageLine, resetCapabilitiesCache, setCapabilities, setCellDimensions } from "@gsd/pi-tui";
 import { ToolExecutionComponent, ToolPhaseSummaryComponent, type ToolExecutionPhase } from "../tool-execution.js";
+import { setRailAnimationEnabled } from "../transcript-design.js";
 import { initTheme } from "@gsd/pi-coding-agent/theme/theme.js";
 import { READ_TUI_EXPANDED_MAX_LINES } from "@gsd/pi-coding-agent/core/tools/read.js";
 
@@ -70,6 +71,70 @@ function renderToolCollapsed(
 }
 
 describe("ToolExecutionComponent", () => {
+	test("running-rail animates at a constant cadence while in-flight, and not at all when the setting is off", (t) => {
+		// The running tool card animates its rail by re-rendering the transcript on a
+		// fixed-cadence timer while in-flight (isInFlight === !result). The cadence is
+		// constant (matched to the rail's per-cell step) and keeps going for as long as
+		// the tool runs — a 30-minute tool stays visibly alive, never frozen. When the
+		// `terminal.toolRailAnimation` setting is off the timer is never armed, so a
+		// long-running tool costs zero idle CPU.
+		mock.timers.enable({ apis: ["setInterval", "Date"] });
+		t.after(() => {
+			setRailAnimationEnabled(true); // module-global — restore default for other tests
+			mock.timers.reset();
+		});
+
+		// --- animation ON (default) ---
+		setRailAnimationEnabled(true);
+		let renderRequests = 0;
+		const onCard = new ToolExecutionComponent(
+			"bash",
+			{ command: "sleep 99999" },
+			{},
+			undefined,
+			{ requestRender() { renderRequests++; } } as any,
+		);
+		onCard.render(120); // arms the rail timer
+		assert.equal(renderRequests, 0, "render itself does not request a render");
+
+		// Each 70ms tick re-renders once — constant cadence, one cell of movement per frame.
+		mock.timers.tick(70);
+		mock.timers.tick(70);
+		assert.ok(renderRequests >= 2, `rail should animate while in-flight, got ${renderRequests}`);
+
+		// It keeps animating indefinitely while in-flight — no cap, no freeze. 200 ticks
+		// (~14s) each request a render at the constant rate.
+		const before = renderRequests;
+		for (let i = 0; i < 200; i++) mock.timers.tick(70);
+		assert.ok(
+			renderRequests - before >= 180,
+			`rail must keep animating at a constant rate (no cap), got ${renderRequests - before} over 200 ticks`,
+		);
+
+		// Stops once the result arrives.
+		onCard.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
+		const afterResult = renderRequests;
+		mock.timers.tick(70);
+		mock.timers.tick(70);
+		assert.equal(renderRequests, afterResult, "rail stops once the tool has a result");
+
+		// --- animation OFF: the timer is never armed ---
+		setRailAnimationEnabled(false);
+		let offRenders = 0;
+		const offCard = new ToolExecutionComponent(
+			"bash",
+			{ command: "sleep 99999" },
+			{},
+			undefined,
+			{ requestRender() { offRenders++; } } as any,
+		);
+		offCard.render(120);
+		mock.timers.tick(70);
+		mock.timers.tick(70);
+		mock.timers.tick(70);
+		assert.equal(offRenders, 0, "no rail animation when the setting is off (zero idle CPU)");
+	});
+
 	test("reuses shared tool-argument normalization for pending invocation matching", () => {
 		const sourceUrl = existsSync(new URL("../tool-execution.ts", import.meta.url))
 			? new URL("../tool-execution.ts", import.meta.url)

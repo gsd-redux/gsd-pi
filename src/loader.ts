@@ -35,7 +35,7 @@ if (firstArg === '--help' || firstArg === '-h') {
 // package.json (already parsed above) and verifies git is available.
 // ---------------------------------------------------------------------------
 {
-  const { MIN_NODE_MAJOR, checkNodeVersion, requireGit } = await import('./runtime-checks.js')
+  const { MIN_NODE_MAJOR, checkNodeVersion, gitAvailableOnPath } = await import('./runtime-checks.js')
   const red = '\x1b[31m'
   const bold = '\x1b[1m'
   const dim = '\x1b[2m'
@@ -56,8 +56,10 @@ if (firstArg === '--help' || firstArg === '-h') {
   }
 
   // -- git --
-  const { execFileSync } = await import('child_process')
-  const gitOk = requireGit((cmd, args) => execFileSync(cmd, args as string[], { stdio: 'ignore' }))
+  // Presence-check git via a $PATH scan rather than spawning `git --version`:
+  // the subprocess cost ~15ms on every cold start (~5% of startup CPU) just to
+  // confirm git is installed.
+  const gitOk = gitAvailableOnPath()
   if (!gitOk) {
     process.stderr.write(
       `\n${red}${bold}Error:${reset} GSD requires git but it was not found on PATH.\n\n` +
@@ -250,7 +252,7 @@ if (missingPackages.length > 0) {
 
 // Register GSD agent packages for extension imports before CLI loads.
 const { registerAgentBundles } = await import('./register-agent-bundles.js')
-registerAgentBundles()
+await registerAgentBundles()
 
 // Dynamic import defers ESM evaluation — config.js will see PI_PACKAGE_DIR above
 await import('./cli.js')

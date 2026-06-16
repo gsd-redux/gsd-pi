@@ -31,6 +31,7 @@ import { ExtensionInputComponent } from "./components/extension-input.js";
 import { ExtensionSelectorComponent } from "./components/extension-selector.js";
 import { FooterComponent } from "./components/footer.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
+import { setRailAnimationEnabled } from "./components/transcript-design.js";
 import { ContextualTips } from "@gsd/agent-core";
 import { handleAgentEvent } from "./controllers/chat-controller.js";
 import { setupEditorSubmitHandler as setupEditorSubmitHandlerController } from "./controllers/input-controller.js";
@@ -177,6 +178,7 @@ export class InteractiveMode {
 		this.version = VERSION;
 		this.ui = new TUI(options.terminal ?? new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		setRailAnimationEnabled(this.settingsManager.getToolRailAnimation());
 		this.headerContainer = new Container();
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
@@ -509,6 +511,14 @@ export class InteractiveMode {
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> { return keyHandlers.cycleModel(this, direction); }
 	private toggleToolOutputExpansion(): void { keyHandlers.toggleToolOutputExpansion(this); }
 	private setToolsExpanded(expanded: boolean): void { keyHandlers.setToolsExpanded(this, expanded); }
+	private setToolRailAnimation(enabled: boolean): void {
+		this.settingsManager.setToolRailAnimation(enabled);
+		setRailAnimationEnabled(enabled);
+		for (const child of this.chatContainer.children) {
+			if (child instanceof ToolExecutionComponent) child.refreshRailAnimation();
+		}
+		this.ui.requestRender();
+	}
 	private toggleThinkingBlockVisibility(): void { keyHandlers.toggleThinkingBlockVisibility(this); }
 	private openExternalEditor(): void { keyHandlers.openExternalEditor(this); }
 

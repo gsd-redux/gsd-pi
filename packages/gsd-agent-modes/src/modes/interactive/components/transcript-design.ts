@@ -23,6 +23,20 @@ const RUNNING_RAIL_TRAIL = 5;
 const HORIZONTAL_RAIL = "─";
 const HORIZONTAL_RAIL_HEAD = "━";
 
+// Whether the "running" rail sweeps (animates) or renders as a static rule. User
+// setting `terminal.toolRailAnimation` (default on). When off, running cards show
+// a static rail and ToolExecutionComponent does not arm its re-render timer, so a
+// long-running tool costs zero idle CPU. Module-level (not per-card) because every
+// running card shares the one preference; the interactive mode sets it at startup
+// and when the setting is toggled.
+let railAnimationEnabled = true;
+export function setRailAnimationEnabled(enabled: boolean): void {
+	railAnimationEnabled = enabled;
+}
+export function isRailAnimationEnabled(): boolean {
+	return railAnimationEnabled;
+}
+
 export function headerLabel(text: string): string {
 	return text.toUpperCase();
 }
@@ -113,7 +127,7 @@ export function renderConnectedCard(
 	const indent = opts.indent ?? TRANSCRIPT_CARD_INDENT;
 	const prefix = indentSpaces(indent);
 	const railColor = opts.railColor ?? "borderAccent";
-	const sweepFrame = opts.railSweep ? runningRailFrame() : undefined;
+	const sweepFrame = opts.railSweep && railAnimationEnabled ? runningRailFrame() : undefined;
 	const rail = (text: string) => renderRailText(text, railColor, sweepFrame);
 	const resolvedTitleColor =
 		opts.titleColor ??
@@ -396,7 +410,7 @@ function openRuleLine(title: string, right: string, width: number, tone: ThemeCo
 	const clippedRight = truncateToWidth(right, rightBudget, "");
 	const fixed = 4 + visibleWidth(clippedTitle) + 2 + visibleWidth(clippedRight) + 4;
 	const fill = Math.max(1, w - fixed);
-	const sweepFrame = sweep ? runningRailFrame() : undefined;
+	const sweepFrame = sweep && railAnimationEnabled ? runningRailFrame() : undefined;
 
 	return padLine(
 		renderRailText("─── ", tone) +

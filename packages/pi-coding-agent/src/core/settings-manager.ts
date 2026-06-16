@@ -33,6 +33,7 @@ export interface RetrySettings {
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	toolsExpanded?: boolean; // default: true (tool output cards start expanded)
+	toolRailAnimation?: boolean; // default: true (animate the running tool-card rail; off = static rail + no re-render timer)
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
@@ -984,6 +985,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.toolsExpanded = expanded;
 		this.markModified("terminal", "toolsExpanded");
+		this.save();
+	}
+
+	getToolRailAnimation(): boolean {
+		return this.settings.terminal?.toolRailAnimation ?? true;
+	}
+
+	setToolRailAnimation(enabled: boolean): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.toolRailAnimation = enabled;
+		this.markModified("terminal", "toolRailAnimation");
 		this.save();
 	}
 

@@ -36,6 +36,7 @@ import {
 	renderTranscriptCard,
 	TRANSCRIPT_CARD_INDENT,
 	collapseBlankLines,
+	isRailAnimationEnabled,
 	type StatusTone,
 } from "./transcript-design.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
@@ -45,6 +46,15 @@ const BASH_PREVIEW_LINES = 5;
 // During partial write tool-call streaming, re-highlight the first N lines fully
 // to keep multiline tokenization mostly correct without re-highlighting the full file.
 const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
+// The in-flight tool card animates its rail by re-rendering the transcript on a
+// fixed-cadence timer. The cadence is matched to the rail's own step
+// (RUNNING_RAIL_FRAME_MS in transcript-design): one re-render == one cell of head
+// movement, so the motion is smooth and no frame is wasted. Animation is gated by
+// the `terminal.toolRailAnimation` user setting (isRailAnimationEnabled): when it
+// is off, the timer is never armed and the rail renders statically, so even a tool
+// that runs for 30 minutes costs zero idle CPU. (A genuinely hung tool is finalized
+// at the source by agent-loop's raceToolExecutionAgainstAbort, which gives the card
+// a result and lets the timer stop on its own.)
 const RUNNING_RAIL_RENDER_INTERVAL_MS = 70;
 
 /**
@@ -470,20 +480,31 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private syncRunningRailTimer(): void {
-		if (!this.isInFlight() || this.hideComponent) {
+		if (!this.isInFlight() || this.hideComponent || !isRailAnimationEnabled()) {
 			this.stopRunningRailTimer();
 			return;
 		}
 		if (this.runningRailTimer) return;
 
 		this.runningRailTimer = setInterval(() => {
-			if (!this.isInFlight() || this.hideComponent) {
+			// Stop once the tool finishes, is hidden, or the animation setting is off.
+			if (!this.isInFlight() || this.hideComponent || !isRailAnimationEnabled()) {
 				this.stopRunningRailTimer();
 				return;
 			}
 			this.ui.requestRender();
 		}, RUNNING_RAIL_RENDER_INTERVAL_MS);
 		this.runningRailTimer.unref?.();
+	}
+
+	/**
+	 * Re-evaluate the running-rail timer after the `terminal.toolRailAnimation`
+	 * setting is toggled live. Arms the timer if animation is now on (and the card
+	 * is still in-flight) or stops it if now off; the static-vs-sweep rail picks up
+	 * the new setting on the next render.
+	 */
+	refreshRailAnimation(): void {
+		this.syncRunningRailTimer();
 	}
 
 	private stopRunningRailTimer(): void {
