@@ -38,8 +38,8 @@ See also:
               bootstrap/db-tools.ts
                        │
                        ▼
-              gsd-db.ts  (barrel over the single-writer layer:
-                          db/engine.ts + db/writers/**)
+              gsd-db.ts  (compatibility barrel over the explicit
+                          single-writer allowlist)
                        │
                  transaction()
                        │
@@ -353,7 +353,7 @@ unit completes
 
 | Invariant | Where Enforced |
 |-----------|---------------|
-| Single-writer: all write SQL in the single-writer layer (`db/engine.ts` + `db/writers/**`); `gsd-db.ts` is the barrel re-exporting it; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (directory predicate) |
+| Single-writer: all write SQL in the explicit single-writer allowlist (`db/engine.ts`, `db/writers/**`, `gsd-db.ts`, typed coordination/runtime writers `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, `db/command-queue.ts`, schema/migration helpers `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, `db-verification-evidence-schema.ts`, and ADR migration/backfill helper `memory-backfill.ts`); this is not permission for arbitrary writes under `db/`; `unit-ownership.ts` owns separate `.gsd/unit-claims.db`; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (explicit allowlist) |
 | Cascade on slice complete: pending tasks → skipped | `gsd_slice_complete` transaction |
 | Cascade on milestone reopen: all slices → in_progress, tasks → pending | `gsd_milestone_reopen` transaction |
 | No nested transactions | `db-transaction.ts` depth counter |
