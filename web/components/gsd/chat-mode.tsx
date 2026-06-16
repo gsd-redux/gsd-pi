@@ -12,6 +12,7 @@ import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/comp
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { ChatMessage, TuiPrompt } from "@/lib/pty-chat-parser"
 import { PendingImage, processImageFile, generateImageId, MAX_PENDING_IMAGES } from "@/lib/image-utils"
+import { clampSelectIndex, getSingleSelectKeyAction } from "@/lib/select-keyboard"
 import {
   useGSDWorkspaceState,
   useGSDWorkspaceActions,
@@ -499,12 +500,12 @@ function TuiSelectPrompt({
 
   useEffect(() => {
     console.log("[TuiSelectPrompt] mounted kind=select label=%s", prompt.label)
-    // Auto-focus the container so keyboard events are captured immediately
-    containerRef.current?.focus()
+    requestAnimationFrame(() => containerRef.current?.focus())
   }, [prompt.label])
 
   const submitIndex = useCallback(
     (clickedIndex: number) => {
+      if (clickedIndex < 0 || clickedIndex >= prompt.options.length) return
       const delta = clickedIndex - localIndex
       let keystrokes = ""
       if (delta > 0) {
@@ -524,22 +525,24 @@ function TuiSelectPrompt({
       setSubmitted(true)
       onSubmit(keystrokes)
     },
-    [localIndex, onSubmit],
+    [localIndex, onSubmit, prompt.options.length],
   )
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       if (submitted) return
-      if (e.key === "ArrowUp") {
-        e.preventDefault()
-        setLocalIndex((i) => Math.max(0, i - 1))
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault()
-        setLocalIndex((i) => Math.min(prompt.options.length - 1, i + 1))
-      } else if (e.key === "Enter") {
-        e.preventDefault()
-        submitIndex(localIndex)
+      const action = getSingleSelectKeyAction(e.key, localIndex, prompt.options.length)
+      if (action.type === "none") return
+
+      e.preventDefault()
+      e.stopPropagation()
+
+      if (action.type === "select") {
+        setLocalIndex(action.index)
+        return
       }
+
+      submitIndex(action.index)
     },
     [submitted, localIndex, prompt.options.length, submitIndex],
   )
@@ -563,7 +566,7 @@ function TuiSelectPrompt({
       data-testid="tui-select-prompt"
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className="mt-2 rounded-xl border border-border bg-background p-1.5 shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-border"
+      className="mt-2 rounded-xl border border-border bg-background p-1.5 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
       aria-label={`Select: ${prompt.label}`}
       role="listbox"
       aria-activedescendant={`tui-select-option-${localIndex}`}
@@ -591,6 +594,9 @@ function TuiSelectPrompt({
                 : "text-foreground hover:bg-muted",
             )}
           >
+            <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center font-mono text-[11px] text-muted-foreground">
+              {i + 1}
+            </span>
             <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center">
               {isSelected ? (
                 <Check className="h-3 w-3 text-primary" />
@@ -696,9 +702,9 @@ function TuiTextPrompt({
           onClick={handleSubmit}
           disabled={!value.trim()}
           className={cn(
-            "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
+            "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-[background-color,color,box-shadow,transform]",
             value.trim()
-              ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96] shadow-sm"
               : "bg-muted text-muted-foreground cursor-not-allowed",
           )}
         >
@@ -813,9 +819,9 @@ function TuiPasswordPrompt({
           onClick={handleSubmit}
           disabled={!value}
           className={cn(
-            "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
+            "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-[background-color,color,box-shadow,transform]",
             value
-              ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96] shadow-sm"
               : "bg-muted text-muted-foreground cursor-not-allowed",
           )}
         >
@@ -913,7 +919,7 @@ function InlineThinking({ content, isStreaming }: { content: string; isStreaming
       <button
         onClick={() => setExpanded((e) => !e)}
         className={cn(
-          "group w-full rounded-xl border px-3.5 py-2.5 text-left transition-all",
+          "group w-full rounded-xl border px-3.5 py-2.5 text-left transition-[background-color,border-color,box-shadow]",
           "border-border/50 bg-muted/50 hover:bg-muted/50",
         )}
       >
@@ -1404,9 +1410,9 @@ function ChatInputBar({
               disabled={!connected || !hasContent}
               aria-label="Send"
               className={cn(
-                "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
+                "flex h-7 w-7 items-center justify-center rounded-lg transition-[background-color,color,box-shadow,transform]",
                 hasContent && connected
-                  ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95"
+                  ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-[0.96]"
                   : "bg-muted text-muted-foreground cursor-not-allowed",
               )}
             >
@@ -1567,7 +1573,7 @@ function PlaceholderState({
           <div className="mt-4">
             <button
               onClick={onPrimaryAction}
-              className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-accent active:scale-[0.98]"
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-5 py-2.5 text-sm font-medium text-foreground transition-[background-color,transform] hover:bg-accent active:scale-[0.96]"
             >
               <primaryAction.icon className="h-4 w-4 text-muted-foreground" />
               {primaryAction.label}
@@ -1643,69 +1649,137 @@ function InlineSelect({
   disabled: boolean
 }) {
   const isMulti = Boolean(request.allowMultiple)
-  const [singleValue, setSingleValue] = useState("")
-  const [multiValues, setMultiValues] = useState<Set<string>>(new Set())
+  const [singleIndex, setSingleIndex] = useState(() => clampSelectIndex(0, request.options.length))
+  const [multiValues, setMultiValues] = useState<Set<string>>(() => new Set())
   const [submitted, setSubmitted] = useState(false)
+  const selectRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isMulti) {
+      requestAnimationFrame(() => selectRef.current?.focus())
+    }
+  }, [isMulti])
 
   const handleSubmit = useCallback(() => {
     setSubmitted(true)
-    onSubmit({ value: isMulti ? Array.from(multiValues) : singleValue })
-  }, [isMulti, singleValue, multiValues, onSubmit])
+    onSubmit({ value: isMulti ? Array.from(multiValues) : request.options[singleIndex] })
+  }, [isMulti, multiValues, onSubmit, request.options, singleIndex])
+
+  const submitSingleIndex = useCallback(
+    (index: number) => {
+      const option = request.options[index]
+      if (!option || disabled) return
+      setSingleIndex(index)
+      setSubmitted(true)
+      onSubmit({ value: option })
+    },
+    [disabled, onSubmit, request.options],
+  )
+
+  const handleSingleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (disabled || submitted) return
+      const action = getSingleSelectKeyAction(event.key, singleIndex, request.options.length)
+      if (action.type === "none") return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (action.type === "select") {
+        setSingleIndex(action.index)
+        return
+      }
+
+      submitSingleIndex(action.index)
+    },
+    [disabled, request.options.length, singleIndex, submitted, submitSingleIndex],
+  )
 
   if (submitted) {
+    const selectedLabel = isMulti ? `${multiValues.size} selected` : request.options[singleIndex] ?? ""
     return (
       <div className="flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
         <Check className="h-3.5 w-3.5 flex-shrink-0" />
-        <span className="font-medium">{isMulti ? `${multiValues.size} selected` : singleValue}</span>
+        <span className="font-medium">{selectedLabel}</span>
       </div>
     )
   }
 
-  const canSubmit = isMulti ? multiValues.size > 0 : singleValue !== ""
+  const canSubmit = isMulti ? multiValues.size > 0 : singleIndex >= 0
+
+  if (!isMulti) {
+    return (
+      <div className="space-y-1.5">
+        <div
+          ref={selectRef}
+          role="listbox"
+          tabIndex={0}
+          aria-activedescendant={singleIndex >= 0 ? `inline-select-option-${request.id}-${singleIndex}` : undefined}
+          onKeyDown={handleSingleKeyDown}
+          className="space-y-1.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {request.options.map((option: string, i: number) => {
+            const selected = i === singleIndex
+            return (
+              <button
+                key={i}
+                id={`inline-select-option-${request.id}-${i}`}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => submitSingleIndex(i)}
+                disabled={disabled}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  selected ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted",
+                  disabled && "cursor-not-allowed opacity-60",
+                )}
+              >
+                <span className="w-4 shrink-0 text-center font-mono text-[11px] text-muted-foreground">
+                  {i + 1}
+                </span>
+                <span className="min-w-0 flex-1">{option}</span>
+                {selected && <Check className="h-3 w-3 shrink-0 text-primary" />}
+              </button>
+            )
+          })}
+        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={disabled || !canSubmit}
+          className={cn(
+            "mt-2 flex w-full items-center justify-center rounded-lg px-3 py-2 text-xs font-medium transition-[background-color,color,box-shadow,transform]",
+            canSubmit && !disabled
+              ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96] shadow-sm"
+              : "bg-muted text-muted-foreground cursor-not-allowed",
+          )}
+        >
+          Submit
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-1.5">
-      {request.options.map((option, i) => {
-        if (isMulti) {
-          const checked = multiValues.has(option)
-          return (
-            <button
-              key={i}
-              onClick={() => {
-                const next = new Set(multiValues)
-                if (checked) next.delete(option); else next.add(option)
-                setMultiValues(next)
-              }}
-              disabled={disabled}
-              className={cn(
-                "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
-                checked ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted",
-              )}
-            >
-              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border">
-                {checked && <Check className="h-2.5 w-2.5 text-primary" />}
-              </span>
-              <span>{option}</span>
-            </button>
-          )
-        }
-        const selected = singleValue === option
+      {request.options.map((option: string, i: number) => {
+        const checked = multiValues.has(option)
         return (
           <button
             key={i}
-            onClick={() => setSingleValue(option)}
+            onClick={() => {
+              const next = new Set(multiValues)
+              if (checked) next.delete(option); else next.add(option)
+              setMultiValues(next)
+            }}
             disabled={disabled}
             className={cn(
               "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
-              selected ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted",
+              checked ? "bg-primary/15 text-primary font-medium" : "text-foreground hover:bg-muted",
             )}
           >
-            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-              {selected ? (
-                <Check className="h-3 w-3 text-primary" />
-              ) : (
-                <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
-              )}
+            <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border border-border">
+              {checked && <Check className="h-2.5 w-2.5 text-primary" />}
             </span>
             <span>{option}</span>
           </button>
@@ -1715,9 +1789,9 @@ function InlineSelect({
         onClick={handleSubmit}
         disabled={disabled || !canSubmit}
         className={cn(
-          "mt-2 flex w-full items-center justify-center rounded-lg px-3 py-2 text-xs font-medium transition-all",
+          "mt-2 flex w-full items-center justify-center rounded-lg px-3 py-2 text-xs font-medium transition-[background-color,color,box-shadow,transform]",
           canSubmit && !disabled
-            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm"
+            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96] shadow-sm"
             : "bg-muted text-muted-foreground cursor-not-allowed",
         )}
       >
@@ -1756,7 +1830,7 @@ function InlineConfirm({
         <button
           onClick={() => { setResolved(true); onSubmit({ value: true }) }}
           disabled={disabled}
-          className="flex-1 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm transition-all"
+          className="flex-1 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,box-shadow,transform] hover:bg-primary/90 active:scale-[0.96]"
         >
           Confirm
         </button>
@@ -1817,9 +1891,9 @@ function InlineInput({
         onClick={handleSubmit}
         disabled={disabled || !value.trim()}
         className={cn(
-          "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-all",
+          "flex h-8 items-center justify-center rounded-lg px-3 text-xs font-medium transition-[background-color,color,box-shadow,transform]",
           value.trim() && !disabled
-            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95 shadow-sm"
+            ? "bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96] shadow-sm"
             : "bg-muted text-muted-foreground cursor-not-allowed",
         )}
       >
@@ -1862,7 +1936,7 @@ function InlineEditor({
       <button
         onClick={() => { setSubmitted(true); onSubmit({ value }) }}
         disabled={disabled}
-        className="flex w-full items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] shadow-sm transition-all"
+        className="flex w-full items-center justify-center rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground shadow-sm transition-[background-color,box-shadow,transform] hover:bg-primary/90 active:scale-[0.96]"
       >
         Submit
       </button>
@@ -1928,7 +2002,8 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
     const hasVisibleResult = Boolean(diff || resultText.trim() || isError)
     if (!hasVisibleResult) return
     autoExpandedRef.current = true
-    setExpanded(true)
+    const frame = requestAnimationFrame(() => setExpanded(true))
+    return () => cancelAnimationFrame(frame)
   }, [diff, resultText, isError])
 
   return (
@@ -2027,6 +2102,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
   const state = useGSDWorkspaceState()
   const { submitInput, sendCommand, pushChatUserMessage } = useGSDWorkspaceActions()
   const [terminalFontSize] = useTerminalFontSize()
+  const [renderTimestamp] = useState(() => Date.now())
 
   const connected = state.connectionState === "connected"
   const isStreaming = state.boot?.bridge.sessionState?.isStreaming ?? false
@@ -2153,7 +2229,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
             role: "assistant",
             content: seg.content,
             complete: true,
-            timestamp: Date.now(),
+            timestamp: renderTimestamp,
           },
         })
       } else if (seg.kind === "tool") {
@@ -2198,7 +2274,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
     }
 
     return items
-  }, [state.liveTranscript, state.completedTurnSegments, state.currentTurnSegments, state.streamingAssistantText, state.streamingThinkingText, state.activeToolExecution, state.pendingUiRequests, state.chatUserMessages, isStreaming])
+  }, [state.liveTranscript, state.completedTurnSegments, state.currentTurnSegments, state.streamingAssistantText, state.streamingThinkingText, state.activeToolExecution, state.pendingUiRequests, state.chatUserMessages, isStreaming, renderTimestamp])
 
   // Prompt submit handler for TUI prompts (select/text/password)
   const handlePromptSubmit = useCallback((data: string) => {
@@ -2288,7 +2364,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                         role: "assistant",
                         content: item.content,
                         complete: false,
-                        timestamp: Date.now(),
+                        timestamp: renderTimestamp,
                       }}
                       isThinking={item.isThinking}
                     />

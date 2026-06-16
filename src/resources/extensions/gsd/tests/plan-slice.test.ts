@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, getSlice, getSliceTasks, getTask, getGateResults, updateTaskStatus } from '../gsd-db.ts';
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getSlice, getSliceTasks, getTask, getGateResults, updateTaskStatus } from '../gsd-db.ts';
 import { handlePlanSlice } from '../tools/plan-slice.ts';
 import { parsePlan } from '../parsers-legacy.ts';
 import { parseTaskPlanFile } from '../files.ts';
@@ -260,6 +260,44 @@ test('handlePlanSlice renders plan artifacts under worktree-local .gsd while usi
     assert.ok(existsSync(worktreePlan), 'slice plan should be rendered to worktree-local .gsd');
     assert.ok(!existsSync(projectPlan), 'slice plan should not be rendered to project .gsd');
     assert.equal(result.planPath, realpathSync(worktreePlan));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanSlice preserves completed task closeout state when replanning the same task', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    insertTask({
+      id: 'T01',
+      sliceId: 'S02',
+      milestoneId: 'M001',
+      title: 'Completed implementation',
+      status: 'complete',
+      oneLiner: 'Completed implementation',
+      narrative: 'Already finished.',
+      verificationResult: 'passed',
+      fullSummaryMd: '# T01 Summary\n\nAlready finished.\n',
+    });
+
+    const before = getTask('M001', 'S02', 'T01');
+    assert.equal(before?.status, 'complete');
+    assert.ok(before?.completed_at, 'completed task should have a completion timestamp');
+    assert.equal(before?.full_summary_md, '# T01 Summary\n\nAlready finished.\n');
+
+    const result = await handlePlanSlice(validParams(), base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const after = getTask('M001', 'S02', 'T01');
+    assert.equal(after?.status, 'complete', 'replanning must not reset completed task status to pending');
+    assert.equal(after?.completed_at, before?.completed_at, 'replanning must not clear completed_at');
+    assert.equal(after?.full_summary_md, before?.full_summary_md, 'replanning must not clear task summary content');
+    assert.equal(after?.verification_result, 'passed', 'replanning must not clear closeout verification');
+    assert.equal(after?.description, 'Implement the slice planning handler.', 'planning fields should still refresh');
+    assert.equal(getTask('M001', 'S02', 'T02')?.status, 'pending', 'new tasks are still inserted as pending');
   } finally {
     cleanup(base);
   }

@@ -4,9 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { registerHooks } from "../bootstrap/register-hooks.ts";
-import { GSD_WORKFLOW_MCP_SERVER_NAME } from "../mcp-project-config.ts";
-import { clearSkillSnapshot, snapshotSkills } from "../skill-discovery.js";
+import { GSD_BROWSER_MCP_SERVER_NAME, GSD_WORKFLOW_MCP_SERVER_NAME } from "../mcp-project-config.ts";
 import { prepareWorkflowMcpForProject, shouldAutoPrepareWorkflowMcp } from "../workflow-mcp-auto-prep.ts";
 
 test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport", () => {
@@ -19,6 +17,44 @@ test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport"
   });
 
   assert.equal(result, true);
+});
+
+test("shouldAutoPrepareWorkflowMcp enables prep when Claude Code provider is known before auth mode settles", () => {
+  const result = shouldAutoPrepareWorkflowMcp({
+    model: { provider: "claude-code", baseUrl: "local://claude-code" },
+  });
+
+  assert.equal(result, true);
+});
+
+test("prepareWorkflowMcpForProject uses the selected unit model when session provider differs", (t) => {
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-mcp-unit-model-"));
+  const notifications: Array<{ message: string; level: "info" | "warning" | "error" | "success" }> = [];
+
+  t.after(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  const result = prepareWorkflowMcpForProject(
+    {
+      model: { provider: "openai", baseUrl: "https://api.openai.com" },
+      modelRegistry: {
+        getProviderAuthMode: (provider: string) => provider === "claude-code" ? "externalCli" : "apiKey",
+        isProviderRequestReady: () => true,
+      },
+      ui: {
+        notify: (message: string, level?: "info" | "warning" | "error" | "success") => {
+          notifications.push({ message, level: level ?? "info" });
+        },
+      },
+    },
+    projectRoot,
+    { provider: "claude-code", baseUrl: "local://claude-code" },
+  );
+
+  assert.equal(result?.status, "created");
+  assert.equal(existsSync(join(projectRoot, ".mcp.json")), true);
+  assert.match(notifications.map((entry) => entry.message).join("\n"), /Claude Code MCP prepared/);
 });
 
 test("shouldAutoPrepareWorkflowMcp stays disabled for non-Claude active provider even when claude-code is ready", () => {
@@ -82,6 +118,7 @@ test("prepareWorkflowMcpForProject warns with /gsd mcp init guidance when prep f
 });
 
 test("before_agent_start auto-prepares project workflow MCP for Claude Code CLI", async (t) => {
+  const { registerHooks } = await import("../bootstrap/register-hooks.ts");
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-mcp-before-agent-"));
   const originalCwd = process.cwd();
   const notifications: string[] = [];
@@ -133,10 +170,20 @@ test("before_agent_start auto-prepares project workflow MCP for Claude Code CLI"
     mcpServers?: Record<string, unknown>;
   };
   assert.ok(parsed.mcpServers?.[GSD_WORKFLOW_MCP_SERVER_NAME]);
+  assert.ok(parsed.mcpServers?.[GSD_BROWSER_MCP_SERVER_NAME]);
+  const settings = JSON.parse(readFileSync(join(projectRoot, ".claude", "settings.local.json"), "utf-8")) as {
+    enabledMcpjsonServers?: string[];
+  };
+  assert.deepEqual(settings.enabledMcpjsonServers, [
+    GSD_WORKFLOW_MCP_SERVER_NAME,
+    GSD_BROWSER_MCP_SERVER_NAME,
+  ]);
   assert.match(notifications.join("\n"), /Claude Code MCP prepared/);
 });
 
 test("before_agent_start returns discovered skill fallback without project .gsd", async (t) => {
+  const { registerHooks } = await import("../bootstrap/register-hooks.ts");
+  const { clearSkillSnapshot, snapshotSkills } = await import("../skill-discovery.js");
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-skill-before-agent-"));
   const skillHome = mkdtempSync(join(tmpdir(), "gsd-skill-home-"));
   const originalCwd = process.cwd();

@@ -50,6 +50,7 @@ import { handleCompleteSlice } from "../../tools/complete-slice.ts";
 import { handleCompleteMilestone } from "../../tools/complete-milestone.ts";
 import { handleReopenTask } from "../../tools/reopen-task.ts";
 import { handleReopenSlice } from "../../tools/reopen-slice.ts";
+import { handleReopenMilestone } from "../../tools/reopen-milestone.ts";
 
 // ── State derivation ──────────────────────────────────────────────────────
 import {
@@ -700,9 +701,7 @@ describe("state-machine-live-validation", () => {
       assert.match((result as any).error, /closed milestone/);
     });
 
-    test("no reopen-milestone tool exists — milestone completion is irrevocable (H5)", async () => {
-      // This test documents the H5 finding: there is no handleReopenMilestone function.
-      // A completed milestone can only be undone via direct DB manipulation.
+    test("closed milestone cannot be reopened by generic DB update", async () => {
       base = createFullFixture();
       openDatabase(join(base, ".gsd", "gsd.db"));
       insertMilestone({ id: "M001", title: "Done", status: "complete" });
@@ -710,10 +709,18 @@ describe("state-machine-live-validation", () => {
       const milestone = getMilestone("M001");
       assert.ok(isClosedStatus(milestone!.status), "milestone is closed");
 
-      // The only escape is direct DB manipulation — no handler exists
-      updateMilestoneStatus("M001", "active", null);
+      assert.throws(
+        () => updateMilestoneStatus("M001", "active", null),
+        /use gsd_milestone_reopen for an explicit reopen/,
+      );
+
+      const result = await handleReopenMilestone(
+        { milestoneId: "M001", reason: "regression surfaced after closure" },
+        base,
+      );
+      assert.ok(!("error" in result), `unexpected reopen error: ${"error" in result ? result.error : ""}`);
       const reopened = getMilestone("M001");
-      assert.equal(reopened!.status, "active", "direct DB manipulation can reopen, but no tool exposes this");
+      assert.equal(reopened!.status, "active", "explicit reopen handler reopens the milestone");
     });
   });
 

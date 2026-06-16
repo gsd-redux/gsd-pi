@@ -64,9 +64,23 @@ function isBlockingUIRequest(event: Record<string, unknown>): boolean {
 // SessionManager
 // ---------------------------------------------------------------------------
 
+/** Terminal lifecycle states — work is finished, process may be reclaimed. */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['completed', 'error', 'cancelled']);
+
+/**
+ * How many terminal (completed/cancelled/errored) sessions to retain for
+ * inspection before evicting the oldest. Bounds heap growth on a daemon that
+ * services many distinct project dirs over its lifetime — without this, every
+ * session ever run stays resident forever (events buffer + RpcClient ref).
+ */
+const MAX_TERMINAL_SESSIONS = 50;
+
 export class SessionManager extends EventEmitter {
   /** Sessions keyed by resolved projectDir for duplicate-start prevention */
   private sessions = new Map<string, ManagedSession>();
+
+  /** Resolved dirs of terminal sessions, oldest-first — for bounded retention. */
+  private terminalOrder: string[] = [];
 
   constructor(private readonly logger: Logger) {
     super();
@@ -91,9 +105,16 @@ export class SessionManager extends EventEmitter {
 
     const existing = this.sessions.get(resolvedDir);
     if (existing) {
-      throw new Error(
-        `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
-      );
+      // A terminal session (completed/cancelled/error) is retained only for
+      // inspection — it must not block a fresh start for the same dir. Evict it
+      // and reclaim its process before starting anew.
+      if (TERMINAL_STATUSES.has(existing.status)) {
+        this.evictSession(resolvedDir);
+      } else {
+        throw new Error(
+          `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
+        );
+      }
     }
 
     const cliPath = options.cliPath ?? SessionManager.resolveCLIPath();
@@ -163,7 +184,9 @@ export class SessionManager extends EventEmitter {
       this.logger.error('session error', { sessionId: session.sessionId, projectDir: resolvedDir, error: session.error });
       this.emit('session:error', { sessionId: session.sessionId, projectDir: resolvedDir, projectName, error: session.error });
 
-      // Keep session in map so callers can inspect the error
+      // Keep session in map so callers can inspect the error, but under the
+      // bounded terminal-retention policy so it is eventually reclaimed.
+      this.markTerminal(resolvedDir);
       throw new Error(`Failed to start session for ${resolvedDir}: ${session.error}`);
     }
   }
@@ -233,8 +256,20 @@ export class SessionManager extends EventEmitter {
 
     session.status = 'cancelled';
     session.unsubscribe?.();
+    session.unsubscribe = undefined;
 
     this.logger.info('session cancelled', { sessionId, projectDir: session.projectDir });
+
+    // Symmetric teardown: notify listeners (EventBridge) so they can dispose the
+    // session's batcher, channel mappings, and any blocker collectors — the
+    // start path emits 'session:started', so cancel must emit too.
+    this.emit('session:cancelled', {
+      sessionId,
+      projectDir: session.projectDir,
+      projectName: session.projectName,
+    });
+
+    this.markTerminal(session.projectDir);
   }
 
   async cancelSessionByDir(projectDir: string): Promise<void> {
@@ -284,6 +319,48 @@ export class SessionManager extends EventEmitter {
     }
 
     await Promise.allSettled(stopPromises);
+
+    this.sessions.clear();
+    this.terminalOrder = [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: Terminal-session retention (bounded)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Record a session (by resolved dir) as terminal and evict the oldest
+   * terminal sessions once the retention cap is exceeded. Retains recent
+   * terminal sessions for inspection while bounding heap growth.
+   */
+  private markTerminal(resolvedDir: string): void {
+    // Move to most-recent position (dedupe if it was already terminal).
+    const existingIdx = this.terminalOrder.indexOf(resolvedDir);
+    if (existingIdx !== -1) this.terminalOrder.splice(existingIdx, 1);
+    this.terminalOrder.push(resolvedDir);
+
+    while (this.terminalOrder.length > MAX_TERMINAL_SESSIONS) {
+      const oldest = this.terminalOrder.shift();
+      if (oldest) this.evictSession(oldest);
+    }
+  }
+
+  /**
+   * Remove a session from tracking and best-effort reclaim its agent process.
+   */
+  private evictSession(resolvedDir: string): void {
+    const session = this.sessions.get(resolvedDir);
+    this.sessions.delete(resolvedDir);
+    const orderIdx = this.terminalOrder.indexOf(resolvedDir);
+    if (orderIdx !== -1) this.terminalOrder.splice(orderIdx, 1);
+
+    if (session) {
+      session.unsubscribe?.();
+      session.unsubscribe = undefined;
+      // The agent child process may still be alive (e.g. a completed session
+      // kept for follow-up relay) — reclaim it on eviction.
+      void session.client.stop().catch(() => { /* swallow */ });
+    }
   }
 
   /**
@@ -355,12 +432,14 @@ export class SessionManager extends EventEmitter {
       } else {
         session.status = 'completed';
         session.unsubscribe?.();
+        session.unsubscribe = undefined;
         this.logger.info('session completed', { sessionId: session.sessionId, projectDir: session.projectDir });
         this.emit('session:completed', {
           sessionId: session.sessionId,
           projectDir: session.projectDir,
           projectName: session.projectName,
         });
+        this.markTerminal(session.projectDir);
       }
       return;
     }

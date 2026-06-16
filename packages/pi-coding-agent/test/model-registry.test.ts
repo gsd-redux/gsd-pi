@@ -242,6 +242,26 @@ describe("ModelRegistry", () => {
 			expect(model).toBeDefined();
 			expect(registry.hasConfiguredAuth(model!)).toBe(true);
 		});
+
+		test("Anthropic Vertex built-in models are available when project auth is configured", () => {
+			const originalProjectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+
+			try {
+				process.env.ANTHROPIC_VERTEX_PROJECT_ID = "test-vertex-project";
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const available = registry.getAvailable();
+
+				expect(available.some((m) => m.provider === "anthropic-vertex" && m.id === "claude-sonnet-4-6"))
+					.toBe(true);
+			} finally {
+				if (originalProjectId === undefined) {
+					delete process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+				} else {
+					process.env.ANTHROPIC_VERTEX_PROJECT_ID = originalProjectId;
+				}
+			}
+		});
 	});
 
 	describe("custom models merge behavior", () => {

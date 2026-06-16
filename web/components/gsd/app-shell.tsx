@@ -4,6 +4,7 @@ import Image from "next/image"
 import dynamic from "next/dynamic"
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react"
 import { Menu, X } from "lucide-react"
+import { AnimatePresence, motion } from "motion/react"
 import { Sidebar, MilestoneExplorer, CollapsedMilestoneSidebar } from "@/components/gsd/sidebar"
 import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
@@ -280,14 +281,14 @@ function WorkspaceChrome() {
       <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-background p-8 text-center">
         <Image
           src="/logo-black.svg"
-          alt="GSD"
+          alt="GSD-Pi Web"
           width={57}
           height={16}
           className="shrink-0 h-4 w-auto dark:hidden"
         />
         <Image
           src="/logo-white.svg"
-          alt="GSD"
+          alt="GSD-Pi Web"
           width={57}
           height={16}
           className="shrink-0 h-4 w-auto hidden dark:block"
@@ -317,19 +318,32 @@ function WorkspaceChrome() {
             aria-label={mobileNavOpen ? "Close navigation" : "Open navigation"}
             data-testid="mobile-nav-toggle"
           >
-            {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            <span className="relative flex h-5 w-5 items-center justify-center">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={mobileNavOpen ? "close" : "open"}
+                  className="absolute inset-0 flex items-center justify-center"
+                  initial={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                  animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+                  exit={{ opacity: 0, scale: 0.25, filter: "blur(4px)" }}
+                  transition={{ type: "spring", duration: 0.3, bounce: 0 }}
+                >
+                  {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                </motion.span>
+              </AnimatePresence>
+            </span>
           </button>
           <div className="flex items-center gap-2">
             <Image
               src="/logo-black.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={57}
               height={16}
               className="shrink-0 h-4 w-auto dark:hidden"
             />
             <Image
               src="/logo-white.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={57}
               height={16}
               className="shrink-0 h-4 w-auto hidden dark:block"
@@ -443,7 +457,7 @@ function WorkspaceChrome() {
         <div className="flex flex-1 flex-col overflow-hidden">
           <div
             className={cn(
-              "flex-1 overflow-hidden transition-all",
+              "flex-1 overflow-hidden transition-[height] duration-200 ease-out",
               isTerminalExpanded && "h-1/3",
             )}
           >

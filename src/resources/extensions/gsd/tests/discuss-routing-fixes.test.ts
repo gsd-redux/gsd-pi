@@ -19,10 +19,12 @@ import { normalizeDiscussTarget } from "../milestone-ids.ts";
 import { _parseDiscussArgsForTest } from "../commands/handlers/workflow.ts";
 import { openDatabase, closeDatabase, isDbAvailable, insertMilestone } from "../gsd-db.ts";
 import { invalidateStateCache } from "../state.ts";
+import { clearGuidedUnitContext, getGuidedUnitContext } from "../guided-unit-context.ts";
 
 afterEach(() => {
   if (isDbAvailable()) closeDatabase();
   invalidateStateCache();
+  clearGuidedUnitContext();
 });
 
 function makeDiscussPi() {
@@ -167,6 +169,65 @@ describe("showDiscuss targeted slice roadmap fallback", () => {
       harness.restore();
       if (isDbAvailable()) closeDatabase();
       invalidateStateCache();
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("/gsd discuss M001/S01 routes slice discussion through the active worktree", async () => {
+    const base = mkdtempSync(join(tmpdir(), "gsd-discuss-target-worktree-"));
+    const notifications: Array<{ message: string; level?: string }> = [];
+    const harness = makeDiscussPi();
+    try {
+      mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+      const dbPath = join(base, ".gsd", "gsd.db");
+      assert.equal(openDatabase(dbPath), true);
+      insertMilestone({ id: "M001", title: "Target slice milestone", status: "active" });
+
+      const rootRoadmap = `# M001 Roadmap
+
+## Slices
+- [ ] **S01: Auth module** \`risk:medium\` \`depends:[]\`
+  > ROOT-ROADMAP-CONTENT
+`;
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), rootRoadmap, "utf-8");
+
+      const worktreeBase = join(base, ".gsd", "worktrees", "M001");
+      mkdirSync(join(worktreeBase, ".gsd", "milestones", "M001"), { recursive: true });
+      writeFileSync(join(worktreeBase, ".git"), "gitdir: /tmp/gsd-discuss-target-worktree.git\n", "utf-8");
+      const worktreeRoadmap = `# M001 Roadmap
+
+## Slices
+- [ ] **S01: Auth module** \`risk:medium\` \`depends:[]\`
+  > WORKTREE-ROADMAP-CONTENT
+`;
+      writeFileSync(
+        join(worktreeBase, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+        worktreeRoadmap,
+        "utf-8",
+      );
+
+      await showDiscuss(
+        makeDiscussCtx(notifications) as any,
+        harness.pi as any,
+        base,
+        { target: "M001/S01" },
+      );
+
+      assert.equal(harness.sent.length, 1, "targeted slice must dispatch discuss-slice");
+      const content = String(harness.sent[0]?.content);
+      assert.match(content, /WORKTREE-ROADMAP-CONTENT/);
+      assert.doesNotMatch(content, /ROOT-ROADMAP-CONTENT/);
+      assert.equal(
+        getGuidedUnitContext(worktreeBase)?.unitType,
+        "discuss-slice",
+        "guided unit context must be keyed by the worktree base path",
+      );
+      assert.equal(getGuidedUnitContext(base), null, "project root must not receive the discuss-slice guided context");
+    } finally {
+      harness.restore();
+      if (isDbAvailable()) closeDatabase();
+      invalidateStateCache();
+      clearGuidedUnitContext();
       rmSync(base, { recursive: true, force: true });
     }
   });

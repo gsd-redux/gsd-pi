@@ -1,5 +1,6 @@
 import type { DaemonConfig, ProjectInfo } from './types.js';
 import type { Logger } from './logger.js';
+import type { DiscordMessageLike } from './orchestrator.js';
 import { SessionManager } from './session-manager.js';
 import { scanForProjects } from './project-scanner.js';
 import { DiscordBot, validateDiscordConfig } from './discord-bot.js';
@@ -22,6 +23,7 @@ export class Daemon {
   private discordBot: DiscordBot | undefined;
   private eventBridge: EventBridge | undefined;
   private orchestrator: Orchestrator | undefined;
+  private removeOrchestratorListener: (() => void) | undefined;
   private cloudRuntime: CloudRuntime | undefined;
 
   constructor(
@@ -93,9 +95,18 @@ export class Daemon {
               logger: this.logger,
               ownerId: this.config.discord.owner_id,
             });
-            client.on('messageCreate', (message) => {
-              void this.orchestrator!.handleMessage(message);
-            });
+            // Named handler so it can be removed on shutdown. Guard against a
+            // null orchestrator: shutdown nulls `this.orchestrator` before the
+            // Discord client is destroyed, so a late message must be a no-op
+            // rather than throw on `this.orchestrator!`.
+            const orchestratorMessageHandler = (message: DiscordMessageLike): void => {
+              if (!this.orchestrator) return;
+              void this.orchestrator.handleMessage(message);
+            };
+            client.on('messageCreate', orchestratorMessageHandler);
+            this.removeOrchestratorListener = () => {
+              client.off('messageCreate', orchestratorMessageHandler);
+            };
             this.logger.info('orchestrator wired', {
               control_channel_id: this.config.discord.control_channel_id,
             });
@@ -184,7 +195,11 @@ export class Daemon {
       this.keepaliveTimer = undefined;
     }
 
-    // Stop Orchestrator first
+    // Stop Orchestrator first — detach its Discord listener before nulling it.
+    if (this.removeOrchestratorListener) {
+      this.removeOrchestratorListener();
+      this.removeOrchestratorListener = undefined;
+    }
     if (this.orchestrator) {
       this.orchestrator.stop();
       this.orchestrator = undefined;

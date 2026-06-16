@@ -1,5 +1,6 @@
 export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	anthropic: "Anthropic",
+	"anthropic-vertex": "Anthropic on Vertex AI",
 	"amazon-bedrock": "Amazon Bedrock",
 	"azure-openai-responses": "Azure OpenAI Responses",
 	cerebras: "Cerebras",

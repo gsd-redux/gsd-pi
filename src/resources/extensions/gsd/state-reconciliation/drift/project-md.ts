@@ -55,7 +55,7 @@ export function repairUnregisteredMilestone(
 ): void {
   throw new Error(
     `Milestone ${record.milestoneId} exists only as markdown projection. ` +
-      "Runtime reconciliation will not import markdown into the authoritative DB; run `/gsd recover` if this markdown should repopulate the database.",
+      "Runtime reconciliation will not import markdown into the authoritative DB; run `/gsd recover --confirm` if this markdown should repopulate the database.",
   );
 }
 

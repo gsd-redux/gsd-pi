@@ -8,9 +8,12 @@
 
 import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
+import { installGlobalErrorHandlers } from './cli-errors.js';
 import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
 
 const MCP_PKG = '@modelcontextprotocol/sdk';
+
+installGlobalErrorHandlers();
 
 async function main(): Promise<void> {
   loadStoredCredentialEnvKeys();

@@ -172,6 +172,12 @@ export function resolveExpectedArtifactPath(
     case "replan-slice": {
       return resolveSliceArtifactPath(base, mid, sid!, "REPLAN");
     }
+    case "triage-captures":
+      // Verified against CAPTURES.md state in verifyExpectedArtifact.
+      return null;
+    case "quick-task":
+      // Verified against the capture's Executed field in CAPTURES.md.
+      return null;
     case "rewrite-docs":
       return null;
     case "gate-evaluate":
@@ -227,6 +233,10 @@ export function diagnoseExpectedArtifact(
       return `Slice ${sid} marked [x] in ${relMilestoneFile(base, mid, "ROADMAP")} + summary + UAT written`;
     case "replan-slice":
       return `${relSliceFile(base, mid, sid!, "REPLAN")} + updated ${relSliceFile(base, mid, sid!, "PLAN")}`;
+    case "triage-captures":
+      return ".gsd/CAPTURES.md with no pending captures";
+    case "quick-task":
+      return `.gsd/CAPTURES.md capture ${sid ?? "<capture-id>"} marked executed`;
     case "rewrite-docs":
       return "Active overrides resolved in .gsd/OVERRIDES.md + plan documents updated";
     case "reassess-roadmap":

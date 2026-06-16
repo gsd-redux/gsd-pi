@@ -220,9 +220,9 @@ export function StepRemote({ onBack, onNext }: StepRemoteProps) {
                   }}
                   disabled={saving}
                   className={cn(
-                    "rounded-xl border px-3 py-3 text-left transition-all duration-200",
+                    "rounded-xl border px-3 py-3 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    "active:scale-[0.97]",
+                    "active:scale-[0.96]",
                     channel === opt.value
                       ? "border-foreground/30 bg-foreground/[0.06]"
                       : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",

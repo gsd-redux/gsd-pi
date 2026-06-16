@@ -7,6 +7,7 @@
  *   /gsd mcp             — Overview of all servers (alias: /gsd mcp status)
  *   /gsd mcp status      — Same as bare /gsd mcp
  *   /gsd mcp check <srv> — Detailed status for a specific server
+ *   /gsd mcp discover [srv] — Connect and list tools for a server
  *   /gsd mcp test <srv>  — Test handshake + tools/list for a server
  *   /gsd mcp enable <srv> / disable <srv> — Toggle local server exposure
  *   /gsd mcp import <srv> [as <name>] — Copy a discovered server into local config
@@ -68,7 +69,8 @@ export function formatMcpInitResult(
     `Project: ${targetPath}`,
     `Config:   ${configPath}`,
     "",
-    "Claude Code can now load the GSD workflow MCP server from this folder.",
+    "MCP-capable clients can now load the GSD workflow MCP server from this folder.",
+    "Restart or reconnect any client that already has this project open.",
   ].join("\n");
 }
 
@@ -102,8 +104,8 @@ export function formatMcpStatusReport(servers: McpServerStatus[]): string {
 
   lines.push("");
   lines.push("Use /gsd mcp check <server> for details on a specific server.");
+  lines.push("Use /gsd mcp discover <server> to connect and list tools.");
   lines.push("Use /gsd mcp test <server> to verify handshake and tool discovery.");
-  lines.push("Use mcp_discover to connect and list tools for a server.");
 
   return lines.join("\n");
 }
@@ -132,7 +134,7 @@ export function formatMcpServerDetail(server: McpServerDetail): string {
   } else {
     lines.push(`  Status:    disconnected`);
     lines.push("");
-    lines.push(`  Run mcp_discover("${server.name}") to connect and list tools.`);
+    lines.push(`  Run /gsd mcp discover ${server.name} to connect and list tools.`);
   }
 
   if (server.envWarnings?.length) {
@@ -166,10 +168,32 @@ export function formatMcpConnectionTestResult(result: ManagedMcpConnectionTestRe
   ].join("\n");
 }
 
+export function formatMcpDiscoveryResult(result: ManagedMcpConnectionTestResult): string {
+  if (result.ok) {
+    return [
+      `MCP discovery completed for ${result.server}.`,
+      "",
+      `Transport: ${result.transport}`,
+      `Tools:     ${result.toolCount}`,
+      ...(result.tools.length > 0 ? ["", "Discovered tools:", ...result.tools.map((tool) => `  - ${tool}`)] : []),
+      "",
+      `Call with: mcp_call(server="${result.server}", tool="<tool_name>", args={...})`,
+    ].join("\n");
+  }
+
+  return [
+    `MCP discovery failed for ${result.server}.`,
+    "",
+    `Transport: ${result.transport}`,
+    `Error:     ${result.error ?? "Unknown error"}`,
+    ...(result.warnings.length > 0 ? ["", "Warnings:", ...result.warnings.map((warning) => `  - ${warning}`)] : []),
+  ].join("\n");
+}
+
 // ─── Command handler ────────────────────────────────────────────────────────
 
 /**
- * Handle `/gsd mcp [status|check <server>]`.
+ * Handle `/gsd mcp [status|check <server>|discover [server]|...]`.
  */
 export async function handleMcpStatus(
   args: string,
@@ -196,6 +220,28 @@ export async function handleMcpStatus(
         "error",
       );
     }
+    return;
+  }
+
+  // /gsd mcp discover [server]
+  if (lowered === "discover" || lowered.startsWith("discover ")) {
+    const requestedServerName = trimmed.slice("discover".length).trim();
+    let serverName = requestedServerName;
+    if (!serverName) {
+      if (configs.length === 1) {
+        serverName = configs[0]!.name;
+      } else {
+        const available = configs.map((config) => config.name).join(", ") || "(none)";
+        ctx.ui.notify(
+          `Usage: /gsd mcp discover <server>\n\nAvailable: ${available}`,
+          "warning",
+        );
+        return;
+      }
+    }
+
+    const result = await testMcpServerConnection(serverName);
+    ctx.ui.notify(formatMcpDiscoveryResult(result), result.ok ? "info" : "warning");
     return;
   }
 
@@ -388,15 +434,16 @@ export async function handleMcpStatus(
 
   // Unknown subcommand
   ctx.ui.notify(
-    "Usage: /gsd mcp [status|check <server>|test <server>|enable <server>|disable <server>|delete <server> --confirm|import <server> [as <name>]|init [dir]]\n\n" +
+    "Usage: /gsd mcp [status|check <server>|discover [server]|test <server>|enable <server>|disable <server>|delete <server> --confirm|import <server> [as <name>]|init [dir]]\n\n" +
     "  status           Show all MCP server statuses (default)\n" +
     "  check <server>   Detailed status for a specific server\n" +
+    "  discover [server] Connect and list tools for a server\n" +
     "  test <server>    Verify MCP handshake and tools/list\n" +
     "  enable <server>  Enable a local GSD-managed server\n" +
     "  disable <server> Disable a local GSD-managed server\n" +
     "  delete <server> --confirm  Delete a local GSD-managed server\n" +
     "  import <server> [as <name>] Copy a discovered server to .gsd/mcp.json\n" +
-    "  init [dir]       Write .mcp.json for the local GSD workflow MCP server",
+    "  init [dir]       Write .mcp.json for the local GSD workflow and browser MCP servers",
     "warning",
   );
 }

@@ -36,6 +36,7 @@ const PR_5060_BUNDLED_SKILLS = [
   'core-web-vitals',
   'github-workflows',
   'web-quality-audit',
+  'gsd-browser',
   'agent-browser',
   'web-design-guidelines',
   'userinterface-wiki',

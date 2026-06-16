@@ -211,6 +211,14 @@ test("execute-task prompt uses gsd_task_complete as canonical summary write path
   assert.doesNotMatch(prompt, /^\d+\.\s+Write `?\{\{taskSummaryPath\}\}`?\s*$/m);
 });
 
+test("execute-task prompt forbids phase escalation tools and native Workflow", () => {
+  const prompt = readPrompt("execute-task");
+  assert.match(prompt, /Complete only `\{\{taskId\}\}`/);
+  assert.match(prompt, /Do NOT call `gsd_slice_complete`, `gsd_validate_milestone`, `gsd_complete_milestone`/);
+  assert.match(prompt, /spawn `Workflow`/);
+  assert.match(prompt, /orchestrator owns slice\/milestone closure and phase transitions/i);
+});
+
 test("execute-task prompt does not instruct LLM to toggle checkboxes manually", () => {
   const prompt = readPrompt("execute-task");
   assert.doesNotMatch(prompt, /change \[ \] to \[x\]/);

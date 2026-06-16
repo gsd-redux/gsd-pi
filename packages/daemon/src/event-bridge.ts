@@ -75,6 +75,8 @@ export class EventBridge {
   private readonly batchers = new Map<string, MessageBatcher>();
   /** sessionId → TextChannel (cached for send operations) */
   private readonly channels = new Map<string, TextChannel>();
+  /** sessionId → active blocker button collectors (stopped on cleanup) */
+  private readonly collectors = new Map<string, Set<{ stop: (reason?: string) => void }>>();
 
   private readonly verbosity = new VerbosityManager();
 
@@ -84,6 +86,7 @@ export class EventBridge {
     event: (...args: unknown[]) => void;
     blocked: (...args: unknown[]) => void;
     completed: (...args: unknown[]) => void;
+    cancelled: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
     messageCreate: (msg: Message) => void;
   } | null = null;
@@ -118,6 +121,9 @@ export class EventBridge {
       completed: (data: unknown) => {
         void this.onSessionCompleted(data as SessionCompletedPayload);
       },
+      cancelled: (data: unknown) => {
+        void this.onSessionCancelled(data as SessionCancelledPayload);
+      },
       error: (data: unknown) => {
         void this.onSessionError(data as SessionErrorPayload);
       },
@@ -130,6 +136,7 @@ export class EventBridge {
     this.sessionManager.on('session:event', this.boundHandlers.event);
     this.sessionManager.on('session:blocked', this.boundHandlers.blocked);
     this.sessionManager.on('session:completed', this.boundHandlers.completed);
+    this.sessionManager.on('session:cancelled', this.boundHandlers.cancelled);
     this.sessionManager.on('session:error', this.boundHandlers.error);
     this.client.on('messageCreate', this.boundHandlers.messageCreate);
 
@@ -143,10 +150,17 @@ export class EventBridge {
       this.sessionManager.off('session:event', this.boundHandlers.event);
       this.sessionManager.off('session:blocked', this.boundHandlers.blocked);
       this.sessionManager.off('session:completed', this.boundHandlers.completed);
+      this.sessionManager.off('session:cancelled', this.boundHandlers.cancelled);
       this.sessionManager.off('session:error', this.boundHandlers.error);
       this.client.off('messageCreate', this.boundHandlers.messageCreate);
       this.boundHandlers = null;
     }
+
+    // Stop any still-active blocker collectors so their 24h timers don't linger.
+    for (const set of this.collectors.values()) {
+      for (const collector of set) collector.stop('shutdown');
+    }
+    this.collectors.clear();
 
     // Destroy all batchers
     const destroyPromises: Promise<void>[] = [];
@@ -269,6 +283,14 @@ export class EventBridge {
     this.logger.info('bridge: session completed', { sessionId, projectName });
   }
 
+  private async onSessionCancelled(data: SessionCancelledPayload): Promise<void> {
+    const { sessionId, projectName } = data;
+    // Cancellation has no completion embed to flush — just tear down the
+    // batcher, channel mappings, and any active blocker collectors.
+    await this.cleanupSession(sessionId);
+    this.logger.info('bridge: session cancelled', { sessionId, projectName });
+  }
+
   private async onSessionError(data: SessionErrorPayload): Promise<void> {
     const { sessionId, projectName, error } = data;
     const batcher = this.batchers.get(sessionId);
@@ -300,6 +322,16 @@ export class EventBridge {
           return interaction.customId.startsWith(`blocker:${blocker.id}:`);
         },
       });
+
+      // Track the collector so a session that completes/cancels/errors before
+      // the blocker is answered doesn't leave the 24h timer (and its closures)
+      // alive. Untrack on 'end'.
+      let collectorSet = this.collectors.get(sessionId);
+      if (!collectorSet) {
+        collectorSet = new Set();
+        this.collectors.set(sessionId, collectorSet);
+      }
+      collectorSet.add(collector);
 
       collector.on('collect', async (interaction: MessageComponentInteraction) => {
         // Auth guard
@@ -333,6 +365,12 @@ export class EventBridge {
       });
 
       collector.on('end', (_collected, reason) => {
+        // Untrack — the collector is no longer active regardless of reason.
+        const set = this.collectors.get(sessionId);
+        if (set) {
+          set.delete(collector);
+          if (set.size === 0) this.collectors.delete(sessionId);
+        }
         if (reason === 'time') {
           // Timeout: edit to show expired
           this.logger.info('bridge: blocker collector timed out', { sessionId, blockerId: blocker.id });
@@ -442,6 +480,13 @@ export class EventBridge {
   // -----------------------------------------------------------------------
 
   private async cleanupSession(sessionId: string): Promise<void> {
+    // Stop any active blocker collectors (each holds a 24h timer + closures).
+    const collectorSet = this.collectors.get(sessionId);
+    if (collectorSet) {
+      for (const collector of collectorSet) collector.stop('session-ended');
+      this.collectors.delete(sessionId);
+    }
+
     const batcher = this.batchers.get(sessionId);
     if (batcher) {
       await batcher.destroy();
@@ -451,6 +496,7 @@ export class EventBridge {
     const channelId = this.sessionToChannel.get(sessionId);
     if (channelId) {
       this.channelToSession.delete(channelId);
+      this.verbosity.clearLevel(channelId);
     }
     this.sessionToChannel.delete(sessionId);
     this.channels.delete(sessionId);
@@ -481,6 +527,12 @@ interface SessionBlockedPayload {
 }
 
 interface SessionCompletedPayload {
+  sessionId: string;
+  projectDir: string;
+  projectName: string;
+}
+
+interface SessionCancelledPayload {
   sessionId: string;
   projectDir: string;
   projectName: string;

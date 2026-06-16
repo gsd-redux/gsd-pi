@@ -13,7 +13,7 @@ import {
   getMilestone,
   getMilestoneSlices,
   getSliceTasks,
-  updateMilestoneStatus,
+  reopenMilestoneStatus,
   updateSliceStatus,
   updateTaskStatus,
   transaction,
@@ -69,7 +69,7 @@ export async function handleReopenMilestone(
       return;
     }
 
-    updateMilestoneStatus(params.milestoneId, "active", null);
+    reopenMilestoneStatus(params.milestoneId);
 
     const slices = getMilestoneSlices(params.milestoneId);
     slicesResetCount = slices.length;

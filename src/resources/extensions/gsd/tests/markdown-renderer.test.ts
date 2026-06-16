@@ -967,6 +967,42 @@ test('── markdown-renderer: stale roadmap artifact regenerates from DB rows 
   }
 });
 
+test('── markdown-renderer: roadmap render sanitizes title and normalizes invalid risk (#230) ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01']);
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({
+      id: 'S01',
+      milestoneId: 'M001',
+      title: 'Title with `ticks` | pipes\nand newline',
+      risk: 'this is invalid risk prose with | and `code`',
+      depends: [],
+      demo: 'Works',
+      status: 'pending',
+    });
+
+    const ok = await renderRoadmapCheckboxes(tmpDir, 'M001');
+    assert.ok(ok, 'render succeeds');
+
+    const roadmapPath = path.join(tmpDir, '.gsd', 'milestones', 'M001', 'M001-ROADMAP.md');
+    const rendered = fs.readFileSync(roadmapPath, 'utf-8');
+    const sliceLine = rendered.split('\n').find(line => line.includes('**S01:'));
+    assert.ok(sliceLine, 'slice line exists');
+    assert.ok(!sliceLine!.includes('\n'), 'slice line is single-line');
+    assert.ok(!sliceLine!.includes('|'), 'slice line title/risk does not include raw pipes');
+    assert.ok(!sliceLine!.includes('`ticks`'), 'slice line title does not include raw backticks');
+    assert.ok(sliceLine!.includes('`risk:medium`'), 'invalid risk is normalized to medium');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // stderr warnings (graceful degradation diagnostics)
 // ═══════════════════════════════════════════════════════════════════════════

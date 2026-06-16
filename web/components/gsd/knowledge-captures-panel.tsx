@@ -402,7 +402,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
           type="button"
           onClick={() => setActiveTab("knowledge")}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
+            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-[color,border-color,background-color] border-b-2 -mb-px",
             activeTab === "knowledge"
               ? "border-foreground/60 text-foreground"
               : "border-transparent text-muted-foreground hover:text-muted-foreground",
@@ -415,7 +415,7 @@ export function KnowledgeCapturesPanel({ initialTab }: KnowledgeCapturesPanelPro
           type="button"
           onClick={() => setActiveTab("captures")}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-all border-b-2 -mb-px",
+            "flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-[color,border-color,background-color] border-b-2 -mb-px",
             activeTab === "captures"
               ? "border-foreground/60 text-foreground"
               : "border-transparent text-muted-foreground hover:text-muted-foreground",

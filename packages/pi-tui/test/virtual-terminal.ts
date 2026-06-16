@@ -51,6 +51,11 @@ export class VirtualTerminal implements Terminal {
 		this.xterm.write(data);
 	}
 
+	get isTTY(): boolean {
+		// Report as interactive so the TUI runs its full input/render pipeline.
+		return true;
+	}
+
 	get columns(): number {
 		return this._columns;
 	}

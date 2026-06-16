@@ -401,6 +401,7 @@ export interface EscalationArtifact {
 
 export interface NotificationPreferences {
   enabled?: boolean; // default true
+  local_bell?: boolean; // default false; play a local terminal bell for questions and auto-mode stops
   on_complete?: boolean; // notify on each unit completion
   on_error?: boolean; // notify on errors
   on_budget?: boolean; // notify on budget thresholds

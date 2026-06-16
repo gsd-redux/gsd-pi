@@ -683,43 +683,17 @@ function cleanupBundledSkillsFromEcosystemDir(): void {
 
   for (const entry of readdirSync(bundledSkillsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
-    const sourcePath = join(bundledSkillsDir, entry.name)
     const targetPath = join(ecosystemDir, entry.name)
     if (!existsSync(targetPath)) continue
 
     try {
       if (lstatSync(targetPath).isSymbolicLink()) continue
-      if (directoriesHaveExactFileContents(sourcePath, targetPath)) {
-        makeTreeWritable(targetPath)
-        rmSync(targetPath, { recursive: true, force: true })
-      } else if (process.env.GSD_RESOURCE_LOADER_DEBUG === '1') {
-        console.warn(
-          `[GSD] Leaving ambiguous skill collision in ${targetPath}; ` +
-          `the bundled copy will be used from ~/.gsd/agent/skills/${entry.name}.`,
-        )
-      }
+      makeTreeWritable(targetPath)
+      rmSync(targetPath, { recursive: true, force: true })
     } catch {
       // Non-fatal: never let cleanup of the shared ecosystem dir block startup.
     }
   }
-}
-
-function directoriesHaveExactFileContents(sourceDir: string, targetDir: string): boolean {
-  const sourceFiles = collectRelativeFiles(sourceDir)
-  const targetFiles = collectRelativeFiles(targetDir)
-  if (sourceFiles.size !== targetFiles.size) return false
-
-  for (const relPath of sourceFiles) {
-    if (!targetFiles.has(relPath)) return false
-    const sourcePath = join(sourceDir, relPath)
-    const targetPath = join(targetDir, relPath)
-    try {
-      if (!readFileSync(sourcePath).equals(readFileSync(targetPath))) return false
-    } catch {
-      return false
-    }
-  }
-  return true
 }
 
 export function hasStaleCompiledExtensionSiblings(extensionsDir: string, sourceDir: string = bundledExtensionsDir): boolean {

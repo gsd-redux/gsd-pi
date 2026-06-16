@@ -206,6 +206,15 @@ function formatForLLM(result: RoundResult): string {
 	return JSON.stringify({ answers });
 }
 
+async function playQuestionBell(): Promise<void> {
+	try {
+		const { playNotificationBell } = await import("./gsd/notifications.js");
+		playNotificationBell("question");
+	} catch {
+		// Best-effort: question rendering must never depend on alert delivery.
+	}
+}
+
 // ─── Extension ────────────────────────────────────────────────────────────────
 
 export default function AskUserQuestions(pi: ExtensionAPI) {
@@ -252,6 +261,9 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 			// ── Routing: race remote + local, remote-only, or local-only ────────
 			const { tryRemoteQuestions, isRemoteConfigured } = await import("./remote-questions/manager.js");
 			const hasRemote = isRemoteConfigured();
+			if (ctx.hasUI || hasRemote) {
+				await playQuestionBell();
+			}
 
 			// Case 1: Both remote and local UI available — race them.
 			// The first response wins; the loser is cancelled via AbortController.

@@ -94,7 +94,7 @@ import {
 import { validateArtifact } from "./schemas/validate.js";
 import { verificationRetryKey } from "./auto/verification-retry-policy.js";
 import { getLedger } from "./metrics.js";
-import { getUnitCostSpikeAction } from "./auto-budget.js";
+import { getUnitCostSpikeAction, resolveUnitCostSpikeMultiplier } from "./auto-budget.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
@@ -115,6 +115,15 @@ const NOTIFICATION_BULLET = "•";
 function isParallelResearchUnit(unitType: string, unitId: string): boolean {
   return unitType === "research-slice" && unitId.endsWith("/parallel-research");
 }
+
+function shouldAttemptPlanRegeneration(unitType: string, unitId: string): boolean {
+  if (unitType === "triage-captures" || unitType === "quick-task") return false;
+  if (isParallelResearchUnit(unitType, unitId)) return false;
+  const { milestone: mid, slice: sid } = parseUnitId(unitId);
+  return !!mid && !!sid;
+}
+
+export const _shouldAttemptPlanRegenerationForTest = shouldAttemptPlanRegeneration;
 
 export function maybeWriteParallelResearchCostSpikeBlocker(
   unitType: string,
@@ -1638,7 +1647,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       if (!triggerArtifactVerified) {
         try {
           const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
-          if (mid && sid && !isParallelResearchUnit(s.currentUnit.type, s.currentUnit.id)) {
+          if (mid && sid && shouldAttemptPlanRegeneration(s.currentUnit.type, s.currentUnit.id)) {
             // Phase C: write to the canonical project root (#5236 scope)
             // so non-symlinked worktrees no longer maintain a separate
             // local .gsd/ projection. copyPlanningArtifacts has been
@@ -1904,7 +1913,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             await pauseAuto(ctx, pi);
             return "dispatched";
           }
-          if (getUnitCostSpikeAction(unitCostUsd, rollingAvgUsd, 3.0) === "pause") {
+          if (getUnitCostSpikeAction(unitCostUsd, rollingAvgUsd, resolveUnitCostSpikeMultiplier(prefs)) === "pause") {
             s.pendingVerificationRetry = null;
             s.verificationRetryCount.delete(retryKey);
             s.verificationRetryFailureHashes.delete(retryKey);
@@ -2125,8 +2134,8 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
               await renderPlanCheckboxes(s.canonicalProjectRoot, mid, sid);
             } catch (dbErr) {
               // DB unavailable — fail explicitly rather than silently reverting to markdown mutation.
-              // Use 'gsd recover' to rebuild DB state from disk if needed.
-              logError("engine", `retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover' to reconcile.`);
+              // Use 'gsd recover --confirm' to import markdown into the DB if needed.
+              logError("engine", `retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover --confirm' to import markdown into the DB.`);
             }
           }
 

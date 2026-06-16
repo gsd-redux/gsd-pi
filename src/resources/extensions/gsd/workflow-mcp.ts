@@ -42,14 +42,27 @@ export function resolveWorkflowMcpProjectRoot(sessionCwd: string): string {
 }
 
 const MCP_WORKFLOW_TOOL_SURFACE = new Set([
+  "gsd_cancel",
+  "gsd_captures",
   "ask_user_questions",
   "gsd_capture_thought",
+  "gsd_doctor",
+  "gsd_execute",
   "gsd_memory_query",
   "gsd_memory_graph",
   "gsd_decision_save",
   "gsd_exec",
   "gsd_exec_search",
+  "gsd_graph",
+  "gsd_history",
+  "gsd_knowledge",
+  "gsd_progress",
+  "gsd_query",
   "gsd_resume",
+  "gsd_result",
+  "gsd_resolve_blocker",
+  "gsd_roadmap",
+  "gsd_status",
   "gsd_complete_milestone",
   "gsd_complete_task",
   "gsd_complete_slice",
@@ -59,6 +72,7 @@ const MCP_WORKFLOW_TOOL_SURFACE = new Set([
   "gsd_milestone_generate_id",
   "gsd_milestone_reopen",
   "gsd_checkpoint_db",
+  "gsd_milestone_plan",
   "gsd_milestone_status",
   "gsd_milestone_validate",
   "gsd_plan_task",
@@ -75,7 +89,9 @@ const MCP_WORKFLOW_TOOL_SURFACE = new Set([
   "gsd_save_decision",
   "gsd_save_gate_result",
   "gsd_save_requirement",
+  "gsd_save_summary",
   "gsd_skip_slice",
+  "gsd_slice_plan",
   "gsd_slice_replan",
   "gsd_slice_complete",
   "gsd_slice_reopen",
@@ -539,9 +555,10 @@ export function getWorkflowTransportSupportError(
   }
 
   const uniqueRequired = [...new Set(requiredTools)];
+  const piRuntimeRequired = uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool));
   const missing = (options.activeTools && options.activeTools.length > 0)
-    ? uniqueRequired.filter((tool) => !hasRequiredTool(tool, options.activeTools!))
-    : uniqueRequired.filter((tool) => !MCP_WORKFLOW_TOOL_SURFACE.has(tool));
+    ? piRuntimeRequired.filter((tool) => !hasRequiredTool(tool, options.activeTools!))
+    : piRuntimeRequired;
   if (missing.length === 0) return null;
 
   if (options.activeTools && options.activeTools.length > 0) {

@@ -9,8 +9,8 @@
     "name": "pi-coding-agent"
   },
   "piConfig": {
-    "name": "pi",
-    "configDir": ".pi"
+    "name": "gsd",
+    "configDir": ".gsd"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -70,7 +70,7 @@
     "@types/proper-lockfile": "4.1.4",
     "shx": "0.4.0",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "4.1.0"
   },
   "optionalDependencies": {
     "@mariozechner/clipboard": "0.3.6"

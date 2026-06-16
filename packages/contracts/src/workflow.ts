@@ -47,7 +47,7 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 	},
 	{
 		canonicalName: "gsd_plan_milestone",
-		aliases: [],
+		aliases: ["gsd_milestone_plan"],
 		schemaId: "workflow.milestone.plan",
 		executorId: "executePlanMilestone",
 		writePolicy: "write",
@@ -55,7 +55,7 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 	},
 	{
 		canonicalName: "gsd_plan_slice",
-		aliases: [],
+		aliases: ["gsd_slice_plan"],
 		schemaId: "workflow.slice.plan",
 		executorId: "executePlanSlice",
 		writePolicy: "write",
@@ -127,7 +127,7 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 	},
 	{
 		canonicalName: "gsd_summary_save",
-		aliases: [],
+		aliases: ["gsd_save_summary"],
 		schemaId: "workflow.summary.save",
 		executorId: "executeSummarySave",
 		writePolicy: "write",
@@ -251,8 +251,8 @@ export const CANONICAL_WORKFLOW_TOOL_NAMES = WORKFLOW_TOOL_CONTRACTS.map(
 
 /**
  * Backwards-compatibility alias names (each forwards to a canonical twin).
- * These are kept callable but excluded from the advertised tool surface by
- * default to save tokens — see registerWorkflowTools({ advertiseAliases }).
+ * Callers may exclude these from an advertised tool surface to save tokens —
+ * see registerWorkflowTools({ advertiseAliases }).
  */
 export const WORKFLOW_TOOL_ALIAS_NAMES = WORKFLOW_TOOL_CONTRACTS.flatMap(
 	(tool) => tool.aliases,

@@ -201,6 +201,23 @@ test("buildMinimalAutoGsdToolSet preserves browser tools for run-uat", () => {
   assert.ok(!result.includes("gsd_task_complete"));
 });
 
+test("buildMinimalAutoGsdToolSet prefers MCP browser tools for run-uat when available", () => {
+  const result = buildMinimalAutoGsdToolSet([
+    "bash",
+    "read",
+    "browser_navigate",
+    "browser_click",
+    "mcp__gsd-browser__browser_navigate",
+    "mcp__gsd-browser__browser_click",
+    "gsd_summary_save",
+  ], "run-uat");
+
+  assert.ok(result.includes("mcp__gsd-browser__browser_navigate"));
+  assert.ok(result.includes("mcp__gsd-browser__browser_click"));
+  assert.ok(!result.includes("browser_navigate"));
+  assert.ok(!result.includes("browser_click"));
+});
+
 test("buildMinimalAutoGsdToolSet includes discuss-slice persistence tools", () => {
   const result = buildMinimalAutoGsdToolSet([
     "bash",

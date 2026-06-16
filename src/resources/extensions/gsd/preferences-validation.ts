@@ -938,6 +938,15 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  if (preferences.unit_cost_spike_multiplier !== undefined) {
+    const raw = preferences.unit_cost_spike_multiplier;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      validated.unit_cost_spike_multiplier = raw;
+    } else {
+      errors.push("unit_cost_spike_multiplier must be a positive number");
+    }
+  }
+
   // ─── Git Preferences ───────────────────────────────────────────────────
   if (preferences.git && typeof preferences.git === "object") {
     const git: Record<string, unknown> = {};

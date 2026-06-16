@@ -465,77 +465,76 @@ export function findCutPoint(
 // Summarization
 // ============================================================================
 
-const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+const SUMMARIZATION_PROMPT = `The messages above are a conversation to hand off. Write a briefing that gets a successor productive in 30 seconds. This is a STATE SNAPSHOT, not a conversation summary — capture where things ARE, not the story of how they got there.
+
+If the conversation shifted direction (e.g., started on problem A, pivoted to problem B), lead with the CURRENT direction. Resolved problems are background, not headline.
 
 Use this EXACT format:
 
-## Goal
-[What is the user trying to accomplish? Can be multiple items if the session covers different tasks.]
+## Current Direction
+[What is actively being worked on RIGHT NOW. This may differ from the original request — if so, state the current focus, not the original ask. Be specific: name the task, the approach being taken, and where in that approach we are.]
+
+## Next Action
+[The single most immediate thing to do when resuming. Be concrete — "run the test suite for X" not "continue working."]
+
+## Decided
+- **[Decision]**: [rationale in one line]
+[Only decisions that constrain future work. Skip deliberation, just verdicts.]
+
+## Done
+- [x] [Completed work, especially file paths modified and what changed in them]
+[Include resolved problems briefly so they are not re-investigated.]
+
+## Failed Approaches
+- [Approaches tried that did NOT work and why — so the successor does not retry them]
+- [Or "(none)" if all approaches succeeded]
 
 ## Constraints & Preferences
-- [Any constraints, preferences, or requirements mentioned by user]
+- [Requirements, preferences, or rules the user stated]
 - [Or "(none)" if none were mentioned]
 
-## Progress
-### Done
-- [x] [Completed tasks/changes]
+## Background
+- [Context from earlier in the conversation that is still load-bearing for the current direction]
+- [Omit anything fully resolved that does not affect current work]
 
-### In Progress
-- [ ] [Current work]
+Preserve exact file paths, function names, and error messages. Be concise — every line should help the successor act, not just understand history.`;
 
-### Blocked
-- [Issues preventing progress, if any]
+const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages. Update the existing briefing (in <previous-summary> tags) to reflect the CURRENT state of the work.
 
-## Key Decisions
-- **[Decision]**: [Brief rationale]
-
-## Next Steps
-1. [Ordered list of what should happen next]
-
-## Critical Context
-- [Any data, examples, or references needed to continue]
-- [Or "(none)" if not applicable]
-
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
-
-const UPDATE_SUMMARIZATION_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
-
-Update the existing structured summary with new information. RULES:
-- PRESERVE all existing information from the previous summary
-- ADD new progress, decisions, and context from the new messages
-- UPDATE the Progress section: move items from "In Progress" to "Done" when completed
-- UPDATE "Next Steps" based on what was accomplished
+This is a living state snapshot, not an append-only log. RULES:
+- UPDATE "Current Direction" to reflect where the work is NOW — if the direction shifted, the new direction leads
+- UPDATE "Next Action" to the most immediate next step based on latest progress
+- MOVE completed work to "Done" — add newly completed items, keep previous ones
+- ADD new decisions to "Decided"
+- ADD failed approaches to "Failed Approaches" so they are not retried
+- DEMOTE or DROP information from the previous briefing that is no longer relevant to active work — do not preserve resolved context that does not affect the current direction
 - PRESERVE exact file paths, function names, and error messages
-- If something is no longer relevant, you may remove it
 
 Use this EXACT format:
 
-## Goal
-[Preserve existing goals, add new ones if the task expanded]
+## Current Direction
+[Update to reflect the current focus — may have shifted from previous briefing]
+
+## Next Action
+[The single most immediate thing to do now]
+
+## Decided
+- **[Decision]**: [rationale in one line]
+[Preserve previous decisions that still constrain work, add new ones]
+
+## Done
+- [x] [All completed work — previous and new]
+
+## Failed Approaches
+- [Preserve previous, add any new failed approaches from these messages]
 
 ## Constraints & Preferences
 - [Preserve existing, add new ones discovered]
 
-## Progress
-### Done
-- [x] [Include previously done items AND newly completed items]
+## Background
+- [Only context that is still load-bearing for the current direction — drop resolved items]
 
-### In Progress
-- [ ] [Current work - update based on progress]
-
-### Blocked
-- [Current blockers - remove if resolved]
-
-## Key Decisions
-- **[Decision]**: [Brief rationale] (preserve all previous, add new)
-
-## Next Steps
-1. [Update based on current state]
-
-## Critical Context
-- [Preserve important context, add new if needed]
-
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+Preserve exact file paths, function names, and error messages. Be concise.`;
 
 type SummaryCompleteFn = (
 	model: Model<any>,
@@ -874,18 +873,19 @@ export function prepareCompaction(
 
 const TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
 
-Summarize the prefix to provide context for the retained suffix:
+Write a brief state snapshot of the prefix so the retained suffix makes sense:
 
-## Original Request
-[What did the user ask for in this turn?]
+## What Was Requested
+[The user's ask that started this turn — one sentence]
 
-## Early Progress
-- [Key decisions and work done in the prefix]
+## Work Done in Prefix
+- [Concrete actions taken and their outcomes, especially file paths modified]
+- [Decisions made that affect the retained suffix]
 
-## Context for Suffix
-- [Information needed to understand the retained recent work]
+## Failed Approaches
+- [Anything tried in the prefix that failed — so it is not retried in the suffix]
 
-Be concise. Focus on what's needed to understand the kept suffix.`;
+Be concise. Only include what the successor needs to understand the kept suffix.`;
 
 /**
  * Generate summaries for compaction using prepared data.

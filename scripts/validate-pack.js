@@ -396,6 +396,37 @@ try {
   }
   console.log(`    All ${getLinkablePackages().length} linkable packages are resolvable.`);
 
+  // --- Verify the packaged standalone web host resolves its runtime deps ---
+  // pnpm lays top-level deps down as symlinks into a `.pnpm/` store, and
+  // `npm pack` silently drops symlinks — so the published standalone host can
+  // lose its `next`/`react`/`react-dom` entries and crash on boot with
+  // `Cannot find module 'next'` (#328). Resolving them from the installed
+  // standalone dir turns that fatal, silent packaging gap into a hard publish
+  // gate. (The staging step flattens the store; this proves it stuck.)
+  console.log('==> Verifying packaged standalone web host resolves runtime deps...');
+  const standaloneDir = join(installedRoot, 'dist', 'web', 'standalone');
+  try {
+    execFileSync(
+      process.execPath,
+      ['-e', "require.resolve('next'); require.resolve('react'); require.resolve('react-dom')"],
+      {
+        cwd: standaloneDir,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 15000,
+        maxBuffer: DEFAULT_MAX_BUFFER,
+      },
+    );
+    console.log('    standalone host resolves next/react/react-dom.');
+  } catch (err) {
+    console.log('ERROR: packaged standalone web host cannot resolve next/react/react-dom after install.');
+    console.log(`    Checked from: ${standaloneDir}`);
+    console.log('    pnpm symlinks were likely dropped by npm pack — staging must flatten the .pnpm store.');
+    if (err.stdout) console.log(err.stdout);
+    if (err.stderr) console.log(err.stderr);
+    process.exit(1);
+  }
+
   // --- Run the binary to confirm end-to-end resolution ---
   console.log('==> Running installed binary (gsd -v)...');
   const loaderPath = join(installedRoot, 'dist', 'loader.js');

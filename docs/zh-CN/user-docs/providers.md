@@ -306,6 +306,8 @@ export ANTHROPIC_VERTEX_PROJECT_ID="my-project-id"
 
 或者设置 `GOOGLE_CLOUD_PROJECT`，并确保 ADC 凭据存在于 `~/.config/gcloud/application_default_credentials.json`。
 
+支持的 Claude-on-Vertex models 会内置注册，并在 Vertex auth 配置完成后自动出现。除非你要覆盖 metadata 或通过代理路由，否则不需要添加 `models.json`。
+
 <a id="azure-openai"></a>
 ### Azure OpenAI
 

@@ -344,6 +344,84 @@ test('planning-unit: allows web research tools', () => {
   assert.strictEqual(r.block, false);
 });
 
+// ─── auto-unit scoped GSD lifecycle tools ─────────────────────────────────
+
+test('auto-unit scope: execute-task allows only its task completion lifecycle tool', () => {
+  const allowed = shouldBlockPlanningUnit(
+    'gsd_task_complete',
+    '',
+    BASE,
+    'execute-task',
+    ALL,
+    undefined,
+    { milestoneId: 'M001', sliceId: 'S01', taskId: 'T01' },
+    'M001/S01/T01',
+  );
+  assert.strictEqual(allowed.block, false);
+
+  const blocked = shouldBlockPlanningUnit('gsd_save_gate_result', '', BASE, 'execute-task', ALL);
+  assert.strictEqual(blocked.block, true);
+  assert.match(blocked.reason!, /HARD BLOCK/);
+  assert.match(blocked.reason!, /gsd_save_gate_result/);
+  assert.strictEqual(isDeterministicPolicyError(blocked.reason!), true);
+});
+
+test('auto-unit scope: execute-task blocks sibling task completion', () => {
+  const r = shouldBlockPlanningUnit(
+    'gsd_complete_task',
+    '',
+    BASE,
+    'execute-task',
+    ALL,
+    undefined,
+    { milestoneId: 'M001', sliceId: 'S01', taskId: 'T02' },
+    'M001/S01/T01',
+  );
+  assert.strictEqual(r.block, true);
+  assert.match(r.reason!, /only complete the active task M001\/S01\/T01/);
+  assert.match(r.reason!, /requested M001\/S01\/T02/);
+});
+
+test('auto-unit scope: execute-task blocks slice and milestone lifecycle aliases even in all mode', () => {
+  const slice = shouldBlockPlanningUnit('mcp__gsd-workflow__gsd_complete_slice', '', BASE, 'execute-task', ALL);
+  assert.strictEqual(slice.block, true);
+  assert.match(slice.reason!, /gsd_slice_complete/);
+
+  const milestone = shouldBlockPlanningUnit('gsd_milestone_complete', '', BASE, 'execute-task', ALL);
+  assert.strictEqual(milestone.block, true);
+  assert.match(milestone.reason!, /gsd_complete_milestone/);
+
+  const skip = shouldBlockPlanningUnit('gsd_skip_slice', '', BASE, 'execute-task', ALL);
+  assert.strictEqual(skip.block, true);
+  assert.match(skip.reason!, /gsd_skip_slice/);
+
+  const reopen = shouldBlockPlanningUnit('gsd_reopen_milestone', '', BASE, 'execute-task', ALL);
+  assert.strictEqual(reopen.block, true);
+  assert.match(reopen.reason!, /gsd_milestone_reopen/);
+});
+
+test('auto-unit scope: complete-slice blocks milestone validation and native Workflow', () => {
+  const closeSlice = shouldBlockPlanningUnit('gsd_slice_complete', '', BASE, 'complete-slice', ALL);
+  assert.strictEqual(closeSlice.block, false);
+
+  const validate = shouldBlockPlanningUnit('gsd_validate_milestone', '', BASE, 'complete-slice', ALL);
+  assert.strictEqual(validate.block, true);
+  assert.match(validate.reason!, /gsd_validate_milestone/);
+
+  const workflow = shouldBlockPlanningUnit('Workflow', '', BASE, 'complete-slice', ALL);
+  assert.strictEqual(workflow.block, true);
+  assert.match(workflow.reason!, /native Workflow/);
+});
+
+test('auto-unit scope: gate-evaluate can save gate results but cannot complete tasks', () => {
+  const saveGate = shouldBlockPlanningUnit('gsd_save_gate_result', '', BASE, 'gate-evaluate', PLANNING_DISPATCH_REVIEW);
+  assert.strictEqual(saveGate.block, false);
+
+  const completeTask = shouldBlockPlanningUnit('gsd_task_complete', '', BASE, 'gate-evaluate', PLANNING_DISPATCH_REVIEW);
+  assert.strictEqual(completeTask.block, true);
+  assert.match(completeTask.reason!, /gsd_task_complete/);
+});
+
 // ─── all mode: never blocks ───────────────────────────────────────────────
 
 test('all-mode: execute-task can edit user source', () => {

@@ -145,18 +145,18 @@ export function ProjectWelcome({
         </div>
 
         {/* Headline */}
-        <h2 className="text-2xl font-bold tracking-tight text-foreground">
+        <h2 className="text-2xl font-bold tracking-tight text-balance text-foreground">
           {variant.headline}
         </h2>
 
         {/* Body */}
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+        <p className="mt-3 text-sm leading-relaxed text-pretty text-muted-foreground">
           {variant.body}
         </p>
 
         {/* Detail note */}
         {variant.detail && (
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-2 text-xs leading-relaxed text-pretty text-muted-foreground">
             {variant.detail}
           </p>
         )}

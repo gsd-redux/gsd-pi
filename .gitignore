@@ -5,6 +5,9 @@ build/
 packages/*/dist/
 pkg/dist/
 
+# Node.js V8 compile cache (created by builds/test runs)
+node-compile-cache/
+
 # Compiled output in src/ should only contain TypeScript source.
 src/**/*.js
 src/**/*.js.map

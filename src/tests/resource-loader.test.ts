@@ -383,23 +383,13 @@ test("initResources removes exact bundled skill orphans from the ecosystem dir",
   );
 });
 
-test("initResources leaves ambiguous ecosystem skill name collisions in place", async (t) => {
+test("initResources removes non-symlink ecosystem skill name collisions", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-skills-ambiguous-"));
   const fakeAgentDir = join(tmp, ".gsd", "agent");
   const ecosystemLintDir = join(tmp, ".agents", "skills", "lint");
   const ecosystemLintFile = join(ecosystemLintDir, "SKILL.md");
   const restoreHomeEnv = overrideHomeEnv(tmp);
-  const originalWarn = console.warn;
-  const originalResourceLoaderDebug = process.env.GSD_RESOURCE_LOADER_DEBUG;
-  const warnings: unknown[][] = [];
-
-  delete process.env.GSD_RESOURCE_LOADER_DEBUG;
-  console.warn = (...args: unknown[]) => { warnings.push(args); };
-
   t.after(() => {
-    console.warn = originalWarn;
-    if (originalResourceLoaderDebug === undefined) delete process.env.GSD_RESOURCE_LOADER_DEBUG;
-    else process.env.GSD_RESOURCE_LOADER_DEBUG = originalResourceLoaderDebug;
     restoreHomeEnv();
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -413,15 +403,10 @@ test("initResources leaves ambiguous ecosystem skill name collisions in place", 
   const { initResources } = await import("../resource-loader.ts");
   initResources(fakeAgentDir);
 
-  assert.deepEqual(
-    warnings,
-    [],
-    "ambiguous user-owned skill collisions should not warn during normal startup",
-  );
   assert.equal(
-    readFileSync(ecosystemLintFile, "utf-8"),
-    "---\nname: lint\ndescription: User-owned lint skill.\n---\n\n# Custom lint\n",
-    "ambiguous user-owned skills in ~/.agents/skills should not be removed or overwritten",
+    existsSync(ecosystemLintFile),
+    false,
+    "non-symlink ecosystem skill collisions should be removed",
   );
 });
 

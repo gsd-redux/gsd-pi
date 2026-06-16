@@ -275,9 +275,9 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                   onClick={() => handleSelectProject(project)}
                   disabled={!!switchingTo}
                   className={cn(
-                    "group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-all duration-200",
+                    "group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    "active:scale-[0.98]",
+                    "active:scale-[0.96]",
                     isSwitching
                       ? "border-foreground/30 bg-foreground/[0.06]"
                       : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
@@ -332,7 +332,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                       <div className="mt-2 flex items-center gap-2">
                         <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/[0.06]">
                           <div
-                            className="h-full rounded-full bg-success/60 transition-all"
+                            className="h-full rounded-full bg-success/60 transition-[width]"
                             style={{
                               width: `${Math.round((project.progress.milestonesCompleted / project.progress.milestonesTotal) * 100)}%`,
                             }}
@@ -346,7 +346,7 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                   </div>
 
                   {/* Arrow */}
-                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
+                  <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-[color,transform] group-hover:text-muted-foreground group-hover:translate-x-0.5" />
                 </button>
               )
             })}
@@ -368,9 +368,9 @@ export function StepProject({ onFinish, onBack, onBeforeSwitch }: StepProjectPro
                 onClick={() => setShowCreate(true)}
                 disabled={!!switchingTo}
                 className={cn(
-                  "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
+                  "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-[background-color,border-color,color,transform] duration-200",
                   "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
-                  "active:scale-[0.98]",
+                  "active:scale-[0.96]",
                   switchingTo && "opacity-40 pointer-events-none",
                 )}
               >

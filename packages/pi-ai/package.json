@@ -19,6 +19,10 @@
       "types": "./dist/providers/anthropic.d.ts",
       "import": "./dist/providers/anthropic.js"
     },
+    "./anthropic-vertex": {
+      "types": "./dist/providers/anthropic-vertex.d.ts",
+      "import": "./dist/providers/anthropic-vertex.js"
+    },
     "./azure-openai-responses": {
       "types": "./dist/providers/azure-openai-responses.d.ts",
       "import": "./dist/providers/azure-openai-responses.js"
@@ -74,6 +78,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
+    "@anthropic-ai/vertex-sdk": "0.14.4",
     "@aws-sdk/client-bedrock-runtime": "3.1048.0",
     "@smithy/node-http-handler": "4.7.3",
     "@google/genai": "1.52.0",
@@ -107,6 +112,6 @@
   "devDependencies": {
     "@types/node": "24.12.4",
     "canvas": "3.2.3",
-    "vitest": "3.2.4"
+    "vitest": "4.1.0"
   }
 }

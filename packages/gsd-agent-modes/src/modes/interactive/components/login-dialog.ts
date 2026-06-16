@@ -1,5 +1,6 @@
 // GSD Login Dialog Component — OAuth login flow UI
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+import type { OAuthDeviceCodeInfo } from "@gsd/pi-ai";
 import { getOAuthProviders } from "@gsd/pi-ai/oauth";
 import { Container, type Focusable, getEditorKeybindings, Input, Spacer, Text, truncateToWidth, type TUI } from "@gsd/pi-tui";
 import { execFile } from "child_process";
@@ -28,6 +29,17 @@ export function buildAuthUrlPresentation(url: string, terminalColumns: number): 
 	};
 }
 
+function openExternalUrl(url: string): void {
+	// PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
+	if (process.platform === "win32") {
+		execFile("powershell", ["-c", `Start-Process '${url.replace(/'/g, "''")}'`], () => {});
+		return;
+	}
+
+	const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
+	execFile(openCmd, [url], () => {});
+}
+
 /**
  * Login dialog component - replaces editor during OAuth login flow.
  *
@@ -44,6 +56,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private inputResolver?: (value: string) => void;
 	private inputRejecter?: (error: Error) => void;
 	private disposed = false;
+	private openUrl: (url: string) => void;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
@@ -60,9 +73,11 @@ export class LoginDialogComponent extends Container implements Focusable {
 		providerId: string,
 		private onComplete: (success: boolean, message?: string) => void,
 		providerDisplayName?: string,
+		options?: { openUrl?: (url: string) => void },
 	) {
 		super();
 		this.tui = tui;
+		this.openUrl = options?.openUrl ?? openExternalUrl;
 
 		const providerInfo = getOAuthProviders().find((p) => p.id === providerId);
 		const providerName = providerDisplayName || providerInfo?.name || providerId;
@@ -80,11 +95,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 		// Input (always present, used when needed)
 		this.input = new Input();
 		this.input.onSubmit = () => {
-			if (this.inputResolver) {
-				this.inputResolver(this.input.getValue());
-				this.inputResolver = undefined;
-				this.inputRejecter = undefined;
-			}
+			this.submitInput();
 		};
 		this.input.onEscape = () => {
 			this.cancel();
@@ -114,6 +125,14 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.inputRejecter = undefined;
 			rejecter(new Error(reason));
 		}
+	}
+
+	private submitInput(): void {
+		if (!this.inputResolver) return;
+		const resolver = this.inputResolver;
+		this.inputResolver = undefined;
+		this.inputRejecter = undefined;
+		resolver(this.input.getValue());
 	}
 
 	private cancel(): void {
@@ -166,14 +185,44 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		// PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
-		if (process.platform === "win32") {
-			execFile("powershell", ["-c", `Start-Process '${url.replace(/'/g, "''")}'`], () => {});
-		} else {
-			const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
-			execFile(openCmd, [url], () => {});
+		this.openUrl(url);
+
+		this.tui.requestRender();
+	}
+
+	/**
+	 * Called by onDeviceCode callback - show device code and verification URL.
+	 */
+	showDeviceCode(info: OAuthDeviceCodeInfo): void {
+		this.contentContainer.clear();
+		this.contentContainer.addChild(new Spacer(1));
+		this.contentContainer.addChild(new Text(theme.fg("text", "Enter this code:"), 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("accent", info.userCode), 1, 0));
+		this.contentContainer.addChild(new Spacer(1));
+
+		const { displayUrl, fullUrlLines } = buildAuthUrlPresentation(info.verificationUri, this.tui.terminal.columns);
+		const urlLink = `\x1b]8;;${info.verificationUri}\x07${theme.fg("accent", displayUrl)}\x1b]8;;\x07`;
+		this.contentContainer.addChild(new Text(urlLink, 1, 0));
+
+		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
+		this.contentContainer.addChild(new Text(theme.fg("dim", clickHint), 1, 0));
+
+		if (fullUrlLines.length > 0) {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("dim", "Full URL:"), 1, 0));
+			for (const line of fullUrlLines) {
+				this.contentContainer.addChild(new Text(theme.fg("dim", line), 1, 0));
+			}
 		}
 
+		if (info.expiresInSeconds) {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(
+				new Text(theme.fg("dim", `Code expires in ${Math.ceil(info.expiresInSeconds / 60)} minutes.`), 1, 0),
+			);
+		}
+
+		this.openUrl(info.verificationUri);
 		this.tui.requestRender();
 	}
 
@@ -200,7 +249,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Called by onPrompt callback - show prompt and wait for input
 	 * Note: Does NOT clear content, appends to existing (preserves URL from showAuth)
 	 */
-	showPrompt(message: string, placeholder?: string): Promise<string> {
+	showPrompt(message: string, placeholder?: string, options?: { allowEmpty?: boolean }): Promise<string> {
 		// Reject any previous pending promise before creating a new one
 		this.rejectPending("Superseded by new input prompt");
 
@@ -211,7 +260,14 @@ export class LoginDialogComponent extends Container implements Focusable {
 		}
 		this.contentContainer.addChild(this.input);
 		this.contentContainer.addChild(
-			new Text(`(${keyHint("selectCancel", "to cancel,")} ${keyHint("selectConfirm", "to submit")})`, 1, 0),
+			new Text(
+				`(${keyHint("selectCancel", "to cancel,")} ${keyHint(
+					"selectConfirm",
+					options?.allowEmpty ? "to submit blank" : "to submit",
+				)})`,
+				1,
+				0,
+			),
 		);
 
 		this.input.setValue("");
@@ -248,6 +304,11 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 		if (kb.matches(data, "selectCancel")) {
 			this.cancel();
+			return;
+		}
+
+		if (kb.matches(data, "selectConfirm")) {
+			this.submitInput();
 			return;
 		}
 

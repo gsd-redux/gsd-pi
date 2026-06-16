@@ -295,7 +295,7 @@ function SegmentedControl<T extends string>({
           key={opt.value}
           type="button"
           className={cn(
-            "rounded-md px-3 py-1.5 text-xs font-medium transition-all",
+            "rounded-md px-3 py-1.5 text-xs font-medium transition-[color,background-color,box-shadow] duration-150 ease-out",
             value === opt.value
               ? "bg-foreground/10 text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground",

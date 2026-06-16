@@ -15,6 +15,9 @@ import {
   updateSliceStatus,
   getSliceTasks,
   setSliceSummaryMd,
+  insertGateRow,
+  getGateResults,
+  updateMilestoneStatus,
   SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteSlice } from '../tools/complete-slice.ts';
@@ -576,6 +579,102 @@ console.log('\n=== complete-slice: PROJECT refresh uses gsd_summary_save ===');
   assertTrue(prompt.includes('gsd_summary_save'), 'PROJECT refresh must use gsd_summary_save');
   assertTrue(prompt.includes('artifact_type: "PROJECT"'), 'PROJECT refresh must use artifact_type PROJECT');
   assertTrue(!/with a full `write`/i.test(prompt), 'prompt must not instruct direct PROJECT.md writes');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: blocked/failed verification content gate (#3580)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: rejects blocked/failed verification content ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+
+  // (a) Blocked/failed signal in the verification field.
+  const rVer = await handleCompleteSlice(
+    { ...makeValidSliceParams(), verification: 'verification failed — gate did not pass' },
+    basePath,
+  );
+  assertTrue('error' in rVer, 'blocked/failed verification text should be rejected');
+  if ('error' in rVer) assertMatch(rVer.error, /verification/i, 'error should explain verification was not passed');
+
+  // (b) Blocked signal in the UAT content.
+  const rUat = await handleCompleteSlice(
+    { ...makeValidSliceParams(), uatContent: 'status: blocked — cannot complete this slice yet' },
+    basePath,
+  );
+  assertTrue('error' in rUat, 'blocked UAT content should be rejected');
+
+  // The slice must remain not-complete after both rejected calls.
+  assertEq(getSlice('M001', 'S01')!.status, 'pending', 'slice should stay pending after blocked-signal rejection');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: cannot complete a slice in a CLOSED milestone
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: rejects completion in a closed milestone ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  updateMilestoneStatus('M001', 'complete', new Date().toISOString());
+
+  const result = await handleCompleteSlice(makeValidSliceParams(), basePath);
+  assertTrue('error' in result, 'should reject slice completion in a closed milestone');
+  if ('error' in result) assertMatch(result.error, /closed milestone/i, 'error should mention closed milestone');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: closes the Q8 (operational readiness) slice gate
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: closes Q8 gate (pass when populated) ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+
+  // Seed Q8 as a pending slice-scoped gate.
+  insertGateRow({ milestoneId: 'M001', sliceId: 'S01', gateId: 'Q8', scope: 'slice' });
+
+  const params = {
+    ...makeValidSliceParams(),
+    operationalReadiness: 'Dashboards updated, alert thresholds set, rollback documented.',
+  };
+  const result = await handleCompleteSlice(params, basePath);
+  assertTrue(!('error' in result), 'Q8 gate-closing completion should succeed');
+
+  const gates = getGateResults('M001', 'S01', 'slice');
+  const q8 = gates.find((g) => g.gate_id === 'Q8');
+  assertTrue(q8 !== undefined, 'Q8 gate row should exist');
+  assertEq(q8!.status, 'complete', 'Q8 should be closed after completion');
+  assertEq(q8!.verdict, 'pass', 'Q8 populated → pass');
+
+  const stillPending = gates.filter((g) => g.status === 'pending');
+  assertEq(stillPending.length, 0, 'no slice gates should remain pending after completion');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

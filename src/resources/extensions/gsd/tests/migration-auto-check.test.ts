@@ -102,8 +102,8 @@ test("migration auto-check preserves empty DB and reports explicit recovery", as
     assert.equal(result.action, "recovery-required");
     assert.equal(result.reason, "db-empty");
     assert.deepEqual(result.afterDb, { milestones: 0, slices: 0, tasks: 0 });
-    assert.equal(result.recoveryCommand, "/gsd recover");
-    assert.match(result.message ?? "", /run `\/gsd recover`/);
+    assert.equal(result.recoveryCommand, "/gsd recover --confirm");
+    assert.match(result.message ?? "", /run `\/gsd recover --confirm`/);
     assert.equal(getAllMilestones().length, 0);
     assert.equal(getSliceTasks("M001", "S01").length, 0);
   } finally {
@@ -125,7 +125,7 @@ test("migration auto-check preserves DB on hierarchy count mismatch", async () =
     assert.equal(result.reason, "count-mismatch");
     assert.deepEqual(result.beforeDb, { milestones: 1, slices: 1, tasks: 0 });
     assert.deepEqual(result.afterDb, { milestones: 1, slices: 1, tasks: 0 });
-    assert.equal(result.recoveryCommand, "/gsd recover");
+    assert.equal(result.recoveryCommand, "/gsd recover --confirm");
     assert.equal(getSliceTasks("M001", "S01").length, 0);
   } finally {
     cleanup(base);

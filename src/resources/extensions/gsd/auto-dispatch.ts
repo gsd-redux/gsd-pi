@@ -91,6 +91,7 @@ import { nativeHasChanges, nativeIsRepo, _resetHasChangesCache } from "./native-
 import { debugLog, isDebugEnabled } from "./debug-logger.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
+import { detectWorktreeName } from "./worktree.js";
 import { probeGitConflictState } from "./git-conflict-state.js";
 import { runTurnGitAction } from "./git-service.js";
 import { parseUnitId } from "./unit-id.js";
@@ -338,6 +339,29 @@ function isRegistryMilestoneComplete(state: GSDState, mid: string): boolean {
   return state.registry.some((milestone) =>
     milestone.id === mid && milestone.status === "complete"
   );
+}
+
+function normalizeMilestoneScope(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || !MILESTONE_ID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+function resolveDispatchMilestoneScope(
+  ctx: DispatchContext,
+): { id: string; source: string } | null {
+  const sessionMilestone = normalizeMilestoneScope(ctx.session?.currentMilestoneId);
+  if (sessionMilestone) return { id: sessionMilestone, source: "session.currentMilestoneId" };
+
+  const sessionWorktree = normalizeMilestoneScope(
+    ctx.session?.basePath ? detectWorktreeName(ctx.session.basePath) : null,
+  );
+  if (sessionWorktree) return { id: sessionWorktree, source: "session.basePath worktree" };
+
+  const baseWorktree = normalizeMilestoneScope(detectWorktreeName(ctx.basePath));
+  if (baseWorktree) return { id: baseWorktree, source: "basePath worktree" };
+
+  return null;
 }
 
 function hasMilestonePassedDiscuss(basePath: string, mid: string): boolean {
@@ -1631,6 +1655,19 @@ import { getRegistry } from "./rule-registry.js";
 export async function resolveDispatch(
   ctx: DispatchContext,
 ): Promise<DispatchAction> {
+  if (ctx.mid && isDbAvailable()) {
+    const milestone = getMilestone(ctx.mid);
+    if (milestone && isClosedStatus(milestone.status)) {
+      return {
+        action: "stop",
+        reason:
+          `Milestone ${ctx.mid} is closed (status: ${milestone.status}); auto-mode will not reopen or recover it implicitly. ` +
+          "Use an explicit reopen command before planning or executing more work for this milestone.",
+        level: "warning",
+      };
+    }
+  }
+
   const activeMid = ctx.state.activeMilestone?.id;
   if (activeMid && ctx.mid !== activeMid) {
     return {
@@ -1638,6 +1675,17 @@ export async function resolveDispatch(
       reason:
         `Dispatch milestone mismatch: context mid "${ctx.mid}" does not match active milestone "${activeMid}". ` +
         "This usually means a project-level deep setup pseudo-id leaked into milestone dispatch; rerun /gsd auto after setup state is reconciled.",
+      level: "warning",
+    };
+  }
+
+  const scopedMilestone = resolveDispatchMilestoneScope(ctx);
+  if (scopedMilestone && ctx.mid !== scopedMilestone.id) {
+    return {
+      action: "stop",
+      reason:
+        `Dispatch milestone mismatch: context mid "${ctx.mid}" does not match ${scopedMilestone.source} "${scopedMilestone.id}". ` +
+        "The active worktree/session and derived project state disagree; recover, park, or discard the stranded milestone before continuing.",
       level: "warning",
     };
   }

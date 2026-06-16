@@ -4,11 +4,33 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { closeDatabase, getAllMilestones, insertMilestone, isDbAvailable, openDatabase } from "../gsd-db.ts";
-import { reconcileProjectMilestonesFromDisk } from "../auto-start.ts";
+import { closeDatabase, getAllMilestones, getMilestone, insertMilestone, isDbAvailable, openDatabase } from "../gsd-db.ts";
+import { reconcileMergedMilestonesFromJournal, reconcileProjectMilestonesFromDisk } from "../auto-start.ts";
+import { emitWorktreeMerged } from "../worktree-telemetry.ts";
 
 test.afterEach(() => {
   if (isDbAvailable()) closeDatabase();
+});
+
+test("bootstrap reconciliation treats a successful worktree merge as milestone closed", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-merged-reconcile-"));
+  try {
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Merged Milestone", status: "active" });
+
+    emitWorktreeMerged(base, "M001", { reason: "milestone-complete", conflict: false });
+
+    const closed = reconcileMergedMilestonesFromJournal(base);
+    const row = getMilestone("M001");
+
+    assert.equal(closed, 1);
+    assert.equal(row?.status, "complete");
+    assert.ok(row?.completed_at);
+  } finally {
+    if (isDbAvailable()) closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("#5389: bootstrap reconciles PROJECT.md milestones that are missing from DB", () => {

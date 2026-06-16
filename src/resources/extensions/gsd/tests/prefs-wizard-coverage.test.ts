@@ -28,6 +28,7 @@ const PREF_SAMPLE_VALUES: Record<string, unknown> = {
   context_pause_threshold: 80,
   notifications: {
     enabled: true,
+    local_bell: true,
     on_complete: true,
     on_error: true,
     on_budget: true,
@@ -59,6 +60,7 @@ const PREF_SAMPLE_VALUES: Record<string, unknown> = {
   verification_auto_fix: true,
   verification_max_retries: 1,
   per_unit_cost_cap_usd: 5,
+  unit_cost_spike_multiplier: 4,
   search_provider: "web",
   context_selection: "auto",
   widget_mode: "small",

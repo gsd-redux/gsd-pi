@@ -1124,7 +1124,7 @@ export function QueuePanel() {
                   <div className="h-1 rounded-full bg-border/50 overflow-hidden">
                     <div
                       className={cn(
-                        "h-full rounded-full transition-all",
+                        "h-full rounded-full transition-[width]",
                         progress.done === progress.total ? "bg-success" : "bg-info",
                       )}
                       style={{ width: `${(progress.done / progress.total) * 100}%` }}
@@ -1247,7 +1247,7 @@ export function StatusPanel() {
           <div className="h-1.5 rounded-full bg-border/50 overflow-hidden">
             <div
               className={cn(
-                "h-full rounded-full transition-all",
+                "h-full rounded-full transition-[width]",
                 doneSlices === totalSlices ? "bg-success" : "bg-info",
               )}
               style={{ width: `${(doneSlices / totalSlices) * 100}%` }}

@@ -318,7 +318,7 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     if (typeof parsed !== 'object' || parsed === null) {
       return {} as GSDPreferences;
     }
-    return parsed as GSDPreferences;
+    return normalizeParsedPreferences(parsed as GSDPreferences);
   } catch (e) {
     // Warn at most once per session to avoid flooding TUI (#3376)
     if (!_warnedFrontmatterParse) {
@@ -327,6 +327,23 @@ function parseFrontmatterBlock(frontmatter: string): GSDPreferences {
     }
     return {} as GSDPreferences;
   }
+}
+
+function normalizeParsedPreferences(preferences: GSDPreferences): GSDPreferences {
+  const remoteQuestions = preferences.remote_questions;
+  if (remoteQuestions && typeof remoteQuestions === "object" && typeof remoteQuestions.channel_id === "number") {
+    const rawChannelId = remoteQuestions.channel_id;
+    const normalizedChannelId =
+      Number.isSafeInteger(rawChannelId) ? String(rawChannelId) : rawChannelId;
+    return {
+      ...preferences,
+      remote_questions: {
+        ...remoteQuestions,
+        channel_id: normalizedChannelId,
+      },
+    };
+  }
+  return preferences;
 }
 
 /**
@@ -391,7 +408,7 @@ function parseHeadingListFormat(content: string): GSDPreferences {
     }
   }
 
-  return typed as GSDPreferences;
+  return normalizeParsedPreferences(typed as GSDPreferences);
 }
 
 // ─── Merging ────────────────────────────────────────────────────────────────

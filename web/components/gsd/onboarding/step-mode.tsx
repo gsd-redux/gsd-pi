@@ -77,9 +77,9 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
               type="button"
               onClick={() => onSelect(opt.id)}
               className={cn(
-                "group relative flex flex-col rounded-xl border px-5 py-5 text-left transition-all duration-200",
+                "group relative flex flex-col rounded-xl border px-5 py-5 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                "active:scale-[0.98]",
+                "active:scale-[0.96]",
                 isSelected
                   ? "border-foreground/30 bg-foreground/[0.06] shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
                   : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
@@ -90,7 +90,7 @@ export function StepMode({ selected, onSelect, onNext, onBack }: StepModeProps) 
               <div className="absolute right-3.5 top-3.5">
                 <div
                   className={cn(
-                    "flex h-5 w-5 items-center justify-center rounded-full border-[1.5px] transition-all duration-200",
+                    "flex h-5 w-5 items-center justify-center rounded-full border-[1.5px] transition-[background-color,border-color] duration-200",
                     isSelected
                       ? "border-foreground bg-foreground"
                       : "border-foreground/20",

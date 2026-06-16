@@ -60,6 +60,13 @@ export class VerbosityManager {
     this.levels.set(channelId, level);
   }
 
+  /** Drop a channel's stored level — call on session/channel teardown so the
+   * map doesn't accumulate one entry per distinct channel over the daemon's
+   * lifetime. */
+  clearLevel(channelId: string): void {
+    this.levels.delete(channelId);
+  }
+
   /**
    * Determine whether an event of the given type should be shown
    * in the specified channel.

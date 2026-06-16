@@ -819,4 +819,86 @@ describe('SessionManager', () => {
     assert.ok(session);
     assert.equal(session.projectName, 'dir-lookup');
   });
+
+  // ---- Bounded terminal-session retention (memory) ----
+
+  /** Drive a session to the 'completed' terminal state via a stop notification. */
+  function completeViaNotify(client: MockRpcClient): void {
+    client.emitEvent({
+      type: 'extension_ui_request',
+      id: 'done',
+      method: 'notify',
+      message: 'Auto-mode stopped: complete',
+    });
+  }
+
+  // MAX_TERMINAL_SESSIONS in session-manager.ts.
+  const TERMINAL_RETENTION_CAP = 50;
+
+  it('retains completed sessions for inspection up to the retention cap', async () => {
+    const { manager } = createManager();
+
+    for (let i = 0; i < TERMINAL_RETENTION_CAP; i++) {
+      const id = await manager.startSession({ projectDir: `/tmp/retain-${i}` });
+      completeViaNotify(manager.lastClient!);
+      // Still inspectable after completion (status preserved).
+      assert.equal(manager.getSession(id)!.status, 'completed');
+    }
+
+    assert.equal(manager.getAllSessions().length, TERMINAL_RETENTION_CAP);
+  });
+
+  it('evicts the oldest terminal session beyond the cap and reclaims its process', async () => {
+    const { manager } = createManager();
+
+    const dirs: string[] = [];
+    let oldestClient: MockRpcClient | null = null;
+
+    for (let i = 0; i <= TERMINAL_RETENTION_CAP; i++) {
+      const dir = `/tmp/evict-${i}`;
+      dirs.push(dir);
+      await manager.startSession({ projectDir: dir });
+      if (i === 0) oldestClient = manager.lastClient!;
+      completeViaNotify(manager.lastClient!);
+    }
+
+    // One past the cap → exactly cap retained, oldest evicted.
+    assert.equal(manager.getAllSessions().length, TERMINAL_RETENTION_CAP);
+    assert.equal(manager.getSessionByDir(dirs[0]), undefined);
+    // Evicted session's child process is reclaimed.
+    assert.ok(oldestClient!.stopped);
+    // Newest session is still retained for inspection.
+    assert.ok(manager.getSessionByDir(dirs[TERMINAL_RETENTION_CAP]));
+  });
+
+  // ---- Cancel path emits session:cancelled (symmetric teardown) ----
+
+  it('cancelSession emits session:cancelled with the session payload', async () => {
+    const { manager } = createManager();
+
+    let cancelled: Record<string, unknown> | undefined;
+    manager.on('session:cancelled', (data: Record<string, unknown>) => { cancelled = data; });
+
+    const sessionId = await manager.startSession({ projectDir: '/tmp/cancel-emit' });
+    await manager.cancelSession(sessionId);
+
+    assert.ok(cancelled, 'session:cancelled should be emitted so EventBridge can tear down');
+    assert.equal(cancelled.sessionId, sessionId);
+    assert.ok(String(cancelled.projectDir).endsWith('cancel-emit'));
+    assert.equal(cancelled.projectName, 'cancel-emit');
+  });
+
+  // ---- cleanup empties the sessions map (no retained references) ----
+
+  it('cleanup clears the sessions map', async () => {
+    const { manager } = createManager();
+
+    await manager.startSession({ projectDir: '/tmp/clear-a' });
+    await manager.startSession({ projectDir: '/tmp/clear-b' });
+    assert.equal(manager.getAllSessions().length, 2);
+
+    await manager.cleanup();
+
+    assert.equal(manager.getAllSessions().length, 0);
+  });
 });

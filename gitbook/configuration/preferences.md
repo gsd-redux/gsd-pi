@@ -68,6 +68,7 @@ verification_commands:
 notifications:
   on_milestone: true
   on_attention: true
+  local_bell: false
 ---
 ```
 
@@ -269,6 +270,7 @@ See [Notifications](notifications.md).
 ```yaml
 notifications:
   enabled: true
+  local_bell: false
   on_complete: true
   on_error: true
   on_milestone: true

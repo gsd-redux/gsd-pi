@@ -1396,12 +1396,12 @@ export async function createMcpServer(
     },
   );
 
-  // Drop the 14 backwards-compatibility alias tools from the advertised
-  // surface by default (~5.6K tokens/turn). Canonical names cover every
-  // operation; set GSD_MCP_ADVERTISE_ALIASES=1 to restore aliases for external
-  // clients that still call them by their legacy names.
+  // Advertise backwards-compatibility aliases by default so external clients
+  // (especially Claude Code CLI) can call every gsd_* tool name the native LLM
+  // path recognizes. Set GSD_MCP_HIDE_ALIASES=1 to trim duplicate schemas when
+  // a client is known to use only canonical names.
   registerWorkflowTools(server, {
-    advertiseAliases: process.env.GSD_MCP_ADVERTISE_ALIASES === '1',
+    advertiseAliases: process.env.GSD_MCP_HIDE_ALIASES !== '1',
   });
 
   return { server };

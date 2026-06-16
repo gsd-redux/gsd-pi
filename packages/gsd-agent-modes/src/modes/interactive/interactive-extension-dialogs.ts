@@ -276,6 +276,8 @@ export function showExtensionNotify(host: InteractiveModeDelegateHost, message: 
 		if (type === "error") {
 			host.lastBlockingError = message;
 			renderBlockingErrorBanner(host.blockingErrorContainer, host.lastBlockingError);
+			host.ui.requestRender();
+			return;
 		}
 		const result = renderExtensionNotifyInChat(host.chatContainer, message, type);
 		if (!result.rendered) {

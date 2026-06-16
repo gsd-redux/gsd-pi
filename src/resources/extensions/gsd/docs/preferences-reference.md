@@ -217,6 +217,7 @@ This config sets a parent workspace with two child repositories. The implicit `p
 
 - `notifications`: configures desktop notification behavior during auto-mode. Keys:
   - `enabled`: boolean — master toggle for all notifications. Default: `true`.
+  - `local_bell`: boolean — play a local terminal bell when a question needs an answer or auto-mode stops. Default: `false`.
   - `on_complete`: boolean — notify when a unit completes. Default: `true`.
   - `on_error`: boolean — notify on errors. Default: `true`.
   - `on_budget`: boolean — notify when budget thresholds are reached. Default: `true`.
@@ -559,6 +560,7 @@ Sets a $10 budget ceiling. Auto-mode pauses when the ceiling is reached. Context
 version: 1
 notifications:
   enabled: true
+  local_bell: false
   on_complete: false
   on_error: true
   on_budget: true

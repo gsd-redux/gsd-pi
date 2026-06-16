@@ -330,7 +330,7 @@ export function StepAuthenticate({
                     <button
                       type="button"
                       onClick={() => copyCode(deviceCode)}
-                      className="group flex items-center gap-3 rounded-lg border border-border bg-background/50 px-5 py-3 transition-colors hover:border-foreground/20 active:scale-[0.98]"
+                      className="group flex items-center gap-3 rounded-lg border border-border bg-background/50 px-5 py-3 transition-[border-color,transform] hover:border-foreground/20 active:scale-[0.96]"
                     >
                       <span className="font-mono text-2xl font-bold tracking-[0.15em] text-foreground">
                         {deviceCode}

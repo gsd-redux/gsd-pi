@@ -53,6 +53,7 @@ import { getProjectResearchStatus } from "./project-research-policy.js";
 import { isGsdWorktreePath } from "./worktree-root.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
+import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
@@ -305,6 +306,21 @@ export function verifyExpectedArtifact(
     return hasCapturedWorkflowPrefs(base);
   }
 
+  if (unitType === "triage-captures") {
+    const pending = loadPendingCaptures(base);
+    if (pending.length === 0) return true;
+    logWarning("recovery", `verify-fail triage-captures ${unitId}: ${pending.length} pending capture(s) remain in CAPTURES.md`);
+    return false;
+  }
+
+  if (unitType === "quick-task") {
+    const { slice: captureId } = parseUnitId(unitId);
+    const capture = captureId ? loadAllCaptures(base).find((entry) => entry.id === captureId) : undefined;
+    if (capture?.executed === true) return true;
+    logWarning("recovery", `verify-fail quick-task ${unitId}: capture ${captureId ?? "(missing capture id)"} not found or not marked executed`);
+    return false;
+  }
+
   if (unitType === "discuss-project") {
     const projectPath = resolveExpectedArtifactPath(unitType, unitId, base);
     return !!projectPath && existsSync(projectPath) && validateArtifact(projectPath, "project").ok;
@@ -445,10 +461,10 @@ export function verifyExpectedArtifact(
 
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
   const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
-  // For unit types with no verifiable artifact (null path), the parent directory
-  // is missing on disk — treat as stale completion state so the key gets evicted (#313).
+  // For unit types with no registered artifact contract (null path), treat the
+  // completion state as stale so the key gets evicted (#313).
   if (!absPath) {
-    logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (parent dir missing)`);
+    logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (no artifact contract registered for this unit type)`);
     return false;
   }
   if (!existsSync(absPath)) {
@@ -851,7 +867,7 @@ export function buildLoopRemediationSteps(
       return [
         `   1. Run \`gsd undo-task ${mid}/${sid}/${tid}\` to reset the task state`,
         `   2. Resume auto-mode — it will re-execute the task`,
-        `   3. If the task keeps failing, run \`gsd recover\` to rebuild DB state from disk`,
+        `   3. If the task keeps failing and markdown should repopulate the DB, run \`gsd recover --confirm\``,
       ].join("\n");
     }
     case "plan-slice":
@@ -863,7 +879,7 @@ export function buildLoopRemediationSteps(
           : relSliceFile(base, mid, sid, "RESEARCH");
       return [
         `   1. Write ${artifactRel} manually (or with the LLM in interactive mode)`,
-        `   2. Run \`gsd recover\` to rebuild DB state from disk`,
+        `   2. Run \`gsd recover --confirm\` to import the markdown into the DB`,
         `   3. Resume auto-mode`,
       ].join("\n");
     }
@@ -872,7 +888,7 @@ export function buildLoopRemediationSteps(
       return [
         `   1. Run \`gsd reset-slice ${mid}/${sid}\` to reset the slice and all its tasks`,
         `   2. Resume auto-mode — it will re-execute incomplete tasks and re-complete the slice`,
-        `   3. If the slice keeps failing, run \`gsd recover\` to rebuild DB state from disk`,
+        `   3. If the slice keeps failing and markdown should repopulate the DB, run \`gsd recover --confirm\``,
       ].join("\n");
     }
     case "validate-milestone": {
@@ -880,7 +896,7 @@ export function buildLoopRemediationSteps(
       const artifactRel = relMilestoneFile(base, mid, "VALIDATION");
       return [
         `   1. Write ${artifactRel} with verdict: pass`,
-        `   2. Run \`gsd recover\` to rebuild DB state from disk`,
+        `   2. Run \`gsd recover --confirm\` to import the markdown into the DB`,
         `   3. Resume auto-mode`,
       ].join("\n");
     }

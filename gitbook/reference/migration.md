@@ -58,7 +58,7 @@ This checks `.gsd/` integrity and flags any structural issues.
 Use `/gsd inspect` for database diagnostics. If a project has markdown artifacts but a missing or damaged database, start GSD once so the database opens, then run:
 
 ```
-/gsd recover
+/gsd recover --confirm
 ```
 
-`/gsd recover` reconstructs the milestone, slice, and task hierarchy from rendered markdown. It is an explicit recovery/import operation; normal runtime does not silently derive state from markdown.
+`/gsd recover --confirm` reconstructs the milestone, slice, and task hierarchy from rendered markdown. It is an explicit recovery/import operation; normal runtime does not silently derive state from markdown.

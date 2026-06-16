@@ -9,7 +9,7 @@ import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkil
 import { handleInspect } from "../../commands-inspect.js";
 import { handleLogs } from "../../commands-logs.js";
 import { handleDebug } from "../../commands-debug.js";
-import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover } from "../../commands-maintenance.js";
+import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover, handleRebuild } from "../../commands-maintenance.js";
 import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
@@ -146,8 +146,12 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleSkip(trimmed.replace(/^skip\s*/, "").trim(), ctx, projectRoot());
     return true;
   }
-  if (trimmed === "recover") {
-    await handleRecover(ctx, projectRoot());
+  if (trimmed === "recover" || trimmed.startsWith("recover ")) {
+    await handleRecover(ctx, projectRoot(), trimmed.replace(/^recover\s*/, "").trim());
+    return true;
+  }
+  if (trimmed === "rebuild" || trimmed.startsWith("rebuild ")) {
+    await handleRebuild(ctx, projectRoot(), trimmed.replace(/^rebuild\s*/, "").trim());
     return true;
   }
   if (trimmed === "closeout" || trimmed.startsWith("closeout ")) {

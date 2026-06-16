@@ -71,6 +71,7 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
   let depColumnIndex = -1;
   for (const line of lines) {
     if (!line.includes("|")) continue;
+    if (!/^\s*\|/.test(line)) continue;
     if (/S\d+/.test(line)) break; // reached data rows
     const headerCells = line.split("|").map(c => c.trim()).filter(Boolean);
     depColumnIndex = headerCells.findIndex(c => /^(depends|deps|depend)/i.test(c));
@@ -80,6 +81,7 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
   for (const line of lines) {
     // Skip non-table lines, separator lines (|---|---|), and header rows
     if (!line.includes("|")) continue;
+    if (!/^\s*\|/.test(line)) continue;
     if (/^\s*\|[\s:-]+\|/.test(line) && !/S\d+/.test(line)) continue;
 
     // Extract a slice ID from the row

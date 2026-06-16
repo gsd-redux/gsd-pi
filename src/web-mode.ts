@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
 import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { appRoot, webPidFilePath as defaultWebPidFilePath } from './app-paths.js'
@@ -27,7 +28,16 @@ type ResourceBootstrapLike = {
   initResources: (agentDir: string) => void
 }
 
-type SpawnedChildLike = Pick<ChildProcess, 'once' | 'unref' | 'pid'>
+type SpawnedChildLike = Pick<ChildProcess, 'once' | 'unref' | 'pid' | 'kill'>
+
+/** Outcome of a child process exiting on its own. */
+interface ChildExitInfo {
+  code: number | null
+  signal: NodeJS.Signals | null
+}
+
+/** Largest slice of the host log we fold into a failure reason. */
+const HOST_LOG_TAIL_BYTES = 4_096
 
 export interface WebModeLaunchOptions {
   cwd: string
@@ -104,6 +114,14 @@ export interface WebModeDeps {
   deletePidFile?: (path: string) => void
   /** Path to the multi-instance registry JSON (for testing). */
   registryPath?: string
+  /**
+   * Directory the spawned host's stderr log is written to (defaults to the OS
+   * temp dir). The launcher detaches the child and then `process.exit()`s, so
+   * the child's stderr is redirected to a file rather than a pipe — a pipe
+   * whose reader has exited would crash the long-lived host with EPIPE. The
+   * log is tailed into the failure reason when boot fails.
+   */
+  hostLogDir?: string
 }
 
 export interface WebModeStopResult {
@@ -358,11 +376,16 @@ function needsWindowsShell(command: string, platform: NodeJS.Platform): boolean 
 }
 
 function formatLaunchStatus(status: WebModeLaunchStatus): string {
+  // `listen` is the real bind target (host:port); `entry` is the spawned host
+  // script/manifest path. These were previously conflated under a single
+  // misleading `host=<entryPath>` field, which sent every reader chasing an
+  // argv-parsing red herring when the real failure was elsewhere.
+  const listen = `${status.host}:${status.port ?? 'n/a'}`
   if (status.ok) {
-    return `[gsd] Web mode startup: status=started cwd=${status.cwd} port=${status.port} host=${status.hostPath} kind=${status.hostKind} url=${status.url}\n`
+    return `[gsd] Web mode startup: status=started cwd=${status.cwd} port=${status.port} listen=${listen} entry=${status.hostPath} kind=${status.hostKind} url=${status.url}\n`
   }
 
-  return `[gsd] Web mode startup: status=failed cwd=${status.cwd} port=${status.port ?? 'n/a'} host=${status.hostPath ?? 'unresolved'} kind=${status.hostKind} reason=${status.failureReason}\n`
+  return `[gsd] Web mode startup: status=failed cwd=${status.cwd} port=${status.port ?? 'n/a'} listen=${listen} entry=${status.hostPath ?? 'unresolved'} kind=${status.hostKind} reason=${status.failureReason}\n`
 }
 
 function emitLaunchStatus(stderr: WritableLike, status: WebModeLaunchStatus): void {
@@ -396,23 +419,50 @@ async function spawnDetachedProcess(
   command: string,
   args: string[],
   options: SpawnOptions,
-): Promise<{ ok: true; child: SpawnedChildLike } | { ok: false; error: unknown }> {
+): Promise<{ ok: true; child: SpawnedChildLike; exited: Promise<ChildExitInfo> } | { ok: false; error: unknown }> {
   return await new Promise((resolve) => {
     try {
       const child = spawnCommand(command, args, options)
+
+      // A child that dies in <1s (e.g. `Cannot find module 'next'`) must be
+      // noticed immediately. Without this, `waitForBootReady` polls a dead
+      // address for the full 180s window before reporting `ECONNREFUSED`.
+      const exited = new Promise<ChildExitInfo>((resolveExit) => {
+        child.once?.('exit', (code: number | null, signal: NodeJS.Signals | null) =>
+          resolveExit({ code: code ?? null, signal: signal ?? null }),
+        )
+      })
+
       let settled = false
-      const finish = (result: { ok: true; child: SpawnedChildLike } | { ok: false; error: unknown }) => {
+      const finish = (result: { ok: true; child: SpawnedChildLike; exited: Promise<ChildExitInfo> } | { ok: false; error: unknown }) => {
         if (settled) return
         settled = true
         resolve(result)
       }
 
       child.once?.('error', (error) => finish({ ok: false, error }))
-      setImmediate(() => finish({ ok: true, child }))
+      setImmediate(() => finish({ ok: true, child, exited }))
     } catch (error) {
       resolve({ ok: false, error })
     }
   })
+}
+
+/** Best-effort terminate a child on a failed launch so we don't leak orphans. */
+function terminateChild(child: SpawnedChildLike): void {
+  try {
+    child.kill?.('SIGTERM')
+  } catch {
+    // Child may already be gone — nothing to clean up.
+  }
+  const escalation = setTimeout(() => {
+    try {
+      child.kill?.('SIGKILL')
+    } catch {
+      // Already reaped.
+    }
+  }, 2_000)
+  escalation.unref?.()
 }
 
 async function requestLocalJson(url: string, timeoutMs: number, authToken?: string): Promise<{ statusCode: number; body: string }> {
@@ -631,6 +681,28 @@ export async function launchWebMode(
 
   stderr.write(`[gsd] Launching web host on port ${port}…\n`)
 
+  // Redirect the detached host's stderr to a log file rather than dropping it
+  // to /dev/null. When the host dies on boot (e.g. `Cannot find module 'next'`)
+  // its real error is the only useful signal; tailing the log into the failure
+  // reason turns a silent 180s ECONNREFUSED into an actionable diagnostic. A
+  // file (not a pipe) is used deliberately: the launcher detaches and exits, so
+  // a pipe whose reader is gone would crash the long-lived host with EPIPE.
+  const hostLogPath = join(deps.hostLogDir ?? tmpdir(), `gsd-web-host-${port}.log`)
+  let hostLogFd: number | null = null
+  try {
+    hostLogFd = openSync(hostLogPath, 'w')
+  } catch {
+    hostLogFd = null
+  }
+  const readHostLogTail = (): string => {
+    if (hostLogFd === null) return ''
+    try {
+      return readFileSync(hostLogPath, 'utf8').slice(-HOST_LOG_TAIL_BYTES).trim()
+    } catch {
+      return ''
+    }
+  }
+
   const spawnResult = await spawnDetachedProcess(
     deps.spawn ?? ((command, args, spawnOptions) => spawn(command, args, spawnOptions)),
     spawnSpec.command,
@@ -638,12 +710,22 @@ export async function launchWebMode(
     {
       cwd: spawnSpec.cwd,
       detached: true,
-      stdio: 'ignore',
+      stdio: hostLogFd !== null ? ['ignore', 'ignore', hostLogFd] : 'ignore',
       windowsHide: true,
       shell: needsWindowsShell(spawnSpec.command, deps.platform ?? process.platform),
       env,
     },
   )
+
+  // The child inherited its own copy of the log fd; the launcher no longer
+  // needs it (failures are read back from the path).
+  if (hostLogFd !== null) {
+    try {
+      closeSync(hostLogFd)
+    } catch {
+      // Already closed.
+    }
+  }
 
   if (!spawnResult.ok) {
     const failure: WebModeLaunchFailure = {
@@ -663,23 +745,49 @@ export async function launchWebMode(
     return failure
   }
 
+  const buildBootFailure = (failureReason: string): WebModeLaunchFailure => ({
+    mode: 'web',
+    ok: false,
+    cwd: options.cwd,
+    projectSessionsDir: options.projectSessionsDir,
+    host,
+    port,
+    url,
+    hostKind: resolution.kind,
+    hostPath: resolution.entryPath,
+    hostRoot: resolution.hostRoot,
+    failureReason,
+  })
+
   try {
     const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 180_000, stderr, authToken))
-    await bootReadyFn(url)
-  } catch (error) {
-    const failure: WebModeLaunchFailure = {
-      mode: 'web',
-      ok: false,
-      cwd: options.cwd,
-      projectSessionsDir: options.projectSessionsDir,
-      host,
-      port,
-      url,
-      hostKind: resolution.kind,
-      hostPath: resolution.entryPath,
-      hostRoot: resolution.hostRoot,
-      failureReason: `boot-ready:${error instanceof Error ? error.message : String(error)}`,
+    // Race readiness against the child exiting. A dead child resolves the exit
+    // promise long before `waitForBootReady` would give up, so we fail fast
+    // with the host's own stderr instead of an opaque connection timeout.
+    type BootOutcome = { kind: 'ready' } | { kind: 'exit'; exit: ChildExitInfo }
+    const readyOutcome = bootReadyFn(url).then((): BootOutcome => ({ kind: 'ready' }))
+    // If the child-exit branch wins, `readyOutcome` may reject later; swallow it
+    // so it never surfaces as an unhandledRejection after the race has settled.
+    readyOutcome.catch(() => {})
+    const exitOutcome = spawnResult.exited.then((exit): BootOutcome => ({ kind: 'exit', exit }))
+    const outcome = await Promise.race([readyOutcome, exitOutcome])
+
+    if (outcome.kind === 'exit') {
+      terminateChild(spawnResult.child)
+      const tail = readHostLogTail()
+      const failure = buildBootFailure(
+        `child-exit:code=${outcome.exit.code ?? 'null'} signal=${outcome.exit.signal ?? 'null'}${tail ? ` stderr=${tail}` : ''}`,
+      )
+      emitLaunchStatus(stderr, failure)
+      return failure
     }
+  } catch (error) {
+    // Readiness probing itself failed (timeout / repeated 5xx). Reap the child
+    // so we don't leak an orphan that may still be flailing.
+    terminateChild(spawnResult.child)
+    const tail = readHostLogTail()
+    const reason = error instanceof Error ? error.message : String(error)
+    const failure = buildBootFailure(`boot-ready:${reason}${tail ? ` stderr=${tail}` : ''}`)
     emitLaunchStatus(stderr, failure)
     return failure
   }

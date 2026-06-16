@@ -15,6 +15,10 @@ import {
   getSlice,
   getSliceTasks,
   insertVerificationEvidence,
+  insertGateRow,
+  getGateResults,
+  updateMilestoneStatus,
+  updateSliceStatus,
   SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteTask } from '../tools/complete-task.ts';
@@ -503,6 +507,121 @@ console.log('\n=== complete-task: minimal params (no keyFiles, keyDecisions, ver
     assertMatch(summaryContent, /key_decisions:\n  - \(none\)/, 'empty key_decisions should use (none) sentinel for parseSummary compatibility');
     assertTrue(summaryContent.includes('  - (none)'), 'empty frontmatter lists use (none) sentinel to preserve parseSummary key_files.length > 0 invariant');
   }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: remaining required-field validation (oneLiner/narrative/verification)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: remaining required-field validation ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const params = makeValidParams();
+
+  const rOne = await handleCompleteTask({ ...params, oneLiner: '' }, '/tmp/fake');
+  assertTrue('error' in rOne, 'empty oneLiner should error');
+  if ('error' in rOne) assertMatch(rOne.error, /oneLiner/, 'error should mention oneLiner');
+
+  const rNarr = await handleCompleteTask({ ...params, narrative: '   ' }, '/tmp/fake');
+  assertTrue('error' in rNarr, 'whitespace-only narrative should error');
+  if ('error' in rNarr) assertMatch(rNarr.error, /narrative/, 'error should mention narrative');
+
+  const rVer = await handleCompleteTask({ ...params, verification: '' }, '/tmp/fake');
+  assertTrue('error' in rVer, 'empty verification should error');
+  if ('error' in rVer) assertMatch(rVer.error, /verification/, 'error should mention verification');
+
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: cannot complete a task in a CLOSED milestone
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: rejects completion in a closed milestone ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  // Close the milestone after seeding.
+  updateMilestoneStatus('M001', 'complete', new Date().toISOString());
+
+  const result = await handleCompleteTask(makeValidParams(), basePath);
+  assertTrue('error' in result, 'should reject task completion in a closed milestone');
+  if ('error' in result) assertMatch(result.error, /closed milestone/i, 'error should mention closed milestone');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: cannot complete a task in a CLOSED slice
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: rejects completion in a closed slice ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+  updateSliceStatus('M001', 'S01', 'complete', new Date().toISOString());
+
+  const result = await handleCompleteTask(makeValidParams(), basePath);
+  assertTrue('error' in result, 'should reject task completion in a closed slice');
+  if ('error' in result) assertMatch(result.error, /closed slice/i, 'error should mention closed slice');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: closes execute-task gates Q5/Q6/Q7 (pass when populated, omitted when empty)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: closes Q5/Q6/Q7 gates (pass vs omitted) ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  // Seed the three task-scoped gates as pending for T01.
+  insertGateRow({ milestoneId: 'M001', sliceId: 'S01', gateId: 'Q5', scope: 'task', taskId: 'T01' });
+  insertGateRow({ milestoneId: 'M001', sliceId: 'S01', gateId: 'Q6', scope: 'task', taskId: 'T01' });
+  insertGateRow({ milestoneId: 'M001', sliceId: 'S01', gateId: 'Q7', scope: 'task', taskId: 'T01' });
+
+  // Populate Q5 (failureModes) and Q7 (negativeTests); leave Q6 (loadProfile) empty.
+  const params = {
+    ...makeValidParams(),
+    failureModes: 'Network partition mid-write leaves a half-flushed record.',
+    negativeTests: 'Reject malformed payloads; verify rollback on constraint violation.',
+    // loadProfile intentionally omitted → Q6 should be recorded omitted
+  };
+
+  const result = await handleCompleteTask(params as any, basePath);
+  assertTrue(!('error' in result), 'gate-closing completion should succeed');
+
+  const gates = getGateResults('M001', 'S01', 'task');
+  const byId = new Map(gates.map((g) => [g.gate_id, g]));
+  assertEq(byId.size, 3, 'all three task gates should be present');
+  assertEq(byId.get('Q5')?.status, 'complete', 'Q5 should be closed');
+  assertEq(byId.get('Q5')?.verdict, 'pass', 'Q5 populated → pass');
+  assertEq(byId.get('Q7')?.verdict, 'pass', 'Q7 populated → pass');
+  assertEq(byId.get('Q6')?.verdict, 'omitted', 'Q6 empty → omitted');
+
+  // No task-scoped gates remain pending for the loop to stall on.
+  const stillPending = getGateResults('M001', 'S01', 'task').filter((g) => g.status === 'pending');
+  assertEq(stillPending.length, 0, 'no task gates should remain pending after completion');
 
   cleanupDir(basePath);
   cleanup(dbPath);

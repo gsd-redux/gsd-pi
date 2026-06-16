@@ -40,9 +40,11 @@ function collectServerEntries(servers: unknown): DiscoveredMcpServer[] {
 export function discoverMcpServers(projectDir: string): DiscoveredMcpServer[] {
   const mcpJsonPath = resolve(projectDir, ".mcp.json");
   const settingsPath = resolve(projectDir, ".claude", "settings.json");
+  const localSettingsPath = resolve(projectDir, ".claude", "settings.local.json");
 
   const mcpJson = readJsonFile(mcpJsonPath) as McpJsonFile | undefined;
   const settings = readJsonFile(settingsPath, true) as ClaudeSettingsFile | undefined;
+  const localSettings = readJsonFile(localSettingsPath, true) as ClaudeSettingsFile | undefined;
 
   const seen = new Set<string>();
   const discovered: DiscoveredMcpServer[] = [];
@@ -50,6 +52,7 @@ export function discoverMcpServers(projectDir: string): DiscoveredMcpServer[] {
     ...collectServerEntries(mcpJson?.mcpServers),
     ...collectServerEntries(mcpJson?.servers),
     ...collectServerEntries(settings?.mcpServers),
+    ...collectServerEntries(localSettings?.mcpServers),
   ]) {
     if (seen.has(entry.name)) continue;
     seen.add(entry.name);
@@ -78,8 +81,34 @@ function isWorkflowMcpServerConfig(config: unknown): boolean {
   return args.some((arg) => arg.includes("gsd-mcp-server") || arg.includes("packages/mcp-server"));
 }
 
+function isBrowserMcpServerConfig(config: unknown): boolean {
+  if (!isRecord(config)) return false;
+  const command = typeof config.command === "string" ? config.command : "";
+  if (command.includes("gsd-browser") || command.includes("@opengsd/gsd-browser")) {
+    return true;
+  }
+
+  const env = config.env;
+  if (isRecord(env)) {
+    if (
+      typeof env.GSD_BROWSER_CLI_PATH === "string"
+      || typeof env.GSD_BROWSER_BIN_PATH === "string"
+      || typeof env.GSD_BROWSER_MCP_COMMAND === "string"
+    ) {
+      return true;
+    }
+  }
+
+  const args = Array.isArray(config.args) ? config.args.filter((arg): arg is string => typeof arg === "string") : [];
+  return args.some((arg) => arg.includes("gsd-browser") || arg.includes("@opengsd/gsd-browser"));
+}
+
 export function discoverWorkflowMcpServerName(projectDir: string): string | undefined {
   return discoverMcpServers(projectDir).find((server) => isWorkflowMcpServerConfig(server.config))?.name;
+}
+
+export function discoverBrowserMcpServerName(projectDir: string): string | undefined {
+  return discoverMcpServers(projectDir).find((server) => isBrowserMcpServerConfig(server.config))?.name;
 }
 
 export function discoverMcpServerNames(projectDir: string): string[] {

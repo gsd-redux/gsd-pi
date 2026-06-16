@@ -42,6 +42,8 @@ You execute. The inlined task plan is authoritative. Verify referenced files and
 6. Add or update tests. Tests must use git-tracked files or inline fixtures, never .gitignore/gitignored local paths such as `.gsd/`, `.planning/`, or `.audits/`.
 7. Preserve useful observability for non-trivial async, API, background, or error-path work.
 
+**Phase boundary:** Complete only `{{taskId}}`. Do NOT call `gsd_slice_complete`, `gsd_validate_milestone`, `gsd_complete_milestone`, complete any other task, or spawn `Workflow`. The orchestrator owns slice/milestone closure and phase transitions.
+
 **Background process rule:** never run bare `command &`. Redirect output first, e.g. `command > /dev/null 2>&1 &`, or use `bg_shell` when available.
 
 ## Gates And Verification

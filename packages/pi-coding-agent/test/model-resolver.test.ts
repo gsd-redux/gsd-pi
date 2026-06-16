@@ -378,6 +378,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
 	});
 
+	test("anthropic vertex default tracks current model", () => {
+		expect(defaultModelPerProvider["anthropic-vertex"]).toBe("claude-sonnet-4-6");
+	});
+
 	test("zai, minimax, and cerebras defaults track current models", () => {
 		expect(defaultModelPerProvider.zai).toBe("glm-5.1");
 		expect(defaultModelPerProvider.minimax).toBe("MiniMax-M2.7");

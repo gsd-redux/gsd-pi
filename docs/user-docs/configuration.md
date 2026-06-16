@@ -835,12 +835,17 @@ Control what notifications GSD sends during auto mode:
 ```yaml
 notifications:
   enabled: true
+  local_bell: false           # play terminal bell on questions and auto-mode stops
   on_complete: true           # notify on unit completion
   on_error: true              # notify on errors
   on_budget: true             # notify on budget thresholds
   on_milestone: true          # notify when milestone finishes
   on_attention: true          # notify when manual attention needed
 ```
+
+Set `local_bell: true` to play the local terminal bell when `ask_user_questions`
+needs an answer or auto-mode stops. The bell respects `enabled` and
+`on_attention`.
 
 **macOS delivery:** GSD uses [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) when available, falling back to `osascript`. We recommend installing `terminal-notifier` for reliable notification delivery:
 
@@ -1142,6 +1147,7 @@ notifications:
   on_complete: false
   on_milestone: true
   on_attention: true
+  local_bell: false
 
 # Visualizer
 auto_visualize: true

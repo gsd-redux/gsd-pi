@@ -279,10 +279,17 @@ export function invalidateStateCache(): void {
 /**
  * Returns the ID of the first incomplete milestone, or null if all are complete.
  */
+function getRequestedMilestoneLock(): string | undefined {
+  const lock = process.env.GSD_MILESTONE_LOCK?.trim();
+  return lock || undefined;
+}
+
 export async function getActiveMilestoneId(basePath: string): Promise<string | null> {
-  // Parallel worker isolation. Normal DB state derivation remains DB-only;
-  // lock env vars are execution routing for explicit worker processes.
-  const milestoneLock = process.env.GSD_PARALLEL_WORKER ? process.env.GSD_MILESTONE_LOCK : undefined;
+  // Milestone-scoped execution. Parallel workers and explicit solo commands
+  // such as `/gsd auto M002` both set GSD_MILESTONE_LOCK; state derivation must
+  // honor it so recovery/adoption sees the requested milestone, not the first
+  // open milestone in queue order.
+  const milestoneLock = getRequestedMilestoneLock();
   if (milestoneLock) {
     if (isDbAvailable()) {
       const locked = getAllMilestones().find(m => m.id === milestoneLock);
@@ -720,7 +727,7 @@ export async function deriveStateFromDb(
 
   const allMilestones = getAllMilestones();
 
-  const milestoneLock = process.env.GSD_PARALLEL_WORKER ? process.env.GSD_MILESTONE_LOCK : undefined;
+  const milestoneLock = getRequestedMilestoneLock();
   const milestones = milestoneLock
     ? allMilestones.filter(m => m.id === milestoneLock)
     : allMilestones;
@@ -959,13 +966,10 @@ export async function _deriveStateImpl(
   const customOrder = loadQueueOrder(basePath);
   const milestoneIds = sortByQueueOrder(diskIds, customOrder);
 
-  // ── Parallel worker isolation ──────────────────────────────────────────
-  // When GSD_PARALLEL_WORKER and GSD_MILESTONE_LOCK are set, this process is a parallel worker
-  // scoped to a single milestone. Filter the milestone list so this worker
-  // only sees its assigned milestone (all others are treated as if they
-  // don't exist). This gives each worker complete isolation without
-  // modifying any other state derivation logic.
-  const milestoneLock = process.env.GSD_PARALLEL_WORKER ? process.env.GSD_MILESTONE_LOCK : undefined;
+  // ── Milestone-scoped execution ─────────────────────────────────────────
+  // Parallel workers and explicit solo recovery both scope auto-mode to one
+  // milestone through GSD_MILESTONE_LOCK.
+  const milestoneLock = getRequestedMilestoneLock();
   if (milestoneLock && milestoneIds.includes(milestoneLock)) {
     milestoneIds.length = 0;
     milestoneIds.push(milestoneLock);

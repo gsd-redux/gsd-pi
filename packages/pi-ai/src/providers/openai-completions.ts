@@ -853,6 +853,12 @@ export function convertMessages(
 					if (model.provider === "opencode-go" && signature === "reasoning") {
 						signature = "reasoning_content";
 					}
+					// DeepSeek (including via OpenRouter, which normalises the inbound reasoning field
+					// to "reasoning") requires reasoning to be replayed under "reasoning_content";
+					// otherwise the backend rejects the next request with a 400.
+					if (compat.requiresReasoningContentOnAssistantMessages && signature === "reasoning") {
+						signature = "reasoning_content";
+					}
 					if (signature && signature.length > 0) {
 						(assistantMsg as any)[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
 					}
@@ -1077,6 +1083,19 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
+	// Direct DeepSeek: provider "deepseek" or the deepseek.com endpoint. These own the
+	// non-standard endpoint flags (supportsStore/supportsDeveloperRole) and the "deepseek"
+	// thinking format.
+	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
+	// A DeepSeek model routed through a gateway that rewrites the model id (OpenRouter
+	// "deepseek/...", Vercel AI Gateway "...deepseek...") is still served by a DeepSeek backend
+	// that requires reasoning to be replayed under `reasoning_content` on the next request.
+	// The gateway — not DeepSeek — owns the request/thinking format, so ONLY this replay flag
+	// applies to the gateway case (not isNonStandard or thinkingFormat).
+	const requiresReasoningContent =
+		isDeepSeek ||
+		(baseUrl.includes("openrouter.ai") && model.id.startsWith("deepseek/")) ||
+		(baseUrl.includes("gateway.ai.vercel") && model.id.includes("deepseek"));
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1085,7 +1104,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		baseUrl.includes("api.x.ai") ||
 		isTogether ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		isMoonshot ||
 		provider === "opencode" ||
@@ -1096,7 +1115,6 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const useMaxTokens = baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
-	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
@@ -1108,7 +1126,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		requiresReasoningContentOnAssistantMessages: isDeepSeek,
+		requiresReasoningContentOnAssistantMessages: requiresReasoningContent,
 		thinkingFormat: isDeepSeek
 			? "deepseek"
 			: isZai

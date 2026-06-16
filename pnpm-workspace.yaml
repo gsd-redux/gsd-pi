@@ -17,6 +17,7 @@ publicHoistPattern:
 
 # Allow lifecycle scripts for native/tooling deps (replaces package.json#pnpm.onlyBuiltDependencies).
 onlyBuiltDependencies:
+  - '@opengsd/gsd-browser'
   - '@google/genai'
   - canvas
   - esbuild

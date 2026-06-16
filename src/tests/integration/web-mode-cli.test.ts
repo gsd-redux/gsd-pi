@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -119,6 +119,7 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
         openedUrl = url
       },
       pidFilePath,
+      hostLogDir: tmp,
       writePidFile: (path, pid) => {
         writtenPid = { path, pid }
         webMode.writePidFile(path, pid)
@@ -144,31 +145,36 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
   // Extract the auth token the launcher generated so we can verify it was
   // passed consistently to both the env and the browser URL.
   const authToken = openedUrl.replace('http://127.0.0.1:45123/#token=', '')
-  assert.deepEqual(spawnInvocation, {
-    command: '/custom/node',
-    args: [serverPath],
-    options: {
-      cwd: standaloneRoot,
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true,
-      shell: false,
-      env: {
-        TEST_ENV: '1',
-        HOSTNAME: '127.0.0.1',
-        PORT: '45123',
-        GSD_WEB_HOST: '127.0.0.1',
-        GSD_WEB_PORT: '45123',
-        GSD_WEB_AUTH_TOKEN: authToken,
-        GSD_WEB_PROJECT_CWD: '/tmp/current-project',
-        GSD_WEB_PROJECT_SESSIONS_DIR: '/tmp/.gsd/sessions/--tmp-current-project--',
-        GSD_WEB_PACKAGE_ROOT: tmp,
-        GSD_WEB_HOST_KIND: 'packaged-standalone',
-      },
-    },
+  assert.ok(spawnInvocation, 'spawn must have been called')
+  assert.equal(spawnInvocation!.command, '/custom/node')
+  assert.deepEqual(spawnInvocation!.args, [serverPath])
+  assert.equal(spawnInvocation!.options.cwd, standaloneRoot)
+  assert.equal(spawnInvocation!.options.detached, true)
+  assert.equal(spawnInvocation!.options.windowsHide, true)
+  assert.equal(spawnInvocation!.options.shell, false)
+  assert.deepEqual(spawnInvocation!.options.env, {
+    TEST_ENV: '1',
+    HOSTNAME: '127.0.0.1',
+    PORT: '45123',
+    GSD_WEB_HOST: '127.0.0.1',
+    GSD_WEB_PORT: '45123',
+    GSD_WEB_AUTH_TOKEN: authToken,
+    GSD_WEB_PROJECT_CWD: '/tmp/current-project',
+    GSD_WEB_PROJECT_SESSIONS_DIR: '/tmp/.gsd/sessions/--tmp-current-project--',
+    GSD_WEB_PACKAGE_ROOT: tmp,
+    GSD_WEB_HOST_KIND: 'packaged-standalone',
   })
+  // The child's stderr is redirected to a log file (fd), not dropped to
+  // /dev/null and not a pipe (which would EPIPE the detached host on exit).
+  const stdio = spawnInvocation!.options.stdio as [string, string, number]
+  assert.equal(stdio[0], 'ignore')
+  assert.equal(stdio[1], 'ignore')
+  assert.equal(typeof stdio[2], 'number', 'child stderr should be redirected to a log file descriptor')
   assert.match(stderrOutput, /status=started/)
   assert.match(stderrOutput, /port=45123/)
+  // The launch log distinguishes the real bind target from the entry script.
+  assert.match(stderrOutput, /listen=127\.0\.0\.1:45123/)
+  assert.match(stderrOutput, new RegExp(`entry=${serverPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
   // PID file must be written with the spawned process's PID
   assert.deepEqual(writtenPid, { path: pidFilePath, pid: 99999 })
   assert.equal(webMode.readPidFile(pidFilePath), 99999)
@@ -422,6 +428,69 @@ test('launch failure surfaces status and reason before browser open', async (t) 
   assert.match(status.failureReason, /host bootstrap not found/)
   assert.match(stderrOutput, /status=failed/)
   assert.match(stderrOutput, /reason=host bootstrap not found/)
+})
+
+test('launchWebMode fails fast when the host exits before boot and surfaces its stderr', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-fastfail-'))
+  const standaloneRoot = join(tmp, 'dist', 'web', 'standalone')
+  const serverPath = join(standaloneRoot, 'server.js')
+  mkdirSync(standaloneRoot, { recursive: true })
+  writeFileSync(serverPath, 'console.log("stub")\n')
+
+  const pidFilePath = join(tmp, 'web-server.pid')
+  const registryPath = join(tmp, 'web-instances.json')
+  const port = 46555
+  let stderrOutput = ''
+  let killed = false
+  let openedBrowser = false
+
+  t.after(() => { rmSync(tmp, { recursive: true, force: true }) })
+
+  const status = await webMode.launchWebMode(
+    {
+      cwd: '/tmp/fastfail-project',
+      projectSessionsDir: '/tmp/.gsd/sessions/fastfail',
+      agentDir: '/tmp/.gsd/agent',
+      packageRoot: tmp,
+    },
+    {
+      initResources: () => {},
+      resolvePort: async () => port,
+      execPath: '/custom/node',
+      env: { TEST_ENV: '1' },
+      hostLogDir: tmp,
+      spawn: () => {
+        // Simulate the host writing a fatal error to its redirected stderr, then dying.
+        appendFileSync(join(tmp, `gsd-web-host-${port}.log`), "Error: Cannot find module 'next'\n")
+        const child: any = {
+          pid: 70123,
+          unref: () => {},
+          kill: () => { killed = true; return true },
+          once: (event: string, cb: (...a: any[]) => void) => {
+            if (event === 'exit') setImmediate(() => cb(1, null))
+            return child
+          },
+        }
+        return child
+      },
+      // Never resolves — readiness must lose the race to the child's early exit
+      // instead of waiting out the full 180s boot window on ECONNREFUSED.
+      waitForBootReady: () => new Promise<void>(() => {}),
+      openBrowser: () => { openedBrowser = true },
+      pidFilePath,
+      registryPath,
+      writePidFile: webMode.writePidFile,
+      stderr: { write: (chunk: string) => { stderrOutput += chunk; return true } },
+    },
+  )
+
+  assert.equal(status.ok, false)
+  if (status.ok) throw new Error('expected fast-fail status')
+  assert.match(status.failureReason, /child-exit:code=1 signal=null/)
+  assert.match(status.failureReason, /Cannot find module 'next'/)
+  assert.equal(killed, true, 'the dead child should be reaped on the failure path')
+  assert.equal(openedBrowser, false, 'browser must not open when the host never came up')
+  assert.match(stderrOutput, /status=failed/)
 })
 
 // ─── Instance registry tests ─────────────────────────────────────────

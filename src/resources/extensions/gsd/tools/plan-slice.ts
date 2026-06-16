@@ -355,15 +355,9 @@ export async function handlePlanSlice(
         deleteTask(params.milestoneId, params.sliceId, taskId);
       }
 
+      const existingTaskById = new Map(existingTasks.map((task) => [task.id, task]));
       for (const task of params.tasks) {
-        insertTask({
-          id: task.taskId,
-          sliceId: params.sliceId,
-          milestoneId: params.milestoneId,
-          title: task.title,
-          status: "pending",
-        });
-        upsertTaskPlanning(params.milestoneId, params.sliceId, task.taskId, {
+        const planning = {
           title: task.title,
           description: task.description,
           estimate: task.estimate,
@@ -374,7 +368,18 @@ export async function handlePlanSlice(
           observabilityImpact: task.observabilityImpact ?? "",
           fullPlanMd: task.fullPlanMd,
           targetRepositories: task.targetRepositories ?? params.targetRepositories ?? defaultTargets,
-        });
+        };
+        const existingTask = existingTaskById.get(task.taskId);
+        if (!existingTask || !isClosedStatus(existingTask.status)) {
+          insertTask({
+            id: task.taskId,
+            sliceId: params.sliceId,
+            milestoneId: params.milestoneId,
+            title: task.title,
+            status: "pending",
+          });
+        }
+        upsertTaskPlanning(params.milestoneId, params.sliceId, task.taskId, planning);
       }
 
       // Seed quality gate rows inside the transaction — all-or-nothing with

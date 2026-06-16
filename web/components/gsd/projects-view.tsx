@@ -180,9 +180,9 @@ function ProjectCard({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-all duration-200",
+        "group flex w-full items-start gap-3.5 rounded-xl border px-4 py-3.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-200",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        "active:scale-[0.98]",
+        "active:scale-[0.96]",
         isActive
           ? "border-primary/30 bg-primary/[0.08]"
           : "border-border/50 bg-card/50 hover:border-foreground/15 hover:bg-card/50",
@@ -237,7 +237,7 @@ function ProjectCard({
           <div className="mt-2 flex items-center gap-2">
             <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/[0.08]">
               <div
-                className="h-full rounded-full bg-success/70 transition-all"
+                className="h-full rounded-full bg-success/70 transition-[width]"
                 style={{
                   width: `${Math.round(
                     (project.progress.milestonesCompleted / project.progress.milestonesTotal) * 100,
@@ -251,7 +251,7 @@ function ProjectCard({
       </div>
 
       {/* Arrow */}
-      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-all group-hover:text-muted-foreground group-hover:translate-x-0.5" />
+      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground/50 transition-[color,transform] group-hover:text-muted-foreground group-hover:translate-x-0.5" />
     </button>
   )
 }
@@ -443,9 +443,9 @@ export function ProjectsPanel({
           type="button"
           onClick={() => setNewProjectOpen(true)}
           className={cn(
-            "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-all duration-200",
+            "flex w-full items-center gap-3.5 rounded-xl border border-dashed px-4 py-3.5 text-left transition-[background-color,border-color,color,transform] duration-200",
             "border-border/50 text-muted-foreground hover:border-foreground/15 hover:text-foreground",
-            "active:scale-[0.98]",
+            "active:scale-[0.96]",
           )}
         >
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.04]">
@@ -1117,14 +1117,14 @@ export function ProjectSelectionGate() {
           <div className="flex flex-col items-center text-center mb-10">
             <Image
               src="/logo-black.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={100}
               height={28}
               className="h-7 w-auto dark:hidden"
             />
             <Image
               src="/logo-white.svg"
-              alt="GSD"
+              alt="GSD-Pi Web"
               width={100}
               height={28}
               className="h-7 w-auto hidden dark:block"
@@ -1271,7 +1271,7 @@ export function ProjectSelectionGate() {
                           <div className="hidden sm:flex items-center gap-2 shrink-0 w-24">
                             <div className="h-1 flex-1 overflow-hidden rounded-full bg-foreground/[0.08]">
                               <div
-                                className="h-full rounded-full bg-success/70 transition-all"
+                                className="h-full rounded-full bg-success/70 transition-[width]"
                                 style={{ width: `${pct}%` }}
                               />
                             </div>

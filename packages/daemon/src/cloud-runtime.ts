@@ -66,8 +66,14 @@ export class CloudRuntime {
     });
     const previousSocket = this.socket;
     this.socket = socket;
-    if (previousSocket && previousSocket.readyState !== WebSocket.CLOSING && previousSocket.readyState !== WebSocket.CLOSED) {
-      previousSocket.close();
+    if (previousSocket) {
+      // Detach the old socket's handlers before closing so its listeners don't
+      // linger on a socket we've already replaced (handlers also guard on
+      // identity, but this releases them eagerly for GC).
+      previousSocket.removeAllListeners();
+      if (previousSocket.readyState !== WebSocket.CLOSING && previousSocket.readyState !== WebSocket.CLOSED) {
+        previousSocket.close();
+      }
     }
 
     socket.on("open", () => {

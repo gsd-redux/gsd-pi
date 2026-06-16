@@ -33,7 +33,7 @@ export function WizardStepper({ steps, currentIndex, onStepClick, className }: W
               disabled={!isClickable}
               aria-current={isCurrent ? "step" : undefined}
               className={cn(
-                "group relative flex items-center gap-2.5 rounded-full px-1 py-1 transition-all duration-300",
+                "group relative flex items-center gap-2.5 rounded-full px-1 py-1 transition-[background-color,color,opacity] duration-300",
                 isClickable && "cursor-pointer",
                 !isClickable && "cursor-default",
               )}
@@ -41,7 +41,7 @@ export function WizardStepper({ steps, currentIndex, onStepClick, className }: W
               {/* Circle indicator */}
               <div
                 className={cn(
-                  "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 transition-all duration-300",
+                  "relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 transition-[background-color,border-color,color,box-shadow] duration-300",
                   isComplete && "border-foreground/80 bg-foreground/90 text-background",
                   isCurrent && "border-foreground bg-foreground text-background shadow-[0_0_12px_rgba(255,255,255,0.15)]",
                   !isComplete && !isCurrent && "border-border bg-background text-muted-foreground",
@@ -74,7 +74,7 @@ export function WizardStepper({ steps, currentIndex, onStepClick, className }: W
               <div className="mx-1 hidden h-px w-8 sm:block lg:w-12">
                 <div
                   className={cn(
-                    "h-full transition-all duration-500",
+                    "h-full transition-[width,background-color] duration-500",
                     index < currentIndex ? "bg-foreground/50" : "bg-border",
                   )}
                 />

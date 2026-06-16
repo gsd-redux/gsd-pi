@@ -32,6 +32,10 @@ interface LoadedNodePty {
 const GLOBAL_KEY = "__gsd_pty_sessions__" as const;
 const CLEANUP_GUARD_KEY = "__gsd_pty_cleanup_installed__" as const;
 const MAX_SESSION_BUFFER_BYTES = 1024 * 1024;
+// After a PTY exits, retain its (dead) session briefly so a late SSE reconnect
+// can still replay the exit message, then reclaim its buffer + listeners so
+// short-lived/unique session ids don't accumulate ~1MB buffers in the global map.
+const DEAD_SESSION_GRACE_MS = 30_000;
 
 function getSessions(): Map<string, PtySession> {
   const g = globalThis as Record<string, unknown>;
@@ -353,6 +357,20 @@ export function getOrCreateSession(sessionId: string, projectCwd?: string, comma
         // ignore
       }
     }
+
+    // Reclaim the dead session after a grace window unless it was replaced by a
+    // restart with the same id. unref so this never keeps the process alive.
+    const reclaim = setTimeout(() => {
+      const sessions = getSessions();
+      const current = sessions.get(session.id);
+      if (current === session && !current.alive) {
+        current.listeners.clear();
+        current.buffer = [];
+        current.bufferedBytes = 0;
+        sessions.delete(session.id);
+      }
+    }, DEAD_SESSION_GRACE_MS);
+    reclaim.unref?.();
   });
 
   map.set(sessionId, session);

@@ -15,6 +15,7 @@ import {
   getAllMilestones,
 } from "../gsd-db.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
+import { autoSession } from "../auto-runtime-state.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
@@ -54,6 +55,29 @@ async function inProjectDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
     process.chdir(originalCwd);
   }
 }
+
+test("closeout executors reject phase escalation from the wrong active auto unit", async () => {
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = "/tmp/project";
+  autoSession.currentUnit = { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() };
+
+  try {
+    const slice = await executeSliceComplete({} as Parameters<typeof executeSliceComplete>[0], "/tmp/project");
+    assert.equal(slice.isError, true);
+    assert.match(String(slice.details.error), /complete_slice may only run from complete-slice/);
+
+    const validate = await executeValidateMilestone({} as Parameters<typeof executeValidateMilestone>[0], "/tmp/project");
+    assert.equal(validate.isError, true);
+    assert.match(String(validate.details.error), /validate_milestone may only run from validate-milestone/);
+
+    const milestone = await executeCompleteMilestone({} as Parameters<typeof executeCompleteMilestone>[0], "/tmp/project");
+    assert.equal(milestone.isError, true);
+    assert.match(String(milestone.details.error), /complete_milestone may only run from complete-milestone/);
+  } finally {
+    autoSession.reset();
+  }
+});
 
 function seedMilestone(milestoneId: string, title: string, status = "active"): void {
   const db = _getAdapter();

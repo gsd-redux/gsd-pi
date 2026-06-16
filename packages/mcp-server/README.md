@@ -99,6 +99,7 @@ The workflow MCP surface includes:
 - `gsd_slice_reopen`
 - `gsd_milestone_reopen`
 - `gsd_milestone_status`
+- `gsd_checkpoint_db`
 - `gsd_journal_query`
 - `gsd_exec`
 - `gsd_exec_search`
@@ -107,7 +108,7 @@ The workflow MCP surface includes:
 - `gsd_memory_query`
 - `gsd_memory_graph`
 
-**Aliases (kept for backwards compatibility — prefer the canonical name above):** `gsd_save_decision`, `gsd_update_requirement`, `gsd_save_requirement`, `gsd_generate_milestone_id`, `gsd_task_plan`, `gsd_slice_replan`, `gsd_complete_task`, `gsd_complete_slice`, `gsd_milestone_validate`, `gsd_milestone_complete`, `gsd_roadmap_reassess`, `gsd_reopen_task`, `gsd_reopen_slice`, `gsd_reopen_milestone`.
+**Aliases (kept for backwards compatibility — prefer the canonical name above):** `gsd_save_decision`, `gsd_update_requirement`, `gsd_save_requirement`, `gsd_save_summary`, `gsd_generate_milestone_id`, `gsd_milestone_plan`, `gsd_slice_plan`, `gsd_task_plan`, `gsd_slice_replan`, `gsd_complete_task`, `gsd_complete_slice`, `gsd_milestone_validate`, `gsd_milestone_complete`, `gsd_roadmap_reassess`, `gsd_reopen_task`, `gsd_reopen_slice`, `gsd_reopen_milestone`.
 
 These tools use the same GSD workflow handlers as the native in-process tool path wherever a shared handler exists.
 

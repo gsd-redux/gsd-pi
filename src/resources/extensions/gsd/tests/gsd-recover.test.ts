@@ -24,6 +24,7 @@ import {
 } from '../gsd-db.ts';
 import { migrateHierarchyToDb } from '../md-importer.ts';
 import { deriveStateFromDb, invalidateStateCache } from '../state.ts';
+import { handleRecover } from '../commands-maintenance.ts';
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
 
 function createFixtureBase(): string {
@@ -40,6 +41,22 @@ function writeFile(base: string, relativePath: string, content: string): void {
 
 function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
+}
+
+function makeCtx(confirm?: () => Promise<boolean>): {
+  ctx: any;
+  notes: Array<{ message: string; kind: string }>;
+} {
+  const notes: Array<{ message: string; kind: string }> = [];
+  return {
+    ctx: {
+      ui: {
+        notify: (message: string, kind: string) => notes.push({ message, kind }),
+        ...(confirm ? { confirm: async () => confirm() } : {}),
+      },
+    },
+    notes,
+  };
 }
 
 // ─── Fixture Content ──────────────────────────────────────────────────────
@@ -432,6 +449,64 @@ describe('gsd-recover', async () => {
       assert.deepStrictEqual(all.length, 0, 'empty: no milestones in DB after recovery');
 
       closeDatabase();
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('handleRecover warns and does not import markdown without confirmation', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_M001);
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M999', title: 'Existing DB State', status: 'active' });
+
+      const { ctx, notes } = makeCtx();
+      await handleRecover(ctx, base);
+
+      assert.ok(getMilestone('M999'), 'existing DB row remains when recover is unconfirmed');
+      assert.equal(getMilestone('M001'), null, 'markdown milestone is not imported without confirmation');
+      assert.equal(notes.at(-1)?.kind, 'warning');
+      assert.match(notes.at(-1)?.message ?? '', /\/gsd recover --confirm/);
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('handleRecover interactive cancellation leaves DB unchanged', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_M001);
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M999', title: 'Existing DB State', status: 'active' });
+
+      const { ctx, notes } = makeCtx(async () => false);
+      await handleRecover(ctx, base);
+
+      assert.ok(getMilestone('M999'), 'existing DB row remains when recover is cancelled');
+      assert.equal(getMilestone('M001'), null, 'markdown milestone is not imported after cancellation');
+      assert.match(notes.at(-1)?.message ?? '', /cancelled/);
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('handleRecover imports markdown after explicit confirmation', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_M001);
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M999', title: 'Existing DB State', status: 'active' });
+
+      const { ctx, notes } = makeCtx();
+      await handleRecover(ctx, base, '--confirm');
+
+      assert.equal(getMilestone('M999'), null, 'confirmed recover clears old hierarchy rows');
+      assert.ok(getMilestone('M001'), 'confirmed recover imports markdown hierarchy');
+      assert.equal(notes.at(-1)?.kind, 'success');
     } finally {
       closeDatabase();
       cleanup(base);

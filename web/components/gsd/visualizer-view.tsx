@@ -300,7 +300,7 @@ function ProgressBar({
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
       <div
-        className={cn("h-full rounded-full transition-all duration-700", barColor, animated && "animate-pulse")}
+        className={cn("h-full rounded-full transition-[width,background-color] duration-700", barColor, animated && "animate-pulse")}
         style={{ width: `${pct}%` }}
       />
     </div>
@@ -1840,7 +1840,7 @@ function ExportTab({ data }: { data: VisualizerData }) {
         <div className="mt-7 grid gap-4 sm:grid-cols-2">
           <button
             onClick={handleMarkdown}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-all hover:border-info/40 hover:bg-info/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-[background-color,border-color,box-shadow,transform] hover:border-info/40 hover:bg-info/5"
           >
             <div className="rounded-xl border border-info/20 bg-info/10 p-4 transition-colors group-hover:bg-info/15">
               <FileText className="h-6 w-6 text-info" />
@@ -1849,12 +1849,12 @@ function ExportTab({ data }: { data: VisualizerData }) {
               <p className="text-sm font-semibold transition-colors group-hover:text-info">Download Markdown</p>
               <p className="mt-1 text-xs text-muted-foreground">Human-readable report with tables and structure</p>
             </div>
-            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-info/70" />
+            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-[color,opacity,transform] group-hover:text-info/70" />
           </button>
 
           <button
             onClick={handleJSON}
-            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-all hover:border-success/40 hover:bg-success/5"
+            className="group flex items-center gap-5 rounded-xl border border-border bg-muted/50 p-5 text-left transition-[background-color,border-color,box-shadow,transform] hover:border-success/40 hover:bg-success/5"
           >
             <div className="rounded-xl border border-success/20 bg-success/10 p-4 transition-colors group-hover:bg-success/15">
               <FileJson className="h-6 w-6 text-success" />
@@ -1863,7 +1863,7 @@ function ExportTab({ data }: { data: VisualizerData }) {
               <p className="text-sm font-semibold transition-colors group-hover:text-success">Download JSON</p>
               <p className="mt-1 text-xs text-muted-foreground">Full raw data payload for tooling</p>
             </div>
-            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-all group-hover:text-success/70" />
+            <Download className="h-4 w-4 shrink-0 text-muted-foreground/0 transition-[color,opacity,transform] group-hover:text-success/70" />
           </button>
         </div>
       </div>

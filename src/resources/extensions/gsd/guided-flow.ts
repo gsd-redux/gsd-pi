@@ -51,6 +51,7 @@ import { nativeAddAll, nativeCommit, nativeHasCommittedHead, nativeIsRepo, nativ
 import { isInheritedRepo } from "./repo-identity.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { getIsolationMode, loadEffectiveGSDPreferences } from "./preferences.js";
+import { getAutoWorktreePath } from "./auto-worktree.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { ensurePlanV2Graph, isMissingFinalizedContextResult } from "./uok/plan-v2.js";
 import { detectProjectState, hasGsdBootstrapArtifacts } from "./detection.js";
@@ -1555,6 +1556,10 @@ async function loadDiscussNormSlices(basePath: string, mid: string): Promise<Dis
 
 export const _loadDiscussNormSlicesForTest = loadDiscussNormSlices;
 
+function resolveDiscussSliceBasePath(basePath: string, milestoneId: string): string {
+  return getAutoWorktreePath(basePath, milestoneId) ?? basePath;
+}
+
 /**
  * Build a rich inlined-context prompt for discussing a specific slice.
  * Preloads roadmap, milestone context, research, decisions, and completed
@@ -1717,13 +1722,14 @@ export async function showDiscuss(
         ctx.ui.notify(`Slice ${target} is already complete; nothing to discuss.`, "info");
         return;
       }
-      const contextFile = resolveSliceFile(basePath, mid, sid, "CONTEXT");
+      const discussBasePath = resolveDiscussSliceBasePath(basePath, mid);
+      const contextFile = resolveSliceFile(discussBasePath, mid, sid, "CONTEXT");
       const sqAvail = getStructuredQuestionsAvailability(pi, ctx);
-      const prompt = await buildDiscussSlicePrompt(mid, sid, chosen.title, basePath, {
+      const prompt = await buildDiscussSlicePrompt(mid, sid, chosen.title, discussBasePath, {
         rediscuss: !!contextFile,
         structuredQuestionsAvailable: sqAvail,
       });
-      await dispatchWorkflow(pi, prompt, "gsd-discuss", ctx, "discuss-slice", { basePath });
+      await dispatchWorkflow(pi, prompt, "gsd-discuss", ctx, "discuss-slice", { basePath: discussBasePath });
       return;
     }
 
@@ -1855,11 +1861,12 @@ export async function showDiscuss(
   while (true) {
     // Invalidate caches so we pick up CONTEXT files written by the just-completed discussion
     invalidateAllCaches();
+    const discussBasePath = resolveDiscussSliceBasePath(basePath, mid);
 
     // Build discussion-state map: which slices have CONTEXT files already?
     const discussedMap = new Map<string, boolean>();
     for (const s of pendingSlices) {
-      const contextFile = resolveSliceFile(basePath, mid, s.id, "CONTEXT");
+      const contextFile = resolveSliceFile(discussBasePath, mid, s.id, "CONTEXT");
       discussedMap.set(s.id, !!contextFile);
     }
 
@@ -1948,8 +1955,11 @@ export async function showDiscuss(
     }
 
     const sqAvail = getStructuredQuestionsAvailability(pi, ctx);
-    const prompt = await buildDiscussSlicePrompt(mid, chosen.id, chosen.title, basePath, { rediscuss: isRediscuss, structuredQuestionsAvailable: sqAvail });
-    await dispatchWorkflow(pi, prompt, "gsd-discuss", ctx, "discuss-slice", { basePath });
+    const prompt = await buildDiscussSlicePrompt(mid, chosen.id, chosen.title, discussBasePath, {
+      rediscuss: isRediscuss,
+      structuredQuestionsAvailable: sqAvail,
+    });
+    await dispatchWorkflow(pi, prompt, "gsd-discuss", ctx, "discuss-slice", { basePath: discussBasePath });
 
     // Wait for the discuss session to finish, then loop back to the picker
     await ctx.waitForIdle();
@@ -2364,7 +2374,7 @@ export async function showSmartEntry(
       if (result.action === "recovery-required") {
         ctx.ui.notify(
           result.message ??
-            `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd recover"}\` to import markdown explicitly.`,
+            `Markdown planning artifacts do not match the authoritative DB. Run \`${result.recoveryCommand ?? "/gsd recover --confirm"}\` to import markdown explicitly.`,
           "warning",
         );
       }
@@ -2903,8 +2913,13 @@ export async function showSmartEntry(
         { basePath },
       );
     } else if (choice === "discuss") {
+      const discussBasePath = resolveDiscussSliceBasePath(basePath, milestoneId);
       const sqAvail = getStructuredQuestionsAvailability(pi, ctx);
-      await dispatchWorkflow(pi, await buildDiscussSlicePrompt(milestoneId, sliceId, sliceTitle, basePath, { rediscuss: hasContext, structuredQuestionsAvailable: sqAvail }), "gsd-run", ctx, "discuss-slice", { basePath });
+      const prompt = await buildDiscussSlicePrompt(milestoneId, sliceId, sliceTitle, discussBasePath, {
+        rediscuss: hasContext,
+        structuredQuestionsAvailable: sqAvail,
+      });
+      await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "discuss-slice", { basePath: discussBasePath });
     } else if (choice === "research") {
       const researchTemplates = inlineTemplate("research", "Research");
       await dispatchWorkflow(pi, loadPrompt("guided-research-slice", {

@@ -84,6 +84,6 @@ test("/gsd help full lists brief separately from visualize", () => {
   showHelp(ctx as any, "full");
 
   const help = ctx.notifications.at(0)?.message ?? "";
-  assert.match(help, /\/gsd visualize\s+Interactive 10-tab TUI/);
+  assert.match(help, /\/gsd visualize\s+Workflow visualizer/);
   assert.match(help, /\/gsd brief <mode>\s+Generate a visual HTML brief/);
 });

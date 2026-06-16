@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { minimatch } from "minimatch";
 
+import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.js";
 import { getIsolationMode } from "../preferences.js";
 import { compileSubagentPermissionContract, type ToolsPolicy } from "../unit-context-manifest.js";
 import { logWarning } from "../workflow-logger.js";
@@ -798,11 +799,15 @@ export function shouldBlockPlanningUnit(
   unitType: string,
   policy: ToolsPolicy | null | undefined,
   agentClasses?: readonly string[],
+  toolInput?: unknown,
+  unitId?: string,
 ): { block: boolean; reason?: string } {
+  const tool = canonicalToolName(toolName);
+  const autoScopeGuard = shouldBlockAutoUnitToolCall(unitType, toolName, toolInput, unitId);
+  if (autoScopeGuard.block) return autoScopeGuard;
+
   if (!policy) return { block: false };
   if (policy.mode === "all") return { block: false };
-
-  const tool = canonicalToolName(toolName);
 
   // Read-only mode: only Read-class tools are permitted.
   if (policy.mode === "read-only") {

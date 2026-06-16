@@ -57,6 +57,7 @@ export interface ValidateMilestoneOptions {
   uokGatesEnabled?: boolean;
   traceId?: string;
   turnId?: string;
+  skipBrowserEvidenceGate?: boolean;
 }
 
 function isVerificationNotApplicable(value: string): boolean {
@@ -194,7 +195,9 @@ export async function handleValidateMilestone(
   }
 
   const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
-  const effectiveParams = await browserEvidenceGateRequiresAttention(params, artifactBasePath)
+  const shouldApplyBrowserEvidenceGate = !opts?.skipBrowserEvidenceGate &&
+    await browserEvidenceGateRequiresAttention(params, artifactBasePath);
+  const effectiveParams = shouldApplyBrowserEvidenceGate
     ? applyBrowserEvidenceGate(params)
     : params;
 

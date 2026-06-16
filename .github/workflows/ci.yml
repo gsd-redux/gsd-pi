@@ -137,6 +137,8 @@ jobs:
           node-version: '24'
           cache: 'pnpm'
 
+      - uses: ./.github/actions/setup-linux-native-build-deps
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -202,6 +204,8 @@ jobs:
           node-version: '24'
           cache: 'pnpm'
 
+      - uses: ./.github/actions/setup-linux-native-build-deps
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -245,6 +249,8 @@ jobs:
         with:
           node-version: '24'
           cache: 'pnpm'
+
+      - uses: ./.github/actions/setup-linux-native-build-deps
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -294,6 +300,8 @@ jobs:
           node-version: '24'
           cache: 'pnpm'
 
+      - uses: ./.github/actions/setup-linux-native-build-deps
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -340,6 +348,8 @@ jobs:
         with:
           node-version: '24'
           cache: 'pnpm'
+
+      - uses: ./.github/actions/setup-linux-native-build-deps
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -393,6 +403,8 @@ jobs:
           node-version: '24'
           cache: 'pnpm'
 
+      - uses: ./.github/actions/setup-linux-native-build-deps
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -436,6 +448,8 @@ jobs:
         with:
           node-version: '24'
           cache: 'pnpm'
+
+      - uses: ./.github/actions/setup-linux-native-build-deps
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -492,6 +506,8 @@ jobs:
         with:
           node-version: '24'
           cache: 'pnpm'
+
+      - uses: ./.github/actions/setup-linux-native-build-deps
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
+import { findEnvKeys, getApiKeyEnvVars, getEnvApiKey } from "../src/env-api-keys.ts";
 
 const originalCopilotGitHubToken = process.env.COPILOT_GITHUB_TOKEN;
 const originalGhToken = process.env.GH_TOKEN;
 const originalGitHubToken = process.env.GITHUB_TOKEN;
+const originalAnthropicVertexProjectId = process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+const originalGoogleCloudProject = process.env.GOOGLE_CLOUD_PROJECT;
+const originalGcloudProject = process.env.GCLOUD_PROJECT;
 
 afterEach(() => {
 	if (originalCopilotGitHubToken === undefined) {
@@ -22,6 +25,24 @@ afterEach(() => {
 		delete process.env.GITHUB_TOKEN;
 	} else {
 		process.env.GITHUB_TOKEN = originalGitHubToken;
+	}
+
+	if (originalAnthropicVertexProjectId === undefined) {
+		delete process.env.ANTHROPIC_VERTEX_PROJECT_ID;
+	} else {
+		process.env.ANTHROPIC_VERTEX_PROJECT_ID = originalAnthropicVertexProjectId;
+	}
+
+	if (originalGoogleCloudProject === undefined) {
+		delete process.env.GOOGLE_CLOUD_PROJECT;
+	} else {
+		process.env.GOOGLE_CLOUD_PROJECT = originalGoogleCloudProject;
+	}
+
+	if (originalGcloudProject === undefined) {
+		delete process.env.GCLOUD_PROJECT;
+	} else {
+		process.env.GCLOUD_PROJECT = originalGcloudProject;
 	}
 });
 
@@ -42,5 +63,15 @@ describe("environment API keys", () => {
 
 		expect(findEnvKeys("github-copilot")).toEqual(["COPILOT_GITHUB_TOKEN"]);
 		expect(getEnvApiKey("github-copilot")).toBe("copilot-token");
+	});
+
+	it("treats ANTHROPIC_VERTEX_PROJECT_ID as Anthropic Vertex auth", () => {
+		process.env.ANTHROPIC_VERTEX_PROJECT_ID = "vertex-project";
+		delete process.env.GOOGLE_CLOUD_PROJECT;
+		delete process.env.GCLOUD_PROJECT;
+
+		expect(getApiKeyEnvVars("anthropic-vertex")).toEqual(["ANTHROPIC_VERTEX_PROJECT_ID"]);
+		expect(findEnvKeys("anthropic-vertex")).toEqual(["ANTHROPIC_VERTEX_PROJECT_ID"]);
+		expect(getEnvApiKey("anthropic-vertex")).toBe("<authenticated>");
 	});
 });

@@ -3,7 +3,9 @@
 // @ts-nocheck
 
 import type { OAuthProviderId } from "@gsd/pi-ai";
+import { getApiKeyEnvVars } from "@gsd/pi-ai";
 import { getAuthPath } from "@gsd/pi-coding-agent/config.js";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "@gsd/pi-coding-agent/core/provider-display-names.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.js";
 import type { InteractiveModeDelegateHost } from "./interactive-mode-delegate-host.js";
@@ -36,6 +38,37 @@ function formatAuthStatus(status: { source?: string; label?: string } | undefine
 	return undefined;
 }
 
+function formatEnvHint(envVars: readonly string[] | undefined): string {
+	if (!envVars || envVars.length === 0) return "";
+	return ` (or set ${envVars.join(" / ")})`;
+}
+
+function apiKeyCredentialLabel(providerId: string): string {
+	if (providerId === "huggingface") return "user access token";
+	return "API key";
+}
+
+function apiKeyPlaceholder(providerId: string): string | undefined {
+	if (providerId === "huggingface") return "hf_...";
+	return undefined;
+}
+
+export function buildApiKeyLoginPrompt(providerId: string, providerName: string): {
+	message: string;
+	placeholder?: string;
+} {
+	const credentialLabel = apiKeyCredentialLabel(providerId);
+	const envHint = formatEnvHint(getApiKeyEnvVars(providerId));
+	return {
+		message: `Paste your ${providerName} ${credentialLabel}${envHint}:`,
+		placeholder: apiKeyPlaceholder(providerId),
+	};
+}
+
+function getApiKeyProviderDisplayName(host: InteractiveModeDelegateHost, providerId: string): string {
+	return BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId] ?? host.session.modelRegistry.getProviderDisplayName(providerId);
+}
+
 export function buildLoginProviderOptions(host: InteractiveModeDelegateHost): AuthSelectorProvider[] {
 	const modelRegistry = host.session.modelRegistry;
 	const oauthProviders = modelRegistry.authStorage
@@ -58,7 +91,7 @@ export function buildLoginProviderOptions(host: InteractiveModeDelegateHost): Au
 		.filter((providerId) => !oauthProviderIds.has(providerId))
 		.map((providerId) => ({
 			id: providerId,
-			name: modelRegistry.getProviderDisplayName(providerId),
+			name: getApiKeyProviderDisplayName(host, providerId),
 			authType: "api_key" as const,
 			statusLabel: formatAuthStatus(modelRegistry.getProviderAuthStatus(providerId)),
 		}));
@@ -202,7 +235,8 @@ async function showApiKeyLoginDialog(host: InteractiveModeDelegateHost, provider
 	};
 
 	try {
-		const apiKey = (await dialog.showPrompt(`Paste your ${providerName} API key:`)).trim();
+		const prompt = buildApiKeyLoginPrompt(providerId, providerName);
+		const apiKey = (await dialog.showPrompt(prompt.message, prompt.placeholder)).trim();
 		if (!apiKey) {
 			throw new Error("API key is required");
 		}
@@ -262,8 +296,8 @@ export async function showLoginDialog(host: InteractiveModeDelegateHost, provide
 				}
 			},
 
-			onPrompt: async (prompt: { message: string; placeholder?: string }) => {
-				return dialog.showPrompt(prompt.message, prompt.placeholder);
+			onPrompt: async (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => {
+				return dialog.showPrompt(prompt.message, prompt.placeholder, { allowEmpty: prompt.allowEmpty });
 			},
 
 			onProgress: (message: string) => {
@@ -274,7 +308,10 @@ export async function showLoginDialog(host: InteractiveModeDelegateHost, provide
 				? () => dialog.showManualInput("Paste redirect URL below, or complete login in browser:")
 				: undefined,
 
-			onDeviceCode: async () => "",
+			onDeviceCode: (info) => {
+				dialog.showDeviceCode(info);
+				dialog.showWaiting("Waiting for browser authentication...");
+			},
 			onSelect: async (prompt) => prompt.options[0]?.id,
 
 			signal: dialog.signal,

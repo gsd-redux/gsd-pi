@@ -55,6 +55,7 @@ import {
 import { rowToGate } from "./db-gate-rows.js";
 import { rowToArtifact, rowToMilestone, type ArtifactRow, type MilestoneRow } from "./db-milestone-artifact-rows.js";
 import { backupDatabaseBeforeMigration } from "./db-migration-backup.js";
+import { isClosedStatus } from "./status-guards.js";
 import {
   applyMigrationV2Artifacts,
   applyMigrationV3Memories,
@@ -1665,16 +1666,50 @@ export function setMilestoneQueueOrder(order: string[]): void {
   }
 }
 
-/**
- * Update a milestone's status in the database.
- * Used by park/unpark to keep the DB in sync with the filesystem marker.
- * See: https://github.com/open-gsd/gsd-pi/issues/2694
- */
-export function updateMilestoneStatus(milestoneId: string, status: string, completedAt?: string | null): void {
+function getMilestoneStatusForUpdate(milestoneId: string): string | null {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const row = currentDb.prepare("SELECT status FROM milestones WHERE id = :id").get({ ":id": milestoneId });
+  return typeof row?.["status"] === "string" ? row["status"] : null;
+}
+
+function writeMilestoneStatus(milestoneId: string, status: string, completedAt?: string | null): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   currentDb.prepare(
     `UPDATE milestones SET status = :status, completed_at = :completed_at WHERE id = :id`,
   ).run({ ":status": status, ":completed_at": completedAt ?? null, ":id": milestoneId });
+}
+
+/**
+ * Update a milestone's status in the database.
+ *
+ * Generic status updates may close milestones, park/unpark open milestones, or
+ * advance planned milestones. They may not reopen a closed milestone; callers
+ * must use reopenMilestoneStatus(), which is reserved for gsd_milestone_reopen.
+ */
+export function updateMilestoneStatus(milestoneId: string, status: string, completedAt?: string | null): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const currentStatus = getMilestoneStatusForUpdate(milestoneId);
+  if (currentStatus && isClosedStatus(currentStatus) && !isClosedStatus(status)) {
+    throw new Error(
+      `Cannot update closed milestone ${milestoneId} from ${currentStatus} to ${status}; use gsd_milestone_reopen for an explicit reopen.`,
+    );
+  }
+  writeMilestoneStatus(milestoneId, status, completedAt);
+}
+
+/**
+ * Explicit closed -> active transition for gsd_milestone_reopen only.
+ */
+export function reopenMilestoneStatus(milestoneId: string): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const currentStatus = getMilestoneStatusForUpdate(milestoneId);
+  if (!currentStatus) {
+    throw new Error(`Cannot reopen missing milestone ${milestoneId}`);
+  }
+  if (!isClosedStatus(currentStatus)) {
+    throw new Error(`Cannot reopen milestone ${milestoneId} from status ${currentStatus}; milestone is not closed.`);
+  }
+  writeMilestoneStatus(milestoneId, "active", null);
 }
 
 export function getActiveMilestoneFromDb(): MilestoneRow | null {
@@ -2708,7 +2743,7 @@ export function deleteArtifactByPath(path: string): void {
 
 /**
  * Drop hierarchy rows in dependency order inside a transaction. Used by
- * `gsd recover` to rebuild engine state from markdown.
+ * `gsd recover --confirm` to rebuild engine state from markdown.
  */
 export function clearEngineHierarchy(): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");

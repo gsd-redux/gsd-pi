@@ -103,6 +103,8 @@ const CHILD_ENV_ALLOWLIST = new Set([
 	"XDG_CACHE_HOME",
 ]);
 
+const MCP_STDERR_MAX_BYTES = 4096;
+
 let cachedStatus: ManagedMcpStatus | null = null;
 let cachedStatusKey = "";
 
@@ -231,6 +233,34 @@ export function resolveMcpString(value: string): string {
 	);
 }
 
+function captureTransportStderr(transport: StdioClientTransport): () => string {
+	const chunks: Buffer[] = [];
+	let totalBytes = 0;
+	const stderr = transport.stderr;
+	stderr?.on("data", (chunk: Buffer | string) => {
+		const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+		totalBytes += buffer.byteLength;
+		chunks.push(buffer);
+		while (chunks.reduce((sum, entry) => sum + entry.byteLength, 0) > MCP_STDERR_MAX_BYTES) {
+			chunks.shift();
+		}
+	});
+
+	return () => {
+		const captured = Buffer.concat(chunks).toString("utf-8").trim();
+		if (!captured) return "";
+		return totalBytes > MCP_STDERR_MAX_BYTES
+			? `[stderr truncated to last ${MCP_STDERR_MAX_BYTES} bytes]\n${captured}`
+			: captured;
+	};
+}
+
+function formatConnectionError(error: unknown, stderr: string): string {
+	const message = error instanceof Error ? error.message : String(error);
+	if (!stderr) return message;
+	return `${message}\nStderr:\n${stderr}`;
+}
+
 export function upsertProjectLocalMcpServer(
 	input: ManagedMcpServerInput,
 	options: { projectDir?: string; previousName?: string } = {},
@@ -348,6 +378,7 @@ export async function testMcpServerConnection(
 
 	const client = new Client({ name: "gsd", version: "1.0.0" });
 	let transport: StdioClientTransport | StreamableHTTPClientTransport | undefined;
+	let readCapturedStderr: (() => string) | undefined;
 	const timeout = options.timeoutMs ?? 30_000;
 	try {
 		if (config.transport === "stdio") {
@@ -358,6 +389,7 @@ export async function testMcpServerConnection(
 				cwd: config.cwd,
 				stderr: "pipe",
 			});
+			readCapturedStderr = captureTransportStderr(transport);
 		} else {
 			const resolvedUrl = resolveMcpString(config.url ?? "");
 			transport = new StreamableHTTPClientTransport(
@@ -385,7 +417,7 @@ export async function testMcpServerConnection(
 			toolCount: 0,
 			tools: [],
 			warnings: config.envWarnings,
-			error: error instanceof Error ? error.message : String(error),
+			error: formatConnectionError(error, readCapturedStderr?.() ?? ""),
 		};
 	} finally {
 		if (transport) {

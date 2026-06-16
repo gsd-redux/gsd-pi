@@ -1,3 +1,4 @@
+import type { MouseEvent } from "../mouse.js";
 import type { Component } from "../tui.js";
 import { applyBackgroundToLine, visibleWidth } from "../utils.js";
 
@@ -19,6 +20,10 @@ export class Box implements Component {
 
 	// Cache for rendered output
 	private cache?: RenderCache;
+
+	// Row range each child occupied within the content area (excluding top
+	// padding) at the last render, used to route mouse events to children.
+	private childRanges: { component: Component; start: number; lineCount: number }[] = [];
 
 	constructor(paddingX = 1, paddingY = 1, bgFn?: (text: string) => string) {
 		this.paddingX = paddingX;
@@ -81,8 +86,10 @@ export class Box implements Component {
 
 		// Render all children
 		const childLines: string[] = [];
+		this.childRanges = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
+			this.childRanges.push({ component: child, start: childLines.length, lineCount: lines.length });
 			for (const line of lines) {
 				childLines.push(leftPad + line);
 			}
@@ -122,6 +129,21 @@ export class Box implements Component {
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;
+	}
+
+	handleMouse(event: MouseEvent): void {
+		// Translate from box-local coordinates into the child content area by
+		// removing the top/left padding, then find the child under the pointer.
+		const contentRow = event.y - this.paddingY;
+		const contentCol = event.x - this.paddingX;
+		if (contentRow < 0 || contentCol < 0) return;
+
+		for (const range of this.childRanges) {
+			if (contentRow >= range.start && contentRow < range.start + range.lineCount) {
+				range.component.handleMouse?.({ ...event, x: contentCol, y: contentRow - range.start });
+				return;
+			}
+		}
 	}
 
 	private applyBg(line: string, width: number): string {

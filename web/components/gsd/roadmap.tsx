@@ -138,7 +138,7 @@ export function Roadmap() {
                           <div className="w-24">
                             <div className="h-1 w-full rounded-full bg-accent">
                               <div
-                                className="h-full rounded-full bg-foreground/70 transition-all"
+                                className="h-full rounded-full bg-foreground/70 transition-[width]"
                                 style={{
                                   width: sliceTotalTasks > 0 ? `${(sliceDoneTasks / sliceTotalTasks) * 100}%` : "0%",
                                 }}

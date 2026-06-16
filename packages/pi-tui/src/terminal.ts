@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { setKittyProtocolActive } from "./keys.js";
+import { DISABLE_MOUSE, ENABLE_MOUSE } from "./mouse.js";
 import { StdinBuffer } from "./stdin-buffer.js";
 
 const cjsRequire = createRequire(import.meta.url);
@@ -70,6 +71,7 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private _mouseActive = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
@@ -97,6 +99,24 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
+		// Idempotency guard: if start() is called again without an intervening
+		// stop() (e.g. a mis-paired suspend/resume cycle), detach any stale
+		// listeners first so they don't accumulate on the long-lived
+		// process.stdin/stdout and trip MaxListenersExceededWarning. No-op on a
+		// fresh start since all handles are undefined.
+		if (this.stdinDataHandler) {
+			process.stdin.removeListener("data", this.stdinDataHandler);
+			this.stdinDataHandler = undefined;
+		}
+		if (this.resizeHandler) {
+			process.stdout.removeListener("resize", this.resizeHandler);
+			this.resizeHandler = undefined;
+		}
+		if (this.stdinBuffer) {
+			this.stdinBuffer.destroy();
+			this.stdinBuffer = undefined;
+		}
+
 		if (!this.isTTY) {
 			this.inputHandler = onInput;
 			this.resizeHandler = onResize;
@@ -116,6 +136,14 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+
+		// Enable mouse reporting so clicks and the wheel reach the TUI. On by
+		// default; set PI_TUI_MOUSE=0 to opt out (preserves native click-drag
+		// text selection without holding Shift).
+		if (process.env.PI_TUI_MOUSE !== "0") {
+			process.stdout.write(ENABLE_MOUSE);
+			this._mouseActive = true;
+		}
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -263,6 +291,10 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write("\x1b[>4;0m");
 			this._modifyOtherKeysActive = false;
 		}
+		if (this._mouseActive) {
+			process.stdout.write(DISABLE_MOUSE);
+			this._mouseActive = false;
+		}
 
 		const previousHandler = this.inputHandler;
 		this.inputHandler = undefined;
@@ -296,6 +328,12 @@ export class ProcessTerminal implements Terminal {
 
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
+
+		// Disable mouse reporting if not already done by drainInput()
+		if (this._mouseActive) {
+			process.stdout.write(DISABLE_MOUSE);
+			this._mouseActive = false;
+		}
 
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (this._kittyProtocolActive) {

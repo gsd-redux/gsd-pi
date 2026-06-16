@@ -163,3 +163,38 @@ test("MCP connection test performs handshake and tools/list without invoking too
 		cleanup();
 	}
 });
+
+test("MCP connection test includes stdio stderr when discovery fails", async () => {
+	const { projectDir, cleanup } = makeProject();
+	try {
+		const serverPath = join(projectDir, "crashing-mcp-server.mjs");
+		writeFileSync(
+			serverPath,
+			[
+				'console.error("fatal browser bootstrap failed");',
+				'console.error("missing browser profile");',
+				"process.exit(1);",
+			].join("\n"),
+			"utf-8",
+		);
+
+		const result = await testMcpServerConnection({
+			name: "crashing",
+			transport: "stdio",
+			sourcePath: join(projectDir, ".gsd", "mcp.json"),
+			sourceKind: "project-local",
+			disabled: false,
+			command: process.execPath,
+			args: [serverPath],
+			envWarnings: [],
+		} satisfies ManagedMcpServerConfig, { projectDir, timeoutMs: 10_000 });
+
+		assert.equal(result.ok, false);
+		assert.match(result.error ?? "", /Connection closed|closed|exit/i);
+		assert.match(result.error ?? "", /Stderr:/);
+		assert.match(result.error ?? "", /fatal browser bootstrap failed/);
+		assert.match(result.error ?? "", /missing browser profile/);
+	} finally {
+		cleanup();
+	}
+});

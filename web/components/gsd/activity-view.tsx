@@ -32,8 +32,8 @@ export function ActivityView() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-border px-6 py-3">
-        <h1 className="text-lg font-semibold">Activity Log</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1 className="text-lg font-semibold text-balance">Activity Log</h1>
+        <p className="text-sm text-pretty text-muted-foreground">
           Execution history and git operations
         </p>
       </div>
@@ -62,7 +62,7 @@ export function ActivityView() {
                       <div>
                         <p className="text-sm font-medium">{line.content}</p>
                       </div>
-                      <span className="flex-shrink-0 font-mono text-xs text-muted-foreground">
+                      <span className="flex-shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                         {line.timestamp}
                       </span>
                     </div>

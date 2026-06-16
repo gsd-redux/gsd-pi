@@ -7,12 +7,17 @@ GSD sends desktop notifications during auto mode to keep you informed without wa
 ```yaml
 notifications:
   enabled: true
+  local_bell: false      # play terminal bell on questions and auto-mode stops
   on_complete: true      # notify on unit completion
   on_error: true         # notify on errors
   on_budget: true        # notify on budget thresholds
   on_milestone: true     # notify when milestone finishes
   on_attention: true     # notify when manual attention needed
 ```
+
+Set `local_bell: true` to make GSD write a local terminal bell when
+`ask_user_questions` needs an answer or auto-mode stops. The bell is
+controlled by `enabled` and `on_attention`.
 
 ## macOS Setup
 

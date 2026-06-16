@@ -823,6 +823,8 @@ function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocke
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
 		websocketSessionCache.delete(sessionId);
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
+	// Don't let a cached idle socket keep the process alive up to the TTL.
+	entry.idleTimer.unref?.();
 }
 
 async function connectWebSocket(url: string, headers: Headers, signal?: AbortSignal): Promise<WebSocketLike> {

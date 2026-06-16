@@ -152,6 +152,15 @@ test("classifyError treats plain 'Connection error.' as transient connection fai
   assert.ok("retryAfterMs" in result && result.retryAfterMs === 15_000);
 });
 
+test("classifyError treats WebSocket transport errors as transient network failures (#338)", () => {
+  for (const message of ["WebSocket error", "WebSocket disconnected", "web socket disconnected"]) {
+    const result = classifyError(message);
+    assert.ok(isTransient(result), `${message} should be transient`);
+    assert.equal(result.kind, "network");
+    assert.ok("retryAfterMs" in result && result.retryAfterMs === 3_000);
+  }
+});
+
 test("classifyError treats unknown error as not transient", () => {
   const result = classifyError("something went wrong");
   assert.ok(!isTransient(result));
@@ -274,6 +283,10 @@ test("isTransientNetworkError detects socket hang up", () => {
   assert.ok(isTransientNetworkError("socket hang up"));
 });
 
+test("isTransientNetworkError detects WebSocket transport errors", () => {
+  assert.ok(isTransientNetworkError("WebSocket error"));
+});
+
 test("isTransientNetworkError detects fetch failed", () => {
   assert.ok(isTransientNetworkError("fetch failed"));
 });
@@ -387,6 +400,50 @@ test("pauseAutoForProviderError schedules auto-resume for rate limit errors", as
     assert.equal(resumeCalled, true);
     assert.deepEqual(notifications[1], {
       message: "Rate limit window elapsed. Resuming auto-mode.",
+      level: "info",
+    });
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
+test("pauseAutoForProviderError schedules auto-resume for WebSocket network errors", async () => {
+  const cls = classifyError("WebSocket error");
+  if (cls.kind !== "network") {
+    assert.fail(`expected WebSocket error to classify as network, got ${cls.kind}`);
+  }
+
+  const notifications: Array<{ message: string; level: string }> = [];
+  let pauseCalls = 0;
+  let resumeCalled = false;
+
+  const originalSetTimeout = globalThis.setTimeout;
+  const timers: Array<{ fn: () => void; delay: number }> = [];
+  globalThis.setTimeout = ((fn: () => void, delay: number) => {
+    timers.push({ fn, delay });
+    return 0 as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+
+  try {
+    await pauseAutoForProviderError(
+      { notify(message, level?) { notifications.push({ message, level: level ?? "info" }); } },
+      ": WebSocket error",
+      async () => { pauseCalls += 1; },
+      { isTransient: isTransient(cls), retryAfterMs: cls.retryAfterMs, resume: () => { resumeCalled = true; } },
+    );
+
+    assert.equal(pauseCalls, 1);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delay, 3_000);
+    assert.deepEqual(notifications[0], {
+      message: "Server error (transient): WebSocket error. Auto-resuming in 3s...",
+      level: "warning",
+    });
+
+    timers[0].fn();
+    assert.equal(resumeCalled, true);
+    assert.deepEqual(notifications[1], {
+      message: "Server error recovery delay elapsed. Resuming auto-mode.",
       level: "info",
     });
   } finally {

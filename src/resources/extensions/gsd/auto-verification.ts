@@ -50,7 +50,7 @@ import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets } fro
 import type { SliceRow } from "./db-task-slice-rows.js";
 import { getSlice } from "./gsd-db.js";
 import { getLedger } from "./metrics.js";
-import { getUnitCostSpikeAction } from "./auto-budget.js";
+import { getUnitCostSpikeAction, resolveUnitCostSpikeMultiplier } from "./auto-budget.js";
 import { formatPostUnitStatusCard } from "./auto-status-message.js";
 
 export interface VerificationContext {
@@ -869,7 +869,7 @@ export async function runPostUnitVerification(
         });
         return "pause";
       }
-      if (getUnitCostSpikeAction(unitCostUsd, rollingAvgUsd, 3.0) === "pause") {
+      if (getUnitCostSpikeAction(unitCostUsd, rollingAvgUsd, resolveUnitCostSpikeMultiplier(prefs)) === "pause") {
         ctx.ui.notify(
           `Unit ${s.currentUnit.id} cost spike detected (${unitCostUsd.toFixed(2)} vs avg ${rollingAvgUsd.toFixed(2)}) during verification retry; keeping verification failure as the authoritative blocker.`,
           "warning",

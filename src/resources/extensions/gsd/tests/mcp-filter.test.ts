@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { discoverMcpServerNames, discoverWorkflowMcpServerName, computeMcpDisallowedTools } from "../mcp-filter.ts";
+import { discoverBrowserMcpServerName, discoverMcpServerNames, discoverWorkflowMcpServerName, computeMcpDisallowedTools } from "../mcp-filter.ts";
 import type { ClaudeCodeMcpConfig } from "../preferences-types.ts";
 
 // ─── discoverMcpServerNames ────────────────────────────────────────────────
@@ -48,6 +48,21 @@ describe("discoverMcpServerNames", () => {
     assert.deepEqual(result.sort(), ["server-a", "server-b", "shared"]);
   });
 
+  it("reads from .claude/settings.local.json for Claude Code project-local servers", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-filter-test-"));
+    mkdirSync(join(dir, ".claude"), { recursive: true });
+    writeFileSync(
+      join(dir, ".claude", "settings.local.json"),
+      JSON.stringify({ mcpServers: { "local-server": {}, "shared": {} } }),
+    );
+    writeFileSync(
+      join(dir, ".claude", "settings.json"),
+      JSON.stringify({ mcpServers: { "project-server": {}, "shared": {} } }),
+    );
+    const result = discoverMcpServerNames(dir);
+    assert.deepEqual(result.sort(), ["local-server", "project-server", "shared"]);
+  });
+
   it("handles .claude/settings.json missing gracefully", () => {
     const dir = mkdtempSync(join(tmpdir(), "mcp-filter-test-"));
     writeFileSync(
@@ -74,6 +89,23 @@ describe("discoverMcpServerNames", () => {
       }),
     );
     assert.equal(discoverWorkflowMcpServerName(dir), "custom-workflow");
+  });
+
+  it("discovers gsd-browser server names by config signature", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-filter-test-"));
+    writeFileSync(
+      join(dir, ".mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          "browser-uat": {
+            command: "gsd-browser",
+            args: ["mcp"],
+          },
+          unrelated: { command: "npx", args: ["other"] },
+        },
+      }),
+    );
+    assert.equal(discoverBrowserMcpServerName(dir), "browser-uat");
   });
 });
 

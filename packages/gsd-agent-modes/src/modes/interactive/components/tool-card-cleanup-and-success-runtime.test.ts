@@ -83,6 +83,31 @@ describe("Extension warning notifications", () => {
 		}
 	});
 
+	it("routes extension errors to the sticky blocker without duplicating chat output", () => {
+		const chat = new Container();
+		const blocker = new Container();
+		const host = {
+			chatContainer: chat,
+			blockingErrorContainer: blocker,
+			lastBlockingError: undefined,
+			ui: makeMockTUI(),
+		};
+
+		showExtensionNotify(host, "stranded work blocks auto-mode", "error");
+
+		assert.equal(host.lastBlockingError, "stranded work blocks auto-mode");
+		assert.match(
+			blocker.render(100).map(stripAnsi).join("\n"),
+			/Error: stranded work blocks auto-mode/,
+		);
+		assert.equal(
+			chat.render(100).map(stripAnsi).join("\n"),
+			"",
+			"extension error notifications must not duplicate the sticky blocker in chat",
+		);
+		assert.equal(host.ui.renderCount, 1);
+	});
+
 	it("preserves explicit ANSI styling in info notifications", () => {
 		const chat = new Container();
 		const styled = "\x1b[32mStyled external notice\x1b[0m";

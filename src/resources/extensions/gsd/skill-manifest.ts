@@ -111,6 +111,7 @@ const UNIT_TYPE_SKILL_MANIFEST: Record<string, string[]> = {
     "api-design",
   ],
   "run-uat": [
+    "gsd-browser",
     "verify-before-complete",
     "test",
     "review",

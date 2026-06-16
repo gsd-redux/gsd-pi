@@ -26,10 +26,10 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd stop          Stop auto-mode gracefully",
     "",
     "VISIBILITY",
-    `  /gsd status         Interactive 10-tab TUI  (${formattedShortcutPair("dashboard")})`,
+    `  /gsd status         Status dashboard  (${formattedShortcutPair("dashboard")})`,
     `  /gsd parallel watch Parallel monitor  (${formattedShortcutPair("parallel")})`,
     `  /gsd notifications  Notification history  (${formattedShortcutPair("notifications")})`,
-    "  /gsd visualize      Interactive 10-tab TUI",
+    "  /gsd visualize      Workflow visualizer",
     "  /gsd report         Generate all HTML reports and open browser",
     "  /gsd brief <mode>   Visual HTML brief (diagram, plan, diff, recap, table, slides)",
     "  /gsd queue          Show queued/dispatched units",
@@ -56,6 +56,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd keys           API key manager (LLM + tool keys)",
     "  /gsd doctor         Diagnose and repair .gsd/ state",
     "  /gsd closeout       Recover failed git closeout actions",
+    "  /gsd rebuild        Rebuild markdown projections from the DB  [markdown]",
     "",
     "Use /gsd help full for the complete command reference.",
   ];
@@ -80,10 +81,10 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd workflow       Custom workflow lifecycle  [new|run|list|validate|pause|resume]",
     "",
     "VISIBILITY",
-    `  /gsd status         Interactive 10-tab TUI  (${formattedShortcutPair("dashboard")})`,
+    `  /gsd status         Status dashboard  (${formattedShortcutPair("dashboard")})`,
     `  /gsd parallel watch Open parallel worker monitor  (${formattedShortcutPair("parallel")})`,
     "  /gsd widget         Cycle status widget  [full|small|min|off]",
-    "  /gsd visualize      Interactive 10-tab TUI (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
+    "  /gsd visualize      Workflow visualizer (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
     "  /gsd brief <mode>   Generate a visual HTML brief  [diagram|plan|diff|recap|table|slides] [topic] [--slides]",
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
@@ -138,7 +139,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd skill-health   Skill lifecycle dashboard",
     "  /gsd extensions     Manage extensions  [list|enable|disable|info]",
     "  /gsd fast           Toggle OpenAI service tier  [on|off|flex|status]",
-    "  /gsd mcp            MCP server management  [status|check|test|enable|disable|import|delete|init]",
+    "  /gsd mcp            MCP server management  [status|check|discover|test|enable|disable|import|delete|init]",
     "",
     "MAINTENANCE",
     "  /gsd doctor         Diagnose and repair .gsd/ state  [audit|fix|heal] [scope]",
@@ -147,6 +148,9 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd export         Alias for /gsd report",
     "  /gsd cleanup        Remove merged branches or snapshots  [branches|snapshots]",
     "  /gsd closeout       Recover failed git closeout actions  [status|retry|resolve] [unit-id]",
+    "  /gsd rebuild markdown  Rebuild markdown projections from the canonical DB",
+    "  /gsd rebuild database  Reserved for DB-native rebuilds; does not import markdown",
+    "  /gsd recover --confirm Import markdown into the DB after DB loss/corruption",
     "  /gsd worktree       Manage worktrees from the TUI  [list|merge|clean|remove]",
     "  /gsd migrate        Migrate .planning/ (v1) to DB-backed .gsd/ with backup + audit",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",
@@ -469,7 +473,7 @@ export async function handleCoreCommand(
     return true;
   }
   if (trimmed === "status") {
-    await handleVisualize(ctx);
+    await handleStatus(ctx);
     return true;
   }
   if (trimmed === "visualize") {

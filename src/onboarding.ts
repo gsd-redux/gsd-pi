@@ -110,7 +110,7 @@ export const OTHER_PROVIDERS = [
   { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
   { value: 'openrouter', label: 'OpenRouter', hint: '200+ models — openrouter.ai/keys' },
   { value: 'mistral', label: 'Mistral', hint: 'console.mistral.ai/api-keys' },
-  { value: 'minimax', label: 'MiniMax', hint: 'platform.minimax.io (Anthropic-compatible recommended)' },
+  { value: 'minimax', label: 'MiniMax', hint: 'platform.minimax.io (Anthropic-compatible)' },
   { value: 'minimax-cn', label: 'MiniMax CN', hint: 'api.minimaxi.com (Anthropic-compatible)' },
   { value: 'ollama-cloud', label: 'Ollama Cloud' },
   { value: 'custom-openai', label: 'Custom (OpenAI-compatible)', hint: 'Ollama, LM Studio, vLLM, proxies — see docs/providers.md' },
@@ -406,7 +406,7 @@ export async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: Au
   // This is the only TOS-compliant path for Anthropic subscription users.
   if (isClaudeCliReady()) {
     authOptions.push(
-      { value: 'claude-cli', label: 'Use Claude Code CLI', hint: 'recommended — uses your existing Claude subscription' },
+      { value: 'claude-cli', label: 'Use Claude Code CLI', hint: 'uses your existing Claude subscription' },
     )
   }
 

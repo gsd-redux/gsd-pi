@@ -212,6 +212,7 @@ export async function handleVerdict(
       remediationPlan: current.remediationPlan,
     },
     basePath,
+    parsed.verdict === "pass" ? { skipBrowserEvidenceGate: true } : undefined,
   );
 
   if (result.isError) {

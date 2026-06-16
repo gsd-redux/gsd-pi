@@ -205,10 +205,10 @@ Checks the authoritative database, refreshes `STATE.md` from derived database st
 Use this only when the database is missing, damaged, or known to be stale but the rendered milestone, slice, and task markdown on disk is the best available source:
 
 ```
-/gsd recover
+/gsd recover --confirm
 ```
 
-`/gsd recover` clears and reconstructs the database hierarchy tables from markdown, then derives state again to verify the result. Normal runtime does not silently import markdown projections, and worktree markdown is not synced back as authoritative state.
+`/gsd recover --confirm` clears and reconstructs the database hierarchy tables from markdown, then derives state again to verify the result. Normal runtime does not silently import markdown projections, and worktree markdown is not synced back as authoritative state.
 
 ## Getting Help
 

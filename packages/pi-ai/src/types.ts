@@ -10,6 +10,7 @@ export type KnownApi =
 	| "azure-openai-responses"
 	| "openai-codex-responses"
 	| "anthropic-messages"
+	| "anthropic-vertex"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-vertex";
@@ -23,6 +24,7 @@ export type ImagesApi = KnownImagesApi | (string & {});
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "anthropic"
+	| "anthropic-vertex"
 	| "google"
 	| "google-vertex"
 	| "openai"
@@ -621,7 +623,7 @@ export interface Model<TApi extends Api> {
 		? OpenAICompletionsCompat
 		: TApi extends "openai-responses"
 			? OpenAIResponsesCompat
-			: TApi extends "anthropic-messages"
+			: TApi extends "anthropic-messages" | "anthropic-vertex"
 				? AnthropicMessagesCompat
 				: never;
 	/** Provider-specific options passed through to stream handlers. */

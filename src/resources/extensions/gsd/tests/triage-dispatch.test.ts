@@ -16,6 +16,7 @@ import {
 } from "../captures.ts";
 import { checkPostUnitHooks } from "../post-unit-hooks.ts";
 import {
+  _shouldAttemptPlanRegenerationForTest,
   _shouldDispatchQuickTaskForTest,
   _shouldDispatchTriageForTest,
 } from "../auto-post-unit.ts";
@@ -47,6 +48,13 @@ function makeProject(): string {
 test("post-unit hooks exclude triage and quick-task units", () => {
   assert.equal(checkPostUnitHooks("triage-captures", "M001/S01/triage", "/tmp/project"), null);
   assert.equal(checkPostUnitHooks("quick-task", "M001/CAP-1", "/tmp/project"), null);
+});
+
+test("PLAN regeneration skips triage and quick-task sidecar unit ids", () => {
+  assert.equal(_shouldAttemptPlanRegenerationForTest("triage-captures", "M001/S01/triage"), false);
+  assert.equal(_shouldAttemptPlanRegenerationForTest("quick-task", "M001/CAP-test"), false);
+  assert.equal(_shouldAttemptPlanRegenerationForTest("research-slice", "M001/parallel-research"), false);
+  assert.equal(_shouldAttemptPlanRegenerationForTest("execute-task", "M001/S01/T01"), true);
 });
 
 test("triage dispatch guard excludes step mode, hook units, triage units, and quick tasks", () => {

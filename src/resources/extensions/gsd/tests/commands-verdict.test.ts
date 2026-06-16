@@ -286,7 +286,7 @@ test("handleVerdict pass override flips verdict and preserves sections", async (
   }
 });
 
-test("handleVerdict reports downgraded effective verdict after validation gates", async () => {
+test("handleVerdict pass override bypasses browser evidence gate", async () => {
   const base = makeBase();
   try {
     openTestDb(base);
@@ -302,15 +302,14 @@ test("handleVerdict reports downgraded effective verdict after validation gates"
     await handleVerdict("pass --milestone M001", ctx, base);
 
     const rewritten = readFileSync(validationPath, "utf-8");
-    assert.match(rewritten, /^verdict: needs-attention$/m, "browser gate should downgrade pass");
+    assert.match(rewritten, /^verdict: pass$/m, "manual verdict pass should persist");
     assert.ok(
-      calls.some((c) => c.kind === "warning" &&
-        /requested: pass, effective: needs-attention/.test(c.message)),
-      `expected downgraded effective verdict warning, got: ${JSON.stringify(calls)}`,
+      calls.some((c) => c.kind === "success" && /needs-attention.*->.*pass/.test(c.message)),
+      `expected pass override success notification, got: ${JSON.stringify(calls)}`,
     );
     assert.ok(
-      !calls.some((c) => c.kind === "success" && /->.*pass/.test(c.message)),
-      `must not report pass when effective verdict stayed needs-attention: ${JSON.stringify(calls)}`,
+      !calls.some((c) => c.kind === "warning" && /effective: needs-attention/.test(c.message)),
+      `manual pass override should not be downgraded by browser gate: ${JSON.stringify(calls)}`,
     );
   } finally {
     closeDatabase();

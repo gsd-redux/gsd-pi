@@ -13,16 +13,6 @@ GSD Pi is a local-first coding agent for planning, implementing, verifying, and 
 
 It combines a terminal agent, project workflow tools, worktree-aware Git automation, and optional UI integrations so a project can move from idea to reviewed implementation with less manual coordination.
 
-## Screenshots
-
-GSD runs as a terminal-first TUI with optional browser dashboard controls.
-
-![GSD TUI running an agent workflow](./docs/assets/screenshots/gsd-tui-agent-run.png)
-
-![GSD TUI progress dashboard](./docs/assets/screenshots/gsd-tui-progress-dashboard.png)
-
-![GSD TUI metrics dashboard](./docs/assets/screenshots/gsd-tui-metrics-dashboard.png)
-
 ## Feature Roll-Up
 
 - **Guided terminal agent** — Start with `gsd`, configure providers, and run planned or quick coding sessions from your shell.

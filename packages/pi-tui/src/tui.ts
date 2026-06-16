@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.js";
+import { isMouseEvent, type MouseEvent, parseMouseEvent } from "./mouse.js";
 import type { Terminal } from "./terminal.js";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
 import {
@@ -55,6 +56,16 @@ export interface Component {
 	 * Optional handler for keyboard input when component has focus
 	 */
 	handleInput?(data: string): void;
+
+	/**
+	 * Optional handler for mouse input (clicks and wheel).
+	 *
+	 * Coordinates are component-local and 0-based: `x` is the column and `y`
+	 * the row within this component's own rendered output. Container-style
+	 * components are responsible for translating coordinates before forwarding
+	 * to children.
+	 */
+	handleMouse?(event: MouseEvent): void;
 
 	/**
 	 * If true, component receives key release events (Kitty protocol).
@@ -234,6 +245,10 @@ export interface OverlayHandle {
 export class Container implements Component {
 	children: Component[] = [];
 
+	// Row range each child occupied at the last render, used to route mouse
+	// events to the child under the pointer.
+	private childRanges: { component: Component; start: number; lineCount: number }[] = [];
+
 	addChild(component: Component): void {
 		this.children.push(component);
 	}
@@ -264,13 +279,26 @@ export class Container implements Component {
 
 	render(width: number): string[] {
 		const lines: string[] = [];
+		this.childRanges = [];
 		for (const child of this.children) {
 			const childLines = child.render(width);
+			this.childRanges.push({ component: child, start: lines.length, lineCount: childLines.length });
 			for (const line of childLines) {
 				lines.push(line);
 			}
 		}
 		return lines;
+	}
+
+	handleMouse(event: MouseEvent): void {
+		// Children are stacked vertically at full width; find the one under the
+		// pointer and forward with row-local coordinates.
+		for (const range of this.childRanges) {
+			if (event.y >= range.start && event.y < range.start + range.lineCount) {
+				range.component.handleMouse?.({ ...event, y: event.y - range.start });
+				return;
+			}
+		}
 	}
 }
 
@@ -305,6 +333,10 @@ export class TUI extends Container {
 		process.platform !== "win32" && process.env.PI_DISABLE_SYNC_OUTPUT !== "1";
 	private _lastRenderedComponents: string[] | null = null;
 	private _lastFrameHadOverlays = false;
+	// Number of content lines in the last rendered frame. Content is bottom-
+	// aligned to the screen, so this lets dispatchMouse map a screen row back to
+	// a content line for hit-testing base (non-overlay) components.
+	private baseContentLineCount = 0;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -314,6 +346,18 @@ export class TUI extends Container {
 		preFocus: Component | null;
 		hidden: boolean;
 		focusOrder: number;
+	}[] = [];
+
+	// Screen regions (viewport-relative, 0-based) of overlays from the last
+	// render, used to hit-test mouse events. Refreshed by compositeOverlays.
+	private overlayRegions: {
+		component: Component;
+		row: number;
+		col: number;
+		width: number;
+		height: number;
+		focusOrder: number;
+		capturing: boolean;
 	}[] = [];
 
 	constructor(terminal: Terminal, showHardwareCursor?: boolean) {
@@ -611,6 +655,17 @@ export class TUI extends Container {
 			data = current;
 		}
 
+		// Mouse reports are dispatched by screen position, not to the focused
+		// component as keystrokes. Handle them before anything else so the raw
+		// escape sequence never leaks into a focused editor/input.
+		if (isMouseEvent(data)) {
+			const event = parseMouseEvent(data);
+			if (event) {
+				this.dispatchMouse(event);
+			}
+			return;
+		}
+
 		// Consume terminal cell size responses without blocking unrelated input.
 		if (this.consumeCellSizeResponse(data)) {
 			return;
@@ -646,6 +701,70 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(data);
 			this.requestRender();
 		}
+	}
+
+	/**
+	 * Route a mouse event to the component under the pointer.
+	 *
+	 * Capturing overlays (menus, settings, dialogs shown via showOverlay) render
+	 * at known screen positions and take precedence: the event is hit-tested
+	 * against the topmost matching region and forwarded with component-local
+	 * coordinates. A capturing overlay is modal, so a miss is swallowed rather
+	 * than leaking to the content beneath it.
+	 *
+	 * Otherwise the event targets base content. Rendered content is bottom-
+	 * aligned to the screen, so a screen row maps to a content line and the
+	 * event is routed through the component tree (Container/Box translate
+	 * coordinates to their children). Components without handleMouse — plain text,
+	 * spacers — simply ignore it.
+	 */
+	private dispatchMouse(event: MouseEvent): void {
+		// Convert 1-based terminal coordinates to 0-based viewport coordinates.
+		const screenRow = event.y - 1;
+		const screenCol = event.x - 1;
+
+		// Topmost capturing overlay first (highest focusOrder).
+		const regions = this.overlayRegions
+			.filter((r) => r.capturing)
+			.sort((a, b) => b.focusOrder - a.focusOrder);
+
+		for (const region of regions) {
+			const within =
+				screenRow >= region.row &&
+				screenRow < region.row + region.height &&
+				screenCol >= region.col &&
+				screenCol < region.col + region.width;
+			if (!within) continue;
+
+			if (region.component.handleMouse) {
+				// A press inside an overlay focuses it (mirrors keyboard focus).
+				if (event.type === "press" && this.focusedComponent !== region.component) {
+					this.setFocus(region.component);
+				}
+				region.component.handleMouse({
+					...event,
+					x: screenCol - region.col,
+					y: screenRow - region.row,
+				});
+				this.requestRender();
+			}
+			return;
+		}
+
+		// A capturing overlay is showing but the pointer is outside it: swallow.
+		if (regions.length > 0) {
+			return;
+		}
+
+		// Base content: translate the screen row to a content-line row.
+		if (this.baseContentLineCount <= 0) return;
+		const contentRow = screenRow + (this.baseContentLineCount - this.terminal.rows);
+		if (contentRow < 0) return;
+
+		// Container.handleMouse walks this.children using the row ranges recorded
+		// during render, forwarding to the component under the pointer.
+		this.handleMouse({ ...event, x: screenCol, y: contentRow });
+		this.requestRender();
 	}
 
 	private consumeCellSizeResponse(data: string): boolean {
@@ -808,6 +927,7 @@ export class TUI extends Container {
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
 	private compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
+		this.overlayRegions = [];
 		if (this.overlayStack.length === 0) return lines;
 		const result = [...lines];
 
@@ -836,6 +956,19 @@ export class TUI extends Container {
 			const { row, col } = this.resolveOverlayLayout(options, overlayLines.length, termWidth, termHeight);
 
 			rendered.push({ overlayLines, row, col, w: width });
+			// Record the on-screen region for mouse hit-testing. Overlays force the
+			// working area to at least the terminal height (see below), so the
+			// viewport is bottom-aligned to the screen and `row`/`col` are also the
+			// viewport-relative screen coordinates.
+			this.overlayRegions.push({
+				component,
+				row,
+				col,
+				width,
+				height: overlayLines.length,
+				focusOrder: entry.focusOrder,
+				capturing: !options?.nonCapturing,
+			});
 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
 		}
 
@@ -1036,7 +1169,10 @@ export class TUI extends Container {
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
 			newLines = this.compositeOverlays(newLines, width, height);
+		} else {
+			this.overlayRegions = [];
 		}
+		this.baseContentLineCount = newLines.length;
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);

@@ -1,13 +1,11 @@
 "use client"
 
-import { useState } from "react"
-import { CheckSquare, MessageSquare, Send, TextCursorInput, Type } from "lucide-react"
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react"
+import { Check, CheckSquare, MessageSquare, Send, TextCursorInput, Type } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   Sheet,
   SheetContent,
@@ -22,6 +20,7 @@ import {
   useGSDWorkspaceActions,
   useGSDWorkspaceState,
 } from "@/lib/gsd-workspace-store"
+import { clampSelectIndex, getSingleSelectKeyAction } from "@/lib/select-keyboard"
 import { cn } from "@/lib/utils"
 
 function methodIcon(method: PendingUiRequest["method"]) {
@@ -48,6 +47,7 @@ function methodLabel(method: PendingUiRequest["method"]): string {
     case "editor":
       return "Editor"
   }
+  return method
 }
 
 // --- Renderers for each blocking UI request type ---
@@ -62,26 +62,63 @@ function SelectRenderer({
   disabled: boolean
 }) {
   const isMulti = Boolean(request.allowMultiple)
-  const [singleValue, setSingleValue] = useState("")
-  const [multiValues, setMultiValues] = useState<Set<string>>(new Set())
+  const [singleIndex, setSingleIndex] = useState(() => clampSelectIndex(0, request.options.length))
+  const [multiValues, setMultiValues] = useState<Set<string>>(() => new Set())
+  const selectRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isMulti) {
+      requestAnimationFrame(() => selectRef.current?.focus())
+    }
+  }, [isMulti])
 
   const handleSubmit = () => {
     if (isMulti) {
       onSubmit({ value: Array.from(multiValues) })
     } else {
-      onSubmit({ value: singleValue })
+      const option = request.options[singleIndex]
+      if (option) onSubmit({ value: option })
     }
   }
 
-  const canSubmit = isMulti ? multiValues.size > 0 : singleValue !== ""
+  const submitSingleIndex = useCallback(
+    (index: number) => {
+      const option = request.options[index]
+      if (!option || disabled) return
+      setSingleIndex(index)
+      onSubmit({ value: option })
+    },
+    [disabled, onSubmit, request.options],
+  )
+
+  const handleSingleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (disabled) return
+      const action = getSingleSelectKeyAction(event.key, singleIndex, request.options.length)
+      if (action.type === "none") return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      if (action.type === "select") {
+        setSingleIndex(action.index)
+        return
+      }
+
+      submitSingleIndex(action.index)
+    },
+    [disabled, request.options.length, singleIndex, submitSingleIndex],
+  )
+
+  const canSubmit = isMulti ? multiValues.size > 0 : singleIndex >= 0
 
   if (isMulti) {
     return (
       <div className="space-y-4">
         <div className="space-y-2">
-          {request.options.map((option) => (
+          {request.options.map((option: string, index: number) => (
             <label
-              key={option}
+              key={`${option}-${index}`}
               className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
             >
               <Checkbox
@@ -111,19 +148,42 @@ function SelectRenderer({
 
   return (
     <div className="space-y-4">
-      <RadioGroup value={singleValue} onValueChange={setSingleValue} disabled={disabled}>
-        {request.options.map((option) => (
-          <label
-            key={option}
-            className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
-          >
-            <RadioGroupItem value={option} id={`select-${option}`} />
-            <Label htmlFor={`select-${option}`} className="cursor-pointer text-sm font-normal">
-              {option}
-            </Label>
-          </label>
-        ))}
-      </RadioGroup>
+      <div
+        ref={selectRef}
+        role="listbox"
+        tabIndex={0}
+        aria-activedescendant={singleIndex >= 0 ? `focused-select-option-${singleIndex}` : undefined}
+        onKeyDown={handleSingleKeyDown}
+        className="space-y-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {request.options.map((option: string, index: number) => {
+          const selected = index === singleIndex
+          return (
+            <button
+              key={`${option}-${index}`}
+              id={`focused-select-option-${index}`}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              onClick={() => submitSingleIndex(index)}
+              disabled={disabled}
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-left text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                selected
+                  ? "border-primary/40 bg-primary/10 text-primary"
+                  : "border-border hover:bg-accent/40",
+                disabled && "cursor-not-allowed opacity-60",
+              )}
+            >
+              <span className="w-4 shrink-0 text-center font-mono text-[11px] text-muted-foreground">
+                {index + 1}
+              </span>
+              <span className="min-w-0 flex-1">{option}</span>
+              {selected && <Check className="h-4 w-4 shrink-0" />}
+            </button>
+          )
+        })}
+      </div>
       <Button onClick={handleSubmit} disabled={disabled || !canSubmit} className="w-full">
         <Send className="h-4 w-4" />
         Submit
@@ -306,6 +366,7 @@ export function FocusedPanel() {
 
             <div className="flex-1 overflow-y-auto px-4 py-2">
               <RequestBody
+                key={current.id}
                 request={current}
                 onSubmit={handleSubmit}
                 onCancel={handleDismiss}

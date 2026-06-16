@@ -266,6 +266,43 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
     assert.match(validationMd, /Browser evidence gate/);
   });
 
+  it("does not require browser evidence for visible in non-browser prose", async () => {
+    base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({
+      id: "M001",
+      planning: {
+        successCriteria: [
+          "Priority scores visible in EmpireMemory",
+          "Profitability visible in haul task creation",
+        ],
+        verificationUat: "Run CLI checks and inspect memory state.",
+      },
+    });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      demo: "Priority scores visible in EmpireMemory after worker planning.",
+      planning: {
+        goal: "Expose runtime scoring in memory for operator inspection.",
+        successCriteria: "Memory fields are available for CLI inspection.",
+      },
+    });
+
+    const result = await handleValidateMilestone(
+      {
+        ...VALID_PARAMS,
+        verificationClasses:
+          `${VALID_PARAMS.verificationClasses}\n- UAT: CLI memory inspection complete`,
+      },
+      base,
+    );
+
+    assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+    assert.equal(result.verdict, "pass");
+  });
+
   it("keeps pass when browser criteria have persisted browser evidence", async () => {
     base = makeTmpBase();
     const dbPath = join(base, ".gsd", "gsd.db");

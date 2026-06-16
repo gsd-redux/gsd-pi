@@ -1905,10 +1905,42 @@ export function registerWorkflowTools(
   );
 
   server.tool(
+    "gsd_milestone_plan",
+    "Alias for gsd_plan_milestone. Write milestone planning state to the GSD database and render ROADMAP.md from DB.",
+    planMilestoneParams,
+    async (args: Record<string, unknown>) => {
+      logAliasUsage("gsd_milestone_plan", "gsd_plan_milestone");
+      const parsed = parseWorkflowArgs(planMilestoneSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_plan_milestone", projectDir, params.milestoneId);
+      const { executePlanMilestone } = await getWorkflowToolExecutors();
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir)),
+      );
+    },
+  );
+
+  server.tool(
     "gsd_plan_slice",
     "Write slice/task planning state to the GSD database and render plan artifacts from DB.",
     planSliceParams,
     async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(planSliceSchema, args);
+      const { projectDir, ...params } = parsed;
+      await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
+      const { executePlanSlice } = await getWorkflowToolExecutors();
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir)),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_slice_plan",
+    "Alias for gsd_plan_slice. Write slice/task planning state to the GSD database and render plan artifacts from DB.",
+    planSliceParams,
+    async (args: Record<string, unknown>) => {
+      logAliasUsage("gsd_slice_plan", "gsd_plan_slice");
       const parsed = parseWorkflowArgs(planSliceSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
@@ -2119,6 +2151,30 @@ export function registerWorkflowTools(
     "Save a GSD summary/research/context/assessment artifact to the database and disk. Omit milestone_id only for root-level PROJECT/PROJECT-DRAFT/REQUIREMENTS/REQUIREMENTS-DRAFT artifacts.",
     summarySaveParams,
     async (args: Record<string, unknown>) => {
+      const parsed = parseWorkflowArgs(summarySaveSchema, args);
+      const { projectDir, milestone_id, slice_id, task_id, artifact_type, content } = parsed;
+      await enforceWorkflowWriteGate("gsd_summary_save", projectDir, milestone_id ?? null);
+      const executors = await getWorkflowToolExecutors();
+      const supportedArtifactTypes = getSupportedSummaryArtifactTypes(executors);
+      if (!supportedArtifactTypes.includes(artifact_type)) {
+        throw new Error(
+          `artifact_type must be one of: ${supportedArtifactTypes.join(", ")}`,
+        );
+      }
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() =>
+          executors.executeSummarySave({ milestone_id, slice_id, task_id, artifact_type, content }, projectDir),
+        ),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_save_summary",
+    "Alias for gsd_summary_save. Save a GSD summary/research/context/assessment artifact to the database and disk.",
+    summarySaveParams,
+    async (args: Record<string, unknown>) => {
+      logAliasUsage("gsd_save_summary", "gsd_summary_save");
       const parsed = parseWorkflowArgs(summarySaveSchema, args);
       const { projectDir, milestone_id, slice_id, task_id, artifact_type, content } = parsed;
       await enforceWorkflowWriteGate("gsd_summary_save", projectDir, milestone_id ?? null);

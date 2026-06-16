@@ -24,14 +24,14 @@ export function StepWelcome({ onNext }: StepWelcomeProps) {
         <div className="relative mb-4 flex h-18 items-center justify-center">
           <Image
             src="/logo-white.svg"
-            alt="GSD"
+            alt="GSD-Pi Web"
             height={70}
             width={200}
             className="hidden dark:block"
           />
           <Image
             src="/logo-black.svg"
-            alt="GSD"
+            alt="GSD-Pi Web"
             height={70}
             width={200}
             className="dark:hidden"

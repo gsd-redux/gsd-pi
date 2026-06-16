@@ -23,6 +23,8 @@ interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** Detaches the abort listener from the caller's signal on resolution. */
+  removeAbortListener: () => void;
 }
 
 export interface GatewayToolCall {
@@ -153,11 +155,16 @@ export class RuntimeRegistry {
     };
 
     return new Promise((resolve, reject) => {
+      // Removes the abort listener so a long-lived signal reused across many
+      // calls doesn't retain a listener per resolved call.
+      const removeAbortListener = () => {
+        call.signal?.removeEventListener("abort", abort);
+      };
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        removeAbortListener();
         reject(new Error(`Timed out waiting for Local GSD Runtime response to ${call.toolName}`));
       }, 10 * 60 * 1000);
-      this.pending.set(requestId, { runtimeId: runtime.runtimeId, toolName: call.toolName, resolve, reject, timer });
 
       const abort = () => {
         this.send(runtime, { type: "cancel", requestId });
@@ -165,13 +172,22 @@ export class RuntimeRegistry {
         clearTimeout(timer);
         reject(new Error(`${call.toolName} cancelled by client`));
       };
+      this.pending.set(requestId, {
+        runtimeId: runtime.runtimeId,
+        toolName: call.toolName,
+        resolve,
+        reject,
+        timer,
+        removeAbortListener,
+      });
+
       if (call.signal?.aborted) return abort();
       call.signal?.addEventListener("abort", abort, { once: true });
 
       try {
         this.send(runtime, payload);
       } catch (err) {
-        call.signal?.removeEventListener("abort", abort);
+        removeAbortListener();
         this.pending.delete(requestId);
         clearTimeout(timer);
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -206,6 +222,7 @@ export class RuntimeRegistry {
       if (!pending) return;
       this.pending.delete(message.requestId);
       clearTimeout(pending.timer);
+      pending.removeAbortListener();
       if (message.error) pending.reject(new Error(message.error));
       else pending.resolve(message.result);
     }
@@ -223,6 +240,7 @@ export class RuntimeRegistry {
       if (pending.runtimeId !== runtimeId) continue;
       this.pending.delete(requestId);
       clearTimeout(pending.timer);
+      pending.removeAbortListener();
       pending.reject(new Error(`${message} while waiting for ${pending.toolName}`));
     }
   }

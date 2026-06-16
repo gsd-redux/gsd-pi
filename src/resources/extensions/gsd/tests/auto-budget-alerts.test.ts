@@ -9,6 +9,10 @@ import {
   resolveCompactionThresholdPercent,
   shouldRerootStepSessionForContext,
 } from "../auto.js";
+import {
+  getUnitCostSpikeAction,
+  resolveUnitCostSpikeMultiplier,
+} from "../auto-budget.js";
 
 test("getBudgetAlertLevel returns the expected threshold bucket", () => {
   assert.equal(getBudgetAlertLevel(0.10), 0);
@@ -74,4 +78,32 @@ test("shouldRerootStepSessionForContext uses compaction threshold pref", () => {
   assert.equal(shouldRerootStepSessionForContext(60, 0.6), true);
   assert.equal(shouldRerootStepSessionForContext(273.8, 0.6), true);
   assert.equal(shouldRerootStepSessionForContext(undefined, 0.6), false);
+});
+
+test("resolveUnitCostSpikeMultiplier disables the spike pause for burn-max", () => {
+  // burn-max -> Infinity, and getUnitCostSpikeAction treats a non-finite
+  // multiplier as "none" (no pause) regardless of how large the spike is.
+  const m = resolveUnitCostSpikeMultiplier({ token_profile: "burn-max" });
+  assert.equal(m, Infinity);
+  assert.equal(getUnitCostSpikeAction(40, 1, m), "none");
+});
+
+test("resolveUnitCostSpikeMultiplier honors an explicit unit_cost_spike_multiplier", () => {
+  const m = resolveUnitCostSpikeMultiplier({ unit_cost_spike_multiplier: 10 });
+  assert.equal(m, 10);
+  // 4x spike is below the configured 10x threshold -> no pause.
+  assert.equal(getUnitCostSpikeAction(4, 1, m), "none");
+  // 11x spike is at/above 10x -> pause.
+  assert.equal(getUnitCostSpikeAction(11, 1, m), "pause");
+});
+
+test("resolveUnitCostSpikeMultiplier defaults to 3.0 and still pauses at >=3x", () => {
+  assert.equal(resolveUnitCostSpikeMultiplier(undefined), 3.0);
+  assert.equal(resolveUnitCostSpikeMultiplier({}), 3.0);
+  // Non-positive / non-finite explicit values fall back to the 3.0 default.
+  assert.equal(resolveUnitCostSpikeMultiplier({ unit_cost_spike_multiplier: 0 }), 3.0);
+  const m = resolveUnitCostSpikeMultiplier({});
+  // Default profile still pauses on a 3x spike.
+  assert.equal(getUnitCostSpikeAction(3, 1, m), "pause");
+  assert.equal(getUnitCostSpikeAction(2.9, 1, m), "none");
 });

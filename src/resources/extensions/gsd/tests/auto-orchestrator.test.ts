@@ -1246,6 +1246,92 @@ test("wired DispatchAdapter forwards constructor session when advance input omit
   }
 });
 
+test("wired DispatchAdapter adopts next active milestone after the session milestone is closed", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-milestone-adopt-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const stateSnapshot: GSDState = {
+    ...makeState(),
+    activeMilestone: { id: "M002", title: "Next" },
+    registry: [
+      { id: "M001", title: "First", status: "complete" },
+      { id: "M002", title: "Next", status: "active" },
+    ],
+  };
+  const captured: DispatchContext[] = [];
+  const captureRule: UnifiedRule = {
+    name: "test-milestone-adoption",
+    when: "dispatch",
+    evaluation: "first-match",
+    where: async (ctx: DispatchContext) => {
+      captured.push(ctx);
+      return {
+        action: "dispatch" as const,
+        unitType: "execute-task",
+        unitId: "M002/S01/T01",
+        prompt: "adopted-milestone-fixture",
+      };
+    },
+    then: (r: unknown) => r,
+  };
+  setRegistry(new RuleRegistry([captureRule]));
+
+  try {
+    const ctx = { model: {}, modelRegistry: { getAll: () => [] } } as any;
+    const pi = { getActiveTools: () => [] } as any;
+    const session = {
+      basePath: base,
+      originalBasePath: base,
+      currentMilestoneId: "M001",
+    } as any;
+    const adapter = createWiredDispatchAdapter(ctx, pi, base, session);
+
+    const result = await adapter.decideNextUnit({ stateSnapshot });
+
+    assert.ok(result);
+    if (!("unitType" in result)) assert.fail(`expected dispatch decision, got ${JSON.stringify(result)}`);
+    assert.equal(result.unitId, "M002/S01/T01");
+    assert.equal(session.currentMilestoneId, "M002");
+    assert.equal(captured[0]?.session?.currentMilestoneId, "M002");
+  } finally {
+    resetRegistry();
+  }
+});
+
+test("wired DispatchAdapter keeps blocking stale milestone worktree scope", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-worktree-block-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const stateSnapshot: GSDState = {
+    ...makeState(),
+    activeMilestone: { id: "M002", title: "Next" },
+    registry: [
+      { id: "M001", title: "First", status: "complete" },
+      { id: "M002", title: "Next", status: "active" },
+    ],
+  };
+  const worktreePath = join(base, ".gsd", "worktrees", "M001");
+  mkdirSync(worktreePath, { recursive: true });
+  const ctx = { model: {}, modelRegistry: { getAll: () => [] } } as any;
+  const pi = { getActiveTools: () => [] } as any;
+  const session = {
+    basePath: worktreePath,
+    originalBasePath: base,
+    currentMilestoneId: "M001",
+  } as any;
+  const adapter = createWiredDispatchAdapter(ctx, pi, base, session);
+
+  const result = await adapter.decideNextUnit({ stateSnapshot });
+
+  assert.deepEqual(result, {
+    kind: "blocked",
+    reason:
+      'Dispatch milestone mismatch: context mid "M002" does not match session.currentMilestoneId "M001". The active worktree/session and derived project state disagree; recover, park, or discard the stranded milestone before continuing.',
+    action: "pause",
+  });
+  assert.equal(session.currentMilestoneId, "M001");
+});
+
 test("wired DispatchAdapter replays pending verification retry dispatch", async () => {
   const stateSnapshot = makeState();
   const ctx = { model: {}, modelRegistry: { getAll: () => [] } } as any;

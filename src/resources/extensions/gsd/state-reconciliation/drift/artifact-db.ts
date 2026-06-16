@@ -434,7 +434,8 @@ export function repairArtifactDbDrift(
     `Artifact/DB status drift in ${record.milestoneId}` +
       `${record.sliceId ? `/${record.sliceId}` : ""}` +
       `${record.taskId ? `/${record.taskId}` : ""}: ${record.reason}. ` +
-      "Runtime will not silently import completion artifacts into DB state; run explicit recovery/repair after review.",
+      "Runtime will not silently import completion artifacts into DB state. " +
+      "Run `/gsd rebuild markdown` after review to quarantine stale projections and re-render from the DB; use `/gsd recover --confirm` only when markdown should repopulate a lost or corrupt DB.",
   );
 }
 
@@ -461,7 +462,8 @@ export function describeArtifactDbDriftBlocker(
     `Artifact/DB status drift in ${record.milestoneId}` +
     `${record.sliceId ? `/${record.sliceId}` : ""}` +
     `${record.taskId ? `/${record.taskId}` : ""}: ${record.reason}. ` +
-    "Runtime will not silently import completion artifacts into DB state; run explicit recovery/repair after review."
+    "Runtime will not silently import completion artifacts into DB state. " +
+    "Run `/gsd rebuild markdown` after review to quarantine stale projections and re-render from the DB; use `/gsd recover --confirm` only when markdown should repopulate a lost or corrupt DB."
   );
 }
 

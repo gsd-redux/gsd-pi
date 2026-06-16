@@ -15,6 +15,29 @@ interface WorkflowMcpAutoPrepContext {
   ui?: Pick<ExtensionContext["ui"], "notify">;
 }
 
+interface WorkflowMcpAutoPrepModel {
+  provider?: string;
+  baseUrl?: string;
+}
+
+function withModelOverride(
+  ctx: WorkflowMcpAutoPrepContext,
+  modelOverride: WorkflowMcpAutoPrepModel | null | undefined,
+): WorkflowMcpAutoPrepContext {
+  if (!modelOverride) return ctx;
+
+  const provider = modelOverride.provider ?? ctx.model?.provider;
+  return {
+    model: {
+      provider,
+      baseUrl: modelOverride.baseUrl
+        ?? (provider === ctx.model?.provider ? ctx.model?.baseUrl : undefined),
+    },
+    modelRegistry: ctx.modelRegistry,
+    ui: ctx.ui,
+  };
+}
+
 function getAuthModeSafe(
   ctx: WorkflowMcpAutoPrepContext,
   provider: string | undefined,
@@ -35,23 +58,26 @@ export function shouldAutoPrepareWorkflowMcp(ctx: WorkflowMcpAutoPrepContext): b
   const authMode = getAuthModeSafe(ctx, provider);
 
   if (provider !== "claude-code") return false;
+  if (authMode === undefined) return true;
   return usesWorkflowMcpTransport(authMode as any, baseUrl) || authMode === "externalCli";
 }
 
 export function prepareWorkflowMcpForProject(
   ctx: WorkflowMcpAutoPrepContext,
   projectRoot: string,
+  modelOverride?: WorkflowMcpAutoPrepModel | null,
 ): EnsureProjectWorkflowMcpConfigResult | null {
-  if (!shouldAutoPrepareWorkflowMcp(ctx)) return null;
+  const prepCtx = withModelOverride(ctx, modelOverride);
+  if (!shouldAutoPrepareWorkflowMcp(prepCtx)) return null;
 
   try {
     const result = ensureProjectWorkflowMcpConfig(projectRoot);
     if (result.status !== "unchanged") {
-      ctx.ui?.notify?.(`Claude Code MCP prepared at ${result.configPath}`, "info");
+      prepCtx.ui?.notify?.(`Claude Code MCP prepared at ${result.configPath}`, "info");
     }
     return result;
   } catch (err) {
-    ctx.ui?.notify?.(
+    prepCtx.ui?.notify?.(
       `Claude Code MCP prep failed: ${err instanceof Error ? err.message : String(err)}. Detected Claude Code model but no workflow MCP. Please run /gsd mcp init . from your project root.`,
       "warning",
     );

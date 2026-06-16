@@ -94,7 +94,7 @@ export function StatusBar() {
           {isConnecting ? (
             <Skeleton className="h-3 w-20" />
           ) : (
-            <span className="font-mono">{branch}</span>
+            <span className="font-mono tabular-nums">{branch}</span>
           )}
         </div>
         <div className="hidden lg:flex items-center gap-1.5 text-muted-foreground">
@@ -144,15 +144,15 @@ export function StatusBar() {
       <div className="flex min-w-0 items-center gap-2 md:gap-4">
         <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
           <Clock className="h-3 w-3" />
-          {isConnecting ? <Skeleton className="h-3 w-8" /> : <span>{formatProjectDuration(projectTotals?.duration ?? auto?.elapsed ?? 0)}</span>}
+          {isConnecting ? <Skeleton className="h-3 w-8" /> : <span className="tabular-nums">{formatProjectDuration(projectTotals?.duration ?? auto?.elapsed ?? 0)}</span>}
         </div>
         <div className="hidden sm:flex items-center gap-1.5 text-muted-foreground">
           <Zap className="h-3 w-3" />
-          {isConnecting ? <Skeleton className="h-3 w-6" /> : <span>{formatTokenCount(projectTotals?.tokens.total ?? auto?.totalTokens ?? 0)}</span>}
+          {isConnecting ? <Skeleton className="h-3 w-6" /> : <span className="tabular-nums">{formatTokenCount(projectTotals?.tokens.total ?? auto?.totalTokens ?? 0)}</span>}
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <DollarSign className="h-3 w-3" />
-          {isConnecting ? <Skeleton className="h-3 w-10" /> : <span>{formatProjectCost(projectTotals?.cost ?? auto?.totalCost ?? 0)}</span>}
+          {isConnecting ? <Skeleton className="h-3 w-10" /> : <span className="tabular-nums">{formatProjectCost(projectTotals?.cost ?? auto?.totalCost ?? 0)}</span>}
         </div>
         <span className="hidden sm:inline max-w-[20rem] truncate text-muted-foreground" data-testid="status-bar-unit">
           {isConnecting ? <Skeleton className="inline-block h-3 w-28 align-middle" /> : <ScopeBadgeInline label={unitLabel} />}

@@ -77,8 +77,8 @@ function MetricCard({ label, value, subtext, icon }: MetricCardProps) {
             </>
           ) : (
             <>
-              <p className="mt-1 truncate text-2xl font-semibold tracking-tight">{value}</p>
-              {subtext && <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtext}</p>}
+              <p className="mt-1 truncate text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+              {subtext && <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">{subtext}</p>}
             </>
           )}
         </div>
@@ -256,7 +256,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
           {!isConnecting && branch && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <GitBranch className="h-4 w-4" />
-              <span className="font-mono">{branch}</span>
+              <span className="font-mono tabular-nums">{branch}</span>
             </div>
           )}
         </div>
@@ -345,11 +345,11 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                   <div className="mt-3">
                     <div className="h-1 w-full overflow-hidden rounded-full bg-accent">
                       <div
-                        className="h-full rounded-full transition-all duration-500"
+                        className="h-full rounded-full transition-[width,background-color] duration-500"
                         style={{ width: `${progressPercent}%`, backgroundColor: getProgressColor(progressPercent) }}
                       />
                     </div>
-                    <p className="mt-1.5 text-xs text-muted-foreground">{doneTasks} of {totalTasks} tasks complete</p>
+                    <p className="mt-1.5 text-xs text-muted-foreground tabular-nums">{doneTasks} of {totalTasks} tasks complete</p>
                   </div>
                 )}
               </div>
@@ -417,7 +417,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
               <div className="divide-y divide-border">
                 {recentLines.map((line) => (
                   <div key={line.id} className="flex items-center gap-3 px-4 py-2.5">
-                    <span className="w-16 flex-shrink-0 font-mono text-xs text-muted-foreground">
+                    <span className="w-16 flex-shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
                       {line.timestamp}
                     </span>
                     <span

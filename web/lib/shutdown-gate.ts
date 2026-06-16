@@ -74,6 +74,24 @@ export function drainStreams(): void {
 
 function handleForcedExit(): void {
   drainStreams();
+  // Reclaim per-project RPC bridge child processes so they don't survive the
+  // server. Fire-and-forget here — a SIGTERM may not leave time to await.
+  void reclaimProjectBridges();
+}
+
+/**
+ * Best-effort teardown of all project bridges (and their RPC child processes).
+ * The bridge module is imported lazily so this lifecycle module doesn't pull the
+ * bridge graph at load time (keeps it loadable under the web package's bare
+ * --experimental-strip-types test runner, and out of the early server boot path).
+ */
+async function reclaimProjectBridges(): Promise<void> {
+  try {
+    const { disposeAllProjectBridges } = await import("../../src/web/bridge-service.ts");
+    await disposeAllProjectBridges();
+  } catch {
+    // best-effort; never let bridge teardown block shutdown
+  }
 }
 
 type HotDisposeApi = {
@@ -159,7 +177,9 @@ export function scheduleShutdown(): void {
     }
 
     drainStreams();
-    process.exit(0);
+    // Reclaim bridges (and their RPC children) before exiting so they aren't
+    // orphaned, then exit once teardown settles (or fails — never block exit).
+    void reclaimProjectBridges().finally(() => process.exit(0));
   }, SHUTDOWN_DELAY_MS);
 }
 

@@ -754,7 +754,7 @@ test("claude-code ExternalCli provider is recognized as configured and unlocks o
   assert.equal(claudeCodeProvider.supports.externalCli, true);
   assert.equal(claudeCodeProvider.supports.apiKey, false);
   assert.equal(claudeCodeProvider.supports.oauth, false);
-  assert.equal(claudeCodeProvider.recommended, true);
+  assert.equal(claudeCodeProvider.recommended, false);
 });
 
 test("ExternalCli auth sentinels do not unlock onboarding when CLI is missing", async (t) => {

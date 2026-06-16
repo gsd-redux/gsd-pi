@@ -1,0 +1,19 @@
+name: Setup Linux native build dependencies
+description: Install system headers used when native npm packages fall back to source builds.
+
+runs:
+  using: composite
+  steps:
+    - name: Install native build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y \
+          pkg-config \
+          libcairo2-dev \
+          libpango1.0-dev \
+          libjpeg-dev \
+          libgif-dev \
+          librsvg2-dev \
+          libpixman-1-dev

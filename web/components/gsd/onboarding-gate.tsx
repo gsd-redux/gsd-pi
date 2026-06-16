@@ -66,7 +66,7 @@ function StepIndicator({ current, total }: { current: number; total: number }) {
         <div
           key={i}
           className={cn(
-            "rounded-full transition-all duration-300",
+            "rounded-full transition-[width,background-color] duration-300",
             i === current
               ? "h-1.5 w-5 bg-foreground"
               : i < current
@@ -167,8 +167,8 @@ export function OnboardingGate() {
       <header className="relative z-10 flex h-12 shrink-0 items-center justify-between px-5 md:px-8">
         {/* Left — logo */}
         <div className="flex w-24 items-center gap-2">
-          <Image src="/logo-white.svg" alt="GSD" width={57} height={16} className="hidden h-4 w-auto dark:block" />
-          <Image src="/logo-black.svg" alt="GSD" width={57} height={16} className="h-4 w-auto dark:hidden" />
+          <Image src="/logo-white.svg" alt="GSD-Pi Web" width={57} height={16} className="hidden h-4 w-auto dark:block" />
+          <Image src="/logo-black.svg" alt="GSD-Pi Web" width={57} height={16} className="h-4 w-auto dark:hidden" />
         </div>
 
         {/* Center — step indicator */}

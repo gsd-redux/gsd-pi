@@ -1,5 +1,6 @@
 import { fuzzyFilter } from "../fuzzy.js";
 import { getKeybindings } from "../keybindings.js";
+import type { MouseEvent } from "../mouse.js";
 import type { Component } from "../tui.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.js";
 import { Input } from "./input.js";
@@ -46,6 +47,13 @@ export class SettingsList implements Component {
 	private submenuComponent: Component | null = null;
 	private submenuItemIndex: number | null = null;
 
+	// Layout of the most recently rendered main list, used to map a clicked row
+	// back to an item: items start at row `itemRowStart` and there are
+	// `viewItemCount` of them, beginning at item index `viewStartIndex`.
+	private itemRowStart = 0;
+	private viewStartIndex = 0;
+	private viewItemCount = 0;
+
 	constructor(
 		items: SettingItem[],
 		maxVisible: number,
@@ -90,6 +98,11 @@ export class SettingsList implements Component {
 	private renderMainList(width: number): string[] {
 		const lines: string[] = [];
 
+		// Reset click-mapping state; updated below once items are laid out.
+		this.itemRowStart = 0;
+		this.viewStartIndex = 0;
+		this.viewItemCount = 0;
+
 		if (this.searchEnabled && this.searchInput) {
 			lines.push(...this.searchInput.render(width));
 			lines.push("");
@@ -116,6 +129,11 @@ export class SettingsList implements Component {
 			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), displayItems.length - this.maxVisible),
 		);
 		const endIndex = Math.min(startIndex + this.maxVisible, displayItems.length);
+
+		// Record where items begin and the visible window for mouse hit-testing.
+		this.itemRowStart = lines.length;
+		this.viewStartIndex = startIndex;
+		this.viewItemCount = endIndex - startIndex;
 
 		// Calculate max label width for alignment
 		const maxLabelWidth = Math.min(30, Math.max(...this.items.map((item) => visibleWidth(item.label))));
@@ -193,6 +211,37 @@ export class SettingsList implements Component {
 			}
 			this.searchInput.handleInput(sanitized);
 			this.applyFilter(this.searchInput.getValue());
+		}
+	}
+
+	handleMouse(event: MouseEvent): void {
+		// Submenu owns the full overlay area; forward with unchanged coordinates
+		// (render() returns the submenu's lines directly, so there is no offset).
+		if (this.submenuComponent) {
+			this.submenuComponent.handleMouse?.(event);
+			return;
+		}
+
+		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
+		if (displayItems.length === 0) return;
+
+		// Wheel moves the selection (with wrap, matching arrow-key behavior).
+		if (event.button === "wheel-up") {
+			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
+			return;
+		}
+		if (event.button === "wheel-down") {
+			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
+			return;
+		}
+
+		// Left click on a visible row selects and activates that item.
+		if (event.type === "press" && event.button === "left") {
+			const itemRow = event.y - this.itemRowStart;
+			if (itemRow >= 0 && itemRow < this.viewItemCount) {
+				this.selectedIndex = this.viewStartIndex + itemRow;
+				this.activateItem();
+			}
 		}
 	}
 

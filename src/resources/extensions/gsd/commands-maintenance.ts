@@ -1,11 +1,14 @@
 /**
  * GSD Maintenance — cleanup, skip, dry-run, and recover handlers.
  *
- * Contains: handleCleanupBranches, handleCleanupSnapshots, handleCleanupWorktrees, handleSkip, handleDryRun, handleRecover
+ * Contains: handleCleanupBranches, handleCleanupSnapshots, handleCleanupWorktrees, handleSkip, handleDryRun, handleRecover, handleRebuild
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { deriveState } from "./state.js";
+import { gsdProjectionRoot, gsdRoot } from "./paths.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
 
@@ -478,6 +481,39 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
   ctx.ui.notify(lines.join("\n"), "info");
 }
 
+function recoverConfirmed(args: string): boolean {
+  return args
+    .split(/\s+/)
+    .map((part) => part.trim().toLowerCase())
+    .some((part) => part === "--confirm" || part === "--yes" || part === "confirm");
+}
+
+async function confirmRecover(ctx: ExtensionCommandContext, args: string): Promise<boolean> {
+  if (recoverConfirmed(args)) return true;
+
+  const warning = [
+    "gsd recover imports markdown into the database.",
+    "It clears and reconstructs milestone, slice, and task hierarchy rows from rendered markdown.",
+    "Use /gsd rebuild markdown for normal DB-to-markdown realignment.",
+  ].join("\n");
+
+  if (typeof ctx.ui.confirm === "function") {
+    const confirmed = await ctx.ui.confirm(
+      "Import markdown into the DB?",
+      `${warning}\n\nContinue only if the DB is lost or corrupt and markdown is the source you intend to import.`,
+    );
+    if (confirmed) return true;
+    ctx.ui.notify("gsd recover cancelled. No database changes made.", "info");
+    return false;
+  }
+
+  ctx.ui.notify(
+    `${warning}\n\nNo database changes made. Re-run /gsd recover --confirm to proceed.`,
+    "warning",
+  );
+  return false;
+}
+
 /**
  * `gsd recover` — Reconstruct DB hierarchy state from rendered markdown on disk.
  *
@@ -487,7 +523,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
  *
  * Prints counts of recovered items and the resulting project phase.
  */
-export async function handleRecover(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
+export async function handleRecover(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
   const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction } = await import("./gsd-db.js");
   const { migrateHierarchyToDb } = await import("./md-importer.js");
   const { invalidateStateCache } = await import("./state.js");
@@ -496,6 +532,8 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
     ctx.ui.notify("gsd recover: No database open. Run a GSD command first to initialize the DB.", "error");
     return;
   }
+
+  if (!(await confirmRecover(ctx, args))) return;
 
   try {
     // 1. Delete + re-populate inside a single transaction for atomicity.
@@ -540,5 +578,162 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
     const msg = err instanceof Error ? err.message : String(err);
     logWarning("command", `recover failed: ${msg}`);
     ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
+  }
+}
+
+function normalizeArtifactPath(value: string): string {
+  return value.replace(/\\/g, "/");
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel.length === 0 || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function artifactPathForDb(basePath: string, absPath: string): string {
+  const projectionRoot = gsdProjectionRoot(basePath);
+  const root = pathWithin(projectionRoot, absPath) ? projectionRoot : gsdRoot(basePath);
+  return normalizeArtifactPath(relative(root, absPath));
+}
+
+function quarantineRelativePath(basePath: string, absPath: string): string {
+  for (const root of [gsdProjectionRoot(basePath), gsdRoot(basePath)]) {
+    if (pathWithin(root, absPath)) {
+      return normalizeArtifactPath(relative(root, absPath));
+    }
+  }
+  return normalizeArtifactPath(absPath.replace(/^[/\\]+/, ""));
+}
+
+function uniquePath(path: string): string {
+  if (!existsSync(path)) return path;
+  let idx = 2;
+  while (existsSync(`${path}.${idx}`)) idx++;
+  return `${path}.${idx}`;
+}
+
+function resolveDiskArtifactPath(basePath: string, artifactPath: string): string {
+  if (isAbsolute(artifactPath)) return artifactPath;
+  const candidates = [
+    join(gsdProjectionRoot(basePath), artifactPath),
+    join(gsdRoot(basePath), artifactPath),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
+}
+
+function quarantineProjectionFile(basePath: string, absPath: string, stamp: string): string {
+  const rel = quarantineRelativePath(basePath, absPath);
+  const target = uniquePath(join(gsdProjectionRoot(basePath), "quarantine", "projections", stamp, rel));
+  mkdirSync(dirname(target), { recursive: true });
+  renameSync(absPath, target);
+  return target;
+}
+
+type RebuildTarget = "markdown" | "database" | "usage";
+
+function parseRebuildTarget(args: string): RebuildTarget {
+  const trimmed = args.trim().toLowerCase();
+  if (!trimmed || trimmed === "markdown") return "markdown";
+  if (trimmed === "database" || trimmed === "db") return "database";
+  return "usage";
+}
+
+/**
+ * `gsd rebuild markdown` — Re-render markdown projections from the authoritative DB.
+ *
+ * This is the DB-first realignment command. It does not import markdown into
+ * the DB. Completion SUMMARY files that contradict open DB rows are preserved
+ * under `.gsd/quarantine/projections/` before DB projections are rendered.
+ */
+export async function handleRebuild(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
+  const { isDbAvailable: dbAvailable, deleteArtifactByPath } = await import("./gsd-db.js");
+  const { detectArtifactDbDrift } = await import("./state-reconciliation/drift/artifact-db.js");
+  const { renderAllFromDb } = await import("./markdown-renderer.js");
+  const { invalidateStateCache } = await import("./state.js");
+
+  const target = parseRebuildTarget(args);
+  if (target === "usage") {
+    ctx.ui.notify(
+      [
+        "Usage:",
+        "  /gsd rebuild markdown   Rebuild markdown projections from the canonical DB",
+        "  /gsd rebuild database   Reserved for DB-native rebuilds; does not import markdown",
+      ].join("\n"),
+      "warning",
+    );
+    return;
+  }
+
+  if (target === "database") {
+    ctx.ui.notify(
+      [
+        "gsd rebuild database is reserved for DB-native rebuilds.",
+        "It will not import markdown projections into the DB.",
+        "For normal realignment, run /gsd rebuild markdown.",
+        "If the DB is lost or corrupt and markdown is the source to import, run /gsd recover --confirm.",
+      ].join("\n"),
+      "warning",
+    );
+    return;
+  }
+
+  if (!dbAvailable()) {
+    ctx.ui.notify("gsd rebuild markdown: No database open. Run a GSD command first to initialize the DB.", "error");
+    return;
+  }
+
+  try {
+    invalidateStateCache();
+    const state = await deriveState(basePath);
+    const drifts = detectArtifactDbDrift(state, { basePath, state });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const quarantined: string[] = [];
+    const seen = new Set<string>();
+
+    for (const drift of drifts) {
+      if (drift.kind !== "artifact-db-status-divergence") continue;
+      if (drift.artifactType !== "SUMMARY" || !drift.artifactPath) continue;
+      const absPath = resolveDiskArtifactPath(basePath, drift.artifactPath);
+      if (seen.has(absPath) || !existsSync(absPath)) continue;
+      seen.add(absPath);
+      const artifactDbPath = artifactPathForDb(basePath, absPath);
+      const target = quarantineProjectionFile(basePath, absPath, stamp);
+      deleteArtifactByPath(artifactDbPath);
+      quarantined.push(target);
+    }
+
+    const rendered = await renderAllFromDb(basePath);
+    invalidateStateCache();
+
+    const lines = [
+      "gsd rebuild markdown: rebuilt markdown projections from the canonical DB",
+      `  Rendered:    ${rendered.rendered}`,
+      `  Skipped:     ${rendered.skipped}`,
+      `  Quarantined: ${quarantined.length}`,
+    ];
+    if (rendered.errors.length > 0) {
+      lines.push(`  Errors:      ${rendered.errors.length}`);
+      for (const err of rendered.errors.slice(0, 5)) {
+        lines.push(`    - ${err}`);
+      }
+      if (rendered.errors.length > 5) {
+        lines.push(`    - ${rendered.errors.length - 5} more`);
+      }
+    }
+    if (quarantined.length > 0) {
+      lines.push("", "  Quarantine:");
+      for (const target of quarantined.slice(0, 5)) {
+        lines.push(`    - ${target}`);
+      }
+      if (quarantined.length > 5) {
+        lines.push(`    - ${quarantined.length - 5} more`);
+      }
+    }
+
+    ctx.ui.notify(lines.join("\n"), rendered.errors.length > 0 ? "warning" : "success");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logWarning("command", `rebuild failed: ${msg}`);
+    ctx.ui.notify(`gsd rebuild failed: ${msg}`, "error");
   }
 }

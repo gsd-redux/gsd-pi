@@ -5,7 +5,7 @@
  * Pure functions — no module state or side effects.
  */
 
-import type { BudgetEnforcementMode } from "./types.js";
+import type { BudgetEnforcementMode, TokenProfile } from "./types.js";
 
 export type BudgetAlertLevel = 0 | 75 | 80 | 90 | 100;
 
@@ -42,6 +42,22 @@ export function getUnitCostSpikeAction(
   if (!Number.isFinite(rollingAvgUsd) || rollingAvgUsd <= 0) return "none";
   if (!Number.isFinite(multiplier) || multiplier <= 0) return "none";
   return unitCostUsd >= (rollingAvgUsd * multiplier) ? "pause" : "none";
+}
+
+/**
+ * Resolve the rolling-average cost-spike multiplier for `getUnitCostSpikeAction`
+ * from preferences. The `burn-max` token profile opts out of the spike pause
+ * entirely (returns Infinity, which `getUnitCostSpikeAction` treats as "none").
+ * An explicit finite, positive `unit_cost_spike_multiplier` overrides the
+ * default; otherwise the default of 3.0 applies.
+ */
+export function resolveUnitCostSpikeMultiplier(
+  prefs: { token_profile?: TokenProfile; unit_cost_spike_multiplier?: number } | null | undefined,
+): number {
+  if (prefs?.token_profile === "burn-max") return Infinity;
+  const override = prefs?.unit_cost_spike_multiplier;
+  if (typeof override === "number" && Number.isFinite(override) && override > 0) return override;
+  return 3.0;
 }
 
 export function getContextPauseAction(

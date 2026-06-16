@@ -7,11 +7,17 @@ const EXPECTED_ADAPTIVE_THINKING_MODELS = [
 	"anthropic/claude-opus-4-7",
 	"anthropic/claude-opus-4-8",
 	"anthropic/claude-sonnet-4-6",
+	"anthropic-vertex/claude-opus-4-6",
+	"anthropic-vertex/claude-opus-4-7",
+	"anthropic-vertex/claude-opus-4-8",
+	"anthropic-vertex/claude-sonnet-4-6",
 	"cloudflare-ai-gateway/claude-opus-4-6",
 	"cloudflare-ai-gateway/claude-opus-4-7",
+	"cloudflare-ai-gateway/claude-opus-4-8",
 	"cloudflare-ai-gateway/claude-sonnet-4-6",
 	"github-copilot/claude-opus-4.6",
 	"github-copilot/claude-opus-4.7",
+	"github-copilot/claude-opus-4.8",
 	"github-copilot/claude-sonnet-4.6",
 	"opencode/claude-opus-4-6",
 	"opencode/claude-opus-4-7",
@@ -28,9 +34,9 @@ function getAllModels(): Model<Api>[] {
 }
 
 describe("Anthropic adaptive thinking model metadata", () => {
-	it("marks exactly the built-in Anthropic Messages models that use adaptive thinking", () => {
+	it("marks exactly the built-in Anthropic API models that use adaptive thinking", () => {
 		const flaggedModels = getAllModels()
-			.filter((model): model is Model<"anthropic-messages"> => model.api === "anthropic-messages")
+			.filter((model) => model.api === "anthropic-messages" || model.api === "anthropic-vertex")
 			.filter((model) => model.compat?.forceAdaptiveThinking === true)
 			.map((model) => `${model.provider}/${model.id}`)
 			.sort();

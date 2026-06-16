@@ -42,6 +42,7 @@ import {
 import { saveFile, clearParseCache } from "./files.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache } from "./paths.js";
+import type { RiskLevel } from "./types.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -90,6 +91,22 @@ function taskSummaryForSlicePlan(description: string): string {
   const beforeHeading = meaningful.split(/\n#{1,6}\s+/)[0]?.trim() ?? "";
   const firstBlock = beforeHeading.split(/\n\s*\n/)[0]?.trim() ?? "";
   return firstBlock || beforeHeading;
+}
+
+function normalizeRiskLevel(value: string | null | undefined): RiskLevel {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high") {
+    return normalized;
+  }
+  return "medium";
+}
+
+function sanitizeInlineRoadmapText(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/\r?\n+/g, " ")
+    .replace(/[|`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -172,12 +189,14 @@ function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): str
   for (const slice of slices) {
     const done = isClosedStatus(slice.status) ? "x" : " ";
     const depends = `[${(slice.depends ?? []).join(",")}]`;
+    const safeTitle = sanitizeInlineRoadmapText(slice.title || slice.id) || slice.id;
+    const safeRisk = normalizeRiskLevel(slice.risk);
     // ADR-011: sketch slices get a `[sketch]` badge so the roadmap shows at a
     // glance which slices are still pending refine-slice expansion. The badge
     // sits in front of `risk:` so it's visible in narrow terminals that may
     // truncate the line.
     const sketchBadge = slice.is_sketch === 1 ? "`[sketch]` " : "";
-    lines.push(`- [${done}] **${slice.id}: ${slice.title}** ${sketchBadge}\`risk:${slice.risk}\` \`depends:${depends}\``);
+    lines.push(`- [${done}] **${slice.id}: ${safeTitle}** ${sketchBadge}\`risk:${safeRisk}\` \`depends:${depends}\``);
     lines.push(`  > After this: ${slice.demo}`);
     lines.push("");
   }

@@ -174,7 +174,7 @@ type ProviderFlowRuntime = {
  * as configured only when their official CLI command is present on PATH.
  */
 const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
-  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: false, recommended: true },
+  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: false },
   { id: "openai", label: "OpenAI", supportsApiKey: true, supportsOAuth: false },
   { id: "github-copilot", label: "GitHub Copilot", supportsApiKey: false, supportsOAuth: true },
   { id: "openai-codex", label: "ChatGPT Plus/Pro (Codex Subscription)", supportsApiKey: false, supportsOAuth: true },
@@ -194,7 +194,7 @@ const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
   { id: "azure-openai-responses", label: "Azure OpenAI", supportsApiKey: false, supportsOAuth: false },
   { id: "alibaba-coding-plan", label: "Alibaba Coding Plan", supportsApiKey: false, supportsOAuth: false },
   { id: "alibaba-dashscope", label: "Alibaba DashScope", supportsApiKey: false, supportsOAuth: false },
-  { id: "claude-code", label: "Claude Code (Local CLI)", supportsApiKey: false, supportsOAuth: false, supportsExternalCli: true, recommended: true },
+  { id: "claude-code", label: "Claude Code (Local CLI)", supportsApiKey: false, supportsOAuth: false, supportsExternalCli: true },
 ];
 
 const OPTIONAL_SECTION_CATALOG: OptionalSectionCatalogEntry[] = [

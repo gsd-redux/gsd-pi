@@ -107,7 +107,7 @@ export function ScopeBadge({ label, size = "md", className }: ScopeBadgeProps) {
 
   return (
     <span className={cn("inline-flex items-center gap-2", className)}>
-      <span className={cn("font-semibold tracking-tight", sizeValue(size))}>
+      <span className={cn("font-semibold tracking-tight tabular-nums", sizeValue(size))}>
         {scopeId}
       </span>
       {phaseInfo && (
@@ -154,7 +154,7 @@ export function ScopeBadgeInline({ label, className }: { label: string; classNam
   return (
     <span className={cn("inline-flex items-center gap-1.5", className)}>
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotColor)} />
-      <span>{scopeId}</span>
+      <span className="tabular-nums">{scopeId}</span>
       {phaseInfo && (
         <>
           <span className="text-border">·</span>

@@ -49,6 +49,8 @@ import {
 import { loadEffectiveGSDPreferences, getIsolationMode } from "./preferences.js";
 import { invalidateAllCaches } from "./cache.js";
 import { resolveMilestoneFile } from "./paths.js";
+import { getMilestone, insertMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
 import type { WorktreeStateProjection } from "./worktree-state-projection.js";
 import { createWorkspace, scopeMilestone } from "./workspace.js";
 // ADR-016 phase 2 / C1 (#5624): file-system + git-CLI leaf primitives
@@ -83,6 +85,28 @@ const MERGE_FAILURE_DEDUPE_MS = 60_000;
 
 export function resetRecentWorktreeMergeFailuresForTest(): void {
   recentWorktreeMergeFailures.clear();
+}
+
+function markMilestoneClosedAfterMerge(milestoneId: string, completedAt: string): void {
+  if (!isDbAvailable()) return;
+  try {
+    const existing = getMilestone(milestoneId);
+    if (!existing) {
+      insertMilestone({ id: milestoneId, title: milestoneId, status: "complete" });
+      updateMilestoneStatus(milestoneId, "complete", completedAt);
+      invalidateAllCaches();
+      return;
+    }
+    if (!isClosedStatus(existing.status)) {
+      updateMilestoneStatus(milestoneId, "complete", completedAt);
+      invalidateAllCaches();
+    }
+  } catch (err) {
+    logWarning(
+      "worktree",
+      `Merged ${milestoneId} but failed to mark milestone complete in DB: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -1716,6 +1740,8 @@ export class WorktreeLifecycle {
 
     // #4764 — record merge completion. Only reaches here when an actual
     // merge ran; failure paths throw out before this point.
+    const mergeCompletedAt = new Date().toISOString();
+    markMilestoneClosedAfterMerge(milestoneId, mergeCompletedAt);
     try {
       emitWorktreeMerged(
         this.s.originalBasePath || this.s.basePath,

@@ -148,6 +148,7 @@ test("fresh start registers the auto worker before bootstrap enters worktree flo
   const freshStartSectionIdx = startAutoBody.indexOf("// ── Fresh start path — delegated to auto-start.ts ──");
   const resumeBody = startAutoBody.slice(resumeSectionIdx, freshStartSectionIdx);
   const resumeDbOpenIdx = resumeBody.indexOf("await openProjectDbIfPresent(base);");
+  const resumeMergeReconcileIdx = resumeBody.indexOf("reconcileMergedMilestonesFromJournal(base);");
   const resumeRegisterIdx = resumeBody.indexOf("registerAutoWorkerForSession(s, base);");
   const resumeEnterMilestoneIdx = resumeBody.indexOf("buildLifecycle().enterMilestone");
   const dbOpenIdx = bootstrapBody.indexOf("await openProjectDbIfPresent(base);");
@@ -164,6 +165,7 @@ test("fresh start registers the auto worker before bootstrap enters worktree flo
   assert.ok(resumeSectionIdx > -1, "startAuto should have resume milestone entry flow");
   assert.ok(freshStartSectionIdx > resumeSectionIdx, "resume assertions should be scoped before fresh start");
   assert.ok(resumeDbOpenIdx > -1, "resume should open DB before milestone entry");
+  assert.ok(resumeMergeReconcileIdx > -1, "resume should reconcile merged milestones before deriving dispatch state");
   assert.ok(resumeRegisterIdx > -1, "resume should register worker before milestone entry");
   assert.ok(resumeEnterMilestoneIdx > -1, "resume should enter milestones through lifecycle");
   assert.ok(bootstrapIdx > -1, "bootstrapAutoSession should exist");
@@ -179,8 +181,10 @@ test("fresh start registers the auto worker before bootstrap enters worktree flo
     "bootstrap must open DB and register worker before first enterMilestone",
   );
   assert.ok(
-    resumeDbOpenIdx < resumeRegisterIdx && resumeRegisterIdx < resumeEnterMilestoneIdx,
-    "resume must open DB and register worker before first enterMilestone",
+    resumeDbOpenIdx < resumeMergeReconcileIdx &&
+      resumeMergeReconcileIdx < resumeRegisterIdx &&
+      resumeRegisterIdx < resumeEnterMilestoneIdx,
+    "resume must open DB, reconcile merged milestones, and register worker before first enterMilestone",
   );
 });
 

@@ -72,6 +72,7 @@ verification_max_retries:
 per_unit_cost_cap_usd:
 notifications:
   enabled:
+  local_bell: false
   on_complete:
   on_error:
   on_budget:

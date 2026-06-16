@@ -80,6 +80,7 @@ export function resolveRemoteConfig(): ResolvedConfig | null {
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
   if (!rq || !rq.channel || !rq.channel_id) return null;
   if (rq.channel !== "slack" && rq.channel !== "discord" && rq.channel !== "telegram") return null;
+  if (typeof rq.channel_id === "number") return null;
 
   const channelId = String(rq.channel_id);
   if (!CHANNEL_ID_PATTERNS[rq.channel].test(channelId)) return null;
@@ -105,6 +106,9 @@ export function getRemoteConfigStatus(): string {
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
   if (!rq || !rq.channel || !rq.channel_id) return "Remote questions: not configured";
   if (rq.channel !== "slack" && rq.channel !== "discord" && rq.channel !== "telegram") return `Remote questions: unknown channel type \"${rq.channel}\"`;
+  if (typeof rq.channel_id === "number") {
+    return `Remote questions: channel ID stored as a number — precision may be lost; re-run \`/gsd remote ${rq.channel}\``;
+  }
   const channelId = String(rq.channel_id);
   if (!CHANNEL_ID_PATTERNS[rq.channel].test(channelId)) return `Remote questions: invalid ${rq.channel} channel ID format`;
   const envVar = ENV_KEYS[rq.channel];

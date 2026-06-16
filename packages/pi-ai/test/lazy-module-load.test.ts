@@ -5,9 +5,11 @@ import { describe, expect, it } from "vitest";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const aiEntryUrl = new URL("../src/index.ts", import.meta.url).href;
+const tsResolver = resolve(packageRoot, "../../src/resources/extensions/gsd/tests/resolve-ts.mjs");
 
 const SDK_SPECIFIERS = [
 	"@anthropic-ai/sdk",
+	"@anthropic-ai/vertex-sdk",
 	"openai",
 	"@google/genai",
 	"@mistralai/mistralai",
@@ -39,10 +41,14 @@ function runProbe(action: string): ProbeResult {
 		console.log(JSON.stringify({ loadedSpecifiers: [...new Set(loaded)] }));
 	`;
 
-	const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
-		cwd: packageRoot,
-		encoding: "utf8",
-	});
+	const result = spawnSync(
+		process.execPath,
+		["--import", tsResolver, "--experimental-strip-types", "--input-type=module", "--eval", script],
+		{
+			cwd: packageRoot,
+			encoding: "utf8",
+		},
+	);
 
 	if (result.status !== 0) {
 		throw new Error(`Probe failed (exit ${result.status})\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`);

@@ -228,6 +228,8 @@ export function serializeConversation(messages: Message[]): string {
 // Summarization System Prompt
 // ============================================================================
 
-export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
+export const SUMMARIZATION_SYSTEM_PROMPT = `You are a handoff briefing writer. Your task is to read a conversation between a user and an AI coding assistant, then produce a state snapshot that enables a successor to continue the work immediately.
 
-Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
+Write from the perspective of "what does the next person need to know to keep going?" — not "what happened in this conversation." Prioritize current direction and next actions over historical narrative. If the conversation shifted goals, lead with the CURRENT goal — the original goal is background context only if still relevant.
+
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured briefing.`;

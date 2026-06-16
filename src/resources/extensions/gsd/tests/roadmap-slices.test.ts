@@ -174,6 +174,32 @@ test("parseRoadmapSlices: standard checkbox format still works (#1736)", () => {
   assert.equal(slices[1]?.done, false);
 });
 
+test("parseRoadmapSlices: checkbox slices with pipe characters do not switch to table mode (#230)", () => {
+  const checkboxWithPipes = [
+    "# M001: Repro",
+    "",
+    "## Slices",
+    "",
+    "- [x] **S01: First** `risk:Hash determinism find | sha256sum` `depends:[]`",
+    "  > After this: deploy and curl returns 200.",
+    "- [x] **S02: Second** `risk:Critical path pnpm --filter | grep must exit 0` `depends:[S01]`",
+    "  > After this: container starts in <1s.",
+    "- [x] **S03: Third** `risk:low` `depends:[S01,S02]`",
+    "  > After this: done.",
+    "",
+  ].join("\n");
+
+  const slices = parseRoadmapSlices(checkboxWithPipes);
+  assert.equal(slices.length, 3);
+  assert.deepEqual(
+    slices.map(slice => slice.id),
+    ["S01", "S02", "S03"],
+  );
+  assert.equal(slices[0]?.title, "First");
+  assert.equal(slices[1]?.title, "Second");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"]);
+});
+
 // --- Prose slice header completion marker tests (#1803) ---
 
 test("parseRoadmapSlices: prose headers with ✓ marker detected as done", () => {

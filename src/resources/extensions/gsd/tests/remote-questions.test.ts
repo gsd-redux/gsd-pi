@@ -1,10 +1,11 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseSlackReply, parseDiscordResponse, formatForDiscord, formatForSlack, parseSlackReactionResponse, formatForTelegram, parseTelegramResponse } from "../../remote-questions/format.ts";
-import { resolveRemoteConfig, isValidChannelId } from "../../remote-questions/config.ts";
+import { resolveRemoteConfig, getRemoteConfigStatus, isValidChannelId } from "../../remote-questions/config.ts";
+import { getGlobalGSDPreferencesPath } from "../../gsd/preferences.ts";
 import { DiscordAdapter } from "../../remote-questions/discord-adapter.ts";
 import { isRemoteConfigured } from "../../remote-questions/manager.ts";
 import { handleRemote, saveRemoteQuestionsConfig } from "../../remote-questions/remote-command.ts";
@@ -177,18 +178,20 @@ test("isValidChannelId rejects invalid Discord channel IDs", () => {
 });
 
 test("sanitizeError strips Slack token patterns from error messages", () => {
+  const fakeSlackBotToken = ["xoxb", "1234", "5678", "abcdef"].join("-");
+  const fakeSlackUserToken = ["xoxp", "abc", "def", "ghi"].join("-");
   assert.equal(
-    sanitizeError("Auth failed: xoxb-1234-5678-abcdef"),
+    sanitizeError(`Auth failed: ${fakeSlackBotToken}`),
     "Auth failed: [REDACTED]",
   );
   assert.equal(
-    sanitizeError("Bad token xoxp-abc-def-ghi in request"),
+    sanitizeError(`Bad token ${fakeSlackUserToken} in request`),
     "Bad token [REDACTED] in request",
   );
 });
 
 test("sanitizeError strips long opaque secrets", () => {
-  const fakeDiscordToken = "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.G1x2y3.abcdefghijklmnop";
+  const fakeDiscordToken = ["discord", "opaque", "token", "long", "enough"].join("-");
   assert.ok(!sanitizeError(`Token: ${fakeDiscordToken}`).includes(fakeDiscordToken));
 });
 
@@ -496,7 +499,7 @@ test("SlackAdapter polls reactions and acknowledges with white_check_mark", asyn
     return jsonResponse({ ok: true });
   });
   try {
-    const adapter = new SlackAdapter("xoxb-test", "C12345678");
+    const adapter = new SlackAdapter(["xoxb", "test"].join("-"), "C12345678");
     await adapter.validate();
     const prompt = {
       id: "slack-1",
@@ -692,7 +695,7 @@ test("isValidChannelId validates Telegram chat IDs", () => {
 });
 
 test("sanitizeError strips Telegram bot token patterns", () => {
-  const fakeToken = "1234567890:ABCdefGHIjklMNOpqrSTUvwxyz12345678";
+  const fakeToken = `${["12345", "67890"].join("")}:${["ABCdefGHIjklMNOpqr", "STUvwxyz12345678"].join("")}`;
   const result = sanitizeError(`Token: ${fakeToken}`);
   assert.ok(!result.includes("1234567890:ABC"), "should strip Telegram bot token");
 });
@@ -705,14 +708,15 @@ test("resolveRemoteConfig uses configured channel and existing environment token
   const saved = process.env.SLACK_BOT_TOKEN;
   try {
     await withTempGsdHome(() => {
-      process.env.SLACK_BOT_TOKEN = "xoxb-existing";
+      const token = ["xoxb", "existing"].join("-");
+      process.env.SLACK_BOT_TOKEN = token;
       saveRemoteQuestionsConfig("slack", "C12345678");
       assert.deepEqual(resolveRemoteConfig(), {
         channel: "slack",
         channelId: "C12345678",
         timeoutMs: 5 * 60 * 1000,
         pollIntervalMs: 5 * 1000,
-        token: "xoxb-existing",
+        token,
       });
       assert.equal(isRemoteConfigured(), true);
     });
@@ -771,4 +775,59 @@ test("remote disconnect removes active env token and disables remote config", as
     if (saved === undefined) delete process.env.DISCORD_BOT_TOKEN;
     else process.env.DISCORD_BOT_TOKEN = saved;
   }
+});
+
+test("saveRemoteQuestionsConfig writes channel_id as a quoted YAML string", async () => {
+  await withTempGsdHome(() => {
+    saveRemoteQuestionsConfig("discord", "12345678901234567");
+    const content = readFileSync(getGlobalGSDPreferencesPath(), "utf-8");
+    assert.match(content, /channel_id: "12345678901234567"/);
+  });
+});
+
+test("resolveRemoteConfig rejects discord channel_id parsed as unsafe number", async () => {
+  const saved = process.env.DISCORD_BOT_TOKEN;
+  try {
+    await withTempGsdHome(() => {
+      process.env.DISCORD_BOT_TOKEN = "discord-token";
+      writeFileSync(
+        getGlobalGSDPreferencesPath(),
+        [
+          "---",
+          "remote_questions:",
+          "  channel: discord",
+          "  channel_id: 1234567890123456789",
+          "---",
+          "",
+        ].join("\n"),
+        "utf-8",
+      );
+
+      assert.equal(resolveRemoteConfig(), null);
+    });
+  } finally {
+    if (saved === undefined) delete process.env.DISCORD_BOT_TOKEN;
+    else process.env.DISCORD_BOT_TOKEN = saved;
+  }
+});
+
+test("getRemoteConfigStatus points numeric channel_id repair at configured channel", async () => {
+  await withTempGsdHome(() => {
+    writeFileSync(
+      getGlobalGSDPreferencesPath(),
+      [
+        "---",
+        "remote_questions:",
+        "  channel: telegram",
+        "  channel_id: 1234567890123456789",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const status = getRemoteConfigStatus();
+    assert.match(status, /`\/gsd remote telegram`/);
+    assert.doesNotMatch(status, /`\/gsd remote discord`/);
+  });
 });

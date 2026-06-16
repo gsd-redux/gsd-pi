@@ -19,6 +19,7 @@ import type { DispatchContext } from "../auto-dispatch.ts";
 import type { AutoSession } from "../auto/session.ts";
 import type { GSDState } from "../types.ts";
 import { enableDebug, disableDebug, getDebugLogPath } from "../debug-logger.ts";
+import { closeDatabase, insertMilestone, isDbAvailable, openDatabase } from "../gsd-db.ts";
 
 function makeState(overrides: Partial<GSDState> = {}): GSDState {
   return {
@@ -123,6 +124,29 @@ test("dispatch: missing task plan triggers plan-slice (not stop) — issue #909"
     `unitId should be M002/S03, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
 });
 
+test("dispatch: closed milestone is not implicitly recovered or reopened", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-closed-dispatch-"));
+  t.after(() => {
+    if (isDbAvailable()) closeDatabase();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  if (isDbAvailable()) closeDatabase();
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+  openDatabase(join(tmp, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M002", title: "Closed Milestone", status: "complete" });
+  scaffoldMilestoneContext(tmp, "M002");
+  scaffoldSlicePlan(tmp, "M002", "S03");
+
+  const result = await resolveDispatch(makeContext(tmp));
+
+  assert.equal(result.action, "stop");
+  assert.ok(result.action === "stop");
+  assert.equal(result.level, "warning");
+  assert.match(result.reason, /Milestone M002 is closed/);
+  assert.match(result.reason, /will not reopen or recover it implicitly/);
+});
+
 test("dispatch: present task plan proceeds to execute-task normally", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-ok-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -139,6 +163,42 @@ test("dispatch: present task plan proceeds to execute-task normally", async (t) 
     `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
   assert.ok(result.action === "dispatch" && result.unitId === "M002/S03/T01",
     `unitId should be M002/S03/T01, got: ${result.action === "dispatch" ? result.unitId : "(stop)"}`);
+});
+
+test("dispatch: session milestone mismatch stops before missing-task-plan recovery", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-session-milestone-mismatch-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M002");
+  mkdirSync(worktreeRoot, { recursive: true });
+
+  const ctx = makeContextFor(tmp, "M001", "S01", "T01", {
+    basePath: worktreeRoot,
+    originalBasePath: tmp,
+    currentMilestoneId: "M002",
+  });
+  const result = await resolveDispatch(ctx);
+
+  assert.equal(result.action, "stop");
+  assert.ok(result.action === "stop");
+  assert.equal(result.level, "warning");
+  assert.match(result.reason, /context mid "M001" does not match session\.currentMilestoneId "M002"/);
+});
+
+test("dispatch: worktree path mismatch stops before planning a different milestone", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-worktree-path-milestone-mismatch-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M002");
+  mkdirSync(worktreeRoot, { recursive: true });
+
+  const ctx = makeContextFor(worktreeRoot, "M001", "S01", "T01");
+  const result = await resolveDispatch(ctx);
+
+  assert.equal(result.action, "stop");
+  assert.ok(result.action === "stop");
+  assert.equal(result.level, "warning");
+  assert.match(result.reason, /context mid "M001" does not match basePath worktree "M002"/);
 });
 
 test("dispatch: executing recovery checks active milestone worktree task plans before re-dispatching plan-slice", async (t) => {

@@ -1,20 +1,53 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { handleCoreCommand } from "../commands/handlers/core.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
+import { invalidateStateCache } from "../state.ts";
 
 function makeCtx(customResult: unknown) {
   const notices: Array<{ message: string; type?: string }> = [];
+  const customCalls: Array<{ options: any }> = [];
   return {
     hasUI: true,
     ui: {
-      custom: async () => customResult,
+      custom: async (_factory: unknown, options: any) => {
+        customCalls.push({ options });
+        return customResult;
+      },
       notify: (message: string, type?: string) => {
         notices.push({ message, type });
       },
     },
     notices,
+    customCalls,
   };
+}
+
+function createGsdProjectWithActiveMilestone(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-status-route-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Status Dashboard", status: "active", depends_on: [] });
+  closeDatabase();
+  return base;
+}
+
+async function withProjectCwd<T>(base: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.cwd();
+  closeDatabase();
+  invalidateStateCache();
+  process.chdir(base);
+  try {
+    return await fn();
+  } finally {
+    closeDatabase();
+    invalidateStateCache();
+    process.chdir(previous);
+  }
 }
 
 test("visualize only falls back when ctx.ui.custom() is unavailable", async () => {
@@ -30,12 +63,19 @@ test("visualize only falls back when ctx.ui.custom() is unavailable", async () =
   assert.match(fallbackCtx.notices[0]!.message, /interactive terminal/i);
 });
 
-test("status routes to the visualizer overlay", async () => {
-  const successCtx = makeCtx(true);
-  const handled = await handleCoreCommand("status", successCtx as any);
+test("status routes to the dashboard overlay", async () => {
+  const base = createGsdProjectWithActiveMilestone();
+  try {
+    const successCtx = makeCtx(true);
+    const handled = await withProjectCwd(base, () => handleCoreCommand("status", successCtx as any));
 
-  assert.equal(handled, true);
-  assert.equal(successCtx.notices.length, 0, "status should use the visualizer overlay path");
+    assert.equal(handled, true);
+    assert.equal(successCtx.notices.length, 0, "status should use the dashboard overlay path");
+    assert.equal(successCtx.customCalls.length, 1, "status should open an overlay");
+    assert.equal(successCtx.customCalls[0]!.options?.overlayOptions?.width, "90%");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("show-config only falls back when ctx.ui.custom() is unavailable", async () => {

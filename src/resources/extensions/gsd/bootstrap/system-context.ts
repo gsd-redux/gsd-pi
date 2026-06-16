@@ -61,6 +61,7 @@ export const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> =
   { trigger: "Core Web Vitals — fix LCP, CLS, INP; layout shifts; page experience optimization", skill: "core-web-vitals" },
   { trigger: "GitHub Actions CI/CD — write, run, and debug workflow files; live syntax and run monitoring", skill: "github-workflows" },
   { trigger: "Comprehensive web quality audit — performance, accessibility, SEO, and best-practices (Lighthouse-style)", skill: "web-quality-audit" },
+  { trigger: "gsd-browser UAT — default browser MCP/CLI for real UI verification, screenshots, assertions, console/network diagnostics", skill: "gsd-browser" },
   { trigger: "Browser automation — open sites, fill forms, click, screenshot, scrape, or test web apps programmatically", skill: "agent-browser" },
   { trigger: "Review UI code for Web Interface Guidelines compliance — UX, design, and accessibility patterns", skill: "web-design-guidelines" },
   { trigger: "UI/UX patterns reference — animations, CSS, typography, prefetching, icons (file:line findings)", skill: "userinterface-wiki" },

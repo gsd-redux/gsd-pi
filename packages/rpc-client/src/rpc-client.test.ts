@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { once } from "node:events";
 import { serializeJsonLine, attachJsonlLineReader } from "./jsonl.js";
@@ -318,6 +321,22 @@ describe("RpcClient construction", () => {
 		});
 		assert.ok(client);
 	});
+
+	it("starts the agent with the current Node executable", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "rpc-client-"));
+		const scriptPath = join(dir, "agent.js");
+		writeFileSync(scriptPath, "setInterval(() => {}, 1000);\n");
+
+		const client = new RpcClient({ cliPath: scriptPath });
+
+		try {
+			await client.start();
+			assert.equal((client as any).process.spawnfile, process.execPath);
+		} finally {
+			await client.stop();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
 
 // ============================================================================
@@ -621,5 +640,16 @@ describe("v2 command serialization", () => {
 
 		assert.equal(sent[0].events.length, 1);
 		assert.equal(sent[0].events[0], "*");
+	});
+
+	it("rejects pending requests when the agent process emits an error", async () => {
+		const { client } = createMockClient();
+
+		const initPromise = client.init();
+		const processError = new Error("spawn ENOENT");
+		(client as any).handleProcessError(processError);
+
+		await assert.rejects(initPromise, /Agent process error: spawn ENOENT/);
+		assert.equal((client as any).pendingRequests.size, 0);
 	});
 });

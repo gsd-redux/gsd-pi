@@ -37,6 +37,21 @@ describe('VerbosityManager', () => {
     assert.equal(vm.shouldShow('chan-q', 'tool_execution_start'), false);
     assert.equal(vm.shouldShow('chan-q', 'extension_ui_request'), true);
   });
+
+  it('clearLevel drops a channel back to the default (prevents unbounded growth)', () => {
+    vm.setLevel('chan-x', 'verbose');
+    assert.equal(vm.getLevel('chan-x'), 'verbose');
+
+    vm.clearLevel('chan-x');
+    assert.equal(vm.getLevel('chan-x'), 'default');
+  });
+
+  it('clearLevel is a no-op for an unknown channel', () => {
+    // Must not throw and must not affect other channels.
+    vm.setLevel('chan-keep', 'quiet');
+    vm.clearLevel('chan-never-set');
+    assert.equal(vm.getLevel('chan-keep'), 'quiet');
+  });
 });
 
 // ---------------------------------------------------------------------------

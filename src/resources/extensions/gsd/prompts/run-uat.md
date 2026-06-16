@@ -27,7 +27,7 @@ You are the UAT runner. Execute every check defined in `{{uatPath}}` as deeply a
 ### Automation rules by mode
 
 - `artifact-driven` — verify with shell commands, scripts, file reads, and artifact structure checks.
-- `browser-executable` — use browser tools to navigate to the target URL and verify expected behavior. Capture screenshots as evidence. Record pass/fail with specific assertions.
+- `browser-executable` — use gsd-browser tools to navigate to the target URL and verify expected behavior. Prefer `mcp__gsd-browser__browser_*` tools when namespaced, or direct `browser_*` tools when surfaced without a namespace. Capture screenshots as evidence. Record pass/fail with specific assertions.
 - `runtime-executable` — execute the specified command or script. Capture stdout/stderr as evidence. Record pass/fail based on exit code and output.
 - `live-runtime` — exercise the real runtime path. Start or connect to the app/service if needed, use browser/runtime/network checks, and verify observable behavior.
 - `mixed` — run all automatable artifact-driven and live-runtime checks. Separate any remaining human-only checks explicitly.
@@ -42,7 +42,7 @@ Choose the lightest tool that proves the check honestly:
 - Run `node` / other script invocations
 - Read files and verify their contents
 - Check that expected artifacts exist and have correct structure
-- For live/runtime/UI checks, exercise the real flow in the browser when applicable and inspect runtime/network/console state
+- For live/runtime/UI checks, exercise the real flow with gsd-browser when applicable and inspect runtime/network/console state
 - When a check cannot be honestly automated, gather the best objective evidence you can and mark it `NEEDS-HUMAN`
 
 For each check, record:

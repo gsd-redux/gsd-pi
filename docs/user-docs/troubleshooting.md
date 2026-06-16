@@ -477,10 +477,10 @@ Doctor checks the authoritative database, refreshes `STATE.md` from derived data
 Use this only when the database is missing, damaged, or known to be stale but the rendered milestone, slice, and task markdown on disk is the best available source:
 
 ```
-/gsd recover
+/gsd recover --confirm
 ```
 
-`/gsd recover` clears the database hierarchy tables plus persisted validation/gate state from prior runs, including quality-gate rows and skipped-validation assessments, then reconstructs the hierarchy from markdown and derives state again to verify the result. Normal runtime does not silently import markdown projections, and worktree markdown is not synced back as authoritative state.
+`/gsd recover --confirm` clears the database hierarchy tables plus persisted validation/gate state from prior runs, including quality-gate rows and skipped-validation assessments, then reconstructs the hierarchy from markdown and derives state again to verify the result. Normal runtime does not silently import markdown projections, and worktree markdown is not synced back as authoritative state.
 
 For non-TTY environments (CI, cron, scripted automation), v2.79 adds `gsd headless recover` — same semantics, no interactive prompt. Exits non-zero on failure.
 
@@ -527,7 +527,7 @@ For non-TTY environments (CI, cron, scripted automation), v2.79 adds `gsd headle
 
 **Cause:** The SQLite database was not initialized or could not be opened. Runtime state derivation will not silently fall back to markdown projections.
 
-**Fix:** Upgrade to the latest version, then run a GSD command from the project root to initialize or open the database. Use `/gsd inspect` for database diagnostics. If the database was lost or corrupted and markdown artifacts are the only usable state, run `/gsd recover` after GSD has opened the database.
+**Fix:** Upgrade to the latest version, then run a GSD command from the project root to initialize or open the database. Use `/gsd inspect` for database diagnostics. If the database was lost or corrupted and markdown artifacts are the only usable state, run `/gsd recover --confirm` after GSD has opened the database.
 
 ## Verification Issues
 

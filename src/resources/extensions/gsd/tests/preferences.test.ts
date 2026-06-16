@@ -459,10 +459,11 @@ test("budget fields validate correctly", () => {
 
 test("notification fields validate correctly", () => {
   const { preferences, errors } = validatePreferences({
-    notifications: { enabled: true, on_complete: false, on_error: true, on_budget: true },
+    notifications: { enabled: true, local_bell: true, on_complete: false, on_error: true, on_budget: true },
   });
   assert.equal(errors.length, 0);
   assert.equal(preferences.notifications?.enabled, true);
+  assert.equal(preferences.notifications?.local_bell, true);
   assert.equal(preferences.notifications?.on_complete, false);
 });
 
@@ -662,6 +663,28 @@ test("handles empty models config", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.notEqual(prefs, null);
   assert.equal(prefs!.models, undefined);
+});
+
+test("parsePreferencesMarkdown keeps unsafe numeric remote_questions.channel_id as number", () => {
+  const content = `---
+remote_questions:
+  channel: discord
+  channel_id: 1234567890123456789
+---
+`;
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(typeof prefs!.remote_questions?.channel_id, "number");
+});
+
+test("parsePreferencesMarkdown normalizes safe numeric remote_questions.channel_id in heading format", () => {
+  const content = `## Remote Questions
+channel: telegram
+channel_id: 12345
+`;
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  assert.equal(prefs!.remote_questions?.channel_id, "12345");
 });
 
 test("parses raw YAML blocks under headings", () => {

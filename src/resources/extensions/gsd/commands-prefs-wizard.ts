@@ -416,8 +416,20 @@ export function buildCategorySummaries(prefs: Record<string, unknown>): Record<s
   const notif = prefs.notifications as Record<string, boolean> | undefined;
   let notifSummary = "(defaults)";
   if (notif && Object.keys(notif).length > 0) {
-    const allKeys = ["enabled", "on_complete", "on_error", "on_budget", "on_milestone", "on_attention"];
-    const enabledCount = allKeys.filter(k => notif[k] !== false).length;
+    const allKeys = ["enabled", "local_bell", "on_complete", "on_error", "on_budget", "on_milestone", "on_attention"];
+    const defaults: Record<string, boolean> = {
+      enabled: true,
+      local_bell: false,
+      on_complete: true,
+      on_error: true,
+      on_budget: true,
+      on_milestone: true,
+      on_attention: true,
+    };
+    const masterEnabled = notif.enabled ?? defaults.enabled;
+    const enabledCount = masterEnabled
+      ? allKeys.filter((k) => (k === "enabled" ? masterEnabled : (notif[k] ?? defaults[k]))).length
+      : 0;
     notifSummary = `${enabledCount}/${allKeys.length} enabled`;
   }
 
@@ -1062,6 +1074,7 @@ async function configureNotifications(ctx: ExtensionCommandContext, prefs: Recor
   const notif: Record<string, boolean> = (prefs.notifications as Record<string, boolean>) ?? {};
   const notifFields = [
     { key: "enabled", label: "Notifications enabled (master toggle)", defaultVal: true },
+    { key: "local_bell", label: "Play local bell for questions and auto stops", defaultVal: false },
     { key: "on_complete", label: "Notify on unit completion", defaultVal: true },
     { key: "on_error", label: "Notify on errors", defaultVal: true },
     { key: "on_budget", label: "Notify on budget thresholds", defaultVal: true },

@@ -1,4 +1,5 @@
 import { getKeybindings } from "../keybindings.js";
+import type { MouseEvent } from "../mouse.js";
 import type { Component } from "../tui.js";
 import { truncateToWidth, visibleWidth } from "../utils.js";
 
@@ -45,6 +46,11 @@ export class SelectList implements Component {
 	private theme: SelectListTheme;
 	private layout: SelectListLayoutOptions;
 
+	// First item index and item count of the most recently rendered window,
+	// used to map a clicked row back to an item.
+	private viewStartIndex = 0;
+	private viewItemCount = 0;
+
 	public onSelect?: (item: SelectItem) => void;
 	public onCancel?: () => void;
 	public onSelectionChange?: (item: SelectItem) => void;
@@ -89,6 +95,11 @@ export class SelectList implements Component {
 		);
 		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
 
+		// Record the visible window so handleMouse can map rows to items.
+		// Items occupy rows 0..(count-1); the optional scroll indicator follows.
+		this.viewStartIndex = startIndex;
+		this.viewItemCount = endIndex - startIndex;
+
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = this.filteredItems[i];
@@ -132,6 +143,38 @@ export class SelectList implements Component {
 		else if (kb.matches(keyData, "tui.select.cancel")) {
 			if (this.onCancel) {
 				this.onCancel();
+			}
+		}
+	}
+
+	handleMouse(event: MouseEvent): void {
+		if (this.filteredItems.length === 0) return;
+
+		// Wheel moves the selection (with wrap, matching arrow-key behavior).
+		if (event.button === "wheel-up") {
+			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
+			this.notifySelectionChange();
+			return;
+		}
+		if (event.button === "wheel-down") {
+			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
+			this.notifySelectionChange();
+			return;
+		}
+
+		// Left click on a visible row selects and confirms that item.
+		if (event.type === "press" && event.button === "left") {
+			const row = event.y;
+			if (row >= 0 && row < this.viewItemCount) {
+				const index = this.viewStartIndex + row;
+				const item = this.filteredItems[index];
+				if (item) {
+					this.selectedIndex = index;
+					this.notifySelectionChange();
+					if (this.onSelect) {
+						this.onSelect(item);
+					}
+				}
 			}
 		}
 	}

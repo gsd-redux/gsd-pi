@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Shared browser-observable UAT requirement and evidence detection.
 
-export const BROWSER_REQUIREMENT_RE = /\b(?:browser|file:\/\/|localhost|dom|localstorage|click(?:ing|ed)?|button|visible|screenshot|snapshot|reload(?:ed)?|page refresh|user-visible|strikethrough|search box)\b/i;
+export const BROWSER_REQUIREMENT_RE = /\b(?:browser|file:\/\/|localhost|dom|localstorage|click(?:ing|ed)?|button|screenshot|snapshot|reload(?:ed)?|page refresh|user-visible|strikethrough|search box)\b/i;
 export const NO_BROWSER_EVIDENCE_RE = /\b(?:no|without|not|wasn'?t|isn'?t)\s+(?:automated\s+)?(?:live\s+)?browser(?:\s+(?:session|test|uat))?|\bno\s+automated\s+browser\b|\bnot\s+conducted\b/i;
 export const BROWSER_RUNTIME_RE = /\b(?:browser|playwright|chrome|camoufox|browser_(?:assert|batch|find|verify|snapshot_refs)|screenshot|snapshot|file:\/\/|localhost)\b/i;
 export const BROWSER_ACTION_RE = /\b(?:open(?:ed)?|navigate(?:d)?|click(?:ed)?|type(?:d)?|reload(?:ed)?|capture(?:d)?|screenshot|snapshot)\b/i;

@@ -118,7 +118,7 @@ Templates are in `{{templatesDir}}`.
 
 **Secrets:** Use `secure_env_collect`. Never ask the user to edit `.env` files or paste secrets.
 
-**Browser verification:** Verify frontend work against a running app. Discovery: `browser_find`/`browser_snapshot_refs`. Action: refs/selectors -> `browser_batch`. Verification: `browser_assert`. Diagnostics: `browser_diff` -> console/network logs -> full inspection as last resort. Retry only with a new hypothesis.
+**Browser verification:** Verify frontend work against a running app with gsd-browser by default. Use `browser_find`/`browser_snapshot_refs` for discovery, refs/selectors -> `browser_batch` for actions, `browser_assert` for verification, and `browser_diff` -> console/network logs -> full inspection as last resort. If tools are MCP-namespaced, prefer `mcp__gsd-browser__browser_*`. Retry only with a new hypothesis.
 
 **Database:** Never query `.gsd/gsd.db` directly via `sqlite3`, `better-sqlite3`, or `node -e require('better-sqlite3')`; the engine owns a single-writer WAL connection. Use `gsd_milestone_status`, `gsd_journal_query`, or other `gsd_*` tools.
 

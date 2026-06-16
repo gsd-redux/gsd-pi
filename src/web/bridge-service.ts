@@ -1542,6 +1542,7 @@ export class BridgeService {
   async dispose(): Promise<void> {
     this.detachStdoutReader?.();
     this.detachStdoutReader = null;
+    this.subscribers.clear();
     this.terminalSubscribers.clear();
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
@@ -1828,6 +1829,44 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
   const service = new BridgeService(config, deps);
   projectBridgeRegistry.set(resolvedPath, service);
   return service;
+}
+
+/**
+ * Dispose the bridge for a single project and drop it from the registry,
+ * reclaiming its spawned RPC child process. Use when a project is no longer
+ * served (e.g. its last SSE subscriber disconnected).
+ */
+export async function disposeProjectBridge(projectCwd: string): Promise<void> {
+  const resolvedPath = resolve(projectCwd);
+  const service = projectBridgeRegistry.get(resolvedPath);
+  if (!service) return;
+  projectBridgeRegistry.delete(resolvedPath);
+  await service.dispose();
+}
+
+/**
+ * Dispose every registered project bridge (and its RPC child process) so they
+ * are reclaimed instead of leaking for the process lifetime. Previously only the
+ * test reset path disposed bridges; the web server's shutdown gate
+ * (`web/lib/shutdown-gate.ts`) now calls this on its exit paths.
+ *
+ * Each entry is removed right before it is disposed (rather than clearing the
+ * whole registry up front) so a concurrent `getProjectBridgeServiceForCwd`
+ * cannot observe a half-cleared registry and create a duplicate bridge for a
+ * path that has not started disposing yet.
+ */
+export async function disposeAllProjectBridges(): Promise<void> {
+  const entries = [...projectBridgeRegistry.entries()];
+  await Promise.all(
+    entries.map(async ([path, service]) => {
+      // Only remove if this is still the registered instance — guards against a
+      // concurrent restart that replaced it with a fresh bridge.
+      if (projectBridgeRegistry.get(path) === service) {
+        projectBridgeRegistry.delete(path);
+      }
+      await service.dispose().catch(() => { /* swallow */ });
+    }),
+  );
 }
 
 /**

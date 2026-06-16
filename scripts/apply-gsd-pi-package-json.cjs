@@ -44,7 +44,7 @@ const GSD_BASE = {
     },
     build: 'node ../../scripts/clean-package-dist.cjs && tsc -p tsconfig.json --incremental false && pnpm run copy-assets',
     extraScripts: { 'copy-assets': 'node scripts/copy-assets.cjs' },
-    piConfig: { name: 'pi', configDir: '.pi' },
+    piConfig: { name: 'gsd', configDir: '.gsd' },
   },
 }
 

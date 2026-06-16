@@ -117,6 +117,7 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
@@ -195,6 +196,10 @@ function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessag
 	model.compat = { ...(model.compat as AnthropicMessagesCompat | undefined), ...compat };
 }
 
+function normalizeAnthropicVertexModelId(modelId: string): string {
+	return modelId.endsWith("@default") ? modelId.slice(0, modelId.length - "@default".length) : modelId;
+}
+
 function isGemini3ProModel(modelId: string): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(modelId.toLowerCase());
 }
@@ -238,7 +243,10 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
 	}
-	if (model.api === "anthropic-messages" && isAnthropicAdaptiveThinkingModel(model.id)) {
+	if (
+		(model.api === "anthropic-messages" || model.api === "anthropic-vertex") &&
+		isAnthropicAdaptiveThinkingModel(model.id)
+	) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
 	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
@@ -459,6 +467,34 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api: "anthropic-messages",
 					provider: "anthropic",
 					baseUrl: "https://api.anthropic.com",
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
+			}
+		}
+
+		// Process Anthropic models served through Google Vertex AI.
+		if (data["google-vertex-anthropic"]?.models) {
+			for (const [modelId, model] of Object.entries(data["google-vertex-anthropic"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const id = normalizeAnthropicVertexModelId(modelId);
+
+				models.push({
+					id,
+					name: `${m.name || id} (Vertex)`,
+					api: "anthropic-vertex",
+					provider: "anthropic-vertex",
+					baseUrl: VERTEX_BASE_URL,
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -1717,7 +1753,6 @@ async function generateModels() {
 		});
 	}
 
-	const VERTEX_BASE_URL = "https://{location}-aiplatform.googleapis.com";
 	const vertexModels: Model<"google-vertex">[] = [
 		{
 			id: "gemini-3-pro-preview",

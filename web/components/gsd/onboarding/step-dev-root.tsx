@@ -302,7 +302,7 @@ export function StepDevRoot({ onNext, onBack }: StepDevRootProps) {
                     type="button"
                     onClick={() => handleSuggestionClick(suggestion)}
                     className={cn(
-                      "rounded-full border px-3 py-1 font-mono text-xs transition-all duration-150",
+                      "rounded-full border px-3 py-1 font-mono text-xs transition-[background-color,border-color,color,transform] duration-150",
                       "active:scale-[0.96]",
                       path === suggestion
                         ? "border-foreground/25 bg-foreground/10 text-foreground"

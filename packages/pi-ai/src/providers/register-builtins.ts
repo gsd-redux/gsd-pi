@@ -13,6 +13,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import type { BedrockOptions } from "./amazon-bedrock.js";
 import type { AnthropicOptions } from "./anthropic.js";
+import type { AnthropicVertexOptions } from "./anthropic-vertex.js";
 import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses.js";
 import type { GoogleOptions } from "./google.js";
 import type { GoogleVertexOptions } from "./google-vertex.js";
@@ -37,6 +38,11 @@ interface LazyProviderModule<
 interface AnthropicProviderModule {
 	streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions>;
 	streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleStreamOptions>;
+}
+
+interface AnthropicVertexProviderModule {
+	streamAnthropicVertex: StreamFunction<"anthropic-vertex", AnthropicVertexOptions>;
+	streamSimpleAnthropicVertex: StreamFunction<"anthropic-vertex", SimpleStreamOptions>;
 }
 
 interface AzureOpenAIResponsesProviderModule {
@@ -94,6 +100,9 @@ const importNodeOnlyProvider = (specifier: string): Promise<unknown> => {
 
 let anthropicProviderModulePromise:
 	| Promise<LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>>
+	| undefined;
+let anthropicVertexProviderModulePromise:
+	| Promise<LazyProviderModule<"anthropic-vertex", AnthropicVertexOptions, SimpleStreamOptions>>
 	| undefined;
 let azureOpenAIResponsesProviderModulePromise:
 	| Promise<LazyProviderModule<"azure-openai-responses", AzureOpenAIResponsesOptions, SimpleStreamOptions>>
@@ -217,6 +226,19 @@ function loadAnthropicProviderModule(): Promise<
 	return anthropicProviderModulePromise;
 }
 
+function loadAnthropicVertexProviderModule(): Promise<
+	LazyProviderModule<"anthropic-vertex", AnthropicVertexOptions, SimpleStreamOptions>
+> {
+	anthropicVertexProviderModulePromise ||= import("./anthropic-vertex.js").then((module) => {
+		const provider = module as AnthropicVertexProviderModule;
+		return {
+			stream: provider.streamAnthropicVertex,
+			streamSimple: provider.streamSimpleAnthropicVertex,
+		};
+	});
+	return anthropicVertexProviderModulePromise;
+}
+
 function loadAzureOpenAIResponsesProviderModule(): Promise<
 	LazyProviderModule<"azure-openai-responses", AzureOpenAIResponsesOptions, SimpleStreamOptions>
 > {
@@ -326,6 +348,8 @@ function loadBedrockProviderModule(): Promise<
 
 export const streamAnthropic = createLazyStream(loadAnthropicProviderModule);
 export const streamSimpleAnthropic = createLazySimpleStream(loadAnthropicProviderModule);
+export const streamAnthropicVertex = createLazyStream(loadAnthropicVertexProviderModule);
+export const streamSimpleAnthropicVertex = createLazySimpleStream(loadAnthropicVertexProviderModule);
 export const streamAzureOpenAIResponses = createLazyStream(loadAzureOpenAIResponsesProviderModule);
 export const streamSimpleAzureOpenAIResponses = createLazySimpleStream(loadAzureOpenAIResponsesProviderModule);
 export const streamGoogle = createLazyStream(loadGoogleProviderModule);
@@ -348,6 +372,12 @@ export function registerBuiltInApiProviders(): void {
 		api: "anthropic-messages",
 		stream: streamAnthropic,
 		streamSimple: streamSimpleAnthropic,
+	});
+
+	registerApiProvider({
+		api: "anthropic-vertex",
+		stream: streamAnthropicVertex,
+		streamSimple: streamSimpleAnthropicVertex,
 	});
 
 	registerApiProvider({

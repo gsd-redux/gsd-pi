@@ -473,13 +473,13 @@ describe('derive-state-helpers', () => {
     }
   });
 
-	  test('getActiveMilestoneId: DB lock path ignores PARKED flag projection', async () => {
-	    const base = createFixtureBase();
-	    const previousLock = process.env.GSD_MILESTONE_LOCK;
-	    const previousWorker = process.env.GSD_PARALLEL_WORKER;
-	    try {
-	      process.env.GSD_MILESTONE_LOCK = 'M001';
-	      process.env.GSD_PARALLEL_WORKER = '1';
+  test('getActiveMilestoneId: DB lock path ignores PARKED flag projection', async () => {
+    const base = createFixtureBase();
+    const previousLock = process.env.GSD_MILESTONE_LOCK;
+    const previousWorker = process.env.GSD_PARALLEL_WORKER;
+    try {
+      process.env.GSD_MILESTONE_LOCK = 'M001';
+      process.env.GSD_PARALLEL_WORKER = '1';
       writeFile(base, 'milestones/M001/M001-PARKED.md', '# Parked on disk');
 
       openDatabase(':memory:');
@@ -487,12 +487,41 @@ describe('derive-state-helpers', () => {
 
       const id = await getActiveMilestoneId(base);
       assert.equal(id, 'M001', 'DB status remains authoritative despite PARKED projection');
-	    } finally {
-	      if (previousLock === undefined) delete process.env.GSD_MILESTONE_LOCK;
-	      else process.env.GSD_MILESTONE_LOCK = previousLock;
-	      if (previousWorker === undefined) delete process.env.GSD_PARALLEL_WORKER;
-	      else process.env.GSD_PARALLEL_WORKER = previousWorker;
-	      closeDatabase();
+    } finally {
+      if (previousLock === undefined) delete process.env.GSD_MILESTONE_LOCK;
+      else process.env.GSD_MILESTONE_LOCK = previousLock;
+      if (previousWorker === undefined) delete process.env.GSD_PARALLEL_WORKER;
+      else process.env.GSD_PARALLEL_WORKER = previousWorker;
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('deriveStateFromDb: solo milestone lock scopes state to the requested milestone', async () => {
+    const base = createFixtureBase();
+    const previousLock = process.env.GSD_MILESTONE_LOCK;
+    const previousWorker = process.env.GSD_PARALLEL_WORKER;
+    try {
+      delete process.env.GSD_PARALLEL_WORKER;
+      process.env.GSD_MILESTONE_LOCK = 'M002';
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'Earlier', status: 'active' });
+      insertMilestone({ id: 'M002', title: 'Requested', status: 'active' });
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+      const id = await getActiveMilestoneId(base);
+
+      assert.equal(state.activeMilestone?.id, 'M002', 'explicit lock chooses requested milestone');
+      assert.deepEqual(state.registry.map((entry) => entry.id), ['M002'], 'registry is scoped to requested milestone');
+      assert.equal(id, 'M002', 'active milestone helper honors solo lock');
+    } finally {
+      if (previousLock === undefined) delete process.env.GSD_MILESTONE_LOCK;
+      else process.env.GSD_MILESTONE_LOCK = previousLock;
+      if (previousWorker === undefined) delete process.env.GSD_PARALLEL_WORKER;
+      else process.env.GSD_PARALLEL_WORKER = previousWorker;
+      closeDatabase();
       cleanup(base);
     }
   });

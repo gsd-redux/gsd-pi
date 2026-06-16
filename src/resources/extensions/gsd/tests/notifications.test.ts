@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   buildDesktopNotificationCommand,
   shouldSendDesktopNotification,
   formatNotificationTitle,
+  playNotificationBell,
+  shouldPlayNotificationBell,
 } from "../notifications.js";
 import type { NotificationPreferences } from "../types.js";
 
@@ -30,6 +33,43 @@ test("shouldSendDesktopNotification disables all categories when notifications a
 
   assert.equal(shouldSendDesktopNotification("error", prefs), false);
   assert.equal(shouldSendDesktopNotification("milestone", prefs), false);
+});
+
+test("shouldPlayNotificationBell requires explicit local_bell opt-in", () => {
+  assert.equal(shouldPlayNotificationBell("question", { enabled: true }), false);
+  assert.equal(shouldPlayNotificationBell("question", { enabled: true, local_bell: true }), true);
+  assert.equal(shouldPlayNotificationBell("stop", { enabled: true, local_bell: true, on_attention: false }), false);
+  assert.equal(shouldPlayNotificationBell("stop", { enabled: false, local_bell: true, on_attention: true }), false);
+});
+
+test("playNotificationBell writes a terminal bell when enabled", () => {
+  let output = "";
+  const stream = { write: (chunk: string) => { output += chunk; } };
+
+  assert.equal(playNotificationBell("question", { enabled: true, local_bell: true }, stream), true);
+  assert.equal(output, "\u0007");
+});
+
+test("playNotificationBell is silent when disabled", () => {
+  let output = "";
+  const stream = { write: (chunk: string) => { output += chunk; } };
+
+  assert.equal(playNotificationBell("question", { enabled: true, local_bell: false }, stream), false);
+  assert.equal(output, "");
+});
+
+test("ask_user_questions plays local bell before waiting for an answer", () => {
+  const source = readFileSync(new URL("../../ask-user-questions.ts", import.meta.url), "utf-8");
+
+  assert.match(source, /playNotificationBell\("question"\)/);
+  assert.match(source, /await playQuestionBell\(\)/);
+});
+
+test("stopAuto plays local bell for auto-mode stop notifications", () => {
+  const source = readFileSync(new URL("../auto.ts", import.meta.url), "utf-8");
+
+  assert.match(source, /import \{[^}]*playNotificationBell[^}]*\} from "\.\/notifications\.js"/);
+  assert.match(source, /playNotificationBell\("stop", loadedPreferences\?\.notifications\)/);
 });
 
 test("buildDesktopNotificationCommand falls back to osascript on macOS when terminal-notifier is absent", () => {

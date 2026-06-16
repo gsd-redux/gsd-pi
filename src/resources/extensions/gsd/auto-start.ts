@@ -60,12 +60,13 @@ import { getAutoWorktreePath, isInAutoWorktree, checkoutBranchWithStashGuard } f
 import { readResourceVersion, cleanStaleRuntimeUnits } from "./auto-worktree.js";
 import { worktreePath as getWorktreeDir, isInsideWorktreesDir } from "./worktree-manager.js";
 import { emitWorktreeOrphaned } from "./worktree-telemetry.js";
+import { queryJournal } from "./journal.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, getAllMilestones, insertMilestone, openDatabase, getDbStatus } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, getAllMilestones, insertMilestone, openDatabase, getDbStatus, updateMilestoneStatus } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { extractVerdict } from "./verdict-parser.js";
@@ -185,6 +186,40 @@ export function reconcileProjectMilestonesFromDisk(basePath: string): number {
     );
     return 0;
   }
+}
+
+export function reconcileMergedMilestonesFromJournal(basePath: string): number {
+  if (!isDbAvailable()) return 0;
+
+  const mergedAtByMilestone = new Map<string, string>();
+  for (const entry of queryJournal(basePath, { eventType: "worktree-merged" })) {
+    const data = entry.data ?? {};
+    const milestoneId = typeof data.milestoneId === "string" ? data.milestoneId : null;
+    if (!milestoneId) continue;
+    if (data.conflict === true) continue;
+
+    const endedAt = typeof data.endedAt === "string" ? data.endedAt : entry.ts;
+    const previous = mergedAtByMilestone.get(milestoneId);
+    if (!previous || endedAt > previous) mergedAtByMilestone.set(milestoneId, endedAt);
+  }
+
+  let closed = 0;
+  for (const [milestoneId, completedAt] of mergedAtByMilestone) {
+    const existing = getMilestone(milestoneId);
+    if (!existing) {
+      insertMilestone({ id: milestoneId, title: milestoneId, status: "complete" });
+      updateMilestoneStatus(milestoneId, "complete", completedAt);
+      closed++;
+      continue;
+    }
+    if (!isClosedStatus(existing.status)) {
+      updateMilestoneStatus(milestoneId, "complete", completedAt);
+      closed++;
+    }
+  }
+
+  if (closed > 0) invalidateAllCaches();
+  return closed;
 }
 
 /**
@@ -332,6 +367,25 @@ function strandedWorkMessage(args: {
     wtSuffix +
     ` ${recovery} Park or discard explicitly if abandoning.`
   );
+}
+
+function formatStrandedWorkBlockerMessage(
+  action: OrphanAuditAction,
+  activeMilestoneId: string | null,
+): string {
+  const target = action.milestoneId;
+  const mode = action.recoveryMode === "worktree" ? "existing worktree" : "milestone branch";
+  const intro = activeMilestoneId
+    ? `Stranded work for ${target} blocks auto-mode before ${activeMilestoneId}.`
+    : `Stranded work for ${target} blocks auto-mode, but that milestone is not active in project state.`;
+
+  return [
+    intro,
+    "Choose one explicit next step:",
+    `1. Recover it: run \`/gsd auto ${target}\` to adopt the ${mode}.`,
+    `2. Defer it: run \`/gsd park ${target} "reason"\`, then rerun \`/gsd auto\`.`,
+    `3. Abandon it: run \`/gsd rethink\` and explicitly discard ${target}.`,
+  ].join("\n");
 }
 
 export function auditOrphanedMilestoneBranches(
@@ -1066,6 +1120,7 @@ export async function bootstrapAutoSession(
     await openProjectDbIfPresent(base);
     registerAutoWorkerForSession(base);
     reconcileProjectMilestonesFromDisk(base);
+    reconcileMergedMilestonesFromJournal(base);
 
     // Clean stale runtime unit files for completed milestones (#887).
     // DB-authoritative: when DB is available, require DB status to be closed
@@ -1177,14 +1232,14 @@ export async function bootstrapAutoSession(
     if (blockingStrandedRecoveryAction) {
       if (!state.activeMilestone) {
         ctx.ui.notify(
-          `Stranded work for ${blockingStrandedRecoveryAction.milestoneId} blocks auto-mode, but that milestone is not active in project state. Park or discard it explicitly before continuing.`,
+          formatStrandedWorkBlockerMessage(blockingStrandedRecoveryAction, null),
           "error",
         );
         return releaseLockAndReturn();
       }
       if (state.activeMilestone.id !== blockingStrandedRecoveryAction.milestoneId) {
         ctx.ui.notify(
-          `Stranded work for ${blockingStrandedRecoveryAction.milestoneId} blocks auto-mode before ${state.activeMilestone.id}. Recover, park, or discard ${blockingStrandedRecoveryAction.milestoneId} explicitly before continuing.`,
+          formatStrandedWorkBlockerMessage(blockingStrandedRecoveryAction, state.activeMilestone.id),
           "error",
         );
         return releaseLockAndReturn();
