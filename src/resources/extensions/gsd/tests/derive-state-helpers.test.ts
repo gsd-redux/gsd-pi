@@ -21,6 +21,7 @@ import {
   insertSlice,
   insertTask,
   setMilestoneQueueOrder,
+  transaction,
   updateTaskStatus,
 } from '../gsd-db.ts';
 
@@ -467,6 +468,31 @@ describe('derive-state-helpers', () => {
 
       assert.equal(state.activeMilestone?.id, 'M002', 'queue-order: DB sequence chooses M002');
       assert.equal(state.registry[0]?.id, 'M002', 'queue-order: registry[0] follows DB sequence');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('setMilestoneQueueOrder can be composed inside a transaction', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-CONTEXT.md', '# M001\n\nContext.');
+      writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002\n\nContext.');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'First', status: 'active' });
+      insertMilestone({ id: 'M002', title: 'Second', status: 'active' });
+
+      transaction(() => {
+        setMilestoneQueueOrder(['M002', 'M001']);
+      });
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      assert.equal(state.activeMilestone?.id, 'M002', 'queue-order: nested transaction chooses M002');
+      assert.deepEqual(state.registry.map(entry => entry.id), ['M002', 'M001']);
     } finally {
       closeDatabase();
       cleanup(base);

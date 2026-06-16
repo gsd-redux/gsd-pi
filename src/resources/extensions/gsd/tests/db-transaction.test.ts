@@ -17,6 +17,10 @@ class FakeTransactionControls implements DbTransactionControls {
     this.record("BEGIN DEFERRED");
   }
 
+  beginImmediate(): void {
+    this.record("BEGIN IMMEDIATE");
+  }
+
   commit(): void {
     this.record("COMMIT");
   }
@@ -106,5 +110,60 @@ describe("db-transaction", () => {
     assert.deepEqual(controls.calls, ["BEGIN DEFERRED", "ROLLBACK"]);
     assert.equal(rollbackErrors.length, 1);
     assert.match(rollbackErrors[0].message, /failed ROLLBACK/);
+  });
+
+  test("commits successful immediate transactions", () => {
+    const runner = createDbTransactionRunner();
+    const controls = new FakeTransactionControls();
+
+    const result = runner.immediateTransaction(controls, () => {
+      assert.equal(runner.isInTransaction(), true);
+      return "ok";
+    });
+
+    assert.equal(result, "ok");
+    assert.equal(runner.isInTransaction(), false);
+    assert.deepEqual(controls.calls, ["BEGIN IMMEDIATE", "COMMIT"]);
+  });
+
+  test("rolls back failed immediate transactions and clears depth", () => {
+    const runner = createDbTransactionRunner();
+    const controls = new FakeTransactionControls();
+
+    assert.throws(
+      () => runner.immediateTransaction(controls, () => {
+        throw new Error("boom");
+      }),
+      /boom/,
+    );
+
+    assert.equal(runner.isInTransaction(), false);
+    assert.deepEqual(controls.calls, ["BEGIN IMMEDIATE", "ROLLBACK"]);
+  });
+
+  test("nested immediate transactions inside write transactions do not issue nested BEGIN", () => {
+    const runner = createDbTransactionRunner();
+    const controls = new FakeTransactionControls();
+
+    runner.transaction(controls, () => {
+      runner.immediateTransaction(controls, () => {
+        assert.equal(runner.isInTransaction(), true);
+      });
+    });
+
+    assert.deepEqual(controls.calls, ["BEGIN", "COMMIT"]);
+  });
+
+  test("nested write transactions inside immediate transactions do not issue nested BEGIN", () => {
+    const runner = createDbTransactionRunner();
+    const controls = new FakeTransactionControls();
+
+    runner.immediateTransaction(controls, () => {
+      runner.transaction(controls, () => {
+        assert.equal(runner.isInTransaction(), true);
+      });
+    });
+
+    assert.deepEqual(controls.calls, ["BEGIN IMMEDIATE", "COMMIT"]);
   });
 });

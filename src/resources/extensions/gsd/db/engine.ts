@@ -735,6 +735,7 @@ function createTransactionControls(db: DbAdapter) {
   return {
     begin: () => db.exec("BEGIN"),
     beginRead: () => db.exec("BEGIN DEFERRED"),
+    beginImmediate: () => db.exec("BEGIN IMMEDIATE"),
     commit: () => db.exec("COMMIT"),
     rollback: () => db.exec("ROLLBACK"),
   };
@@ -753,6 +754,11 @@ export function isInTransaction(): boolean {
 export function transaction<T>(fn: () => T): T {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   return _transactionRunner.transaction(createTransactionControls(currentDb), fn);
+}
+
+export function immediateTransaction<T>(fn: () => T): T {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  return _transactionRunner.immediateTransaction(createTransactionControls(currentDb), fn);
 }
 
 /**

@@ -4,6 +4,7 @@
 export interface DbTransactionControls {
   begin(): void;
   beginRead(): void;
+  beginImmediate?(): void;
   commit(): void;
   rollback(): void;
 }
@@ -16,22 +17,15 @@ export class DbTransactionRunner {
   }
 
   transaction<T>(controls: DbTransactionControls, fn: () => T): T {
-    if (this.depth > 0) {
-      return this.runNested(fn);
+    return this.runTransaction(controls, () => controls.begin(), fn);
+  }
+
+  immediateTransaction<T>(controls: DbTransactionControls, fn: () => T): T {
+    if (!controls.beginImmediate) {
+      throw new Error("db transaction controls do not support immediate transactions");
     }
 
-    controls.begin();
-    this.depth++;
-    try {
-      const result = fn();
-      controls.commit();
-      return result;
-    } catch (err) {
-      controls.rollback();
-      throw err;
-    } finally {
-      this.depth--;
-    }
+    return this.runTransaction(controls, () => controls.beginImmediate!(), fn);
   }
 
   readTransaction<T>(
@@ -39,22 +33,27 @@ export class DbTransactionRunner {
     fn: () => T,
     logRollbackError: (error: Error) => void,
   ): T {
+    return this.runTransaction(controls, () => controls.beginRead(), fn, logRollbackError);
+  }
+
+  private runTransaction<T>(
+    controls: DbTransactionControls,
+    begin: () => void,
+    fn: () => T,
+    logRollbackError?: (error: Error) => void,
+  ): T {
     if (this.depth > 0) {
       return this.runNested(fn);
     }
 
-    controls.beginRead();
+    begin();
     this.depth++;
     try {
       const result = fn();
       controls.commit();
       return result;
     } catch (err) {
-      try {
-        controls.rollback();
-      } catch (rollbackErr) {
-        logRollbackError(rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr)));
-      }
+      this.rollback(controls, logRollbackError);
       throw err;
     } finally {
       this.depth--;
@@ -67,6 +66,19 @@ export class DbTransactionRunner {
       return fn();
     } finally {
       this.depth--;
+    }
+  }
+
+  private rollback(controls: DbTransactionControls, logRollbackError?: (error: Error) => void): void {
+    if (!logRollbackError) {
+      controls.rollback();
+      return;
+    }
+
+    try {
+      controls.rollback();
+    } catch (rollbackErr) {
+      logRollbackError(rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr)));
     }
   }
 }
