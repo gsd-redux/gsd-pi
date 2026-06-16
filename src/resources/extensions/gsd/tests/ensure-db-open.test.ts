@@ -12,7 +12,7 @@ import * as os from 'node:os';
 import * as fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { closeDatabase, isDbAvailable, getDecisionById, SCHEMA_VERSION, _getAdapter } from '../gsd-db.ts';
 import { formatWorkflowDatabaseOpenFailure } from '../bootstrap/dynamic-tools.ts';
 
@@ -345,17 +345,31 @@ describe('ensure-db-open', () => {
 
   test('ensureDbOpen: source-mode runtime without node:sqlite records actionable guidance', () => {
     const loaderPath = fileURLToPath(new URL('./resolve-ts.mjs', import.meta.url));
+    const runningFromDistTest = fileURLToPath(import.meta.url).includes(`${path.sep}dist-test${path.sep}`);
+    const dynamicToolsImportUrl = pathToFileURL(
+      path.resolve(
+        runningFromDistTest
+          ? 'dist-test/src/resources/extensions/gsd/bootstrap/dynamic-tools.js'
+          : 'src/resources/extensions/gsd/bootstrap/dynamic-tools.ts',
+      ),
+    ).href;
+    const loggerImportUrl = pathToFileURL(
+      path.resolve(
+        runningFromDistTest
+          ? 'dist-test/src/resources/extensions/gsd/workflow-logger.ts'
+          : 'src/resources/extensions/gsd/workflow-logger.ts',
+      ),
+    ).href;
     const script = `
       const fs = require('node:fs');
       const os = require('node:os');
       const path = require('node:path');
-      const { pathToFileURL } = require('node:url');
       (async () => {
         const base = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-missing-sqlite-'));
         try {
           fs.mkdirSync(path.join(base, '.gsd'), { recursive: true });
-          const dynamicTools = await import(pathToFileURL(path.resolve('src/resources/extensions/gsd/bootstrap/dynamic-tools.ts')).href);
-          const logger = await import(pathToFileURL(path.resolve('src/resources/extensions/gsd/workflow-logger.ts')).href);
+          const dynamicTools = await import(${JSON.stringify(dynamicToolsImportUrl)});
+          const logger = await import(${JSON.stringify(loggerImportUrl)});
           await dynamicTools.ensureDbOpen(base);
           const messages = logger.peekLogs().map((entry) => entry.message);
           console.log(JSON.stringify(messages));

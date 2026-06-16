@@ -103,7 +103,7 @@ function dbOpenPhaseHint(status: WorkflowDatabaseStatus): string {
 
 export function formatWorkflowDatabaseOpenFailure(
   result: WorkflowDatabaseOpenFailure,
-  status: WorkflowDatabaseStatus = getWorkflowDatabaseStatus(),
+  status?: WorkflowDatabaseStatus,
   nodeVersion: string = process.versions.node,
 ): string {
   if (result.reason === "missing-gsd-dir") {
@@ -114,11 +114,12 @@ export function formatWorkflowDatabaseOpenFailure(
     return `ensureDbOpen failed — no GSD database found at ${result.location.projectDb}`;
   }
 
-  const detail = result.error?.message ?? status.lastError?.message ?? "";
+  const resolvedStatus = status ?? getWorkflowDatabaseStatus();
+  const detail = result.error?.message ?? resolvedStatus.lastError?.message ?? "";
   const detailSuffix = detail ? ` (${detail})` : "";
   return (
     `ensureDbOpen failed for ${result.location.projectDb}: ` +
-    `${dbOpenPhaseHint(status)}${detailSuffix}. ${sqliteProviderHint(status, nodeVersion)}`
+    `${dbOpenPhaseHint(resolvedStatus)}${detailSuffix}. ${sqliteProviderHint(resolvedStatus, nodeVersion)}`
   );
 }
 
