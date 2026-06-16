@@ -21,14 +21,11 @@ export function backupDatabaseBeforeMigration(
     const backupPath = `${dbPath}.backup-v${currentVersion}`;
     if (deps.existsSync(backupPath)) return;
 
-    try {
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    } catch {
-      // Checkpoint is best effort; copying the base file is still better than no backup.
-    }
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     deps.copyFileSync(dbPath, backupPath);
   } catch (backupErr) {
     const message = backupErr instanceof Error ? backupErr.message : String(backupErr);
     deps.logWarning("db", `Pre-migration backup failed: ${message}`);
+    throw backupErr;
   }
 }

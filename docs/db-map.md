@@ -50,6 +50,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 - Sibling worktrees share the same `.gsd/gsd.db` via SQLite WAL
 - Only one connection is "active" at a time; others cached for fast re-activation
 - On process exit: checkpoint WAL → vacuum → close
+- Before file-backed schema migrations, `db-migration-backup.ts` checkpoints WAL and copies `.gsd/gsd.db` to `.gsd/gsd.db.backup-vN`; same-version backups are reused, and checkpoint/copy failures stop before migration DDL.
 
 **Provider fallback chain:**
 1. `node:sqlite` (Node ≥ 22 built-in) — preferred
@@ -766,3 +767,5 @@ remain outside manifest restore.
 5. **FTS fallback**: if FTS5 unavailable, `memory_query` falls back to LIKE scan on `memories.content`.
 
 6. **Workspace isolation**: same `.gsd/gsd.db` for all worktrees of one project; separate `.gsd/gsd.db` per project root. Coordination tables assume single-host shared WAL. Multi-host needs external coordinator.
+
+7. **Pre-migration backup**: file-backed migrations checkpoint WAL before copying the base DB to `.backup-vN`. If the same-version backup already exists, backup is skipped and migrations continue; if checkpointing or copying fails, the error propagates before any migration DDL runs.

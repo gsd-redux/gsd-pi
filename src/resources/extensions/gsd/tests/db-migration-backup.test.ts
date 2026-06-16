@@ -77,28 +77,45 @@ describe("db-migration-backup", () => {
     assert.deepEqual(copies, [["/tmp/gsd.db", "/tmp/gsd.db.backup-v12"]]);
   });
 
-  test("continues copying when checkpoint fails and warns when copy fails", () => {
+  test("throws and skips copying when checkpoint fails", () => {
     const db = new FakeAdapter();
     db.failCheckpoint = true;
     const copies: Array<[string, string]> = [];
     const warnings: string[] = [];
 
-    backupDatabaseBeforeMigration(db, "/tmp/gsd.db", 12, {
-      existsSync: (path) => path === "/tmp/gsd.db",
-      copyFileSync: (src, dest) => copies.push([src, dest]),
-      logWarning: (_scope, message) => warnings.push(message),
-    });
+    assert.throws(
+      () =>
+        backupDatabaseBeforeMigration(db, "/tmp/gsd.db", 12, {
+          existsSync: (path) => path === "/tmp/gsd.db",
+          copyFileSync: (src, dest) => copies.push([src, dest]),
+          logWarning: (_scope, message) => warnings.push(message),
+        }),
+      /checkpoint failed/,
+    );
 
-    assert.deepEqual(copies, [["/tmp/gsd.db", "/tmp/gsd.db.backup-v12"]]);
+    assert.deepEqual(db.execCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(copies, []);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Pre-migration backup failed: checkpoint failed/);
+  });
 
-    backupDatabaseBeforeMigration(db, "/tmp/fail.db", 13, {
-      existsSync: (path) => path === "/tmp/fail.db",
-      copyFileSync: () => {
-        throw new Error("read only");
-      },
-      logWarning: (_scope, message) => warnings.push(message),
-    });
+  test("throws and warns when copy fails", () => {
+    const db = new FakeAdapter();
+    const warnings: string[] = [];
 
+    assert.throws(
+      () =>
+        backupDatabaseBeforeMigration(db, "/tmp/fail.db", 13, {
+          existsSync: (path) => path === "/tmp/fail.db",
+          copyFileSync: () => {
+            throw new Error("read only");
+          },
+          logWarning: (_scope, message) => warnings.push(message),
+        }),
+      /read only/,
+    );
+
+    assert.deepEqual(db.execCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Pre-migration backup failed: read only/);
   });
