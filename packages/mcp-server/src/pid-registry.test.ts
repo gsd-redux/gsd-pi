@@ -450,6 +450,46 @@ describe('registerMcpInstance', () => {
 });
 
 describe('sweepProjectOrphanMcpServers', () => {
+  test('does not inspect cwd when an orphan command already contains the project path', () => {
+    const projectDir = '/workspace/project';
+    const alive = new Set([1101]);
+    const signals: Array<{ pid: number; signal: NodeJS.Signals | 0 | undefined }> = [];
+
+    const result = sweepProjectOrphanMcpServers(projectDir, {
+      isOrphaned: isPpidOneOrphan,
+      listProcesses() {
+        return [
+          { pid: 1101, ppid: 1, command: `node ${projectDir}/packages/mcp-server/dist/cli.js` },
+        ];
+      },
+      getProcessCwd() {
+        throw new Error('cwd lookup should not run for project-qualified MCP commands');
+      },
+      kill(pid, signal) {
+        signals.push({ pid, signal });
+        if (!alive.has(pid)) {
+          const err = new Error('dead') as NodeJS.ErrnoException;
+          err.code = 'ESRCH';
+          throw err;
+        }
+        if (signal === 'SIGTERM') alive.delete(pid);
+      },
+      waitForExit() {},
+    });
+
+    assert.deepEqual(signals, [
+      { pid: 1101, signal: 0 },
+      { pid: 1101, signal: 'SIGTERM' },
+      { pid: 1101, signal: 0 },
+    ]);
+    assert.deepEqual(result, {
+      matched: [1101],
+      terminated: [1101],
+      forceKilled: [],
+      skipped: [],
+    });
+  });
+
   test('terminates only orphaned MCP servers for the same project and force-kills TERM-resistant processes', () => {
     const projectDir = '/workspace/project';
     const otherDir = '/workspace/other';

@@ -387,7 +387,9 @@ export function sweepProjectOrphanMcpServers(
   for (const proc of listProcesses()) {
     if (!isSafePid(proc.pid) || proc.pid === process.pid) continue;
     if (!isOrphaned(proc)) continue;
-    if (!isSameProjectMcpProcess(proc.command, getProcessCwd(proc.pid), projectDir)) continue;
+    if (!isMcpServerCommand(proc.command)) continue;
+    const cwd = commandContainsProjectPath(proc.command, projectDir) ? null : getProcessCwd(proc.pid);
+    if (!isSameProjectMcpProcess(proc.command, cwd, projectDir)) continue;
     result.matched.push(proc.pid);
 
     if (!isPidAlive(proc.pid, sendSignal)) {
