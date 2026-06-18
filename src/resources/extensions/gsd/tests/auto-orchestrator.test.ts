@@ -42,7 +42,7 @@ import {
 } from "../gsd-db.js";
 import { AutoSession } from "../auto/session.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
-import { claimMilestoneLease } from "../db/milestone-leases.js";
+import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from "../db/milestone-leases.js";
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
 import { normalizeRealPath } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
@@ -308,6 +308,71 @@ test("advance() sets active unit and is reflected in status", async (t) => {
   });
 });
 
+test("advance() reclaims a released milestone lease before isolated source dispatch", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  writeFileSync(
+    join(f.base, ".gsd", "PREFERENCES.md"),
+    "---\ngit:\n  isolation: branch\n---\n",
+  );
+  execFileSync("git", ["checkout", "-b", "milestone/M001"], { cwd: f.base, stdio: "ignore" });
+
+  const priorWorkerId = registerAutoWorker({ projectRootRealpath: f.base });
+  const priorLease = claimMilestoneLease(priorWorkerId, "M001");
+  assert.equal(priorLease.ok, true);
+  if (!priorLease.ok) return;
+  assert.equal(releaseMilestoneLease(priorWorkerId, "M001", priorLease.token), true);
+
+  const resumedWorkerId = registerAutoWorker({ projectRootRealpath: f.base });
+  f.session.workerId = resumedWorkerId;
+  f.session.currentMilestoneId = null;
+  f.session.milestoneLeaseToken = null;
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "advanced", JSON.stringify(result));
+  assert.equal(f.session.currentMilestoneId, "M001");
+  assert.equal(f.session.milestoneLeaseToken, priorLease.token + 1);
+  const lease = getMilestoneLease("M001");
+  assert.equal(lease?.worker_id, resumedWorkerId);
+  assert.equal(lease?.status, "held");
+  assert.ok(f.journalNames().includes("advance"));
+  assert.ok(!f.journalNames().includes("advance-blocked"));
+});
+
+test("advance() claims the active milestone lease even when session still holds a prior milestone token", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  writeFileSync(
+    join(f.base, ".gsd", "PREFERENCES.md"),
+    "---\ngit:\n  isolation: branch\n---\n",
+  );
+  execFileSync("git", ["checkout", "-b", "milestone/M001"], { cwd: f.base, stdio: "ignore" });
+
+  insertMilestone({ id: "M000", title: "Prior", status: "complete" });
+  const workerId = registerAutoWorker({ projectRootRealpath: f.base });
+  const staleLease = claimMilestoneLease(workerId, "M000");
+  assert.equal(staleLease.ok, true);
+  if (!staleLease.ok) return;
+
+  f.session.workerId = workerId;
+  f.session.currentMilestoneId = "M000";
+  f.session.milestoneLeaseToken = staleLease.token;
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "advanced", JSON.stringify(result));
+  assert.equal(f.session.currentMilestoneId, "M001");
+  const activeLease = getMilestoneLease("M001");
+  assert.equal(activeLease?.worker_id, workerId);
+  assert.equal(activeLease?.status, "held");
+  assert.equal(f.session.milestoneLeaseToken, activeLease?.fencing_token);
+  assert.ok(f.journalNames().includes("advance"));
+  assert.ok(!f.journalNames().includes("advance-blocked"));
+});
+
 test("advance() blocks source dispatch when an earlier slice is incomplete", async (t) => {
   const f = makeFixture({
     dispatch: () => ({
@@ -425,7 +490,7 @@ test("advance() reports completion when complete state has no next unit", async 
   assert.equal(f.orchestrator.getStatus().phase, "stopped");
 });
 
-test("advance() blocks all-complete stop when completed milestone is still unmerged in a worktree", async (t) => {
+test("advance() merges a completed milestone worktree before all-complete stop", async (t) => {
   const f = makeFixture({ complete: true, noTask: true });
   t.after(() => f.cleanup());
 
@@ -466,17 +531,16 @@ test("advance() blocks all-complete stop when completed milestone is still unmer
 
   const result = await f.orchestrator.advance();
 
-  assert.equal(result.kind, "blocked");
-  if (result.kind !== "blocked") return;
-  assert.equal(result.action, "pause");
-  assert.equal(result.terminalOutcome?.code, "settlement-blocked");
-  assert.match(result.reason, /worktree branch has not been merged to main/);
-  assert.doesNotMatch(result.reason, /quality gate Q3 is still pending/);
-  assert.equal(f.orchestrator.getStatus().phase, "paused");
-  assert.equal(f.session.milestoneSettlement?.ok, false);
+  assert.equal(result.kind, "stopped");
+  if (result.kind !== "stopped") return;
+  assert.equal(result.reason, "All milestones complete");
+  assert.equal(result.terminalOutcome?.code, "all-complete");
+  assert.equal(f.orchestrator.getStatus().phase, "stopped");
+  assert.equal(f.session.milestoneMergedInPhases, true);
+  assert.deepEqual(f.session.milestoneSettlement, { ok: true, reason: "settled" });
   const names = f.journalNames();
-  assert.ok(names.includes("advance-blocked"));
-  assert.ok(!names.includes("advance-stopped"));
+  assert.ok(names.includes("advance-stopped"));
+  assert.ok(!names.includes("advance-blocked"));
 });
 
 test("advance() stopped clears previous activeUnit and resets idempotent lock", async (t) => {

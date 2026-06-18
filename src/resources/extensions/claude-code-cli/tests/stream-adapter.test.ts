@@ -1,10 +1,14 @@
 // gsd-pi - Claude Code stream adapter regression tests
 import { describe, test } from "node:test";
+import { clearGuidedUnitContext, setGuidedUnitContext } from "../../gsd/guided-unit-context.ts";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import {
+	streamViaClaudeCode,
 	makeStreamExhaustedErrorMessage,
 	isClaudeCodeAbortErrorMessage,
 	resolveClaudeCodeAbortedMessageText,
@@ -35,12 +39,20 @@ import {
 	roundResultToElicitationContent,
 	autoInitClaudeCodeWorkflowMcp,
 	inferGsdPhaseFromContext,
+	resolveGsdPhaseForSdk,
+	resolveClaudeCodeToolSurfaceReadinessError,
+	resolveClaudeCodeToolSurfaceReadinessRetryDelayMs,
+	shouldRetryClaudeCodeToolSurfaceReadiness,
+	buildWorkflowMcpReadinessProgressMessage,
+	pushWorkflowMcpReadinessProgressEvent,
 } from "../stream-adapter.ts";
 import { CLAUDE_CODE_MODELS } from "../models.ts";
 import type { AssistantMessage, Context, Message } from "@gsd/pi-ai";
 import type { SDKUserMessage } from "../sdk-types.ts";
 import { _setAutoActiveForTest } from "../../gsd/auto.ts";
 import { getInFlightToolCount, hasInteractiveToolInFlight, clearInFlightTools, isInteractiveElicitationInFlight } from "../../gsd/auto-tool-tracking.ts";
+import { clearMcpConfigCache } from "../../mcp-client/manager.ts";
+import { UNIT_TOOL_CONTRACTS } from "../../gsd/unit-tool-contracts.ts";
 
 // ---------------------------------------------------------------------------
 // Env helpers — `GSD_WORKFLOW_MCP_*` save/restore
@@ -356,6 +368,114 @@ describe("stream-adapter — image prompt forwarding (#4183)", () => {
 			parent_tool_use_id: null,
 		});
 	});
+
+	test("buildSdkQueryPrompt image iterable can be consumed for each SDK retry", async () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "image", data: "ZmFrZQ==", mimeType: "image/jpeg" },
+						{ type: "text", text: "Retry with this image." },
+					],
+				} as Message,
+			],
+		};
+		const textPrompt = buildPromptFromContext(context);
+		const prompt = buildSdkQueryPrompt(context, textPrompt);
+
+		const firstAttempt = [];
+		for await (const item of prompt as AsyncIterable<any>) {
+			firstAttempt.push(item);
+		}
+
+		const retryAttempt = [];
+		for await (const item of prompt as AsyncIterable<any>) {
+			retryAttempt.push(item);
+		}
+
+		assert.equal(firstAttempt.length, 1);
+		assert.deepEqual(retryAttempt, firstAttempt);
+	});
+
+	test("SDK readiness retries do not leak partial content into the next attempt", async () => {
+		let queryCalls = 0;
+		const cwd = mkdtempSync(join(tmpdir(), "claude-sdk-retry-state-"));
+		const context: Context = {
+			systemPrompt: "UNIT: Run UAT",
+			messages: [{ role: "user", content: "Run UAT." } as Message],
+		};
+		try {
+			const stream = streamViaClaudeCode(
+				{ id: "claude-sonnet-4-6" } as any,
+				context,
+				{
+					cwd,
+					_skipWorkflowMcpPreflightForTest: true,
+					async *_sdkQueryForTest() {
+						queryCalls += 1;
+						if (queryCalls === 1) {
+							yield {
+								type: "stream_event",
+								event: { type: "message_start", message: { model: "claude-sonnet-4-6" } },
+								parent_tool_use_id: null,
+								uuid: "partial-1",
+								session_id: "session-1",
+							};
+							yield {
+								type: "stream_event",
+								event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+								parent_tool_use_id: null,
+								uuid: "partial-1",
+								session_id: "session-1",
+							};
+							yield {
+								type: "stream_event",
+								event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "stale retry text" } },
+								parent_tool_use_id: null,
+								uuid: "partial-1",
+								session_id: "session-1",
+							};
+							yield {
+								type: "system",
+								subtype: "init",
+								tools: ["Read"],
+								mcp_servers: [{ name: "gsd-workflow", status: "connected" }],
+							};
+							return;
+						}
+
+						yield {
+							type: "result",
+							subtype: "success",
+							uuid: "result-2",
+							session_id: "session-2",
+							duration_ms: 1,
+							duration_api_ms: 1,
+							is_error: false,
+							num_turns: 1,
+							result: "fresh retry result",
+							stop_reason: "end_turn",
+							total_cost_usd: 0,
+							usage: {
+								input_tokens: 0,
+								output_tokens: 0,
+								cache_read_input_tokens: 0,
+								cache_creation_input_tokens: 0,
+							},
+						};
+					},
+				} as any,
+			);
+
+			const message = await stream.result();
+
+			assert.equal(queryCalls, 2);
+			assert.deepEqual(message.content, [{ type: "text", text: "fresh retry result" }]);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -459,6 +579,33 @@ describe("stream-adapter — no transcript fabrication (#4102)", () => {
 		assert.ok(prompt.includes("mcp__custom-workflow__<tool_name>"));
 		assert.ok(prompt.includes("mcp__custom-workflow__gsd_exec"));
 		assert.ok(!prompt.includes("mcp__gsd-workflow__<tool_name>"));
+	});
+
+	test("buildPromptFromContext remaps structured user input to the workflow MCP question tool", () => {
+		const context: Context = {
+			systemPrompt: "Use ask_user_questions for structured user input.",
+			messages: [{ role: "user", content: "Ask the user what comes next" } as Message],
+		};
+
+		const prompt = buildPromptFromContext(context, { workflowMcpServerName: "gsd-workflow" });
+
+		assert.ok(prompt.includes("mcp__gsd-workflow__ask_user_questions"));
+		assert.ok(prompt.includes("Do not call bare ask_user_questions"));
+		assert.ok(prompt.includes("Do not call native AskUserQuestion"));
+	});
+
+	test("buildPromptFromContext allows ToolSearch only for deferred workflow MCP hydration", () => {
+		const context: Context = {
+			messages: [{ role: "user", content: "Plan the slice" } as Message],
+		};
+
+		const prompt = buildPromptFromContext(context, { workflowMcpServerName: "gsd-workflow" });
+
+		assert.ok(prompt.includes("ToolSearch is available only for Claude Code deferred workflow MCP hydration"));
+		assert.ok(prompt.includes("use ToolSearch with select:mcp__gsd-workflow__<tool_name> or the base tool name"));
+		assert.ok(prompt.includes("then call the returned MCP tool directly"));
+		assert.ok(prompt.includes("Do not use ToolSearch for browser_* tools or general discovery"));
+		assert.ok(!prompt.includes("ToolSearch is NOT available"));
 	});
 
 	test("buildPromptFromContext does not advertise workflow MCP tools when unavailable", () => {
@@ -760,6 +907,91 @@ describe("stream-adapter — Claude Code external tool results", () => {
 		assert.deepEqual(finalContent[1], { type: "text", text: "All done." });
 	});
 
+	test("buildFinalAssistantContent suppresses duplicate empty MCP tool-unavailable failures after same-turn success", () => {
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{
+					type: "toolCall",
+					id: "tool-empty-uat",
+					name: "gsd_uat_exec",
+					arguments: {},
+					mcpServer: "gsd-workflow",
+				} as any,
+				{
+					type: "toolCall",
+					id: "tool-real-uat",
+					name: "gsd_uat_exec",
+					arguments: {
+						milestoneId: "M004",
+						sliceId: "S01",
+						checkId: "S01-UAT-01-smoke",
+						intent: "uat-runtime-check",
+						script: "npx playwright test e2e/priority.spec.js --reporter=line",
+					},
+					mcpServer: "gsd-workflow",
+				} as any,
+			],
+			pendingContent: [{ type: "text", text: "UAT S01 complete." }],
+			toolResultsById: new Map([
+				[
+					"tool-empty-uat",
+					{
+						content: [{
+							type: "text",
+							text: "<tool_use_error>Error: No such tool available: mcp__gsd-workflow__gsd_uat_exec</tool_use_error>",
+						}],
+						isError: true,
+					},
+				],
+				[
+					"tool-real-uat",
+					{
+						content: [{ type: "text", text: "{\"operation\":\"gsd_uat_exec\",\"exit_code\":0}" }],
+						isError: false,
+					},
+				],
+			]),
+		});
+
+		assert.equal(finalContent.length, 2);
+		assert.equal((finalContent[0] as any).id, "tool-real-uat");
+		assert.deepEqual((finalContent[0] as any).externalResult, {
+			content: [{ type: "text", text: "{\"operation\":\"gsd_uat_exec\",\"exit_code\":0}" }],
+			isError: false,
+		});
+		assert.deepEqual(finalContent[1], { type: "text", text: "UAT S01 complete." });
+	});
+
+	test("buildFinalAssistantContent keeps lone MCP tool-unavailable failures", () => {
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{
+					type: "toolCall",
+					id: "tool-empty-uat",
+					name: "gsd_uat_exec",
+					arguments: {},
+					mcpServer: "gsd-workflow",
+				} as any,
+			],
+			toolResultsById: new Map([
+				[
+					"tool-empty-uat",
+					{
+						content: [{
+							type: "text",
+							text: "<tool_use_error>Error: No such tool available: mcp__gsd-workflow__gsd_uat_exec</tool_use_error>",
+						}],
+						isError: true,
+					},
+				],
+			]),
+		});
+
+		assert.equal(finalContent.length, 1);
+		assert.equal((finalContent[0] as any).id, "tool-empty-uat");
+		assert.equal((finalContent[0] as any).externalResult.isError, true);
+	});
+
 	test("buildFinalAssistantContent keeps final-turn tool calls when result arrives without a synthetic user boundary", () => {
 		const finalContent = buildFinalAssistantContent({
 			intermediateToolBlocks: [],
@@ -1053,7 +1285,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			assert.equal(srv.env.GSD_CLI_PATH, "/tmp/gsd");
 			assert.equal(srv.env.GSD_PERSIST_WRITE_GATE_STATE, "1");
 			assert.equal(srv.env.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
-			assert.deepEqual(options.disallowedTools, ["ToolSearch", "AskUserQuestion"]);
+			assert.deepEqual(options.disallowedTools, ["AskUserQuestion"]);
 			assert.deepEqual(options.allowedTools, [
 				"Read",
 				"Write",
@@ -1173,12 +1405,127 @@ describe("stream-adapter — session persistence (#2859)", () => {
 				"plan-milestone must expose exact milestone status helper before ToolSearch is needed",
 			);
 			assert.ok(
-				allowedTools.includes("mcp__gsd-workflow__*"),
-				"non-UAT workflow phases keep the wildcard for existing broad workflow behavior",
+				!allowedTools.includes("mcp__gsd-workflow__*"),
+				"strict GSD phases must not rely on a workflow wildcard that can mask missing exact tools",
 			);
 			assert.ok((options.disallowedTools as string[]).includes("AskUserQuestion"));
 			assert.equal(options.strictMcpConfig, true);
 			assert.ok((options.mcpServers as Record<string, unknown>)?.["gsd-workflow"]);
+		} finally {
+			process.chdir(originalCwd);
+			rmSync(emptyDir, { recursive: true, force: true });
+			restore();
+		}
+	});
+
+	test("buildSdkOptions leaves ToolSearch available for complete-milestone workflow MCP hydration", () => {
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" }),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
+		const originalCwd = process.cwd();
+		const emptyDir = mkdtempSync(join(tmpdir(), "claude-mcp-complete-milestone-"));
+		try {
+			process.chdir(emptyDir);
+			const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { gsdPhase: "complete-milestone" });
+			const disallowedTools = options.disallowedTools as string[];
+
+			assert.ok(!disallowedTools.includes("ToolSearch"));
+			assert.ok(disallowedTools.includes("Skill"));
+			assert.ok(disallowedTools.includes("AskUserQuestion"));
+			assert.equal(options.strictMcpConfig, true);
+		} finally {
+			process.chdir(originalCwd);
+			rmSync(emptyDir, { recursive: true, force: true });
+			restore();
+		}
+	});
+
+	test("buildSdkOptions scopes complete-slice away from native write and shell tools", () => {
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" }),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
+		const originalCwd = process.cwd();
+		const emptyDir = mkdtempSync(join(tmpdir(), "claude-mcp-complete-slice-"));
+		try {
+			process.chdir(emptyDir);
+			const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { gsdPhase: "complete-slice" });
+			const allowedTools = options.allowedTools as string[];
+
+			assert.ok(allowedTools.includes("Read"));
+			assert.ok(allowedTools.includes("Glob"));
+			assert.ok(allowedTools.includes("Grep"));
+			assert.ok(allowedTools.includes("mcp__gsd-workflow__gsd_exec"));
+			assert.ok(allowedTools.includes("mcp__gsd-workflow__gsd_slice_complete"));
+			assert.ok(!allowedTools.includes("Bash"));
+			assert.ok(!allowedTools.includes("Write"));
+			assert.ok(!allowedTools.includes("Edit"));
+			assert.ok(!allowedTools.includes("mcp__gsd-workflow__*"));
+		} finally {
+			process.chdir(originalCwd);
+			rmSync(emptyDir, { recursive: true, force: true });
+			restore();
+		}
+	});
+
+	test("buildSdkOptions blocks native Skill tool during GSD phases", () => {
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" }),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
+		const originalCwd = process.cwd();
+		const emptyDir = mkdtempSync(join(tmpdir(), "claude-mcp-no-native-skill-"));
+		try {
+			process.chdir(emptyDir);
+			const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { gsdPhase: "complete-slice" });
+			const allowedTools = options.allowedTools as string[];
+			const disallowedTools = options.disallowedTools as string[];
+
+			assert.ok(!allowedTools.includes("Skill"));
+			assert.ok(disallowedTools.includes("Skill"));
+		} finally {
+			process.chdir(originalCwd);
+			rmSync(emptyDir, { recursive: true, force: true });
+			restore();
+		}
+	});
+
+	test("buildSdkOptions presents every unit's required workflow MCP tools", () => {
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
+		const originalCwd = process.cwd();
+		const emptyDir = mkdtempSync(join(tmpdir(), "claude-mcp-all-units-"));
+		try {
+			process.chdir(emptyDir);
+			for (const [unitType, contract] of Object.entries(UNIT_TOOL_CONTRACTS)) {
+				const requiredTools = contract.requiredWorkflowTools.filter(
+					(tool) => tool.startsWith("gsd_") || tool === "ask_user_questions",
+				);
+				if (requiredTools.length === 0) continue;
+
+				const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { gsdPhase: unitType });
+				const allowedTools = options.allowedTools as string[];
+				for (const toolName of requiredTools) {
+					assert.ok(
+						allowedTools.includes(`mcp__gsd-workflow__${toolName}`) || allowedTools.includes("mcp__gsd-workflow__*"),
+						`${unitType} must allow ${toolName}; allowed=${JSON.stringify(allowedTools)}`,
+					);
+				}
+			}
 		} finally {
 			process.chdir(originalCwd);
 			rmSync(emptyDir, { recursive: true, force: true });
@@ -1194,6 +1541,53 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		} as Context;
 
 		assert.equal(inferGsdPhaseFromContext(context), "plan-milestone");
+	});
+
+	test("inferGsdPhaseFromContext recognizes discuss-slice and refine-slice prompts", () => {
+		const discussSlice = {
+			messages: [{ role: "user", content: "Discuss slice S001 in milestone M001." }],
+		} as Context;
+		const refineSlice = {
+			messages: [{ role: "user", content: "## UNIT: Refine Slice S001 (\"Auth\") - Milestone M001" }],
+		} as Context;
+
+		assert.equal(inferGsdPhaseFromContext(discussSlice), "discuss-slice");
+		assert.equal(inferGsdPhaseFromContext(refineSlice), "refine-slice");
+	});
+
+	test("resolveGsdPhaseForSdk prefers guided unit context over prompt inference", () => {
+		const projectRoot = "/tmp/gsd-guided-phase-project";
+		clearGuidedUnitContext();
+		setGuidedUnitContext(projectRoot, "discuss-slice");
+		try {
+			const context = {
+				messages: [{ role: "user", content: "Generic workflow task with no phase slug." }],
+			} as Context;
+			assert.equal(resolveGsdPhaseForSdk(context, projectRoot), "discuss-slice");
+		} finally {
+			clearGuidedUnitContext(projectRoot);
+		}
+	});
+
+	test("resolveGsdPhaseForSdk matches guided context across milestone worktrees", () => {
+		const projectRoot = "/tmp/gsd-guided-phase-root";
+		const worktreeRoot = `${projectRoot}/.gsd/worktrees/m001-wt`;
+		clearGuidedUnitContext();
+		setGuidedUnitContext(worktreeRoot, "refine-slice");
+		try {
+			const context = { messages: [{ role: "user", content: "No UNIT header here." }] } as Context;
+			assert.equal(resolveGsdPhaseForSdk(context, projectRoot), "refine-slice");
+		} finally {
+			clearGuidedUnitContext(worktreeRoot);
+		}
+	});
+
+	test("resolveGsdPhaseForSdk falls back to prompt inference when guided context is absent", () => {
+		clearGuidedUnitContext();
+		const context = {
+			messages: [{ role: "user", content: "## UNIT: Run UAT — M001/S001" }],
+		} as Context;
+		assert.equal(resolveGsdPhaseForSdk(context, "/tmp/unrelated-project"), "run-uat");
 	});
 
 	test("buildSdkOptions presents ask_user_questions for discuss phases", () => {
@@ -1245,7 +1639,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			const mcpServers = options.mcpServers as Record<string, any>;
 			assert.ok(mcpServers?.["custom-workflow"], "expected custom workflow server config");
 			assert.ok(mcpServers?.["gsd-browser"], "expected gsd-browser server config");
-			assert.deepEqual(options.disallowedTools, ["ToolSearch", "AskUserQuestion"]);
+			assert.deepEqual(options.disallowedTools, ["AskUserQuestion"]);
 			assert.deepEqual(options.allowedTools, [
 				"Read",
 				"Write",
@@ -1291,7 +1685,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			if (mcpServers) {
 				assert.ok(mcpServers["gsd-workflow"], "if present, must include gsd-workflow");
 				assert.ok(mcpServers["gsd-browser"], "if present, must include gsd-browser");
-				assert.deepEqual((options as any).disallowedTools, ["ToolSearch", "AskUserQuestion"]);
+				assert.deepEqual((options as any).disallowedTools, ["AskUserQuestion"]);
 			} else {
 				assert.deepEqual((options as any).disallowedTools, ["ToolSearch"]);
 			}
@@ -1333,7 +1727,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			assert.equal(srv.env.GSD_CLI_PATH, "/tmp/gsd");
 			assert.equal(srv.env.GSD_PERSIST_WRITE_GATE_STATE, "1");
 			assert.equal(srv.env.GSD_WORKFLOW_PROJECT_ROOT, resolvedRepoDir);
-			assert.deepEqual(options.disallowedTools, ["ToolSearch", "AskUserQuestion"]);
+			assert.deepEqual(options.disallowedTools, ["AskUserQuestion"]);
 		} finally {
 			process.chdir(originalCwd);
 			rmSync(repoDir, { recursive: true, force: true });
@@ -1403,7 +1797,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			const allowedTools = options.allowedTools as string[];
 			assert.ok(allowedTools.includes("mcp__gsd-workflow__gsd_plan_milestone"));
 			assert.ok(allowedTools.includes("mcp__gsd-workflow__gsd_milestone_status"));
-			assert.ok(allowedTools.includes("mcp__gsd-workflow__*"));
+			assert.ok(!allowedTools.includes("mcp__gsd-workflow__*"));
 		} finally {
 			process.chdir(originalCwd);
 			rmSync(projectDir, { recursive: true, force: true });
@@ -1515,6 +1909,277 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		} finally {
 			restore();
 		}
+	});
+});
+
+describe("stream-adapter — workflow MCP readiness", () => {
+	test("emits visible progress text before workflow MCP readiness waits", () => {
+		const partial: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider: "claude-code",
+			model: "claude-sonnet-4-6",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		const events: any[] = [];
+		const state = {};
+		const message = buildWorkflowMcpReadinessProgressMessage({
+			unitType: "complete-milestone",
+			workflowServerName: "gsd-workflow",
+			stage: "preflight",
+		});
+
+		pushWorkflowMcpReadinessProgressEvent({
+			stream: { push: (event: any) => events.push(event) } as any,
+			partial,
+			state,
+			message,
+		});
+		const retryMessage = buildWorkflowMcpReadinessProgressMessage({
+			unitType: "complete-milestone",
+			workflowServerName: "gsd-workflow",
+			stage: "retry",
+			attempt: 1,
+			delayMs: 1_000,
+		});
+		pushWorkflowMcpReadinessProgressEvent({
+			stream: { push: (event: any) => events.push(event) } as any,
+			partial,
+			state,
+			message: retryMessage,
+		});
+
+		assert.deepEqual(events.map((event) => event.type), ["text_start", "text_delta", "text_delta"]);
+		assert.match(events[1].delta, /Starting gsd-workflow MCP/);
+		assert.match(events[1].delta, /complete-milestone/);
+		assert.match(events[2].delta, /Still waiting for gsd-workflow MCP tools/);
+		assert.match(events[2].delta, /Retrying in 1s/);
+		assert.deepEqual(partial.content, [{ type: "text", text: `${message}\n${retryMessage}` }]);
+	});
+
+	test("execute-task requires gsd_exec before the model follows verification guidance", async () => {
+		const error = await resolveClaudeCodeToolSurfaceReadinessError({
+			unitType: "execute-task",
+			workflowServerName: "gsd-workflow",
+			observation: {
+				tools: [
+					"Read",
+					"Bash",
+					"mcp__gsd-workflow__gsd_task_complete",
+					"mcp__gsd-workflow__gsd_exec_search",
+					"mcp__gsd-workflow__gsd_resume",
+					"mcp__gsd-workflow__gsd_capture_thought",
+				],
+				mcpServers: [{ name: "gsd-workflow", status: "connected" }],
+			},
+		});
+
+		assert.match(error ?? "", /gsd_exec/);
+	});
+
+	test("complete-slice requires gsd_exec before the model follows closeout verification guidance", async () => {
+		const error = await resolveClaudeCodeToolSurfaceReadinessError({
+			unitType: "complete-slice",
+			workflowServerName: "gsd-workflow",
+			observation: {
+				tools: [
+					"Read",
+					"mcp__gsd-workflow__gsd_slice_complete",
+					"mcp__gsd-workflow__gsd_task_reopen",
+					"mcp__gsd-workflow__gsd_replan_slice",
+					"mcp__gsd-workflow__gsd_requirement_update",
+					"mcp__gsd-workflow__gsd_summary_save",
+					"mcp__gsd-workflow__gsd_capture_thought",
+					"mcp__gsd-workflow__gsd_exec_search",
+				],
+				mcpServers: [{ name: "gsd-workflow", status: "connected" }],
+			},
+		});
+
+		assert.match(error ?? "", /gsd_exec/);
+	});
+
+	test("complete-slice requires workflow MCP memory capture before closeout guidance can use it", async () => {
+		const error = await resolveClaudeCodeToolSurfaceReadinessError({
+			unitType: "complete-slice",
+			workflowServerName: "gsd-workflow",
+			observation: {
+				tools: [
+					"Read",
+					"capture_thought",
+					"mcp__gsd-workflow__gsd_exec",
+					"mcp__gsd-workflow__gsd_slice_complete",
+					"mcp__gsd-workflow__gsd_task_reopen",
+					"mcp__gsd-workflow__gsd_replan_slice",
+					"mcp__gsd-workflow__gsd_requirement_update",
+					"mcp__gsd-workflow__gsd_summary_save",
+				],
+				mcpServers: [{ name: "gsd-workflow", status: "connected" }],
+			},
+		});
+
+		assert.match(error ?? "", /gsd_capture_thought/);
+	});
+
+	test("terminal init surface remains not ready even when configured workflow MCP probes available", async () => {
+		const previousGsdHome = process.env.GSD_HOME;
+		const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), "claude-sdk-mcp-pending-ready-")));
+		const gsdHomeDir = realpathSync(mkdtempSync(join(tmpdir(), "claude-sdk-mcp-pending-home-")));
+		try {
+			process.env.GSD_HOME = gsdHomeDir;
+
+			const require = createRequire(import.meta.url);
+			const mcpModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/mcp.js")).href;
+			const stdioModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/stdio.js")).href;
+			const serverPath = join(projectRoot, "fake-workflow-mcp-server.mjs");
+			writeFileSync(
+				serverPath,
+				[
+					`const { McpServer } = await import(${JSON.stringify(mcpModuleUrl)});`,
+					`const { StdioServerTransport } = await import(${JSON.stringify(stdioModuleUrl)});`,
+					'const server = new McpServer({ name: "fake", version: "1.0.0" }, { capabilities: { tools: {} } });',
+					'server.tool("gsd_plan_slice", "Plan slice", {}, async () => ({ content: [{ type: "text", text: "ok" }] }));',
+					'server.tool("gsd_reassess_roadmap", "Reassess roadmap", {}, async () => ({ content: [{ type: "text", text: "ok" }] }));',
+					'await server.connect(new StdioServerTransport());',
+				].join("\n"),
+				"utf-8",
+			);
+			writeFileSync(
+				join(projectRoot, ".mcp.json"),
+				JSON.stringify({ mcpServers: { "gsd-workflow": { command: process.execPath, args: [serverPath] } } }),
+				"utf-8",
+			);
+
+			const error = await resolveClaudeCodeToolSurfaceReadinessError({
+				unitType: "plan-slice",
+				workflowServerName: "gsd-workflow",
+				observation: {
+					tools: ["Read", "Bash"],
+					mcpServers: [{ name: "gsd-workflow", status: "failed" }],
+				},
+			});
+
+			assert.match(error ?? "", /status is "failed"/);
+			assert.match(error ?? "", /gsd_plan_slice/);
+		} finally {
+			if (previousGsdHome === undefined) {
+				delete process.env.GSD_HOME;
+			} else {
+				process.env.GSD_HOME = previousGsdHome;
+			}
+			rmSync(projectRoot, { recursive: true, force: true });
+			rmSync(gsdHomeDir, { recursive: true, force: true });
+			clearMcpConfigCache();
+		}
+	});
+
+	test("pending init surface is not accepted until the live Claude session exposes plan-slice tools", async () => {
+		const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), "claude-sdk-mcp-plan-pending-")));
+		try {
+			const require = createRequire(import.meta.url);
+			const mcpModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/mcp.js")).href;
+			const stdioModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/stdio.js")).href;
+			const serverPath = join(projectRoot, "fake-workflow-mcp-server.mjs");
+			writeFileSync(
+				serverPath,
+				[
+					`const { McpServer } = await import(${JSON.stringify(mcpModuleUrl)});`,
+					`const { StdioServerTransport } = await import(${JSON.stringify(stdioModuleUrl)});`,
+					'const server = new McpServer({ name: "fake", version: "1.0.0" }, { capabilities: { tools: {} } });',
+					'server.tool("gsd_plan_slice", "Plan slice", {}, async () => ({ content: [{ type: "text", text: "ok" }] }));',
+					'server.tool("gsd_reassess_roadmap", "Reassess roadmap", {}, async () => ({ content: [{ type: "text", text: "ok" }] }));',
+					'await server.connect(new StdioServerTransport());',
+				].join("\n"),
+				"utf-8",
+			);
+			writeFileSync(
+				join(projectRoot, ".mcp.json"),
+				JSON.stringify({ mcpServers: { "gsd-workflow": { command: process.execPath, args: [serverPath] } } }),
+				"utf-8",
+			);
+
+			const error = await resolveClaudeCodeToolSurfaceReadinessError({
+				unitType: "plan-slice",
+				workflowServerName: "gsd-workflow",
+				projectRoot,
+				observation: {
+					tools: ["Read", "Bash"],
+					mcpServers: [{ name: "gsd-workflow", status: "pending" }],
+				},
+			});
+
+			assert.match(error ?? "", /status is "pending"/);
+			assert.match(error ?? "", /gsd_plan_slice/);
+		} finally {
+			rmSync(projectRoot, { recursive: true, force: true });
+			clearMcpConfigCache();
+		}
+	});
+
+	test("pending init surface can be deferred to Claude Code ToolSearch hydration", async () => {
+		const error = await resolveClaudeCodeToolSurfaceReadinessError({
+			unitType: "plan-slice",
+			workflowServerName: "gsd-workflow",
+			allowPendingToolSearchHydration: true,
+			observation: {
+				tools: ["Read", "Bash"],
+				mcpServers: [{ name: "gsd-workflow", status: "pending" }],
+			},
+		});
+
+		assert.equal(error, null);
+	});
+
+	test("complete-milestone pending init surface defers to Claude Code ToolSearch hydration", async () => {
+		const error = await resolveClaudeCodeToolSurfaceReadinessError({
+			unitType: "complete-milestone",
+			workflowServerName: "gsd-workflow",
+			allowPendingToolSearchHydration: true,
+			observation: {
+				tools: ["Read", "Bash"],
+				mcpServers: [{ name: "gsd-workflow", status: "pending" }],
+			},
+		});
+
+		assert.equal(error, null);
+	});
+
+	test("retries transient readiness errors internally but not terminal MCP failures", () => {
+		const pendingError =
+			'workflow tool surface not ready for run-uat: MCP server "gsd-workflow" status is "pending" (not yet connected): gsd_uat_exec';
+		const partialError =
+			'workflow tool surface not ready for run-uat: MCP server "gsd-workflow" is connected but has not registered: gsd_uat_exec';
+		const terminalError =
+			'workflow tool surface not ready for run-uat: MCP server "gsd-workflow" status is "failed" (terminal) — cannot register: gsd_uat_exec';
+
+		assert.equal(shouldRetryClaudeCodeToolSurfaceReadiness(pendingError), true);
+		assert.equal(shouldRetryClaudeCodeToolSurfaceReadiness(partialError), true);
+		assert.equal(shouldRetryClaudeCodeToolSurfaceReadiness(terminalError), false);
+		assert.equal(
+			resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 0),
+			500,
+		);
+		assert.equal(
+			resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 1),
+			1_000,
+		);
+		assert.equal(
+			resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(partialError, 2),
+			2_000,
+		);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 3), 4_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 4), 8_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 5), 15_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 6), 15_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 7), 15_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 8), null);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 0, true), 1_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 9, true), 15_000);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(pendingError, 10, true), null);
+		assert.equal(resolveClaudeCodeToolSurfaceReadinessRetryDelayMs(terminalError, 0), null);
 	});
 });
 

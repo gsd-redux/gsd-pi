@@ -58,13 +58,14 @@ describe("formatMcpStatusReport", () => {
     assert.match(result, /disabled/i);
   });
 
-  test("shows available state for servers that pass a status probe", () => {
+  test("labels probe-only availability separately from live connections", () => {
     const servers: McpServerStatus[] = [
       { name: "gsd-workflow", transport: "stdio", connected: false, available: true, toolCount: 62, error: undefined },
     ];
     const result = formatMcpStatusReport(servers);
     assert.match(result, /gsd-workflow/);
-    assert.match(result, /available — 62 tools/);
+    assert.match(result, /probe available — 62 tools/);
+    assert.doesNotMatch(result, /connected — 62 tools/);
     assert.doesNotMatch(result, /disconnected/);
   });
 
@@ -132,7 +133,7 @@ describe("formatMcpServerDetail", () => {
     assert.match(result, /disconnected/i);
   });
 
-  test("shows available status with tool names", () => {
+  test("shows probe-available status with tool names", () => {
     const result = formatMcpServerDetail({
       name: "gsd-workflow",
       transport: "stdio",
@@ -142,7 +143,7 @@ describe("formatMcpServerDetail", () => {
       tools: ["gsd_milestone_status"],
       error: undefined,
     });
-    assert.match(result, /available/i);
+    assert.match(result, /probe available/i);
     assert.match(result, /gsd_milestone_status/);
   });
 
@@ -206,7 +207,7 @@ describe("handleMcpStatus", () => {
       await handleMcpStatus("status", ctx as unknown as ExtensionCommandContext);
 
       assert.match(message, /gsd-workflow/);
-      assert.match(message, /available — 1 tools/);
+      assert.match(message, /probe available — 1 tools/);
       assert.doesNotMatch(message, /disconnected/);
     } finally {
       process.chdir(originalCwd);

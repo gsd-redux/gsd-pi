@@ -4,6 +4,7 @@ import {
   type EnsureProjectWorkflowMcpConfigResult,
   ensureProjectWorkflowMcpConfig,
 } from "./mcp-project-config.js";
+import { warmWorkflowMcpProbeInBackground } from "./workflow-mcp-readiness-cache.js";
 import { usesWorkflowMcpTransport } from "./workflow-mcp.js";
 
 interface WorkflowMcpAutoPrepContext {
@@ -75,6 +76,7 @@ export function prepareWorkflowMcpForProject(
     if (result.status !== "unchanged") {
       prepCtx.ui?.notify?.(`GSD MCP Server Prepared at ${result.configPath}`, "info");
     }
+    warmWorkflowMcpProbeInBackground(projectRoot);
     return result;
   } catch (err) {
     prepCtx.ui?.notify?.(

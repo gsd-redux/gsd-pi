@@ -11,6 +11,7 @@ import { cleanupAfterLoopExit, pauseAuto, rerootCommandSession, stopAuto } from 
 import { autoSession } from "../auto-runtime-state.ts";
 import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.ts";
+import { claimMilestoneLease, getMilestoneLease } from "../db/milestone-leases.ts";
 import { readPausedSessionMetadata } from "../interrupted-session.ts";
 import { WorktreeLifecycle } from "../worktree-lifecycle.ts";
 
@@ -264,6 +265,56 @@ test("pauseAuto marks active worker as stopping and clears workerId", async () =
 
     assert.equal(autoSession.workerId, null);
     assert.equal(getAutoWorker(workerId)?.status, "stopping");
+  } finally {
+    autoSession.reset();
+    try {
+      closeDatabase();
+    } catch {
+      /* noop */
+    }
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("pauseAuto preserves worker lease across transient provider auto-resume pauses", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-pause-provider-lease-"));
+  const previousCwd = process.cwd();
+  const dbPath = join(base, ".gsd", "gsd.db");
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+
+  autoSession.reset();
+  autoSession.active = true;
+  autoSession.basePath = base;
+  autoSession.originalBasePath = base;
+  autoSession.currentMilestoneId = "M001";
+
+  try {
+    openDatabase(dbPath);
+    insertMilestone({ id: "M001", title: "Milestone 1", status: "active" });
+    const workerId = registerAutoWorker({ projectRootRealpath: base });
+    const lease = claimMilestoneLease(workerId, "M001");
+    assert.equal(lease.ok, true);
+    if (!lease.ok) return;
+
+    autoSession.workerId = workerId;
+    autoSession.milestoneLeaseToken = lease.token;
+    process.chdir(base);
+
+    await pauseAuto(undefined, undefined, {
+      message: "Provider error: socket closed",
+      category: "provider",
+      isTransient: true,
+    });
+
+    assert.equal(autoSession.paused, true);
+    assert.equal(autoSession.workerId, workerId);
+    assert.equal(autoSession.milestoneLeaseToken, lease.token);
+    assert.equal(getAutoWorker(workerId)?.status, "active");
+    const row = getMilestoneLease("M001");
+    assert.equal(row?.worker_id, workerId);
+    assert.equal(row?.status, "held");
+    assert.equal(row?.fencing_token, lease.token);
   } finally {
     autoSession.reset();
     try {

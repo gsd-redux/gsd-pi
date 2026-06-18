@@ -74,8 +74,8 @@ export function evaluateAllCompleteSettlement(
     action: "pause",
     message:
       `Milestone ${milestoneId} is complete, but its worktree branch has not been merged to main. ` +
-      `Retry with \`/gsd dispatch complete-milestone ${milestoneId}\` or merge manually.`,
-    nextAction: `Retry \`/gsd dispatch complete-milestone ${milestoneId}\` or merge manually.`,
+      `Retry with \`/gsd dispatch complete-milestone ${milestoneId}\` to finish the system-owned merge.`,
+    nextAction: `Retry \`/gsd dispatch complete-milestone ${milestoneId}\`.`,
     milestoneId,
   };
 }

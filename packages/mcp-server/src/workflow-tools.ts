@@ -719,6 +719,24 @@ async function importLocalModule<T>(relativePath: string): Promise<T> {
   throw lastErr;
 }
 
+async function importWorkflowRuntimeModule<T>(relativePath: string): Promise<T> {
+  const rawCandidates = import.meta.url.includes("/src/") || import.meta.url.includes("\\src\\")
+    ? _buildImportCandidates(relativePath)
+    : buildBridgeImportCandidates(relativePath);
+  const candidates = rawCandidates
+    .map((p) => new URL(p, import.meta.url).href);
+
+  let lastErr: unknown;
+  for (const candidate of candidates) {
+    try {
+      return await import(candidate) as T;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
 async function loadProjectPreferences(projectDir: string): Promise<unknown | null> {
   const bridge = await importBridgeModule();
   try {
@@ -2725,7 +2743,7 @@ export function registerWorkflowTools(
       const { projectDir, ...params } = parseWorkflowArgs(captureThoughtSchema, args);
       await enforceWorkflowWriteGate("gsd_capture_thought", projectDir);
       return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { executeMemoryCapture } = await importLocalModule<any>(
+        const { executeMemoryCapture } = await importWorkflowRuntimeModule<any>(
           "../../../src/resources/extensions/gsd/tools/memory-tools.js",
         );
         return executeMemoryCapture(params);
@@ -2763,7 +2781,7 @@ export function registerWorkflowTools(
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(memoryQuerySchema, args);
       return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { executeMemoryQuery } = await importLocalModule<any>(
+        const { executeMemoryQuery } = await importWorkflowRuntimeModule<any>(
           "../../../src/resources/extensions/gsd/tools/memory-tools.js",
         );
         return executeMemoryQuery(params);
@@ -2796,7 +2814,7 @@ export function registerWorkflowTools(
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(memoryGraphSchema, args);
       return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { executeGsdGraph } = await importLocalModule<any>(
+        const { executeGsdGraph } = await importWorkflowRuntimeModule<any>(
           "../../../src/resources/extensions/gsd/tools/memory-tools.js",
         );
         return executeGsdGraph(params);

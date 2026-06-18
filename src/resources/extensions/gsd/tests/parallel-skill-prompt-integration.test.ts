@@ -29,8 +29,8 @@ import {
 
 const SKILL_NAME = "testskill";
 const COMPLETE_SLICE_SKILL_NAME = "complete-slice-policies";
-const SKILL_ACTIVATION_SUBSTRING = `Call Skill({ skill: '${SKILL_NAME}' })`;
-const COMPLETE_SLICE_SKILL_ACTIVATION_SUBSTRING = `Call Skill({ skill: '${COMPLETE_SLICE_SKILL_NAME}' })`;
+const SKILL_ACTIVATION_SUBSTRING = `Read the installed '${SKILL_NAME}' skill file from <available_skills>`;
+const COMPLETE_SLICE_SKILL_ACTIVATION_SUBSTRING = `Read the installed '${COMPLETE_SLICE_SKILL_NAME}' skill file from <available_skills>`;
 
 const tmpDirs: string[] = [];
 let savedCwd: string | undefined;

@@ -10,6 +10,8 @@ If any inlined plan, summary, verification command, or prior artifact names an a
 
 All relevant context has been preloaded below. Start working immediately without re-reading these files.
 
+If a `.gsd/**` or `.gsd/**/*` glob returns no matches, treat that as a possible symlink-backed traversal limitation; do not infer that the GSD harness is missing. Use the preloaded UAT context and direct `.gsd/...` file paths named in this prompt instead.
+
 {{inlinedContext}}
 
 {{skillActivation}}

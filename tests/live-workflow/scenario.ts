@@ -13,6 +13,7 @@ import {
   credentialNames,
   hasUsableCredentials,
   liveEnv,
+  normalizeLiveWorkflowModel,
   runStreaming,
   runVerification,
 } from "./harness.ts";
@@ -128,7 +129,8 @@ export async function runLiveWorkflowScenario(scenario: LiveWorkflowScenario): P
       execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: project.dir, encoding: "utf8" }).trim(),
     );
 
-    const model = process.env.GSD_LIVE_WORKFLOW_MODEL?.trim();
+    const requestedModel = process.env.GSD_LIVE_WORKFLOW_MODEL?.trim();
+    const model = normalizeLiveWorkflowModel(requestedModel);
     const timeoutMs = resolveTimeoutMs(scenario);
     const outputFormat = resolveOutputFormat();
     const dispatchArgs = [
@@ -144,6 +146,9 @@ export async function runLiveWorkflowScenario(scenario: LiveWorkflowScenario): P
       scenario.dispatch?.command ?? "next",
     ];
 
+    if (requestedModel && model !== requestedModel) {
+      console.log(`Model alias: ${requestedModel} -> ${model}`);
+    }
     console.log(`Running: gsd ${dispatchArgs.join(" ")}${model ? "" : " (model auto-resolved from available credentials)"}`);
     console.log("─── live transcript ─────────────────────────────────────────");
     const result = await runStreaming(dispatchArgs, {

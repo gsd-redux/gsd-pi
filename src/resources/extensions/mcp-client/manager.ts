@@ -105,6 +105,9 @@ const CHILD_ENV_ALLOWLIST = new Set([
 
 const MCP_STDERR_MAX_BYTES = 4096;
 
+/** Short-lived stdio probes must not register/kill production MCP PIDs (see probe-mode.ts). */
+export const GSD_MCP_PROBE_ENV = "GSD_MCP_PROBE";
+
 let cachedStatus: ManagedMcpStatus | null = null;
 let cachedStatusKey = "";
 
@@ -385,7 +388,10 @@ export async function testMcpServerConnection(
 			transport = new StdioClientTransport({
 				command: config.command ?? "",
 				args: config.args,
-				env: buildMcpChildEnv(config.env),
+				env: {
+					...buildMcpChildEnv(config.env),
+					[GSD_MCP_PROBE_ENV]: "1",
+				},
 				cwd: config.cwd,
 				stderr: "pipe",
 			});

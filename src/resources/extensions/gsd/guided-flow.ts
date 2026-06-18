@@ -76,9 +76,24 @@ import {
   countUnmappedActiveRequirements,
   showRequirementsBacklogReview,
 } from "./requirements-backlog.js";
-import { selectAndApplyModel } from "./auto-model-selection.js";
+import { selectAndApplyModel, getRegisteredToolSnapshot } from "./auto-model-selection.js";
 import { DISCUSS_TOOLS_ALLOWLIST } from "./constants.js";
-import { supportsStructuredQuestions } from "./workflow-mcp.js";
+import {
+  detectWorkflowMcpLaunchConfig,
+  resolveWorkflowMcpProjectRoot,
+  supportsStructuredQuestions,
+} from "./workflow-mcp.js";
+import { usesWorkflowMcpTransport } from "./question-transport.js";
+import {
+  getCachedWorkflowMcpProbe,
+  probeAndCacheWorkflowMcp,
+  warmWorkflowMcpProbeInBackground,
+  workflowMcpProbeAdvertisesSurface,
+  WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+} from "./workflow-mcp-readiness-cache.js";
+import { probeCoversRequiredWorkflowTools } from "./tool-surface-readiness.js";
+import { getRequiredWorkflowToolsForUnit } from "./unit-tool-contracts.js";
+import { isWorkflowToolSurfaceName } from "./workflow-tool-surface.js";
 import { getUnitWorkflowDispatchReadinessError } from "./tool-contract.js";
 import {
   runPreparation,
@@ -561,6 +576,93 @@ export function resolveGuidedDispatchProjectRoot(basePath?: string): string {
 }
 
 /**
+ * Wait until the workflow MCP server is reachable and advertising its tool
+ * surface. Returns failure details when timed out, or null when ready (or MCP
+ * is not the transport). Called inside dispatchWorkflow() so every guided-flow
+ * dispatch path is gated automatically.
+ */
+const MCP_READINESS_TIMEOUT_MS = 15_000;
+const MCP_READINESS_POLL_MS = 200;
+
+export interface WorkflowMcpReadinessFailure {
+  server: string;
+  error?: string;
+}
+
+async function awaitWorkflowMcpReadiness(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  basePath: string,
+  options: {
+    unitType?: string;
+    timeoutMs?: number;
+    pollMs?: number;
+    probeTimeoutMs?: number;
+    probe?: typeof probeAndCacheWorkflowMcp;
+  } = {},
+): Promise<WorkflowMcpReadinessFailure | null> {
+  const provider = ctx.model?.provider;
+  const authMode = provider ? ctx.modelRegistry.getProviderAuthMode(provider) : undefined;
+  if (!usesWorkflowMcpTransport(authMode, ctx.model?.baseUrl)) return null;
+
+  const projectRoot = resolveWorkflowMcpProjectRoot(basePath);
+  const launch = detectWorkflowMcpLaunchConfig(projectRoot);
+  if (!launch) return null;
+
+  const requiredTools = options.unitType
+    ? getRequiredWorkflowToolsForUnit(options.unitType).filter(isWorkflowToolSurfaceName)
+    : [];
+  const coversExpectedSurface = (tools: readonly string[]) =>
+    requiredTools.length > 0
+      ? probeCoversRequiredWorkflowTools(tools, requiredTools)
+      : workflowMcpProbeAdvertisesSurface(tools);
+
+  const serverPrefix = `mcp__${launch.name}__`;
+  const systemPrompt = () => typeof ctx.getSystemPrompt === "function" ? ctx.getSystemPrompt() : "";
+  const systemPromptCoversExpectedSurface = () => {
+    const prompt = systemPrompt();
+    return requiredTools.length > 0
+      ? requiredTools.every((tool) => prompt.includes(`${serverPrefix}${tool}`))
+      : prompt.includes(serverPrefix);
+  };
+  const sessionAlreadyReady = () =>
+    coversExpectedSurface(getRegisteredToolSnapshot(pi)) ||
+    systemPromptCoversExpectedSurface();
+  if (sessionAlreadyReady()) return null;
+
+  if (coversExpectedSurface(getCachedWorkflowMcpProbe(projectRoot)?.tools ?? [])) {
+    return null;
+  }
+
+  const probe = options.probe ?? probeAndCacheWorkflowMcp;
+  const probeTimeoutMs = options.probeTimeoutMs ?? WORKFLOW_MCP_PROBE_TIMEOUT_MS;
+
+  ctx.ui.setStatus("gsd-step", `Waiting for ${launch.name} MCP server…`);
+  let lastError: string | undefined;
+  const deadline = Date.now() + (options.timeoutMs ?? MCP_READINESS_TIMEOUT_MS);
+  const pollMs = options.pollMs ?? MCP_READINESS_POLL_MS;
+  while (Date.now() < deadline) {
+    if (sessionAlreadyReady()) {
+      ctx.ui.setStatus("gsd-step", "");
+      return null;
+    }
+
+    const result = await probe(projectRoot, { timeoutMs: probeTimeoutMs });
+    if (result.ok && coversExpectedSurface(result.tools)) {
+      ctx.ui.setStatus("gsd-step", "");
+      return null;
+    }
+    lastError = result.error;
+
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+  ctx.ui.setStatus("gsd-step", "");
+  return lastError ? { server: launch.name, error: lastError } : { server: launch.name };
+}
+
+export const _awaitWorkflowMcpReadinessForTest = awaitWorkflowMcpReadiness;
+
+/**
  * Read GSD-WORKFLOW.md and dispatch it to the LLM with a contextual note.
  * This is the only way the wizard triggers work — everything else is the LLM's job.
  *
@@ -620,6 +722,29 @@ async function dispatchWorkflow(
     if (compatibilityError) {
       ctx.ui.notify(compatibilityError, "error");
       return;
+    }
+
+    // ── Live MCP readiness gate ────────────────────────────────────────
+    // Units with required workflow tools must not dispatch until the MCP
+    // surface covers that exact contract; otherwise the model can race into
+    // "No such tool available" before recovery sees a clean readiness error.
+    warmWorkflowMcpProbeInBackground(projectRoot);
+    const requiredWorkflowTools = getRequiredWorkflowToolsForUnit(unitType).filter(isWorkflowToolSurfaceName);
+    const strictBlocking = requiredWorkflowTools.length > 0
+      && (process.env.GSD_GUIDED_MCP_BLOCKING ?? "").trim() !== "0";
+    if (strictBlocking) {
+      // If the workflow MCP server is configured but still connecting, wait
+      // for it instead of dispatching into a child session that will abort.
+      const readinessFailure = await awaitWorkflowMcpReadiness(pi, ctx, projectRoot, { unitType });
+      if (readinessFailure) {
+        const detail = readinessFailure.error ? ` ${readinessFailure.error}` : "";
+        ctx.ui.notify(
+          `GSD workflow server "${readinessFailure.server}" did not connect in time.${detail} ` +
+          `Run \`/gsd mcp check ${readinessFailure.server}\` for details.`,
+          "warning",
+        );
+        return;
+      }
     }
   }
 
@@ -1703,6 +1828,7 @@ export async function showSmartEntry(
   options?: { step?: boolean },
 ): Promise<void> {
   const stepMode = options?.step ?? true;
+  warmWorkflowMcpProbeInBackground(basePath);
 
   // ── Clear stale milestone ID reservations from previous cancelled sessions ──
   // Reservations only need to survive within a single /gsd interaction.

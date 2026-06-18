@@ -197,6 +197,8 @@ Recommended verification order:
 - When `secure_env_collect` writes to a local dotenv file, the accepted keys are also hydrated into the current MCP server process. When it pushes to Vercel or Convex, the values are sent to the remote destination only and are not added to `process.env`.
 - If a server is team-shared and safe to commit, `.mcp.json` is usually the better home.
 - If a server depends on machine-local paths, personal services, or local-only secrets, prefer `.gsd/mcp.json`.
+- For the built-in `gsd-workflow` server, set `GSD_WORKFLOW_PROJECT_ROOT` to the canonical project root when launching from a worktree or wrapper. The packaged server uses it for workflow tool paths and the per-project stale-process registry at `$GSD_HOME/mcp-instances.json`.
+- Claude Code sessions that require GSD workflow tools are fail-closed: if `gsd-workflow` is absent, still pending, failed, disabled, or missing required tools at startup, GSD aborts the unit before the first model turn and retries instead of allowing tool calls against an incomplete surface.
 
 ### Per-Model MCP Filtering
 
@@ -269,6 +271,9 @@ With this configuration, a Haiku-4-5 subagent sees only `gsd-workflow` and `goog
 | `GSD_PROJECT_ID` | (auto-hash) | Override the automatic project identity hash. Per-project state goes to `$GSD_HOME/projects/<GSD_PROJECT_ID>/` instead of the computed hash. Useful for CI/CD or sharing state across clones of the same repo. (v2.39) |
 | `GSD_STATE_DIR` | `$GSD_HOME` | Per-project state root. Controls where `projects/<repo-hash>/` directories are created. Takes precedence over `GSD_HOME` for project state. |
 | `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | Agent directory containing managed resources, extensions, and auth. Takes precedence over `GSD_HOME` for agent paths. |
+| `GSD_WORKFLOW_PROJECT_ROOT` | current working directory | Canonical project root for the packaged `gsd-workflow` MCP server. Used by workflow tools and by the stale-process registry key in `$GSD_HOME/mcp-instances.json`. |
+| `GSD_WORKFLOW_EXECUTORS_MODULE` | auto-discovered when possible | Optional absolute path or `file:` URL for the shared workflow executor module used by `gsd-workflow` mutation tools. |
+| `GSD_WORKFLOW_WRITE_GATE_MODULE` | auto-discovered when possible | Optional absolute path or `file:` URL for the shared write-gate module used by `gsd-workflow` mutation tools. |
 | `GSD_ALLOWED_COMMAND_PREFIXES` | (built-in list) | Comma-separated command prefixes allowed for `!command` value resolution. Overrides `allowedCommandPrefixes` in settings.json. See [Custom Models — Command Allowlist](custom-models.md#command-allowlist). |
 | `GSD_FETCH_ALLOWED_URLS` | (none) | Comma-separated hostnames exempted from `fetch_page` URL blocking. Overrides `fetchAllowedUrls` in settings.json. See [URL Blocking](#url-blocking-fetch_page). |
 | `PI_DISABLE_SYNC_OUTPUT` | (unset) | Set to literal `1` to disable synchronized terminal output mode in the TUI on non-Windows platforms. By default synchronized output is enabled on macOS/Linux and always disabled on Windows. |

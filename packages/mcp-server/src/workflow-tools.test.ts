@@ -22,6 +22,7 @@ import {
   openDatabase,
   upsertMilestonePlanning,
 } from "../../../src/resources/extensions/gsd/mcp-bridge.ts";
+import { createMemory } from "../../../src/resources/extensions/gsd/memory-store.ts";
 import { buildReassessRoadmapPrompt } from "../../../src/resources/extensions/gsd/auto-prompts.ts";
 import { invalidateAllCaches } from "../../../src/resources/extensions/gsd/cache.ts";
 import { resolveToolPresentationPlan } from "../../../src/resources/extensions/gsd/tool-presentation-plan.ts";
@@ -286,6 +287,38 @@ describe("workflow MCP tools", () => {
       const walSizeAfter = existsSync(walPath) ? statSync(walPath).size : 0;
       assert.equal(walSizeAfter, 0, "WAL file should be truncated to 0 after MCP checkpoint");
     } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_memory_query opens the project DB when invoked from a GSD worktree without projectDir", async () => {
+    const base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    const worktree = join(base, ".gsd-worktrees", "M001");
+    const originalCwd = process.cwd();
+    try {
+      openDatabase(dbPath);
+      createMemory({
+        category: "gotcha",
+        content: "worktree memory query should use the project database",
+        confidence: 0.9,
+      });
+      closeDatabase();
+
+      mkdirSync(join(worktree, ".gsd"), { recursive: true });
+      writeFileSync(join(worktree, ".git"), `gitdir: ${join(base, ".git", "worktrees", "M001")}\n`, "utf-8");
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_memory_query");
+      assert.ok(tool, "gsd_memory_query should be registered");
+
+      process.chdir(worktree);
+      const result = await tool.handler({ query: "worktree memory" });
+      const record = result as { isError?: boolean; content?: Array<{ text?: string }> };
+      assert.notEqual(record.isError, true, record.content?.[0]?.text ?? "memory query should not fail");
+      assert.match(record.content?.[0]?.text ?? "", /worktree memory query should use the project database/);
+    } finally {
+      process.chdir(originalCwd);
       cleanup(base);
     }
   });

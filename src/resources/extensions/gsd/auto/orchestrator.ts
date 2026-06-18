@@ -74,6 +74,7 @@ import {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
+import { hasHeldMilestoneLease, reclaimMissingMilestoneLease } from "./milestone-lease-reclaim.js";
 
 function now(): number {
   return Date.now();
@@ -209,6 +210,7 @@ export async function decideOrchestratorDispatch(
 
   if (active && activeSession && shouldAdoptActiveMilestone(state, activeSession, activeDispatchBasePath)) {
     activeSession.currentMilestoneId = active.id;
+    activeSession.milestoneLeaseToken = null;
   }
   const dispatchMid = active?.id ?? activeSession?.currentMilestoneId ?? "";
   const dispatchMidTitle = active?.title ?? "";
@@ -609,6 +611,37 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     };
   }
 
+  private async mergePendingCompleteMilestone(milestoneId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const result = this.buildLifecycle().exitMilestone(
+      milestoneId,
+      { merge: true },
+      this.ctx.ui,
+    );
+    if (!result.ok) {
+      const detail = result.cause instanceof Error
+        ? result.cause.message
+        : result.reason;
+      return {
+        ok: false,
+        reason: `Milestone ${milestoneId} is complete, but the system-owned merge failed: ${detail}`,
+      };
+    }
+
+    this.s.milestoneMergedInPhases = true;
+    this.s.milestoneSettlement = { ok: true, reason: "settled" };
+    try {
+      const projectRoot = this.s.originalBasePath || this.s.canonicalProjectRoot || this.runtimeBasePath;
+      const { rebuildMarkdownProjectionsFromDb } = await import("../commands-maintenance.js");
+      await rebuildMarkdownProjectionsFromDb(projectRoot);
+    } catch (err) {
+      logWarning(
+        "engine",
+        `markdown projection rebuild after settlement merge failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return { ok: true };
+  }
+
   private clearPendingDispatch(): void {
     this.s.pendingOrchestrationDispatch = null;
   }
@@ -706,10 +739,13 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       milestoneId && this.s.workerId
         ? {
             required: writeScope === "source-writing" && mode !== "none",
-            held: this.s.currentMilestoneId === milestoneId && this.s.milestoneLeaseToken !== null,
+            held: hasHeldMilestoneLease(this.s, milestoneId),
             owner: this.s.workerId,
           }
         : undefined;
+    if (writeScope === "source-writing") {
+      reclaimMissingMilestoneLease(this.s, milestoneId, isolationMode, "orchestrator");
+    }
     let result = safety.validateUnitRoot({
       unitType,
       unitId,
@@ -957,6 +993,35 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       if (!decision) {
         const settlementBlock = this.evaluateNoRemainingUnitsSettlement(reconciliation.stateSnapshot);
         if (settlementBlock) {
+          const settlement = this.s.milestoneSettlement;
+          if (settlement && !settlement.ok && settlement.reason === "merge-pending") {
+            const merged = await this.mergePendingCompleteMilestone(settlement.milestoneId);
+            if (merged.ok) {
+              const terminalOutcome = noRemainingUnitsOutcome(reconciliation.stateSnapshot);
+              const stopped: AutoAdvanceResult = {
+                kind: "stopped",
+                reason: terminalOutcome.displayReason,
+                stateSnapshot: reconciliation.stateSnapshot,
+                terminalOutcome,
+              };
+              this.status.phase = "stopped";
+              this.status.activeUnit = undefined;
+              this.lastAdvanceKey = null;
+              this.dispatchHistory.clearOnRecovery();
+              this.bumpTransition();
+              this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
+              this.postAdvanceRecord(stopped);
+              return stopped;
+            }
+            settlementBlock.reason = merged.reason;
+            settlementBlock.terminalOutcome = {
+              code: "settlement-blocked",
+              displayReason: merged.reason,
+              nextAction: `Fix the merge failure, then retry \`/gsd dispatch complete-milestone ${settlement.milestoneId}\`.`,
+              milestoneId: settlement.milestoneId,
+              allMilestonesComplete: false,
+            };
+          }
           this.status.phase = "paused";
           this.status.activeUnit = undefined;
           this.lastAdvanceKey = null;

@@ -37,8 +37,9 @@ The cross-module phrase contract (`workflow tool surface not ready` recognized b
 
 ## Trade-offs accepted
 
-- ~~If the SDK reports the workflow server as pending/failed at init but would have connected later in the same session, the gate aborts and retries a fresh session. Bounded retries absorb this.~~ **Amended 2026-06-10:** production showed `"pending"` at init is the *common healthy* case — the SDK does not wait for MCP connect before init, and the server typically registers within seconds, before the Unit's first workflow tool call. Aborting on `pending` failed routine `plan-slice` dispatches. The gate now passes `pending` (and other non-terminal statuses) through and aborts only on statuses that cannot self-heal (`failed`, `needs-auth`, `disabled`), on a server absent from the init surface, or on a connected server missing required tools. A genuine miss after a pending pass-through still surfaces in-session as `No such tool available` → `tool-unavailable` → bounded retry.
+- **Amended 2026-06-16:** the workflow surface is now required before Claude Code proceeds. The gate aborts on any non-`connected` workflow server status, including `pending`, and routes the abort through `tool-unavailable` retry classification. This supersedes the 2026-06-10 temporary pending pass-through and restores the pre-turn invariant that a Unit cannot begin while its required workflow MCP tools are still pending.
 - The stdio CLI now refuses to start when the workflow bridge is unloadable, even for read-only/session-control use. Every supported launch path (stream-adapter env injection, `gsd mcp init` config, repo checkout, built package) has a loadable bridge; a hand-rolled config without one gets the actionable remediation at spawn time instead of a dead tool surface.
+- The stdio CLI registers a single live MCP process per `GSD_WORKFLOW_PROJECT_ROOT` in `$GSD_HOME/mcp-instances.json`, terminates verified stale GSD MCP PIDs for the same project at startup, unregisters on shutdown, and exits orphaned stdio children after five minutes of input idle time.
 - The four static-gate call sites are not folded into one helper this pass — they share `getWorkflowTransportSupportError` already; folding their option-plumbing is cosmetic and touches four hot dispatch paths. Deferred.
 
 ## Implementation status
@@ -47,6 +48,8 @@ The cross-module phrase contract (`workflow tool surface not ready` recognized b
 |---|---|---|
 | Tool Surface Readiness gate | ✅ | `src/resources/extensions/gsd/tool-surface-readiness.ts`; wired in `claude-code-cli/stream-adapter.ts` (`case "system"`) |
 | `tool-unavailable` Recovery kind | ✅ | `recovery-classification.ts`; transient routing in `auto-post-unit.ts`; `error-classifier.ts` |
-| Workflow bridge warm-up | ✅ | `packages/mcp-server/src/workflow-tools.ts` (`warmWorkflowToolBridges`); `cli.ts` fails spawn on broken bridge |
+| Workflow bridge warm-up | ✅ | `packages/mcp-server/src/workflow-tools.ts` (`warmWorkflowToolBridges`); `packages/mcp-server/src/cli-runner.ts` fails spawn before connect on broken bridge |
+| MCP PID registry and orphan watchdog | ✅ | `packages/mcp-server/src/pid-registry.ts`; `packages/mcp-server/src/stdio-watchdog.ts`; wired through `packages/mcp-server/src/cli-runner.ts` |
+| Probe-mode stdio (no PID registry side effects) | ✅ | `packages/mcp-server/src/probe-mode.ts`; `testMcpServerConnection` sets `GSD_MCP_PROBE=1`; `cli-runner.ts` skips register/unregister in probe sessions |
 | Typed naming seam | ✅ | `@opengsd/contracts` `CanonicalWorkflowToolName`; `unit-tool-contracts.ts` typed lists; parser delegated to `@gsd/pi-ai` |
 | Static-gate call-site fold | ⏸ deferred | see trade-offs |

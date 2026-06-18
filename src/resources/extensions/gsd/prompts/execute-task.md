@@ -52,6 +52,7 @@ You execute. The inlined task plan is authoritative. Verify referenced files and
 
 - If task sections exist for Failure Modes (Q5), Load Profile (Q6), Negative Tests (Q7), or Observability Impact, implement and verify them.
 - Verify must-haves with concrete commands or observable behavior.
+- Run verification commands through `gsd_exec` / Context Mode evidence when workflow MCP tools are presented. Use `gsd_exec_search` before rerunning noisy checks, and `gsd_resume` after compaction or resume. Do not call direct `bash` for final verification evidence in this unit.
 - Run slice-level verification from the slice plan. Final tasks need all checks passing; intermediate tasks should record partial passes.
 - Populate `## Verification Evidence` with `formatEvidenceTable` rows: command, exit code, verdict, duration. If no checks were found, say so.
 - For UI/browser/DOM/user-visible web changes, exercise the real flow and record explicit checks.
@@ -64,7 +65,7 @@ Keep about **{{verificationBudget}}** for verification and summary. If context i
 
 - If the plan is fundamentally invalid, set `blocker_discovered: true` in the summary and explain.
 - For downstream-impacting ambiguity that cannot be resolved from code, plans, or decisions, include an `escalation` object with question, options, recommendation, rationale, and `continueWithDefault`.
-- Capture meaningful architecture/pattern/observability decisions with `capture_thought`; capture non-obvious gotchas or conventions only when they save future investigation.
+- Capture meaningful architecture/pattern/observability decisions with `gsd_capture_thought` (or MCP-scoped `mcp__...__gsd_capture_thought`) when workflow MCP tools are presented; capture non-obvious gotchas or conventions only when they save future investigation.
 - Use the inlined Task Summary template below. Read `{{taskSummaryTemplatePath}}` only if the inlined template is absent or visibly truncated.
 - Call `gsd_task_complete` with camelCase fields `milestoneId`, `sliceId`, `taskId`, `oneLiner`, `narrative`, `verification`, and `verificationEvidence`. Include `blockerDiscovered: true` when a stale-path safety failure or other plan-invalidating blocker prevents execution.
 - The DB-backed tool is the canonical write path. Do **not** manually write `{{taskSummaryPath}}` or edit PLAN.md checkboxes; the tool renders the summary and updates state.

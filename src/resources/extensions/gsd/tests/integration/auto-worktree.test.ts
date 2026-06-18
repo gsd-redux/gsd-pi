@@ -134,6 +134,21 @@ describe("auto-worktree lifecycle", () => {
     teardownAutoWorktree(tempDir, "M003");
   });
 
+  test("isInAutoWorktree returns false when ambient cwd was deleted", (t) => {
+    const cwd = t.mock.method(process, "cwd", () => {
+      const err = new Error("process.cwd failed") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      err.syscall = "uv_cwd";
+      throw err;
+    });
+
+    try {
+      assert.equal(isInAutoWorktree("/repo"), false);
+    } finally {
+      cwd.mock.restore();
+    }
+  });
+
   test("symlink-resolved auto worktree is detected after module state reset", () => {
     tempDir = createTempRepo();
     const savedGsdHome = process.env.GSD_HOME;

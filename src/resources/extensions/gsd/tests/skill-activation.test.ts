@@ -92,14 +92,14 @@ test("buildSkillActivationBlock activates skills via prefer_skills when context 
       prefer_skills: ["react"],
     });
 
-    assert.match(result, /Call Skill\(\{ skill: 'react' \}\)/);
+    assert.match(result, /Read the installed 'react' skill file from <available_skills>/);
     assert.doesNotMatch(result, /swiftui/);
   } finally {
     cleanup(base);
   }
 });
 
-test("buildSkillActivationBlock includes always_use_skills from preferences using exact Skill tool format", () => {
+test("buildSkillActivationBlock includes always_use_skills using read-based skill loading", () => {
   const base = makeTempBase();
   try {
     writeSkill(base, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
@@ -109,7 +109,10 @@ test("buildSkillActivationBlock includes always_use_skills from preferences usin
       always_use_skills: ["swift-testing"],
     });
 
-    assert.equal(result, "<skill_activation>Call Skill({ skill: 'swift-testing' }).</skill_activation>");
+    assert.equal(
+      result,
+      "<skill_activation>Read the installed 'swift-testing' skill file from <available_skills>.</skill_activation>",
+    );
   } finally {
     cleanup(base);
   }
@@ -137,8 +140,8 @@ test("buildSkillActivationBlock includes skill_rules matches and task-plan skill
       skill_rules: [{ when: "prisma database schema", use: ["prisma"] }],
     });
 
-    assert.match(result, /Call Skill\(\{ skill: 'accessibility' \}\)/);
-    assert.match(result, /Call Skill\(\{ skill: 'prisma' \}\)/);
+    assert.match(result, /Read the installed 'accessibility' skill file from <available_skills>/);
+    assert.match(result, /Read the installed 'prisma' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }
@@ -160,7 +163,7 @@ test("buildSkillActivationBlock matches skill_rules against exact unit type cont
       ],
     });
 
-    assert.match(result, /Call Skill\(\{ skill: 'complete-slice-policies' \}\)/);
+    assert.match(result, /Read the installed 'complete-slice-policies' skill file from <available_skills>/);
     assert.doesNotMatch(result, /slice-broad/);
   } finally {
     cleanup(base);
@@ -264,8 +267,8 @@ test("buildSkillActivationBlock allows valid skill names and rejects invalid one
     });
 
     assert.match(result, /skill_activation/);
-    assert.match(result, /Call Skill\(\{ skill: 'react' \}\)/);
-    assert.match(result, /Call Skill\(\{ skill: 'good-skill-2' \}\)/);
+    assert.match(result, /Read the installed 'react' skill file from <available_skills>/);
+    assert.match(result, /Read the installed 'good-skill-2' skill file from <available_skills>/);
     assert.doesNotMatch(result, /bad'name/);
   } finally {
     cleanup(base);
@@ -289,8 +292,8 @@ test("buildSkillActivationBlock: explicit always_use_skills bypass the unit-type
       always_use_skills: ["write-docs", "swiftui"],
     });
 
-    assert.match(result, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+    assert.match(result, /Read the installed 'write-docs' skill file from <available_skills>/);
+    assert.match(result, /Read the installed 'swiftui' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }
@@ -307,7 +310,7 @@ test("buildSkillActivationBlock falls through to all skills for unknown unit typ
     });
 
     // Unknown unit type = wildcard fallback (pre-manifest behavior).
-    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+    assert.match(result, /Read the installed 'swiftui' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }
@@ -324,7 +327,7 @@ test("buildSkillActivationBlock without unitType preserves pre-manifest behavior
       always_use_skills: ["swiftui"],
     });
 
-    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+    assert.match(result, /Read the installed 'swiftui' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }
@@ -341,12 +344,12 @@ test("milestone prompt builders propagate always_use_skills through buildSkillAc
     loadOnlyTestSkills(base);
 
     const researchPrompt = await buildResearchMilestonePrompt("M001", "Test", base);
-    assert.match(researchPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.match(researchPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+    assert.match(researchPrompt, /Read the installed 'write-docs' skill file from <available_skills>/);
+    assert.match(researchPrompt, /Read the installed 'swiftui' skill file from <available_skills>/);
 
     const planPrompt = await buildPlanMilestonePrompt("M001", "Test", base);
-    assert.match(planPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
-    assert.match(planPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+    assert.match(planPrompt, /Read the installed 'write-docs' skill file from <available_skills>/);
+    assert.match(planPrompt, /Read the installed 'swiftui' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }
@@ -377,7 +380,7 @@ test("complete-slice prompt propagates always_use_skills through buildSkillActiv
 
     const prompt = await buildCompleteSlicePrompt("M001", "Test", "S01", "Slice", base);
 
-    assert.match(prompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
+    assert.match(prompt, /Read the installed 'write-docs' skill file from <available_skills>/);
   } finally {
     cleanup(base);
   }

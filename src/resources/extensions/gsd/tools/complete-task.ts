@@ -10,6 +10,7 @@
  * back committed DB state.
  */
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CompleteTaskParams, EscalationArtifact } from "../types.js";
@@ -84,6 +85,49 @@ function taskSummaryPath(
     "tasks",
     `${taskId}-SUMMARY.md`,
   );
+}
+
+async function repairMissingTaskSummaryProjection(
+  artifactBasePath: string,
+  taskRow: TaskRow,
+): Promise<{ summaryPath: string; stale: boolean }> {
+  const summaryPath = taskSummaryPath(
+    artifactBasePath,
+    taskRow.milestone_id,
+    taskRow.slice_id,
+    taskRow.id,
+  );
+  const summaryMd = renderSummaryContent(taskRow, taskRow.slice_id, taskRow.milestone_id, []);
+  let stale = false;
+
+  try {
+    await saveFile(summaryPath, summaryMd);
+    await renderPlanCheckboxes(artifactBasePath, taskRow.milestone_id, taskRow.slice_id);
+  } catch (renderErr) {
+    stale = true;
+    logWarning(
+      "projection",
+      `complete_task missing-summary repair failed for ${taskRow.milestone_id}/${taskRow.slice_id}/${taskRow.id}`,
+      { error: (renderErr as Error).message },
+    );
+  }
+
+  invalidateStateCache();
+  clearPathCache();
+  clearParseCache();
+
+  try {
+    await flushWorkflowProjections(artifactBasePath, { milestoneId: taskRow.milestone_id });
+  } catch (projErr) {
+    logWarning("tool", `complete-task repair projection warning: ${(projErr as Error).message}`);
+  }
+  try {
+    writeManifest(artifactBasePath);
+  } catch (mfErr) {
+    logWarning("tool", `complete-task repair manifest warning: ${(mfErr as Error).message}`);
+  }
+
+  return { summaryPath, stale };
 }
 
 /**
@@ -208,6 +252,7 @@ export async function handleCompleteTask(
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
   let summaryMd = "";
+  let repairTaskSummaryRow: TaskRow | null = null;
 
   // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
   // Building the artifact runs the full shape validation (2-4 options, unique
@@ -272,6 +317,17 @@ export async function handleCompleteTask(
         guardError = "__stale_duplicate__";
         return;
       }
+      const existingSummaryPath = taskSummaryPath(
+        artifactBasePath,
+        params.milestoneId,
+        params.sliceId,
+        params.taskId,
+      );
+      if (existingTask.full_summary_md.trim() && !existsSync(existingSummaryPath)) {
+        repairTaskSummaryRow = existingTask;
+        guardError = "__repair_missing_summary__";
+        return;
+      }
       guardError = `task ${params.taskId} is already complete — use gsd_task_reopen first if you need to redo it`;
       return;
     }
@@ -334,6 +390,18 @@ export async function handleCompleteTask(
       summaryPath: staleSummaryPath,
       duplicate: true,
       stale: true,
+    };
+  }
+
+  if (guardError === "__repair_missing_summary__" && repairTaskSummaryRow) {
+    const repair = await repairMissingTaskSummaryProjection(artifactBasePath, repairTaskSummaryRow);
+    return {
+      taskId: params.taskId,
+      sliceId: params.sliceId,
+      milestoneId: params.milestoneId,
+      summaryPath: repair.summaryPath,
+      duplicate: true,
+      ...(repair.stale ? { stale: true } : {}),
     };
   }
 

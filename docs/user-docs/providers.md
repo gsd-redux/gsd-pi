@@ -136,6 +136,8 @@ You can also add this to `~/.claude/settings.json` under `mcpServers` to make GS
 
 The MCP server provides GSD's full workflow tool surface — milestone planning, task completion, slice management, roadmap reassessment, journal queries, and more. Session management tools (`gsd_execute`, `gsd_status`, `gsd_result`, `gsd_cancel`) let Claude Code start and monitor GSD auto-mode sessions. See [Commands → MCP Server Mode](./commands.md#mcp-server-mode) for the full tool list.
 
+Claude Code units that require workflow tools require a connected `gsd-workflow` MCP surface before the first model turn. If the server is absent, pending, failed, disabled, or missing required tools, GSD aborts and retries the unit rather than letting Claude Code improvise without the workflow tools.
+
 **Verify the connection:**
 
 From inside a GSD session, check that the MCP server is reachable:

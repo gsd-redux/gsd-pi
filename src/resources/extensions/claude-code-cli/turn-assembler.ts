@@ -201,6 +201,41 @@ export function attachExternalResultsToToolBlocks(
 	}
 }
 
+function textFromExternalResult(result: ExternalToolResultPayload | undefined): string {
+	return (result?.content ?? [])
+		.map((block) => typeof block.text === "string" ? block.text : "")
+		.join("\n");
+}
+
+function isEmptyToolArguments(value: unknown): boolean {
+	return !!value
+		&& typeof value === "object"
+		&& !Array.isArray(value)
+		&& Object.keys(value as Record<string, unknown>).length === 0;
+}
+
+function sameToolSurface(a: ToolCall, b: ToolCall): boolean {
+	return a.name === b.name
+		&& (a as ToolCall & { mcpServer?: string }).mcpServer === (b as ToolCall & { mcpServer?: string }).mcpServer;
+}
+
+export function shouldSuppressDuplicateToolUnavailableBlock(
+	block: AssistantMessage["content"][number],
+	allBlocks: AssistantMessage["content"],
+): boolean {
+	if (block.type !== "toolCall") return false;
+	const externalResult = (block as ToolCallWithExternalResult).externalResult;
+	if (!externalResult?.isError) return false;
+	if (!isEmptyToolArguments(block.arguments)) return false;
+	if (!/No such tool available:/i.test(textFromExternalResult(externalResult))) return false;
+
+	return allBlocks.some((candidate) => {
+		if (candidate.type !== "toolCall" || candidate.id === block.id) return false;
+		const candidateResult = (candidate as ToolCallWithExternalResult).externalResult;
+		return candidateResult?.isError === false && sameToolSurface(block, candidate);
+	});
+}
+
 /**
  * Build the final assistant content that Agent Core consumes in
  * `externalToolExecution` mode. This preserves tool-call blocks, attaches any
@@ -221,7 +256,9 @@ export function buildFinalAssistantContent(params: {
 	}
 	attachExternalResultsToToolBlocks(mergedToolBlocks, params.toolResultsById);
 
-	const finalContent: AssistantMessage["content"] = [...mergedToolBlocks];
+	const finalContent: AssistantMessage["content"] = mergedToolBlocks.filter(
+		(block) => !shouldSuppressDuplicateToolUnavailableBlock(block, mergedToolBlocks),
+	);
 	if (params.pendingContent && params.pendingContent.length > 0) {
 		for (const block of params.pendingContent) {
 			if (block.type === "text" || block.type === "thinking") {

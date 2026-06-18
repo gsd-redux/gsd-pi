@@ -1,8 +1,14 @@
 // Project/App: gsd-pi
 // File Purpose: Tool Contract module's runtime face — verify the live SDK tool surface covers a Unit's required workflow tools.
 
+import { testMcpServerConnection } from "../mcp-client/manager.js";
 import { mcpToolMatchesBaseName } from "./mcp-tool-name.js";
 import { getRequiredWorkflowToolsForUnit } from "./unit-tool-contracts.js";
+import {
+  recordWorkflowMcpProbe,
+  WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+} from "./workflow-mcp-readiness-cache.js";
+import { resolveWorkflowMcpProjectRoot } from "./workflow-mcp.js";
 import { isWorkflowToolSurfaceName } from "./workflow-tool-surface.js";
 
 /**
@@ -36,10 +42,112 @@ export interface LiveToolSurfaceObservation {
  * workflow server is part of this session (native tool path), when the Unit
  * requires no workflow tools, or when the surface is ready.
  */
+export interface WorkflowMcpToolProbeResult {
+  ok: boolean;
+  tools: readonly string[];
+}
+
+export type WorkflowMcpToolProbe = (
+  serverName: string,
+  projectRoot: string,
+) => Promise<WorkflowMcpToolProbeResult>;
+
+export const DEFAULT_WORKFLOW_MCP_PREFLIGHT_TIMEOUT_MS = 30_000;
+export const DEFAULT_WORKFLOW_MCP_PREFLIGHT_POLL_MS = 200;
+const RUN_UAT_PREFLIGHT_TIMEOUT_MS = 90_000;
+
+function resolveWorkflowMcpPreflightTimeoutMs(unitType: string | undefined): number {
+  if (unitType === "run-uat") return RUN_UAT_PREFLIGHT_TIMEOUT_MS;
+  return DEFAULT_WORKFLOW_MCP_PREFLIGHT_TIMEOUT_MS;
+}
+
+export function probeCoversRequiredWorkflowTools(
+  tools: readonly string[],
+  required: readonly string[],
+): boolean {
+  return required.every((tool) =>
+    tools.some((name) => name === tool || mcpToolMatchesBaseName(name, tool)),
+  );
+}
+
+export async function awaitWorkflowMcpToolRegistration(input: {
+  unitType: string | undefined;
+  workflowServerName: string | undefined;
+  projectRoot: string;
+  timeoutMs?: number;
+  pollMs?: number;
+  probe?: WorkflowMcpToolProbe;
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  const { unitType, workflowServerName, projectRoot } = input;
+  if (!unitType || !workflowServerName) return null;
+
+  const required = getRequiredWorkflowToolsForUnit(unitType).filter(isWorkflowToolSurfaceName);
+  if (required.length === 0) return null;
+
+  const probe = input.probe ?? (async (serverName, root) => {
+    const result = await testMcpServerConnection(serverName, {
+      projectDir: resolveWorkflowMcpProjectRoot(root),
+      timeoutMs: WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+    });
+    return { ok: result.ok, tools: result.tools };
+  });
+
+  const deadline = Date.now() + (input.timeoutMs ?? resolveWorkflowMcpPreflightTimeoutMs(unitType));
+  const pollMs = input.pollMs ?? DEFAULT_WORKFLOW_MCP_PREFLIGHT_POLL_MS;
+
+  while (Date.now() < deadline) {
+    throwIfAborted(input.signal);
+    const result = await probe(workflowServerName, projectRoot);
+    throwIfAborted(input.signal);
+    if (result.ok && probeCoversRequiredWorkflowTools(result.tools, required)) {
+      recordWorkflowMcpProbe(projectRoot, workflowServerName, result.tools);
+      return null;
+    }
+    await sleep(pollMs, input.signal);
+  }
+
+  return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" did not register required tools before session start: ${required.join(", ")}`;
+}
+
+function makeAbortError(): Error {
+  const error = new Error("AbortError: The operation was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw makeAbortError();
+}
+
+function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  throwIfAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      reject(makeAbortError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** Brief pause after a successful preflight before SDK query (race with MCP attach). */
+export const POST_PREFLIGHT_SDK_SETTLE_MS = 750;
+
+export const POST_PREFLIGHT_READINESS_RETRY_DELAYS_MS = [
+  1_000, 2_000, 3_000, 5_000, 8_000, 10_000, 15_000, 15_000, 15_000, 15_000,
+] as const;
+
 export function getToolSurfaceReadinessError(input: {
   unitType: string | undefined;
   workflowServerName: string | undefined;
   observation: LiveToolSurfaceObservation;
+  projectRoot?: string | undefined;
 }): string | null {
   const { unitType, workflowServerName, observation } = input;
   if (!unitType || !workflowServerName) return null;
@@ -48,29 +156,28 @@ export function getToolSurfaceReadinessError(input: {
   if (required.length === 0) return null;
 
   const server = observation.mcpServers.find((entry) => entry.name === workflowServerName);
-  if (!server) {
-    return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" is absent from the init surface (not yet connected): ${required.join(", ")}`;
-  }
-
-  // The SDK does not wait for MCP servers before init — a still-connecting
-  // server reports "pending" there routinely, then registers within seconds,
-  // usually well before the Unit's first workflow tool call. Aborting on
-  // "pending" would fail the common healthy session, so it passes through;
-  // a genuine miss after pass-through still surfaces in-session as
-  // "No such tool available" and classifies tool-unavailable → bounded retry.
-  // Only statuses that cannot self-heal abort here.
-  if (server.status !== "connected" && !TERMINAL_MCP_SERVER_STATUSES.has(server.status)) {
-    return null;
+  if (server && TERMINAL_MCP_SERVER_STATUSES.has(server.status)) {
+    const missing = required.filter(
+      (tool) => !observation.tools.some((name) => name === tool || mcpToolMatchesBaseName(name, tool)),
+    );
+    const tools = missing.length > 0 ? missing : required;
+    return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" status is "${server.status}" (terminal) — cannot register: ${tools.join(", ")}`;
   }
 
   const missing = required.filter(
     (tool) => !observation.tools.some((name) => name === tool || mcpToolMatchesBaseName(name, tool)),
   );
-  if (missing.length === 0) return null;
+  if (missing.length === 0) {
+    return null;
+  }
 
-  const serverDetail =
-    server.status === "connected"
-      ? `MCP server "${workflowServerName}" is connected but has not registered`
-      : `MCP server "${workflowServerName}" status is "${server.status}" and it has not registered`;
-  return `${TOOL_SURFACE_NOT_READY} for ${unitType}: ${serverDetail}: ${missing.join(", ")}`;
+  if (!server) {
+    return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" is absent from the init surface (not yet connected): ${missing.join(", ")}`;
+  }
+
+  if (server.status !== "connected") {
+    return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" status is "${server.status}" (not yet connected): ${missing.join(", ")}`;
+  }
+
+  return `${TOOL_SURFACE_NOT_READY} for ${unitType}: MCP server "${workflowServerName}" is connected but has not registered: ${missing.join(", ")}`;
 }

@@ -220,15 +220,19 @@ export const UNIT_REGISTRY = {
     phaseChain: ["completion"],
     toolContract: {
       allowedGsdTools: [
+        "gsd_exec",
         "gsd_slice_complete",
         "gsd_task_reopen",
         "gsd_replan_slice",
         "gsd_decision_save",
+        "gsd_capture_thought",
         "gsd_requirement_update",
         "gsd_summary_save",
         "subagent",
       ],
       requiredWorkflowTools: [
+        "gsd_exec",
+        "gsd_capture_thought",
         "gsd_slice_complete",
         "gsd_task_reopen",
         "gsd_replan_slice",
@@ -254,8 +258,21 @@ export const UNIT_REGISTRY = {
     scopeClass: "execute-task",
     phaseChain: ["execution"],
     toolContract: {
-      allowedGsdTools: ["gsd_task_complete", "gsd_decision_save"],
-      requiredWorkflowTools: ["gsd_task_complete"],
+      allowedGsdTools: [
+        "gsd_task_complete",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+        "gsd_capture_thought",
+        "gsd_decision_save",
+      ],
+      requiredWorkflowTools: [
+        "gsd_task_complete",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+        "gsd_capture_thought",
+      ],
     },
   },
   "execute-task-simple": {
@@ -263,8 +280,21 @@ export const UNIT_REGISTRY = {
     scopeClass: "execute-task",
     phaseChain: ["execution_simple", "execution"],
     toolContract: {
-      allowedGsdTools: ["gsd_task_complete", "gsd_decision_save"],
-      requiredWorkflowTools: ["gsd_task_complete"],
+      allowedGsdTools: [
+        "gsd_task_complete",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+        "gsd_capture_thought",
+        "gsd_decision_save",
+      ],
+      requiredWorkflowTools: [
+        "gsd_task_complete",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+        "gsd_capture_thought",
+      ],
     },
   },
   "reactive-execute": {

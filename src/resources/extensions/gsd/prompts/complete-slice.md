@@ -38,7 +38,7 @@ Use `subagent` only when useful: reviewer, security, or tester. Apply findings b
 10. Prepare `gsd_slice_complete` content with camelCase fields `milestoneId`, `sliceId`, `sliceTitle`, `oneLiner`, `narrative`, `verification`, and `uatContent`.
 11. Draft concrete UAT with preconditions, steps, expected outcomes, edge cases, and UAT Type. Declare the type as a bullet under a `## UAT Type` heading, exactly like `- UAT mode: browser-executable`.
     **Web apps:** when inlined Web App UAT guidance is present, declare `browser-executable` or `runtime-executable` (not `artifact-driven`) for localhost/browser/screenshot steps; include dev-server preconditions and name Playwright specs when they exist.
-12. Review the inlined task-summary excerpts for DECISIONS.md/KNOWLEDGE.md-worthy decisions and gotchas. Read full `*-SUMMARY.md` only if needed. Capture with `capture_thought`; do not append knowledge files.
+12. Review the inlined task-summary excerpts for DECISIONS.md/KNOWLEDGE.md-worthy decisions and gotchas. Read full `*-SUMMARY.md` only if needed. Capture with `gsd_capture_thought` (MCP-scoped `mcp__...__gsd_capture_thought`), not bare `capture_thought`; do not append knowledge files.
 13. When verification passes, call `gsd_slice_complete`. The DB-backed tool is the canonical write path. Do **not** manually write `{{sliceSummaryPath}}`. Do **not** manually write `{{sliceUatPath}}`. Do not edit roadmap checkboxes.
 14. Do not run git commands.
 15. If the current project state needs refresh, call `gsd_summary_save` with `artifact_type: "PROJECT"` and the full updated project markdown as `content`; omit `milestone_id`. Do not write or edit `.gsd/PROJECT.md` directly.

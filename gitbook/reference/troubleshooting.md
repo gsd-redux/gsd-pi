@@ -181,6 +181,10 @@ See [Notifications](../configuration/notifications.md) for details.
 
 **Fix:** Verify `command` and `args` paths are correct and absolute. Run the command manually to catch errors.
 
+### GSD workflow tool surface not ready
+
+**Fix:** Run `/gsd mcp init` from the project root, restart Claude Code, and check `/gsd mcp status`. Manual configs should set `GSD_WORKFLOW_PROJECT_ROOT` to the canonical project root. If stale process cleanup is involved, inspect `$GSD_HOME/mcp-instances.json` and remove only dead `gsd-mcp-server` entries.
+
 ## Recovery Procedures
 
 ### Reset auto mode state

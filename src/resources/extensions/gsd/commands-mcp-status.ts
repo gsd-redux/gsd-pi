@@ -102,7 +102,7 @@ export function formatMcpStatusReport(servers: McpServerStatus[]): string {
       : s.connected
         ? `connected — ${s.toolCount} tools`
         : s.available
-          ? `available — ${s.toolCount} tools`
+          ? `probe available — ${s.toolCount} tools`
         : "disconnected";
     const warningText = s.envWarnings?.length ? ` — ${s.envWarnings.length} warning(s)` : "";
     lines.push(`  ${icon} ${s.name} (${s.transport}) — ${status}${warningText}`);
@@ -128,7 +128,7 @@ export function formatMcpServerDetail(server: McpServerDetail): string {
     lines.push(`  Status:    error`);
     lines.push(`  Error:     ${server.error}`);
   } else if (server.connected || server.available) {
-    lines.push(`  Status:    ${server.connected ? "connected" : "available"}`);
+    lines.push(`  Status:    ${server.connected ? "connected" : "probe available"}`);
     lines.push(`  Tools:     ${server.toolCount}`);
     if (server.tools.length > 0) {
       lines.push("");

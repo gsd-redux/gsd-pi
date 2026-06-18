@@ -534,6 +534,9 @@ console.log('\n=== complete-task: handler idempotency ===');
   // First call should succeed
   const r1 = await handleCompleteTask(params, basePath);
   assertTrue(!('error' in r1), 'first call should succeed');
+  if ('error' in r1) {
+    throw new Error(r1.error);
+  }
 
   // Verify complete-task did not duplicate T01. S01-PLAN.md is a projection,
   // so the remaining plan task is not imported implicitly.
@@ -541,16 +544,29 @@ console.log('\n=== complete-task: handler idempotency ===');
   assertEq(tasks.length, 1, 'should only have the completed DB task after first call');
   assertEq(tasks.filter(t => t.id === 'T01').length, 1, 'should have exactly one T01 row after first call');
 
-  // Second call with same params — state machine guard rejects (task is already complete)
+  // If the DB row is complete but the projection was lost, the duplicate call
+  // should repair the missing summary from full_summary_md instead of forcing a
+  // reopen/re-complete loop.
+  fs.unlinkSync(r1.summaryPath);
+  assertTrue(!fs.existsSync(r1.summaryPath), 'fixture should remove the task summary before repair');
   const r2 = await handleCompleteTask(params, basePath);
-  assertTrue('error' in r2, 'second call should return error (task already complete)');
+  assertTrue(!('error' in r2), 'second call should repair missing summary for DB-complete task');
   if ('error' in r2) {
-    assertMatch(r2.error, /already complete/, 'error should mention already complete');
+    throw new Error(r2.error);
+  }
+  assertTrue(fs.existsSync(r2.summaryPath), 'missing summary should be restored on disk');
+  assertEq(r2.duplicate, true, 'repair should be reported as a duplicate/no-op state mutation');
+
+  // Third call with the summary present — state machine guard rejects (task is already complete)
+  const r3 = await handleCompleteTask(params, basePath);
+  assertTrue('error' in r3, 'third call should return error (task already complete)');
+  if ('error' in r3) {
+    assertMatch(r3.error, /already complete/, 'error should mention already complete');
   }
 
-  // Still no duplicate rows from the rejected second call.
+  // Still no duplicate rows from the repair or rejected third call.
   const tasksAfter = getSliceTasks('M001', 'S01');
-  assertEq(tasksAfter.length, 1, 'should still only have T01 after rejected second call');
+  assertEq(tasksAfter.length, 1, 'should still only have T01 after duplicate repair and rejected third call');
   assertEq(tasksAfter.filter(t => t.id === 'T01').length, 1, 'should still have exactly one T01 row');
 
   cleanupDir(basePath);

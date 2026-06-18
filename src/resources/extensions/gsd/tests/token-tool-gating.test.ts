@@ -365,13 +365,14 @@ test("buildMinimalAutoGsdToolSet includes closeout tool for complete-slice", () 
     "gsd_complete_slice",
     "memory_query",
     "capture_thought",
+    "gsd_capture_thought",
   ], "complete-slice");
 
   assert.ok(result.includes("gsd_slice_complete"));
   assert.ok(result.includes("gsd_task_reopen"));
   assert.ok(result.includes("gsd_replan_slice"));
   assert.ok(result.includes("subagent"));
-  assert.ok(result.includes("capture_thought"));
+  assert.ok(result.includes("gsd_capture_thought"));
   assert.ok(!result.includes("gsd_task_complete"));
   assert.ok(!result.includes("gsd_complete_slice"));
 });
@@ -387,6 +388,7 @@ test("buildMinimalAutoGsdToolSet preserves workflow MCP-namespaced closeout tool
     "mcp__gsd-workflow__gsd_exec",
     "mcp__gsd-workflow__memory_query",
     "mcp__gsd-workflow__capture_thought",
+    "mcp__gsd-workflow__gsd_capture_thought",
   ], "complete-slice");
 
   assert.ok(result.includes("mcp__gsd-workflow__gsd_task_reopen"));
@@ -395,7 +397,7 @@ test("buildMinimalAutoGsdToolSet preserves workflow MCP-namespaced closeout tool
   assert.ok(!result.includes("mcp__gsd-workflow__gsd_complete_slice"));
   assert.ok(result.includes("mcp__gsd-workflow__gsd_exec"));
   assert.ok(result.includes("mcp__gsd-workflow__memory_query"));
-  assert.ok(result.includes("mcp__gsd-workflow__capture_thought"));
+  assert.ok(result.includes("mcp__gsd-workflow__gsd_capture_thought"));
 });
 
 test("buildMinimalAutoGsdToolSet covers execute-task-simple", () => {

@@ -26,8 +26,15 @@ import { fileURLToPath } from "node:url";
 import {
   closeDatabase,
   getTask,
+  openDatabase,
+  _getAdapter,
 } from "../../../src/resources/extensions/gsd/gsd-db.ts";
-import { executeTaskComplete } from "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts";
+import { registerDbTools } from "../../../src/resources/extensions/gsd/bootstrap/db-tools.ts";
+import {
+  executeTaskComplete,
+  executeSummarySave,
+  executeMilestoneStatus,
+} from "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts";
 import { registerWorkflowTools } from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
@@ -75,6 +82,80 @@ function makeMockServer() {
     },
   };
 }
+
+function seedMilestoneRow(base: string, milestoneId = "M001"): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  const db = _getAdapter();
+  if (!db) throw new Error("DB not open");
+  db.prepare(
+    "INSERT OR REPLACE INTO milestones (id, title, status, created_at) VALUES (?, ?, ?, ?)",
+  ).run(milestoneId, "Parity milestone", "active", new Date().toISOString());
+}
+
+async function runNativeDbTool(
+  base: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
+  const registrations: Array<{
+    name: string;
+    execute: (
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => Promise<unknown>;
+  }> = [];
+  registerDbTools({
+    registerTool(tool: (typeof registrations)[number]) {
+      registrations.push(tool);
+    },
+  } as Parameters<typeof registerDbTools>[0]);
+  const tool = registrations.find((entry) => entry.name === toolName);
+  if (!tool) throw new Error(`native db tool ${toolName} not registered`);
+  return tool.execute("parity-call", args, undefined, undefined, { cwd: base });
+}
+
+async function runNativeAndMcpParity(input: {
+  toolName: string;
+  args: Record<string, unknown>;
+  seed: (base: string) => void;
+  assertEquivalent: (ctx: {
+    nativeBase: string;
+    mcpBase: string;
+    nativeResult: unknown;
+    mcpResult: unknown;
+  }) => void;
+  nativeRun?: (base: string, args: Record<string, unknown>) => Promise<unknown>;
+}): Promise<void> {
+  let baseNative = "";
+  let baseMcp = "";
+  try {
+    baseNative = makeTmpBase();
+    input.seed(baseNative);
+    const nativeResult = input.nativeRun
+      ? await input.nativeRun(baseNative, input.args)
+      : await runNativeDbTool(baseNative, input.toolName, input.args);
+    assert.ok(!(nativeResult as { isError?: boolean }).isError, `native ${input.toolName} must succeed`);
+    closeDatabase();
+
+    baseMcp = makeTmpBase();
+    input.seed(baseMcp);
+    const server = makeMockServer();
+    registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0]);
+    const mcpTool = server.tools.find((entry) => entry.name === input.toolName);
+    assert.ok(mcpTool, `${input.toolName} must be registered on MCP`);
+    const mcpResult = await mcpTool.handler({ projectDir: baseMcp, ...input.args });
+    assert.ok(!(mcpResult as { isError?: boolean }).isError, `mcp ${input.toolName} must succeed`);
+
+    input.assertEquivalent({ nativeBase: baseNative, mcpBase: baseMcp, nativeResult, mcpResult });
+  } finally {
+    if (baseNative) cleanup(baseNative);
+    if (baseMcp) cleanup(baseMcp);
+  }
+}
+
 
 interface SnapshotShape {
   /** SUMMARY.md content, trimmed, with ISO timestamps replaced by a sentinel. */
@@ -253,5 +334,92 @@ describe("ADR-008 parity: gsd_task_complete native vs MCP", () => {
       if (baseNative) cleanup(baseNative);
       if (baseMcp) cleanup(baseMcp);
     }
+  });
+});
+
+const SUMMARY_SAVE_ARGS = {
+  milestone_id: "M001",
+  slice_id: "S01",
+  artifact_type: "SUMMARY",
+  content: "# Summary\n\nparity matrix artifact",
+};
+
+const DECISION_SAVE_ARGS = {
+  scope: "global",
+  decision: "Use matrix parity tests",
+  choice: "Extend workflow-tools-parity.test.ts",
+  rationale: "Lock native/MCP DB write equivalence",
+  revisable: "yes",
+};
+
+describe("ADR-008 parity: shared workflow write tools native vs MCP", () => {
+  it("gsd_summary_save writes identical artifact files", async () => {
+    await runNativeAndMcpParity({
+      toolName: "gsd_summary_save",
+      args: SUMMARY_SAVE_ARGS,
+      seed: (base) => {
+        mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+      },
+      nativeRun: (base, args) => executeSummarySave(args as Parameters<typeof executeSummarySave>[0], base),
+      assertEquivalent: ({ nativeBase, mcpBase }) => {
+        const rel = "milestones/M001/slices/S01/S01-SUMMARY.md";
+        const nativePath = join(nativeBase, ".gsd", rel);
+        const mcpPath = join(mcpBase, ".gsd", rel);
+        assert.ok(existsSync(nativePath), "native summary artifact must exist");
+        assert.ok(existsSync(mcpPath), "mcp summary artifact must exist");
+        assert.equal(
+          normalizeTimestamps(readFileSync(nativePath, "utf-8").trim()),
+          normalizeTimestamps(readFileSync(mcpPath, "utf-8").trim()),
+          "summary artifact content must match between transports",
+        );
+      },
+    });
+  });
+
+  it("gsd_milestone_status returns equivalent milestone metadata", async () => {
+    await runNativeAndMcpParity({
+      toolName: "gsd_milestone_status",
+      args: { milestoneId: "M001" },
+      seed: seedMilestoneRow,
+      nativeRun: (base, args) =>
+        executeMilestoneStatus(args as Parameters<typeof executeMilestoneStatus>[0], base),
+      assertEquivalent: ({ nativeResult, mcpResult }) => {
+        const nativeDetails = normalizeParams(
+          ((nativeResult as { details?: Record<string, unknown> }).details ?? {}) as Record<string, unknown>,
+        );
+        const mcpDetails = normalizeParams(
+          ((mcpResult as { structuredContent?: Record<string, unknown> }).structuredContent
+            ?? (mcpResult as { details?: Record<string, unknown> }).details
+            ?? {}) as Record<string, unknown>,
+        );
+        assert.deepEqual(nativeDetails, mcpDetails, "milestone status details must match between transports");
+      },
+    });
+  });
+
+  it("gsd_decision_save persists equivalent decision rows", async () => {
+    await runNativeAndMcpParity({
+      toolName: "gsd_decision_save",
+      args: {
+        ...DECISION_SAVE_ARGS,
+        when_context: "parity matrix",
+        made_by: "agent",
+      },
+      seed: (base) => {
+        openDatabase(join(base, ".gsd", "gsd.db"));
+        closeDatabase();
+      },
+      assertEquivalent: ({ nativeBase, mcpBase }) => {
+        const nativeDecisions = join(nativeBase, ".gsd", "DECISIONS.md");
+        const mcpDecisions = join(mcpBase, ".gsd", "DECISIONS.md");
+        assert.ok(existsSync(nativeDecisions), "native DECISIONS.md must exist");
+        assert.ok(existsSync(mcpDecisions), "mcp DECISIONS.md must exist");
+        assert.equal(
+          normalizeTimestamps(readFileSync(nativeDecisions, "utf-8").trim()),
+          normalizeTimestamps(readFileSync(mcpDecisions, "utf-8").trim()),
+          "DECISIONS.md must match between transports",
+        );
+      },
+    });
   });
 });

@@ -153,6 +153,8 @@ mcp_call(server="my-server", tool="<tool_name>", args={...})
 - GSD 和 `gsd-mcp-server` 都会自动加载保存在 `~/.gsd/agent/auth.json` 中的 model / tool keys，因此 MCP 配置可以安全地通过 `${ENV_VAR}` 占位符引用这些值，而不必提交原始凭据
 - 如果某个 server 是团队共享且适合提交到仓库，通常更适合放在 `.mcp.json`
 - 如果某个 server 依赖本机路径、个人服务或本地 secrets，更适合放在 `.gsd/mcp.json`
+- 对内置的 `gsd-workflow` server，如果是从 worktree 或 wrapper 启动，请把 `GSD_WORKFLOW_PROJECT_ROOT` 设为规范项目根目录。打包的 server 会用它定位 workflow 工具路径，并用它作为 `$GSD_HOME/mcp-instances.json` 中的单项目 stale-process registry key。
+- 需要 GSD workflow 工具的 Claude Code 会话是 fail-closed 的：如果启动时 `gsd-workflow` 不存在、仍为 pending、failed、disabled，或缺少必需工具，GSD 会在第一个 model turn 前中止该 unit 并重试，而不是允许工具调用落到不完整的 surface 上。
 
 ## 环境变量
 
@@ -162,6 +164,9 @@ mcp_call(server="my-server", tool="<tool_name>", args={...})
 | `GSD_PROJECT_ID` | （自动哈希） | 覆盖自动生成的项目身份哈希。这样项目状态会写入 `$GSD_HOME/projects/<GSD_PROJECT_ID>/`，而不是计算出的哈希目录。适用于 CI/CD 或多个克隆共享状态。（v2.39） |
 | `GSD_STATE_DIR` | `$GSD_HOME` | 项目状态根目录。控制 `projects/<repo-hash>/` 的创建位置。对项目状态的优先级高于 `GSD_HOME`。 |
 | `GSD_CODING_AGENT_DIR` | `$GSD_HOME/agent` | agent 目录，包含托管资源、扩展和 auth。对 agent 相关路径的优先级高于 `GSD_HOME`。 |
+| `GSD_WORKFLOW_PROJECT_ROOT` | 当前工作目录 | 打包的 `gsd-workflow` MCP server 使用的规范项目根目录。workflow 工具和 `$GSD_HOME/mcp-instances.json` 的 stale-process registry key 都会使用它。 |
+| `GSD_WORKFLOW_EXECUTORS_MODULE` | 尽可能自动发现 | 可选的绝对路径或 `file:` URL，指向 `gsd-workflow` mutation tools 使用的共享 workflow executor module。 |
+| `GSD_WORKFLOW_WRITE_GATE_MODULE` | 尽可能自动发现 | 可选的绝对路径或 `file:` URL，指向 `gsd-workflow` mutation tools 使用的共享 write-gate module。 |
 | `GSD_ALLOWED_COMMAND_PREFIXES` | （内置列表） | 允许用于 `!command` 值解析的命令前缀，逗号分隔。会覆盖 settings.json 中的 `allowedCommandPrefixes`。见 [自定义模型：命令允许列表](custom-models.md#command-allowlist)。 |
 | `GSD_FETCH_ALLOWED_URLS` | （无） | 对 `fetch_page` URL block 免检的 hostnames，逗号分隔。会覆盖 settings.json 中的 `fetchAllowedUrls`。见 [URL Blocking](#url-blocking-fetch_page)。 |
 

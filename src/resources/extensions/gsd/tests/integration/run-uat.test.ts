@@ -317,6 +317,24 @@ test('(k2) run-uat prompt references gsd_uat_result_save, not direct write', () 
   );
 });
 
+test('(k3) run-uat prompt warns that .gsd glob misses can be symlink traversal artifacts', async () => {
+  const base = createFixtureBase();
+  try {
+    const uatRel = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
+    const uatContent = makeUatContent('runtime-executable');
+    writeSliceFile(base, 'M001', 'S01', 'UAT', uatContent);
+
+    const prompt = await buildRunUatPrompt('M001', 'S01', uatRel, uatContent, base);
+
+    assert.match(prompt, /\.gsd\/\*\*/);
+    assert.match(prompt, /symlink-backed/i);
+    assert.match(prompt, /do not infer that the GSD harness is missing/i);
+    assert.match(prompt, /use the preloaded UAT context/i);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('(l) dispatch preconditions via resolveSliceFile', () => {
     const base = createFixtureBase();
     const uatContent = makeUatContent('artifact-driven');

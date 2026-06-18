@@ -65,3 +65,5 @@ After adding config, verify from a GSD session:
 - `secure_env_collect` hydrates accepted local dotenv writes into the current MCP server process, but Vercel and Convex pushes are remote-only and are not added to `process.env`
 - Use `.mcp.json` for team-shared servers; `.gsd/mcp.json` for machine-local ones
 - If a server depends on local paths or personal secrets, keep it in `.gsd/mcp.json`
+- For the built-in `gsd-workflow` server, set `GSD_WORKFLOW_PROJECT_ROOT` to the canonical project root when launching from a worktree or wrapper. The packaged server uses it for workflow tool paths and the per-project stale-process registry at `$GSD_HOME/mcp-instances.json`.
+- Claude Code sessions that require GSD workflow tools are fail-closed: if `gsd-workflow` is absent, still pending, failed, disabled, or missing required tools at startup, GSD aborts the unit before the first model turn and retries instead of allowing tool calls against an incomplete surface.

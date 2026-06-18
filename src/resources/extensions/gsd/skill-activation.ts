@@ -134,11 +134,8 @@ const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/;
 function formatSkillActivationBlock(skillNames: string[]): string {
   const safe = skillNames.filter(name => SAFE_SKILL_NAME.test(name));
   if (safe.length === 0) return "";
-  // Use explicit parameter syntax so LLMs pass { skill: "..." } instead of { name: "..." }.
-  // The function-call-like syntax `Skill('name')` led LLMs to infer a positional
-  // parameter name, causing tool validation failures — see #2224.
-  const calls = safe.map(name => `Call Skill({ skill: '${name}' })`).join('. ');
-  return `<skill_activation>${calls}.</skill_activation>`;
+  const reads = safe.map(name => `Read the installed '${name}' skill file from <available_skills>`).join(". ");
+  return `<skill_activation>${reads}.</skill_activation>`;
 }
 
 /**
@@ -157,7 +154,7 @@ function formatSkillRecommendationsBlock(unitType: string | undefined, skillName
   if (!unitType) return "";
   const safe = skillNames.filter(name => SAFE_SKILL_NAME.test(name));
   if (safe.length === 0) return "";
-  return `<skill_recommendations unit="${unitType}">For this unit type, also consider invoking: ${safe.join(", ")}. Use Skill({ skill: 'name' }) when relevant — these are recommendations, not requirements.</skill_recommendations>`;
+  return `<skill_recommendations unit="${unitType}">For this unit type, also consider reading these installed skill files from <available_skills>: ${safe.join(", ")}. These are recommendations, not requirements.</skill_recommendations>`;
 }
 
 export function buildSkillActivationBlock(params: {

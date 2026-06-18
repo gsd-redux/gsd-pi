@@ -432,6 +432,23 @@ In these states GSD does not auto-stash and does not auto-fix; it stops so you c
 - Run the command manually to catch import/runtime errors
 - Check that the configured interpreter or runtime exists on the machine
 
+### GSD workflow tool surface not ready
+
+**Symptoms:** A Claude Code-backed unit aborts before the first model turn with `workflow tool surface not ready`, often mentioning `gsd-workflow` as `pending`, `failed`, `disabled`, absent, or missing a required `gsd_*` tool.
+
+**Common causes:**
+- Claude Code has not connected the `gsd-workflow` MCP server yet
+- The server's workflow bridge failed during startup
+- `GSD_WORKFLOW_PROJECT_ROOT` points at the wrong project
+- A stale MCP server process is still registered for the project
+
+**Fix:**
+- Run `/gsd mcp init` from the project root, restart Claude Code, and retry the unit.
+- Check `/gsd mcp status` and confirm `gsd-workflow` is connected with workflow tools listed.
+- If you maintain MCP config manually, set `GSD_WORKFLOW_PROJECT_ROOT` to the canonical project root and rebuild or reinstall `gsd-mcp-server` after local package changes.
+- If startup still reports stale process cleanup problems, inspect `$GSD_HOME/mcp-instances.json` and remove only entries for dead `gsd-mcp-server` processes.
+- Background MCP probes (`/gsd mcp status`, guided-flow warm-up, preflight checks) use `GSD_MCP_PROBE=1` and do not compete with Claude Code's live `gsd-workflow` server. If you maintain a custom MCP launch path, ensure only the Claude Code child session registers in `mcp-instances.json`.
+
 ### `mcp_call` fails because required arguments are missing
 
 **Symptoms:** A discovered MCP tool exists, but calling it fails validation because required fields are missing.

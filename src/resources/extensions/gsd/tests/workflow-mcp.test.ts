@@ -22,6 +22,7 @@ import {
   usesWorkflowMcpTransport,
 } from "../workflow-mcp.ts";
 import { DB_WORKFLOW_TOOL_NAMES } from "../workflow-tool-surface.ts";
+import { UNIT_TOOL_CONTRACTS } from "../unit-tool-contracts.ts";
 
 const MCP_STDIO_TIMEOUT_MS = 90_000;
 
@@ -43,11 +44,25 @@ test("resolveWorkflowMcpProjectRoot maps milestone worktree cwd to project root"
 });
 
 test("guided execute-task requires canonical task completion tool", () => {
-  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("execute-task"), ["gsd_task_complete"]);
+  const expected = [
+    "gsd_task_complete",
+    "gsd_exec",
+    "gsd_exec_search",
+    "gsd_resume",
+    "gsd_capture_thought",
+  ];
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("execute-task"), expected);
 });
 
 test("auto execute-task requires canonical task completion tool", () => {
-  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("execute-task"), ["gsd_task_complete"]);
+  const expected = [
+    "gsd_task_complete",
+    "gsd_exec",
+    "gsd_exec_search",
+    "gsd_resume",
+    "gsd_capture_thought",
+  ];
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("execute-task"), expected);
 });
 
 test("plan-slice requires planning and roadmap reassessment tools", () => {
@@ -69,6 +84,8 @@ test("refine-slice requires canonical slice planning tool", () => {
 
 test("complete-slice requires closeout and execution handoff tools", () => {
   const expected = [
+    "gsd_exec",
+    "gsd_capture_thought",
     "gsd_slice_complete",
     "gsd_task_reopen",
     "gsd_replan_slice",
@@ -521,6 +538,52 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
     );
   } finally {
     await client.close().catch(() => {});
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(isolatedGsdHome, { recursive: true, force: true });
+  }
+});
+
+test("workflow MCP stdio surface exposes every unit's required workflow tool", async () => {
+  const projectRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-all-unit-tools-"));
+  const isolatedGsdHome = mkdtempSync(join(tmpdir(), "gsd-workflow-all-unit-home-"));
+  mkdirSync(join(projectRoot, ".gsd"), { recursive: true });
+
+  const launch = detectWorkflowMcpLaunchConfig(projectRoot, {});
+  assert.ok(launch, "expected a workflow MCP launch config");
+
+  const client = new Client({ name: "workflow-mcp-contract-test", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: launch.command,
+    args: launch.args,
+    env: {
+      ...process.env,
+      ...launch.env,
+      GSD_HOME: isolatedGsdHome,
+      DISCORD_BOT_TOKEN: "",
+      SLACK_BOT_TOKEN: "",
+      TELEGRAM_BOT_TOKEN: "",
+    } as Record<string, string>,
+    cwd: launch.cwd,
+    stderr: "pipe",
+  });
+
+  try {
+    await client.connect(transport, { timeout: MCP_STDIO_TIMEOUT_MS });
+    const listed = await client.listTools(undefined, { timeout: MCP_STDIO_TIMEOUT_MS });
+    const exposedTools = new Set((listed.tools ?? []).map((tool) => tool.name));
+
+    for (const [unitType, contract] of Object.entries(UNIT_TOOL_CONTRACTS)) {
+      for (const toolName of contract.requiredWorkflowTools) {
+        if (!toolName.startsWith("gsd_") && toolName !== "ask_user_questions") continue;
+        assert.ok(
+          exposedTools.has(toolName),
+          `${unitType} requires ${toolName}, but workflow MCP exposed ${JSON.stringify([...exposedTools].sort())}`,
+        );
+      }
+    }
+  } finally {
+    await client.close().catch(() => undefined);
+    await transport.close().catch(() => undefined);
     rmSync(projectRoot, { recursive: true, force: true });
     rmSync(isolatedGsdHome, { recursive: true, force: true });
   }

@@ -8,6 +8,7 @@ import { resolveWorktreeProjectRoot } from "../worktree-root.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { debugLog } from "../debug-logger.js";
 import { isSamePathLocal } from "./phase-helpers.js";
+import { hasHeldMilestoneLease, reclaimMissingMilestoneLease } from "./milestone-lease-reclaim.js";
 import type { IterationContext } from "./types.js";
 
 export function shouldDegradeEmptyWorktreeToProjectRoot(
@@ -101,6 +102,7 @@ export async function validateSourceWriteWorktreeSafety(
     s.isolationDegraded,
     s.strandedRecoveryIsolationMode,
   );
+  reclaimMissingMilestoneLease(s, milestoneId, isolationMode, phase);
   const safety = createWorktreeSafetyModule();
   const result = safety.validateUnitRoot({
     unitType,
@@ -123,7 +125,7 @@ export async function validateSourceWriteWorktreeSafety(
     lease: s.workerId
       ? {
           required: isolationMode !== "none",
-          held: s.currentMilestoneId === milestoneId && s.milestoneLeaseToken !== null,
+          held: hasHeldMilestoneLease(s, milestoneId),
           owner: s.workerId,
         }
       : undefined,

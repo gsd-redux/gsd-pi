@@ -20,6 +20,41 @@ import { join } from "node:path";
 import { gsdAsync, gsdSync, stripAnsi, type SpawnSyncResult, type TmpProject } from "../e2e/_shared/index.ts";
 
 const CRED_RE = /_API_KEY$|_OAUTH_TOKEN$/;
+const CLAUDE_CODE_PROVIDER = "claude-code";
+const CLAUDE_CODE_CLI_ALIAS = "claude-code-cli";
+
+export function normalizeLiveWorkflowModel(model = process.env.GSD_LIVE_WORKFLOW_MODEL): string | undefined {
+  const trimmed = model?.trim();
+  if (!trimmed) return undefined;
+
+  const lower = trimmed.toLowerCase();
+  if (lower === CLAUDE_CODE_CLI_ALIAS) return CLAUDE_CODE_PROVIDER;
+  if (lower.startsWith(`${CLAUDE_CODE_CLI_ALIAS}/`)) {
+    return `${CLAUDE_CODE_PROVIDER}/${trimmed.slice(CLAUDE_CODE_CLI_ALIAS.length + 1)}`;
+  }
+
+  return trimmed;
+}
+
+export function isClaudeCodeWorkflowModel(model = process.env.GSD_LIVE_WORKFLOW_MODEL): boolean {
+  const normalized = normalizeLiveWorkflowModel(model)?.toLowerCase();
+  if (!normalized) return false;
+  return normalized === CLAUDE_CODE_PROVIDER || normalized.startsWith(`${CLAUDE_CODE_PROVIDER}/`);
+}
+
+function isClaudeCodeCliAuthenticated(): boolean {
+  try {
+    const raw = execFileSync("claude", ["auth", "status"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10_000,
+    });
+    const parsed = JSON.parse(raw) as { loggedIn?: unknown };
+    return parsed.loggedIn === true;
+  } catch {
+    return false;
+  }
+}
 
 /** Provider credential env vars present in the current environment. */
 export function detectCredentialEnv(): Record<string, string> {
@@ -32,7 +67,11 @@ export function detectCredentialEnv(): Record<string, string> {
 
 /** Names of the credential env vars found (for diagnostics/skip messages). */
 export function credentialNames(): string[] {
-  return Object.keys(detectCredentialEnv()).sort();
+  const names = Object.keys(detectCredentialEnv()).sort();
+  if (isClaudeCodeWorkflowModel() && isClaudeCodeCliAuthenticated()) {
+    names.push("CLAUDE_CODE_CLI");
+  }
+  return names;
 }
 
 /**
@@ -51,7 +90,11 @@ export function hasUsableCredentials(): boolean {
  * isolated, fresh agent home.
  */
 export function liveEnv(extra: Record<string, string> = {}): Record<string, string> {
-  return { ...detectCredentialEnv(), ...extra };
+  const claudeCodeEnv: Record<string, string> = {};
+  if (isClaudeCodeWorkflowModel() && process.env.HOME) {
+    claudeCodeEnv.HOME = process.env.HOME;
+  }
+  return { ...detectCredentialEnv(), ...claudeCodeEnv, ...extra };
 }
 
 function git(dir: string, args: string[]): void {

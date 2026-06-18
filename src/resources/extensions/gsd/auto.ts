@@ -1160,6 +1160,10 @@ function pauseAutoUnitIdentityMatches(expected: PauseAutoUnitIdentity | null): b
     s.currentUnit.startedAt === expected.startedAt;
 }
 
+function shouldPreserveCoordinationForPause(errorContext?: ErrorContext): boolean {
+  return errorContext?.category === "provider" && errorContext.isTransient === true;
+}
+
 function setLifecycleOutcome(
   ctx: ExtensionContext | undefined,
   input: {
@@ -2120,7 +2124,7 @@ export async function pauseAuto(
     clearLock(lockBase());
   }
 
-  if (s.workerId) {
+  if (s.workerId && !shouldPreserveCoordinationForPause(_errorContext)) {
     try {
       if (s.currentMilestoneId && s.milestoneLeaseToken) {
         releaseMilestoneLease(s.workerId, s.currentMilestoneId, s.milestoneLeaseToken);

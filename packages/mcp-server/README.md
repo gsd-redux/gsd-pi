@@ -4,7 +4,7 @@ MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other M
 
 Start GSD auto-mode sessions, poll progress, resolve blockers, and retrieve results — all through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-This package now exposes two tool surfaces:
+This package exposes three tool surfaces:
 
 - session/read tools for starting and inspecting GSD sessions
 - MCP-native interactive tools for structured user input
@@ -134,9 +134,15 @@ Current support boundary:
 - when running inside the GSD monorepo checkout, the MCP server auto-discovers the shared workflow executor module
 - outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` to an importable `workflow-tool-executors` module path if you want the mutation tools enabled
 - `ask_user_questions` and `secure_env_collect` require an MCP client that supports form elicitation
-- session/read tools do not depend on this bridge
+- session/read tool implementations do not use this bridge, but the packaged CLI still warms it at startup so Claude Code never sees a partial workflow surface
 
-If the executor bridge cannot be loaded, workflow mutation calls will fail with a precise configuration error instead of silently degrading.
+If the executor bridge cannot be loaded, the packaged CLI fails startup with a precise configuration error instead of silently degrading.
+
+Startup is fail-closed for the workflow bridge: `gsd-mcp-server` loads the workflow executor and write-gate bridge before it connects over stdio. If bridge warm-up fails, the MCP host sees a startup failure instead of a partially advertised tool surface.
+
+The server also keeps a per-project PID registry at `$GSD_HOME/mcp-instances.json` (default `~/.gsd/mcp-instances.json`). On startup it terminates a previously registered `gsd-mcp-server` process for the same project when the saved PID still belongs to an MCP server, then records the current PID. On normal shutdown it removes only its own entry. Corrupt registry files are preserved as `.corrupt-<timestamp>` backups before a new registry is written.
+
+For stdio hosts that leave child processes behind, the server watches stdin activity. If stdin is idle for five minutes and the original parent process is gone, it cleans up sessions, unregisters its PID, and exits.
 
 ### `gsd_execute`
 
@@ -245,6 +251,9 @@ Resolve a pending blocker in a session by sending a response to the blocked UI r
 |----------|-------------|
 | `GSD_CLI_PATH` | Absolute path to the GSD CLI binary. If not set, the server resolves `gsd` via `which`. |
 | `GSD_WORKFLOW_EXECUTORS_MODULE` | Optional absolute path or `file:` URL for the shared GSD workflow executor module used by workflow mutation tools. |
+| `GSD_WORKFLOW_WRITE_GATE_MODULE` | Optional absolute path or `file:` URL for the shared write-gate module used by workflow mutation tools. |
+| `GSD_WORKFLOW_PROJECT_ROOT` | Canonical project root for workflow tools and the per-project MCP PID registry key. Defaults to the server's current working directory. |
+| `GSD_HOME` | Global GSD directory. Also controls where `mcp-instances.json` is stored. |
 
 The server also hydrates supported model-provider and tool credentials from `~/.gsd/agent/auth.json` on startup. Keys saved through `/gsd config` or `/gsd keys` become available to the MCP server process automatically, and any explicitly-set environment variable still wins.
 

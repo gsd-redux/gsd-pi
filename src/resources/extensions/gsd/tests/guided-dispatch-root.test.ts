@@ -11,6 +11,7 @@ import {
   _dispatchWorkflowForTest,
   resolveGuidedDispatchProjectRoot,
 } from "../guided-flow.ts";
+import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.ts";
 
 test("guided dispatch falls back to cwd only when no project root is supplied", () => {
   const cwd = process.cwd();
@@ -115,6 +116,7 @@ test("guided dispatch accepts workflow MCP tools absent from parent active tool 
       getProviderAuthMode: () => "externalCli",
     },
     ui: {
+      setStatus: () => {},
       notify: (message: string) => {
         notifications.push(message);
       },
@@ -130,8 +132,22 @@ test("guided dispatch accepts workflow MCP tools absent from parent active tool 
     "write",
   ];
 
+  // The workflow MCP server registers its tools out of band, so the unit's
+  // required workflow tools show up in the registered tool snapshot
+  // (getAllTools) under the MCP server prefix without ever entering the parent
+  // session's active tool surface (getActiveTools). This is exactly the shape
+  // the readiness gate must accept. Derive the surface from the unit contract
+  // so this test stays correct if discuss-milestone's required tools change.
+  const registeredTools = [
+    ...activeTools,
+    ...getRequiredWorkflowToolsForUnit("discuss-milestone").map(
+      (tool) => `mcp__gsd-workflow__${tool}`,
+    ),
+  ];
+
   const pi = {
     getActiveTools: () => [...activeTools],
+    getAllTools: () => registeredTools.map((name) => ({ name })),
     setActiveTools: (tools: string[]) => {
       activeTools = [...tools];
     },

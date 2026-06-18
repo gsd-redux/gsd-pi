@@ -1258,7 +1258,7 @@ export function teardownAutoWorktree(
  * still works after process restart when module state has been reset.
  */
 export function isInAutoWorktree(basePath: string): boolean {
-  const targetPath = isGsdWorktreePath(basePath) ? basePath : process.cwd();
+  const targetPath = isGsdWorktreePath(basePath) ? basePath : safeCwd("");
   if (!isGsdWorktreePath(targetPath)) return false;
 
   const storedBase = getAutoWorktreeOriginalBase();
