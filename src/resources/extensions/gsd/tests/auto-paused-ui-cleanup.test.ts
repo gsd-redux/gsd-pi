@@ -7,7 +7,13 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { cleanupAfterLoopExit, pauseAuto, rerootCommandSession, stopAuto } from "../auto.ts";
+import {
+  anchorProcessCwdForAutoResume,
+  cleanupAfterLoopExit,
+  pauseAuto,
+  rerootCommandSession,
+  stopAuto,
+} from "../auto.ts";
 import { autoSession } from "../auto-runtime-state.ts";
 import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.ts";
@@ -103,6 +109,25 @@ test("cleanupAfterLoopExit preserves paused worktree session and visible failure
     assert.equal(autoSession.paused, true);
   } finally {
     autoSession.reset();
+    process.chdir(previousCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("anchorProcessCwdForAutoResume recovers when current cwd was deleted", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-resume-cwd-anchor-"));
+  const deletedCwd = join(base, ".gsd-worktrees", "M002");
+  const previousCwd = process.cwd();
+
+  mkdirSync(deletedCwd, { recursive: true });
+
+  try {
+    process.chdir(deletedCwd);
+    rmSync(deletedCwd, { recursive: true, force: true });
+
+    assert.equal(anchorProcessCwdForAutoResume(base), true);
+    assert.equal(realpathSync(process.cwd()), realpathSync(base));
+  } finally {
     process.chdir(previousCwd);
     rmSync(base, { recursive: true, force: true });
   }

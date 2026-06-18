@@ -859,6 +859,20 @@ export function _warnIfWorktreeMissingForTest(
   return false;
 }
 
+export function anchorProcessCwdForAutoResume(basePath: string): boolean {
+  try {
+    process.chdir(basePath);
+    return true;
+  } catch (err) {
+    logWarning(
+      "session",
+      `resume cwd anchor failed: ${err instanceof Error ? err.message : String(err)}`,
+      { file: "auto.ts", basePath },
+    );
+    return false;
+  }
+}
+
 export function isAutoPaused(): boolean {
   return s.paused;
 }
@@ -2642,6 +2656,7 @@ export async function startAuto(
     }
     // ADR-016 phase 2 / B3 (#5621): paused-resume worktree-path adoption.
     buildLifecycle().resumeFromPausedSession(base, resumeWorktreePath);
+    anchorProcessCwdForAutoResume(s.basePath || base);
     // Rebuild scope now that s.basePath reflects the actual worktree (or project root).
     rebuildScope(s.basePath, s.currentMilestoneId);
     // Ensure the workflow-logger audit log is pinned to the project root
