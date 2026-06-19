@@ -756,6 +756,11 @@ export function transaction<T>(fn: () => T): T {
   return _transactionRunner.transaction(createTransactionControls(currentDb), fn);
 }
 
+/**
+ * Run a BEGIN IMMEDIATE write transaction for operations that need SQLite's
+ * reserved writer lock before issuing updates. Re-entrant like transaction():
+ * nested calls run inside the outer transaction without a nested BEGIN.
+ */
 export function immediateTransaction<T>(fn: () => T): T {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   return _transactionRunner.immediateTransaction(createTransactionControls(currentDb), fn);

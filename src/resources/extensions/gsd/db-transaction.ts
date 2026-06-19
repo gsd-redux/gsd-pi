@@ -4,6 +4,7 @@
 export interface DbTransactionControls {
   begin(): void;
   beginRead(): void;
+  /** Starts a write transaction that obtains SQLite's reserved lock up front. */
   beginImmediate?(): void;
   commit(): void;
   rollback(): void;
@@ -20,6 +21,10 @@ export class DbTransactionRunner {
     return this.runTransaction(controls, () => controls.begin(), fn);
   }
 
+  /**
+   * Run a BEGIN IMMEDIATE transaction through the same depth counter as regular
+   * transactions so callers can compose it inside existing transaction scopes.
+   */
   immediateTransaction<T>(controls: DbTransactionControls, fn: () => T): T {
     if (!controls.beginImmediate) {
       throw new Error("db transaction controls do not support immediate transactions");

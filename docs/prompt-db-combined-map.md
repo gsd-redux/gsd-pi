@@ -41,7 +41,7 @@ See also:
               gsd-db.ts  (barrel over the single-writer layer:
                           db/engine.ts + db/writers/**)
                        │
-                 transaction()
+                 transaction()/immediateTransaction()
                        │
                        ▼
                SQLite writes
@@ -356,7 +356,7 @@ unit completes
 | Single-writer: all write SQL in the single-writer layer (`db/engine.ts` + `db/writers/**`); `gsd-db.ts` is the barrel re-exporting it; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (directory predicate) |
 | Cascade on slice complete: pending tasks → skipped | `gsd_slice_complete` transaction |
 | Cascade on milestone reopen: all slices → in_progress, tasks → pending | `gsd_milestone_reopen` transaction |
-| No nested transactions | `db-transaction.ts` depth counter |
+| No nested write transactions: `transaction()` and `immediateTransaction()` share one depth counter | `db-transaction.test.ts` |
 | Workspace isolation: one DB per project root, shared across worktrees via WAL | `db-connection-cache.ts` identityKey |
 | Coordination: one active dispatch per unit_id at a time | `idx_unit_dispatches_active_per_unit` unique partial index |
 | Memory FTS fallback: LIKE scan if FTS5 unavailable | `tryCreateMemoriesFtsSchema` onUnavailable callback |
