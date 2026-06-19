@@ -60,6 +60,16 @@ const MIGRATION_BACKFILL_WRITER_FILES = new Set([
   "memory-backfill.ts",
 ]);
 
+const DB_WRITER_ALLOWLIST_GUIDANCE = [
+  "gsd-db.ts",
+  "db/engine.ts",
+  "db/writers/**",
+  ...TYPED_DB_WRITER_FILES,
+  ...SCHEMA_DB_WRITER_FILES,
+  ...MIGRATION_BACKFILL_WRITER_FILES,
+  "unit-ownership.ts only for .gsd/unit-claims.db",
+].join(", ");
+
 function isSingleWriterFile(rel: string): boolean {
   const norm = rel.split("\\").join("/");
   if (norm === "gsd-db.ts" || norm === "unit-ownership.ts") return true;
@@ -255,7 +265,7 @@ function importNames(specifierBlock: string): string[] {
     .filter(Boolean);
 }
 
-test("no module outside gsd-db.ts issues raw write SQL against the engine DB", () => {
+test("no module outside the explicit DB writer allowlist issues raw write SQL", () => {
   const files = walkTsFiles(gsdDir);
   assert.ok(files.length >= 20, `Expected at least 20 .ts files under gsd/, found ${files.length}`);
 
@@ -280,9 +290,9 @@ test("no module outside gsd-db.ts issues raw write SQL against the engine DB", (
       (v) => `  ${v.file}:${v.line} [${v.kind}] — ${v.snippet}`,
     );
     assert.fail(
-      `Found ${violations.length} raw write SQL bypass(es) outside gsd-db.ts:\n` +
+      `Found ${violations.length} raw write SQL bypass(es) outside the explicit DB writer allowlist:\n` +
         lines.join("\n") +
-        "\n\nEach of these must be replaced with a typed wrapper exported from gsd-db.ts.",
+        `\n\nMove each write to the appropriate allowlisted owner: ${DB_WRITER_ALLOWLIST_GUIDANCE}.`,
     );
   }
 });
@@ -298,7 +308,7 @@ test("db/queries.ts (the Query Module) is read-only — contains no write SQL", 
   assert.equal(
     violations.length,
     0,
-    `db/queries.ts must contain no write SQL — move write wrappers to db/writers/:\n` +
+    `db/queries.ts must contain no write SQL — move write wrappers to the explicit DB writer allowlist:\n` +
       violations.map((v) => `  db/queries.ts:${v.line} [${v.kind}] — ${v.snippet}`).join("\n"),
   );
 });
@@ -411,7 +421,7 @@ test("production modules do not import DB open-state mechanics from gsd-db.ts", 
     assert.fail(
       `Found ${violations.length} DB open-state import(s) from gsd-db.ts:\n` +
         lines.join("\n") +
-        "\n\nImport these through db-workspace.ts so gsd-db.ts stays the single-writer implementation, not the caller-facing DB Workspace Interface.",
+        "\n\nImport these through db-workspace.ts so gsd-db.ts stays the writer compatibility barrel, not the caller-facing DB Workspace Interface.",
     );
   }
 });
