@@ -603,7 +603,8 @@ export function openDatabase(path: string): boolean {
     initSchema(adapter, fileBacked, path);
   } catch (err) {
     // Corrupt freelist: DDL fails with "malformed" but VACUUM can rebuild.
-    // Attempt VACUUM recovery before giving up (see #2519).
+    // Pre-migration backup failures are already pre-DDL and must propagate
+    // instead of being masked by VACUUM recovery (see #2519).
     if (shouldAttemptVacuumRecovery(fileBacked, err)) {
       try {
         adapter.exec("VACUUM");

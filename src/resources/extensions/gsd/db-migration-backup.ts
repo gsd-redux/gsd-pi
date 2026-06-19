@@ -9,6 +9,7 @@ export interface MigrationBackupDeps {
   logWarning(scope: string, message: string): void;
 }
 
+/** Marks pre-migration backup failures so DB-open recovery cannot mask them. */
 export class MigrationBackupError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message, { cause });
@@ -16,10 +17,18 @@ export class MigrationBackupError extends Error {
   }
 }
 
+/** Returns true for errors raised while checkpointing or copying a migration backup. */
 export function isMigrationBackupError(err: unknown): err is MigrationBackupError {
   return err instanceof MigrationBackupError;
 }
 
+/**
+ * Creates a same-version backup before file-backed schema migrations.
+ *
+ * Existing same-version backups are reused. New backups fail closed: WAL
+ * checkpoint failures, incomplete checkpoints, and copy failures are logged
+ * and then rethrown before migration DDL runs.
+ */
 export function backupDatabaseBeforeMigration(
   db: DbAdapter,
   dbPath: string | null,

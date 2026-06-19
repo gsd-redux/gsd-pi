@@ -360,6 +360,6 @@ unit completes
 | Workspace isolation: one DB per project root, shared across worktrees via WAL | `db-connection-cache.ts` identityKey |
 | Coordination: one active dispatch per unit_id at a time | `idx_unit_dispatches_active_per_unit` unique partial index |
 | Memory FTS fallback: LIKE scan if FTS5 unavailable | `tryCreateMemoriesFtsSchema` onUnavailable callback |
-| Pre-migration backup: file-backed migrations checkpoint WAL before copying `.backup-vN`; existing same-version backups are reused/skipped, and checkpoint/copy failures stop before migration DDL | `db-migration-backup.ts` |
+| Pre-migration backup: file-backed migrations checkpoint WAL before copying `.gsd/gsd.db.backup-vN`; existing same-version backups are reused/skipped, and checkpoint/copy failures warn then stop before migration DDL | `db-migration-backup.ts` |
 | Prompt template vars: all `{{vars}}` must be provided before substitution | `prompt-loader.ts` pre-substitution validation |
 | Prompt cache stability: static sections always before dynamic | `prompt-ordering.ts` reorderForCaching |
