@@ -1,11 +1,13 @@
 // Project/App: gsd-pi
 // File Purpose: GSD engine — connection ownership, lifecycle, schema/migrations,
 // and transaction primitives for the single-writer layer. The shared handle
-// (currentDb) lives here; writers (db/writers/*) and the Query Module
-// (db/queries.ts) read it through getDb()/getDbOrNull().
+// (currentDb) lives here; domain writers, allowlisted coordination/runtime
+// writers, schema/migration helpers, and the Query Module (db/queries.ts) read
+// it through getDb()/getDbOrNull().
 //
 // This file legitimately holds DDL and BEGIN/COMMIT control, so it is
-// allowlisted in tests/single-writer-invariant.test.ts alongside db/writers/.
+// allowlisted in tests/single-writer-invariant.test.ts alongside the explicit
+// writer layer.
 import { createRequire } from "node:module";
 import { existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";

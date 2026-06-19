@@ -18,10 +18,16 @@ tools/workflow-tool-executors.ts  ← business logic
        ├── validation reads (milestones, slices, tasks)
        │
        ▼
-gsd-db.ts  ← barrel: re-exports the single-writer layer (callers import from here)
+gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        │
        ├── db/engine.ts     ← connection/handle, schema/migrations, transaction primitives
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
+       ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
+       │                    ← typed coordination/runtime writers
+       ├── db-memory-fts-schema.ts, db-schema-metadata.ts, db-verification-evidence-schema.ts
+       │                    ← allowlisted schema/migration helpers
+       ├── memory-backfill.ts
+       │                    ← allowlisted ADR migration/backfill helper
        ├── db/queries.ts    ← the Query Module (read-only SELECT wrappers)
        │
        ├── transaction()  (db/engine.ts via db-transaction.ts — depth counter, no nested BEGIN)
