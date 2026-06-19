@@ -41,7 +41,9 @@ import {
   refreshOpenDatabaseFromDisk,
   tryCreateMemoriesFts,
   _isLikelyWslDrvFsPathForTest,
+  _shouldAttemptVacuumRecoveryForTest,
 } from '../gsd-db.ts';
+import { MigrationBackupError } from '../db-migration-backup.ts';
 import { _resetLogs, peekLogs, setStderrLoggingEnabled } from '../workflow-logger.ts';
 
 const _require = createRequire(import.meta.url);
@@ -537,6 +539,23 @@ describe('gsd-db', () => {
     assert.equal(index?.['name'], 'idx_memories_scope', 'scope index should be created after bootstrap columns are present');
 
     cleanup(dbPath);
+  });
+
+  test('gsd-db: migration backup errors bypass malformed-DB VACUUM recovery', () => {
+    assert.equal(
+      _shouldAttemptVacuumRecoveryForTest(
+        true,
+        new MigrationBackupError('database disk image is malformed during backup'),
+      ),
+      false,
+    );
+    assert.equal(
+      _shouldAttemptVacuumRecoveryForTest(
+        true,
+        new Error('database disk image is malformed'),
+      ),
+      true,
+    );
   });
 
   test('gsd-db: pre-v18 DB with memory_sources missing scope opens without crash (issue #4607)', () => {

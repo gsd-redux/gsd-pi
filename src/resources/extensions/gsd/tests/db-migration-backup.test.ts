@@ -3,16 +3,22 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { backupDatabaseBeforeMigration } from "../db-migration-backup.ts";
+import { MigrationBackupError, backupDatabaseBeforeMigration } from "../db-migration-backup.ts";
 import type { DbAdapter, DbStatement } from "../db-adapter.ts";
 
 class FakeStatement implements DbStatement {
+  private readonly row: Record<string, unknown> | undefined;
+
+  constructor(row: Record<string, unknown> | undefined = undefined) {
+    this.row = row;
+  }
+
   run(): unknown {
     return undefined;
   }
 
   get(): Record<string, unknown> | undefined {
-    return undefined;
+    return this.row;
   }
 
   all(): Record<string, unknown>[] {
@@ -22,15 +28,19 @@ class FakeStatement implements DbStatement {
 
 class FakeAdapter implements DbAdapter {
   readonly execCalls: string[] = [];
+  readonly prepareCalls: string[] = [];
   failCheckpoint = false;
+  checkpointRow: Record<string, unknown> = { busy: 0, log: 0, checkpointed: 0 };
 
   exec(sql: string): void {
     this.execCalls.push(sql);
     if (this.failCheckpoint) throw new Error("checkpoint failed");
   }
 
-  prepare(): DbStatement {
-    return new FakeStatement();
+  prepare(sql: string): DbStatement {
+    this.prepareCalls.push(sql);
+    if (this.failCheckpoint) throw new Error("checkpoint failed");
+    return new FakeStatement(this.checkpointRow);
   }
 
   close(): void {}
@@ -73,7 +83,7 @@ describe("db-migration-backup", () => {
       logWarning: () => assert.fail("should not warn"),
     });
 
-    assert.deepEqual(db.execCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
     assert.deepEqual(copies, [["/tmp/gsd.db", "/tmp/gsd.db.backup-v12"]]);
   });
 
@@ -93,10 +103,32 @@ describe("db-migration-backup", () => {
       /checkpoint failed/,
     );
 
-    assert.deepEqual(db.execCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
     assert.deepEqual(copies, []);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Pre-migration backup failed: checkpoint failed/);
+  });
+
+  test("throws and skips copying when checkpoint result is incomplete", () => {
+    const db = new FakeAdapter();
+    db.checkpointRow = { busy: 1, log: 4, checkpointed: 3 };
+    const copies: Array<[string, string]> = [];
+    const warnings: string[] = [];
+
+    assert.throws(
+      () =>
+        backupDatabaseBeforeMigration(db, "/tmp/gsd.db", 12, {
+          existsSync: (path) => path === "/tmp/gsd.db",
+          copyFileSync: (src, dest) => copies.push([src, dest]),
+          logWarning: (_scope, message) => warnings.push(message),
+        }),
+      MigrationBackupError,
+    );
+
+    assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(copies, []);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Pre-migration backup failed: WAL checkpoint incomplete/);
   });
 
   test("throws and warns when copy fails", () => {
@@ -115,7 +147,7 @@ describe("db-migration-backup", () => {
       /read only/,
     );
 
-    assert.deepEqual(db.execCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Pre-migration backup failed: read only/);
   });
