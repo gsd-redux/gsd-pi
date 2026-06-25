@@ -27,6 +27,7 @@ import type {
 import { KNOWN_UNIT_TYPES, UNIT_MANIFESTS } from "../unit-context-manifest.ts";
 import { getUnitToolSurfaceContract } from "../unit-tool-contracts.ts";
 import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
+import type { UnitGsdToolName } from "../unit-registry.ts";
 import {
   buildExecuteTaskPrompt,
   buildGateEvaluatePrompt,
@@ -196,8 +197,8 @@ test("Context Mode composer: run-uat guidance steers to gsd_uat_exec in both ren
 
 test("Context Mode composer: slice planning and research guidance tools pass unit contracts", () => {
   const affectedUnits = ["research-slice", "plan-slice", "refine-slice"];
-  const contextModeTools = ["gsd_exec", "gsd_exec_search", "gsd_resume"];
-  const readOnlyOrientationTools = ["gsd_milestone_status", ...contextModeTools];
+  const contextModeTools: UnitGsdToolName[] = ["gsd_exec", "gsd_exec_search", "gsd_resume"];
+  const readOnlyOrientationTools: UnitGsdToolName[] = ["gsd_milestone_status", ...contextModeTools];
 
   for (const unitType of affectedUnits) {
     const out = composeContextModeInstructions(unitType, { enabled: true, renderMode: "standalone" });
