@@ -920,15 +920,21 @@ test("stuck-loop: stop('user-request') resets the ring (hard stop)", async (t) =
   assert.equal(next.kind, "advanced");
 });
 
-test("stuck-loop #482 regression: start() rehydrates the window from the dispatch ledger so cross-session re-dispatch loops are detected", async (t) => {
+test("stuck-loop #852 fix: start() does NOT rehydrate so prior-session failures cannot false-positive on a fresh session", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
-  // Simulate a PRIOR session: the dispatch ledger recorded the same unit
-  // being re-dispatched repeatedly without progress. The orchestrator under test is a
-  // fresh instance (as it would be after a session restart) — before the
-  // Dispatch History module, start() reset the window to [] and the loop
-  // would silently re-dispatch the unit forever (#482: 146 re-dispatches).
+  // Simulate a PRIOR session: STUCK_WINDOW_SIZE-1 consecutive dispatches of
+  // the same unit, all failed. Before #852 was fixed, start() would rehydrate
+  // these stale entries and the very next advance() would declare stuck —
+  // killing the new session before a single dispatch ran. The fix: start()
+  // clears the window WITHOUT rehydrating, so prior-session failures are
+  // invisible to the fresh session.
+  //
+  // Cross-session stuck detection is preserved by resume() (which rehydrates
+  // when the window is empty after a crash) and by within-session accumulation
+  // (STUCK_WINDOW_SIZE dispatches of the same unit within one session still
+  // trigger stuck detection). See the resume() test below.
   const worker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
   const lease = claimMilestoneLease(worker, "M001");
   assert.equal(lease.ok, true);
@@ -950,13 +956,10 @@ test("stuck-loop #482 regression: start() rehydrates the window from the dispatc
   const started = await f.orchestrator.start(SESSION_CONTEXT);
   assert.equal(started.kind, "started");
 
-  // The very next decision for the same unit must trip the stuck verdict
-  // instead of advancing.
+  // The fresh session must advance past the prior-session history: window is
+  // empty after start(), so the first advance dispatches normally.
   const result = await f.orchestrator.advance();
-  assert.equal(result.kind, "blocked");
-  if (result.kind !== "blocked") return;
-  assert.equal(result.action, "stop");
-  assert.ok(result.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${result.reason}`);
+  assert.equal(result.kind, "advanced", "fresh session must not be blocked by stale prior-session dispatch history");
 });
 
 test("stuck-loop #482: resume() with an empty window rehydrates from the dispatch ledger", async (t) => {
