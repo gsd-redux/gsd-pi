@@ -130,6 +130,91 @@ test("getRecentUnitKeysForProjectRoot restores compound keys used by stuck detec
   assert.match(result?.reason ?? "", /3 consecutive times/);
 });
 
+// ── #852: stuck window must be scoped to the current session (trace_id) ───────
+//
+// Without trace_id scoping, two consecutive finalize-retry failures from a
+// PREVIOUS session persist in unit_dispatches and fire detectStuck Rule 1 on
+// the first iteration of every new session — killing auto-mode before any new
+// dispatch runs. The trace_id filter ensures only the current session's
+// dispatches populate the window.
+
+test("#852: getRecentUnitKeysForProjectRoot scoped to trace_id ignores prior-session entries", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M015", title: "T", status: "active" });
+  const worker = registerAutoWorker({ projectRootRealpath: base });
+  const lease = claimMilestoneLease(worker, "M015");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
+
+  // PRIOR session: two consecutive finalize-retry failures (trace_id = "old").
+  for (let i = 0; i < 2; i++) {
+    const claim = recordDispatchClaim({
+      traceId: "old-session",
+      workerId: worker,
+      milestoneLeaseToken: lease.token,
+      milestoneId: "M015",
+      unitType: "discuss-milestone",
+      unitId: "M015",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "finalize-retry" });
+  }
+
+  // NEW session (trace_id = "new") has dispatched nothing yet.
+  // Without the trace_id filter, the window loads the two stale "old-session"
+  // finalize-retry entries → detectStuck Rule 1 fires immediately.
+  const unscopedWindow = getRecentUnitKeysForProjectRoot(base, 20);
+  assert.equal(unscopedWindow.length, 2, "unscoped window sees prior-session entries");
+
+  // With the trace_id filter, the new session's window is empty — no false stuck.
+  const scopedWindow = getRecentUnitKeysForProjectRoot(base, 20, "new-session");
+  assert.equal(scopedWindow.length, 0, "trace_id-scoped window excludes prior-session entries");
+
+  // detectStuck on an empty window returns null (not stuck).
+  assert.equal(detectStuck(scopedWindow), null);
+});
+
+test("#852: getRecentUnitKeysForProjectRoot trace_id filter still includes current-session entries", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M016", title: "T", status: "active" });
+  const worker = registerAutoWorker({ projectRootRealpath: base });
+  const lease = claimMilestoneLease(worker, "M016");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
+
+  // Prior session entries.
+  const oldClaim = recordDispatchClaim({
+    traceId: "prior", workerId: worker, milestoneLeaseToken: lease.token,
+    milestoneId: "M016", unitType: "plan-milestone", unitId: "M016",
+  });
+  assert.equal(oldClaim.ok, true);
+  if (oldClaim.ok) markFailed(oldClaim.dispatchId, { errorSummary: "finalize-retry" });
+
+  // Current session entries.
+  for (let i = 0; i < 2; i++) {
+    const claim = recordDispatchClaim({
+      traceId: "current", workerId: worker, milestoneLeaseToken: lease.token,
+      milestoneId: "M016", unitType: "plan-milestone", unitId: "M016",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "finalize-retry" });
+  }
+
+  // Scoped to "current" → only the 2 current-session entries.
+  const scoped = getRecentUnitKeysForProjectRoot(base, 20, "current");
+  assert.equal(scoped.length, 2, "trace_id filter includes current-session entries");
+
+  // Unscoped → 3 (prior + current).
+  const unscoped = getRecentUnitKeysForProjectRoot(base, 20);
+  assert.equal(unscoped.length, 3, "unscoped window includes all sessions");
+});
+
 test("getRecentUnitKeysForWorker honors the limit parameter", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));

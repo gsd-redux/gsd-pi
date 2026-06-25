@@ -520,9 +520,33 @@ export function getRecentUnitKeysForWorker(
 export function getRecentUnitKeysForProjectRoot(
   projectRootRealpath: string,
   limit = 20,
+  traceId?: string,
 ): Array<{ key: string }> {
   if (!isDbAvailable()) return [];
   const db = _getAdapter()!;
+  // When a trace_id is provided, scope the window to the current session so
+  // stale finalize-retry entries from PREVIOUS sessions don't fire detectStuck
+  // Rule 1 on the first iteration of a new session — killing auto-mode before
+  // any new dispatch runs. Without this, a project that had two consecutive
+  // finalize-retry failures in a prior session is permanently stuck: every
+  // fresh session loads those stale errors and immediately declares stuck.
+  if (traceId) {
+    const rows = db.prepare(
+      `SELECT ud.unit_type, ud.unit_id
+       FROM unit_dispatches ud
+       INNER JOIN workers w ON w.worker_id = ud.worker_id
+       WHERE w.project_root_realpath = :project_root_realpath
+         AND w.status != 'crashed'
+         AND ud.trace_id = :trace_id
+       ORDER BY ud.started_at DESC, ud.id DESC
+       LIMIT :limit`,
+    ).all({
+      ":project_root_realpath": projectRootRealpath,
+      ":trace_id": traceId,
+      ":limit": limit,
+    }) as Array<{ unit_type: string; unit_id: string }>;
+    return rows.reverse().map((r) => ({ key: `${r.unit_type}/${r.unit_id}` }));
+  }
   const rows = db.prepare(
     `SELECT ud.unit_type, ud.unit_id
      FROM unit_dispatches ud
