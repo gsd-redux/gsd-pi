@@ -191,6 +191,11 @@ function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; 
     // Rule 1 on the first iteration — killing auto-mode before any new
     // dispatch runs (#852). A prior session's two consecutive finalize-retry
     // failures would otherwise permanently block every new session.
+    //
+    // s.currentTraceId is only set inside the first loop iteration (line ~443),
+    // so at this call-site it is always null for a fresh session. Return []
+    // directly in that case — no prior dispatch has occurred in this session,
+    // so the stuck window is trivially empty and the DB query is skipped.
     const recentUnits =
       s.currentTraceId != null
         ? getRecentUnitKeysForProjectRoot(scopeId, STUCK_WINDOW_SIZE, s.currentTraceId)

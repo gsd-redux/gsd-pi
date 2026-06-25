@@ -326,3 +326,105 @@ test("rehydrate degrades to an empty window without a scope or ledger", () => {
   assert.equal(noDb.rehydrate(), 0);
   assert.equal(noDb.getRecentWindow().length, 0);
 });
+
+// ─── Session-scoped rehydration (#852) ───────────────────────────────────────
+//
+// Without session scoping, two consecutive finalize-retry failures from a
+// PREVIOUS session persist in unit_dispatches and are loaded into the
+// DispatchHistory window on the NEXT session's start() → rehydrate() call.
+// The first advance's recordDispatch fills the window (matchingCount >=
+// STUCK_WINDOW_SIZE) and detectStuck Rule 1 fires immediately, killing
+// auto-mode before any new unit runs. The resolveTraceId option scopes
+// rehydrate() to the current session so only that session's dispatches
+// populate the window.
+
+test("#852: rehydrate with resolveTraceId ignores prior-session entries (empty window on fresh session)", (t) => {
+  const f = makeLedgerFixture(t);
+
+  // Prior session: six consecutive finalize-retry failures for the same unit.
+  // recordDispatchClaim uses the trace_id from the fixture's claim() helper
+  // (random per-iteration). We insert them directly so we control the trace_id.
+  for (let i = 0; i < STUCK_WINDOW_SIZE; i++) {
+    const claim = recordDispatchClaim({
+      traceId: "prior-session-trace-id",
+      workerId: f.worker,
+      milestoneLeaseToken: f.token,
+      milestoneId: "M001",
+      unitType: "discuss-milestone",
+      unitId: "M001",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "finalize-retry" });
+  }
+
+  // Unscoped rehydrate loads all prior entries — the window is full.
+  const unscopedHistory = createDispatchHistory({ resolveScopeId: () => f.base });
+  unscopedHistory.rehydrate();
+  assert.equal(
+    unscopedHistory.getRecentWindow().length,
+    STUCK_WINDOW_SIZE,
+    "unscoped rehydrate sees prior-session entries",
+  );
+
+  // New session: rehydrate scoped to a fresh trace_id that has never been
+  // written to unit_dispatches → 0 rows → the window stays empty.
+  const freshTraceId = "new-session-trace-id-never-in-db";
+  const freshHistory = createDispatchHistory({
+    resolveScopeId: () => f.base,
+    resolveTraceId: () => freshTraceId,
+  });
+  const count = freshHistory.rehydrate();
+  assert.equal(count, 0, "session-scoped rehydrate excludes prior-session entries");
+  assert.equal(freshHistory.getRecentWindow().length, 0);
+
+  // The first dispatch of the new session should not trigger stuck (window is
+  // empty, so Rule 1/2/3/4 cannot fire on a single-entry window).
+  freshHistory.recordDispatch("discuss-milestone", "M001");
+  assert.equal(
+    freshHistory.detectStuck(),
+    null,
+    "first dispatch in new session must not trigger stuck detection",
+  );
+});
+
+test("#852: rehydrate with resolveTraceId still includes current-session entries", (t) => {
+  const f = makeLedgerFixture(t);
+  const currentTraceId = "current-session-trace";
+
+  // Prior session entry (different trace_id).
+  const oldClaim = recordDispatchClaim({
+    traceId: "old-session-trace",
+    workerId: f.worker,
+    milestoneLeaseToken: f.token,
+    milestoneId: "M001",
+    unitType: "plan-milestone",
+    unitId: "M001",
+  });
+  assert.equal(oldClaim.ok, true);
+  if (oldClaim.ok) markFailed(oldClaim.dispatchId, { errorSummary: "finalize-retry" });
+
+  // Current session entries (matching trace_id).
+  for (let i = 0; i < 2; i++) {
+    const claim = recordDispatchClaim({
+      traceId: currentTraceId,
+      workerId: f.worker,
+      milestoneLeaseToken: f.token,
+      milestoneId: "M001",
+      unitType: "plan-milestone",
+      unitId: "M001",
+    });
+    assert.equal(claim.ok, true);
+    if (!claim.ok) return;
+    markFailed(claim.dispatchId, { errorSummary: "finalize-retry" });
+  }
+
+  // Scoped to current session: only the 2 current entries are loaded.
+  const history = createDispatchHistory({
+    resolveScopeId: () => f.base,
+    resolveTraceId: () => currentTraceId,
+  });
+  const count = history.rehydrate();
+  assert.equal(count, 2, "session-scoped rehydrate includes current-session entries");
+  assert.equal(history.getRecentWindow().length, 2);
+});

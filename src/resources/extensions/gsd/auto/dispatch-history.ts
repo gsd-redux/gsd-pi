@@ -82,6 +82,19 @@ export interface DispatchHistoryOptions {
    */
   resolveScopeId: () => string | null;
   windowSize?: number;
+  /**
+   * Session-level trace_id used to scope `rehydrate()` to the CURRENT session
+   * so stale finalize-retry entries from PREVIOUS sessions don't fire
+   * detectStuck Rule 1 on the first advance of a new session — killing
+   * auto-mode before any new dispatch runs (#852). When provided, only
+   * dispatches recorded with this trace_id are returned by the DB query;
+   * a brand-new session trace_id that has never been written to unit_dispatches
+   * returns 0 rows, giving a clean stuck window on session start.
+   *
+   * The unscoped (no resolveTraceId) path is preserved for callers without a
+   * session context so existing behaviour for those paths is unchanged.
+   */
+  resolveTraceId?: () => string | null;
 }
 
 /**
@@ -137,7 +150,12 @@ export function createDispatchHistory(options: DispatchHistoryOptions): Dispatch
       const scopeId = options.resolveScopeId();
       if (!scopeId) return 0;
       try {
-        const persisted = getRecentUnitKeysForProjectRoot(scopeId, windowSize);
+        // Scope to the current session's trace_id when available (#852):
+        // a fresh session UUID that has never been written to unit_dispatches
+        // returns 0 rows so prior-session failures don't pre-populate the
+        // stuck window and immediately block the new session.
+        const traceId = options.resolveTraceId?.() ?? undefined;
+        const persisted = getRecentUnitKeysForProjectRoot(scopeId, windowSize, traceId);
         if (persisted.length === 0) return 0;
         const rebuilt: WindowEntry[] = [];
         for (const { key } of persisted) {

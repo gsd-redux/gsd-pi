@@ -73,6 +73,7 @@ import {
 } from "./dispatch-history.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
 import { hasHeldMilestoneLease, reclaimMissingMilestoneLease } from "./milestone-lease-reclaim.js";
 
@@ -376,6 +377,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   // recovery to one attempt per stuck episode per run (reset on start/resume/
   // stop), mirroring the legacy Level-1-then-Level-2 escalation in phases.ts.
   private lastStuckRecoveryKey: string | null = null;
+  // #852: a per-session UUID used to scope rehydrate() so stale prior-session
+  // finalize-retry entries don't pre-populate the stuck window on session start.
+  // Refreshed in start() for fresh sessions; resume() carries forward the
+  // existing value (in-process resume keeps the in-memory window; after-crash
+  // resume generates a fresh scope so the new session starts clean too).
+  private sessionTraceId: string = randomUUID();
 
   public constructor(context: OrchestratorContext) {
     this.ctx = context.ctx;
@@ -393,6 +400,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           this.s.scope?.workspace.projectRoot ??
             (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
         ) || null,
+      // Session-scoped trace_id (#852): this.sessionTraceId is refreshed on
+      // start() so rehydrate() only loads dispatches from the current session.
+      // A brand-new UUID that has never been written to unit_dispatches returns
+      // 0 rows, giving a clean stuck window — prior-session failures are
+      // invisible to the new session's stuck detector.
+      resolveTraceId: () => this.sessionTraceId,
     });
   }
 
@@ -918,10 +931,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async start(_sessionContext: AutoSessionContext): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
+    // #852: refresh the session trace_id before rehydrate() so the window is
+    // scoped exclusively to this new session. Prior-session finalize-retry
+    // failures (and any other stale entries) are invisible because the new
+    // UUID has never been written to unit_dispatches. This prevents a session
+    // from being killed before its first dispatch runs.
+    this.sessionTraceId = randomUUID();
     // #482: the DB dispatch ledger is the source of truth across sessions.
     // Discard any in-memory window and rebuild it from the ledger so a unit
     // that was re-dispatched in previous sessions is detected as stuck here
-    // instead of silently re-dispatching forever.
+    // instead of silently re-dispatching forever. (#852 session scoping ensures
+    // only the current session's dispatches are loaded, so a fresh session
+    // always starts with an empty window.)
     this.dispatchHistory.clearOnRecovery();
     this.dispatchHistory.rehydrate();
     this.lastStuckRecoveryKey = null;
