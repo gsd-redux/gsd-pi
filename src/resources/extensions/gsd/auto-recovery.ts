@@ -58,7 +58,7 @@ import {
 import { execFileSync } from "node:child_process";
 
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
@@ -69,6 +69,7 @@ import { validateArtifact } from "./schemas/validate.js";
 import { getProjectResearchStatus } from "./project-research-policy.js";
 import { isGsdWorktreePath } from "./worktree-root.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
+import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import {
@@ -527,7 +528,26 @@ export function verifyExpectedArtifact(
   }
 
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
-  const absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  let absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
+  // Worktree→project-root fallback: a milestone running in a worktree may not
+  // have its CONTEXT/ROADMAP/SUMMARY projected into the worktree yet (the
+  // worktree only has the META dir until planning writes its projections).
+  // When the worktree base yields null or a non-existent path, fall back to the
+  // project root — where the artifact genuinely lives. Without this, a
+  // discuss-milestone unit with CONTEXT at phases/NN-slug/ in the project root
+  // but not in the worktree resolves to null → "resolveExpectedArtifactPath
+  // returned null" → finalize-retry loop (#852).
+  if (artifactBase !== base) {
+    const projectRoot = resolve(resolveWorktreeProjectRoot(artifactBase));
+    if (projectRoot && projectRoot !== artifactBase) {
+      if (!absPath || !existsSync(absPath)) {
+        const projectPath = resolveExpectedArtifactPath(unitType, unitId, projectRoot);
+        if (projectPath && existsSync(projectPath)) {
+          absPath = projectPath;
+        }
+      }
+    }
+  }
   // For unit types with no registered artifact contract (null path), treat the
   // completion state as stale so the key gets evicted (#313).
   if (!absPath) {
