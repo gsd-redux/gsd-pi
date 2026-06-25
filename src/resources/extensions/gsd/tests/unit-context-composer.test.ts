@@ -26,6 +26,7 @@ import type {
 } from "../unit-context-manifest.ts";
 import { KNOWN_UNIT_TYPES, UNIT_MANIFESTS } from "../unit-context-manifest.ts";
 import { getUnitToolSurfaceContract } from "../unit-tool-contracts.ts";
+import { shouldBlockAutoUnitToolCall } from "../auto-unit-tool-scope.ts";
 import {
   buildExecuteTaskPrompt,
   buildGateEvaluatePrompt,
@@ -191,6 +192,26 @@ test("Context Mode composer: run-uat guidance steers to gsd_uat_exec in both ren
   const standalone = composeContextModeInstructions("run-uat", { enabled: true, renderMode: "standalone" });
   assert.match(standalone, /`gsd_uat_exec`/);
   assert.doesNotMatch(standalone, /`gsd_exec`/);
+});
+
+test("Context Mode composer: slice planning and research guidance tools pass unit contracts", () => {
+  const affectedUnits = ["research-slice", "plan-slice", "refine-slice"];
+  const contextModeTools = ["gsd_exec", "gsd_exec_search", "gsd_resume"];
+  const readOnlyOrientationTools = ["gsd_milestone_status", ...contextModeTools];
+
+  for (const unitType of affectedUnits) {
+    const out = composeContextModeInstructions(unitType, { enabled: true, renderMode: "standalone" });
+    const allowed = new Set(getUnitToolSurfaceContract(unitType)?.allowedGsdTools ?? []);
+
+    for (const toolName of contextModeTools) {
+      assert.ok(out.includes(`\`${toolName}\``), `${unitType} guidance should mention ${toolName}`);
+    }
+    for (const toolName of readOnlyOrientationTools) {
+      assert.ok(allowed.has(toolName), `${unitType} contract should allow ${toolName}`);
+      const scope = shouldBlockAutoUnitToolCall(unitType, toolName);
+      assert.equal(scope.block, false, `${unitType} should not hard-block ${toolName}: ${scope.reason ?? ""}`);
+    }
+  }
 });
 
 test("Context Mode composer: workflow-preferences and research-decision render no Context Mode block", () => {

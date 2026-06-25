@@ -183,7 +183,14 @@ export const UNIT_REGISTRY = {
     scopeClass: "standard",
     phaseChain: ["research"],
     toolContract: {
-      allowedGsdTools: ["gsd_summary_save", "gsd_decision_save"],
+      allowedGsdTools: [
+        "gsd_milestone_status",
+        "gsd_summary_save",
+        "gsd_decision_save",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+      ],
       requiredWorkflowTools: ["gsd_summary_save"],
     },
   },
@@ -192,7 +199,15 @@ export const UNIT_REGISTRY = {
     scopeClass: "standard",
     phaseChain: ["planning"],
     toolContract: {
-      allowedGsdTools: ["gsd_plan_slice", "gsd_reassess_roadmap", "gsd_decision_save"],
+      allowedGsdTools: [
+        "gsd_milestone_status",
+        "gsd_plan_slice",
+        "gsd_reassess_roadmap",
+        "gsd_decision_save",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+      ],
       requiredWorkflowTools: ["gsd_plan_slice", "gsd_reassess_roadmap"],
     },
   },
@@ -201,7 +216,14 @@ export const UNIT_REGISTRY = {
     scopeClass: "standard",
     phaseChain: ["planning"],
     toolContract: {
-      allowedGsdTools: ["gsd_plan_slice", "gsd_decision_save"],
+      allowedGsdTools: [
+        "gsd_milestone_status",
+        "gsd_plan_slice",
+        "gsd_decision_save",
+        "gsd_exec",
+        "gsd_exec_search",
+        "gsd_resume",
+      ],
       requiredWorkflowTools: ["gsd_plan_slice"],
     },
   },
