@@ -191,7 +191,10 @@ function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; 
     // Rule 1 on the first iteration — killing auto-mode before any new
     // dispatch runs (#852). A prior session's two consecutive finalize-retry
     // failures would otherwise permanently block every new session.
-    const recentUnits = getRecentUnitKeysForProjectRoot(scopeId, STUCK_WINDOW_SIZE, s.currentTraceId ?? undefined);
+    const recentUnits =
+      s.currentTraceId != null
+        ? getRecentUnitKeysForProjectRoot(scopeId, STUCK_WINDOW_SIZE, s.currentTraceId)
+        : [];
     const stuckRecoveryAttempts =
       getRuntimeKv<number>("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY) ?? 0;
     return { recentUnits, stuckRecoveryAttempts };
