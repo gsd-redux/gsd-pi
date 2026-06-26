@@ -475,6 +475,49 @@ describe('derive-state-helpers', () => {
     }
   });
 
+  // ─── Queue order: milestone absent from file gets explicit sequence (idempotency) ─
+  test('deriveStateFromDb sync is idempotent when a milestone is omitted from QUEUE-ORDER.json', async () => {
+    const base = createFixtureBase();
+    try {
+      // QUEUE-ORDER.json lists only M002 and M001; M003 is absent.
+      const queueOrder = JSON.stringify({ order: ['M002', 'M001'], updatedAt: new Date().toISOString() });
+      writeFileSync(join(base, '.gsd', 'QUEUE-ORDER.json'), queueOrder);
+      writeFile(base, 'milestones/M001/M001-CONTEXT.md', '# M001\n\nContext.');
+      writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002\n\nContext.');
+      writeFile(base, 'milestones/M003/M003-CONTEXT.md', '# M003\n\nContext.');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'First', status: 'active' });
+      insertMilestone({ id: 'M002', title: 'Second', status: 'active' });
+      insertMilestone({ id: 'M003', title: 'Third', status: 'active' });
+      // DB starts with natural order M001→M002→M003 (stale vs the file's M002→M001).
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      // After sync, M002 leads (per file), M003 is appended at the end.
+      assert.equal(state.activeMilestone?.id, 'M002', 'omitted-milestone: QUEUE-ORDER.json chooses M002 as active');
+      assert.deepEqual(
+        getAllMilestones().map(m => m.id),
+        ['M002', 'M001', 'M003'],
+        'omitted-milestone: DB sequence is M002, M001, M003 with M003 appended',
+      );
+
+      // Second derive must not re-write the DB (idempotency guard holds).
+      invalidateStateCache();
+      const state2 = await deriveStateFromDb(base);
+      assert.equal(state2.activeMilestone?.id, 'M002', 'omitted-milestone: second derive still picks M002');
+      assert.deepEqual(
+        getAllMilestones().map(m => m.id),
+        ['M002', 'M001', 'M003'],
+        'omitted-milestone: DB sequence unchanged on second call',
+      );
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
   test('setMilestoneQueueOrder can be composed inside a transaction', async () => {
     const base = createFixtureBase();
     try {

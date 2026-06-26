@@ -278,7 +278,7 @@ function syncQueueOrderProjectionToDb(basePath: string): void {
   const desiredIds = sortByQueueOrder(currentIds, queueOrder);
   if (currentIds.length === desiredIds.length && currentIds.every((id, i) => id === desiredIds[i])) return;
 
-  setMilestoneQueueOrder(queueOrder);
+  setMilestoneQueueOrder(desiredIds);
 }
 
 function ensureExistingWorkflowDbOpen(basePath: string): boolean {
