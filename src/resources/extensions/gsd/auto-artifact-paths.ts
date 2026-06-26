@@ -43,7 +43,10 @@ function resolveMilestoneArtifactPath(
     // filename for the resolved dir produces existsSync-false paths that trap
     // the unit in a finalize-retry loop (#852).
     const legacyBase = legacyMilestonesDir(base);
-    const isLegacy = dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\");
+    const projectLegacyBase = join(gsdRoot(base), "milestones");
+    const isLegacy =
+      dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\")
+      || dir.startsWith(projectLegacyBase + "/") || dir.startsWith(projectLegacyBase + "\\");
     const phaseNum = milestoneIdToPhaseNum(mid);
     const filename = isLegacy
       ? `${mid}-${suffix}.md`
