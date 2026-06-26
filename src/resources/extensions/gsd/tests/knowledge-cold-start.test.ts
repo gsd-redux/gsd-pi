@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import { execFileSync } from "node:child_process";
 
 import type { ExtensionCommandContext, ExtensionContext } from "@gsd/pi-coding-agent";
 
-import { buildBeforeAgentStartResult } from "../bootstrap/system-context.ts";
+import { buildBeforeAgentStartResult, _flushDeferredContextMaintenanceForTest } from "../bootstrap/system-context.ts";
 import { handleKnowledge } from "../commands-handlers.ts";
 import { withCommandCwd } from "../commands/context.ts";
 import {
@@ -37,7 +38,8 @@ test("#830 startup opens the project DB before projecting KNOWLEDGE.md", async (
   process.chdir(base);
   process.env.GSD_HOME = join(base, ".gsd-home");
 
-  t.after(() => {
+  t.after(async () => {
+    await _flushDeferredContextMaintenanceForTest(base);
     if (isDbAvailable()) closeDatabase();
     invalidateStateCache();
     process.chdir(originalCwd);
@@ -75,11 +77,119 @@ test("#830 startup opens the project DB before projecting KNOWLEDGE.md", async (
   );
 
   assert.equal(isDbAvailable(), true, "startup should open the project DB");
-  assert.equal(existsSync(knowledgePath), true, "startup should write KNOWLEDGE.md");
+  assert.equal(existsSync(knowledgePath), false, "startup should defer KNOWLEDGE.md projection off the prompt path");
+  await _flushDeferredContextMaintenanceForTest(base);
+  assert.equal(existsSync(knowledgePath), true, "deferred maintenance should write KNOWLEDGE.md");
   assert.match(
     readFileSync(knowledgePath, "utf-8"),
     /\| P001 \| Cold-start projections open the canonical DB first \| bootstrap \| regression coverage \|/,
   );
+});
+
+test("#896 startup maintenance skips repeated sentinel work in one session", async (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-startup-maintenance-once-")));
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const gsdDir = join(base, ".gsd");
+  const knowledgePath = join(gsdDir, "KNOWLEDGE.md");
+  mkdirSync(gsdDir, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: base, stdio: "ignore" });
+  process.chdir(base);
+  process.env.GSD_HOME = join(base, ".gsd-home");
+
+  t.after(async () => {
+    await _flushDeferredContextMaintenanceForTest(base);
+    if (isDbAvailable()) closeDatabase();
+    invalidateStateCache();
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  writeFileSync(
+    knowledgePath,
+    [
+      "# Project Knowledge",
+      "",
+      "## Rules",
+      "",
+      "| # | Scope | Rule | Why | Added |",
+      "|---|-------|------|-----|-------|",
+      "",
+      "## Patterns",
+      "",
+      "| # | Pattern | Where | Notes |",
+      "|---|---------|-------|-------|",
+      "| P001 | Run startup maintenance once | bootstrap | first pass |",
+      "",
+      "## Lessons Learned",
+      "",
+      "| # | What Happened | Root Cause | Fix | Scope |",
+      "|---|--------------|------------|-----|-------|",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  assert.equal(openDatabase(join(gsdDir, "gsd.db")), true);
+  closeDatabase();
+  assert.equal(isDbAvailable(), false);
+
+  const ctx = {
+    projectRoot: base,
+    ui: { notify: () => undefined },
+  } as unknown as ExtensionContext;
+
+  await buildBeforeAgentStartResult(
+    { prompt: "Inspect project knowledge", systemPrompt: "base system prompt" },
+    ctx,
+  );
+  await _flushDeferredContextMaintenanceForTest(base);
+
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  const firstPass = adapter
+    .prepare("SELECT COUNT(*) AS count FROM memories WHERE structured_fields LIKE '%\"sourceKnowledgeId\":\"P001\"%'")
+    .get() as { count: number };
+  assert.equal(firstPass.count, 1, "first startup should backfill existing KNOWLEDGE.md row");
+
+  writeFileSync(
+    knowledgePath,
+    [
+      "# Project Knowledge",
+      "",
+      "## Rules",
+      "",
+      "| # | Scope | Rule | Why | Added |",
+      "|---|-------|------|-----|-------|",
+      "",
+      "## Patterns",
+      "",
+      "| # | Pattern | Where | Notes |",
+      "|---|---------|-------|-------|",
+      "| P001 | Run startup maintenance once | bootstrap | first pass |",
+      "| P002 | Do not re-run startup sentinels | bootstrap | second pass |",
+      "",
+      "## Lessons Learned",
+      "",
+      "| # | What Happened | Root Cause | Fix | Scope |",
+      "|---|--------------|------------|-----|-------|",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  await buildBeforeAgentStartResult(
+    { prompt: "Inspect project knowledge again", systemPrompt: "base system prompt" },
+    ctx,
+  );
+  await _flushDeferredContextMaintenanceForTest(base);
+
+  const secondPass = adapter
+    .prepare("SELECT COUNT(*) AS count FROM memories WHERE structured_fields LIKE '%\"sourceKnowledgeId\":\"P002\"%'")
+    .get() as { count: number };
+  assert.equal(secondPass.count, 0, "second startup in same session should not re-run KNOWLEDGE.md sentinel backfill");
 });
 
 test("#830 knowledge command opens the project DB before capturing patterns", async (t) => {
