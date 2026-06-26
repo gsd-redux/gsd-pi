@@ -56,6 +56,8 @@ See also:
    auto.ts loop ──► back to auto-dispatch.ts
 ```
 
+`QUEUE-ORDER.json` is the exception to the usual generated-artifact projection rule. `/gsd rethink` and related phase-management flows write it as the durable milestone reorder contract, and state derivation mirrors it into `milestones.sequence` before dispatch so stale DB sequence can be repaired without importing arbitrary markdown projections.
+
 ---
 
 ## 2. Prompt → DB Read/Write Reference
@@ -122,7 +124,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
 | `replan-slice` | slices, tasks | slices, tasks, replan_history, quality_gates | S##-PLAN.md, S##-REPLAN.md |
-| `rethink` | milestones, slices, artifacts | slices (UPDATE status=skipped), milestones (UPDATE sequence) | QUEUE-ORDER.json, PARKED.md |
+| `rethink` | milestones, slices, artifacts | slices (UPDATE status=skipped), milestones (UPDATE sequence; repaired from QUEUE-ORDER.json during state derivation) | QUEUE-ORDER.json, PARKED.md |
 | `rewrite-docs` | decisions, requirements, artifacts | decisions, requirements, artifacts | DECISIONS.md, REQUIREMENTS.md, task/slice plans |
 | `doctor-heal` | slices, tasks, artifacts | artifacts (repair CONTEXT/SUMMARY/UAT) | repairs existing artifacts |
 | `review-migration` | milestones, slices, tasks, artifacts, decisions, requirements | — (read-only audit) | — |

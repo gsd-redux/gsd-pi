@@ -247,7 +247,7 @@ complete-milestone
 | Prompt | Purpose | Key Tools Called |
 |--------|---------|-----------------|
 | `replan-slice.md` | Replan after blocker discovered mid-slice. Preserves completed tasks. | `gsd_replan_slice` |
-| `rethink.md` | Reorder, park, unpark, skip, or discard milestones. | `gsd_skip_slice`, writes `QUEUE-ORDER.json` |
+| `rethink.md` | Reorder, park, unpark, skip, or discard milestones. | `gsd_skip_slice`, writes `QUEUE-ORDER.json` as the durable reorder contract; state derivation mirrors it into DB sequence |
 | `worktree-merge.md` | Merge a worktree branch into a target branch from the main tree. | git merge (main tree CWD) |
 | `reassess-roadmap.md` | *(see Completion Flow above)* | — |
 | `rewrite-docs.md` | Apply OVERRIDES.md changes across all planning docs. | — |

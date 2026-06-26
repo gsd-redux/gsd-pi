@@ -42,6 +42,8 @@ The SQLite database is the runtime source of truth for milestones, slices, tasks
 
 Markdown files in `.gsd/` are rendered projections for review, prompts, and git-friendly history. `.gsd/DECISIONS.md` is projected from architecture memories, and the Patterns/Lessons sections of `.gsd/KNOWLEDGE.md` are projected from memory rows; editing those projections does not override the database unless a command imports or saves the change through GSD. The Rules section of `KNOWLEDGE.md` remains manually authored and is preserved separately.
 
+`.gsd/QUEUE-ORDER.json` is the special durable reorder contract for milestone queue order. Commands such as `/gsd rethink` and `/gsd phase` write it when an operator reorders milestones; when the runtime database is open, GSD mirrors that order into `milestones.sequence`. State derivation also replays an existing `QUEUE-ORDER.json` into the database before choosing the active milestone, which repairs stale DB sequence for prompt-driven reorder flows without making arbitrary markdown projections runtime authority.
+
 In worktree mode, the project-root database remains authoritative runtime state, while artifact/projection writes render under the active worktree-local `.gsd/`. Those worktree markdown projections are not treated as runtime state fallbacks. If the database is unavailable, runtime state derivation refuses to silently rebuild from markdown. Use explicit recovery/import commands, or run `/gsd migrate` when markdown is the intended source.
 
 ### Single-Host Runtime Constraint

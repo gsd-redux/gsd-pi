@@ -31,6 +31,8 @@ vscode-extension/         VS Code extension — chat participant (@gsd), sidebar
 
 GSD stores runtime workflow state in the project-root SQLite database. Auto mode derives phases, completion status, requirements, decisions, summaries, and hierarchy from that database, then renders markdown projections in `.gsd/` for human review, prompt context, and git-friendly history. No in-memory state survives across sessions. This enables crash recovery, multi-terminal steering, and session resumption while avoiding silent markdown re-imports during normal runtime.
 
+Milestone queue position has one explicit file contract: `.gsd/QUEUE-ORDER.json`. `/gsd rethink` and `/gsd phase` use it as a durable reorder record, and state derivation mirrors that order into `milestones.sequence` before selecting the active milestone. Other generated `.gsd` artifacts remain projections unless an explicit import or recovery command reads them.
+
 ### Two-File Loader Pattern
 
 `loader.ts` sets all environment variables with zero SDK imports, then dynamically imports `cli.ts` which does static SDK imports. This ensures `PI_PACKAGE_DIR` is set before any SDK code evaluates.
@@ -157,7 +159,7 @@ Model routing (complexity classification, budget pressure, routing history, capa
 | `visualizer-data.ts` | Data loading for visualizer tabs, including active memory-store rows |
 | `visualizer-views.ts` | Tab renderers (progress, timeline, deps, metrics, health, agent, changes, knowledge, memories, captures, export) |
 | `metrics.ts` | Token and cost tracking ledger |
-| `state.ts` | DB-authoritative state derivation with explicit legacy markdown fallback for tests/recovery |
+| `state.ts` | DB-authoritative state derivation with explicit legacy markdown fallback for tests/recovery, plus QUEUE-ORDER.json replay into milestone sequence |
 | `session-lock.ts` | OS-level exclusive session locking (proper-lockfile) |
 | `crash-recovery.ts` | Lock file management for crash detection and recovery |
 | `guidance.ts` | Single catalog mapping typed findings (recovery kinds, milestone blockers, doctor issue codes, crash unit classes) to user-facing remediation prose |
@@ -169,7 +171,7 @@ Model routing (complexity classification, budget pressure, routing history, capa
 | `roadmap-slices.ts` | Roadmap parser with prose fallback for LLM-generated variants |
 | `memory-extractor.ts` | Extract reusable knowledge from session transcripts |
 | `memory-store.ts` | Persistent memory store for cross-session knowledge |
-| `queue-order.ts` | Milestone queue ordering |
+| `queue-order.ts` | Durable milestone queue ordering contract and DB sequence mirroring |
 | `context-masker.ts` | Context masking for model routing optimization |
 | `phase-anchor.ts` | Phase anchoring for dispatch pipeline |
 | `slice-parallel-orchestrator.ts` | Slice-level parallelism with dependency-aware dispatch |
