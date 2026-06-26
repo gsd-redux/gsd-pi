@@ -20,6 +20,7 @@ import {
   insertRequirement,
   insertSlice,
   insertTask,
+  getAllMilestones,
   setMilestoneQueueOrder,
   transaction,
   updateTaskStatus,
@@ -445,11 +446,10 @@ describe('derive-state-helpers', () => {
     }
   });
 
-  // ─── Queue order: DB sequence is authoritative ─────────────────────
-  test('deriveStateFromDb ignores QUEUE-ORDER.json and uses DB sequence', async () => {
+  // ─── Queue order: explicit file order repairs stale DB sequence ─────
+  test('deriveStateFromDb syncs QUEUE-ORDER.json into DB sequence', async () => {
     const base = createFixtureBase();
     try {
-      // QUEUE-ORDER.json is a projection and should not drive DB derivation.
       const queueOrder = JSON.stringify({ order: ['M003', 'M001', 'M002'], updatedAt: new Date().toISOString() });
       writeFileSync(join(base, '.gsd', 'QUEUE-ORDER.json'), queueOrder);
       writeFile(base, 'milestones/M001/M001-CONTEXT.md', '# M001\n\nContext.');
@@ -466,8 +466,9 @@ describe('derive-state-helpers', () => {
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      assert.equal(state.activeMilestone?.id, 'M002', 'queue-order: DB sequence chooses M002');
-      assert.equal(state.registry[0]?.id, 'M002', 'queue-order: registry[0] follows DB sequence');
+      assert.equal(state.activeMilestone?.id, 'M003', 'queue-order: QUEUE-ORDER.json chooses M003');
+      assert.equal(state.registry[0]?.id, 'M003', 'queue-order: registry[0] follows QUEUE-ORDER.json');
+      assert.deepEqual(getAllMilestones().map(m => m.id), ['M003', 'M001', 'M002'], 'queue-order: DB sequence is repaired');
     } finally {
       closeDatabase();
       cleanup(base);

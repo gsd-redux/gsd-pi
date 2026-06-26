@@ -67,6 +67,7 @@ import {
   getRequirementCounts,
   getLatestAssessmentByScope,
   getPendingGateCountForTurn,
+  setMilestoneQueueOrder,
 } from './gsd-db.js';
 import { openExistingWorkflowDatabase, wasWorkflowDatabaseOpenAttempted } from './db-workspace.js';
 import { formatCompletePhaseNextAction, countUnmappedActiveRequirements } from './requirements-backlog.js';
@@ -269,9 +270,21 @@ export function invalidateStateCache(): void {
   _stateCache = null;
 }
 
+function syncQueueOrderProjectionToDb(basePath: string): void {
+  const queueOrder = loadQueueOrder(basePath);
+  if (!queueOrder) return;
+
+  const currentIds = getAllMilestones().map((m) => m.id);
+  const desiredIds = sortByQueueOrder(currentIds, queueOrder);
+  if (currentIds.length === desiredIds.length && currentIds.every((id, i) => id === desiredIds[i])) return;
+
+  setMilestoneQueueOrder(queueOrder);
+}
+
 function ensureExistingWorkflowDbOpen(basePath: string): boolean {
-  if (isDbAvailable()) return true;
-  return openExistingWorkflowDatabase(basePath).ok;
+  const opened = isDbAvailable() || openExistingWorkflowDatabase(basePath).ok;
+  if (opened) syncQueueOrderProjectionToDb(basePath);
+  return opened;
 }
 
 function buildDbUnavailableState(): GSDState {
@@ -319,6 +332,7 @@ export async function getActiveMilestoneId(basePath: string): Promise<string | n
 
   // DB-first: query milestones table for the first non-complete, non-parked milestone
   if (isDbAvailable()) {
+    syncQueueOrderProjectionToDb(basePath);
     const allMilestones = getAllMilestones();
     if (allMilestones.length > 0) {
       for (const m of allMilestones) {

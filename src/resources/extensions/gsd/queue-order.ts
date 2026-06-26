@@ -64,8 +64,9 @@ export function loadQueueOrder(basePath: string): string[] | null {
 }
 
 /**
- * Save a custom queue order. The DB sequence is canonical when a DB
- * connection is open; QUEUE-ORDER.json remains a compatibility projection.
+ * Save a custom queue order. When the DB connection is open, mirror the order
+ * into milestone sequence; QUEUE-ORDER.json remains the durable file contract
+ * for prompt-driven flows such as /gsd rethink.
  */
 export function saveQueueOrder(basePath: string, order: string[]): void {
   if (isDbAvailable()) {

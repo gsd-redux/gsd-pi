@@ -58,7 +58,7 @@ function activeRequirement(id: string): Requirement {
   };
 }
 
-test("DB authority: PROJECT.md and QUEUE-ORDER projections do not choose runtime milestone", async (t) => {
+test("DB authority: PROJECT.md projection does not create runtime milestones from QUEUE-ORDER", async (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
 
