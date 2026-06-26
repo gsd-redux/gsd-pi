@@ -13,7 +13,6 @@ import {
   resolveMilestonePath,
   resolveMilestoneFile,
   resolveSliceFile,
-  legacyMilestonesDir,
   relMilestoneFile,
   relSliceFile,
   buildTaskFileName,
@@ -23,7 +22,7 @@ import {
 } from "./paths.js";
 import { milestoneIdToPhaseNum } from "./layout-policy.js";
 import { parseUnitId } from "./unit-id.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 function resolveMilestoneArtifactPath(
   base: string,
@@ -42,11 +41,17 @@ function resolveMilestoneArtifactPath(
     // uses the milestone-id prefix (M015-CONTEXT.md). Building the wrong
     // filename for the resolved dir produces existsSync-false paths that trap
     // the unit in a finalize-retry loop (#852).
-    const legacyBase = legacyMilestonesDir(base);
-    const projectLegacyBase = join(gsdRoot(base), "milestones");
-    const isLegacy =
-      dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\")
-      || dir.startsWith(projectLegacyBase + "/") || dir.startsWith(projectLegacyBase + "\\");
+    //
+    // Layout is determined structurally from the resolved directory's parent
+    // segment name, NOT by comparing against a root-anchored legacyMilestonesDir
+    // base path. On a canonical worktree (<project>/.gsd-worktrees/M001/),
+    // legacyMilestonesDir uses gsdProjectionRoot (the worktree .gsd) while
+    // resolveProjectMilestonePath uses gsdRoot (the project .gsd) — two
+    // different roots. A dir returned by resolveProjectMilestonePath would
+    // fail the startsWith check against the worktree root and incorrectly
+    // produce a flat-phase filename for a legacy directory (#bugbot c5ee8eba).
+    const parentDir = dirname(dir);
+    const isLegacy = parentDir.endsWith("/milestones") || parentDir.endsWith("\\milestones");
     const phaseNum = milestoneIdToPhaseNum(mid);
     const filename = isLegacy
       ? `${mid}-${suffix}.md`
@@ -61,9 +66,15 @@ function resolveMilestoneArtifactPath(
  * Exported so other callers (e.g. verification diagnostics) use the same
  * naming policy: flat-phase dirs use the phase-number prefix (15-CONTEXT.md),
  * legacy dirs use the milestone-id prefix (M015-CONTEXT.md).
+ *
+ * Layout is determined structurally: dirs whose immediate parent is named
+ * "milestones" are legacy; all others are flat-phase. This avoids the
+ * root-path ambiguity between gsdProjectionRoot (worktree .gsd) and gsdRoot
+ * (project .gsd) that caused wrong filenames on canonical worktrees.
  */
-export function buildMilestoneArtifactFilename(mid: string, suffix: string, dir: string, legacyBase: string): string {
-  const isLegacy = dir.startsWith(legacyBase + "/") || dir.startsWith(legacyBase + "\\");
+export function buildMilestoneArtifactFilename(mid: string, suffix: string, dir: string): string {
+  const parentDir = dirname(dir);
+  const isLegacy = parentDir.endsWith("/milestones") || parentDir.endsWith("\\milestones");
   const phaseNum = milestoneIdToPhaseNum(mid);
   return isLegacy
     ? `${mid}-${suffix}.md`
