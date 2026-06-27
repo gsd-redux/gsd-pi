@@ -3,7 +3,6 @@
 
 import { existsSync, statSync, readFileSync, openSync, readSync, closeSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import type { Theme } from "@gsd/pi-coding-agent";
 import { matchesKey, Key } from "@gsd/pi-tui";
@@ -11,6 +10,11 @@ import { matchesKey, Key } from "@gsd/pi-tui";
 import { formatDuration } from "../shared/mod.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 import { resolveGsdPathContract } from "./paths.js";
+import { openWorkflowDatabasePath } from "./db-workspace.js";
+import {
+  getParallelMonitorRecentCompletions,
+  getParallelMonitorSliceProgress,
+} from "./db/queries.js";
 import { worktreePathFor, worktreesDirs } from "./worktree-placement.js";
 import {
   renderBar,
@@ -48,6 +52,13 @@ interface SliceProgress {
   done: number;
 }
 
+interface NdjsonCostCacheEntry {
+  size: number;
+  mtimeMs: number;
+  total: number;
+  pendingLine: string;
+}
+
 interface WorkerView {
   mid: string;
   pid: number;
@@ -66,6 +77,9 @@ interface WorkerView {
   slices: SliceProgress[];
   errors: string[];
 }
+
+const ndjsonCostCache = new Map<string, NdjsonCostCacheEntry>();
+const NDJSON_COST_READ_CHUNK_BYTES = 64 * 1024;
 
 // ─── Data Helpers ─────────────────────────────────────────────────────────
 
@@ -133,38 +147,108 @@ function querySliceProgress(basePath: string, mid: string, workRoot: string = wo
   if (!existsSync(dbPath)) return [];
 
   try {
-    const sql = `SELECT s.id, s.status, COUNT(t.id), SUM(CASE WHEN t.status='complete' THEN 1 ELSE 0 END) FROM slices s LEFT JOIN tasks t ON s.milestone_id=t.milestone_id AND s.id=t.slice_id WHERE s.milestone_id='${mid}' GROUP BY s.id ORDER BY s.id`;
-    const result = spawnSync("sqlite3", [dbPath, sql], { timeout: 3000, encoding: "utf-8" });
-    const out = (result.stdout || "").trim();
-    if (!out || result.status !== 0) return [];
-    return out.split("\n").map((line) => {
-      const [id, status, total, done] = line.split("|");
-      return { id, status, total: parseInt(total, 10), done: parseInt(done || "0", 10) };
-    });
+    if (!openWorkflowDatabasePath(dbPath)) return [];
+    return getParallelMonitorSliceProgress(mid);
   } catch {
     return [];
   }
 }
 
-function extractCostFromNdjson(basePath: string, mid: string): number {
-  const stdoutPath = join(basePath, ".gsd", "parallel", `${mid}.stdout.log`);
-  if (!existsSync(stdoutPath)) return 0;
+function costFromNdjsonLine(line: string): number {
+  if (!line.includes("message_end")) return 0;
   try {
-    const content = readFileSync(stdoutPath, "utf-8");
-    let total = 0;
-    for (const line of content.split("\n")) {
-      if (!line.includes("message_end")) continue;
-      try {
-        const obj = JSON.parse(line);
-        if (obj.type === "message_end") {
-          const cost = obj.message?.usage?.cost?.total;
-          if (typeof cost === "number") total += cost;
-        }
-      } catch { /* skip */ }
-    }
-    return total;
+    const obj = JSON.parse(line);
+    if (obj.type !== "message_end") return 0;
+    const cost = obj.message?.usage?.cost?.total;
+    return typeof cost === "number" ? cost : 0;
   } catch {
     return 0;
+  }
+}
+
+function consumePendingNdjsonLine(line: string): { consumed: boolean; cost: number } {
+  const trimmed = line.trim();
+  if (!trimmed) return { consumed: true, cost: 0 };
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj.type !== "message_end") return { consumed: true, cost: 0 };
+    const cost = obj.message?.usage?.cost?.total;
+    return { consumed: true, cost: typeof cost === "number" ? cost : 0 };
+  } catch {
+    return { consumed: false, cost: 0 };
+  }
+}
+
+function readNdjsonCostRange(
+  filePath: string,
+  start: number,
+  length: number,
+  initialTotal: number,
+  initialPendingLine: string,
+): { total: number; pendingLine: string } {
+  const fd = openSync(filePath, "r");
+  let total = initialTotal;
+  let pendingLine = initialPendingLine;
+
+  try {
+    let offset = start;
+    let remaining = length;
+    while (remaining > 0) {
+      const readSize = Math.min(remaining, NDJSON_COST_READ_CHUNK_BYTES);
+      const buf = Buffer.alloc(readSize);
+      const bytesRead = readSync(fd, buf, 0, readSize, offset);
+      if (bytesRead <= 0) break;
+
+      offset += bytesRead;
+      remaining -= bytesRead;
+
+      const content = pendingLine + buf.subarray(0, bytesRead).toString("utf-8");
+      const lines = content.split("\n");
+      pendingLine = lines.pop() ?? "";
+      for (const line of lines) total += costFromNdjsonLine(line);
+    }
+  } finally {
+    closeSync(fd);
+  }
+
+  return { total, pendingLine };
+}
+
+function extractCostFromNdjson(basePath: string, mid: string): number {
+  const stdoutPath = join(basePath, ".gsd", "parallel", `${mid}.stdout.log`);
+  if (!existsSync(stdoutPath)) {
+    ndjsonCostCache.delete(stdoutPath);
+    return 0;
+  }
+
+  try {
+    const stat = statSync(stdoutPath);
+    const cached = ndjsonCostCache.get(stdoutPath);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.total;
+
+    const isAppendOnly = cached !== undefined && stat.size > cached.size;
+    const start = isAppendOnly ? cached.size : 0;
+    const initialTotal = isAppendOnly ? cached.total : 0;
+    const initialPendingLine = isAppendOnly ? cached.pendingLine : "";
+    const { total, pendingLine } = readNdjsonCostRange(
+      stdoutPath,
+      start,
+      stat.size - start,
+      initialTotal,
+      initialPendingLine,
+    );
+    const pending = consumePendingNdjsonLine(pendingLine);
+    const nextPendingLine = pending.consumed ? "" : pendingLine;
+    const nextTotal = total + pending.cost;
+    ndjsonCostCache.set(stdoutPath, {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      total: nextTotal,
+      pendingLine: nextPendingLine,
+    });
+    return nextTotal;
+  } catch {
+    return ndjsonCostCache.get(stdoutPath)?.total ?? 0;
   }
 }
 
@@ -173,12 +257,8 @@ function queryRecentCompletions(basePath: string, mid: string): string[] {
   const dbPath = resolveGsdPathContract(workRoot, basePath).projectDb;
   if (!existsSync(dbPath)) return [];
   try {
-    const sql = `SELECT id, slice_id, one_liner FROM tasks WHERE milestone_id='${mid}' AND status='complete' AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 5`;
-    const result = spawnSync("sqlite3", [dbPath, sql], { timeout: 3000, encoding: "utf-8" });
-    const out = (result.stdout || "").trim();
-    if (!out || result.status !== 0) return [];
-    return out.split("\n").map((line) => {
-      const [taskId, sliceId, oneLiner] = line.split("|");
+    if (!openWorkflowDatabasePath(dbPath)) return [];
+    return getParallelMonitorRecentCompletions(mid).map(({ taskId, sliceId, oneLiner }) => {
       return `✓ ${mid}/${sliceId}/${taskId}${oneLiner ? ": " + oneLiner : ""}`;
     });
   } catch {

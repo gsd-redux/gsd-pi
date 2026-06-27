@@ -270,6 +270,66 @@ export function getMilestoneSlices(milestoneId: string): SliceRow[] {
   return rows.map(rowToSlice);
 }
 
+export interface ParallelMonitorSliceProgress {
+  id: string;
+  status: string;
+  total: number;
+  done: number;
+}
+
+export function getParallelMonitorSliceProgress(milestoneId: string): ParallelMonitorSliceProgress[] {
+  const db = getDbOrNull();
+  if (!db) return [];
+  const rows = db.prepare(
+    `SELECT
+       s.id AS id,
+       s.status AS status,
+       COUNT(t.id) AS total,
+       COALESCE(SUM(CASE WHEN t.status='complete' THEN 1 ELSE 0 END), 0) AS done
+     FROM slices s
+     LEFT JOIN tasks t ON s.milestone_id=t.milestone_id AND s.id=t.slice_id
+     WHERE s.milestone_id=:mid
+     GROUP BY s.id
+     ORDER BY s.id`,
+  ).all({ ":mid": milestoneId });
+  return rows.map((row) => ({
+    id: String(row["id"] ?? ""),
+    status: String(row["status"] ?? ""),
+    total: Number(row["total"] ?? 0),
+    done: Number(row["done"] ?? 0),
+  }));
+}
+
+export interface ParallelMonitorCompletion {
+  taskId: string;
+  sliceId: string;
+  oneLiner: string;
+}
+
+export function getParallelMonitorRecentCompletions(
+  milestoneId: string,
+  limit: number = 5,
+): ParallelMonitorCompletion[] {
+  const db = getDbOrNull();
+  if (!db) return [];
+  const numericLimit = Number.isFinite(limit) ? Math.floor(limit) : 5;
+  const safeLimit = Math.max(1, Math.min(50, numericLimit));
+  const rows = db.prepare(
+    `SELECT id, slice_id, one_liner
+     FROM tasks
+     WHERE milestone_id=:mid
+       AND status='complete'
+       AND completed_at IS NOT NULL
+     ORDER BY completed_at DESC
+     LIMIT ${safeLimit}`,
+  ).all({ ":mid": milestoneId });
+  return rows.map((row) => ({
+    taskId: String(row["id"] ?? ""),
+    sliceId: String(row["slice_id"] ?? ""),
+    oneLiner: String(row["one_liner"] ?? ""),
+  }));
+}
+
 /**
  * Load slices for many milestones in a single query. Returns a Map keyed by
  * milestone_id, preserving `ORDER BY sequence, id` within each bucket.
