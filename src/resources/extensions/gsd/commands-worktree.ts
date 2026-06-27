@@ -42,9 +42,9 @@ export interface WorktreeStatus {
 
 // ─── Status helper ─────────────────────────────────────────────────────────
 
-function getStatus(basePath: string, name: string, wtPath: string): WorktreeStatus {
-  const diff = diffWorktreeAll(basePath, name);
-  const numstat = diffWorktreeNumstat(basePath, name);
+function getStatus(basePath: string, name: string, wtPath: string, mainBranch: string): WorktreeStatus {
+  const diff = diffWorktreeAll(basePath, name, undefined, mainBranch);
+  const numstat = diffWorktreeNumstat(basePath, name, undefined, mainBranch);
   const filesChanged = diff.added.length + diff.modified.length + diff.removed.length;
   let linesAdded = 0;
   let linesRemoved = 0;
@@ -62,8 +62,7 @@ function getStatus(basePath: string, name: string, wtPath: string): WorktreeStat
 
   let commits = 0;
   try {
-    const main = nativeDetectMainBranch(basePath);
-    commits = nativeCommitCountBetween(basePath, main, worktreeBranchName(name));
+    commits = nativeCommitCountBetween(basePath, mainBranch, worktreeBranchName(name));
   } catch {
     // commit count unavailable → leave at 0
   }
@@ -129,7 +128,8 @@ export function formatCleanKeepReason(status: WorktreeStatus): string {
 async function handleList(ctx: ExtensionCommandContext): Promise<void> {
   const basePath = projectRoot();
   const worktrees = listWorktrees(basePath);
-  const statuses = worktrees.map((wt) => getStatus(basePath, wt.name, wt.path));
+  const mainBranch = worktrees.length > 0 ? nativeDetectMainBranch(basePath) : "";
+  const statuses = worktrees.map((wt) => getStatus(basePath, wt.name, wt.path, mainBranch));
   ctx.ui.notify(formatWorktreeList(statuses), "info");
 }
 
@@ -161,7 +161,8 @@ async function handleMerge(args: string, ctx: ExtensionCommandContext): Promise<
     return;
   }
 
-  const status = getStatus(basePath, target, wt.path);
+  const mainBranch = nativeDetectMainBranch(basePath);
+  const status = getStatus(basePath, target, wt.path, mainBranch);
   if (status.filesChanged === 0 && !status.uncommitted) {
     try {
       removeWorktree(basePath, target, { deleteBranch: true });
@@ -194,7 +195,6 @@ async function handleMerge(args: string, ctx: ExtensionCommandContext): Promise<
   }
 
   const commitType = inferCommitType(target);
-  const mainBranch = nativeDetectMainBranch(basePath);
   const commitMessage = `${commitType}: merge worktree ${target}\n\nGSD-Worktree: ${target}`;
 
   try {
@@ -250,8 +250,9 @@ async function handleClean(ctx: ExtensionCommandContext): Promise<void> {
 
   const removed: string[] = [];
   const kept: string[] = [];
+  const mainBranch = nativeDetectMainBranch(basePath);
   for (const wt of worktrees) {
-    const status = getStatus(basePath, wt.name, wt.path);
+    const status = getStatus(basePath, wt.name, wt.path, mainBranch);
     if (status.filesChanged === 0 && !status.uncommitted) {
       try {
         removeWorktree(basePath, wt.name, { deleteBranch: true });
@@ -298,7 +299,8 @@ async function handleRemove(args: string, ctx: ExtensionCommandContext): Promise
     return;
   }
 
-  const status = getStatus(basePath, name, wt.path);
+  const mainBranch = nativeDetectMainBranch(basePath);
+  const status = getStatus(basePath, name, wt.path, mainBranch);
   if ((status.filesChanged > 0 || status.uncommitted) && !force) {
     ctx.ui.notify(
       [
