@@ -23,6 +23,7 @@ import {
   type UnitMetrics,
 } from "./metrics.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { countPendingCaptures } from "./captures.js";
 import { getActiveWorktreeName } from "./worktree-session-state.js";
 import { getWorkerBatches, hasActiveWorkers, type WorkerEntry } from "../subagent/worker-registry.js";
 import { formatDuration, padRight, joinColumns, centerLine, fitColumns, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
@@ -130,6 +131,14 @@ export class GSDDashboardOverlay {
   }
 
   private refreshVolatileDashboardData(snapshot = getAutoRuntimeSnapshot()): void {
+    let pendingCaptureCount = this.dashData.pendingCaptureCount;
+    try {
+      if (snapshot.basePath) {
+        pendingCaptureCount = countPendingCaptures(snapshot.basePath);
+      }
+    } catch {
+      // Non-fatal — keep last known value
+    }
     this.dashData = {
       ...this.dashData,
       active: snapshot.active,
@@ -146,6 +155,7 @@ export class GSDDashboardOverlay {
         ? (this.dashData.startTime > 0 ? Date.now() - this.dashData.startTime : 0)
         : 0,
       toolSurface: snapshot.toolSurface,
+      pendingCaptureCount,
     };
   }
 
