@@ -303,9 +303,6 @@ function getChatHighlighter(): Promise<ShikiHighlighter> {
  * Renders markdown content using react-markdown + remark-gfm + shiki code blocks.
  * Dynamic imports keep the main bundle lean.
  * Falls back to plain text if modules fail to load.
- *
- * Observability:
- *   - console.debug("[ChatBubble] markdown modules loaded") fires once on first render
  */
 function MarkdownContent({ content }: { content: string }) {
   const [rendered, setRendered] = useState<React.ReactNode | null>(null)
@@ -322,7 +319,6 @@ function MarkdownContent({ content }: { content: string }) {
     ])
       .then(([ReactMarkdownMod, remarkGfmMod, highlighter]) => {
         if (cancelled) return
-        console.debug("[ChatBubble] markdown modules loaded")
 
         const ReactMarkdown = ReactMarkdownMod.default
         const remarkGfm = remarkGfmMod.default
@@ -1070,7 +1066,15 @@ function ChatBubble({
             </span>
           </div>
         )}
-        {message.content && <MarkdownContent content={message.content} />}
+        {message.content && (
+          message.complete ? (
+            <MarkdownContent content={message.content} />
+          ) : (
+            <span className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+              {message.content}
+            </span>
+          )
+        )}
         {!message.complete && !hasAnyPrompt && <StreamingCursor />}
         {hasSelectPrompt && (
           <TuiSelectPrompt
