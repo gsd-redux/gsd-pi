@@ -283,6 +283,35 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server from GSD_BIN_PAT
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
 });
 
+test("detectWorkflowMcpLaunchConfig memoizes repo root discovery for the same deep GSD_BIN_PATH", () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-root-cache-"));
+  const worktreeRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-root-cache-wt-"));
+  const cliPath = join(repoRoot, "packages", "mcp-server", "dist", "cli.js");
+  const devCliPath = join(repoRoot, ".gsd", "worktrees", "M001", "S01", "deep", "bin", "gsd");
+
+  mkdirSync(join(repoRoot, "packages", "mcp-server", "dist"), { recursive: true });
+  mkdirSync(join(repoRoot, ".gsd", "worktrees", "M001", "S01", "deep", "bin"), { recursive: true });
+  writeFileSync(cliPath, "#!/usr/bin/env node\n", "utf-8");
+  writeFileSync(devCliPath, "#!/usr/bin/env node\n", "utf-8");
+
+  try {
+    const firstLaunch = detectWorkflowMcpLaunchConfig(worktreeRoot, {
+      GSD_BIN_PATH: devCliPath,
+    });
+    assert.equal(firstLaunch?.args?.[0], cliPath);
+
+    rmSync(cliPath, { force: true });
+
+    const secondLaunch = detectWorkflowMcpLaunchConfig(worktreeRoot, {
+      GSD_BIN_PATH: devCliPath,
+    });
+    assert.equal(secondLaunch?.args?.[0], cliPath);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+    rmSync(worktreeRoot, { recursive: true, force: true });
+  }
+});
+
 test("detectWorkflowMcpLaunchConfig resolves the bundled server from a symlinked GSD_BIN_PATH", () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-symlink-root-"));
   const binDir = mkdtempSync(join(tmpdir(), "gsd-workflow-symlink-bin-"));

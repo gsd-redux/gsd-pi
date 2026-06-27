@@ -85,6 +85,8 @@ function lookupCommand(command: string, platform: NodeJS.Platform = process.plat
   }
 }
 
+const gsdPiRepoRootCache = new Map<string, string | null>();
+
 function findGsdPiRepoRoot(startPath: string): string | null {
   let current: string;
   try {
@@ -93,15 +95,24 @@ function findGsdPiRepoRoot(startPath: string): string | null {
     current = resolve(startPath);
   }
 
+  const cacheKey = current;
+  if (gsdPiRepoRootCache.has(cacheKey)) {
+    return gsdPiRepoRootCache.get(cacheKey) ?? null;
+  }
+
   while (true) {
     const distCli = resolve(current, "packages", "mcp-server", "dist", "cli.js");
-    if (existsSync(distCli)) return current;
+    if (existsSync(distCli)) {
+      gsdPiRepoRootCache.set(cacheKey, current);
+      return current;
+    }
 
     const parent = dirname(current);
     if (parent === current) break;
     current = parent;
   }
 
+  gsdPiRepoRootCache.set(cacheKey, null);
   return null;
 }
 
