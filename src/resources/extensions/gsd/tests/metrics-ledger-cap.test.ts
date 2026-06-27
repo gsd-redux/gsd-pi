@@ -100,6 +100,55 @@ describe("metrics ledger steady-state cap", () => {
     rmSync(projectDir, { recursive: true, force: true });
   });
 
+  test("final cap preserves newest units by finishedAt when memory lags peer writes", () => {
+    // Scenario: memory loaded units 0..KEEP-1; a peer then advanced disk to
+    // units PEER_OFFSET..PEER_OFFSET+KEEP-1, adding PEER_OFFSET newer entries
+    // the worker has never seen.  The final keepNewestUnits call must rank by
+    // finishedAt, not by insertion order (disk-first), so old memory-only units
+    // do not crowd out newer on-disk peer units.
+    const KEEP = METRICS_LEDGER_KEEP_UNITS;
+    const PEER_OFFSET = 500;
+
+    // Load memory with units 0..KEEP-1.
+    const memUnits = Array.from({ length: KEEP }, (_, i) => makeUnit(i));
+    writeLedger(projectDir, memUnits);
+    initMetrics(projectDir);
+
+    // Peer advances disk to units PEER_OFFSET..PEER_OFFSET+KEEP-1.
+    const diskUnits = Array.from({ length: KEEP }, (_, i) => makeUnit(i + PEER_OFFSET));
+    writeLedger(projectDir, diskUnits);
+
+    // Trigger saveLedger.
+    const unit = snapshotUnitMetrics(
+      assistantCtx(),
+      "execute-task",
+      "M_STALE_MEM/S01/T01",
+      makeUnit(PEER_OFFSET + KEEP).startedAt,
+      "test-model",
+    );
+    assert.ok(unit, "snapshot must succeed");
+
+    const disk = readLedger(projectDir);
+    assert.equal(disk.units.length, KEEP, "disk must be capped at KEEP units");
+
+    // A disk unit that sits in the range evicted by insertion-order cap
+    // (positions 0..PEER_OFFSET-1 of the merged array) but must be kept
+    // by finishedAt-ordered cap because it is newer than memory-only units.
+    const diskUnitInEvictedRange = makeUnit(PEER_OFFSET + 1); // unit 501, newer than any memory-only unit
+    assert.ok(
+      disk.units.some((u) => u.id === diskUnitInEvictedRange.id),
+      `unit ${diskUnitInEvictedRange.id} (on-disk, newer than memory-only units) must not be displaced by stale memory tail`,
+    );
+
+    // The oldest surviving memory-only unit must be evicted.
+    const oldestMemOnlyUnit = makeUnit(1); // unit 1, older than all disk units (disk starts at 500)
+    assert.equal(
+      disk.units.some((u) => u.id === oldestMemOnlyUnit.id),
+      false,
+      `unit ${oldestMemOnlyUnit.id} (memory-only, older than all disk units) must be pruned`,
+    );
+  });
+
   test("snapshot saves keep metrics.json and in-memory ledger bounded while preserving peer writes", () => {
     const historicalUnits = Array.from(
       { length: METRICS_LEDGER_KEEP_UNITS + 25 },

@@ -1033,7 +1033,9 @@ function saveLedger(base: string, data: MetricsLedger): void {
       const dataUnits = keepNewestUnits(data.units);
       const merged =
         onDisk && onDisk.units.length > 0
-          ? deduplicateUnits([...keepNewestUnits(onDisk.units), ...dataUnits])
+          ? deduplicateUnits([...keepNewestUnits(onDisk.units), ...dataUnits]).sort(
+              (a, b) => a.finishedAt - b.finishedAt
+            )
           : dataUnits;
       merged.sort((a, b) => a.finishedAt - b.finishedAt || a.startedAt - b.startedAt);
       data.units = keepNewestUnits(merged);
