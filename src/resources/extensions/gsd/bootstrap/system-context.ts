@@ -28,7 +28,8 @@ const DEFAULT_CODEBASE_MAX_CHARS = 8_000;
 const MIN_CONTEXT_MESSAGE_MAX_CHARS = 1_000;
 const MIN_KNOWLEDGE_MAX_CHARS = 1_000;
 
-const contextMaintenanceStartedForBasePath = new Set<string>();
+const contextMaintenanceCompletedForBasePath = new Set<string>();
+const contextMaintenanceInFlightByBasePath = new Map<string, Promise<boolean>>();
 const deferredContextMaintenanceByBasePath = new Map<string, Promise<void>>();
 
 /**
@@ -113,18 +114,39 @@ async function runSessionStartupMaintenanceOnce(
   basePath: string,
   ctx: ExtensionContext,
 ): Promise<boolean> {
-  if (contextMaintenanceStartedForBasePath.has(basePath)) return false;
-  contextMaintenanceStartedForBasePath.add(basePath);
+  if (contextMaintenanceCompletedForBasePath.has(basePath)) return false;
 
+  let inFlight = contextMaintenanceInFlightByBasePath.get(basePath);
+  const isInitiator = !inFlight;
+  if (isInitiator) {
+    inFlight = performSessionStartupMaintenance(basePath, ctx);
+    contextMaintenanceInFlightByBasePath.set(basePath, inFlight);
+    void inFlight.finally(() => {
+      if (contextMaintenanceInFlightByBasePath.get(basePath) === inFlight) {
+        contextMaintenanceInFlightByBasePath.delete(basePath);
+      }
+    });
+  }
+
+  const result = await inFlight;
+  return isInitiator ? result : false;
+}
+
+async function performSessionStartupMaintenance(
+  basePath: string,
+  ctx: ExtensionContext,
+): Promise<boolean> {
   // DB-backed memory backfills run below. On a cold session the database file
   // may exist without an active in-process adapter, so open the canonical
   // project DB before those best-effort operations inspect it.
+  let dbOpen = false;
   try {
     const { ensureDbOpen } = await import("./dynamic-tools.js");
-    await ensureDbOpen(basePath);
+    dbOpen = await ensureDbOpen(basePath);
   } catch (e) {
     logWarning("bootstrap", `project DB open failed before memory projection: ${(e as Error).message}`);
   }
+  if (!dbOpen) return false;
 
   // These backfills are independent idempotent migrations. Keep them on the
   // startup path because their rows can affect the MEMORY block for this turn,
@@ -134,6 +156,7 @@ async function runSessionStartupMaintenanceOnce(
     runKnowledgeMemoryBackfill(basePath, ctx),
   ]);
 
+  contextMaintenanceCompletedForBasePath.add(basePath);
   return true;
 }
 
