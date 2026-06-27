@@ -12,6 +12,9 @@ export interface WorkflowToolContractMetadata {
 	auditEvent: string;
 }
 
+// Bounds single streamed tool arguments so large artifacts are saved incrementally.
+export const SUMMARY_SAVE_CONTENT_MAX_LENGTH = 50_000;
+
 export const WORKFLOW_TOOL_CONTRACTS = [
 	{
 		canonicalName: "gsd_decision_save",

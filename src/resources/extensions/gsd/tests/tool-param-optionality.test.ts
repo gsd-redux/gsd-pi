@@ -13,6 +13,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { SUMMARY_SAVE_CONTENT_MAX_LENGTH } from "@opengsd/contracts";
 import { registerDbTools } from "../bootstrap/db-tools.ts";
 import AjvModule from "ajv";
 
@@ -84,6 +85,31 @@ test("gsd_summary_save — validates UAT assessment params", () => {
   });
 
   assert.strictEqual(valid, true, `UAT assessment params should validate but got errors: ${JSON.stringify(validate.errors)}`);
+});
+
+test("gsd_summary_save — content has a provider-safe maxLength", () => {
+  const tool = getTool("gsd_summary_save");
+  assert.ok(tool, "gsd_summary_save must be registered");
+
+  const contentSchema = tool.parameters.properties.content;
+  assert.strictEqual(contentSchema.maxLength, SUMMARY_SAVE_CONTENT_MAX_LENGTH);
+
+  const validAtLimit = validateSchema(tool, {
+    milestone_id: "M001",
+    artifact_type: "CONTEXT-DRAFT",
+    content: "x".repeat(SUMMARY_SAVE_CONTENT_MAX_LENGTH),
+  });
+  assert.deepEqual(validAtLimit, []);
+
+  const overLimit = validateSchema(tool, {
+    milestone_id: "M001",
+    artifact_type: "CONTEXT-DRAFT",
+    content: "x".repeat(SUMMARY_SAVE_CONTENT_MAX_LENGTH + 1),
+  });
+  assert.ok(
+    overLimit.some((error) => error.includes(`must NOT have more than ${SUMMARY_SAVE_CONTENT_MAX_LENGTH} characters`)),
+    `expected maxLength validation error, got: ${overLimit.join("; ")}`,
+  );
 });
 
 // ─── gsd_slice_complete: enrichment arrays must be optional ──────────────────

@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { symlinkSync, realpathSync } from "node:fs";
+import { SUMMARY_SAVE_CONTENT_MAX_LENGTH } from "@opengsd/contracts";
 
 import {
   _getAdapter,
@@ -35,6 +36,7 @@ import {
   WORKFLOW_TOOL_ALIAS_NAMES,
   validateProjectDir,
   _parseWorkflowArgsForTest,
+  _summarySaveSchemaForTest,
   _sliceCompleteSchemaForTest,
 } from "./workflow-tools.ts";
 
@@ -250,6 +252,25 @@ describe("workflow MCP tools", () => {
     assert.ok("sliceId" in taskReopen.params);
     assert.ok("taskId" in taskReopen.params);
     assert.ok("reason" in taskReopen.params);
+  });
+
+  it("caps gsd_summary_save content before executor invocation", () => {
+    assert.doesNotThrow(() => {
+      _parseWorkflowArgsForTest(_summarySaveSchemaForTest, {
+        milestone_id: "M001",
+        artifact_type: "CONTEXT-DRAFT",
+        content: "x".repeat(SUMMARY_SAVE_CONTENT_MAX_LENGTH),
+      });
+    });
+
+    assert.throws(
+      () => _parseWorkflowArgsForTest(_summarySaveSchemaForTest, {
+        milestone_id: "M001",
+        artifact_type: "CONTEXT-DRAFT",
+        content: "x".repeat(SUMMARY_SAVE_CONTENT_MAX_LENGTH + 1),
+      }),
+      /content must be at most 50000 characters per save/,
+    );
   });
 
   it("registers gsd_checkpoint_db and flushes the open WAL", async () => {

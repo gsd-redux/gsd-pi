@@ -14,6 +14,7 @@ import {
   WORKFLOW_TOOL_NAMES as CONTRACT_WORKFLOW_TOOL_NAMES,
   CANONICAL_WORKFLOW_TOOL_NAMES as CONTRACT_CANONICAL_WORKFLOW_TOOL_NAMES,
   WORKFLOW_TOOL_ALIAS_NAMES as CONTRACT_WORKFLOW_TOOL_ALIAS_NAMES,
+  SUMMARY_SAVE_CONTENT_MAX_LENGTH,
 } from "@opengsd/contracts";
 
 import { logAliasUsage } from "./alias-telemetry.js";
@@ -1698,7 +1699,9 @@ const summarySaveParams = {
   slice_id: z.string().optional().describe("Slice ID (e.g. S01)"),
   task_id: z.string().optional().describe("Task ID (e.g. T01)"),
   artifact_type: z.string().describe("Artifact type to save (SUMMARY, RESEARCH, CONTEXT, ASSESSMENT, CONTEXT-DRAFT, PROJECT, PROJECT-DRAFT, REQUIREMENTS, REQUIREMENTS-DRAFT)"),
-  content: z.string().describe("The full markdown content of the artifact"),
+  content: z.string()
+    .max(SUMMARY_SAVE_CONTENT_MAX_LENGTH, `content must be at most ${SUMMARY_SAVE_CONTENT_MAX_LENGTH} characters per save`)
+    .describe(`The full markdown content of the artifact. Maximum ${SUMMARY_SAVE_CONTENT_MAX_LENGTH} characters per save.`),
 };
 const ROOT_SUMMARY_ARTIFACT_TYPES = new Set([
   "PROJECT",
@@ -1716,6 +1719,7 @@ const summarySaveSchema = z.object(summarySaveParams).superRefine((value, ctx) =
     });
   }
 });
+export const _summarySaveSchemaForTest = summarySaveSchema;
 
 const decisionSaveParams = {
   projectDir: projectDirParam,
