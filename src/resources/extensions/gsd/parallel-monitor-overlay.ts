@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Parallel worker monitor overlay with width-safe operations-console rendering.
 
-import { existsSync, statSync, readFileSync, openSync, readSync, closeSync, readdirSync } from "node:fs";
+import { existsSync, statSync, readFileSync, openSync, readSync, closeSync, readdirSync, type Stats } from "node:fs";
 import { join } from "node:path";
 
 import type { Theme } from "@gsd/pi-coding-agent";
@@ -80,7 +80,7 @@ const NDJSON_COST_READ_CHUNK_BYTES = 64 * 1024;
 
 // ─── Data Helpers ─────────────────────────────────────────────────────────
 
-function ndjsonFileKey(stat: ReturnType<typeof statSync>): string {
+function ndjsonFileKey(stat: Stats): string {
   return `${stat.dev}:${stat.ino}`;
 }
 
