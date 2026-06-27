@@ -15,6 +15,7 @@ import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveSliceFile } from "./paths.js";
 import { getAutoDashboardData } from "./auto.js";
 import type { AutoDashboardData } from "./auto-dashboard.js";
+import { getAutoRuntimeSnapshot } from "./auto-runtime-state.js";
 import {
   getLedger, getProjectTotals, aggregateByPhase, aggregateBySlice,
   aggregateByModel, aggregateCacheHitRate, formatCost, formatTokenCount, formatCostProjection,
@@ -113,7 +114,9 @@ export class GSDDashboardOverlay {
       });
   }
 
-  private computeDashboardIdentity(dashData: AutoDashboardData): string {
+  private computeDashboardIdentity(
+    dashData: Pick<AutoDashboardData, "active" | "paused" | "currentUnit" | "basePath">,
+  ): string {
     const base = dashData.basePath || process.cwd();
     const currentUnit = dashData.currentUnit
       ? `${dashData.currentUnit.type}:${dashData.currentUnit.id}:${dashData.currentUnit.startedAt}`
@@ -126,18 +129,42 @@ export class GSDDashboardOverlay {
     ].join("|");
   }
 
+  private refreshVolatileDashboardData(snapshot = getAutoRuntimeSnapshot()): void {
+    this.dashData = {
+      ...this.dashData,
+      active: snapshot.active,
+      paused: snapshot.paused,
+      currentUnit: snapshot.currentUnit
+        ? {
+            type: snapshot.currentUnit.type,
+            id: snapshot.currentUnit.id,
+            startedAt: snapshot.currentUnit.startedAt,
+          }
+        : null,
+      basePath: snapshot.basePath,
+      elapsed: snapshot.active || snapshot.paused
+        ? (this.dashData.startTime > 0 ? Date.now() - this.dashData.startTime : 0)
+        : 0,
+      toolSurface: snapshot.toolSurface,
+    };
+  }
+
   private async refreshDashboard(initial = false): Promise<void> {
     if (this.disposed) return;
-    this.dashData = getAutoDashboardData();
-    const nextIdentity = this.computeDashboardIdentity(this.dashData);
+    const runtimeSnapshot = getAutoRuntimeSnapshot();
+    const nextIdentity = this.computeDashboardIdentity(runtimeSnapshot);
 
     const identityChanged = initial || nextIdentity !== this.loadedDashboardIdentity;
     if (identityChanged) {
+      this.dashData = getAutoDashboardData();
+      const loadedIdentity = this.computeDashboardIdentity(this.dashData);
       const loaded = await this.loadData();
       if (this.disposed) return;
       if (loaded) {
-        this.loadedDashboardIdentity = nextIdentity;
+        this.loadedDashboardIdentity = loadedIdentity;
       }
+    } else {
+      this.refreshVolatileDashboardData(runtimeSnapshot);
     }
 
     if (initial) {
