@@ -1035,6 +1035,7 @@ function saveLedger(base: string, data: MetricsLedger): void {
         onDisk && onDisk.units.length > 0
           ? deduplicateUnits([...keepNewestUnits(onDisk.units), ...dataUnits])
           : dataUnits;
+      merged.sort((a, b) => a.finishedAt - b.finishedAt || a.startedAt - b.startedAt);
       data.units = keepNewestUnits(merged);
       saveJsonFile(path, data);
     } finally {
