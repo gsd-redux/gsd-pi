@@ -12,26 +12,13 @@ import { getActiveAutoWorkers } from "./db/auto-workers.js";
 import { normalizeRealPath } from "./paths.js";
 import { ensureGitignore, isGsdGitignored } from "./gitignore.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
-import { recoverFailedMigration } from "./migrate-external.js";
+import { isCurrentGsdStateIntactForMigratingCleanup, recoverFailedMigration } from "./migrate-external.js";
 import { splitCompletedKey } from "./forensics.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { getAllMilestones, isDbAvailable } from "./gsd-db.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 const MAX_UAT_ATTEMPTS = 3;
-
-function isCurrentGsdStateIntactForMigratingCleanup(basePath: string): boolean {
-  try {
-    const stateFile = resolveGsdRootFile(basePath, "STATE");
-    const milestonesPath = milestonesDir(basePath);
-    const dbPath = join(gsdRoot(basePath), "gsd.db");
-    const hasDbFile = existsSync(dbPath);
-    const hasNonEmptyDb = hasDbFile && statSync(dbPath).size > 0;
-    return existsSync(stateFile) && existsSync(milestonesPath) && hasNonEmptyDb;
-  } catch {
-    return false;
-  }
-}
 
 function hasAssessmentVerdict(basePath: string, mid: string, sid: string): boolean {
   const assessmentPath = join(gsdRoot(basePath), "milestones", mid, "slices", sid, `${sid}-ASSESSMENT.md`);
@@ -467,7 +454,7 @@ export async function checkRuntimeHealth(
 
         if (shouldFix("failed_migration")) {
           if (recoverFailedMigration(basePath)) {
-            fixesApplied.push("recovered failed migration (.gsd.migrating → .gsd)");
+            fixesApplied.push("recovered failed external state migration");
           } else if (isCurrentGsdStateIntactForMigratingCleanup(basePath)) {
             try {
               rmSync(migratingPath, { recursive: true, force: true });

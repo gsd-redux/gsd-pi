@@ -2518,7 +2518,7 @@ export async function startAuto(
   // resume paths (#4416). The matching call in auto-start.ts covers the
   // bootstrap-only path; this call ensures the resume path is also protected.
   if (recoverFailedMigration(base)) {
-    ctx.ui.notify("Recovered unfinished migration (.gsd.migrating → .gsd).", "info");
+    ctx.ui.notify("Recovered unfinished external state migration.", "info");
   }
 
   const unmergedStartMessage = await getUnmergedMilestoneBlockMessageForBase(base, "auto");

@@ -7,12 +7,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, cpSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { externalGsdRoot, isInsideWorktree } from "./repo-identity.js";
 import { getErrorMessage } from "./error-utils.js";
 import { hasGitTrackedGsdFiles } from "./gitignore.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
+import { gsdRoot, milestonesDir, resolveGsdRootFile } from "./paths.js";
 
 export interface MigrationResult {
   migrated: boolean;
@@ -159,6 +160,10 @@ export function migrateToExternalState(basePath: string): MigrationResult {
       return { migrated: false, error: `Migration verification failed: ${getErrorMessage(verifyErr)}` };
     }
 
+    // Remove .gsd.migrating once the junction is verified. The git-index cleanup
+    // below is best-effort and does not need the staging copy to survive.
+    rmSync(migratingPath, { recursive: true, force: true });
+
     // Clean the git index — any .gsd/* files tracked before migration now
     // sit behind the symlink and git can't follow it, causing them to show
     // as deleted. Remove them from the index so the working tree stays clean.
@@ -173,9 +178,6 @@ export function migrateToExternalState(basePath: string): MigrationResult {
     } catch {
       // Non-fatal — git may be unavailable or nothing was tracked
     }
-
-    // Remove .gsd.migrating only after symlink is verified and index is clean
-    rmSync(migratingPath, { recursive: true, force: true });
 
     return { migrated: true };
   } catch (err) {
@@ -195,16 +197,57 @@ export function migrateToExternalState(basePath: string): MigrationResult {
   }
 }
 
+export function isCurrentGsdStateIntactForMigratingCleanup(basePath: string): boolean {
+  try {
+    const stateFile = resolveGsdRootFile(basePath, "STATE");
+    const milestonesPath = milestonesDir(basePath);
+    const dbPath = join(gsdRoot(basePath), "gsd.db");
+    const hasDbFile = existsSync(dbPath);
+    const hasNonEmptyDb = hasDbFile && statSync(dbPath).size > 0;
+    return existsSync(stateFile) && existsSync(milestonesPath) && hasNonEmptyDb;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeResolvedPath(p: string): string {
+  const normalized = p.replaceAll("\\", "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isLocalGsdExternalStateJunction(basePath: string, localGsd: string): boolean {
+  try {
+    const stat = lstatSync(localGsd);
+    if (!stat.isSymbolicLink()) return false;
+    const resolved = normalizeResolvedPath(realpathSync(localGsd));
+    const resolvedExternal = normalizeResolvedPath(realpathSync(externalGsdRoot(basePath)));
+    return resolved === resolvedExternal;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Recover from a failed migration (`.gsd.migrating` exists).
- * Moves `.gsd.migrating` back to `.gsd` if `.gsd` doesn't exist.
+ * Moves `.gsd.migrating` back to `.gsd` if `.gsd` doesn't exist, or removes an
+ * orphaned staging directory when `.gsd` is already a verified external state
+ * junction with intact current state.
  */
 export function recoverFailedMigration(basePath: string): boolean {
   const localGsd = join(basePath, ".gsd");
   const migratingPath = join(basePath, ".gsd.migrating");
 
   if (!existsSync(migratingPath)) return false;
-  if (existsSync(localGsd)) return false; // both exist -- ambiguous, don't touch
+  if (existsSync(localGsd)) {
+    if (!isLocalGsdExternalStateJunction(basePath, localGsd)) return false;
+    if (!isCurrentGsdStateIntactForMigratingCleanup(basePath)) return false;
+    try {
+      rmSync(migratingPath, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   try {
     renameSync(migratingPath, localGsd);

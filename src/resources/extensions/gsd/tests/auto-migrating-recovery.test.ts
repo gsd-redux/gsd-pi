@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { recoverFailedMigration } from "../migrate-external.ts";
+import { externalGsdRoot } from "../repo-identity.ts";
 
 // Regression tests for #4416: `.gsd.migrating` must be healed before auto-mode
 // proceeds, including on the resume path in auto.ts (fixed at auto.ts:1325).
@@ -46,6 +47,36 @@ test("recoverFailedMigration returns false when both .gsd and .gsd.migrating exi
   assert.equal(recovered, false, "should not touch ambiguous state");
   assert.ok(existsSync(join(base, ".gsd")), ".gsd must still exist");
   assert.ok(existsSync(join(base, ".gsd.migrating")), ".gsd.migrating must still exist");
+});
+
+test("recoverFailedMigration removes orphan when .gsd is an intact external-state junction", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-migrating-orphan-"));
+  const stateDir = mkdtempSync(join(tmpdir(), "gsd-migrating-state-"));
+  const previousStateDir = process.env.GSD_STATE_DIR;
+  const previousProjectId = process.env.GSD_PROJECT_ID;
+  process.env.GSD_STATE_DIR = stateDir;
+  process.env.GSD_PROJECT_ID = "recover-orphan";
+  t.after(() => {
+    if (previousStateDir === undefined) delete process.env.GSD_STATE_DIR;
+    else process.env.GSD_STATE_DIR = previousStateDir;
+    if (previousProjectId === undefined) delete process.env.GSD_PROJECT_ID;
+    else process.env.GSD_PROJECT_ID = previousProjectId;
+    rmSync(base, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  const externalPath = externalGsdRoot(base);
+  mkdirSync(join(externalPath, "phases"), { recursive: true });
+  writeFileSync(join(externalPath, "STATE.md"), "# State\n", "utf-8");
+  writeFileSync(join(externalPath, "gsd.db"), "not empty\n", "utf-8");
+  symlinkSync(externalPath, join(base, ".gsd"), "junction");
+  mkdirSync(join(base, ".gsd.migrating"), { recursive: true });
+
+  const recovered = recoverFailedMigration(base);
+
+  assert.equal(recovered, true, "expected orphan cleanup to succeed");
+  assert.ok(existsSync(join(base, ".gsd")), ".gsd junction must remain");
+  assert.ok(!existsSync(join(base, ".gsd.migrating")), ".gsd.migrating orphan must be removed");
 });
 
 test("recoverFailedMigration preserves contents of .gsd.migrating", (t) => {
