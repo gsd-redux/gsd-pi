@@ -396,11 +396,15 @@ export async function validatePlanBoundary(basePath: string, milestoneId: string
 
   const tasksDir = resolveTasksDir(basePath, milestoneId, sliceId);
   const taskPlans = tasksDir ? resolveTaskFiles(tasksDir, "PLAN") : [];
-  for (const file of taskPlans) {
+  const taskPlanPaths = taskPlans.flatMap(file => {
     const taskId = file.split("-")[0];
     const taskPlan = resolveTaskFile(basePath, milestoneId, sliceId, taskId, "PLAN");
+    return taskPlan ? [taskPlan] : [];
+  });
+  const taskPlanContents = await Promise.all(taskPlanPaths.map(loadFile));
+  for (const [index, content] of taskPlanContents.entries()) {
+    const taskPlan = taskPlanPaths[index];
     if (!taskPlan) continue;
-    const content = await loadFile(taskPlan);
     if (content) issues.push(...validateTaskPlanContent(taskPlan, content));
   }
 
@@ -428,11 +432,15 @@ export async function validateCompleteBoundary(basePath: string, milestoneId: st
   const issues: ValidationIssue[] = [];
   const tasksDir = resolveTasksDir(basePath, milestoneId, sliceId);
   const taskSummaries = tasksDir ? resolveTaskFiles(tasksDir, "SUMMARY") : [];
-  for (const file of taskSummaries) {
+  const taskSummaryPaths = taskSummaries.flatMap(file => {
     const taskId = file.split("-")[0];
     const taskSummary = resolveTaskFile(basePath, milestoneId, sliceId, taskId, "SUMMARY");
+    return taskSummary ? [taskSummary] : [];
+  });
+  const taskSummaryContents = await Promise.all(taskSummaryPaths.map(loadFile));
+  for (const [index, content] of taskSummaryContents.entries()) {
+    const taskSummary = taskSummaryPaths[index];
     if (!taskSummary) continue;
-    const content = await loadFile(taskSummary);
     if (content) issues.push(...validateTaskSummaryContent(taskSummary, content));
   }
 
