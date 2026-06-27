@@ -698,6 +698,12 @@ export interface RetryOptions {
   delayMs?: number;
 }
 
+const _retrySleepView = new Int32Array(new SharedArrayBuffer(4));
+function sleepSync(ms: number): void {
+  if (!(ms > 0)) return;
+  Atomics.wait(_retrySleepView, 0, 0, ms);
+}
+
 export function readExistingLockDataWithRetry(
   lp: string,
   options?: RetryOptions,
@@ -709,12 +715,7 @@ export function readExistingLockDataWithRetry(
     const data = readExistingLockData(lp);
     if (data !== null) return data;
     if (attempt < maxAttempts) {
-      // Synchronous busy-wait — onCompromised runs in a sync callback context
-      // and the delays are short (200ms default).
-      const start = Date.now();
-      while (Date.now() - start < delayMs) {
-        // busy-wait
-      }
+      sleepSync(delayMs);
     }
   }
   return null;

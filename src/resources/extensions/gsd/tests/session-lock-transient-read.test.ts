@@ -8,6 +8,7 @@
  *
  * Tests:
  *   - readExistingLockDataWithRetry retries on transient read failure
+ *   - readExistingLockDataWithRetry sleeps between retries without CPU spin
  *   - readExistingLockDataWithRetry returns data when file becomes readable after retries
  *   - readExistingLockDataWithRetry returns null only when ALL retries exhausted
  *   - onCompromised does not declare compromise when lock file is transiently unreadable
@@ -75,6 +76,31 @@ async function main(): Promise<void> {
     }
   }
 
+  // ─── 2b. Retry delay sleeps without CPU spin ──────────────────────────────
+  console.log('\n=== 2b. readExistingLockDataWithRetry sleeps between retry attempts ===');
+  {
+    const base = mkdtempSync(join(tmpdir(), 'gsd-transient-'));
+    mkdirSync(join(base, '.gsd'), { recursive: true });
+    const originalWait = Atomics.wait;
+    const waits: Array<number | undefined> = [];
+
+    try {
+      const lockFile = join(gsdRoot(base), 'auto.lock');
+      Atomics.wait = ((_typedArray: Int32Array, _index: number, _value: number, timeout?: number) => {
+        waits.push(timeout);
+        return 'timed-out';
+      }) as typeof Atomics.wait;
+
+      const result = readExistingLockDataWithRetry(lockFile, { maxAttempts: 3, delayMs: 17 });
+      assertEq(result, null, 'null for missing file after instrumented retries');
+      assertEq(waits.length, 2, 'sleep called only between failed attempts');
+      assertEq(waits, [17, 17], 'sleep preserves delayMs across retries');
+    } finally {
+      Atomics.wait = originalWait;
+      rmSync(base, { recursive: true, force: true });
+    }
+  }
+
   // ─── 3. readExistingLockDataWithRetry recovers after transient rename ──────
   console.log('\n=== 3. readExistingLockDataWithRetry recovers after transient unavailability ===');
   {
@@ -96,8 +122,8 @@ async function main(): Promise<void> {
 
       // Simulate transient unavailability: move file away, spawn a child process
       // to restore it shortly after. The child runs outside our event loop so it
-      // fires even during busy-wait retries. Give the test extra retry budget so
-      // it stays stable under full-suite CPU contention.
+      // fires even during synchronous retry sleeps. Give the test extra retry
+      // budget so it stays stable under full-suite CPU contention.
       renameSync(lockFile, tmpFile);
       spawn('bash', ['-c', `sleep 0.05 && mv "${tmpFile}" "${lockFile}"`], { stdio: 'ignore', detached: true }).unref();
 
