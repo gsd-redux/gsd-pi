@@ -242,6 +242,7 @@ export const UNIT_REGISTRY = {
     phaseChain: ["completion"],
     toolContract: {
       allowedGsdTools: [
+        "gsd_milestone_status",
         "gsd_exec",
         "gsd_slice_complete",
         "gsd_task_reopen",
@@ -253,6 +254,7 @@ export const UNIT_REGISTRY = {
         "subagent",
       ],
       requiredWorkflowTools: [
+        "gsd_milestone_status",
         "gsd_exec",
         "gsd_capture_thought",
         "gsd_slice_complete",

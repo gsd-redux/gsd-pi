@@ -82,8 +82,9 @@ test("refine-slice requires canonical slice planning tool", () => {
   assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("refine-slice"), ["gsd_plan_slice"]);
 });
 
-test("complete-slice requires closeout and execution handoff tools", () => {
+test("complete-slice requires status, closeout, and execution handoff tools", () => {
   const expected = [
+    "gsd_milestone_status",
     "gsd_exec",
     "gsd_capture_thought",
     "gsd_slice_complete",

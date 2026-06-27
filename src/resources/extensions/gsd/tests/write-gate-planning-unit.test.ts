@@ -431,7 +431,10 @@ test('auto-unit scope: execute-task blocks slice and milestone lifecycle aliases
   assert.match(reopen.reason!, /gsd_milestone_reopen/);
 });
 
-test('auto-unit scope: complete-slice blocks milestone validation and native Workflow', () => {
+test('auto-unit scope: complete-slice allows milestone status but blocks milestone validation and native Workflow', () => {
+  const status = shouldBlockPlanningUnit('gsd_milestone_status', '', BASE, 'complete-slice', ALL);
+  assert.strictEqual(status.block, false);
+
   const closeSlice = shouldBlockPlanningUnit('gsd_slice_complete', '', BASE, 'complete-slice', ALL);
   assert.strictEqual(closeSlice.block, false);
 
