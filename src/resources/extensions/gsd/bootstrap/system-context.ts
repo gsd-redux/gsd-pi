@@ -170,8 +170,10 @@ async function performSessionStartupMaintenance(
     runKnowledgeMemoryBackfill(basePath, ctx),
   ]);
 
-  scheduleDeferredContextMaintenance(basePath);
+  // Mark session complete before scheduling deferred work so any concurrent
+  // caller that observes the completed state does not re-enter maintenance.
   contextMaintenanceCompletedForBasePath.add(basePath);
+  scheduleDeferredContextMaintenance(basePath);
   return true;
 }
 
