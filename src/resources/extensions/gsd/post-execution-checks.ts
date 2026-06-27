@@ -16,7 +16,7 @@
  *   - No AST parsers — uses regex heuristics
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve, dirname, join, extname } from "node:path";
 import type { TaskRow } from "./db-task-slice-rows.js";
 
@@ -364,6 +364,14 @@ interface FunctionSignature {
   lineNum: number;
 }
 
+interface CachedFunctionSignatures {
+  mtimeMs: number;
+  signatures: FunctionSignature[];
+}
+
+let signatureCacheScope: string | null = null;
+const signatureCache = new Map<string, CachedFunctionSignatures>();
+
 /**
  * Extract function signatures from TypeScript/JavaScript source code.
  */
@@ -404,6 +412,35 @@ function extractFunctionSignatures(
   return signatures;
 }
 
+function signatureCacheFor(taskRow: TaskRow, basePath: string): Map<string, CachedFunctionSignatures> {
+  const scope = `${resolve(basePath)}\0${taskRow.milestone_id}\0${taskRow.slice_id}`;
+
+  if (signatureCacheScope !== scope) {
+    signatureCacheScope = scope;
+    signatureCache.clear();
+  }
+
+  return signatureCache;
+}
+
+function getCachedFunctionSignatures(
+  cache: Map<string, CachedFunctionSignatures>,
+  absolutePath: string,
+  fileName: string
+): FunctionSignature[] {
+  const mtimeMs = statSync(absolutePath).mtimeMs;
+  const cached = cache.get(absolutePath);
+
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached.signatures.map((sig) => ({ ...sig, file: fileName }));
+  }
+
+  const source = readFileSync(absolutePath, "utf-8");
+  const signatures = extractFunctionSignatures(source, fileName);
+  cache.set(absolutePath, { mtimeMs, signatures });
+  return signatures;
+}
+
 /**
  * Normalize parameter list for comparison.
  */
@@ -437,6 +474,7 @@ export function checkCrossTaskSignatures(
 
   // Build map of functions from prior tasks' key_files
   const priorSignatures = new Map<string, FunctionSignature[]>();
+  const cache = signatureCacheFor(taskRow, basePath);
 
   for (const task of priorTasks) {
     for (const file of task.key_files) {
@@ -447,8 +485,7 @@ export function checkCrossTaskSignatures(
       if (!existsSync(absolutePath)) continue;
 
       try {
-        const source = readFileSync(absolutePath, "utf-8");
-        const sigs = extractFunctionSignatures(source, file);
+        const sigs = getCachedFunctionSignatures(cache, absolutePath, file);
         for (const sig of sigs) {
           const existing = priorSignatures.get(sig.name) || [];
           existing.push(sig);

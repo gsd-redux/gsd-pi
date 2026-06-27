@@ -10,7 +10,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import fs, { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 
 import {
@@ -766,6 +767,52 @@ describe("checkCrossTaskSignatures", () => {
       assert.equal(results.length, 1);
       assert.ok(results[0].message.includes("parse"));
     } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("caches prior task signature reads across calls for the same slice", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "post-exec-cache-"));
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+
+    const priorPath = join(tempDir, "src", "utils.ts");
+    writeFileSync(
+      priorPath,
+      "export function process(data: string): boolean { return true; }"
+    );
+    writeFileSync(
+      join(tempDir, "src", "api.ts"),
+      "export function process(data: string): boolean { return false; }"
+    );
+
+    const originalReadFileSync = fs.readFileSync;
+    let priorReads = 0;
+
+    fs.readFileSync = ((...args: unknown[]) => {
+      const path = args[0];
+      if (path === priorPath) priorReads++;
+      return originalReadFileSync(...(args as Parameters<typeof fs.readFileSync>));
+    }) as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+
+    try {
+      const priorTask = createTask({
+        id: "T01",
+        slice_id: "S01",
+        key_files: ["src/utils.ts"],
+      });
+      const currentTask = createTask({
+        id: "T02",
+        slice_id: "S01",
+        key_files: ["src/api.ts"],
+      });
+
+      assert.deepEqual(checkCrossTaskSignatures(currentTask, [priorTask], tempDir), []);
+      assert.deepEqual(checkCrossTaskSignatures(currentTask, [priorTask], tempDir), []);
+      assert.equal(priorReads, 1);
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+      syncBuiltinESMExports();
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
