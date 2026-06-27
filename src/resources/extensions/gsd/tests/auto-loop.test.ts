@@ -3381,6 +3381,87 @@ test("autoLoop pauses after repeated orchestration skips", async () => {
   assert.equal(deps.callLog.includes("stopAuto"), false, "persistent orchestration skips should not hit the max-iteration stop");
 });
 
+test("autoLoop does not pause on repeated idempotent advance skips", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  const s = makeLoopSession({
+    currentMilestoneId: "M001",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        advanceCalls++;
+        if (advanceCalls >= 5) s.active = false;
+        return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+      },
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+      getStatus: () => ({ phase: "running" as const, transitionCount: 1 }),
+    } satisfies AutoOrchestrationModule,
+  });
+
+  const deps = makeMockDeps();
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.ok(advanceCalls >= 5, "loop should complete multiple idempotent skips before deactivating");
+  assert.equal(deps.callLog.includes("pauseAuto"), false, "idempotent advance skips must not trigger the consecutive-skip pause");
+  assert.equal(deps.callLog.includes("stopAuto"), false, "idempotent advance skips must not reach the max-iteration stop");
+});
+
+test("autoLoop skip streak survives sidecar iteration without resetting", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  const s = makeLoopSession({ currentMilestoneId: "M001" });
+  s.orchestration = {
+    start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    advance: async () => {
+      advanceCalls++;
+      if (advanceCalls === 2) {
+        // Inject a sidecar so the *next* iteration takes the sidecar path rather than
+        // calling orchestration.advance() — which must NOT reset the skip streak.
+        s.sidecarQueue.push({
+          kind: "hook" as const,
+          unitType: "run-uat",
+          unitId: "M001/S01/T01/review",
+          prompt: "review",
+        });
+      }
+      return { kind: "skipped" as const, reason: "gate-marker-drift" };
+    },
+    completeActiveUnit: async () => {},
+    retryActiveUnit: async () => {},
+    resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+    getStatus: () => ({ phase: "running" as const, transitionCount: advanceCalls }),
+  } satisfies AutoOrchestrationModule;
+
+  const deps = makeMockDeps();
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // Wait for the sidecar unit to call newSession (pi.calls grows)
+  await waitForMicrotasks(() => pi.calls.length >= 1, "sidecar unit to start");
+  resolveAgentEnd(makeEvent()); // resolve the sidecar unit
+
+  await loopPromise;
+
+  // Skip 1 (call 1) + sidecar iteration (no advance) + skip 3 (call 3, matches key) → pause.
+  // The old reset at the dispatch boundary would have zeroed the counter during the sidecar,
+  // requiring 3 more skips (calls 3,4,5) before pausing. With the fix, 3 total → call 3.
+  assert.equal(advanceCalls, 3, "skip streak must survive the sidecar iteration: pause on the 3rd total skip");
+  assert.ok(deps.callLog.includes("pauseAuto"), "persistent skips must still pause after an interleaved sidecar");
+  assert.equal(deps.callLog.includes("stopAuto"), false, "must not hit the max-iteration stop");
+});
+
 test("autoLoop drains sidecar queue after postUnitPostVerification enqueues items", async (t) => {
   _resetPendingResolve();
 

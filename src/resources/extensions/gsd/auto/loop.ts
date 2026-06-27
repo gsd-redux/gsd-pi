@@ -941,37 +941,43 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
-            const isIdempotentSkip = orchestrationResult.reason === "idempotent advance: unit already active";
-            if (!isIdempotentSkip) {
-              const skipState = orchestrationResult.stateSnapshot;
-              const skipKey = [
-                orchestrationResult.reason,
-                skipState?.phase,
-                skipState?.activeMilestone?.id,
-                skipState?.activeSlice?.id,
-                skipState?.activeTask?.id,
-              ].join("|");
-              consecutiveOrchestrationSkips = skipKey === lastOrchestrationSkipKey
-                ? consecutiveOrchestrationSkips + 1
-                : 1;
-              lastOrchestrationSkipKey = skipKey;
-              if (consecutiveOrchestrationSkips >= MAX_CONSECUTIVE_ORCHESTRATION_SKIPS) {
-                const msg = `Orchestration skipped ${consecutiveOrchestrationSkips} consecutive attempts without progress. Pausing auto-mode for manual recovery.`;
-                ctx.ui.notify(msg, "error");
-                await deps.pauseAuto(ctx, pi, {
-                  message: msg,
-                  category: "unknown",
-                }, {
-                  expectedCurrentUnit: null,
-                });
-                finishTurn("paused", "manual-attention", orchestrationResult.reason ?? "orchestration-skipped");
-                finishIncompleteIteration({
-                  status: "paused",
-                  reason: orchestrationResult.reason ?? "orchestration-skipped",
-                  failureClass: "manual-attention",
-                });
-                break;
-              }
+            // Idempotent re-poll skips are benign (an active unit is still running).
+            // The orchestrator's own stuck-window detection handles the truly-stuck case.
+            // Do not count these toward the consecutive-skip streak.
+            if (orchestrationResult.reason === "idempotent advance: unit already active") {
+              emitIterationEnd({ skipped: true });
+              completeIteration();
+              finishTurn("skipped");
+              continue;
+            }
+            const skipState = orchestrationResult.stateSnapshot;
+            const skipKey = [
+              orchestrationResult.reason,
+              skipState?.phase,
+              skipState?.activeMilestone?.id,
+              skipState?.activeSlice?.id,
+              skipState?.activeTask?.id,
+            ].join("|");
+            consecutiveOrchestrationSkips = skipKey === lastOrchestrationSkipKey
+              ? consecutiveOrchestrationSkips + 1
+              : 1;
+            lastOrchestrationSkipKey = skipKey;
+            if (consecutiveOrchestrationSkips >= MAX_CONSECUTIVE_ORCHESTRATION_SKIPS) {
+              const msg = `Orchestration skipped ${consecutiveOrchestrationSkips} consecutive attempts without progress. Pausing auto-mode for manual recovery.`;
+              ctx.ui.notify(msg, "error");
+              await deps.pauseAuto(ctx, pi, {
+                message: msg,
+                category: "unknown",
+              }, {
+                expectedCurrentUnit: null,
+              });
+              finishTurn("paused", "manual-attention", orchestrationResult.reason ?? "orchestration-skipped");
+              finishIncompleteIteration({
+                status: "paused",
+                reason: orchestrationResult.reason ?? "orchestration-skipped",
+                failureClass: "manual-attention",
+              });
+              break;
             }
             emitIterationEnd({ skipped: true });
             completeIteration();
