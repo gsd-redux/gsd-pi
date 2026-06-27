@@ -1,7 +1,7 @@
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
+import { delimiter, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 
@@ -116,6 +116,56 @@ function startMockRegistry(responseBody: object, statusCode = 200): Promise<{ ur
       })
     })
   })
+}
+
+function installCountingGsdBrowserShim(t: TestContext): { cachePath: string; spawnCountPath: string } {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-browser-update-'))
+  const binDir = join(tmp, 'bin')
+  const cachePath = join(tmp, '.update-check-gsd-browser')
+  const spawnCountPath = join(tmp, 'spawn-count')
+  const originalPath = process.env.PATH
+  const originalPathVersion = process.env.GSD_BROWSER_PATH_VERSION
+  const originalSpawnCount = process.env.GSD_BROWSER_SPAWN_COUNT
+
+  t.after(() => {
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
+    }
+    if (originalPathVersion === undefined) {
+      delete process.env.GSD_BROWSER_PATH_VERSION
+    } else {
+      process.env.GSD_BROWSER_PATH_VERSION = originalPathVersion
+    }
+    if (originalSpawnCount === undefined) {
+      delete process.env.GSD_BROWSER_SPAWN_COUNT
+    } else {
+      process.env.GSD_BROWSER_SPAWN_COUNT = originalSpawnCount
+    }
+    rmSync(tmp, { recursive: true, force: true })
+  });
+
+  mkdirSync(binDir)
+  writeFileSync(spawnCountPath, '0')
+  const shim = join(binDir, 'gsd-browser')
+  writeFileSync(shim, [
+    '#!/usr/bin/env node',
+    "const { readFileSync, writeFileSync } = require('node:fs');",
+    'const countPath = process.env.GSD_BROWSER_SPAWN_COUNT;',
+    "const count = Number(readFileSync(countPath, 'utf8')) || 0;",
+    "writeFileSync(countPath, String(count + 1));",
+    "console.log('gsd-browser 9.9.9');",
+    '',
+  ].join('\n'))
+  chmodSync(shim, 0o755)
+  writeFileSync(join(binDir, 'gsd-browser.cmd'), '@echo off\r\nnode "%~dp0gsd-browser" %*\r\n')
+
+  process.env.PATH = `${binDir}${delimiter}${originalPath ?? ''}`
+  process.env.GSD_BROWSER_SPAWN_COUNT = spawnCountPath
+  delete process.env.GSD_BROWSER_PATH_VERSION
+
+  return { cachePath, spawnCountPath }
 }
 
 test('checkForUpdates calls onUpdate when newer version is available', async (t) => {
@@ -274,6 +324,39 @@ test('checkForGsdBrowserUpdates treats a newer PATH browser as the current versi
 
   assert.equal(called, false, 'startup banner must not fire when PATH already has latest gsd-browser')
   assert.equal(readUpdateCache(cachePath, GSD_BROWSER_PACKAGE_NAME)?.latestVersion, '0.2.2')
+})
+
+test('checkForGsdBrowserUpdates does not spawn PATH browser when browser cache is fresh', async (t) => {
+  const { cachePath, spawnCountPath } = installCountingGsdBrowserShim(t)
+  writeUpdateCache({ lastCheck: Date.now(), latestVersion: '9.9.9' }, cachePath, GSD_BROWSER_PACKAGE_NAME)
+
+  await checkForGsdBrowserUpdates({
+    cachePath,
+    checkIntervalMs: 60 * 60 * 1000,
+    fetchTimeoutMs: 1,
+    onUpdate: () => {
+      throw new Error('fresh browser cache should short-circuit before notification')
+    },
+  })
+
+  assert.equal(readFileSync(spawnCountPath, 'utf-8'), '0')
+})
+
+test('checkForGsdBrowserUpdates defers PATH browser spawn when browser cache is stale', async (t) => {
+  const { cachePath, spawnCountPath } = installCountingGsdBrowserShim(t)
+
+  const pendingCheck = checkForGsdBrowserUpdates({
+    cachePath,
+    registryUrl: 'http://127.0.0.1:9',
+    fetchTimeoutMs: 1,
+    onUpdate: () => {
+      throw new Error('network failure should prevent notification')
+    },
+  })
+
+  assert.equal(readFileSync(spawnCountPath, 'utf-8'), '0')
+  await pendingCheck
+  assert.equal(readFileSync(spawnCountPath, 'utf-8'), '1')
 })
 
 test('checkForUpdates uses cache and skips fetch when checked recently', async (t) => {
