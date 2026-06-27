@@ -126,8 +126,10 @@ async function runSessionStartupMaintenanceOnce(
     return false;
   }
 
-  let inFlight = contextMaintenanceInFlightByBasePath.get(basePath);
-  const isInitiator = !inFlight;
+  const existing = contextMaintenanceInFlightByBasePath.get(basePath);
+  const isInitiator = !existing;
+  // Use a definite Promise<boolean> so `await inFlight` has a known return type.
+  let inFlight: Promise<boolean>;
   if (isInitiator) {
     inFlight = performSessionStartupMaintenance(basePath, ctx);
     contextMaintenanceInFlightByBasePath.set(basePath, inFlight);
@@ -136,6 +138,8 @@ async function runSessionStartupMaintenanceOnce(
         contextMaintenanceInFlightByBasePath.delete(basePath);
       }
     });
+  } else {
+    inFlight = existing;
   }
 
   const result = await inFlight;
