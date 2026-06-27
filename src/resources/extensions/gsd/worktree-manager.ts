@@ -964,11 +964,11 @@ function parseDiffNameStatus(entries: { status: string; path: string }[]): Workt
  * Diff the .gsd/ directory between the worktree branch and main branch.
  * Returns a summary of added, modified, and removed GSD artifacts.
  */
-export function diffWorktreeGSD(basePath: string, name: string): WorktreeDiffSummary {
+export function diffWorktreeGSD(basePath: string, name: string, mainBranchOverride?: string): WorktreeDiffSummary {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   const entries = nativeDiffNameStatus(basePath, mainBranch, branch, ".gsd/", true);
 
@@ -981,11 +981,16 @@ export function diffWorktreeGSD(basePath: string, name: string): WorktreeDiffSum
  * on main when the merge is applied. If both branches have identical
  * content, this correctly returns an empty diff.
  */
-export function diffWorktreeAll(basePath: string, name: string, branchOverride?: string): WorktreeDiffSummary {
+export function diffWorktreeAll(
+  basePath: string,
+  name: string,
+  branchOverride?: string,
+  mainBranchOverride?: string,
+): WorktreeDiffSummary {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = branchOverride ?? worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   const entries = nativeDiffNameStatus(basePath, mainBranch, branch);
 
@@ -996,11 +1001,16 @@ export function diffWorktreeAll(basePath: string, name: string, branchOverride?:
  * Get per-file line addition/deletion stats for what will change on main.
  * Uses direct diff (not merge-base) so the preview matches the actual merge outcome.
  */
-export function diffWorktreeNumstat(basePath: string, name: string, branchOverride?: string): FileLineStat[] {
+export function diffWorktreeNumstat(
+  basePath: string,
+  name: string,
+  branchOverride?: string,
+  mainBranchOverride?: string,
+): FileLineStat[] {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = branchOverride ?? worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   const rawStats = nativeDiffNumstat(basePath, mainBranch, branch);
 
@@ -1016,11 +1026,11 @@ export function diffWorktreeNumstat(basePath: string, name: string, branchOverri
  * Get the full diff content for .gsd/ between the worktree branch and main.
  * Returns the raw unified diff for LLM consumption.
  */
-export function getWorktreeGSDDiff(basePath: string, name: string): string {
+export function getWorktreeGSDDiff(basePath: string, name: string, mainBranchOverride?: string): string {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   return nativeDiffContent(basePath, mainBranch, branch, ".gsd/", undefined, true);
 }
@@ -1029,11 +1039,11 @@ export function getWorktreeGSDDiff(basePath: string, name: string): string {
  * Get the full diff content for non-.gsd/ files between the worktree branch and main.
  * Returns the raw unified diff for LLM consumption.
  */
-export function getWorktreeCodeDiff(basePath: string, name: string): string {
+export function getWorktreeCodeDiff(basePath: string, name: string, mainBranchOverride?: string): string {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   return nativeDiffContent(basePath, mainBranch, branch, undefined, ".gsd/", true);
 }
@@ -1041,11 +1051,11 @@ export function getWorktreeCodeDiff(basePath: string, name: string): string {
 /**
  * Get commit log for the worktree branch since it diverged from main.
  */
-export function getWorktreeLog(basePath: string, name: string): string {
+export function getWorktreeLog(basePath: string, name: string, mainBranchOverride?: string): string {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
 
   const entries = nativeLogOneline(basePath, mainBranch, branch);
 
@@ -1057,11 +1067,17 @@ export function getWorktreeLog(basePath: string, name: string): string {
  * Must be called from the main working tree (not the worktree itself).
  * Returns the merge commit message.
  */
-export function mergeWorktreeToMain(basePath: string, name: string, commitMessage: string, branchOverride?: string): string {
+export function mergeWorktreeToMain(
+  basePath: string,
+  name: string,
+  commitMessage: string,
+  branchOverride?: string,
+  mainBranchOverride?: string,
+): string {
   basePath = normalizeBasePathForWorktreeOps(basePath);
 
   const branch = branchOverride ?? worktreeBranchName(name);
-  const mainBranch = nativeDetectMainBranch(basePath);
+  const mainBranch = mainBranchOverride ?? nativeDetectMainBranch(basePath);
   const current = nativeGetCurrentBranch(basePath);
 
   if (current !== mainBranch) {

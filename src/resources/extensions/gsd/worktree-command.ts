@@ -570,11 +570,11 @@ async function handleMerge(
     }
 
     // Gather merge context — full repo diff, not just .gsd/
-    const diffSummary = diffWorktreeAll(basePath, name);
-    const numstat = diffWorktreeNumstat(basePath, name);
-    const gsdDiff = getWorktreeGSDDiff(basePath, name);
-    const codeDiff = getWorktreeCodeDiff(basePath, name);
-    const commitLog = getWorktreeLog(basePath, name);
+    const diffSummary = diffWorktreeAll(basePath, name, undefined, mainBranch);
+    const numstat = diffWorktreeNumstat(basePath, name, undefined, mainBranch);
+    const gsdDiff = getWorktreeGSDDiff(basePath, name, mainBranch);
+    const codeDiff = getWorktreeCodeDiff(basePath, name, mainBranch);
+    const commitLog = getWorktreeLog(basePath, name, mainBranch);
 
     const totalChanges = diffSummary.added.length + diffSummary.modified.length + diffSummary.removed.length;
     if (totalChanges === 0 && !commitLog.trim()) {
@@ -662,7 +662,7 @@ async function handleMerge(
     }
 
     try {
-      mergeWorktreeToMain(basePath, name, commitMessage);
+      mergeWorktreeToMain(basePath, name, commitMessage, undefined, mainBranch);
       ctx.ui.notify(
         [
           `${CLR.ok("✓")} Merged ${CLR.name(name)} → ${CLR.branch(mainBranch)} ${CLR.muted("(deterministic squash)")}`,

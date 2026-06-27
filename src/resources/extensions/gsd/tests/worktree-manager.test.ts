@@ -10,6 +10,7 @@ import {
   listWorktrees,
   removeWorktree,
   diffWorktreeGSD,
+  diffWorktreeNumstat,
   getWorktreeGSDDiff,
   getWorktreeLog,
   worktreeBranchName,
@@ -288,6 +289,31 @@ describe("diffWorktreeGSD and getWorktreeGSDDiff", () => {
     const fullDiff = getWorktreeGSDDiff(base, "feature-x");
     assert.ok(fullDiff.includes("M002"), "diff should mention M002");
     assert.ok(fullDiff.includes("updated"), "diff should mention the update");
+  });
+});
+
+describe("worktree diff target branch override", () => {
+  let base: string;
+  beforeEach(() => {
+    const repo = makeRepoWithChanges("feature-x");
+    base = repo.base;
+
+    run("git checkout -b integration main", base);
+    writeFileSync(join(base, "TARGET_ONLY.md"), "target branch only\n", "utf-8");
+    run("git add TARGET_ONLY.md", base);
+    run('git commit -m "chore: target branch only"', base);
+    run("git checkout main", base);
+  });
+  afterEach(() => { rmSync(base, { recursive: true, force: true }); });
+
+  test("uses supplied main branch for merge preview helper overrides", () => {
+    const defaultStats = diffWorktreeNumstat(base, "feature-x", undefined, "main");
+    const overrideStats = diffWorktreeNumstat(base, "feature-x", undefined, "integration");
+    const selfLog = getWorktreeLog(base, "feature-x", worktreeBranchName("feature-x"));
+
+    assert.ok(!defaultStats.some(s => s.file === "TARGET_ONLY.md"), "default main stats should not include target-only file");
+    assert.ok(overrideStats.some(s => s.file === "TARGET_ONLY.md"), "override stats should use the supplied target branch");
+    assert.strictEqual(selfLog, "", "override log should use the supplied branch");
   });
 });
 
