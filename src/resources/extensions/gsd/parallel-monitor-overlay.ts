@@ -10,7 +10,11 @@ import { matchesKey, Key } from "@gsd/pi-tui";
 import { formatDuration } from "../shared/mod.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 import { resolveGsdPathContract } from "./paths.js";
-import { openWorkflowDatabasePath } from "./db-workspace.js";
+import {
+  closeWorkflowDatabase,
+  getWorkflowDatabasePath,
+  openWorkflowDatabasePath,
+} from "./db-workspace.js";
 import {
   getParallelMonitorRecentCompletions,
   getParallelMonitorSliceProgress,
@@ -55,6 +59,7 @@ interface SliceProgress {
 interface NdjsonCostCacheEntry {
   size: number;
   mtimeMs: number;
+  fileKey: string;
   total: number;
   pendingLine: string;
 }
@@ -82,6 +87,32 @@ const ndjsonCostCache = new Map<string, NdjsonCostCacheEntry>();
 const NDJSON_COST_READ_CHUNK_BYTES = 64 * 1024;
 
 // ─── Data Helpers ─────────────────────────────────────────────────────────
+
+function ndjsonFileKey(stat: ReturnType<typeof statSync>): string {
+  return `${stat.dev}:${stat.ino}`;
+}
+
+function restoreWorkflowDatabasePath(previousPath: string | null): void {
+  if (previousPath) {
+    try {
+      openWorkflowDatabasePath(previousPath);
+    } catch {
+      /* best-effort restore */
+    }
+    return;
+  }
+  closeWorkflowDatabase();
+}
+
+function withWorkflowDatabasePath<T>(dbPath: string, onOpenFailure: T, fn: () => T): T {
+  const previousPath = getWorkflowDatabasePath();
+  try {
+    if (!openWorkflowDatabasePath(dbPath)) return onOpenFailure;
+    return fn();
+  } finally {
+    restoreWorkflowDatabasePath(previousPath);
+  }
+}
 
 function readJsonSafe<T>(filePath: string): T | null {
   try {
@@ -147,8 +178,7 @@ function querySliceProgress(basePath: string, mid: string, workRoot: string = wo
   if (!existsSync(dbPath)) return [];
 
   try {
-    if (!openWorkflowDatabasePath(dbPath)) return [];
-    return getParallelMonitorSliceProgress(mid);
+    return withWorkflowDatabasePath(dbPath, [], () => getParallelMonitorSliceProgress(mid));
   } catch {
     return [];
   }
@@ -226,7 +256,9 @@ function extractCostFromNdjson(basePath: string, mid: string): number {
     const cached = ndjsonCostCache.get(stdoutPath);
     if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.total;
 
-    const isAppendOnly = cached !== undefined && stat.size > cached.size;
+    const isAppendOnly = cached !== undefined
+      && stat.size > cached.size
+      && ndjsonFileKey(stat) === cached.fileKey;
     const start = isAppendOnly ? cached.size : 0;
     const initialTotal = isAppendOnly ? cached.total : 0;
     const initialPendingLine = isAppendOnly ? cached.pendingLine : "";
@@ -243,6 +275,7 @@ function extractCostFromNdjson(basePath: string, mid: string): number {
     ndjsonCostCache.set(stdoutPath, {
       size: stat.size,
       mtimeMs: stat.mtimeMs,
+      fileKey: ndjsonFileKey(stat),
       total: nextTotal,
       pendingLine: nextPendingLine,
     });
@@ -257,10 +290,11 @@ function queryRecentCompletions(basePath: string, mid: string): string[] {
   const dbPath = resolveGsdPathContract(workRoot, basePath).projectDb;
   if (!existsSync(dbPath)) return [];
   try {
-    if (!openWorkflowDatabasePath(dbPath)) return [];
-    return getParallelMonitorRecentCompletions(mid).map(({ taskId, sliceId, oneLiner }) => {
-      return `✓ ${mid}/${sliceId}/${taskId}${oneLiner ? ": " + oneLiner : ""}`;
-    });
+    return withWorkflowDatabasePath(dbPath, [], () =>
+      getParallelMonitorRecentCompletions(mid).map(({ taskId, sliceId, oneLiner }) => {
+        return `✓ ${mid}/${sliceId}/${taskId}${oneLiner ? ": " + oneLiner : ""}`;
+      }),
+    );
   } catch {
     return [];
   }
@@ -376,6 +410,7 @@ export class ParallelMonitorOverlay {
   private scrollOffset = 0;
   private disposed = false;
   private resizeHandler: (() => void) | null = null;
+  private savedDbPath: string | null;
 
   constructor(
     tui: { requestRender: () => void },
@@ -387,6 +422,7 @@ export class ParallelMonitorOverlay {
     this.theme = theme;
     this.onClose = onClose;
     this.basePath = basePath || process.cwd();
+    this.savedDbPath = getWorkflowDatabasePath();
 
     this.resizeHandler = () => {
       if (this.disposed) return;
@@ -424,6 +460,9 @@ export class ParallelMonitorOverlay {
       process.stdout.removeListener("resize", this.resizeHandler);
       this.resizeHandler = null;
     }
+    const savedDbPath = this.savedDbPath;
+    this.savedDbPath = null;
+    restoreWorkflowDatabasePath(savedDbPath);
   }
 
   handleInput(data: string): void {
