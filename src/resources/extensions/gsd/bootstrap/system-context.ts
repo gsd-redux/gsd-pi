@@ -170,6 +170,7 @@ async function performSessionStartupMaintenance(
     runKnowledgeMemoryBackfill(basePath, ctx),
   ]);
 
+  scheduleDeferredContextMaintenance(basePath);
   contextMaintenanceCompletedForBasePath.add(basePath);
   return true;
 }
@@ -306,10 +307,7 @@ export async function buildBeforeAgentStartResult(
     }
   }
 
-  const shouldScheduleDeferredMaintenance = await runSessionStartupMaintenanceOnce(basePath, ctx);
-  if (shouldScheduleDeferredMaintenance) {
-    scheduleDeferredContextMaintenance(basePath);
-  }
+  await runSessionStartupMaintenanceOnce(basePath, ctx);
 
   const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome(), basePath);
   if (globalSizeKb > 4) {

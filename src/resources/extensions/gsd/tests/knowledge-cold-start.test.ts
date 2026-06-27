@@ -192,6 +192,139 @@ test("#896 startup maintenance skips repeated sentinel work in one session", asy
   assert.equal(secondPass.count, 0, "second startup in same session should not re-run KNOWLEDGE.md sentinel backfill");
 });
 
+test("#896 later turns reopen the project DB after startup maintenance is complete", async (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-startup-maintenance-reopen-")));
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: base, stdio: "ignore" });
+  process.chdir(base);
+  process.env.GSD_HOME = join(base, ".gsd-home");
+
+  t.after(async () => {
+    await _flushDeferredContextMaintenanceForTest(base);
+    if (isDbAvailable()) closeDatabase();
+    invalidateStateCache();
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  assert.equal(openDatabase(join(gsdDir, "gsd.db")), true);
+  closeDatabase();
+  assert.equal(isDbAvailable(), false);
+
+  const ctx = {
+    projectRoot: base,
+    ui: { notify: () => undefined },
+  } as unknown as ExtensionContext;
+
+  await buildBeforeAgentStartResult(
+    { prompt: "Inspect project knowledge", systemPrompt: "base system prompt" },
+    ctx,
+  );
+  await _flushDeferredContextMaintenanceForTest(base);
+
+  const memoryId = createMemory({
+    category: "gotcha",
+    content: "Later before_agent_start turns reopen the project DB.",
+    scope: "project",
+    confidence: 0.95,
+  });
+  assert.ok(memoryId);
+
+  closeDatabase();
+  assert.equal(isDbAvailable(), false);
+
+  const result = await buildBeforeAgentStartResult(
+    { prompt: "Inspect project knowledge again", systemPrompt: "base system prompt" },
+    ctx,
+  );
+
+  assert.equal(isDbAvailable(), true, "completed startup maintenance should still reopen the DB per turn");
+  assert.match(
+    result?.message?.content ?? "",
+    /Later before_agent_start turns reopen the project DB\./,
+    "DB-backed memory context should still be available on later turns",
+  );
+});
+
+test("#896 deferred maintenance is queued before later prompt assembly can throw", async (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-startup-maintenance-deferred-")));
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const gsdDir = join(base, ".gsd");
+  const knowledgePath = join(gsdDir, "KNOWLEDGE.md");
+  const gsdHomeDir = join(base, ".gsd-home");
+  mkdirSync(gsdDir, { recursive: true });
+  mkdirSync(join(gsdHomeDir, "agent"), { recursive: true });
+  execFileSync("git", ["init", "-q"], { cwd: base, stdio: "ignore" });
+  process.chdir(base);
+  process.env.GSD_HOME = gsdHomeDir;
+
+  t.after(async () => {
+    await _flushDeferredContextMaintenanceForTest(base);
+    if (isDbAvailable()) closeDatabase();
+    invalidateStateCache();
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  writeFileSync(
+    join(gsdHomeDir, "agent", "KNOWLEDGE.md"),
+    ["# Global Knowledge", "", "Large global knowledge warning. ".repeat(220)].join("\n"),
+    "utf-8",
+  );
+
+  assert.equal(openDatabase(join(gsdDir, "gsd.db")), true);
+  const memoryId = createMemory({
+    category: "pattern",
+    content: "Deferred maintenance survives prompt assembly failures",
+    scope: "project",
+    confidence: 0.9,
+    structuredFields: {
+      sourceKnowledgeId: "P001",
+      sourceKnowledgeTable: "patterns",
+      pattern: "Deferred maintenance survives prompt assembly failures",
+      where: "bootstrap",
+      notes: "regression coverage",
+    },
+  });
+  assert.ok(memoryId);
+  closeDatabase();
+  assert.equal(isDbAvailable(), false);
+
+  const ctx = {
+    projectRoot: base,
+    ui: {
+      notify: (message: string) => {
+        if (message.includes("KNOWLEDGE.md is")) {
+          throw new Error("notification failure after startup maintenance");
+        }
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  await assert.rejects(
+    () => buildBeforeAgentStartResult(
+      { prompt: "Inspect project knowledge", systemPrompt: "base system prompt" },
+      ctx,
+    ),
+    /notification failure after startup maintenance/,
+  );
+
+  await _flushDeferredContextMaintenanceForTest(base);
+  assert.equal(existsSync(knowledgePath), true, "deferred projection should still run after prompt assembly throws");
+  assert.match(
+    readFileSync(knowledgePath, "utf-8"),
+    /\| P001 \| Deferred maintenance survives prompt assembly failures \| bootstrap \| regression coverage \|/,
+  );
+});
+
 test("#830 knowledge command opens the project DB before capturing patterns", async (t) => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-knowledge-command-")));
   const gsdDir = join(base, ".gsd");
