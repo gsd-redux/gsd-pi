@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 
 import type { GsdWorkspace, MilestoneScope } from "./workspace.js";
+import type { DbAdapter } from "./db-adapter.js";
 import {
   backupDatabaseSnapshot,
   checkpointDatabase,
@@ -18,6 +19,7 @@ import {
   openDatabase,
   openDatabaseByScope,
   openDatabaseByWorkspace,
+  openIsolatedDatabase,
   refreshOpenDatabaseFromDisk,
   vacuumDatabase,
   wasDbOpenAttempted,
@@ -111,6 +113,19 @@ export function openExistingWorkflowDatabase(basePath: string): WorkflowDatabase
 
 export function openWorkflowDatabasePath(path: string): boolean {
   return openDatabase(path);
+}
+
+/**
+ * Open an isolated database connection for read-only observation without
+ * displacing the active workflow session's global DB handle. The caller is
+ * responsible for calling `adapter.close()` when done.
+ *
+ * Use this for background observers (e.g. the parallel monitor overlay) that
+ * need to query a database on a 5s tick without interfering with the primary
+ * connection. Returns null if the connection cannot be opened.
+ */
+export function openWorkflowDatabaseIsolated(path: string): DbAdapter | null {
+  return openIsolatedDatabase(path);
 }
 
 export function openWorkflowDatabaseByWorkspace(workspace: GsdWorkspace): boolean {

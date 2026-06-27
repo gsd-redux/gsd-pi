@@ -10,15 +10,7 @@ import { matchesKey, Key } from "@gsd/pi-tui";
 import { formatDuration } from "../shared/mod.js";
 import { formattedShortcutPair } from "./shortcut-defs.js";
 import { resolveGsdPathContract } from "./paths.js";
-import {
-  closeWorkflowDatabase,
-  getWorkflowDatabasePath,
-  openWorkflowDatabasePath,
-} from "./db-workspace.js";
-import {
-  getParallelMonitorRecentCompletions,
-  getParallelMonitorSliceProgress,
-} from "./db/queries.js";
+import { openWorkflowDatabaseIsolated } from "./db-workspace.js";
 import { worktreePathFor, worktreesDirs } from "./worktree-placement.js";
 import {
   renderBar,
@@ -92,28 +84,6 @@ function ndjsonFileKey(stat: ReturnType<typeof statSync>): string {
   return `${stat.dev}:${stat.ino}`;
 }
 
-function restoreWorkflowDatabasePath(previousPath: string | null): void {
-  if (previousPath) {
-    try {
-      openWorkflowDatabasePath(previousPath);
-    } catch {
-      /* best-effort restore */
-    }
-    return;
-  }
-  closeWorkflowDatabase();
-}
-
-function withWorkflowDatabasePath<T>(dbPath: string, onOpenFailure: T, fn: () => T): T {
-  const previousPath = getWorkflowDatabasePath();
-  try {
-    if (!openWorkflowDatabasePath(dbPath)) return onOpenFailure;
-    return fn();
-  } finally {
-    restoreWorkflowDatabasePath(previousPath);
-  }
-}
-
 function readJsonSafe<T>(filePath: string): T | null {
   try {
     return JSON.parse(readFileSync(filePath, "utf-8")) as T;
@@ -177,10 +147,31 @@ function querySliceProgress(basePath: string, mid: string, workRoot: string = wo
   const dbPath = resolveGsdPathContract(workRoot, basePath).projectDb;
   if (!existsSync(dbPath)) return [];
 
+  const db = openWorkflowDatabaseIsolated(dbPath);
+  if (!db) return [];
   try {
-    return withWorkflowDatabasePath(dbPath, [], () => getParallelMonitorSliceProgress(mid));
+    const rows = db.prepare(
+      `SELECT
+         s.id AS id,
+         s.status AS status,
+         COUNT(t.id) AS total,
+         COALESCE(SUM(CASE WHEN t.status='complete' THEN 1 ELSE 0 END), 0) AS done
+       FROM slices s
+       LEFT JOIN tasks t ON s.milestone_id=t.milestone_id AND s.id=t.slice_id
+       WHERE s.milestone_id=:mid
+       GROUP BY s.id
+       ORDER BY s.id`,
+    ).all({ ":mid": mid });
+    return rows.map((row) => ({
+      id: String(row["id"] ?? ""),
+      status: String(row["status"] ?? ""),
+      total: Number(row["total"] ?? 0),
+      done: Number(row["done"] ?? 0),
+    }));
   } catch {
     return [];
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
   }
 }
 
@@ -289,14 +280,29 @@ function queryRecentCompletions(basePath: string, mid: string): string[] {
   const workRoot = worktreePathFor(basePath, mid);
   const dbPath = resolveGsdPathContract(workRoot, basePath).projectDb;
   if (!existsSync(dbPath)) return [];
+
+  const db = openWorkflowDatabaseIsolated(dbPath);
+  if (!db) return [];
   try {
-    return withWorkflowDatabasePath(dbPath, [], () =>
-      getParallelMonitorRecentCompletions(mid).map(({ taskId, sliceId, oneLiner }) => {
-        return `✓ ${mid}/${sliceId}/${taskId}${oneLiner ? ": " + oneLiner : ""}`;
-      }),
-    );
+    const rows = db.prepare(
+      `SELECT id, slice_id, one_liner
+       FROM tasks
+       WHERE milestone_id=:mid
+         AND status='complete'
+         AND completed_at IS NOT NULL
+       ORDER BY completed_at DESC
+       LIMIT 5`,
+    ).all({ ":mid": mid });
+    return rows.map((row) => {
+      const taskId = String(row["id"] ?? "");
+      const sliceId = String(row["slice_id"] ?? "");
+      const oneLiner = String(row["one_liner"] ?? "");
+      return `✓ ${mid}/${sliceId}/${taskId}${oneLiner ? ": " + oneLiner : ""}`;
+    });
   } catch {
     return [];
+  } finally {
+    try { db.close(); } catch { /* ignore */ }
   }
 }
 
@@ -410,7 +416,6 @@ export class ParallelMonitorOverlay {
   private scrollOffset = 0;
   private disposed = false;
   private resizeHandler: (() => void) | null = null;
-  private savedDbPath: string | null;
 
   constructor(
     tui: { requestRender: () => void },
@@ -422,7 +427,6 @@ export class ParallelMonitorOverlay {
     this.theme = theme;
     this.onClose = onClose;
     this.basePath = basePath || process.cwd();
-    this.savedDbPath = getWorkflowDatabasePath();
 
     this.resizeHandler = () => {
       if (this.disposed) return;
@@ -460,9 +464,6 @@ export class ParallelMonitorOverlay {
       process.stdout.removeListener("resize", this.resizeHandler);
       this.resizeHandler = null;
     }
-    const savedDbPath = this.savedDbPath;
-    this.savedDbPath = null;
-    restoreWorkflowDatabasePath(savedDbPath);
   }
 
   handleInput(data: string): void {

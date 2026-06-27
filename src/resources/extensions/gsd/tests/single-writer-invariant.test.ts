@@ -365,6 +365,7 @@ test("DB Workspace Interface owns database open-state and maintenance calls", as
     "openWorkflowDatabase",
     "openWorkflowDatabaseByScope",
     "openWorkflowDatabaseByWorkspace",
+    "openWorkflowDatabaseIsolated",
     "openWorkflowDatabasePath",
     "refreshWorkflowDatabaseFromDisk",
     "resolveProjectRootDbPath",

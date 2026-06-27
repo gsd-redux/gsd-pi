@@ -672,6 +672,32 @@ export function closeDatabase(): void {
 }
 
 /**
+ * Open an isolated database connection that does NOT touch the process-wide
+ * `currentDb` singleton. Intended for background observers (e.g. the parallel
+ * monitor overlay) that must read a database without displacing an active
+ * workflow session connection.
+ *
+ * The caller MUST call `adapter.close()` when done. Schema migrations are NOT
+ * run — the database must already exist and be fully migrated by the primary
+ * connection. Returns null if the connection cannot be opened.
+ */
+export function openIsolatedDatabase(path: string): DbAdapter | null {
+  try {
+    const rawDb = providerLoader.openRaw(path);
+    if (!rawDb) return null;
+    const adapter = createDbAdapter(rawDb);
+    // Minimal pragmas for a short-lived read-only observer connection.
+    // WAL mode is already set file-wide by the primary connection; repeating
+    // it here is a no-op on an existing WAL file and safe to issue.
+    adapter.exec("PRAGMA journal_mode=WAL");
+    adapter.exec("PRAGMA busy_timeout = 5000");
+    return adapter;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Re-open the active database connection from disk.
  *
  * Auto-mode can observe artifacts written by a workflow server running in a
