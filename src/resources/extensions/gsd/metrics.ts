@@ -848,16 +848,20 @@ function defaultLedger(): MetricsLedger {
 
 export const METRICS_LEDGER_KEEP_UNITS = 1500;
 
+function compareUnitsByTime(a: UnitMetrics, b: UnitMetrics): number {
+  return a.finishedAt - b.finishedAt || a.startedAt - b.startedAt;
+}
+
 function keepNewestUnits(units: UnitMetrics[], keepCount = METRICS_LEDGER_KEEP_UNITS): UnitMetrics[] {
-  return units.length > keepCount ? units.slice(-keepCount) : units;
+  return units.length > keepCount ? [...units].sort(compareUnitsByTime).slice(-keepCount) : units;
 }
 
 /**
  * Prune the metrics ledger to at most `keepCount` most-recent unit entries.
  *
  * Called by the doctor when the ledger exceeds the bloat threshold.
- * Keeps the newest entries (highest index = most recent) and discards
- * the oldest from the head of the array. Preserves `projectStartedAt`.
+ * Keeps the newest entries by unit timestamps and discards the oldest.
+ * Preserves `projectStartedAt`.
  *
  * Updates both the on-disk file and the in-memory ledger if it is loaded,
  * so the current session sees the pruned state immediately.
@@ -1033,11 +1037,9 @@ function saveLedger(base: string, data: MetricsLedger): void {
       const dataUnits = keepNewestUnits(data.units);
       const merged =
         onDisk && onDisk.units.length > 0
-          ? deduplicateUnits([...keepNewestUnits(onDisk.units), ...dataUnits]).sort(
-              (a, b) => a.finishedAt - b.finishedAt
-            )
+          ? deduplicateUnits([...keepNewestUnits(onDisk.units), ...dataUnits])
           : dataUnits;
-      merged.sort((a, b) => a.finishedAt - b.finishedAt || a.startedAt - b.startedAt);
+      merged.sort(compareUnitsByTime);
       data.units = keepNewestUnits(merged);
       saveJsonFile(path, data);
     } finally {

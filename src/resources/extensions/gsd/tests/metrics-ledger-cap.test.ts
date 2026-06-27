@@ -149,6 +149,46 @@ describe("metrics ledger steady-state cap", () => {
     );
   });
 
+  test("pre-merge cap preserves newest on-disk units even when disk order is stale", () => {
+    const KEEP = METRICS_LEDGER_KEEP_UNITS;
+
+    // Load memory with older local units.
+    const memUnits = Array.from(
+      { length: KEEP },
+      (_, i) => makeUnit(i, `M_MEM/S01/T${String(i).padStart(4, "0")}`),
+    );
+    writeLedger(projectDir, memUnits);
+    initMetrics(projectDir);
+
+    // Disk has more than KEEP entries, but its newest peer entries are at the
+    // head. A tail-slice pre-cap would discard these before the merge.
+    const newestPeerUnits = Array.from(
+      { length: 10 },
+      (_, i) => makeUnit(KEEP + i, `M_PEER/S01/T${String(i).padStart(4, "0")}`),
+    );
+    const olderPeerUnits = Array.from(
+      { length: KEEP },
+      (_, i) => makeUnit(i, `M_PEER_OLD/S01/T${String(i).padStart(4, "0")}`),
+    );
+    writeLedger(projectDir, [...newestPeerUnits, ...olderPeerUnits]);
+
+    const unit = snapshotUnitMetrics(
+      assistantCtx(),
+      "execute-task",
+      "M_STALE_DISK/S01/T01",
+      makeUnit(KEEP + newestPeerUnits.length).startedAt,
+      "test-model",
+    );
+    assert.ok(unit, "snapshot must succeed");
+
+    const disk = readLedger(projectDir);
+    assert.equal(disk.units.length, KEEP, "disk must be capped at KEEP units");
+    assert.ok(
+      disk.units.some((u) => u.id === newestPeerUnits[0]!.id),
+      "newer on-disk head unit must survive the pre-merge cap",
+    );
+  });
+
   test("snapshot saves keep metrics.json and in-memory ledger bounded while preserving peer writes", () => {
     const historicalUnits = Array.from(
       { length: METRICS_LEDGER_KEEP_UNITS + 25 },
