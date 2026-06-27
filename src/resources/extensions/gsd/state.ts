@@ -31,6 +31,8 @@ import {
 } from './files.js';
 
 import {
+  buildMilestoneFileName,
+  resolveFile,
   resolveMilestonePath,
   resolveMilestoneFile,
   resolveSlicePath,
@@ -476,6 +478,16 @@ function buildCompletenessSet(basePath: string, milestones: MilestoneRow[]) {
   return { completeMilestoneIds, parkedMilestoneIds };
 }
 
+function milestoneArtifactExistsInResolvedDir(
+  milestoneDir: string | null,
+  milestoneId: string,
+  suffix: string,
+): boolean {
+  if (!milestoneDir) return false;
+  const flatPath = join(milestoneDir, buildMilestoneFileName(milestoneId, suffix));
+  return existsSync(flatPath) || resolveFile(milestoneDir, milestoneId, suffix) !== null;
+}
+
 async function buildRegistryAndFindActive(
   basePath: string,
   milestones: MilestoneRow[],
@@ -514,8 +526,9 @@ async function buildRegistryAndFindActive(
     const allSlicesDone = slices.length > 0 && slices.every(s => isStatusDone(s.status));
 
     const title = stripMilestonePrefix(m.title) || m.id;
-    const hasContext = !!resolveMilestoneFile(basePath, m.id, "CONTEXT");
-    const hasDraftContext = !hasContext && !!resolveMilestoneFile(basePath, m.id, "CONTEXT-DRAFT");
+    const milestoneDir = resolveMilestonePath(basePath, m.id);
+    const hasContext = milestoneArtifactExistsInResolvedDir(milestoneDir, m.id, "CONTEXT");
+    const hasDraftContext = !hasContext && milestoneArtifactExistsInResolvedDir(milestoneDir, m.id, "CONTEXT-DRAFT");
     const readiness = classifyMilestoneReadiness({
       status: m.status,
       hasContext,

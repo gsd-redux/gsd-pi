@@ -1,6 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -1257,6 +1259,43 @@ describe('derive-state-db', async () => {
 
       closeDatabase();
     } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test('derive-state-db: missing context resolves milestone directory once', async () => {
+    const base = createFixtureBase();
+    const phaseDir = join(base, '.gsd', 'phases', '01-m001');
+    let phaseDirExistsChecks = 0;
+    const mutableFs = fs as { existsSync: typeof fs.existsSync };
+    const originalExistsSync = fs.existsSync;
+    mutableFs.existsSync = ((path) => {
+      if (String(path) === phaseDir) phaseDirExistsChecks += 1;
+      return originalExistsSync(path);
+    }) as typeof fs.existsSync;
+    syncBuiltinESMExports();
+
+    try {
+      mkdirSync(phaseDir, { recursive: true });
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'First', status: 'queued' });
+
+      invalidateStateCache();
+      const dbState = await deriveStateFromDb(base);
+
+      assert.equal(dbState.activeMilestone?.id, 'M001', 'single-resolve: queued milestone becomes active');
+      assert.equal(
+        phaseDirExistsChecks,
+        1,
+        'single-resolve: absent CONTEXT/CONTEXT-DRAFT should resolve the milestone directory once',
+      );
+
+      closeDatabase();
+    } finally {
+      mutableFs.existsSync = originalExistsSync;
+      syncBuiltinESMExports();
       closeDatabase();
       cleanup(base);
     }
