@@ -56,9 +56,9 @@ export function withFileLockSync<T>(
 ): T {
   if (!existsSync(filePath)) return fn();
 
-  const retries = opts.retries ?? DEFAULT_RETRIES;
   const stale = opts.stale ?? DEFAULT_STALE_MS;
   const onLocked: OnLocked = opts.onLocked ?? "fail";
+  const retries = onLocked === "skip" ? 0 : (opts.retries ?? DEFAULT_RETRIES);
 
   try {
     const release = acquireLockSyncWithRetry(filePath, retries, stale);

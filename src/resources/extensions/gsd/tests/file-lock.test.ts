@@ -114,6 +114,49 @@ test("withFileLockSync: onLocked=\"skip\" runs callback unlocked on ELOCKED", ()
   }
 });
 
+test("withFileLockSync: onLocked=\"skip\" does not sleep through retries before fallback", () => {
+  if (!hasProperLockfile() || process.platform === "win32") {
+    return;
+  }
+
+  const lockfile = require("proper-lockfile");
+  const dir = mkdtempSync(join(tmpdir(), "gsd-file-lock-test-"));
+  const filePath = join(dir, "locked.jsonl");
+  writeFileSync(filePath, "{}\n", "utf-8");
+
+  const release = lockfile.lockSync(filePath, { retries: 0, stale: 10000 });
+  const waitDescriptor = Object.getOwnPropertyDescriptor(Atomics, "wait");
+  assert.ok(waitDescriptor, "Atomics.wait descriptor should exist");
+  let sleepCalls = 0;
+
+  Object.defineProperty(Atomics, "wait", {
+    ...waitDescriptor,
+    value: () => {
+      sleepCalls++;
+      throw new Error("skip fallback must not wait before running callback");
+    },
+  });
+
+  try {
+    let called = 0;
+    const result = withFileLockSync(
+      filePath,
+      () => {
+        called++;
+        return "fallback-ok";
+      },
+      { onLocked: "skip" },
+    );
+    assert.equal(result, "fallback-ok");
+    assert.equal(called, 1, "callback should run when onLocked is skip");
+    assert.equal(sleepCalls, 0, "skip path must not block on retry sleeps");
+  } finally {
+    Object.defineProperty(Atomics, "wait", waitDescriptor);
+    release();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("withFileLock: throws ELOCKED by default (no silent fallback)", async () => {
   if (!hasProperLockfile() || process.platform === "win32") {
     return;
