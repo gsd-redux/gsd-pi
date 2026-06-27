@@ -1022,6 +1022,71 @@ test("ADR-017 (#391): roadmap-divergence skips slices before task planning compl
   assert.deepEqual(getSlice("M001", "S02")?.depends, [], "DB remains unchanged");
 });
 
+test("ADR-017 (#870): roadmap-divergence accepts recovered S00 blocker sequence", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-s00-"));
+  const milestoneId = "M002-a1rwmq";
+  const milestoneDir = join(base, ".gsd", "milestones", milestoneId);
+  const roadmapPath = join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  mkdirSync(milestoneDir, { recursive: true });
+  const originalRoadmap = [
+    "# M002-a1rwmq: Support Command Policy Hardening",
+    "",
+    "**Vision:** Recover DB-backed planning state.",
+    "",
+    "## Slices",
+    "",
+    "- [x] **S00-blocker: Blocker placeholder - planning failed** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+    "- [ ] **S01: Source of truth contract** `risk:medium` `depends:[]`",
+    "  > After this: S01 tasks are planned.",
+    "",
+    "- [ ] **S02: Policy implementation** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+    "- [ ] **S03: Verification coverage** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+    "- [ ] **S04: Documentation handoff** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+  ].join("\n");
+  writeFileSync(roadmapPath, originalRoadmap);
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: milestoneId,
+    title: "Support Command Policy Hardening",
+    status: "active",
+    planning: { vision: "Recover DB-backed planning state." },
+  });
+  insertSlice({ id: "S00-blocker", milestoneId, title: "Blocker placeholder - planning failed", status: "complete", risk: "medium", depends: [], demo: "", sequence: 0 });
+  insertSlice({ id: "S01", milestoneId, title: "Source of truth contract", status: "pending", risk: "medium", depends: [], demo: "S01 tasks are planned.", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId, title: "Policy implementation", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertSlice({ id: "S03", milestoneId, title: "Verification coverage", status: "pending", risk: "medium", depends: [], demo: "", sequence: 3 });
+  insertSlice({ id: "S04", milestoneId, title: "Documentation handoff", status: "pending", risk: "medium", depends: [], demo: "", sequence: 4 });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId, title: "Map current support command policy inputs", status: "pending" });
+  insertTask({ id: "T02", sliceId: "S01", milestoneId, title: "Define shared policy surface shape", status: "pending" });
+  insertTask({ id: "T03", sliceId: "S01", milestoneId, title: "Lock source of truth contract coverage", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: milestoneId, title: "Support Command Policy Hardening" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    false,
+    "matching recovered DB/ROADMAP state must not report persistent roadmap-divergence",
+  );
+  assert.equal(readFileSync(roadmapPath, "utf-8"), originalRoadmap);
+});
+
 test("ADR-017 (#5705): roadmap-divergence re-renders projection without syncing depends into DB", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-"));
   const milestoneDir = join(base, ".gsd", "phases", "01-test");

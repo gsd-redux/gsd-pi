@@ -60,6 +60,7 @@ function milestoneHasDivergence(
 
   const dbSlices = getMilestoneSlices(milestoneId);
   const dbSliceMap = new Map(dbSlices.map((s) => [s.id, s]));
+  const dbSliceOrder = new Map(dbSlices.map((s, index) => [s.id, index]));
   const readySliceIds = getSlicesReadyForDivergenceCheck(milestoneId, dbSlices);
   if (dbSlices.length > 0 && readySliceIds.size === 0) {
     return false;
@@ -69,11 +70,10 @@ function milestoneHasDivergence(
   for (let i = 0; i < roadmap.slices.length; i++) {
     const roadmapSlice = roadmap.slices[i]!;
     roadmapSliceIds.add(roadmapSlice.id);
-    const expectedSequence = i + 1;
     const dbSlice = dbSliceMap.get(roadmapSlice.id);
     if (!dbSlice) return true; // Roadmap has a slice the DB doesn't.
     if (!readySliceIds.has(dbSlice.id)) continue;
-    if (dbSlice.sequence !== expectedSequence) return true;
+    if (dbSliceOrder.get(dbSlice.id) !== i) return true;
     if (!arraysEqual(dbSlice.depends, roadmapSlice.depends)) return true;
     if (isClosedStatus(dbSlice.status) !== roadmapSlice.done) return true;
   }
