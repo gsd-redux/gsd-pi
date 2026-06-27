@@ -5,13 +5,14 @@
  * that getWorktreeHealth and formatWorktreeStatusLine return correct results.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, realpathSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { getWorktreeHealth, formatWorktreeStatusLine } from "../worktree-health.ts";
+import { getAllWorktreeHealth, getWorktreeHealth, formatWorktreeStatusLine } from "../worktree-health.ts";
 import { listWorktrees } from "../worktree-manager.ts";
+import { GIT_NO_PROMPT_ENV } from "../git-constants.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -171,6 +172,45 @@ describe('worktree-health', async () => {
       const line = formatWorktreeStatusLine(health);
       // Should show last commit age since it's not merged and not stale
       assert.ok(line.includes("last commit"), "shows last commit age for active worktree");
+    }
+
+    // ─── Test: batch health detects main branch once ───────────────────
+    console.log("\n=== worktree health: batch main branch detection ===");
+    {
+      const dir = createBaseRepo();
+      cleanups.push(dir);
+
+      mkdirSync(join(dir, ".gsd", "worktrees"), { recursive: true });
+      run("git worktree add -b worktree/batch-a .gsd/worktrees/batch-a", dir);
+      run("git worktree add -b worktree/batch-b .gsd/worktrees/batch-b", dir);
+
+      const bin = mkdtempSync(join(tmpdir(), "wt-health-git-shim-"));
+      cleanups.push(bin);
+      const logPath = join(bin, "git.log");
+      const realGit = execSync("command -v git", { encoding: "utf-8" }).trim();
+      const shim = join(bin, "git");
+      writeFileSync(shim, `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(logPath)}\nexec ${JSON.stringify(realGit)} "$@"\n`, "utf-8");
+      chmodSync(shim, 0o755);
+
+      const originalPath = process.env.PATH ?? "";
+      const originalGitEnvPath = GIT_NO_PROMPT_ENV.PATH;
+      try {
+        process.env.PATH = `${bin}${delimiter}${originalPath}`;
+        GIT_NO_PROMPT_ENV.PATH = process.env.PATH;
+
+        const health = getAllWorktreeHealth(dir);
+        assert.equal(health.length, 2, "both worktrees have health entries");
+      } finally {
+        process.env.PATH = originalPath;
+        GIT_NO_PROMPT_ENV.PATH = originalGitEnvPath;
+      }
+
+      const invocations = readFileSync(logPath, "utf-8")
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      const mainBranchDetections = invocations.filter(line => line === "symbolic-ref refs/remotes/origin/HEAD");
+      assert.equal(mainBranchDetections.length, 1, "batch health detects main branch once");
     }
 
   } finally {

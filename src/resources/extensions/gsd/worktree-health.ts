@@ -54,14 +54,14 @@ const DEFAULT_STALE_DAYS = 14;
  * @param basePath — the main project root (not the worktree path)
  * @param wt — worktree info from listWorktrees()
  * @param staleDays — days without commits to consider stale (default: 14)
+ * @param mainBranch — pre-detected main branch for batched health checks
  */
 export function getWorktreeHealth(
   basePath: string,
   wt: WorktreeInfo,
   staleDays = DEFAULT_STALE_DAYS,
+  mainBranch = nativeDetectMainBranch(basePath),
 ): WorktreeHealthStatus {
-  const mainBranch = nativeDetectMainBranch(basePath);
-
   // Merge status: is the worktree branch fully contained in main?
   let mergedIntoMain = false;
   try {
@@ -131,7 +131,10 @@ export function getAllWorktreeHealth(
   staleDays = DEFAULT_STALE_DAYS,
 ): WorktreeHealthStatus[] {
   const worktrees = listWorktrees(basePath);
-  return worktrees.map(wt => getWorktreeHealth(basePath, wt, staleDays));
+  if (worktrees.length === 0) return [];
+
+  const mainBranch = nativeDetectMainBranch(basePath);
+  return worktrees.map(wt => getWorktreeHealth(basePath, wt, staleDays, mainBranch));
 }
 
 /**
