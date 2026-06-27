@@ -295,7 +295,7 @@ test("initResources syncs the gsd-browser skill from the installed gsd-browser p
   }
 });
 
-test("initResources refreshes a stale managed gsd-browser package skill", async (t) => {
+test("initResources refreshes a stale managed gsd-browser package skill during resource refresh", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-browser-skill-stale-"));
   const fakeAgentDir = join(tmp, ".gsd", "agent");
   const restoreHomeEnv = overrideHomeEnv(tmp);
@@ -307,7 +307,6 @@ test("initResources refreshes a stale managed gsd-browser package skill", async 
 
   const {
     collectGsdBrowserPackageSkillReferences,
-    computeResourceFingerprint,
     hasStaleGsdBrowserPackageSkill,
     initResources,
   } = await import("../resource-loader.ts");
@@ -333,7 +332,7 @@ test("initResources refreshes a stale managed gsd-browser package skill", async 
     JSON.stringify({
       gsdVersion: currentPackageVersion(),
       packageName: "@opengsd/gsd-pi",
-      contentHash: computeResourceFingerprint(),
+      contentHash: "force-refresh",
     }),
   );
 
@@ -348,13 +347,13 @@ test("initResources refreshes a stale managed gsd-browser package skill", async 
   assert.equal(
     readFileSync(join(fakeAgentDir, "skills", "gsd-browser", "SKILL.md"), "utf-8"),
     packageSkill,
-    "current managed-resource manifests must not skip stale package-owned gsd-browser skills",
+    "resource refresh must update stale package-owned gsd-browser skills",
   );
   if (missingSupportRef) {
     assert.equal(
       existsSync(join(fakeAgentDir, "skills", "gsd-browser", missingSupportRef)),
       false,
-      "current managed-resource manifests must prune stale placeholder support files not shipped by @opengsd/gsd-browser",
+      "resource refresh must prune stale placeholder support files not shipped by @opengsd/gsd-browser",
     );
   }
 });
@@ -544,7 +543,37 @@ test("initResources syncs top-level shared resources used by extension imports",
   );
 });
 
-test("initResources resyncs when current manifest is missing top-level shared resources", async (t) => {
+test("initResources steady-state hash match returns before recursive drift checks", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-fast-path-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const skillsDir = join(tmp, "skills");
+
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const { initResources } = await import("../resource-loader.ts");
+  initResources(fakeAgentDir, skillsDir);
+
+  const manifest = JSON.parse(readFileSync(join(fakeAgentDir, "managed-resources.json"), "utf-8"));
+  assert.equal(typeof manifest.contentHash, "string", "test setup should have a current content hash");
+
+  const sharedDir = join(fakeAgentDir, "shared");
+  rmSync(sharedDir, { recursive: true, force: true });
+  writeFileSync(sharedDir, "not a directory");
+
+  assert.doesNotThrow(
+    () => initResources(fakeAgentDir, skillsDir),
+    "matching manifest hash should return before walking installed resource trees",
+  );
+  assert.equal(
+    readFileSync(sharedDir, "utf-8"),
+    "not a directory",
+    "matching manifest hash should skip the refresh path",
+  );
+});
+
+test("initResources restores missing top-level shared resources during resource refresh", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-shared-stale-"));
   const fakeAgentDir = join(tmp, ".gsd", "agent");
 
@@ -553,7 +582,6 @@ test("initResources resyncs when current manifest is missing top-level shared re
   });
 
   const {
-    computeResourceFingerprint,
     hasMissingBundledResourceFiles,
     initResources,
   } = await import("../resource-loader.ts");
@@ -570,7 +598,7 @@ test("initResources resyncs when current manifest is missing top-level shared re
         ? process.env.GSD_VERSION
         : packageVersion,
       packageName: "@opengsd/gsd-pi",
-      contentHash: computeResourceFingerprint(),
+      contentHash: "force-refresh",
     }),
   );
 
@@ -588,11 +616,11 @@ test("initResources resyncs when current manifest is missing top-level shared re
   assert.equal(
     hasSyncedResourceFile(join(fakeAgentDir, "shared"), "package-manager-detection"),
     true,
-    "current managed-resource manifests must not skip missing top-level shared files",
+    "resource refresh must restore missing top-level shared files",
   );
 });
 
-test("initResources resyncs when current manifest is missing bundled skills", async (t) => {
+test("initResources restores missing bundled skills during resource refresh", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-skill-stale-"));
   const fakeAgentDir = join(tmp, ".gsd", "agent");
   const restoreHome = overrideHomeEnv(tmp);
@@ -603,7 +631,6 @@ test("initResources resyncs when current manifest is missing bundled skills", as
   });
 
   const {
-    computeResourceFingerprint,
     hasMissingBundledResourceFiles,
     initResources,
   } = await import("../resource-loader.ts");
@@ -620,7 +647,7 @@ test("initResources resyncs when current manifest is missing bundled skills", as
         ? process.env.GSD_VERSION
         : packageVersion,
       packageName: "@opengsd/gsd-pi",
-      contentHash: computeResourceFingerprint(),
+      contentHash: "force-refresh",
     }),
   );
 
@@ -638,7 +665,7 @@ test("initResources resyncs when current manifest is missing bundled skills", as
   assert.equal(
     existsSync(join(fakeAgentDir, "skills", "tdd", "SKILL.md")),
     true,
-    "current managed-resource manifests must not skip missing bundled skills",
+    "resource refresh must restore missing bundled skills",
   );
 });
 

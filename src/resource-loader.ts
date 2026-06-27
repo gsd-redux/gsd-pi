@@ -714,9 +714,9 @@ function pruneRemovedBundledExtensions(
  * - gsd-browser skill → ~/.gsd/agent/skills/gsd-browser/ from @opengsd/gsd-browser
  * - GSD-WORKFLOW.md → ~/.gsd/agent/GSD-WORKFLOW.md (fallback for env var miss)
  *
- * Skips the full copy only when the managed-resources.json version, content
- * fingerprint, and package-owned gsd-browser skill all match the current
- * install, avoiding ~128ms of synchronous cpSync on steady-state startup.
+ * Skips the full copy when the managed-resources.json version and content
+ * fingerprint match the current install, avoiding ~128ms of synchronous cpSync
+ * on steady-state startup.
  * After `npm update -g @opengsd/gsd-pi`, versions will differ and the copy
  * runs once to land the new resources.
  *
@@ -755,24 +755,7 @@ export function initResources(agentDir: string, skillsDir: string = join(agentDi
   if (manifest && isCurrentPackageManifest(manifest) && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = getCurrentResourceFingerprint()
-    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
-    const hasMissingSharedFiles = hasMissingBundledResourceFiles(
-      join(agentDir, 'shared'),
-      join(resourcesDir, 'shared'),
-    )
-    const hasMissingSkillFiles = hasMissingBundledResourceFiles(
-      skillsDir,
-      join(resourcesDir, 'skills'),
-    )
-    const hasStaleGsdBrowserSkill = hasStaleGsdBrowserPackageSkill(skillsDir)
-    if (
-      manifest.contentHash &&
-      manifest.contentHash === currentHash &&
-      !hasStaleExtensionFiles &&
-      !hasMissingSharedFiles &&
-      !hasMissingSkillFiles &&
-      !hasStaleGsdBrowserSkill
-    ) {
+    if (manifest.contentHash && manifest.contentHash === currentHash) {
       return
     }
   }
