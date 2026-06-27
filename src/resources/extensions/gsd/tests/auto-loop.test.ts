@@ -3358,6 +3358,29 @@ test("autoLoop handles dispatch skip action by continuing", async (t) => {
   );
 });
 
+test("autoLoop pauses after repeated orchestration skips", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  const deps = makeMockDeps({
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return { action: "skip" as const, reason: "gate-marker-drift" as const };
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  const dispatchCalls = deps.callLog.filter((c) => c === "resolveDispatch");
+  assert.equal(dispatchCalls.length, 3, "persistent orchestration skips should pause before the runaway cap");
+  assert.equal(deps.callLog.includes("pauseAuto"), true, "persistent orchestration skips should pause auto-mode");
+  assert.equal(deps.callLog.includes("stopAuto"), false, "persistent orchestration skips should not hit the max-iteration stop");
+});
+
 test("autoLoop drains sidecar queue after postUnitPostVerification enqueues items", async (t) => {
   _resetPendingResolve();
 
