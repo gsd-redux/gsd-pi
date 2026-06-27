@@ -114,6 +114,8 @@ export interface WebModeDeps {
   writePidFile?: (path: string, pid: number) => void
   readPidFile?: (path: string) => number | null
   deletePidFile?: (path: string) => void
+  /** Override process.kill for testing (avoids sending real signals to arbitrary PIDs). */
+  kill?: (pid: number, signal: string | number) => void
   /** Path to the multi-instance registry JSON (for testing). */
   registryPath?: string
   /**
@@ -175,9 +177,9 @@ export function unregisterInstance(cwd: string, registryPath = WEB_INSTANCES_PAT
   writeInstanceRegistry(registry, registryPath)
 }
 
-function killPid(pid: number): 'killed' | 'already-dead' | { error: string } {
+function killPid(pid: number, killFn: (pid: number, signal: string | number) => void = process.kill): 'killed' | 'already-dead' | { error: string } {
   try {
-    process.kill(pid, 'SIGTERM')
+    killFn(pid, 'SIGTERM')
     return 'killed'
   } catch (error) {
     const isAlreadyDead = error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ESRCH'
@@ -215,8 +217,9 @@ export interface WebModeStopOptions {
   all?: boolean
 }
 
-export function stopWebMode(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile' | 'deletePidFile' | 'stderr'> = {}, options: WebModeStopOptions = {}): WebModeStopResult {
+export function stopWebMode(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile' | 'deletePidFile' | 'stderr' | 'kill'> = {}, options: WebModeStopOptions = {}): WebModeStopResult {
   const stderr = deps.stderr ?? process.stderr
+  const killFn = deps.kill ?? process.kill
 
   // ── Stop all instances ──────────────────────────────────────────────
   if (options.all) {
@@ -228,7 +231,7 @@ export function stopWebMode(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile
     }
     let stopped = 0
     for (const [cwd, entry] of entries) {
-      const result = killPid(entry.pid)
+      const result = killPid(entry.pid, killFn)
       if (result === 'killed') {
         stderr.write(`[gsd] Stopped web server for ${cwd} (pid=${entry.pid})\n`)
         stopped++
@@ -257,7 +260,7 @@ export function stopWebMode(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile
       stderr.write(`[gsd] No web server running for ${resolvedCwd}\n`)
       return { ok: false, reason: 'not-found' }
     }
-    const result = killPid(entry.pid)
+    const result = killPid(entry.pid, killFn)
     unregisterInstance(resolvedCwd)
     if (result === 'killed') {
       stderr.write(`[gsd] Stopped web server for ${resolvedCwd} (pid=${entry.pid})\n`)
@@ -275,11 +278,12 @@ export function stopWebMode(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile
   return stopLegacyPidFile(deps)
 }
 
-function stopLegacyPidFile(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile' | 'deletePidFile' | 'stderr'>): WebModeStopResult {
+function stopLegacyPidFile(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile' | 'deletePidFile' | 'stderr' | 'kill'>): WebModeStopResult {
   const stderr = deps.stderr ?? process.stderr
   const pidFilePath = deps.pidFilePath ?? defaultWebPidFilePath
   const readPid = deps.readPidFile ?? readPidFile
   const deletePid = deps.deletePidFile ?? deletePidFile
+  const killFn = deps.kill ?? process.kill
 
   const pid = readPid(pidFilePath)
   if (pid === null) {
@@ -289,7 +293,7 @@ function stopLegacyPidFile(deps: Pick<WebModeDeps, 'pidFilePath' | 'readPidFile'
 
   stderr.write(`[gsd] Stopping web server (pid=${pid})…\n`)
 
-  const result = killPid(pid)
+  const result = killPid(pid, killFn)
   deletePid(pidFilePath)
   if (result === 'killed') {
     stderr.write(`[gsd] Web server stopped.\n`)

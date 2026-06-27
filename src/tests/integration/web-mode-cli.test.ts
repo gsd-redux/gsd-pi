@@ -255,21 +255,23 @@ test('stopWebMode kills process by PID and removes PID file', (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-web-stop-'))
   const pidFilePath = join(tmp, 'web-server.pid')
   let stderrOutput = ''
-  let killedPid: number | undefined
 
   t.after(() => { rmSync(tmp, { recursive: true, force: true }) });
 
   webMode.writePidFile(pidFilePath, 12345)
 
+  // Inject a kill mock that simulates ESRCH (process already gone) so the test
+  // never sends a real signal to an arbitrary PID on the host.
+  const esrchError = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
   const result = webMode.stopWebMode({
     pidFilePath,
     readPidFile: webMode.readPidFile,
     deletePidFile: webMode.deletePidFile,
     stderr: { write: (chunk: string) => { stderrOutput += chunk; return true } },
-    // Override process.kill to avoid killing a real process in tests
+    kill: (_pid: number, _signal: string | number) => { throw esrchError },
   })
 
-  // Since PID 12345 is almost certainly dead, stopWebMode should succeed by treating ESRCH as "already gone"
+  // ESRCH means the process is already gone — stopWebMode should treat this as success
   assert.equal(result.ok, true)
   assert.match(stderrOutput, /pid=12345/)
 })
