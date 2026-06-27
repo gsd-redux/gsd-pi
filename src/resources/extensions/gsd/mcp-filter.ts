@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -21,12 +21,50 @@ interface DiscoveredMcpServer {
   config: unknown;
 }
 
+interface JsonFileSignature {
+  exists: boolean;
+  mtimeMs?: number;
+  size?: number;
+}
+
+interface ProjectMcpDiscoveryCacheEntry {
+  signatures: JsonFileSignature[];
+  servers: DiscoveredMcpServer[];
+}
+
+const projectMcpDiscoveryCache = new Map<string, ProjectMcpDiscoveryCacheEntry>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function readJsonFile(path: string, ignoreParseErrors = false): unknown | undefined {
-  if (!existsSync(path)) return undefined;
+function getJsonFileSignature(path: string, ignoreAccessErrors = false): JsonFileSignature {
+  try {
+    const stats = statSync(path);
+    return { exists: true, mtimeMs: stats.mtimeMs, size: stats.size };
+  } catch (err) {
+    const code = isRecord(err) ? err.code : undefined;
+    if (code === "ENOENT" || code === "ENOTDIR" || ignoreAccessErrors) return { exists: false };
+    throw err;
+  }
+}
+
+function jsonFileSignaturesEqual(a: JsonFileSignature[], b: JsonFileSignature[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((signature, index) => {
+    const other = b[index];
+    return signature.exists === other.exists
+      && signature.mtimeMs === other.mtimeMs
+      && signature.size === other.size;
+  });
+}
+
+function readJsonFile(
+  path: string,
+  ignoreParseErrors = false,
+  signature = getJsonFileSignature(path, ignoreParseErrors),
+): unknown | undefined {
+  if (!signature.exists) return undefined;
   try {
     return JSON.parse(readFileSync(path, "utf-8")) as unknown;
   } catch (err) {
@@ -41,13 +79,23 @@ function collectServerEntries(servers: unknown): DiscoveredMcpServer[] {
 }
 
 export function discoverMcpServers(projectDir: string): DiscoveredMcpServer[] {
-  const mcpJsonPath = resolve(projectDir, ".mcp.json");
-  const settingsPath = resolve(projectDir, ".claude", "settings.json");
-  const localSettingsPath = resolve(projectDir, ".claude", "settings.local.json");
+  const resolvedProjectDir = resolve(projectDir);
+  const mcpJsonPath = resolve(resolvedProjectDir, ".mcp.json");
+  const settingsPath = resolve(resolvedProjectDir, ".claude", "settings.json");
+  const localSettingsPath = resolve(resolvedProjectDir, ".claude", "settings.local.json");
+  const signatures = [
+    getJsonFileSignature(mcpJsonPath),
+    getJsonFileSignature(settingsPath, true),
+    getJsonFileSignature(localSettingsPath, true),
+  ];
+  const cached = projectMcpDiscoveryCache.get(resolvedProjectDir);
+  if (cached && jsonFileSignaturesEqual(cached.signatures, signatures)) {
+    return [...cached.servers];
+  }
 
-  const mcpJson = readJsonFile(mcpJsonPath) as McpJsonFile | undefined;
-  const settings = readJsonFile(settingsPath, true) as ClaudeSettingsFile | undefined;
-  const localSettings = readJsonFile(localSettingsPath, true) as ClaudeSettingsFile | undefined;
+  const mcpJson = readJsonFile(mcpJsonPath, false, signatures[0]) as McpJsonFile | undefined;
+  const settings = readJsonFile(settingsPath, true, signatures[1]) as ClaudeSettingsFile | undefined;
+  const localSettings = readJsonFile(localSettingsPath, true, signatures[2]) as ClaudeSettingsFile | undefined;
 
   const seen = new Set<string>();
   const discovered: DiscoveredMcpServer[] = [];
@@ -61,7 +109,8 @@ export function discoverMcpServers(projectDir: string): DiscoveredMcpServer[] {
     seen.add(entry.name);
     discovered.push(entry);
   }
-  return discovered;
+  projectMcpDiscoveryCache.set(resolvedProjectDir, { signatures, servers: discovered });
+  return [...discovered];
 }
 
 function isWorkflowMcpServerConfig(config: unknown): boolean {

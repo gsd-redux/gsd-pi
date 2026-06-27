@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import fs, { mkdtempSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -106,6 +107,78 @@ describe("discoverMcpServerNames", () => {
       }),
     );
     assert.equal(discoverBrowserMcpServerName(dir), "browser-uat");
+  });
+
+  it("invalidates cached project MCP config when .mcp.json changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-filter-cache-test-"));
+    const configPath = join(dir, ".mcp.json");
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { "server-a": {} } }));
+    assert.deepEqual(discoverMcpServerNames(dir), ["server-a"]);
+
+    writeFileSync(configPath, JSON.stringify({ mcpServers: { "server-b": {} } }));
+    const later = new Date(Date.now() + 5_000);
+    utimesSync(configPath, later, later);
+
+    assert.deepEqual(discoverMcpServerNames(dir), ["server-b"]);
+  });
+
+  it("reuses parsed project MCP config across discovery helpers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-filter-cache-test-"));
+    const claudeDir = join(dir, ".claude");
+    const mcpJsonPath = join(dir, ".mcp.json");
+    const settingsPath = join(claudeDir, "settings.json");
+    const localSettingsPath = join(claudeDir, "settings.local.json");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      mcpJsonPath,
+      JSON.stringify({
+        mcpServers: {
+          "custom-workflow": {
+            command: "node",
+            args: ["custom-cli.js"],
+            env: { GSD_WORKFLOW_PROJECT_ROOT: dir },
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      settingsPath,
+      JSON.stringify({ mcpServers: { "browser-uat": { command: "gsd-browser", args: ["mcp"] } } }),
+    );
+    writeFileSync(
+      localSettingsPath,
+      JSON.stringify({ mcpServers: { "local-server": { command: "npx", args: ["local"] } } }),
+    );
+
+    const trackedPaths = new Set([mcpJsonPath, settingsPath, localSettingsPath]);
+    const readCounts = new Map<string, number>();
+    const originalReadFileSync = fs.readFileSync;
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      const path = args[0];
+      if (typeof path === "string" && trackedPaths.has(path)) {
+        readCounts.set(path, (readCounts.get(path) ?? 0) + 1);
+      }
+      return originalReadFileSync(...args);
+    }) as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+
+    try {
+      const mcpFilter = await import(`../mcp-filter.ts?cache-test=${Date.now()}`);
+      const discovered = mcpFilter.discoverMcpServerNames(dir);
+      const workflowName = mcpFilter.discoverWorkflowMcpServerName(dir);
+      const browserName = mcpFilter.discoverBrowserMcpServerName(dir);
+
+      assert.deepEqual(discovered.sort(), ["browser-uat", "custom-workflow", "local-server"]);
+      assert.equal(workflowName, "custom-workflow");
+      assert.equal(browserName, "browser-uat");
+      assert.deepEqual(
+        [mcpJsonPath, settingsPath, localSettingsPath].map((path) => readCounts.get(path) ?? 0),
+        [1, 1, 1],
+      );
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+      syncBuiltinESMExports();
+    }
   });
 });
 
