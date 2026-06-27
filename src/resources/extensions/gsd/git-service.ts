@@ -921,16 +921,19 @@ export class GitServiceImpl {
    *
    * Returns the commit message on success, or null if nothing to commit.
    * @param extraExclusions Additional paths to exclude from staging (e.g. [".gsd/"] for pre-switch commits).
+   * @param knownDirty Fresh caller-provided dirty status; when omitted, autoCommit probes the tree.
    */
   autoCommit(
     unitType: string,
     unitId: string,
     extraExclusions: readonly string[] = [],
     taskContext?: TaskCommitContext,
+    knownDirty?: boolean,
   ): string | null {
     // Quick check: is there anything dirty at all?
     // Native path uses libgit2 (single syscall), fallback spawns git.
-    if (!nativeHasChanges(this.basePath)) return null;
+    if (knownDirty === false) return null;
+    if (knownDirty !== true && !nativeHasChanges(this.basePath)) return null;
 
     const scoped = taskContext
       ? this.scopedStageTaskFiles(taskContext, extraExclusions)
@@ -1282,6 +1285,7 @@ function runPerRepositoryCommitAction(args: {
   unitId: string;
   taskContext?: TaskCommitContext;
   targetRepositories?: string[];
+  dirtyRepositories?: Record<string, boolean>;
 }): {
   commitMessages: Record<string, string>;
   commitErrors: Record<string, string>;
@@ -1313,6 +1317,7 @@ function runPerRepositoryCommitAction(args: {
           args.unitId,
           [],
           args.taskContext,
+          args.dirtyRepositories?.[repo.id],
         ) ?? "";
       if (message) {
         commitMessages[repo.id] = message;
@@ -1360,7 +1365,7 @@ export function runTurnGitAction(args: {
       };
     }
 
-    const repoCommitResult = runPerRepositoryCommitAction(args);
+    const repoCommitResult = runPerRepositoryCommitAction({ ...args, dirtyRepositories });
     if (Object.keys(repoCommitResult.commitErrors).length > 0) {
       return {
         action: args.action,
