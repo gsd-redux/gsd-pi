@@ -17,6 +17,7 @@ import {
   getAllMilestones,
   getMilestone,
   getMilestoneScopedArtifacts,
+  getSliceScopedArtifacts,
   getMilestoneSlices,
   getSliceTasks,
   getTask,
@@ -684,6 +685,44 @@ export async function renderMilestoneArtifactsFromDb(
   return wrote;
 }
 
+/**
+ * Slice-scoped artifacts (CONTEXT, RESEARCH, CONTINUE, etc.) must survive
+ * layout migration. PLAN is normally regenerated from task rows, but a real
+ * imported PLAN can still be replayed as a fallback; known recovery stubs are
+ * treated as missing.
+ */
+export async function renderSliceArtifactsFromDb(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+): Promise<boolean> {
+  const artifacts = getSliceScopedArtifacts(milestoneId, sliceId);
+  if (artifacts.length === 0) return false;
+
+  let wrote = false;
+  for (const artifact of artifacts) {
+    const artifactType = artifact.artifact_type.toUpperCase();
+    if (!artifact.full_content.trim()) continue;
+    if (artifactType === "PLAN" && isAutoRecoveryPlaceholderPlan(artifact.full_content)) continue;
+
+    const absPath = join(basePath, relSliceFile(basePath, milestoneId, sliceId, artifactType));
+    mkdirSync(dirname(absPath), { recursive: true });
+    const artifactPath = toArtifactPath(absPath, basePath);
+    await writeAndStore(absPath, artifactPath, artifact.full_content, {
+      artifact_type: artifactType,
+      milestone_id: milestoneId,
+      slice_id: sliceId,
+    }, basePath);
+    wrote = true;
+  }
+
+  return wrote;
+}
+
+function isAutoRecoveryPlaceholderPlan(content: string): boolean {
+  return /(?:^|\n)\s*#\s*BLOCKER\b/i.test(content) && /auto-mode recovery failed/i.test(content);
+}
+
 // ─── Plan Checkbox Rendering ──────────────────────────────────────────────
 
 /**
@@ -861,6 +900,18 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
     // Iterate slices
     const slices = getMilestoneSlices(milestone.id);
     for (const slice of slices) {
+      // Preserve slice-scoped artifacts imported from disk, including real PLAN
+      // fallback content when task rows cannot regenerate it.
+      try {
+        const ok = await renderSliceArtifactsFromDb(basePath, milestone.id, slice.id);
+        if (ok) result.rendered++;
+        else result.skipped++;
+      } catch (err) {
+        result.errors.push(
+          `slice artifacts ${milestone.id}/${slice.id}: ${(err as Error).message}`,
+        );
+      }
+
       // Render plan checkboxes
       try {
         const ok = await renderPlanCheckboxes(basePath, milestone.id, slice.id);

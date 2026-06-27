@@ -351,6 +351,15 @@ export function getMilestoneScopedArtifacts(milestoneId: string): ArtifactRow[] 
   return rows.map(rowToArtifact);
 }
 
+/** Slice-level artifacts (CONTEXT, RESEARCH, CONTINUE, etc.) from the artifacts table. */
+export function getSliceScopedArtifacts(milestoneId: string, sliceId: string): ArtifactRow[] {
+  if (!getDbOrNull()!) return [];
+  const rows = getDbOrNull()!.prepare(
+    "SELECT * FROM artifacts WHERE milestone_id = :mid AND slice_id = :sid AND task_id IS NULL ORDER BY path",
+  ).all({ ":mid": milestoneId, ":sid": sliceId });
+  return rows.map(rowToArtifact);
+}
+
 /** Fast milestone status check — avoids deserializing JSON planning fields. */
 export function getActiveMilestoneIdFromDb(): IdStatusSummary | null {
   if (!getDbOrNull()!) return null;

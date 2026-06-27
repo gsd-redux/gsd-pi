@@ -330,7 +330,7 @@ function importRequirements(gsdDir: string): number {
 
 /** Artifact suffixes to look for at each hierarchy level */
 const MILESTONE_SUFFIXES = ['ROADMAP', 'CONTEXT', 'RESEARCH', 'ASSESSMENT', 'SUMMARY', 'VALIDATION'];
-const SLICE_SUFFIXES = ['PLAN', 'SUMMARY', 'RESEARCH', 'CONTEXT', 'ASSESSMENT', 'UAT'];
+const SLICE_SUFFIXES = ['PLAN', 'SUMMARY', 'RESEARCH', 'CONTEXT', 'CONTEXT-DRAFT', 'ASSESSMENT', 'UAT', 'CONTINUE'];
 const TASK_SUFFIXES = ['PLAN', 'SUMMARY', 'CONTINUE', 'CONTEXT', 'RESEARCH'];
 
 /**
@@ -428,7 +428,7 @@ function importHierarchyArtifacts(gsdDir: string): number {
       .sort();
 
     for (const planFile of planFiles) {
-      const planMatch = planFile.match(/^\d+-(\d+)-(\w+)\.md$/i);
+      const planMatch = planFile.match(/^\d+-(\d+)-([A-Z0-9-]+)\.md$/i);
       if (!planMatch) continue;
       const planNum = parseInt(planMatch[1]!, 10);
       const sliceId = `S${String(planNum).padStart(2, '0')}`;
