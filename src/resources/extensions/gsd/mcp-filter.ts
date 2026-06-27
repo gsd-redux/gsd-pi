@@ -84,7 +84,7 @@ export function discoverMcpServers(projectDir: string): DiscoveredMcpServer[] {
   const settingsPath = resolve(resolvedProjectDir, ".claude", "settings.json");
   const localSettingsPath = resolve(resolvedProjectDir, ".claude", "settings.local.json");
   const signatures = [
-    getJsonFileSignature(mcpJsonPath),
+    getJsonFileSignature(mcpJsonPath, true),
     getJsonFileSignature(settingsPath, true),
     getJsonFileSignature(localSettingsPath, true),
   ];
