@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -1266,7 +1266,7 @@ describe('derive-state-db', async () => {
 
   test('derive-state-db: missing context resolves milestone directory once', async () => {
     const base = createFixtureBase();
-    const phaseDir = join(base, '.gsd', 'phases', '01-m001');
+    const phaseDir = join(realpathSync.native(base), '.gsd', 'phases', '01-m001');
     let phaseDirExistsChecks = 0;
     const mutableFs = fs as { existsSync: typeof fs.existsSync };
     const originalExistsSync = fs.existsSync;
