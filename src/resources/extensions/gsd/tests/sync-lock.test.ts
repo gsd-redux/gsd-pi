@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { acquireSyncLock, releaseSyncLock } from '../sync-lock.ts';
 
 function tempDir(): string {
@@ -148,6 +149,28 @@ test('sync-lock: EPERM from live owner PID prevents stale lock stealing', () => 
     assert.strictEqual(content.pid, fakePid, 'lock file should not be overwritten');
   } finally {
     process.kill = originalKill;
+    cleanupDir(base);
+  }
+});
+
+test('sync-lock: contended fresh lock fails fast without honoring long sync timeout', () => {
+  const base = tempDir();
+  fs.mkdirSync(path.join(base, '.gsd'), { recursive: true });
+  const lockPath = path.join(base, '.gsd', 'sync.lock');
+
+  try {
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 99999, acquired_at: new Date().toISOString() }));
+
+    const startedAt = performance.now();
+    const result = acquireSyncLock(base, 1_000);
+    const elapsedMs = performance.now() - startedAt;
+
+    assert.strictEqual(result.acquired, false, 'fresh lock should not be stolen');
+    assert.ok(
+      elapsedMs < 250,
+      `contended sync lock should fail fast instead of blocking for timeout; elapsed=${elapsedMs.toFixed(1)}ms`,
+    );
+  } finally {
     cleanupDir(base);
   }
 });

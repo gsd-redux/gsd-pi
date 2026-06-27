@@ -1,25 +1,16 @@
 // GSD Extension — Advisory Sync Lock
 // Prevents concurrent worktree syncs from colliding via a simple file lock.
 // Stale locks (mtime > 60s, owner PID confirmed dead) are overridden. Lock
-// acquisition waits up to 5 seconds then skips non-fatally.
+// acquisition skips non-fatally when a live lock is already held.
 
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const STALE_THRESHOLD_MS = 60_000; // 60 seconds
-const DEFAULT_TIMEOUT_MS = 5_000;  // 5 seconds
-const SPIN_INTERVAL_MS = 100;      // 100ms polling interval
-
-// SharedArrayBuffer for synchronous sleep via Atomics.wait
-const SLEEP_BUFFER = new SharedArrayBuffer(4);
-const SLEEP_VIEW = new Int32Array(SLEEP_BUFFER);
+const DEFAULT_TIMEOUT_MS = 0;      // fail fast; sync waits block the JS event loop
 
 function lockFilePath(basePath: string): string {
   return join(basePath, ".gsd", "sync.lock");
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(SLEEP_VIEW, 0, 0, ms);
 }
 
 /** True if the given PID is alive in the current process namespace. */
@@ -64,7 +55,7 @@ function tryCreateLockFile(lp: string, payload: string): boolean {
 
 /**
  * Acquire an advisory sync lock for the given basePath.
- * Returns { acquired: true } on success, { acquired: false } after timeout.
+ * Returns { acquired: true } on success, { acquired: false } when a live lock is held.
  *
  * Replaces a non-atomic `existsSync` + `atomicWriteSync` (write-temp+rename,
  * which is not exclusive-create) sequence that allowed two callers to both
@@ -75,13 +66,16 @@ function tryCreateLockFile(lp: string, payload: string): boolean {
  * before stealing — prevents a slow event-loop pause (>60s under heavy I/O)
  * from making a legitimately-held lock appear stale and get stolen.
  * (Issue #4980 M-concurrency-3)
+ *
+ * Contended live locks fail fast. A synchronous wait here would freeze timers,
+ * I/O, and UI work on Node's single JS thread. The timeout argument remains
+ * accepted for compatibility but is intentionally not used for sync waiting.
  */
 export function acquireSyncLock(
   basePath: string,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  _timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): { acquired: boolean } {
   const lp = lockFilePath(basePath);
-  const deadline = Date.now() + timeoutMs;
   const lockData = JSON.stringify(
     { pid: process.pid, acquired_at: new Date().toISOString() },
     null,
@@ -98,7 +92,7 @@ export function acquireSyncLock(
       /* unexpected — fall through to retry */
     }
 
-    // File exists. Decide whether to steal (stale + owner dead) or wait.
+    // File exists. Decide whether to steal (stale + owner dead) or skip.
     let canSteal = false;
     try {
       const stat = statSync(lp);
@@ -129,11 +123,8 @@ export function acquireSyncLock(
       continue;
     }
 
-    // Lock is held and not stale (or owner is alive) — wait or give up.
-    if (Date.now() >= deadline) {
-      return { acquired: false };
-    }
-    sleepSync(SPIN_INTERVAL_MS);
+    // Lock is held and not stale (or owner is alive) — skip non-fatally.
+    return { acquired: false };
   }
 }
 
