@@ -158,6 +158,12 @@ const laneLabelByMode: Record<string, string> = {
   triage: "triage",
 };
 
+const unitSpecificContextModeGuidanceUnits = new Set([
+  "run-uat",
+  "replan-slice",
+  "reassess-roadmap",
+]);
+
 test("Context Mode composer: every known eligible unit renders its configured lane and required tools", () => {
   for (const unitType of KNOWN_UNIT_TYPES) {
     const manifest = UNIT_MANIFESTS[unitType];
@@ -170,6 +176,13 @@ test("Context Mode composer: every known eligible unit renders its configured la
     assert.ok(out.startsWith("## Context Mode"), `${unitType} should render standalone Context Mode heading`);
     assert.match(out, new RegExp(`Lane: \\*\\*${laneLabelByMode[manifest.contextMode]} lane\\*\\*\\.`, "i"));
     const forbidden = getUnitToolSurfaceContract(unitType)?.forbiddenGsdTools ?? {};
+    if (unitSpecificContextModeGuidanceUnits.has(unitType)) {
+      // Unit-specific guidance replaces the lane default, so it must not
+      // advertise the exec tools that narrow contracts do not allow.
+      assert.doesNotMatch(out, /`gsd_exec`/, `${unitType} guidance must not steer to gsd_exec`);
+      assert.doesNotMatch(out, /`gsd_exec_search`/, `${unitType} guidance must not steer to gsd_exec_search`);
+      continue;
+    }
     if ("gsd_exec" in forbidden) {
       // Units that forbid gsd_exec (run-uat) have it stripped from their
       // Claude Code dispatch surface; guidance steering to it produces
@@ -193,6 +206,33 @@ test("Context Mode composer: run-uat guidance steers to gsd_uat_exec in both ren
   const standalone = composeContextModeInstructions("run-uat", { enabled: true, renderMode: "standalone" });
   assert.match(standalone, /`gsd_uat_exec`/);
   assert.doesNotMatch(standalone, /`gsd_exec`/);
+});
+
+test("Context Mode composer: narrow planning guidance steers only to contracted tools", () => {
+  const cases = [
+    {
+      unitType: "replan-slice",
+      expectedTools: ["gsd_replan_slice", "gsd_decision_save"],
+    },
+    {
+      unitType: "reassess-roadmap",
+      expectedTools: ["gsd_milestone_status", "gsd_reassess_roadmap"],
+    },
+  ];
+  const disallowedTools = ["gsd_exec", "gsd_exec_search", "gsd_resume"];
+
+  for (const { unitType, expectedTools } of cases) {
+    for (const renderMode of ["nested", "standalone"] as const) {
+      const out = composeContextModeInstructions(unitType, { enabled: true, renderMode });
+      assert.match(out, /planning lane/i, `${unitType} should still render planning lane guidance`);
+      for (const toolName of expectedTools) {
+        assert.ok(out.includes(`\`${toolName}\``), `${unitType} guidance should mention ${toolName}`);
+      }
+      for (const toolName of disallowedTools) {
+        assert.ok(!out.includes(`\`${toolName}\``), `${unitType} guidance must not mention ${toolName}`);
+      }
+    }
+  }
 });
 
 test("Context Mode composer: slice planning and research guidance tools pass unit contracts", () => {

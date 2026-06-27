@@ -135,12 +135,13 @@ const CONTEXT_MODE_GUIDANCE_BY_LANE: Record<Exclude<ContextModePolicy, "none">, 
     "Use `gsd_resume` for prior context, `gsd_exec_search` for saved evidence, and `gsd_exec` for noisy doc validation commands.",
 };
 
-// Per-unit overrides win over the lane default. run-uat's tool contract
-// forbids `gsd_exec`/`gsd_exec_search` (acceptance evidence must flow through
-// `gsd_uat_exec`) and Claude Code dispatch strips the tools entirely, so the
-// shared verification-lane guidance would steer the agent into calling an
-// unavailable tool.
+// Per-unit overrides win over the lane default for units whose tool contracts
+// are narrower than the shared lane guidance.
 const CONTEXT_MODE_GUIDANCE_BY_UNIT: Record<string, string> = {
+  "replan-slice":
+    "Use `gsd_replan_slice` to persist the revised slice plan, and `gsd_decision_save` for planning decisions that need durable rationale.",
+  "reassess-roadmap":
+    "Use `gsd_milestone_status` to inspect current milestone state, then `gsd_reassess_roadmap` to persist the roadmap reassessment.",
   "run-uat":
     "Use `gsd_uat_exec` for acceptance checks so evidence is typed as UAT-owned, and `gsd_resume` after compaction or resume.",
 };
