@@ -32,7 +32,7 @@ function buildSafeParentEnv(): NodeJS.ProcessEnv {
 }
 
 /** Env overlay that suppresses interactive git credential prompts and git-svn noise. */
-export const GIT_NO_PROMPT_ENV = {
+export const GIT_NO_PROMPT_ENV: NodeJS.ProcessEnv = {
   ...buildSafeParentEnv(),
   GIT_TERMINAL_PROMPT: "0",
   GIT_ASKPASS: "",
