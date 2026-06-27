@@ -366,6 +366,7 @@ interface FunctionSignature {
 
 interface CachedFunctionSignatures {
   mtimeMs: number;
+  size: number;
   signatures: FunctionSignature[];
 }
 
@@ -428,16 +429,18 @@ function getCachedFunctionSignatures(
   absolutePath: string,
   fileName: string
 ): FunctionSignature[] {
-  const mtimeMs = statSync(absolutePath).mtimeMs;
+  const stat = statSync(absolutePath);
+  const mtimeMs = stat.mtimeMs;
+  const size = stat.size;
   const cached = cache.get(absolutePath);
 
-  if (cached && cached.mtimeMs === mtimeMs) {
+  if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
     return cached.signatures.map((sig) => ({ ...sig, file: fileName }));
   }
 
   const source = readFileSync(absolutePath, "utf-8");
   const signatures = extractFunctionSignatures(source, fileName);
-  cache.set(absolutePath, { mtimeMs, signatures });
+  cache.set(absolutePath, { mtimeMs, size, signatures });
   return signatures;
 }
 
