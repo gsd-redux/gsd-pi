@@ -1288,8 +1288,8 @@ describe('derive-state-db', async () => {
       assert.equal(dbState.activeMilestone?.id, 'M001', 'single-resolve: queued milestone becomes active');
       assert.equal(
         phaseDirExistsChecks,
-        1,
-        'single-resolve: absent CONTEXT/CONTEXT-DRAFT should resolve the milestone directory once',
+        3,
+        'single-resolve: one directory resolve plus two artifact probes re-check the milestone directory via resolveFile',
       );
 
       closeDatabase();
