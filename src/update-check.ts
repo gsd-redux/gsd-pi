@@ -249,7 +249,15 @@ export async function checkForUpdates(options: UpdateCheckOptions = {}): Promise
   // Check cache — skip network if checked recently
   const cache = readUpdateCache(cachePath, packageName)
   if (cache && Date.now() - cache.lastCheck < checkIntervalMs) {
-    const currentVersion = options.currentVersion
+    // Resolve current version via cheap means (env var / installed package.json)
+    // even when the caller did not pass options.currentVersion, so that a cached
+    // "update available" result still produces a banner on subsequent startups
+    // within the 24h window.  For gsd-browser, skip this fallback to avoid a
+    // synchronous PATH binary spawn in the fast-path; the PATH version is only
+    // resolved when the cache is stale and the check runs asynchronously.
+    const currentVersion =
+      options.currentVersion ??
+      (packageName !== GSD_BROWSER_PACKAGE_NAME ? defaultCurrentVersion(packageName) : null)
     if (currentVersion && compareSemver(cache.latestVersion, currentVersion) > 0) {
       onUpdate(currentVersion, cache.latestVersion, packageName)
     }

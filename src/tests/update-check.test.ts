@@ -387,6 +387,56 @@ test('checkForUpdates uses cache and skips fetch when checked recently', async (
   assert.equal(reportedLatest, '10.0.0')
 })
 
+test('checkForUpdates shows cached update banner even without explicit currentVersion (gsd-pi)', async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-update-'))
+  const cachePath = join(tmp, '.update-check')
+  const originalVersion = process.env.GSD_VERSION
+  t.after(() => {
+    if (originalVersion === undefined) {
+      delete process.env.GSD_VERSION
+    } else {
+      process.env.GSD_VERSION = originalVersion
+    }
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  process.env.GSD_VERSION = '1.0.0'
+  writeUpdateCache({ lastCheck: Date.now(), latestVersion: '2.0.0' }, cachePath)
+
+  let reportedCurrent = ''
+  let reportedLatest = ''
+
+  // Intentionally omit currentVersion — simulates the cli.ts call: checkForUpdates().catch(...)
+  await checkForUpdates({
+    cachePath,
+    checkIntervalMs: 60 * 60 * 1000,
+    onUpdate: (current, latest) => {
+      reportedCurrent = current
+      reportedLatest = latest
+    },
+  })
+
+  assert.equal(reportedCurrent, '1.0.0', 'should resolve current version from GSD_VERSION env var')
+  assert.equal(reportedLatest, '2.0.0', 'should report the cached latest version')
+})
+
+test('checkForGsdBrowserUpdates does not show banner from cache when currentVersion is absent (no spawn)', async (t) => {
+  const { cachePath, spawnCountPath } = installCountingGsdBrowserShim(t)
+  writeUpdateCache({ lastCheck: Date.now(), latestVersion: '9.9.9' }, cachePath, GSD_BROWSER_PACKAGE_NAME)
+
+  let bannerFired = false
+
+  await checkForGsdBrowserUpdates({
+    cachePath,
+    checkIntervalMs: 60 * 60 * 1000,
+    fetchTimeoutMs: 1,
+    onUpdate: () => { bannerFired = true },
+  })
+
+  assert.equal(readFileSync(spawnCountPath, 'utf-8'), '0', 'PATH binary must not be spawned in the fresh-cache fast-path')
+  assert.equal(bannerFired, false, 'banner must not fire when gsd-browser currentVersion is absent — PATH spawn is deferred')
+})
+
 test('checkForUpdates ignores fresh legacy gsd-pi cache and fetches scoped package version', async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), 'gsd-update-'))
   const cachePath = join(tmp, '.update-check')
