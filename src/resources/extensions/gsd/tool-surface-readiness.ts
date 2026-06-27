@@ -1,10 +1,18 @@
 // Project/App: gsd-pi
 // File Purpose: Tool Contract module's runtime face — verify the live SDK tool surface covers a Unit's required workflow tools.
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+import { buildHttpTransportOpts } from "../mcp-client/auth.js";
 import {
+  buildMcpChildEnv,
   collectMcpEnvWarnings,
   detectTransport,
-  testMcpServerConnection,
+  getMcpServerConfig,
+  GSD_MCP_PROBE_ENV,
+  resolveMcpString,
   type ManagedMcpServerConfig,
 } from "../mcp-client/manager.js";
 import { mcpToolMatchesBaseName } from "./mcp-tool-name.js";
@@ -175,33 +183,137 @@ export async function awaitWorkflowMcpToolRegistration(input: {
   const required = getRequiredWorkflowToolsForUnit(unitType).filter(isWorkflowToolSurfaceName);
   if (required.length === 0) return null;
 
-  const probe = input.probe ?? (async (serverName, root, workflowServerConfig) => {
-    const inlineConfig = normalizeInlineWorkflowMcpServerConfig(serverName, workflowServerConfig);
-    const result = await testMcpServerConnection(inlineConfig ?? serverName, {
-      projectDir: resolveWorkflowMcpProjectRoot(root),
-      timeoutMs: WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+  let reusableClient: Client | undefined;
+  let reusableTransport: StdioClientTransport | StreamableHTTPClientTransport | undefined;
+  let reusableServerConfig: ManagedMcpServerConfig | undefined;
+  let readReusableStderr: (() => string) | undefined;
+
+  const closeReusableConnection = async (): Promise<void> => {
+    if (reusableTransport) {
+      try {
+        await reusableTransport.close();
+      } catch {
+        // Best-effort cleanup after preflight connection probing.
+      }
+    }
+    if (reusableClient) {
+      try {
+        await reusableClient.close();
+      } catch {
+        // Best-effort cleanup after preflight connection probing.
+      }
+    }
+    reusableClient = undefined;
+    reusableTransport = undefined;
+    readReusableStderr = undefined;
+  };
+
+  const formatProbeError = (error: unknown): string => {
+    const message = error instanceof Error ? error.message : String(error);
+    const stderr = readReusableStderr?.() ?? "";
+    return stderr ? `${message}\nStderr:\n${stderr}` : message;
+  };
+
+  const captureReusableStderr = (transport: StdioClientTransport): (() => string) => {
+    const maxBytes = 4096;
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    transport.stderr?.on("data", (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      totalBytes += buffer.byteLength;
+      chunks.push(buffer);
+      while (chunks.reduce((sum, entry) => sum + entry.byteLength, 0) > maxBytes) {
+        chunks.shift();
+      }
     });
-    return { ok: result.ok, tools: result.tools, error: result.error };
+
+    return () => {
+      const captured = Buffer.concat(chunks).toString("utf-8").trim();
+      if (!captured) return "";
+      return totalBytes > maxBytes ? `[stderr truncated to last ${maxBytes} bytes]\n${captured}` : captured;
+    };
+  };
+
+  const probe = input.probe ?? (async (serverName, root, workflowServerConfig) => {
+    reusableServerConfig ??=
+      normalizeInlineWorkflowMcpServerConfig(serverName, workflowServerConfig) ??
+      getMcpServerConfig(serverName, {
+        projectDir: resolveWorkflowMcpProjectRoot(root),
+        includeDisabled: true,
+      });
+
+    const config = reusableServerConfig;
+    if (!config) return { ok: false, tools: [], error: "Unknown MCP server." };
+    if (config.disabled) return { ok: false, tools: [], error: "MCP server is disabled." };
+    if (config.transport === "unsupported") return { ok: false, tools: [], error: "MCP server transport is unsupported." };
+    if (config.envWarnings.length > 0) {
+      return { ok: false, tools: [], error: "MCP server config references unset environment variables." };
+    }
+
+    try {
+      if (!reusableClient) {
+        reusableClient = new Client({ name: "gsd", version: "1.0.0" });
+        let transport: StdioClientTransport | StreamableHTTPClientTransport;
+        if (config.transport === "stdio") {
+          transport = new StdioClientTransport({
+            command: config.command ?? "",
+            args: config.args,
+            env: {
+              ...buildMcpChildEnv(config.env),
+              [GSD_MCP_PROBE_ENV]: "1",
+            },
+            cwd: config.cwd,
+            stderr: "pipe",
+          });
+          readReusableStderr = captureReusableStderr(transport);
+        } else {
+          const resolvedUrl = resolveMcpString(config.url ?? "");
+          transport = new StreamableHTTPClientTransport(
+            new URL(resolvedUrl),
+            buildHttpTransportOpts({ headers: config.headers, oauth: config.oauth }),
+          );
+        }
+        reusableTransport = transport;
+        await reusableClient.connect(transport, {
+          signal: input.signal,
+          timeout: WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+        });
+      }
+
+      const result = await reusableClient.listTools(undefined, {
+        signal: input.signal,
+        timeout: WORKFLOW_MCP_PROBE_TIMEOUT_MS,
+      });
+      return { ok: true, tools: (result.tools ?? []).map((tool) => tool.name) };
+    } catch (error) {
+      const formatted = formatProbeError(error);
+      await closeReusableConnection();
+      return { ok: false, tools: [], error: formatted };
+    }
   });
 
   const deadline = Date.now() + (input.timeoutMs ?? resolveWorkflowMcpPreflightTimeoutMs(unitType));
   const pollMs = input.pollMs ?? DEFAULT_WORKFLOW_MCP_PREFLIGHT_POLL_MS;
   let lastProbeError: string | undefined;
 
-  while (Date.now() < deadline) {
-    throwIfAborted(input.signal);
-    const result = await probe(workflowServerName, projectRoot, input.workflowServerConfig).catch((err: unknown) => {
-      if (input.signal?.aborted) throw err;
-      lastProbeError = err instanceof Error ? err.message : String(err);
-      return undefined;
-    });
-    throwIfAborted(input.signal);
-    if (result) lastProbeError = result.error;
-    if (result?.ok && probeCoversRequiredWorkflowTools(result.tools, required)) {
-      recordWorkflowMcpProbe(projectRoot, workflowServerName, result.tools);
-      return null;
+  try {
+    while (Date.now() < deadline) {
+      throwIfAborted(input.signal);
+      const result = await probe(workflowServerName, projectRoot, input.workflowServerConfig).catch((err: unknown) => {
+        if (input.signal?.aborted) throw err;
+        lastProbeError = err instanceof Error ? err.message : String(err);
+        return undefined;
+      });
+      throwIfAborted(input.signal);
+      if (result) lastProbeError = result.error;
+      if (result?.ok && probeCoversRequiredWorkflowTools(result.tools, required)) {
+        recordWorkflowMcpProbe(projectRoot, workflowServerName, result.tools);
+        return null;
+      }
+      await sleep(pollMs, input.signal);
     }
-    await sleep(pollMs, input.signal);
+  } finally {
+    await closeReusableConnection();
   }
 
   const probeError = lastProbeError ? `; last probe error: ${lastProbeError}` : "";

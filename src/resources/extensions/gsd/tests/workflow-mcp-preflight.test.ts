@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -45,6 +45,47 @@ test("preflight uses inline workflow MCP config when no project config is persis
     });
 
     assert.equal(error, null);
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("preflight reuses one inline stdio MCP child while polling incomplete tool registration", async () => {
+  clearWorkflowMcpProbeCache();
+  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), "workflow-mcp-reuse-preflight-")));
+  try {
+    const require = createRequire(import.meta.url);
+    const mcpModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/mcp.js")).href;
+    const stdioModuleUrl = pathToFileURL(require.resolve("@modelcontextprotocol/sdk/server/stdio.js")).href;
+    const spawnCountPath = join(projectRoot, "spawn-count.txt");
+    const serverPath = join(projectRoot, "incomplete-workflow-mcp-server.mjs");
+    writeFileSync(
+      serverPath,
+      [
+        'const { appendFileSync } = await import("node:fs");',
+        `appendFileSync(${JSON.stringify(spawnCountPath)}, "spawn\\n");`,
+        `const { McpServer } = await import(${JSON.stringify(mcpModuleUrl)});`,
+        `const { StdioServerTransport } = await import(${JSON.stringify(stdioModuleUrl)});`,
+        'const server = new McpServer({ name: "fake", version: "1.0.0" }, { capabilities: { tools: {} } });',
+        'server.tool("gsd_uat_result_save", "Save UAT result", {}, async () => ({ content: [{ type: "text", text: "ok" }] }));',
+        'await server.connect(new StdioServerTransport());',
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const error = await awaitWorkflowMcpToolRegistration({
+      unitType: "run-uat",
+      workflowServerName: SERVER,
+      projectRoot,
+      timeoutMs: 1_000,
+      pollMs: 10,
+      workflowServerConfig: { command: process.execPath, args: [serverPath] },
+    });
+
+    assert.ok(error);
+    assert.match(error, /did not register required tools before session start/);
+    const spawnCount = readFileSync(spawnCountPath, "utf-8").trim().split("\n").filter(Boolean).length;
+    assert.equal(spawnCount, 1);
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }
