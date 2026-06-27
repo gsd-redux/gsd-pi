@@ -398,7 +398,11 @@ function modelLabel(ctx: ExtensionContext): string {
 
 function isFatalManualGuidedTerminalFailure(lastMsg: unknown): boolean {
   if (!isObjectRecord(lastMsg) || !("stopReason" in lastMsg)) return false;
-  if (lastMsg.stopReason === "error") return true;
+  if (lastMsg.stopReason === "error") {
+    const rawErrorMsg = ("errorMessage" in lastMsg && lastMsg.errorMessage) ? String(lastMsg.errorMessage) : "";
+    if (isUserInitiatedAbortMessage(rawErrorMsg)) return false;
+    return true;
+  }
   if (lastMsg.stopReason !== "aborted") return false;
 
   const content = "content" in lastMsg ? lastMsg.content : undefined;

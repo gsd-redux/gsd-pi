@@ -729,6 +729,60 @@ test("manual guided discuss provider error records warning and activity marker (
   }
 });
 
+test("manual guided discuss user-cancel is not treated as a provider error (#944)", async () => {
+  const originalCwd = process.cwd();
+  const base = mkdtempSync(join(tmpdir(), "gsd-manual-discuss-cancel-"));
+  const guidedBase = join(base, "slice-work");
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  try {
+    autoSession.reset();
+    mkdirSync(join(base, ".git"), { recursive: true });
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    mkdirSync(guidedBase, { recursive: true });
+    process.chdir(base);
+    initNotificationStore(base);
+
+    setGuidedUnitContext(guidedBase, "discuss-slice");
+
+    const ctx = {
+      model: { provider: "anthropic", id: "claude-opus-4" },
+      modelRegistry: { getAvailable: () => [] },
+      ui: {
+        notify(message: string, level?: "info" | "warning" | "error" | "success") {
+          notifications.push({ message, level });
+        },
+      },
+    } as any;
+    installNotifyInterceptor(ctx);
+
+    const pi = { sendMessage: () => {} } as any;
+
+    await handleAgentEnd(pi, {
+      messages: [{
+        role: "assistant",
+        stopReason: "error",
+        errorMessage: "Request aborted by user",
+        content: [],
+      }],
+    } as any, ctx);
+
+    assert.deepEqual(notifications, [], "user-cancel stopReason=error must not emit a provider-error warning");
+    assert.equal(getGuidedUnitContext(guidedBase), null, "context must be cleared even for user-cancel");
+
+    // No activity directory should have been created
+    let activityExists = false;
+    try { readdirSync(join(base, ".gsd", "activity")); activityExists = true; } catch { /* expected */ }
+    assert.equal(activityExists, false, "user-cancel must not write an activity error marker");
+  } finally {
+    clearGuidedUnitContext();
+    _resetNotificationStore();
+    autoSession.reset();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 // ── resumeAutoAfterProviderDelay ────────────────────────────────────────────
 
 test("resumeAutoAfterProviderDelay restarts paused auto-mode from the recorded base path", async () => {
