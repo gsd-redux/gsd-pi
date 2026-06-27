@@ -13,6 +13,7 @@ import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { saveFile } from "./files.js";
 import {
+  clearGSDPreferencesCache,
   getGlobalGSDPreferencesPath,
   loadEffectiveGSDPreferences,
   loadGlobalGSDPreferences,
@@ -153,6 +154,7 @@ async function writeGlobalServiceTier(
   }
 
   await saveFile(path, `---\n${frontmatter}---${body}`);
+  clearGSDPreferencesCache();
   await ctx.waitForIdle();
   await ctx.reload();
 }

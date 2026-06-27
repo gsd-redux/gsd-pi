@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { atomicWriteSync } from "./atomic-write.js";
-import { getProjectGSDPreferencesPath } from "./preferences.js";
+import { clearGSDPreferencesCache, getProjectGSDPreferencesPath } from "./preferences.js";
 import { logWarning } from "./workflow-logger.js";
 import {
   researchDecisionPath,
@@ -95,6 +95,7 @@ function writeProjectPreferencesParts(
     : `---\n${yamlBlock}\n---\n`;
 
   atomicWriteSync(path, newContent, "utf-8");
+  clearGSDPreferencesCache();
 }
 
 function applyDeepWorkflowPreferenceDefaults(frontmatter: Record<string, unknown>): void {

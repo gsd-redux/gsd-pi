@@ -10,7 +10,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -24,6 +24,7 @@ import {
   loadProjectGSDPreferences,
   parsePreferencesMarkdown,
   renderPreferencesForSystemPrompt,
+  clearGSDPreferencesCache,
   _resetParseWarningFlag,
 } from "../preferences.ts";
 import { collectPreferenceDiagnostics, formatPreferenceDiagnostic } from "../preferences-diagnostics.ts";
@@ -444,6 +445,51 @@ test("loadEffectiveGSDPreferences preserves disabled_model_providers across merg
     rmSync(tempProject, { recursive: true, force: true });
     rmSync(tempGsdHome, { recursive: true, force: true });
   }
+});
+
+test("loadEffectiveGSDPreferences caches unchanged files until mtime changes", (t) => {
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-prefs-cache-project-"));
+  const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-prefs-cache-home-"));
+
+  t.after(() => {
+    clearGSDPreferencesCache();
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempGsdHome, { recursive: true, force: true });
+  });
+
+  mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+  process.env.GSD_HOME = tempGsdHome;
+  process.chdir(tempProject);
+  clearGSDPreferencesCache();
+
+  const globalPrefsPath = join(tempGsdHome, "PREFERENCES.md");
+  const fixedMtime = new Date("2025-01-01T00:00:00.000Z");
+  const changedMtime = new Date("2025-01-01T00:00:01.000Z");
+
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nlanguage: Spanish\n---\n", "utf-8");
+  utimesSync(globalPrefsPath, fixedMtime, fixedMtime);
+
+  const first = loadEffectiveGSDPreferences();
+  assert.notEqual(first, null);
+  assert.equal(first!.preferences.language, "Spanish");
+
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nlanguage: English\n---\n", "utf-8");
+  utimesSync(globalPrefsPath, fixedMtime, fixedMtime);
+
+  const cached = loadEffectiveGSDPreferences();
+  assert.notEqual(cached, null);
+  assert.equal(cached!.preferences.language, "Spanish");
+
+  utimesSync(globalPrefsPath, changedMtime, changedMtime);
+
+  const reloaded = loadEffectiveGSDPreferences();
+  assert.notEqual(reloaded, null);
+  assert.equal(reloaded!.preferences.language, "English");
 });
 
 // ── Wizard fields ────────────────────────────────────────────────────────────

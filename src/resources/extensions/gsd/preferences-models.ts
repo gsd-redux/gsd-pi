@@ -25,7 +25,7 @@ import type {
   ResolvedModelConfig,
   AutoSupervisorConfig,
 } from "./preferences-types.js";
-import { loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
+import { clearGSDPreferencesCache, loadEffectiveGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { getUnitPhaseChain } from "./unit-registry.js";
 
 // Re-export types so existing consumers of ./preferences-models.js keep working
@@ -405,6 +405,7 @@ export function updatePreferencesModels(models: GSDModelConfigV2): void {
   }
 
   writeFileSync(prefsPath, content, "utf-8");
+  clearGSDPreferencesCache();
 }
 
 /**

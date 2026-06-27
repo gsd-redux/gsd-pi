@@ -19,6 +19,7 @@ import {
   loadEffectiveGSDPreferences,
   normalizePreferencesShape,
   resolveAllSkillReferences,
+  clearGSDPreferencesCache,
 } from "./preferences.js";
 import { loadFile, saveFile, splitFrontmatter, parseFrontmatterMap } from "./files.js";
 import { runClaudeImportFlow } from "./claude-import.js";
@@ -298,6 +299,7 @@ export async function handleImportClaude(ctx: ExtensionCommandContext, scope: "g
       if (preserved) body = preserved;
     }
     await saveFile(path, `---\n${frontmatter}---${body}`);
+    clearGSDPreferencesCache();
   };
 
   await runClaudeImportFlow(ctx, scope, readPrefs, writePrefs);
@@ -322,6 +324,7 @@ export async function handlePrefsMode(ctx: ExtensionCommandContext, scope: "glob
 
   const content = `---\n${frontmatter}---${body}`;
   await saveFile(path, content);
+  clearGSDPreferencesCache();
   await ctx.waitForIdle();
   await ctx.reload();
   ctx.ui.notify(`Saved ${scope} preferences to ${path}`, "info");
@@ -1677,6 +1680,7 @@ export async function writePreferencesFile(
 
   const content = `---\n${frontmatter}---${body}`;
   await saveFile(path, content);
+  clearGSDPreferencesCache();
 
   if (ctx) {
     // Per-phase model prefs must beat an earlier /gsd model session pin.
@@ -1810,6 +1814,7 @@ export async function ensurePreferencesFile(
       return;
     }
     await saveFile(path, template);
+    clearGSDPreferencesCache();
     ctx.ui.notify(`Created ${scope} GSD skill preferences at ${path}`, "info");
   } else {
     ctx.ui.notify(`Using existing ${scope} GSD skill preferences at ${path}`, "info");
@@ -1866,6 +1871,7 @@ export async function handleLanguage(args: string, ctx: ExtensionCommandContext)
   const body = extractBodyAfterFrontmatter(rawContent)
     ?? "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
   await saveFile(path, `---\n${frontmatter}---${body}`);
+  clearGSDPreferencesCache();
   await ctx.waitForIdle();
   await ctx.reload();
 }

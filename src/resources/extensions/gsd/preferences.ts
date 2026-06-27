@@ -10,7 +10,7 @@
  * statements continue to work without modification.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -267,32 +267,94 @@ export function normalizePreferencesShape(
 }
 // ─── Loading ────────────────────────────────────────────────────────────────
 
-export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {
-  return loadFirstUsablePreferencesFile([
+const EFFECTIVE_PREFERENCES_CACHE_MAX = 64;
+const effectivePreferencesCache = new Map<string, LoadedGSDPreferences | null>();
+
+export function clearGSDPreferencesCache(): void {
+  effectivePreferencesCache.clear();
+}
+
+function globalPreferencesCandidatePaths(): string[] {
+  return [
     globalPreferencesPath(),
     legacyGlobalPreferencesPathLowercase(),
     legacyGlobalPreferencesPath(),
-  ], "global");
+  ];
+}
+
+function projectPreferencesCandidatePaths(basePath?: string): string[] {
+  return [
+    projectPreferencesPath(basePath),
+    legacyProjectPreferencesPathLowercase(basePath),
+  ];
+}
+
+function preferencesFileSignature(path: string): string {
+  try {
+    const stats = statSync(path);
+    return `${path}:${stats.size}:${stats.mtimeMs}`;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "unknown";
+    return `${path}:missing:${code}`;
+  }
+}
+
+function effectivePreferencesCacheKey(
+  basePath?: string,
+  opts?: { availableModelIds?: string[]; preferredModelId?: string },
+): string {
+  return JSON.stringify({
+    basePath: basePath ?? null,
+    global: globalPreferencesCandidatePaths().map(preferencesFileSignature),
+    project: projectPreferencesCandidatePaths(basePath).map(preferencesFileSignature),
+    availableModelIds: opts?.availableModelIds ?? null,
+    preferredModelId: opts?.preferredModelId ?? null,
+  });
+}
+
+function cloneLoadedPreferences(
+  loaded: LoadedGSDPreferences | null,
+): LoadedGSDPreferences | null {
+  return loaded ? structuredClone(loaded) : null;
+}
+
+function cacheEffectivePreferences(
+  key: string,
+  loaded: LoadedGSDPreferences | null,
+): void {
+  if (!effectivePreferencesCache.has(key) && effectivePreferencesCache.size >= EFFECTIVE_PREFERENCES_CACHE_MAX) {
+    effectivePreferencesCache.clear();
+  }
+  effectivePreferencesCache.set(key, cloneLoadedPreferences(loaded));
+}
+
+export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {
+  return loadFirstUsablePreferencesFile(globalPreferencesCandidatePaths(), "global");
 }
 
 export function loadProjectGSDPreferences(basePath?: string): LoadedGSDPreferences | null {
-  return loadFirstUsablePreferencesFile([
-    projectPreferencesPath(basePath),
-    legacyProjectPreferencesPathLowercase(basePath),
-  ], "project");
+  return loadFirstUsablePreferencesFile(projectPreferencesCandidatePaths(basePath), "project");
 }
 
 export function loadEffectiveGSDPreferences(
   basePath?: string,
   opts?: { availableModelIds?: string[]; preferredModelId?: string },
 ): LoadedGSDPreferences | null {
+  const cacheKey = effectivePreferencesCacheKey(basePath, opts);
+  if (effectivePreferencesCache.has(cacheKey)) {
+    return cloneLoadedPreferences(effectivePreferencesCache.get(cacheKey)!);
+  }
+
   const globalPreferences = loadGlobalGSDPreferences();
   const projectPreferences = loadProjectGSDPreferences(basePath);
   const effectiveGlobalPreferences = globalPreferences?.ignored ? null : globalPreferences;
   const effectiveProjectPreferences = projectPreferences?.ignored ? null : projectPreferences;
   const projectHasPlanningDepth = effectiveProjectPreferences?.preferences.planning_depth !== undefined;
 
-  if (!effectiveGlobalPreferences && !effectiveProjectPreferences) return null;
+  if (!effectiveGlobalPreferences && !effectiveProjectPreferences) {
+    cacheEffectivePreferences(cacheKey, null);
+    return null;
+  }
 
   let result: LoadedGSDPreferences;
   if (!effectiveGlobalPreferences) {
@@ -348,6 +410,7 @@ export function loadEffectiveGSDPreferences(
 
   result = stripInheritedPlanningDepth(result, projectHasPlanningDepth);
 
+  cacheEffectivePreferences(cacheKey, result);
   return result;
 }
 

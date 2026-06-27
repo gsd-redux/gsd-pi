@@ -32,7 +32,7 @@ import { isDbAvailable, getAllMilestones, getMilestoneSlices, getSliceTasks } fr
 import { isClosedStatus } from "./status-guards.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
-import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
+import { clearGSDPreferencesCache, loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { showNextAction } from "../shared/tui.js";
 import {
   isInteractiveCommandContext,
@@ -271,6 +271,7 @@ async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: bo
   }
 
   writeFileSync(prefsPath, `---\n${frontmatter}---${body}`, "utf-8");
+  clearGSDPreferencesCache();
 }
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { saveFile } from "./files.js";
 import {
+  clearGSDPreferencesCache,
   getProjectGSDPreferencesPath,
   loadEffectiveGSDPreferences,
   loadProjectGSDPreferences,
@@ -36,6 +37,7 @@ export function autoEnableCmuxPreferences(): boolean {
   if (preserved) body = preserved;
 
   writeFileSync(path, `---\n${frontmatter}---${body}`, "utf-8");
+  clearGSDPreferencesCache();
   return true;
 }
 
@@ -68,6 +70,7 @@ async function writeProjectCmuxPreferences(
   }
 
   await saveFile(path, `---\n${frontmatter}---${body}`);
+  clearGSDPreferencesCache();
   await ctx.waitForIdle();
   await ctx.reload();
 }
