@@ -310,40 +310,29 @@ function _atomicWrite(basePath: string, content: string): void {
 /**
  * Acquire an exclusive lockfile for rewrite operations.
  * Uses O_CREAT|O_EXCL for atomic creation — if the file exists, another
- * process holds the lock. Retries briefly, then proceeds anyway (best-effort)
- * to avoid deadlocking the UI on a stale lock.
+ * process holds the lock. Clears stale locks, then proceeds anyway
+ * (best-effort) to avoid blocking the UI.
  */
 function _withLock<T>(basePath: string, fn: () => T): T {
   const lockPath = join(basePath, ".gsd", LOCKFILE);
   let fd: number | null = null;
-  const maxAttempts = 5;
-  const retryMs = 20;
 
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      mkdirSync(join(basePath, ".gsd"), { recursive: true });
-      fd = openSync(lockPath, "wx");
-      break;
-    } catch (err: any) {
-      if (err?.code === "EEXIST") {
-        // Check if lock is stale (older than 5s)
-        try {
-          const stat = readFileSync(lockPath, "utf-8");
-          const lockTime = parseInt(stat, 10);
-          if (Date.now() - lockTime > 5000) {
-            try { unlinkSync(lockPath); } catch { /* race ok */ }
-            continue;
-          }
-        } catch { /* can't read lock, retry */ }
-
-        // Wait and retry
-        const start = Date.now();
-        while (Date.now() - start < retryMs) { /* spin */ }
-        continue;
-      }
-      // Other error — proceed without lock
-      break;
+  try {
+    mkdirSync(join(basePath, ".gsd"), { recursive: true });
+    fd = openSync(lockPath, "wx");
+  } catch (err: any) {
+    if (err?.code === "EEXIST") {
+      // Check if lock is stale (older than 5s)
+      try {
+        const stat = readFileSync(lockPath, "utf-8");
+        const lockTime = parseInt(stat, 10);
+        if (Date.now() - lockTime > 5000) {
+          try { unlinkSync(lockPath); } catch { /* race ok */ }
+          try { fd = openSync(lockPath, "wx"); } catch { /* race ok */ }
+        }
+      } catch { /* proceed without lock */ }
     }
+    // Any lock acquisition error leaves fd null; proceed without lock.
   }
 
   // Best-effort: mutation runs regardless of lock status (idempotent overwrites).

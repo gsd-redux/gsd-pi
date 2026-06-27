@@ -306,6 +306,29 @@ describe("notification-store", () => {
     rmSync(lockPath, { force: true });
   });
 
+  test("markAllRead does not busy-spin when a foreign lock is held", (t) => {
+    initNotificationStore(tmp);
+    appendNotification("msg1", "info");
+
+    const lockPath = join(tmp, ".gsd", "notifications.lock");
+    writeFileSync(lockPath, "1000", "utf-8");
+
+    let now = 1001;
+    let calls = 0;
+    t.mock.method(Date, "now", () => {
+      calls++;
+      return now++;
+    });
+
+    markAllRead();
+
+    assert.ok(calls <= 2, `expected no retry spin, got ${calls} Date.now calls`);
+    assert.ok(existsSync(lockPath), "foreign lock file should not be deleted");
+    assert.equal(getUnreadCount(), 0, "best-effort mutation should still run");
+
+    rmSync(lockPath, { force: true });
+  });
+
   test("structured meta persists kind and scope on the entry", () => {
     initNotificationStore(tmp);
     appendNotification("Auto-mode blocked — validation gate", "warning", "notify", { kind: "auto-stop", scope: "M005" });
