@@ -1143,9 +1143,6 @@ export async function autoLoop(
         });
       }
 
-      consecutiveOrchestrationSkips = 0;
-      lastOrchestrationSkipKey = null;
-
       await enforceMinRequestInterval(s, prefs);
 
       // Phase B: claim a unit_dispatches row before invoking the unit. The
