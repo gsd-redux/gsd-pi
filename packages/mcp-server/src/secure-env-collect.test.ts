@@ -232,6 +232,48 @@ describe("secure_env_collect — handler behaviour", () => {
     }
   });
 
+  it("returns promptly when the client aborts while elicitation is pending", async () => {
+    const controller = new AbortController();
+    let resolveElicitStarted!: () => void;
+    const elicitStarted = new Promise<void>((resolve) => {
+      resolveElicitStarted = resolve;
+    });
+    const never = new Promise<ElicitResponse>(() => {});
+
+    const resultPromise = secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [{ key: "ABORTED_KEY" }],
+        destination: "dotenv",
+      },
+      () => {
+        resolveElicitStarted();
+        return never;
+      },
+      controller.signal,
+    );
+
+    await elicitStarted;
+    controller.abort();
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        resultPromise,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("secure_env_collect did not observe client abort")),
+            250,
+          );
+        }),
+      ]);
+
+      assert.match(textOf(result), /secure_env_collect cancelled by client/);
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
   it("auto-detects destination from project files when not specified", async () => {
     // No vercel/convex signals — falls back to dotenv.
     const { fn } = fakeElicit({

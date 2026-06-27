@@ -906,6 +906,7 @@ type ToolContent =
 export async function secureEnvCollectHandler(
   args: Record<string, unknown>,
   elicitInput: ElicitInputFn,
+  signal?: AbortSignal,
 ): Promise<ToolContent> {
   const { projectDir, keys, destination, envFilePath, environment } = args as {
     projectDir: string;
@@ -963,6 +964,8 @@ export async function secureEnvCollectHandler(
         },
       }),
       'secure_env_collect',
+      undefined,
+      signal,
     );
 
     if (elicitation.action !== 'accept' || !elicitation.content) {
@@ -1276,9 +1279,11 @@ export async function createMcpServer(
       envFilePath: z.string().optional().describe('Path to .env file (dotenv only). Defaults to .env in projectDir.'),
       environment: z.enum(['development', 'preview', 'production']).optional().describe('Target environment (vercel/convex only)'),
     },
-    async (args: Record<string, unknown>) =>
-      secureEnvCollectHandler(args, (params) =>
-        server.server.elicitInput(params as ElicitRequestFormParams),
+    async (args: Record<string, unknown>, extra?: McpToolExtra) =>
+      secureEnvCollectHandler(
+        args,
+        (params) => server.server.elicitInput(params as ElicitRequestFormParams),
+        extra?.signal,
       ),
   );
 
