@@ -655,7 +655,6 @@ test("does not suppress deleted-worktree provider errors outside terminal comple
 test("manual guided discuss provider error records warning and activity marker (#944)", async () => {
   const originalCwd = process.cwd();
   const base = mkdtempSync(join(tmpdir(), "gsd-manual-discuss-error-"));
-  const guidedBase = join(base, "slice-work");
   const notifications: Array<{ message: string; level?: string }> = [];
   const sendMessageCalls: unknown[][] = [];
 
@@ -663,11 +662,14 @@ test("manual guided discuss provider error records warning and activity marker (
     autoSession.reset();
     mkdirSync(join(base, ".git"), { recursive: true });
     mkdirSync(join(base, ".gsd"), { recursive: true });
-    mkdirSync(guidedBase, { recursive: true });
     process.chdir(base);
     initNotificationStore(base);
 
-    setGuidedUnitContext(guidedBase, "discuss-slice");
+    // Use base as the guided context path so gsdRoot(base) hits the fast path
+    // (.gsd exists at base directly) and doesn't need git to walk up from a
+    // subdirectory — the empty .git folder is not a real repo and git resolution
+    // from a child directory would return the wrong .gsd path.
+    setGuidedUnitContext(base, "discuss-slice");
 
     const ctx = {
       model: { provider: "openai-codex", id: "gpt-5.1-codex" },
@@ -696,7 +698,7 @@ test("manual guided discuss provider error records warning and activity marker (
     } as any, ctx);
 
     assert.deepEqual(sendMessageCalls, [], "manual discuss terminal errors must not auto-retry or redispatch");
-    assert.equal(getGuidedUnitContext(guidedBase), null, "guided unit context must still be cleared after the turn");
+    assert.equal(getGuidedUnitContext(base), null, "guided unit context must still be cleared after the turn");
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0]?.level, "warning");
     assert.match(notifications[0]?.message ?? "", /Manual \/gsd discuss discuss-slice ended with a provider error/);
