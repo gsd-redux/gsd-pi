@@ -114,7 +114,17 @@ async function runSessionStartupMaintenanceOnce(
   basePath: string,
   ctx: ExtensionContext,
 ): Promise<boolean> {
-  if (contextMaintenanceCompletedForBasePath.has(basePath)) return false;
+  if (contextMaintenanceCompletedForBasePath.has(basePath)) {
+    // Backfills are session-once, but memory queries and other DB-backed
+    // prompt assembly still need an active adapter on every turn.
+    try {
+      const { ensureDbOpen } = await import("./dynamic-tools.js");
+      await ensureDbOpen(basePath);
+    } catch (e) {
+      logWarning("bootstrap", `project DB open failed: ${(e as Error).message}`);
+    }
+    return false;
+  }
 
   let inFlight = contextMaintenanceInFlightByBasePath.get(basePath);
   const isInitiator = !inFlight;
@@ -293,6 +303,9 @@ export async function buildBeforeAgentStartResult(
   }
 
   const shouldScheduleDeferredMaintenance = await runSessionStartupMaintenanceOnce(basePath, ctx);
+  if (shouldScheduleDeferredMaintenance) {
+    scheduleDeferredContextMaintenance(basePath);
+  }
 
   const { block: knowledgeBlock, globalSizeKb } = loadKnowledgeBlock(gsdHome(), basePath);
   if (globalSizeKb > 4) {
@@ -372,9 +385,6 @@ export async function buildBeforeAgentStartResult(
   });
 
   const contextMessage = buildContextMessage({ memoryBlock, injection, forensicsInjection });
-  if (shouldScheduleDeferredMaintenance) {
-    scheduleDeferredContextMaintenance(basePath);
-  }
 
   return {
     systemPrompt: fullSystem,
