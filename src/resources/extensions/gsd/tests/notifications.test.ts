@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +13,7 @@ import {
   buildDesktopNotificationCommand,
   shouldSendDesktopNotification,
   formatNotificationTitle,
+  launchDesktopNotification,
   playNotificationBell,
   shouldPlayNotificationBell,
 } from "../notifications.js";
@@ -125,6 +128,36 @@ test("stopAuto plays local bell for auto-mode stop notifications", async () => {
     process.chdir(previousCwd);
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("launchDesktopNotification starts notifier as detached fire-and-forget process", (t) => {
+  const child = {
+    on(_event: string, _listener: (error: Error) => void) {
+      return child;
+    },
+    unref() {
+      return child;
+    },
+  };
+  const onMock = t.mock.method(child, "on");
+  const unrefMock = t.mock.method(child, "unref");
+  const spawnMock = t.mock.method(
+    childProcess,
+    "spawn",
+    () => child as unknown as ChildProcess,
+  );
+
+  launchDesktopNotification({ file: "notify-send", args: ["Title", "Message"] });
+
+  assert.equal(spawnMock.mock.callCount(), 1);
+  assert.deepEqual(spawnMock.mock.calls[0].arguments, [
+    "notify-send",
+    ["Title", "Message"],
+    { detached: true, stdio: "ignore" },
+  ]);
+  assert.equal(onMock.mock.callCount(), 1);
+  assert.equal(onMock.mock.calls[0].arguments[0], "error");
+  assert.equal(unrefMock.mock.callCount(), 1);
 });
 
 test("buildDesktopNotificationCommand falls back to osascript on macOS when terminal-notifier is absent", () => {

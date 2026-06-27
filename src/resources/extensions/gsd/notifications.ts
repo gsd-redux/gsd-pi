@@ -1,7 +1,9 @@
 // GSD Extension — Desktop Notification Helper
 // Cross-platform desktop notifications for auto-mode events.
 
-import { execFileSync } from "node:child_process";
+import childProcess from "node:child_process";
+import { accessSync, constants } from "node:fs";
+import { delimiter, resolve } from "node:path";
 import type { NotificationPreferences } from "./types.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { sendRemoteNotification as _sendRemoteNotification } from "../remote-questions/notify.js";
@@ -24,6 +26,8 @@ interface BellStream {
   isTTY?: boolean;
   write(chunk: string): unknown;
 }
+
+const executablePathCache = new Map<string, string | null>();
 
 /**
  * Send a native desktop notification. Non-blocking, non-fatal.
@@ -73,11 +77,24 @@ export function sendDesktopNotification(
     try {
       const command = buildDesktopNotificationCommand(process.platform, title, message, level);
       if (!command) return;
-      execFileSync(command.file, command.args, { timeout: 3000, stdio: "ignore" });
+      launchDesktopNotification(command);
     } catch {
       // Non-fatal — desktop notifications are best-effort
     }
   }).catch(() => {});
+}
+
+export function launchDesktopNotification(command: NotificationCommand): void {
+  try {
+    const child = childProcess.spawn(command.file, command.args, {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch {
+    // Non-fatal — desktop notifications are best-effort
+  }
 }
 
 export function shouldSendDesktopNotification(
@@ -194,11 +211,25 @@ function escapeAppleScript(s: string): string {
  * Non-fatal — returns null on any error.
  */
 function findExecutable(name: string): string | null {
-  try {
-    return execFileSync("which", [name], { timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim() || null;
-  } catch {
-    return null;
+  if (executablePathCache.has(name)) return executablePathCache.get(name) ?? null;
+
+  let resolved: string | null = null;
+  const path = process.env.PATH;
+  if (path) {
+    for (const dir of path.split(delimiter)) {
+      const candidate = resolve(dir || ".", name);
+      try {
+        accessSync(candidate, constants.X_OK);
+        resolved = candidate;
+        break;
+      } catch {
+        // keep searching PATH
+      }
+    }
   }
+
+  executablePathCache.set(name, resolved);
+  return resolved;
 }
 
 function resolveBellStream(): BellStream | null {
