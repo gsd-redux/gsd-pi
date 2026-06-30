@@ -2,9 +2,16 @@
 // File Purpose: Memory FTS5 SQLite schema helpers for the GSD database facade.
 
 import type { DbAdapter } from "./db-adapter.js";
+import { createRuntimeKvTableV25 } from "./db-runtime-kv-schema.js";
+
+export const MEMORIES_FTS_REBUILT_KEY = "memories_fts_rebuilt_at";
 
 export interface MemoryFtsSchemaOptions {
   onUnavailable?: (message: string) => void;
+}
+
+export interface MemoryFtsRebuildOptions {
+  onRebuildFailed?: (message: string) => void;
 }
 
 function formatFtsUnavailableError(err: unknown): string {
@@ -62,5 +69,43 @@ export function isMemoriesFtsAvailableSchema(db: DbAdapter): boolean {
     return !!row;
   } catch {
     return false;
+  }
+}
+
+export function rebuildMemoriesFtsSchemaOnce(
+  db: DbAdapter,
+  options: MemoryFtsRebuildOptions = {},
+): void {
+  if (!isMemoriesFtsAvailableSchema(db)) return;
+
+  createRuntimeKvTableV25(db);
+  const marker = db.prepare(
+    "SELECT 1 as present FROM runtime_kv WHERE scope = 'global' AND scope_id = '' AND key = :key",
+  ).get({ ":key": MEMORIES_FTS_REBUILT_KEY });
+  if (marker) return;
+
+  const now = new Date().toISOString();
+  try {
+    db.exec("BEGIN");
+    db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
+    db.prepare(
+      `INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
+       VALUES ('global', '', :key, :value_json, :updated_at)
+       ON CONFLICT (scope, scope_id, key) DO UPDATE SET
+         value_json = excluded.value_json,
+         updated_at = excluded.updated_at`,
+    ).run({
+      ":key": MEMORIES_FTS_REBUILT_KEY,
+      ":value_json": JSON.stringify(now),
+      ":updated_at": now,
+    });
+    db.exec("COMMIT");
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Best effort: leave startup alive and retry the rebuild on next open.
+    }
+    options.onRebuildFailed?.(`FTS5 rebuild failed: ${(err as Error).message}`);
   }
 }

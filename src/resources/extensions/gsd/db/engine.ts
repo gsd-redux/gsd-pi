@@ -47,7 +47,11 @@ import {
   applyMigrationV28MemoryLastHitAt,
   applyMigrationV29RepositoryTargets,
 } from "../db-migration-steps.js";
-import { isMemoriesFtsAvailableSchema, tryCreateMemoriesFtsSchema } from "../db-memory-fts-schema.js";
+import {
+  isMemoriesFtsAvailableSchema,
+  rebuildMemoriesFtsSchemaOnce,
+  tryCreateMemoriesFtsSchema,
+} from "../db-memory-fts-schema.js";
 import { createDbOpenState, type DbOpenPhase } from "../db-open-state.js";
 import { createRuntimeKvTableV25 } from "../db-runtime-kv-schema.js";
 import { getCurrentSchemaVersion, recordSchemaVersion } from "../db-schema-metadata.js";
@@ -134,6 +138,9 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
   }
 
   migrateSchema(db, dbPath);
+  rebuildMemoriesFtsSchemaOnce(db, {
+    onRebuildFailed: (message) => logWarning("db", message),
+  });
 }
 
 export function _isLikelyWslDrvFsPathForTest(dbPath: string | null): boolean {

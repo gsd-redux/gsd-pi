@@ -5,6 +5,9 @@ import {
   SCHEMA_VERSION,
   _getAdapter,
 } from '../gsd-db.ts';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import {
   _resetLogs,
   peekLogs,
@@ -22,12 +25,23 @@ import {
   markUnitProcessed,
   decayStaleMemories,
   enforceMemoryCap,
+  queryMemoriesRanked,
   applyMemoryActions,
   formatMemoriesForPrompt,
 } from '../memory-store.ts';
 import type { MemoryAction } from '../memory-store.ts';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+
+function tempDbPath(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-memory-store-test-'));
+  return path.join(dir, 'test.db');
+}
+
+function cleanupDbPath(dbPath: string): void {
+  closeDatabase();
+  fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // memory-store: fallback when DB not open
@@ -364,6 +378,40 @@ test('memory-store: schema includes memories table', () => {
   assert.deepStrictEqual(version?.["v"], SCHEMA_VERSION, `schema version should be ${SCHEMA_VERSION}`);
 
   closeDatabase();
+});
+
+test('memory-store: reopening rebuilds FTS index for pre-FTS memories', () => {
+  const dbPath = tempDbPath();
+  try {
+    openDatabase(dbPath);
+    const id = createMemory({ category: 'gotcha', content: 'pre FTS auth memory must become searchable' });
+    assert.equal(id, 'MEM001');
+
+    const adapter = _getAdapter()!;
+    const fts = adapter.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'").get();
+    if (!fts) return;
+
+    adapter.exec('DROP TRIGGER IF EXISTS memories_ai');
+    adapter.exec('DROP TRIGGER IF EXISTS memories_ad');
+    adapter.exec('DROP TRIGGER IF EXISTS memories_au');
+    adapter.exec('DROP TABLE IF EXISTS memories_fts');
+    adapter.prepare(
+      "DELETE FROM runtime_kv WHERE scope = 'global' AND scope_id = '' AND key = 'memories_fts_rebuilt_at'",
+    ).run();
+    closeDatabase();
+
+    openDatabase(dbPath);
+    const reopened = _getAdapter()!;
+    const marker = reopened.prepare(
+      "SELECT value_json FROM runtime_kv WHERE scope = 'global' AND scope_id = '' AND key = 'memories_fts_rebuilt_at'",
+    ).get();
+    assert.ok(marker, 'FTS rebuild marker should be set after reopening');
+
+    const hits = queryMemoriesRanked({ query: 'auth', k: 5 }).map((hit) => hit.memory.id);
+    assert.deepEqual(hits, ['MEM001']);
+  } finally {
+    cleanupDbPath(dbPath);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
