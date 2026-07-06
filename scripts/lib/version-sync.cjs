@@ -8,6 +8,7 @@ const RELEASE_WORKSPACE_PACKAGE_DIRS = [
   "packages/cloud-mcp-gateway",
   "packages/contracts",
   "packages/daemon",
+  "packages/gsd-cloud",
   "packages/gsd-agent-core",
   "packages/gsd-agent-modes",
   "packages/mcp-server",
