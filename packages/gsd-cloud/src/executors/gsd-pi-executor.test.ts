@@ -29,6 +29,13 @@ test("constructing with colliding aliases warns once", () => {
   assert.equal(dupWarn.length, 1);
 });
 
+test("missing alias with several projects rejects instead of using the first", async () => {
+  const exec = new GsdPiExecutor(logger as never, {
+    projectDirs: ["/tmp/alpha", "/tmp/beta"],
+  });
+  await assert.rejects(exec.execute("gsd_status", {}), /ambiguous/i);
+});
+
 test("an alias that is not advertised rejects", async () => {
   const exec = new GsdPiExecutor(logger as never, { projectDirs: ["/tmp/solo/app"] });
   await assert.rejects(exec.execute("gsd_status", {}, "nope"), /not advertised/i);
