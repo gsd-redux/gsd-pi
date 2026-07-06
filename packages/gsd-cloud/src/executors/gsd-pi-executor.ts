@@ -148,17 +148,13 @@ export class GsdPiExecutor implements Executor {
 
   private resolveProjectPath(aliasOrPath?: string): string {
     if (!aliasOrPath) {
-      const first = this.projectDirs[0];
-      if (!first) throw new Error("No project advertised by the standalone GSD runtime");
-      // Only default to the sole advertised project. When several are advertised
-      // the caller (often the gateway, which omits projectAlias) must name one —
-      // silently picking the first would route work to the wrong repo.
-      if (this.projectDirs.length > 1) {
-        throw new Error(
-          "Project is ambiguous: several projects are advertised but no projectAlias or projectDir was provided",
-        );
+      if (this.projectDirs.length === 0) {
+        throw new Error("No project advertised by the standalone GSD runtime");
       }
-      return first;
+      if (this.projectDirs.length > 1) {
+        throw new Error("projectDir or projectAlias is required");
+      }
+      return this.projectDirs[0]!;
     }
     const resolved = resolve(aliasOrPath);
     // Prefer an exact absolute-path match — always unambiguous.
