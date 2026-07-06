@@ -1,0 +1,38 @@
+{
+  "name": "@opengsd/gsd-cloud",
+  "version": "1.6.0",
+  "description": "Thin CLI wrapper that connects a local GSD runtime to GSD Cloud (cloud.opengsd.net)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-gsd/gsd-pi.git",
+    "directory": "packages/gsd-cloud"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "bin": {
+    "gsd-cloud": "./bin/gsd-cloud.js"
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-package-dist.cjs && tsc",
+    "test": "pnpm run build && node --test dist/inject-gateway.test.js"
+  },
+  "dependencies": {
+    "@opengsd/daemon": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "README.md",
+    "bin",
+    "dist",
+    "!dist/**/*.test.*"
+  ]
+}
