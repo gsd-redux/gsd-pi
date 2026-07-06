@@ -17,4 +17,11 @@ const { injectDefaultGateway } = await import('../dist/inject-gateway.js');
 const { handleCloudRuntimeCommand } = await import('@opengsd/daemon');
 
 const argv = injectDefaultGateway(process.argv.slice(2));
-await handleCloudRuntimeCommand(argv, { binaryName: 'gsd-cloud' });
+
+try {
+  await handleCloudRuntimeCommand(argv, { binaryName: 'gsd-cloud' });
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`gsd-cloud: fatal: ${msg}\n`);
+  process.exit(1);
+}

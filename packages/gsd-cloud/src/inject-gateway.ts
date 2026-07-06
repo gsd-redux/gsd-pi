@@ -19,7 +19,11 @@ export const DEFAULT_GATEWAY = "https://cloud.opengsd.net";
 export function injectDefaultGateway(argv: string[]): string[] {
   const command = argv[0];
   const gatewayAwareCommand = command === "login" || command === "pair";
-  if (!gatewayAwareCommand || argv.includes("--gateway")) {
+  // Respect both flag forms `parseArgs` accepts: `--gateway <url>` and
+  // `--gateway=<url>`. Matching only the bare token let an explicit
+  // `--gateway=<url>` slip through and get overridden by the appended default.
+  const hasGateway = argv.some((arg) => arg === "--gateway" || arg.startsWith("--gateway="));
+  if (!gatewayAwareCommand || hasGateway) {
     return argv;
   }
   return [...argv, "--gateway", DEFAULT_GATEWAY];

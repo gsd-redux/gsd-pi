@@ -36,3 +36,15 @@ test("Test 4: status/connect/disconnect are returned unchanged", () => {
 test("Test 5: empty argv (no command) is returned unchanged", () => {
   assert.deepEqual(injectDefaultGateway([]), []);
 });
+
+test("Test 6: login with equals-form --gateway=... is returned unchanged", () => {
+  const argv = ["login", "--gateway=https://other.example"];
+  const out = injectDefaultGateway(argv);
+  assert.deepEqual(out, argv);
+  assert.ok(!out.includes(DEFAULT_GATEWAY), "default gateway must not be appended");
+  assert.equal(
+    out.filter((a) => a === "--gateway" || a.startsWith("--gateway=")).length,
+    1,
+    "no double gateway",
+  );
+});
