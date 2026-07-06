@@ -20,6 +20,7 @@ export class CloudRuntime {
   private readonly inFlight = new Map<string, GatewayMessage>();
   private outbox: string[] = [];
   private stopped = false;
+  private firstConnectDeferred: PromiseWithResolvers<void> | undefined;
 
   constructor(
     private readonly cloud: NonNullable<DaemonConfig["cloud"]>,
@@ -27,13 +28,16 @@ export class CloudRuntime {
     private readonly logger: Logger,
   ) {}
 
-  start(): void {
+  start(): Promise<void> {
     this.stopped = false;
+    this.firstConnectDeferred = Promise.withResolvers<void>();
     this.connect();
+    return this.firstConnectDeferred.promise;
   }
 
   stop(): void {
     this.stopped = true;
+    this.rejectFirstConnect(new Error("cloud runtime stopped"));
     if (this.reconnect) clearTimeout(this.reconnect);
     this.reconnect = undefined;
     if (this.heartbeat) clearInterval(this.heartbeat);
@@ -50,15 +54,16 @@ export class CloudRuntime {
     this.reconnect = undefined;
     if (!this.cloud.device_token || !this.cloud.runtime_id) {
       this.logger.warn("cloud runtime skipped — missing device token or runtime id");
+      this.rejectFirstConnect(new Error("cloud runtime missing device token or runtime id"));
       return;
     }
     const gatewayUrl = parseCloudGatewayUrl(this.cloud.gateway_url);
     try {
       validateGatewayNetworkTarget(gatewayUrl);
     } catch (err) {
-      this.logger.warn("cloud runtime skipped unsafe gateway URL", {
-        error: err instanceof Error ? err.message : String(err),
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn("cloud runtime skipped unsafe gateway URL", { error: message });
+      this.rejectFirstConnect(new Error(`cloud runtime unsafe gateway URL: ${message}`));
       return;
     }
     const url = new URL("/runtime/connect", gatewayUrl);
@@ -95,6 +100,7 @@ export class CloudRuntime {
 
   private handleSocketOpen(socket: WebSocket): void {
     if (socket !== this.socket) return;
+    this.resolveFirstConnect();
     this.logger.info("cloud runtime connected", { gateway_url: this.cloud.gateway_url, runtime_id: this.cloud.runtime_id });
     // Re-advertise projects (async: the hello is sent on a later microtask), then
     // drain any messages buffered while disconnected. tool_results route by
@@ -191,6 +197,20 @@ export class CloudRuntime {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  private resolveFirstConnect(): void {
+    const deferred = this.firstConnectDeferred;
+    if (!deferred) return;
+    this.firstConnectDeferred = undefined;
+    deferred.resolve();
+  }
+
+  private rejectFirstConnect(err: Error): void {
+    const deferred = this.firstConnectDeferred;
+    if (!deferred) return;
+    this.firstConnectDeferred = undefined;
+    deferred.reject(err);
   }
 
   private send(message: unknown): void {

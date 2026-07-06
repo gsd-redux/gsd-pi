@@ -47,11 +47,17 @@ export class McpStdioClient {
 
   /** Ensure the server is spawned and `initialize` has completed. Idempotent. */
   async ensureReady(): Promise<void> {
-    if (this.initPromise) return this.initPromise;
+    if (this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch {
+        return this.ensureReady();
+      }
+      if (this.isProcessAlive()) return;
+      this.resetConnection();
+    }
     this.initPromise = this.startAndInitialize().catch((err) => {
-      // Reset so a later call can retry a fresh spawn rather than reusing a
-      // permanently-rejected promise.
-      this.initPromise = undefined;
+      this.resetConnection();
       throw err;
     });
     return this.initPromise;
@@ -64,16 +70,7 @@ export class McpStdioClient {
   }
 
   close(): void {
-    for (const [, p] of this.pending) {
-      clearTimeout(p.timer);
-      p.reject(new Error("MCP client closed"));
-    }
-    this.pending.clear();
-    this.rl?.close();
-    this.rl = undefined;
-    this.child?.kill();
-    this.child = undefined;
-    this.initPromise = undefined;
+    this.resetConnection(new Error("MCP client closed"));
   }
 
   private async startAndInitialize(): Promise<void> {
@@ -86,13 +83,13 @@ export class McpStdioClient {
 
     child.on("error", (err) => {
       this.logger.error("gsd MCP process error", { error: err.message });
-      this.failAll(new Error(`gsd MCP process error: ${err.message}`));
+      this.resetConnection(new Error(`gsd MCP process error: ${err.message}`));
     });
     child.on("exit", (code, signal) => {
       this.logger.warn("gsd MCP process exited", { code, signal });
-      this.failAll(new Error(`gsd MCP process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`));
-      this.child = undefined;
-      this.initPromise = undefined;
+      this.resetConnection(
+        new Error(`gsd MCP process exited (code=${code ?? "null"}, signal=${signal ?? "null"})`),
+      );
     });
 
     // MCP servers commonly log human-readable startup noise on stderr; forward at debug.
@@ -128,6 +125,7 @@ export class McpStdioClient {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`gsd MCP request '${method}' timed out after ${timeoutMs}ms`));
+        this.resetConnection();
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       child.stdin.write(payload, (err) => {
@@ -135,6 +133,7 @@ export class McpStdioClient {
           clearTimeout(timer);
           this.pending.delete(id);
           reject(new Error(`Failed to write MCP request: ${err.message}`));
+          this.resetConnection();
         }
       });
     });
@@ -174,5 +173,21 @@ export class McpStdioClient {
       p.reject(err);
     }
     this.pending.clear();
+  }
+
+  private isProcessAlive(): boolean {
+    const child = this.child;
+    return child !== undefined && child.exitCode === null && child.signalCode === null;
+  }
+
+  private resetConnection(reason = new Error("MCP connection reset")): void {
+    this.failAll(reason);
+    this.rl?.close();
+    this.rl = undefined;
+    if (this.child && this.child.exitCode === null && this.child.signalCode === null) {
+      this.child.kill();
+    }
+    this.child = undefined;
+    this.initPromise = undefined;
   }
 }

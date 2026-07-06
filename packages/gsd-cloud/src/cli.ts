@@ -132,7 +132,7 @@ async function runCloudRuntime(config: DaemonConfig, binaryName: string, verbose
   });
   const executor = selectExecutor(logger);
   const runtime = new CloudRuntime(config.cloud, executor, logger);
-  runtime.start();
+  await runtime.start();
   process.stdout.write(`${binaryName}: connected to ${config.cloud.gateway_url}. Press Ctrl+C to stop.\n`);
 
   await new Promise<void>((resolve) => {
