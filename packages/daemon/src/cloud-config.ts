@@ -170,7 +170,7 @@ function writeConfigFile(configPath: string, contents: string): void {
   chmodSync(configPath, 0o600);
 }
 
-function postJsonToValidatedGateway(url: URL, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+export function postJsonToValidatedGateway(url: URL, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   validateGatewayNetworkTarget(url);
   const body = JSON.stringify(payload);
   const requestImpl = url.protocol === "https:" ? httpsRequest : httpRequest;
