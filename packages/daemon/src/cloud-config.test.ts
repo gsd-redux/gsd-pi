@@ -5,7 +5,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadConfig } from "./config.js";
-import { exchangePairingCode, parseCloudGatewayUrl, redactedCloudStatus, saveCloudConfig } from "./cloud-config.js";
+import { createGatewayLookup, exchangePairingCode, parseCloudGatewayUrl, redactedCloudStatus, saveCloudConfig } from "./cloud-config.js";
+
+// Invoke a gateway lookup and capture (err, result) from its Node-style callback.
+function runGatewayLookup(url: string, options: unknown): Promise<{ err: Error | null; result: unknown }> {
+  const lookup = createGatewayLookup(new URL(url));
+  return new Promise((resolve) => {
+    (lookup as unknown as (h: string, o: unknown, cb: (...a: unknown[]) => void) => void)(
+      "localhost",
+      options,
+      (...args: unknown[]) => resolve({ err: (args[0] as Error | null) ?? null, result: args[1] }),
+    );
+  });
+}
+
+test("createGatewayLookup honors all:true with an array callback (regression: scalar form threw 'Invalid IP address' on Node >=20)", async () => {
+  const { err, result } = await runGatewayLookup("http://localhost", { all: true, family: 0 });
+  assert.equal(err, null, "loopback allowed for http URL");
+  assert.ok(Array.isArray(result), "all:true must call back with an array");
+  assert.ok((result as unknown[]).length > 0, "expected at least one address");
+});
+
+test("createGatewayLookup all:true still enforces the SSRF guard on every address", async () => {
+  const { err } = await runGatewayLookup("https://localhost", { all: true, family: 0 });
+  assert.ok(err instanceof Error, "https loopback must be rejected");
+  assert.match(err!.message, /private or loopback/);
+});
 
 test("cloud config stores device token but redacts status output", () => {
   const dir = mkdtempSync(join(tmpdir(), "gsd-cloud-config-"));

@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { lookup } from "node:dns";
-import type { LookupOneOptions } from "node:dns";
+import type { LookupOptions } from "node:dns";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
@@ -127,18 +127,38 @@ export function validateGatewayNetworkTarget(url: URL): void {
 
 export function createGatewayLookup(url: URL): LookupFunction {
   const allowLoopback = url.protocol === "http:" && isLoopbackHost(url.hostname);
-  return (hostname, options, callback) => {
-    const lookupOptions: LookupOneOptions = typeof options === "number"
-      ? { family: options, all: false }
-      : { ...options, all: false };
-    lookup(hostname, lookupOptions, (err, address, family) => {
+  const rejected = (address: string): boolean =>
+    !address || (!allowLoopback && isPrivateIpHost(address));
+  // Node's socket connect (autoSelectFamily / Happy Eyeballs, default-on since
+  // Node 20) calls a custom lookup with `all: true` and expects an ARRAY
+  // callback. Forcing `all: false` + a scalar callback made every real gateway
+  // request throw "Invalid IP address: undefined". Honor both forms; the SSRF
+  // guard is applied to every resolved address (reject the whole lookup if any
+  // is private/loopback — an attacker-controlled resolver must not slip one in).
+  return ((hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
+    const wantsAll =
+      typeof options === "object" && options !== null && (options as LookupOptions).all === true;
+    const base: LookupOptions =
+      typeof options === "number" ? { family: options } : { ...(options as LookupOptions) };
+    if (wantsAll) {
+      lookup(hostname, { ...base, all: true }, (err, addresses) => {
+        if (err) return callback(err);
+        const list = addresses as Array<{ address: string; family: number }>;
+        if (!list.length || list.some((entry) => rejected(entry.address))) {
+          return callback(new Error("Cloud gateway URL resolved to a private or loopback address"));
+        }
+        callback(null, list);
+      });
+      return;
+    }
+    lookup(hostname, { ...base, all: false }, (err, address, family) => {
       if (err) return callback(err, address, family);
-      if (!address || (!allowLoopback && isPrivateIpHost(address))) {
+      if (rejected(address)) {
         return callback(new Error("Cloud gateway URL resolved to a private or loopback address"), address, family);
       }
       callback(null, address, family);
     });
-  };
+  }) as unknown as LookupFunction;
 }
 
 function isPrivateIpv4(host: string): boolean {
