@@ -26,6 +26,8 @@ function fakeSocket(readyState = WebSocket.OPEN): FakeSocket {
 type RuntimeInternals = {
   socket: FakeSocket | undefined;
   firstConnectDeferred: PromiseWithResolvers<void> | undefined;
+  initialConnectAttempts: number;
+  reconnect: ReturnType<typeof setTimeout> | undefined;
   handleSocketOpen: (socket: unknown) => void;
   handleSocketClose: (socket: unknown) => void;
   connect: () => void;
@@ -52,12 +54,37 @@ test("start()'s first-connect promise resolves only when the relay socket opens"
   }
 });
 
-test("start()'s first-connect promise rejects when the socket closes before opening", async () => {
+test("an early socket close retries instead of rejecting while attempts remain", async () => {
   const runtime = makeRuntime();
   const internals = runtime as unknown as RuntimeInternals;
   try {
     const deferred = Promise.withResolvers<void>();
     internals.firstConnectDeferred = deferred;
+    const socket = fakeSocket();
+    internals.socket = socket;
+
+    let settled = false;
+    void deferred.promise.then(() => (settled = true), () => (settled = true));
+
+    internals.handleSocketClose(socket); // first transient failure
+    await Promise.resolve();
+    assert.equal(settled, false, "a single early close must not settle start()");
+    assert.equal(internals.initialConnectAttempts, 1);
+    assert.notEqual(internals.reconnect, undefined, "a reconnect must be scheduled");
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("start()'s first-connect promise rejects once the initial connect attempts are exhausted", async () => {
+  const runtime = makeRuntime();
+  const internals = runtime as unknown as RuntimeInternals;
+  try {
+    const deferred = Promise.withResolvers<void>();
+    internals.firstConnectDeferred = deferred;
+    // Simulate having already burned every retry but the last so the next close
+    // is the one that must give up and reject.
+    internals.initialConnectAttempts = 4;
     const socket = fakeSocket();
     internals.socket = socket;
 
