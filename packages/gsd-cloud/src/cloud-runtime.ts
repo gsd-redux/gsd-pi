@@ -21,6 +21,7 @@ export class CloudRuntime {
   // persistent failure (gateway down, session rejected) must eventually reject so
   // the CLI reports an error instead of hanging or exiting silently.
   private static readonly MAX_INITIAL_CONNECT_ATTEMPTS = 5;
+  private static readonly INITIAL_CONNECT_HANDSHAKE_TIMEOUT_MS = 30_000;
   private socket: WebSocket | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private reconnect: ReturnType<typeof setTimeout> | undefined;
@@ -80,6 +81,7 @@ export class CloudRuntime {
     const socket = new WebSocket(url, {
       headers: { Authorization: `Bearer ${this.cloud.device_token}` },
       lookup: createGatewayLookup(gatewayUrl),
+      handshakeTimeout: CloudRuntime.INITIAL_CONNECT_HANDSHAKE_TIMEOUT_MS,
     });
     const previousSocket = this.socket;
     this.socket = socket;

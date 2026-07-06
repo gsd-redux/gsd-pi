@@ -55,6 +55,8 @@ export class GsdPiExecutor implements Executor {
   private readonly projectDirs: string[];
   /** Lazily-created MCP clients, keyed by resolved absolute project path. */
   private readonly projects = new Map<string, ProjectEntry>();
+  /** In-flight project client creation, keyed by resolved absolute project path. */
+  private readonly projectInit = new Map<string, Promise<ProjectEntry>>();
 
   constructor(private readonly logger: Logger, opts: GsdPiExecutorOptions = {}) {
     this.gsdBinary = opts.gsdBinary
@@ -67,7 +69,7 @@ export class GsdPiExecutor implements Executor {
     const routingKey = projectAlias
       ?? (typeof rawArgs.projectDir === "string" ? rawArgs.projectDir : undefined)
       ?? (typeof rawArgs.projectAlias === "string" ? rawArgs.projectAlias : undefined);
-    const entry = this.resolveProject(routingKey);
+    const entry = await this.resolveProject(routingKey);
     const { projectAlias: _pa, ...args } = rawArgs;
     void _pa;
     return entry.client.callTool(toolName, { ...args, projectDir: entry.path });
@@ -91,8 +93,21 @@ export class GsdPiExecutor implements Executor {
     this.projects.clear();
   }
 
-  private resolveProject(aliasOrPath?: string): ProjectEntry {
+  private async resolveProject(aliasOrPath?: string): Promise<ProjectEntry> {
     const path = this.resolveProjectPath(aliasOrPath);
+    const existing = this.projects.get(path);
+    if (existing) return existing;
+
+    let init = this.projectInit.get(path);
+    if (!init) {
+      init = this.createProjectEntry(path);
+      this.projectInit.set(path, init);
+      void init.finally(() => this.projectInit.delete(path));
+    }
+    return init;
+  }
+
+  private async createProjectEntry(path: string): Promise<ProjectEntry> {
     const existing = this.projects.get(path);
     if (existing) return existing;
     // `gsd --mode mcp` resolves its GSD root from cwd, so spawn the child in the

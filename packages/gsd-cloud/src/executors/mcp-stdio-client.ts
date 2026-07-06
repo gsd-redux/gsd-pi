@@ -47,20 +47,24 @@ export class McpStdioClient {
 
   /** Ensure the server is spawned and `initialize` has completed. Idempotent. */
   async ensureReady(): Promise<void> {
-    if (this.initPromise) {
-      try {
-        await this.initPromise;
-      } catch {
-        return this.ensureReady();
-      }
-      if (this.isProcessAlive()) return;
-      this.resetConnection();
+    await this.awaitReadyProcess();
+  }
+
+  private awaitReadyProcess(): Promise<void> {
+    if (!this.initPromise) {
+      this.initPromise = this.startAndInitialize().catch((err) => {
+        this.resetConnection();
+        throw err;
+      });
     }
-    this.initPromise = this.startAndInitialize().catch((err) => {
-      this.resetConnection();
-      throw err;
-    });
-    return this.initPromise;
+    return this.initPromise.then(
+      async () => {
+        if (this.isProcessAlive()) return;
+        this.resetConnection();
+        return this.awaitReadyProcess();
+      },
+      () => this.awaitReadyProcess(),
+    );
   }
 
   /** Invoke an MCP tool and return its raw result object. */
