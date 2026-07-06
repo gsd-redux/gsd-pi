@@ -152,7 +152,9 @@ export class GsdPiExecutor implements Executor {
         throw new Error("No project advertised by the standalone GSD runtime");
       }
       if (this.projectDirs.length > 1) {
-        throw new Error("projectDir or projectAlias is required");
+        throw new Error(
+          "Project routing is ambiguous: multiple projects are advertised — projectDir or projectAlias is required",
+        );
       }
       return this.projectDirs[0]!;
     }
