@@ -27,7 +27,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc",
-    "test": "node --test dist/daemon.test.js dist/cloud-config.test.js dist/cloud-runtime.test.js dist/local-tool-executor.test.js dist/mcp-cli.test.js dist/message-batcher.test.js"
+    "test": "node --test dist/daemon.test.js dist/cloud-config.test.js dist/cloud-runtime.test.js dist/device-flow.test.js dist/local-tool-executor.test.js dist/mcp-cli.test.js dist/message-batcher.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
