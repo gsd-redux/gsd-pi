@@ -131,11 +131,14 @@ export class GsdPiExecutor implements Executor {
       return first;
     }
     const resolved = resolve(aliasOrPath);
-    const match = this.projectDirs.find((p) => p === resolved || basename(p) === aliasOrPath);
-    if (!match) {
-      throw new Error(`Project is not advertised by the standalone GSD runtime: ${aliasOrPath}`);
+    const exact = this.projectDirs.find((p) => p === resolved);
+    if (exact) return exact;
+    const byBasename = this.projectDirs.filter((p) => basename(p) === aliasOrPath);
+    if (byBasename.length > 1) {
+      throw new Error(`Project alias is ambiguous: ${aliasOrPath}`);
     }
-    return match;
+    if (byBasename.length === 1) return byBasename[0]!;
+    throw new Error(`Project is not advertised by the standalone GSD runtime: ${aliasOrPath}`);
   }
 }
 

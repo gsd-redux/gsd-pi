@@ -37,6 +37,7 @@ export class McpStdioClient {
   private nextId = 1;
   private readonly pending = new Map<number | string, Pending>();
   private initPromise: Promise<void> | undefined;
+  private closed = false;
 
   constructor(
     private readonly command: string,
@@ -51,6 +52,9 @@ export class McpStdioClient {
   }
 
   private awaitReadyProcess(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(new Error("MCP client closed"));
+    }
     if (!this.initPromise) {
       this.initPromise = this.startAndInitialize().catch((err) => {
         this.resetConnection();
@@ -59,11 +63,15 @@ export class McpStdioClient {
     }
     return this.initPromise.then(
       async () => {
+        if (this.closed) throw new Error("MCP client closed");
         if (this.isProcessAlive()) return;
         this.resetConnection();
         return this.awaitReadyProcess();
       },
-      () => this.awaitReadyProcess(),
+      (err) => {
+        if (this.closed) throw new Error("MCP client closed");
+        throw err;
+      },
     );
   }
 
@@ -74,6 +82,7 @@ export class McpStdioClient {
   }
 
   close(): void {
+    this.closed = true;
     this.resetConnection(new Error("MCP client closed"));
   }
 
