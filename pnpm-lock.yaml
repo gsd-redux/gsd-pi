@@ -337,6 +337,19 @@ importers:
         specifier: ^5.5.0
         version: 5.6.2
 
+  packages/gsd-cloud:
+    dependencies:
+      '@opengsd/daemon':
+        specifier: workspace:*
+        version: link:../daemon
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.0
+        version: 24.12.4
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/mcp-server:
     dependencies:
       '@gsd/pi-ai':
