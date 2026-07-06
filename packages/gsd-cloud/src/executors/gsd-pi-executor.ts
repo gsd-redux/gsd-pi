@@ -1,0 +1,158 @@
+// Project/App: Open GSD
+// File Purpose: Executor adapter that drives the installed `gsd` CLI headlessly.
+//
+// MECHANISM
+// ---------
+// The `gsd` CLI exposes every registered workflow tool over the Model Context
+// Protocol when started with `gsd --mode mcp` (see src/cli.ts in gsd-pi: mode
+// 'mcp' flips the active tool set to the full registry and serves MCP over
+// stdin/stdout). This adapter spawns ONE long-lived `gsd --mode mcp` child per
+// project and issues `tools/call` requests for each `execute()` — the same
+// gsd_* tool names the cloud gateway forwards (gsd_execute, gsd_status,
+// gsd_graph, gsd_cancel, gsd_query, …). No GSD package is linked; the only
+// contract is the MCP wire protocol.
+//
+// DOCUMENTED GAPS (see report):
+//  1. Project discovery. The daemon's LocalToolExecutor scanned filesystem roots
+//     via a dedicated ProjectScanner. This standalone package has no scanner, so
+//     it advertises an EXPLICIT project list from `GSD_CLOUD_PROJECTS` (a
+//     path-list separated by the OS path delimiter) or, if unset, the current
+//     working directory. Each advertised project's `repoIdentity` is computed
+//     exactly as the daemon did (sha256 of the git origin remote, else
+//     basename:path), so gateway-side identity matching is preserved.
+//  2. One MCP server per project. `gsd --mode mcp` is project-scoped (it resolves
+//     the GSD root from its cwd). A `tool_call` carrying a `projectAlias` is
+//     routed to that project's dedicated child; the `projectDir` arg the daemon
+//     injected is not needed because cwd already scopes the server. Tool args are
+//     forwarded verbatim otherwise.
+
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename, delimiter, resolve } from "node:path";
+import type { Logger } from "../logger.js";
+import type { AdvertisedProject, Executor } from "./executor.js";
+import { McpStdioClient } from "./mcp-stdio-client.js";
+
+export interface GsdPiExecutorOptions {
+  /** Path to the `gsd` binary. Defaults to GSD_CLI_PATH env, else `gsd` on PATH. */
+  gsdBinary?: string;
+  /**
+   * Explicit list of project directories to advertise. Defaults to
+   * GSD_CLOUD_PROJECTS (path-delimiter separated), else [cwd].
+   */
+  projectDirs?: string[];
+}
+
+interface ProjectEntry {
+  alias: string;
+  path: string;
+  client: McpStdioClient;
+}
+
+export class GsdPiExecutor implements Executor {
+  private readonly gsdBinary: string;
+  private readonly projectDirs: string[];
+  /** Lazily-created MCP clients, keyed by resolved absolute project path. */
+  private readonly projects = new Map<string, ProjectEntry>();
+
+  constructor(private readonly logger: Logger, opts: GsdPiExecutorOptions = {}) {
+    this.gsdBinary = opts.gsdBinary
+      ?? process.env["GSD_CLI_PATH"]
+      ?? "gsd";
+    this.projectDirs = (opts.projectDirs ?? defaultProjectDirs()).map((p) => resolve(p));
+  }
+
+  async execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown> {
+    const entry = this.resolveProject(projectAlias);
+    // The MCP server is already scoped to the project via its cwd, so a
+    // projectDir/projectAlias arg is redundant. Strip both to avoid a mismatch
+    // between the arg and the server's own root, and forward everything else.
+    const { projectDir: _pd, projectAlias: _pa, ...args } = rawArgs;
+    void _pd;
+    void _pa;
+    return entry.client.callTool(toolName, args);
+  }
+
+  async advertisedProjects(): Promise<AdvertisedProject[]> {
+    return this.projectDirs.map((path) => {
+      const remoteLabel = gitRemote(path);
+      return {
+        alias: basename(path),
+        path,
+        repoIdentity: identityFor(path, remoteLabel),
+        ...(remoteLabel ? { remoteLabel } : {}),
+        markers: detectMarkers(path),
+      };
+    });
+  }
+
+  async close(): Promise<void> {
+    for (const entry of this.projects.values()) entry.client.close();
+    this.projects.clear();
+  }
+
+  private resolveProject(aliasOrPath?: string): ProjectEntry {
+    const path = this.resolveProjectPath(aliasOrPath);
+    const existing = this.projects.get(path);
+    if (existing) return existing;
+    // `gsd --mode mcp` resolves its GSD root from cwd, so spawn the child in the
+    // project directory. GSD_PROJECT_ROOT is also set as a belt-and-suspenders
+    // hint for gsd's root resolution.
+    const client = new McpStdioClient(
+      this.gsdBinary,
+      ["--mode", "mcp"],
+      this.logger,
+      { env: { ...process.env, GSD_PROJECT_ROOT: path }, cwd: path },
+    );
+    const entry: ProjectEntry = { alias: basename(path), path, client };
+    this.projects.set(path, entry);
+    return entry;
+  }
+
+  private resolveProjectPath(aliasOrPath?: string): string {
+    if (!aliasOrPath) {
+      const first = this.projectDirs[0];
+      if (!first) throw new Error("No project advertised by the standalone GSD runtime");
+      return first;
+    }
+    const resolved = resolve(aliasOrPath);
+    const match = this.projectDirs.find((p) => p === resolved || basename(p) === aliasOrPath);
+    if (!match) {
+      throw new Error(`Project is not advertised by the standalone GSD runtime: ${aliasOrPath}`);
+    }
+    return match;
+  }
+}
+
+function defaultProjectDirs(): string[] {
+  const env = process.env["GSD_CLOUD_PROJECTS"];
+  if (env && env.trim()) {
+    return env.split(delimiter).map((p) => p.trim()).filter(Boolean);
+  }
+  return [process.cwd()];
+}
+
+function detectMarkers(path: string): string[] {
+  const markers: string[] = [];
+  if (existsSync(resolve(path, ".git"))) markers.push("git");
+  if (existsSync(resolve(path, "package.json"))) markers.push("node");
+  if (existsSync(resolve(path, ".gsd"))) markers.push("gsd");
+  return markers;
+}
+
+function gitRemote(projectPath: string): string | undefined {
+  try {
+    return execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: projectPath,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function identityFor(projectPath: string, remote?: string): string {
+  return createHash("sha256").update(remote || `${basename(projectPath)}:${projectPath}`).digest("hex").slice(0, 12);
+}
