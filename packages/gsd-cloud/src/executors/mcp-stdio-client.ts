@@ -66,7 +66,7 @@ export class McpStdioClient {
         if (this.closed) throw new Error("MCP client closed");
         if (this.isProcessAlive()) return;
         this.resetConnection();
-        return this.awaitReadyProcess();
+        throw new Error("gsd MCP process is not running after initialize");
       },
       (err) => {
         if (this.closed) throw new Error("MCP client closed");
