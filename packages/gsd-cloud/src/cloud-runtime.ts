@@ -128,6 +128,10 @@ export class CloudRuntime {
     this.heartbeat = undefined;
     this.socket = undefined;
     if (!this.stopped) {
+      if (this.firstConnectDeferred) {
+        this.rejectFirstConnect(new Error("cloud runtime connection failed"));
+        return;
+      }
       this.logger.warn("cloud runtime disconnected; reconnecting");
       if (this.reconnect) clearTimeout(this.reconnect);
       this.reconnect = setTimeout(() => this.connect(), 5_000);
