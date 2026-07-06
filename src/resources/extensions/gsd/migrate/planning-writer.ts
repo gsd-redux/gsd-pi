@@ -11,6 +11,7 @@ import { join, relative } from "node:path";
 
 import { getAllMilestones, getMilestoneSlices, getSliceTasks } from "../gsd-db.js";
 import { saveFile } from "../files.js";
+import { isClosedStatus } from "../status-guards.js";
 import type { PlanningLayout } from "../compat/compat-marker.js";
 import {
   applyPlanningProjectionWrites,
@@ -104,7 +105,7 @@ function formatPlanningPlan(
   phaseNum: number,
   planNum: number,
   title: string,
-  tasks: Array<{ id: string; title: string; estimate?: string }>,
+  tasks: Array<{ id: string; title: string; estimate?: string; done?: boolean }>,
 ): string {
   const lines: string[] = [];
   lines.push(`# ${pad(phaseNum)}-${pad(planNum)}: ${title}`, "");
@@ -115,7 +116,11 @@ function formatPlanningPlan(
   lines.push("<tasks>");
   for (const t of tasks) {
     const est = t.estimate ? ` _(${t.estimate})_` : "";
-    lines.push(`- [ ] **${t.id}**: ${t.title}${est}`);
+    // Render the checkbox from the task's DB status so a DB→.planning
+    // projection preserves completion. Hardcoding `[ ]` here silently reset
+    // every completed historical task to unchecked on each reconcile (#1276).
+    const box = t.done ? "[x]" : "[ ]";
+    lines.push(`- ${box} **${t.id}**: ${t.title}${est}`);
   }
   lines.push("</tasks>");
   lines.push("");
@@ -173,7 +178,7 @@ export async function writePlanningDirectory(
 
       const tasks = getSliceTasks(milestone.id, slice.id);
       const isDone =
-        tasks.length > 0 && tasks.every((t) => t.status === "complete");
+        tasks.length > 0 && tasks.every((t) => isClosedStatus(t.status));
       roadmapEntries.push({
         number: phaseNum,
         title: slice.title || slice.id,
@@ -204,6 +209,7 @@ export async function writePlanningDirectory(
                 id: task.id,
                 title: task.title || task.id,
                 estimate: task.estimate || undefined,
+                done: isClosedStatus(task.status),
               },
             ]),
           );

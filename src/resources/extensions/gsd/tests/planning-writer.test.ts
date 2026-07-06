@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, updateTaskStatus } from "../gsd-db.ts";
 
 const tmpDirs: string[] = [];
 function makeTmp(): string {
@@ -63,6 +63,23 @@ test("writePlanningDirectory emits phase plan file with XML structure", async ()
   // Planning plans use XML tags per parsers.ts extractXmlTag
   assert.match(plan, /<objective>/);
   assert.match(plan, /<tasks>/);
+});
+
+test("writePlanningDirectory renders completed task checkboxes as [x] (#1276)", async () => {
+  const base = makeTmp();
+  updateTaskStatus("M001", "S01", "T01", "complete");
+  await writePlanningDirectory(base, "flat-phases");
+
+  const phaseDir = readdirSync(join(base, ".planning", "phases"), { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)[0]!;
+  const planFile = readdirSync(join(base, ".planning", "phases", phaseDir))
+    .filter((f) => f.endsWith("PLAN.md"))[0]!;
+  const plan = readFileSync(join(base, ".planning", "phases", phaseDir, planFile), "utf-8");
+  assert.match(plan, /- \[x\] \*\*T01\*\*/, "completed task should project as [x], not [ ]");
+
+  const roadmap = readFileSync(join(base, ".planning", "ROADMAP.md"), "utf-8");
+  assert.match(roadmap, /- \[x\] 01 —/, "phase with all tasks complete should be [x] in ROADMAP");
 });
 
 test("writePlanningDirectory is idempotent: writing twice produces stable content", async () => {
