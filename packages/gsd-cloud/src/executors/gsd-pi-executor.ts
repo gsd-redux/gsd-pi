@@ -63,6 +63,28 @@ export class GsdPiExecutor implements Executor {
       ?? process.env["GSD_CLI_PATH"]
       ?? "gsd";
     this.projectDirs = (opts.projectDirs ?? defaultProjectDirs()).map((p) => resolve(p));
+    this.warnDuplicateAliases();
+  }
+
+  /**
+   * Advertised aliases are directory basenames, so two projects that share a
+   * folder name collide. Warn up front — such an alias can only be routed by an
+   * absolute `projectDir` (see resolveProjectPath).
+   */
+  private warnDuplicateAliases(): void {
+    const counts = new Map<string, number>();
+    for (const p of this.projectDirs) {
+      const alias = basename(p);
+      counts.set(alias, (counts.get(alias) ?? 0) + 1);
+    }
+    for (const [alias, count] of counts) {
+      if (count > 1) {
+        this.logger.warn("duplicate project alias advertised; route by absolute projectDir", {
+          alias,
+          count,
+        });
+      }
+    }
   }
 
   async execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown> {
@@ -131,8 +153,12 @@ export class GsdPiExecutor implements Executor {
       return first;
     }
     const resolved = resolve(aliasOrPath);
+    // Prefer an exact absolute-path match — always unambiguous.
     const exact = this.projectDirs.find((p) => p === resolved);
     if (exact) return exact;
+    // Otherwise match by advertised alias (basename). If more than one advertised
+    // directory shares that basename the alias is ambiguous, so fail loudly rather
+    // than silently routing work to whichever entry happens to come first.
     const byBasename = this.projectDirs.filter((p) => basename(p) === aliasOrPath);
     if (byBasename.length > 1) {
       throw new Error(`Project alias is ambiguous: ${aliasOrPath}`);
