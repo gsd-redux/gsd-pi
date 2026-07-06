@@ -122,6 +122,9 @@ export async function handleCloudCommand(argv: string[], opts: {
  */
 async function runCloudRuntime(config: DaemonConfig, binaryName: string, verbose: boolean): Promise<void> {
   if (!config.cloud) throw new Error("cloud runtime is not configured");
+  if (config.cloud.enabled === false) {
+    throw new Error("cloud runtime is disabled in config; set cloud.enabled to true to connect");
+  }
   const logger = new Logger({
     filePath: config.log.file,
     level: config.log.level,

@@ -64,14 +64,13 @@ export class GsdPiExecutor implements Executor {
   }
 
   async execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown> {
-    const entry = this.resolveProject(projectAlias);
-    // The MCP server is already scoped to the project via its cwd, so a
-    // projectDir/projectAlias arg is redundant. Strip both to avoid a mismatch
-    // between the arg and the server's own root, and forward everything else.
-    const { projectDir: _pd, projectAlias: _pa, ...args } = rawArgs;
-    void _pd;
+    const routingKey = projectAlias
+      ?? (typeof rawArgs.projectDir === "string" ? rawArgs.projectDir : undefined)
+      ?? (typeof rawArgs.projectAlias === "string" ? rawArgs.projectAlias : undefined);
+    const entry = this.resolveProject(routingKey);
+    const { projectAlias: _pa, ...args } = rawArgs;
     void _pa;
-    return entry.client.callTool(toolName, args);
+    return entry.client.callTool(toolName, { ...args, projectDir: entry.path });
   }
 
   async advertisedProjects(): Promise<AdvertisedProject[]> {
