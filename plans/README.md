@@ -7,7 +7,14 @@ order below unless dependencies say otherwise. Each executor: read the plan full
 before starting, honor its STOP conditions, and update your row when done.
 
 Plans 001–008 planned against commit `2c63ab9d`. Plans 009–017 planned against
-commit `58dc840f`.
+commit `58dc840f`. Plans 018–024 added 2026-07-07 from a deep re-audit (8
+category agents over the 548 commits / 573 files changed since `58dc840f`,
+findings lead-verified against HEAD `7cca07ae`); that session ran
+non-interactively, so the top findings by leverage were planned by default.
+Executors ran 018–022 the same day on per-plan `advisor/*` branches (unmerged;
+018→019→020 are stacked). NOTE: plan files 018/023/024 were restored after the
+originals — untracked in this shared checkout — were lost during executor
+branch switches; commit new plan files promptly to avoid a repeat.
 
 ## Execution order & status
 
@@ -30,7 +37,14 @@ commit `58dc840f`.
 | 015 | Bound the Discord message-batcher buffer | P2 | S | — | DONE |
 | 016 | Override undici (via discord.js) & protobufjs to patched versions | P2 | S | — | DONE |
 | 017 | Doc & DX quick fixes (ADR pointer, dev env-vars, fast-test path) | P3 | S | — | DONE |
-| 022 | Test gsd-cloud device-flow polling & SSRF gateway guards | P2 | M | 018 | DONE |
+| 018 | Ship @opengsd/gsd-cloud built, tested, and guarded against empty publishes | P0 | M | — | DONE (branch `advisor/018-…`, unmerged) |
+| 019 | Refuse token-less web mode on non-loopback hosts | P1 | S | — | DONE (branch `advisor/019-…`, stacked on 018, unmerged) |
+| 020 | Add request timeouts to cloud pairing HTTP helper (both copies) | P1 | S | — | DONE (branch `advisor/020-…`, stacked on 019, unmerged) |
+| 021 | Batch plan-v2 graph compile + skip unchanged writes (dispatch hot path) | P2 | S | — | DONE (branch `advisor/021-…`, unmerged) |
+| 022 | Test gsd-cloud device-flow polling & SSRF gateway guards | P2 | M | 018 | DONE (branch `advisor/022-…`, unmerged) |
+| 023 | ADR: decide the flat-phase layout migration completion path | P2 | M | — | DONE (branch `advisor/023-…`, ADR-045, unmerged) |
+| 024 | Dependency & dead-code hygiene (hono, daemon SDK, ajv, chart.tsx) | P2 | S | — | TODO |
+| 025 | Parallel-monitor/eligibility DB hygiene (executed ad hoc from the unplanned list; no plan file) | P3 | S | — | DONE (branch `advisor/025-…`, unmerged) |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`
 (2026-07-01). Notable deviations recorded in the plan files: 009 skipped the
@@ -42,6 +56,10 @@ previously-orphaned `message-batcher.test.js` into the daemon test script.
 - **008 depends on 001, 002, 003** because extracting the auto-loop phase modules will move the orchestrator's Worktree Safety call, the dispatch-history rehydration contract, and the session-timeout counter handling. Landing those behavior changes first avoids merge conflicts and makes the extraction diff smaller and safer.
 - **004, 005, 006, 007 are independent** of each other and of 008, but should be completed before 008 if they touch `auto/phases.ts` or the orchestrator (005 source-grep tests do not; 006 tests `unit-closeout.ts`; 007 touches `packages/mcp-server`).
 - **009–017 are all independent** of each other and of 001–008. Recommended order is by priority then leverage: security first (009, 010), then the correctness fixes that prevent silent data loss (011, 012, 013), then perf (014, 015), then the dependency pin (016) and docs (017). 011 and 015 both touch the daemon but different files (`cloud-runtime.ts` vs `message-batcher.ts`) — no conflict.
+- **022 depends on 018** (its tests only run in CI once 018 wires the cloud packages' test scripts in). Both are done on branches; merge 018 (or the 018→019→020 stack) before or with 022.
+- **Merging the 2026-07-07 branches**: `advisor/020` contains 018+019+020 (stacked); `advisor/021`, `advisor/022`, `advisor/025` are independent of the stack. 021 and 025 both touch gsd-extension query paths but different files.
+- **023 is document-only** (ADR). The migration code work it proposes is NOT planned yet — it needs maintainer approval of the ADR first (CONTRIBUTING requires an RFC/ADR for this territory).
+- **024 touches `packages/daemon/package.json`** (SDK bump) — land after the 018-stack merges to avoid manifest conflicts.
 
 ## Findings surviving verification but NOT planned this round
 
@@ -56,6 +74,36 @@ larger/looser scope, or already partly mitigated. Recorded so they aren't lost.
 - **Dashboard polls `/api/visualizer` every 30s without change detection** (`web/components/gsd/dashboard.tsx:144`): a 10s server-side cache already blunts the subprocess cost; adding ETag/`304` is a clean follow-up, not urgent.
 - **Three doc systems drift** (`docs/`, `gitbook/`, `mintlify-docs/`): `docs/user-docs/` is canonical (most active); gitbook/mintlify may be stale. Auditing and consolidating is an L-effort docs initiative.
 - **Two near-identical RPC client copies** (`packages/rpc-client` vs `packages/gsd-agent-modes/src/modes/rpc`): genuine duplication (it caused the 1000-vs-5000ms shutdown drift plan 012 fixes at both sites). De-duping is worthwhile but a deliberate refactor — surface to maintainers before doing it, given VISION's "no cosmetic refactors" rule.
+
+### From the 2026-07-07 deep audit (verified at `7cca07ae`)
+
+- **Discord orchestrator messages run concurrently against shared history** (`packages/daemon/src/daemon.ts:104` `void this.orchestrator.handleMessage(...)`; `orchestrator-agent.ts` `run()` mutates `this.history` unserialized): two near-simultaneous owner messages can interleave pushes and produce a non-alternating history the Anthropic API rejects (400). Fix is a per-agent promise-chain queue — S effort; plan when Discord control sees real concurrent use.
+- **Daemon session-manager `Promise.race` timers never cleared** (`packages/daemon/src/session-manager.ts:471` `timeout()` has no `clearTimeout`/`.unref()`): two orphaned 30s timers per successful session start keep the event loop alive and delay clean exit. S fix (return the handle, clear in `finally`).
+- **Run-manager directory names collide at second resolution** (`src/resources/extensions/gsd/run-manager.ts:52` `makeTimestamp` strips ms; `mkdirSync(recursive)` + unconditional writes at `:87–104`): two runs of the same definition within one second silently overwrite each other's DEFINITION/GRAPH/PARAMS. S fix (ms or random suffix, or non-recursive mkdir + retry on EEXIST).
+- **`json-persistence.ts` leaves `.tmp.<hex>` litter when rename fails** (`saveJsonFile`/`saveJsonFileCompact`/`writeJsonFileAtomic` swallow errors without unlinking the temp; sibling `atomic-write.ts:118,149` does clean up): S consistency fix.
+- **`atomic-write.ts` renames without fsync** — rename protects against torn files, not data loss on power failure; the doc comment overstates the guarantee. Callers are best-effort ledgers, so this is an investigate/soften-the-comment item, not a blanket fsync.
+- **Gateway auth is O(N_tokens × scrypt) per request** (`packages/cloud-mcp-gateway/src/auth-store.ts:208` `findSecretEntry` runs scrypt per stored record on every `/mcp` request and WS upgrade): CPU-DoS lever that grows with the device-token set. Fine at today's single-user scale; index by HMAC-of-secret for O(1) lookup before multi-user/team use (pairs with the team-sharing direction item).
+- **gsd-cloud device-token at-rest key derives from hostname+username+homedir** (`packages/gsd-cloud/src/cloud-token.ts:31–37`): device-binding obfuscation, not secret storage — anyone who can read the config on-host can decrypt. Document honestly; prefer OS keychain where available; rotate any token from a synced/committed config.
+- **Local SQLite reconcile interpolates paths/table names into SQL** (`db/writers/reconcile.ts:112,119`, `db-schema-metadata.ts:13`): internal-only inputs today (latent, not reachable); bind the ATTACH path and allowlist table names when next touching that code.
+- **Parallel-orchestration I/O leftovers** (siblings of plans 021/025 — 025 already fixed the monitor's double connection and the eligibility N+1): `parallel-orchestrator.ts:992+1004` reads/parses every session-status file twice per refresh; worker status files are atomically rewritten per `message_end`/`notify` event (`:820`, `:839`) even when unchanged. Both S.
+- **Daemon `orchestrator-agent.ts`/`orchestrator-tools.ts`/`cloud-cli.ts`/`cloud-token.ts` untested** (changed this window, no matching tests); **pi-ai `tool-result-content.ts` + Bedrock provider changes** need a coverage check (possibly covered transitively). Follow `packages/daemon/src/orchestrator.test.ts` / `device-flow.test.ts` patterns.
+- **zod dual-major** (daemon+web on v3; root/mcp-server/gateway on v4 — both bundled, AI-SDK peers double-instantiated) and **typebox dual-package** (`@sinclair/typebox@0.34` in 44 main-src files vs `typebox@1.x` in the vendored pi packages — same library, incompatible types, both shipped): each is an M migration needing a spike + fixture-gated typecheck pass; surface to maintainers first (VISION bans churn without measurable value; the typebox seam-crossing is the strongest argument).
+- **highlight.js 10.7.3** (2021-era, renders untrusted tool output) → bump to ^11 after verifying registered language aliases; **workspace version-range drift** (ws/typescript/@types/node/chalk floors differ) → consider a pnpm catalog; **`better-sqlite3` fallback provider is undeclared** — it try-requires gracefully (verified), so by-design-adjacent; an `optionalDependencies` entry would make the fallback real for users who don't already have it.
+- **Hermes CI has no lint/type gate and only tests Python 3.12** despite a 3.10 floor (`integrations/hermes/pyproject.toml:11` vs `.github/workflows/hermes-integration.yml:65–76`): add ruff (+3.10 matrix leg) — S.
+- **`build:core` compiles `@opengsd/contracts` three times** (build:core → build:contracts; build:pi → build:contracts; build:pi-coding-agent → build:contracts) and `hermes-integration.yml` rebuilds core without reusing `ci.yml` artifacts: S dedupe / M artifact sharing.
+- **Repo-root `screenshot-context-breakdown.jpg`** is git-tracked but NOT published (root `files` allowlist excludes it — verified). Repo-cleanliness only.
+
+## Direction options (2026-07-07 — maintainer decisions, not ranked against bugs)
+
+Grounded in repo evidence; a selected one becomes a design/spike plan, not a
+build-everything plan. Effort estimates are coarse.
+
+1. **Finish the flat-phase migration** — plan 023 writes the ADR (the drift alarm `detectStaleRenders` is still hard-disabled at 1.8.1 while the seam shipped #1303/#1305/#1313/#1316 within six days).
+2. **Team sharing + RBAC for GSD Cloud — build or formally defer**: promised twice in the product brief; zero backing code (`auth-store.ts`/`runtime-registry.ts` model single-user only; grep for team/org/rbac/tenant across gateway+gsd-cloud → 0 non-test hits). Multi-machine is delivered; multi-user is absent. A record-schema + gateway-ownership-seam ADR is the cheap first step. L (coarse).
+3. **Linux systemd service packaging for the daemon**: the brief requires macOS AND Linux service install; only `launchd.ts` exists (`packages/daemon/src/cli.ts` wires install/uninstall/status exclusively to launchd). A `systemd.ts` mirroring the launchd trio + a platform switch is a bounded M.
+4. **Bidirectional GitHub sync**: `github-sync` is export-only (all ops are `ghCreate*/ghClose*/ghAddComment`; zero inbound reads). Spike a read-only `github-sync import` preview (issues → milestone/task mapping) to surface the DB-single-writer conflict questions first. M–L (coarse).
+5. **Productize the repo's own triage/PR-risk automation as an extension**: `scripts/{ai-triage-policy,issue-dedupe,pr-risk-check,issue-lifecycle}.mjs` (~950 proven lines) solve friction every gsd user with a GitHub repo has; extension host + `gh` wrapper already exist. Spike: wrap `pr-risk-check.mjs` behind a `/pr-risk` command. M (coarse).
+6. **Implement (or cut) the stubbed Codex/Claude cloud executors**: `packages/gsd-cloud/src/executors/{codex,claude}-executor.ts` throw "not yet implemented" while the `Executor` seam, registry, README docs, and a full reference impl (`gsd-pi-executor.ts`) all exist — `GSD_CLOUD_EXECUTOR=codex` currently only throws. One adapter spike validates the tool-exposure/result-mapping contract. M per adapter (coarse).
 
 ## Findings considered and rejected
 
@@ -72,4 +120,15 @@ larger/looser scope, or already partly mitigated. Recorded so they aren't lost.
 - **Detached GitHub milestone sync unawaited**: labeled "best-effort detached sync" and covered by `recovery-finalize-logs.test.ts`; by design. Rejected.
 - **Pre-merge-check shell-injection**: the tokenizer feeds `execFileSync(binary, args)` with no `shell:true`, so shell metacharacters are inert. Rejected.
 - **Per-message WebSocket auth / Hono CORS / Hono path-traversal advisories**: the gateway uses raw `http.createServer` (no Hono CORS/serve-static middleware reachable), and the WS connection is bearer-authenticated at connect over WSS; the specific exploit paths are unreachable. Rejected (undici DoS via discord.js is real and IS planned — see 016).
-- **Stale-render detection tests skipped / flat-phase migration "incomplete"**: `detectStaleRenders` is intentionally disabled during the shipping v1.4.0 flat-phase migration (documented design), not an accidental coverage hole. Tracked as direction (finish the migration), not a bug.
+- **Stale-render detection tests skipped / flat-phase migration "incomplete"**: `detectStaleRenders` is intentionally disabled during the shipping v1.4.0 flat-phase migration (documented design), not an accidental coverage hole. Tracked as direction (finish the migration), not a bug. *2026-07-07 update: still disabled three minor versions later with fresh bug fallout — escalated to plan 023 (ADR).*
+
+### Rejected in the 2026-07-07 deep audit
+
+- **"32 source files branch on legacy layout"**: over-counted — the verified grep (non-test, `isLegacyMilestonesLayout|legacyMilestones`) finds **13** files. Still material; correct count recorded in plan 023.
+- **"`better-sqlite3` branch will throw at runtime"**: false — `db-provider.ts` try-requires and degrades with an actionable stderr message. Downgraded to an `optionalDependencies` suggestion (see unplanned list).
+- **hono advisories as a reachable security finding**: the gateway uses raw `node:http`; no hono middleware executes. The override is planned in 024 as hygiene, not as a vulnerability fix.
+- **gsd-cloud "ws+zod only" manifest drift**: it ships `ws`+`yaml` (no zod) — cosmetic mismatch with the design note, no leakage; not a finding.
+- **Studio Electron lag**: `studio/` is private/0.0.0 and outside the pnpm workspace; Electron 41 + React 19 are current. Not a finding.
+- **worktree-cli split and migrate-command split (#1314) leaving orphaned logic**: both verified clean — typed delegation, single importer chains, no duplicated copies.
+- **Hermes tests not in CI**: false — `hermes-integration.yml:76` runs pytest on hermes-touching pushes. (The missing lint/type gate IS recorded, above.)
+- **`@modelcontextprotocol/sdk`, Next 16, React 19, Playwright, discord.js 14, Electron 41, Rust crates**: all current lines, no EOL exposure. No action.
