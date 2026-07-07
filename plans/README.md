@@ -30,6 +30,7 @@ commit `58dc840f`.
 | 015 | Bound the Discord message-batcher buffer | P2 | S | — | DONE |
 | 016 | Override undici (via discord.js) & protobufjs to patched versions | P2 | S | — | DONE |
 | 017 | Doc & DX quick fixes (ADR pointer, dev env-vars, fast-test path) | P3 | S | — | DONE |
+| 022 | Test gsd-cloud device-flow polling & SSRF gateway guards | P2 | M | 018 | DONE |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`
 (2026-07-01). Notable deviations recorded in the plan files: 009 skipped the
