@@ -249,3 +249,51 @@ export function truncateResponsesInputResultItems(items: ResponsesInputItem[], m
     return item;
   });
 }
+
+// GSD injects at most one context message per turn (memory/guided/forensics —
+// see buildContextMessage in bootstrap/system-context.ts), marked with this
+// sentinel. convertToLlm strips the distinguishing customType before the
+// payload reaches this hook, so detection is by content prefix instead.
+const GSD_CONTEXT_MESSAGE_SENTINEL = "[GSD Context Injection]";
+
+function isGsdContextInjectionText(text: string | undefined): boolean {
+  return typeof text === "string" && text.startsWith(GSD_CONTEXT_MESSAGE_SENTINEL);
+}
+
+function isGsdContextInjectionMessage(m: MaskableMessage): boolean {
+  if (m.role !== "user") return false;
+  return isGsdContextInjectionText(firstTextFromContent(m.content));
+}
+
+/**
+ * Removes every GSD context-injection user message except the latest one.
+ * Each turn re-injects a near-identical memory/guided/forensics block; left
+ * in place they duplicate verbatim across an N-turn session. Removal (not
+ * masking) — an empty placeholder still costs tokens and shifts message
+ * positions, breaking cache byte-stability. Pure function: stored history is
+ * never mutated, only the outgoing payload array.
+ */
+export function filterSupersededContextInjections(messages: MaskableMessage[]): MaskableMessage[] {
+  let lastIndex = -1;
+  for (let i = 0; i < messages.length; i++) {
+    if (isGsdContextInjectionMessage(messages[i])) lastIndex = i;
+  }
+  if (lastIndex === -1) return messages;
+  return messages.filter((m, i) => i === lastIndex || !isGsdContextInjectionMessage(m));
+}
+
+function isResponsesGsdContextInjectionItem(item: ResponsesInputItem): boolean {
+  if (item.role !== "user") return false;
+  return isGsdContextInjectionText(firstTextFromContent(item.content));
+}
+
+export function filterSupersededResponsesContextInjections(
+  items: ResponsesInputItem[],
+): ResponsesInputItem[] {
+  let lastIndex = -1;
+  for (let i = 0; i < items.length; i++) {
+    if (isResponsesGsdContextInjectionItem(items[i])) lastIndex = i;
+  }
+  if (lastIndex === -1) return items;
+  return items.filter((item, i) => i === lastIndex || !isResponsesGsdContextInjectionItem(item));
+}

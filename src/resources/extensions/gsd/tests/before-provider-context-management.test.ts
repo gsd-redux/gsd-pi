@@ -143,3 +143,58 @@ test("successful shell result clears source context before provider injection", 
   assert.equal(payload.messages.length, 1);
   assert.doesNotMatch(payload.messages[0].content[0].text, /Source Context Block/);
 });
+
+test("before_provider_request keeps only the latest GSD context injection across a 5-turn session", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-before-provider-injections-"));
+  const gsdHome = join(dir, "home");
+  const project = join(dir, "project");
+  const previousCwd = process.cwd();
+  const previousGsdHome = process.env.GSD_HOME;
+
+  mkdirSync(join(project, ".gsd"), { recursive: true });
+  mkdirSync(gsdHome, { recursive: true });
+  process.env.GSD_HOME = gsdHome;
+  process.chdir(project);
+  _setAutoActiveForTest(false);
+
+  t.after(() => {
+    _setAutoActiveForTest(false);
+    process.chdir(previousCwd);
+    if (previousGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = previousGsdHome;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const beforeProviderRequest = requireHook(createHookHandlers(), "before_provider_request");
+
+  const sentinel = "[GSD Context Injection]";
+  const contextInjection = (turn: number) => ({
+    role: "user",
+    content: [{ type: "text", text: `${sentinel}\n[MEMORY] turn=${turn}` }],
+  });
+
+  const payload = {
+    messages: [
+      { role: "user", content: [{ type: "text", text: "turn 1" }] },
+      contextInjection(1),
+      { role: "assistant", content: [{ type: "text", text: "r1" }] },
+      { role: "user", content: [{ type: "text", text: "turn 2" }] },
+      contextInjection(2),
+      { role: "assistant", content: [{ type: "text", text: "r2" }] },
+      { role: "user", content: [{ type: "text", text: "turn 3" }] },
+      contextInjection(3),
+      { role: "assistant", content: [{ type: "text", text: "r3" }] },
+      { role: "user", content: [{ type: "text", text: "turn 4" }] },
+      contextInjection(4),
+      { role: "assistant", content: [{ type: "text", text: "r4" }] },
+      { role: "user", content: [{ type: "text", text: "turn 5" }] },
+      contextInjection(5),
+    ],
+  };
+
+  await beforeProviderRequest({ payload });
+
+  const survivors = (payload.messages as any[]).filter((m) => (m.content?.[0]?.text ?? "").startsWith(sentinel));
+  assert.equal(survivors.length, 1);
+  assert.match(survivors[0].content[0].text, /turn=5/);
+});

@@ -2,10 +2,12 @@
  * Provider Payload Policy - ordered shaping of provider request payloads.
  *
  * The order is intentional:
- * 1. observation budgeting masks old tool results in auto-mode,
- * 2. display truncation caps tool-result text for every mode,
- * 3. the protected Source Context Block is appended after truncation,
- * 4. supported models receive the configured service tier.
+ * 1. superseded GSD context injections (memory/guided/forensics) are removed,
+ *    keeping only the latest, for every mode,
+ * 2. observation budgeting masks old tool results in auto-mode,
+ * 3. display truncation caps tool-result text for every mode,
+ * 4. the protected Source Context Block is appended after truncation,
+ * 5. supported models receive the configured service tier.
  */
 
 import type { ContextManagementConfig } from "./preferences-types.js";
@@ -14,6 +16,8 @@ import type { ServiceTierSetting } from "./service-tier.js";
 import {
   createObservationMask,
   createResponsesInputObservationMask,
+  filterSupersededContextInjections,
+  filterSupersededResponsesContextInjections,
   truncateContextResultMessages,
   truncateResponsesInputResultItems,
 } from "./context-masker.js";
@@ -80,8 +84,18 @@ function applyContextManagement(
   deps: ProviderPayloadPolicyDeps,
 ): void {
   const config = deps.loadContextManagementConfig();
+  applyContextInjectionFilter(payload);
   applyObservationBudget(payload, config, deps.isAutoActive());
   applyDisplayTruncation(payload, config);
+}
+
+function applyContextInjectionFilter(payload: Record<string, unknown>): void {
+  if (Array.isArray(payload.messages)) {
+    payload.messages = filterSupersededContextInjections(payload.messages as MessagePayload);
+  }
+  if (Array.isArray(payload.input)) {
+    payload.input = filterSupersededResponsesContextInjections(payload.input as ResponsesInputPayload);
+  }
 }
 
 function applyObservationBudget(

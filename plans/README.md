@@ -63,7 +63,7 @@ HEAD `43033bb9`; top 5 by leverage planned per the non-interactive rule).
 | 034 | Re-enable the stale-render drift detector for flat-phase projects | P2 | S | 032, 033 | TODO |
 | 035 | Stop advertising duplicate alias tool schemas to the model | P1 | M | — | DONE |
 | 036 | Stabilize the prompt-cache prefix (quantize observation mask) + surface cacheRetention | P1 | M | — | DONE |
-| 037 | Keep only the latest GSD context injection in the model payload (memory-block dedupe) | P1 | M | 036 | TODO |
+| 037 | Keep only the latest GSD context injection in the model payload (memory-block dedupe) | P1 | M | 036 | DONE |
 | 038 | Stop spending reasoning tokens / double calls on compaction summaries | P2 | S | — | TODO |
 | 039 | Close prompt-budget enforcement gaps (execute-task cap, discuss-slice cap, provider ratio) | P2 | M | — | TODO |
 

@@ -4,9 +4,12 @@ import assert from "node:assert/strict";
 import {
   createObservationMask,
   createResponsesInputObservationMask,
+  filterSupersededContextInjections,
+  filterSupersededResponsesContextInjections,
   truncateContextResultMessages,
   truncateResponsesInputResultItems,
 } from "../context-masker.js";
+import { GSD_CONTEXT_MESSAGE_SENTINEL } from "../bootstrap/system-context.js";
 
 // These helpers produce messages in the pi-ai LLM payload format
 // (post-convertToLlm, pre-provider), which is what before_provider_request sees.
@@ -245,4 +248,75 @@ test("truncates Responses API function outputs and recent bash result items", ()
   assert.match((result[2].content as any)[0].text, /…\[truncated\]/);
   assert.ok((result[1].output as string).length < (items[1].output as string).length);
   assert.ok((result[2].content as any)[0].text.length < (items[2].content as any)[0].text.length);
+});
+
+function contextInjectionMsg(label: string) {
+  return userMsg(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n[MEMORY] turn=${label}`);
+}
+
+test("filterSupersededContextInjections keeps only the latest of three same-kind injections", () => {
+  const messages = [
+    userMsg("turn 1 prompt"),
+    contextInjectionMsg("1"),
+    assistantMsg("response 1"),
+    userMsg("turn 2 prompt"),
+    contextInjectionMsg("2"),
+    assistantMsg("response 2"),
+    userMsg("turn 3 prompt"),
+    contextInjectionMsg("3"),
+  ];
+  const original = JSON.parse(JSON.stringify(messages));
+
+  const result = filterSupersededContextInjections(messages as any);
+
+  const survivors = result.filter((m: any) => (m.content?.[0]?.text ?? "").startsWith(GSD_CONTEXT_MESSAGE_SENTINEL));
+  assert.equal(survivors.length, 1);
+  assert.match((survivors[0] as any).content[0].text, /turn=3/);
+  assert.equal(result.length, messages.length - 2);
+  // Pure function — input array is untouched.
+  assert.deepEqual(messages, original);
+});
+
+test("filterSupersededContextInjections keeps the latest injection overall across mixed kinds", () => {
+  // buildContextMessage emits one message per turn (guided > forensics > memory);
+  // the latest one already embeds the memory block when present, so "keep the
+  // latest overall" is correct — no separate per-kind tracking needed.
+  const memoryOnly = userMsg(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n[GSD Context Metadata]\n- Memory supplied: yes\n\n[MEMORY]`);
+  const guided = userMsg(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n[GSD Context Metadata]\n- Memory supplied: yes\n\n[GUIDED EXECUTE]`);
+  const messages = [userMsg("turn 1"), memoryOnly, assistantMsg("r1"), userMsg("turn 2"), guided];
+
+  const result = filterSupersededContextInjections(messages as any);
+
+  const survivors = result.filter((m: any) => (m.content?.[0]?.text ?? "").startsWith(GSD_CONTEXT_MESSAGE_SENTINEL));
+  assert.equal(survivors.length, 1);
+  assert.match((survivors[0] as any).content[0].text, /GUIDED EXECUTE/);
+});
+
+test("filterSupersededContextInjections returns the array unchanged when no injections present", () => {
+  const messages = [userMsg("hi"), assistantMsg("hello"), toolResult("data")];
+  const result = filterSupersededContextInjections(messages as any);
+  assert.equal(result, messages);
+});
+
+test("filterSupersededResponsesContextInjections keeps only the latest injection in payload.input", () => {
+  const items = [
+    { role: "user", content: [{ type: "input_text", text: "turn 1" }] },
+    { role: "user", content: [{ type: "input_text", text: `${GSD_CONTEXT_MESSAGE_SENTINEL}\n[MEMORY] turn=1` }] },
+    { type: "function_call_output", call_id: "call_1", output: "ok" },
+    { role: "user", content: [{ type: "input_text", text: `${GSD_CONTEXT_MESSAGE_SENTINEL}\n[MEMORY] turn=2` }] },
+  ];
+  const original = JSON.parse(JSON.stringify(items));
+
+  const result = filterSupersededResponsesContextInjections(items as any);
+
+  const survivors = result.filter((i: any) => (i.content?.[0]?.text ?? "").startsWith(GSD_CONTEXT_MESSAGE_SENTINEL));
+  assert.equal(survivors.length, 1);
+  assert.match((survivors[0] as any).content[0].text, /turn=2/);
+  assert.deepEqual(items, original);
+});
+
+test("filterSupersededResponsesContextInjections returns the array unchanged when no injections present", () => {
+  const items = [{ role: "user", content: [{ type: "input_text", text: "hi" }] }];
+  const result = filterSupersededResponsesContextInjections(items as any);
+  assert.equal(result, items);
 });

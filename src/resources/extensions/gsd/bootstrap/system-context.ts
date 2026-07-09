@@ -22,6 +22,12 @@ import { toPosixPath } from "../../shared/mod.js";
 import { autoEnableCmuxPreferences } from "../commands-cmux.js";
 import { gsdHome } from "../gsd-home.js";
 
+// Leading marker on every buildContextMessage() output. Lets the provider
+// payload policy (filterSupersededContextInjections in context-masker.ts)
+// find and dedupe these messages after convertToLlm strips customType.
+// Adding a new customType here? Add its branch to the marker too.
+export const GSD_CONTEXT_MESSAGE_SENTINEL = "[GSD Context Injection]";
+
 const DEFAULT_CONTEXT_MESSAGE_MAX_CHARS = 4_000;
 const DEFAULT_KNOWLEDGE_MAX_CHARS = 12_000;
 const DEFAULT_CODEBASE_MAX_CHARS = 8_000;
@@ -448,14 +454,14 @@ export function buildContextMessage(opts: {
   const memoryContent = markMemoryContextSupplied(opts.memoryBlock.trim());
   if (opts.injection) {
     const content = limitContextMessageContent(
-      memoryContent ? `${memoryContent}\n\n${opts.injection}` : opts.injection,
+      `${GSD_CONTEXT_MESSAGE_SENTINEL}\n${memoryContent ? `${memoryContent}\n\n${opts.injection}` : opts.injection}`,
       contextCharLimit,
     );
     return { customType: "gsd-guided-context", content, display: false as const };
   }
   if (opts.forensicsInjection) {
     const content = limitContextMessageContent(
-      memoryContent ? `${memoryContent}\n\n${opts.forensicsInjection}` : opts.forensicsInjection,
+      `${GSD_CONTEXT_MESSAGE_SENTINEL}\n${memoryContent ? `${memoryContent}\n\n${opts.forensicsInjection}` : opts.forensicsInjection}`,
       contextCharLimit,
     );
     return { customType: "gsd-forensics", content, display: false as const };
@@ -463,7 +469,7 @@ export function buildContextMessage(opts: {
   if (memoryContent) {
     return {
       customType: "gsd-memory",
-      content: limitContextMessageContent(memoryContent, contextCharLimit),
+      content: limitContextMessageContent(`${GSD_CONTEXT_MESSAGE_SENTINEL}\n${memoryContent}`, contextCharLimit),
       display: false as const,
     };
   }
