@@ -64,7 +64,7 @@ HEAD `43033bb9`; top 5 by leverage planned per the non-interactive rule).
 | 035 | Stop advertising duplicate alias tool schemas to the model | P1 | M | — | DONE |
 | 036 | Stabilize the prompt-cache prefix (quantize observation mask) + surface cacheRetention | P1 | M | — | DONE |
 | 037 | Keep only the latest GSD context injection in the model payload (memory-block dedupe) | P1 | M | 036 | DONE |
-| 038 | Stop spending reasoning tokens / double calls on compaction summaries | P2 | S | — | TODO |
+| 038 | Stop spending reasoning tokens / double calls on compaction summaries | P2 | S | — | DONE (steps 1-3; step 4 optional model-override skipped) |
 | 039 | Close prompt-budget enforcement gaps (execute-task cap, discuss-slice cap, provider ratio) | P2 | M | — | TODO |
 
 All of 009–017 implemented, tested, and committed on branch `chore/audit-fixes-009-017`

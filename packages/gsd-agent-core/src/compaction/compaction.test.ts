@@ -675,3 +675,175 @@ describe("(#4665) degenerate summary guard", () => {
 		);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// (#038) cheap compaction summarization
+// ---------------------------------------------------------------------------
+
+describe("(#038) summarization options cap reasoning at low", () => {
+	function makeReasoningModel(contextWindow: number): Model<any> {
+		return { ...makeModel(contextWindow), reasoning: true };
+	}
+
+	it("caps a high session thinking level down to low on a reasoning model", async () => {
+		const model = makeReasoningModel(200_000);
+		const messages = [makeUserMessage(10)];
+		let seenOptions: any;
+		const mockComplete = mock.fn(async (_model: any, _context: any, options: any) => {
+			seenOptions = options;
+			return makeFakeResponse(
+				"## Done\n- Real summary well over one hundred characters long so the degenerate check passes cleanly here.",
+			);
+		});
+
+		await generateSummary(
+			messages,
+			model,
+			16_384,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"high",
+			undefined,
+			mockComplete,
+		);
+
+		assert.equal(seenOptions.reasoning, "low");
+	});
+
+	it("does not set reasoning when session thinking level is off", async () => {
+		const model = makeReasoningModel(200_000);
+		const messages = [makeUserMessage(10)];
+		let seenOptions: any;
+		const mockComplete = mock.fn(async (_model: any, _context: any, options: any) => {
+			seenOptions = options;
+			return makeFakeResponse(
+				"## Done\n- Real summary well over one hundred characters long so the degenerate check passes cleanly here.",
+			);
+		});
+
+		await generateSummary(
+			messages,
+			model,
+			16_384,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"off",
+			undefined,
+			mockComplete,
+		);
+
+		assert.equal(seenOptions.reasoning, undefined);
+	});
+
+	it("does not set reasoning on a non-reasoning model", async () => {
+		const model = makeModel(200_000); // reasoning: false
+		const messages = [makeUserMessage(10)];
+		let seenOptions: any;
+		const mockComplete = mock.fn(async (_model: any, _context: any, options: any) => {
+			seenOptions = options;
+			return makeFakeResponse(
+				"## Done\n- Real summary well over one hundred characters long so the degenerate check passes cleanly here.",
+			);
+		});
+
+		await generateSummary(
+			messages,
+			model,
+			16_384,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"high",
+			undefined,
+			mockComplete,
+		);
+
+		assert.equal(seenOptions.reasoning, undefined);
+	});
+});
+
+describe("(#038) degenerate-chunk retry is bounded per compaction", () => {
+	it("retries at most once total across a run with multiple degenerate chunks", async () => {
+		const messages: AgentMessage[] = [
+			makeBranchSummaryMessage(80_000),
+			makeBranchSummaryMessage(80_000),
+			makeBranchSummaryMessage(80_000),
+		];
+		const model = makeModel(1_000);
+		const reserveTokens = 200;
+
+		// Every response is degenerate — old behavior retried every chunk once
+		// (6 calls for 3 chunks); bounded behavior spends the single retry
+		// budget on the first chunk and gives up thereafter (4 calls).
+		const mockComplete = mock.fn(async () => makeFakeResponse("empty conversation"));
+
+		await assert.rejects(
+			() =>
+				generateSummary(
+					messages,
+					model,
+					reserveTokens,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					mockComplete,
+				),
+			(err: unknown) => err instanceof CompactionProducedNoSummaryError,
+		);
+
+		assert.equal(
+			mockComplete.mock.callCount(),
+			4,
+			"expected exactly 4 calls: chunk0 + one retry + chunk1 + chunk2 (no further retries)",
+		);
+	});
+
+	it("skips the retry when the degenerate chunk's serialized input is itself tiny", async () => {
+		// Chunk 0 is a single tiny user message (serializes to well under the
+		// 100-char degenerate threshold); chunk 1 is a branch summary. Branch
+		// summary content is capped by the serializer's per-block truncation
+		// (~500 tokens), so a small context window is needed to force the two
+		// onto separate chunks: tiny(~1 token) + capped-branch(~500 tokens)
+		// exceeds a 340-token chunk budget, so chunkMessages splits them.
+		const messages: AgentMessage[] = [makeUserMessage(1), makeBranchSummaryMessage(80_000)];
+		const model = makeModel(700);
+		const reserveTokens = 200;
+
+		const responses = [
+			"", // chunk 0 (tiny input) → degenerate, must NOT retry
+			"## Done\n- Real summary for chunk one well over one hundred characters long, clearing the degenerate threshold.",
+		];
+		let callIndex = 0;
+		const mockComplete = mock.fn(async () => {
+			const response = responses[Math.min(callIndex, responses.length - 1)];
+			callIndex++;
+			return makeFakeResponse(response);
+		});
+
+		await generateSummary(
+			messages,
+			model,
+			reserveTokens,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mockComplete,
+		);
+
+		assert.equal(
+			mockComplete.mock.callCount(),
+			2,
+			"expected exactly 2 calls: chunk0 (no retry, tiny input) + chunk1",
+		);
+	});
+});

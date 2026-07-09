@@ -614,7 +614,9 @@ function createSummarizationOptions(
 ): SimpleStreamOptions {
 	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers };
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
+		// Summarization is a mechanical template-fill; extended reasoning adds
+		// cost, not quality. Cap at "low" regardless of session thinking level.
+		options.reasoning = "low";
 	}
 	return options;
 }
@@ -743,6 +745,7 @@ export async function generateSummary(
 	}
 
 	let runningSummary = previousSummary;
+	let degenerateRetriesUsed = 0;
 	for (const chunk of chunks) {
 		const summaryBeforeChunk = runningSummary;
 		let chunkSummary = await summarizeOnce(
@@ -755,7 +758,12 @@ export async function generateSummary(
 			completeFn,
 		);
 
-		if (isDegenerateSummary(chunkSummary)) {
+		// A tiny chunk legitimately yields a short summary — retrying won't help.
+		// Cap retries at one per compaction run (not per chunk) so a large,
+		// already-expensive chunked run can't double its cost per chunk.
+		const chunkInputSize = serializeConversation(convertToLlm(chunk)).length;
+		if (isDegenerateSummary(chunkSummary) && degenerateRetriesUsed < 1 && chunkInputSize >= 100) {
+			degenerateRetriesUsed++;
 			chunkSummary = await summarizeOnce(
 				chunk,
 				model,
