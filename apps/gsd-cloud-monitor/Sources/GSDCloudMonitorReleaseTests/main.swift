@@ -20,6 +20,10 @@ struct ReleasePackageTests {
         "--output", output.path,
       ]
     )
+    try run(
+      "/bin/bash",
+      [packageRoot.appendingPathComponent("script/build_and_run.sh").path, "stage"]
+    )
 
     let zip = output.appendingPathComponent("GSDCloudMonitor-0.1.0-macos.zip")
     let dmg = output.appendingPathComponent("GSDCloudMonitor-0.1.0-macos.dmg")
@@ -32,6 +36,11 @@ struct ReleasePackageTests {
     try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
     try run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path])
     let app = unpacked.appendingPathComponent("GSDCloudMonitor.app")
+    let developmentApp = packageRoot.appendingPathComponent("dist/GSDCloudMonitor.app")
+    try expect(
+      FileManager.default.fileExists(atPath: developmentApp.path),
+      "development app bundle was not staged"
+    )
     let executable = app.appendingPathComponent("Contents/MacOS/GSDCloudMonitor")
     let architectures = try outputOf("/usr/bin/lipo", ["-archs", executable.path])
     try expect(architectures.contains("arm64"), "release is missing arm64")
@@ -47,6 +56,17 @@ struct ReleasePackageTests {
       ["-c", "Print :CFBundleIconFile", infoPlist.path]
     ).trimmingCharacters(in: .whitespacesAndNewlines)
     try expect(iconName == "GSDCloudMonitor", "bundle icon name is incorrect")
+    let developmentDisplayName = try outputOf(
+      "/usr/libexec/PlistBuddy",
+      [
+        "-c", "Print :CFBundleDisplayName",
+        developmentApp.appendingPathComponent("Contents/Info.plist").path,
+      ]
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    try expect(
+      developmentDisplayName == "GSD Cloud Monitor",
+      "development and release staging metadata must match"
+    )
     try expect(
       FileManager.default.fileExists(
         atPath: app.appendingPathComponent("Contents/Resources/GSDCloudMonitor.icns").path

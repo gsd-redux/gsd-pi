@@ -21,7 +21,7 @@ public enum RuntimeActivityOutcome: String, Codable, Sendable {
 }
 
 public struct RuntimeProjectTelemetry: Decodable, Identifiable, Sendable {
-  public var id: String { repoIdentity }
+  public var id: String { path }
 
   public let alias: String
   public let path: String
@@ -57,6 +57,7 @@ public struct RuntimeActivity: Decodable, Identifiable, Sendable {
 
   public let requestID: String
   public let projectAlias: String?
+  public let projectPath: String?
   public let toolName: String
   public let outcome: RuntimeActivityOutcome
   public let durationMs: Int
@@ -66,11 +67,17 @@ public struct RuntimeActivity: Decodable, Identifiable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case requestID = "request_id"
     case projectAlias = "project_alias"
+    case projectPath = "project_path"
     case toolName = "tool_name"
     case outcome
     case durationMs = "duration_ms"
     case at
     case error
+  }
+
+  public func belongs(to project: RuntimeProjectTelemetry) -> Bool {
+    if let projectPath { return projectPath == project.path }
+    return projectAlias == project.alias
   }
 }
 

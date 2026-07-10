@@ -56,9 +56,13 @@ export class CloudRuntime {
   start(): Promise<void> {
     this.stopped = false;
     this.initialConnectAttempts = 0;
-    this.firstConnectDeferred = Promise.withResolvers<void>();
+    const firstConnect = Promise.withResolvers<void>();
+    this.firstConnectDeferred = firstConnect;
     this.connect();
-    return this.firstConnectDeferred.promise;
+    return firstConnect.promise.catch(async (error: unknown) => {
+      await this.telemetry.flush?.();
+      throw error;
+    });
   }
 
   stop(): void {

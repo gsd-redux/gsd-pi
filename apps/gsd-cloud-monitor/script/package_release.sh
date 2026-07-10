@@ -3,7 +3,6 @@ set -euo pipefail
 
 APP_NAME="GSDCloudMonitor"
 DISPLAY_NAME="GSD Cloud Monitor"
-BUNDLE_ID="net.opengsd.GSDCloudMonitor"
 MIN_SYSTEM_VERSION="14.0"
 DRY_RUN=false
 VERSION=""
@@ -42,17 +41,13 @@ WORK_DIR="$ROOT_DIR/.build/release-package"
 ARM_BUILD="$ROOT_DIR/.build/release-arm64"
 INTEL_BUILD="$ROOT_DIR/.build/release-x86_64"
 APP_BUNDLE="$WORK_DIR/$APP_NAME.app"
-APP_CONTENTS="$APP_BUNDLE/Contents"
-APP_MACOS="$APP_CONTENTS/MacOS"
-APP_RESOURCES="$APP_CONTENTS/Resources"
-APP_BINARY="$APP_MACOS/$APP_NAME"
-INFO_PLIST="$APP_CONTENTS/Info.plist"
+UNIVERSAL_BINARY="$WORK_DIR/$APP_NAME"
 ZIP_PATH="$OUTPUT_DIR/$APP_NAME-$VERSION-macos.zip"
 DMG_PATH="$OUTPUT_DIR/$APP_NAME-$VERSION-macos.dmg"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
 rm -rf "$WORK_DIR" "$OUTPUT_DIR"
-mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$OUTPUT_DIR"
+mkdir -p "$WORK_DIR" "$OUTPUT_DIR"
 
 cd "$ROOT_DIR"
 swift build \
@@ -68,44 +63,9 @@ swift build \
 
 ARM_BINARY="$(swift build --configuration release --triple "arm64-apple-macosx$MIN_SYSTEM_VERSION" --scratch-path "$ARM_BUILD" --show-bin-path)/$APP_NAME"
 INTEL_BINARY="$(swift build --configuration release --triple "x86_64-apple-macosx$MIN_SYSTEM_VERSION" --scratch-path "$INTEL_BUILD" --show-bin-path)/$APP_NAME"
-/usr/bin/lipo -create "$ARM_BINARY" "$INTEL_BINARY" -output "$APP_BINARY"
-chmod +x "$APP_BINARY"
-
-cat >"$INFO_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleExecutable</key>
-  <string>$APP_NAME</string>
-  <key>CFBundleIdentifier</key>
-  <string>$BUNDLE_ID</string>
-  <key>CFBundleName</key>
-  <string>$DISPLAY_NAME</string>
-  <key>CFBundleDisplayName</key>
-  <string>$DISPLAY_NAME</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$VERSION</string>
-  <key>CFBundleVersion</key>
-  <string>$BUILD_NUMBER</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>$MIN_SYSTEM_VERSION</string>
-  <key>LSUIElement</key>
-  <true/>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSPrincipalClass</key>
-  <string>NSApplication</string>
-</dict>
-</plist>
-PLIST
-
-if [[ -f "$ROOT_DIR/Resources/GSDCloudMonitor.icns" ]]; then
-  cp "$ROOT_DIR/Resources/GSDCloudMonitor.icns" "$APP_RESOURCES/GSDCloudMonitor.icns"
-  /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string GSDCloudMonitor" "$INFO_PLIST"
-fi
+/usr/bin/lipo -create "$ARM_BINARY" "$INTEL_BINARY" -output "$UNIVERSAL_BINARY"
+/bin/bash "$ROOT_DIR/script/stage_app_bundle.sh" \
+  "$UNIVERSAL_BINARY" "$APP_BUNDLE" "$VERSION" "$BUILD_NUMBER"
 
 if [[ "$DRY_RUN" == true ]]; then
   /usr/bin/codesign --force --deep --options runtime --sign - "$APP_BUNDLE"

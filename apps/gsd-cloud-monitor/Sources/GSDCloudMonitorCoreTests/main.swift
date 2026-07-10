@@ -6,10 +6,12 @@ struct RuntimeTelemetryTests {
   static func main() async throws {
     try readerLoadsAgentConnectionAndTrafficState()
     try readerLoadsPerProjectTrafficAndRecentActivity()
+    try duplicateAliasesKeepDistinctActivityAndProjectIdentity()
     try trafficRateUsesOnlyGrowthBetweenSamples()
     try trafficRateDoesNotGoNegativeAfterAgentRestart()
     try trafficSeriesCalculatesAndBoundsSamples()
     try agentCommandsExecuteWithTheSelectedConfiguration()
+    try stopRemainsAvailableWithoutTelemetry()
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
@@ -130,6 +132,48 @@ struct RuntimeTelemetryTests {
     try expect(status.recentActivity.isEmpty, "legacy telemetry should default to no activity")
   }
 
+  static func duplicateAliasesKeepDistinctActivityAndProjectIdentity() throws {
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension("json")
+    let json = """
+      {
+        "version": 1,
+        "pid": 4242,
+        "state": "connected",
+        "gateway_url": "https://cloud.opengsd.net",
+        "started_at": "2026-07-10T12:00:00.000Z",
+        "connected_at": "2026-07-10T12:00:01.000Z",
+        "updated_at": "2026-07-10T12:00:02.000Z",
+        "last_error": null,
+        "connection_attempts": 1,
+        "reconnects": 0,
+        "received_messages": 2,
+        "sent_messages": 2,
+        "received_bytes": 20,
+        "sent_bytes": 20,
+        "active_requests": 0,
+        "projects": [
+          {"alias":"app","path":"/work/one/app","repo_identity":"shared","state":"idle","active_requests":0,"request_count":1,"error_count":0,"received_bytes":10,"sent_bytes":10,"last_tool":"gsd_status","last_activity_at":null},
+          {"alias":"app","path":"/work/two/app","repo_identity":"shared","state":"idle","active_requests":0,"request_count":1,"error_count":0,"received_bytes":10,"sent_bytes":10,"last_tool":"gsd_status","last_activity_at":null}
+        ],
+        "recent_activity": [
+          {"request_id":"one","project_alias":"app","project_path":"/work/one/app","tool_name":"gsd_status","outcome":"success","duration_ms":1,"at":"2026-07-10T12:00:02.000Z"},
+          {"request_id":"two","project_alias":"app","project_path":"/work/two/app","tool_name":"gsd_status","outcome":"success","duration_ms":1,"at":"2026-07-10T12:00:02.000Z"}
+        ]
+      }
+      """
+    try Data(json.utf8).write(to: fileURL)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    let status = try RuntimeTelemetryReader().load(from: fileURL)
+    try expect(status.projects[0].id != status.projects[1].id, "project IDs must be path-unique")
+    try expect(
+      status.recentActivity.filter { $0.belongs(to: status.projects[1]) }.map(\.requestID) == ["two"],
+      "activity must match the selected project path"
+    )
+  }
+
   static func trafficRateUsesOnlyGrowthBetweenSamples() throws {
     let previous = TrafficCounters(receivedBytes: 1_000, sentBytes: 500)
     let current = TrafficCounters(receivedBytes: 1_600, sentBytes: 800)
@@ -204,6 +248,17 @@ struct RuntimeTelemetryTests {
       "stop --config /work/custom-runtime.yaml",
       "connect --config /work/custom-runtime.yaml",
     ], "agent command sequence is incorrect")
+  }
+
+  static func stopRemainsAvailableWithoutTelemetry() throws {
+    try expect(
+      isAgentActionEnabled(.stop, connectionState: .stopped, actionInProgress: false),
+      "stop must remain available when telemetry is missing"
+    )
+    try expect(
+      !isAgentActionEnabled(.stop, connectionState: .connected, actionInProgress: true),
+      "agent actions must remain disabled while another command is running"
+    )
   }
 
   static func connectionTransitionsIdentifyNotifications() throws {

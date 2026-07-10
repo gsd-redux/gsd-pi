@@ -27,6 +27,7 @@ export interface RuntimeProjectTelemetry {
 export interface RuntimeActivityTelemetry {
   request_id: string;
   project_alias?: string;
+  project_path?: string;
   tool_name: string;
   outcome: RuntimeRequestOutcome;
   duration_ms: number;
@@ -85,6 +86,7 @@ export interface RuntimeTelemetryReporter {
   requestStarted(request: RuntimeRequestStarted): void;
   requestFinished(request: RuntimeRequestFinished): void;
   stopped(): void;
+  flush?(): Promise<void>;
 }
 
 interface RuntimeTelemetryMetadata {
@@ -183,15 +185,18 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
 
   projectsAdvertised(projects: AdvertisedProject[]): void {
     const existingProjects = new Map(
-      this.status.projects.map((project) => [project.repo_identity, project]),
+      this.status.projects.map((project) => [project.path, project]),
     );
     this.status.projects = projects.map((project) => {
-      const existing = existingProjects.get(project.repoIdentity);
+      const existing = existingProjects.get(project.path);
+      const remoteLabel = project.remoteLabel
+        ? credentialFreeRemoteLabel(project.remoteLabel)
+        : undefined;
       return {
         alias: project.alias,
         path: project.path,
         repo_identity: project.repoIdentity,
-        ...(project.remoteLabel ? { remote_label: project.remoteLabel } : {}),
+        ...(remoteLabel ? { remote_label: remoteLabel } : {}),
         state: existing?.state ?? "idle",
         active_requests: existing?.active_requests ?? 0,
         request_count: existing?.request_count ?? 0,
@@ -239,6 +244,7 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     this.status.recent_activity.push({
       request_id: request.requestId,
       ...(request.projectAlias ? { project_alias: request.projectAlias } : {}),
+      ...(request.projectPath ? { project_path: request.projectPath } : {}),
       tool_name: request.toolName,
       outcome: request.outcome,
       duration_ms: request.durationMs,
@@ -317,4 +323,15 @@ export function readRuntimeTelemetry(configPath: string): RuntimeTelemetryStatus
 
 function runtimeTelemetryPath(configPath: string): string {
   return join(dirname(configPath), "cloud-runtime-status.json");
+}
+
+function credentialFreeRemoteLabel(remoteLabel: string): string {
+  try {
+    const url = new URL(remoteLabel);
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return remoteLabel.replace(/^[^/@]+@([^:]+):/, "$1:");
+  }
 }

@@ -52,11 +52,23 @@ struct DashboardView: View {
         }
         .frame(maxWidth: 180)
         Button("Start") { monitor.runAgentAction(.start) }
-          .disabled(monitor.actionInProgress || monitor.connectionState == .connected)
+          .disabled(!isAgentActionEnabled(
+            .start,
+            connectionState: monitor.connectionState,
+            actionInProgress: monitor.actionInProgress
+          ))
         Button("Stop") { monitor.runAgentAction(.stop) }
-          .disabled(monitor.actionInProgress || monitor.connectionState == .stopped)
+          .disabled(!isAgentActionEnabled(
+            .stop,
+            connectionState: monitor.connectionState,
+            actionInProgress: monitor.actionInProgress
+          ))
         Button("Reconnect") { monitor.runAgentAction(.reconnect) }
-          .disabled(monitor.actionInProgress)
+          .disabled(!isAgentActionEnabled(
+            .reconnect,
+            connectionState: monitor.connectionState,
+            actionInProgress: monitor.actionInProgress
+          ))
         Button {
           monitor.exportDiagnostics()
         } label: {
@@ -227,7 +239,7 @@ private struct ProjectDetailView: View {
 
   private var recentActivity: [RuntimeActivity] {
     Array((monitor.telemetry?.recentActivity ?? [])
-      .filter { $0.projectAlias == project.alias }
+      .filter { $0.belongs(to: project) }
       .suffix(12)
       .reversed())
   }

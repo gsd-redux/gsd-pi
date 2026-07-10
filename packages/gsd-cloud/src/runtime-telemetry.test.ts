@@ -248,6 +248,7 @@ test("runtime telemetry distinguishes projects with duplicate aliases by path", 
 
     const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
       projects: Array<{ path: string; request_count: number; received_bytes: number; sent_bytes: number }>;
+      recent_activity: Array<Record<string, unknown>>;
     };
     assert.deepEqual(status.projects.map(({ path, request_count, received_bytes, sent_bytes }) => ({
       path, request_count, received_bytes, sent_bytes,
@@ -255,6 +256,86 @@ test("runtime telemetry distinguishes projects with duplicate aliases by path", 
       { path: "/work/one/app", request_count: 0, received_bytes: 0, sent_bytes: 0 },
       { path: "/work/two/app", request_count: 1, received_bytes: 25, sent_bytes: 6 },
     ]);
+    assert.deepEqual(status.recent_activity, [{
+      request_id: "request-2",
+      project_alias: "app",
+      project_path: "/work/two/app",
+      tool_name: "gsd_status",
+      outcome: "success",
+      duration_ms: 10,
+      at: status.recent_activity[0]?.at,
+    }]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime telemetry keeps same-repository worktrees distinct", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-worktree-telemetry-"));
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+
+  try {
+    store.projectsAdvertised([
+      { alias: "app", path: "/work/one/app", repoIdentity: "shared-repo", markers: [".gsd"] },
+      { alias: "app-copy", path: "/work/two/app", repoIdentity: "shared-repo", markers: [".gsd"] },
+    ]);
+    store.requestStarted({
+      requestId: "request-1",
+      projectPath: "/work/one/app",
+      toolName: "gsd_status",
+      receivedBytes: 10,
+    });
+    store.requestFinished({
+      requestId: "request-1",
+      projectPath: "/work/one/app",
+      toolName: "gsd_status",
+      durationMs: 1,
+      outcome: "success",
+    });
+    store.projectsAdvertised([
+      { alias: "app", path: "/work/one/app", repoIdentity: "shared-repo", markers: [".gsd"] },
+      { alias: "app-copy", path: "/work/two/app", repoIdentity: "shared-repo", markers: [".gsd"] },
+    ]);
+    await store.flush();
+
+    const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
+      projects: Array<{ path: string; request_count: number }>;
+    };
+    assert.deepEqual(
+      status.projects.map(({ path, request_count }) => ({ path, request_count })),
+      [
+        { path: "/work/one/app", request_count: 1 },
+        { path: "/work/two/app", request_count: 0 },
+      ],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime telemetry removes credentials from remote labels", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-remote-label-"));
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+
+  try {
+    store.projectsAdvertised([{
+      alias: "project-one",
+      path: "/work/project-one",
+      repoIdentity: "repo-one",
+      remoteLabel: "https://token:secret@github.com/open-gsd/project-one.git",
+      markers: [".gsd"],
+    }]);
+    await store.flush();
+
+    const raw = readFileSync(join(root, "cloud-runtime-status.json"), "utf8");
+    const status = JSON.parse(raw) as { projects: Array<{ remote_label?: string }> };
+    assert.equal(status.projects[0]?.remote_label, "https://github.com/open-gsd/project-one.git");
+    assert.equal(raw.includes("token"), false);
+    assert.equal(raw.includes("secret"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

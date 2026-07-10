@@ -6,6 +6,20 @@ public enum AgentControlAction: Sendable {
   case reconnect
 }
 
+public func isAgentActionEnabled(
+  _ action: AgentControlAction,
+  connectionState: RuntimeConnectionState,
+  actionInProgress: Bool
+) -> Bool {
+  guard !actionInProgress else { return false }
+  switch action {
+  case .start:
+    return connectionState != .connected
+  case .stop, .reconnect:
+    return true
+  }
+}
+
 public struct AgentCommandResult: Sendable {
   public let output: String
 }

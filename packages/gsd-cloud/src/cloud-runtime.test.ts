@@ -4,8 +4,12 @@
 // failure, so the CLI never reports "connected" for a socket that never opened.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import WebSocket from "ws";
 import { CloudRuntime } from "./cloud-runtime.js";
+import { RuntimeTelemetryStore } from "./runtime-telemetry.js";
 
 const noopLogger = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined };
 const noopExecutor = { execute: async () => ({}), advertisedProjects: async () => [] };
@@ -213,5 +217,30 @@ test("socket activity is reported to runtime telemetry", async () => {
     assert.ok(events.some((event) => event.name === "sent"));
   } finally {
     runtime.stop();
+  }
+});
+
+test("startup failures flush runtime telemetry before rejecting", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-startup-error-"));
+  const telemetry = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "wss://cloud.example.net",
+  });
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "", runtime_id: "runtime" },
+    noopExecutor as never,
+    noopLogger as never,
+    telemetry,
+  );
+
+  try {
+    await assert.rejects(runtime.start(), /missing device token/);
+    const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
+      state?: string;
+      last_error?: string;
+    };
+    assert.equal(status.state, "error");
+    assert.equal(status.last_error, "cloud runtime missing device token or runtime id");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
