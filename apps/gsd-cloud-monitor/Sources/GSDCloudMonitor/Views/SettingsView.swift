@@ -17,6 +17,7 @@ struct MonitorSettingsView: View {
         }
         TextField("Name", text: name)
         TextField("Telemetry file", text: telemetryPath)
+        TextField("Agent configuration", text: agentConfigPath)
         TextField("gsd-cloud executable", text: agentExecutablePath)
         HStack {
           Button("Add Runtime") { monitor.addConfiguration() }
@@ -82,6 +83,13 @@ struct MonitorSettingsView: View {
     Binding(
       get: { monitor.selectedConfiguration.agentExecutablePath },
       set: { monitor.updateSelectedConfiguration(agentExecutablePath: $0) }
+    )
+  }
+
+  private var agentConfigPath: Binding<String> {
+    Binding(
+      get: { monitor.selectedConfiguration.agentConfigPath },
+      set: { monitor.updateSelectedConfiguration(agentConfigPath: $0) }
     )
   }
 

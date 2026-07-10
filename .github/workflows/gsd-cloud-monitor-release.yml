@@ -14,6 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify monitor behavior
+        working-directory: apps/gsd-cloud-monitor
+        run: |
+          swift run GSDCloudMonitorCoreTests
+          swift run GSDCloudMonitorReleaseTests
+
       - name: Import Developer ID certificate
         env:
           CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}

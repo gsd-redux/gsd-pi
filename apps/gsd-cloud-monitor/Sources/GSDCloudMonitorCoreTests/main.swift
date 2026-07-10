@@ -3,7 +3,7 @@ import GSDCloudMonitorCore
 
 @main
 struct RuntimeTelemetryTests {
-  static func main() throws {
+  static func main() async throws {
     try readerLoadsAgentConnectionAndTrafficState()
     try readerLoadsPerProjectTrafficAndRecentActivity()
     try trafficRateUsesOnlyGrowthBetweenSamples()
@@ -12,8 +12,11 @@ struct RuntimeTelemetryTests {
     try agentCommandsExecuteWithTheSelectedConfiguration()
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
+    try runtimeConfigurationsPreserveCustomAgentConfigPath()
+    try legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath()
     try diagnosticsRedactLocalPaths()
     try releaseVersionsCompareMonitorTags()
+    try await updateCheckerSearchesAllReleasePages()
     print("GSDCloudMonitorCoreTests passed")
   }
 
@@ -186,7 +189,7 @@ struct RuntimeTelemetryTests {
     )
     let runner = AgentCommandRunner(
       executableURL: executable,
-      configPath: "/work/daemon.yaml",
+      configPath: "/work/custom-runtime.yaml",
       environment: ["GSD_TEST_INVOCATIONS": invocations.path]
     )
 
@@ -197,9 +200,9 @@ struct RuntimeTelemetryTests {
       .split(separator: "\n")
       .map(String.init)
     try expect(lines == [
-      "stop --config /work/daemon.yaml",
-      "stop --config /work/daemon.yaml",
-      "connect --config /work/daemon.yaml",
+      "stop --config /work/custom-runtime.yaml",
+      "stop --config /work/custom-runtime.yaml",
+      "connect --config /work/custom-runtime.yaml",
     ], "agent command sequence is incorrect")
   }
 
@@ -222,6 +225,7 @@ struct RuntimeTelemetryTests {
     let configuration = RuntimeConfiguration(
       name: "Studio Mac",
       telemetryPath: "/Users/example/.gsd/cloud-runtime-status.json",
+      agentConfigPath: "/Users/example/.gsd/custom-runtime.yaml",
       agentExecutablePath: "/opt/homebrew/bin/gsd-cloud"
     )
 
@@ -231,6 +235,29 @@ struct RuntimeTelemetryTests {
     )
 
     try expect(decoded == configuration, "runtime configuration should round-trip")
+  }
+
+  static func runtimeConfigurationsPreserveCustomAgentConfigPath() throws {
+    let configuration = RuntimeConfiguration(
+      name: "Custom Runtime",
+      telemetryPath: "/work/state/cloud-runtime-status.json",
+      agentConfigPath: "/work/config/custom.yaml",
+      agentExecutablePath: "/usr/local/bin/gsd-cloud"
+    )
+    let decoded = try JSONDecoder().decode(
+      RuntimeConfiguration.self,
+      from: JSONEncoder().encode(configuration)
+    )
+    try expect(decoded.configPath == "/work/config/custom.yaml", "custom config path must round-trip")
+  }
+
+  static func legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath() throws {
+    let id = UUID()
+    let data = Data("""
+      {"id":"\(id.uuidString)","name":"Legacy","telemetryPath":"/work/state/cloud-runtime-status.json","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
+      """.utf8)
+    let configuration = try JSONDecoder().decode(RuntimeConfiguration.self, from: data)
+    try expect(configuration.configPath == "/work/state/daemon.yaml", "legacy config should retain default path")
   }
 
   static func diagnosticsRedactLocalPaths() throws {
@@ -289,6 +316,39 @@ struct RuntimeTelemetryTests {
 
     try expect(update > current, "release versions should compare numerically")
     try expect(ReleaseVersion(tag: "v2.0.0") == nil, "unrelated release tags must be ignored")
+  }
+
+  static func updateCheckerSearchesAllReleasePages() async throws {
+    let unrelated = (0..<100).map { index in
+      [
+        "tag_name": "v1.\(index).0",
+        "html_url": "https://example.com/unrelated/\(index)",
+        "draft": false,
+        "prerelease": false,
+      ] as [String: Any]
+    }
+    let monitorRelease: [[String: Any]] = [[
+      "tag_name": "gsd-cloud-monitor-v1.2.0",
+      "html_url": "https://example.com/monitor/1.2.0",
+      "draft": false,
+      "prerelease": false,
+    ]]
+    let checker = UpdateChecker { request in
+      let page = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first(where: { $0.name == "page" })?.value
+      let releases = page == "1" ? unrelated : monitorRelease
+      let response = HTTPURLResponse(
+        url: request.url!,
+        statusCode: 200,
+        httpVersion: nil,
+        headerFields: nil
+      )!
+      return (try JSONSerialization.data(withJSONObject: releases), response)
+    }
+
+    let update = try await checker.latestUpdate(currentVersion: "1.0.0")
+
+    try expect(update?.version.tag == "gsd-cloud-monitor-v1.2.0", "expected update from second page")
   }
 
   static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {

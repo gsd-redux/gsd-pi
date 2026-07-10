@@ -24,6 +24,11 @@ interface GatewayMessage {
   projectAlias?: string;
 }
 
+interface QueuedFrame {
+  text: string;
+  projectPath?: string;
+}
+
 export class CloudRuntime {
   private static readonly MAX_OUTBOX = 200;
   // How many times to retry the initial connect before rejecting start(). A
@@ -35,7 +40,7 @@ export class CloudRuntime {
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private reconnect: ReturnType<typeof setTimeout> | undefined;
   private readonly inFlight = new Map<string, GatewayMessage>();
-  private outbox: string[] = [];
+  private outbox: QueuedFrame[] = [];
   private advertisedProjects: AdvertisedProject[] = [];
   private stopped = false;
   private firstConnectDeferred: PromiseWithResolvers<void> | undefined;
@@ -137,12 +142,12 @@ export class CloudRuntime {
     void this.advertiseProjects();
     const pending = this.outbox;
     this.outbox = [];
-    for (const text of pending) {
+    for (const frame of pending) {
       if (this.socket?.readyState === WebSocket.OPEN) {
-        this.socket.send(text);
-        this.telemetry.sent(text);
+        this.socket.send(frame.text);
+        this.telemetry.sent(frame.text, frame.projectPath);
       }
-      else this.outbox.push(text);
+      else this.outbox.push(frame);
     }
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = setInterval(() => this.send({ type: "heartbeat", at: Date.now() }), 30_000);
@@ -216,26 +221,28 @@ export class CloudRuntime {
       return;
     }
     if (message.type !== "tool_call" || !message.requestId || !message.toolName) return;
-    const projectAlias = this.resolveProjectAlias(message);
+    const project = this.resolveProject(message);
+    const projectAlias = project?.alias ?? message.projectAlias;
+    const projectPath = project?.path;
     const startedAt = Date.now();
     const receivedBytes = Buffer.byteLength(text);
     this.inFlight.set(message.requestId, message);
     this.telemetry.requestStarted({
       requestId: message.requestId,
       ...(projectAlias ? { projectAlias } : {}),
+      ...(projectPath ? { projectPath } : {}),
       toolName: message.toolName,
       receivedBytes,
     });
     let outcome: "success" | "error" | "cancelled" = "success";
     let errorMessage: string | undefined;
-    let sentBytes = 0;
     try {
       const result = await this.executor.execute(message.toolName, message.args ?? {}, message.projectAlias);
       if (!this.inFlight.has(message.requestId)) {
         outcome = "cancelled";
         return;
       }
-      sentBytes = this.send({ type: "tool_result", requestId: message.requestId, result });
+      this.send({ type: "tool_result", requestId: message.requestId, result }, projectPath);
     } catch (err) {
       if (!this.inFlight.has(message.requestId)) {
         outcome = "cancelled";
@@ -243,18 +250,18 @@ export class CloudRuntime {
       }
       outcome = "error";
       errorMessage = err instanceof Error ? err.message : String(err);
-      sentBytes = this.send({
+      this.send({
         type: "tool_result",
         requestId: message.requestId,
         error: errorMessage,
-      });
+      }, projectPath);
     } finally {
       this.inFlight.delete(message.requestId);
       this.telemetry.requestFinished({
         requestId: message.requestId,
         ...(projectAlias ? { projectAlias } : {}),
+        ...(projectPath ? { projectPath } : {}),
         toolName: message.toolName,
-        sentBytes,
         durationMs: Date.now() - startedAt,
         outcome,
         ...(errorMessage ? { error: errorMessage } : {}),
@@ -262,14 +269,15 @@ export class CloudRuntime {
     }
   }
 
-  private resolveProjectAlias(message: GatewayMessage): string | undefined {
-    if (message.projectAlias) return message.projectAlias;
-    if (typeof message.args?.projectAlias === "string") return message.args.projectAlias;
+  private resolveProject(message: GatewayMessage): AdvertisedProject | undefined {
     const projectDir = message.args?.projectDir;
     if (typeof projectDir === "string") {
-      return this.advertisedProjects.find((project) => project.path === projectDir)?.alias;
+      return this.advertisedProjects.find((project) => project.path === projectDir);
     }
-    if (this.advertisedProjects.length === 1) return this.advertisedProjects[0]?.alias;
+    const alias = message.projectAlias
+      ?? (typeof message.args?.projectAlias === "string" ? message.args.projectAlias : undefined);
+    if (alias) return this.advertisedProjects.find((project) => project.alias === alias);
+    if (this.advertisedProjects.length === 1) return this.advertisedProjects[0];
     return undefined;
   }
 
@@ -308,21 +316,19 @@ export class CloudRuntime {
     deferred.reject(err);
   }
 
-  private send(message: unknown): number {
+  private send(message: unknown, projectPath?: string): void {
     const text = JSON.stringify(message);
-    const bytes = Buffer.byteLength(text);
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(text);
-      this.telemetry.sent(text);
-      return bytes;
+      this.telemetry.sent(text, projectPath);
+      return;
     }
     // Buffer while disconnected; flushed on reconnect in handleSocketOpen. Bounded
     // so a long outage cannot grow memory without limit — a stale heartbeat is
     // worth less than a fresh tool_result, so drop oldest first.
-    this.outbox.push(text);
+    this.outbox.push({ text, ...(projectPath ? { projectPath } : {}) });
     if (this.outbox.length > CloudRuntime.MAX_OUTBOX) {
       this.outbox.shift();
     }
-    return bytes;
   }
 }

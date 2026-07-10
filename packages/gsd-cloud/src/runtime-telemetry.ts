@@ -1,6 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Persist token-free cloud runtime status and traffic counters for local monitors.
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AdvertisedProject } from "./executors/executor.js";
 
@@ -58,6 +59,7 @@ export interface RuntimeTelemetryStatus {
 export interface RuntimeRequestStarted {
   requestId: string;
   projectAlias?: string;
+  projectPath?: string;
   toolName: string;
   receivedBytes: number;
 }
@@ -65,8 +67,8 @@ export interface RuntimeRequestStarted {
 export interface RuntimeRequestFinished {
   requestId: string;
   projectAlias?: string;
+  projectPath?: string;
   toolName: string;
-  sentBytes: number;
   durationMs: number;
   outcome: RuntimeRequestOutcome;
   error?: string;
@@ -78,7 +80,7 @@ export interface RuntimeTelemetryReporter {
   disconnected(error?: string): void;
   socketError(error: string): void;
   received(text: string): void;
-  sent(text: string): void;
+  sent(text: string, projectPath?: string): void;
   projectsAdvertised(projects: AdvertisedProject[]): void;
   requestStarted(request: RuntimeRequestStarted): void;
   requestFinished(request: RuntimeRequestFinished): void;
@@ -107,6 +109,8 @@ export const noopRuntimeTelemetry: RuntimeTelemetryReporter = {
 export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   private readonly path: string;
   private status: RuntimeTelemetryStatus;
+  private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private persistPromise = Promise.resolve();
 
   constructor(configPath: string, metadata: RuntimeTelemetryMetadata) {
     const now = new Date().toISOString();
@@ -168,9 +172,12 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     this.persist();
   }
 
-  sent(text: string): void {
+  sent(text: string, projectPath?: string): void {
     this.status.sent_messages += 1;
-    this.status.sent_bytes += Buffer.byteLength(text);
+    const bytes = Buffer.byteLength(text);
+    this.status.sent_bytes += bytes;
+    const project = projectPath ? this.findProject(projectPath) : undefined;
+    if (project) project.sent_bytes += bytes;
     this.persist();
   }
 
@@ -200,7 +207,7 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
 
   requestStarted(request: RuntimeRequestStarted): void {
     this.status.active_requests += 1;
-    const project = this.findProject(request.projectAlias);
+    const project = this.findProject(request.projectPath, request.projectAlias);
     if (project) {
       project.state = "active";
       project.active_requests += 1;
@@ -214,11 +221,10 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   requestFinished(request: RuntimeRequestFinished): void {
     this.status.active_requests = Math.max(0, this.status.active_requests - 1);
     const now = new Date().toISOString();
-    const project = this.findProject(request.projectAlias);
+    const project = this.findProject(request.projectPath, request.projectAlias);
     if (project) {
       project.active_requests = Math.max(0, project.active_requests - 1);
       project.request_count += 1;
-      project.sent_bytes += request.sentBytes;
       project.last_tool = request.toolName;
       project.last_activity_at = now;
       if (request.outcome === "error") project.error_count += 1;
@@ -252,10 +258,20 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
       project.active_requests = 0;
       project.state = "idle";
     }
-    this.persist();
+    void this.flush();
   }
 
-  private findProject(alias?: string): RuntimeProjectTelemetry | undefined {
+  async flush(): Promise<void> {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    this.enqueuePersist();
+    await this.persistPromise;
+  }
+
+  private findProject(path?: string, alias?: string): RuntimeProjectTelemetry | undefined {
+    if (path) return this.status.projects.find((project) => project.path === path);
     if (alias) return this.status.projects.find((project) => project.alias === alias);
     if (this.status.projects.length === 1) return this.status.projects[0];
     return undefined;
@@ -263,13 +279,30 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
 
   private persist(): void {
     this.status.updated_at = new Date().toISOString();
-    mkdirSync(dirname(this.path), { recursive: true });
-    writeFileSync(
-      this.path,
-      `${JSON.stringify(this.status, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
-    chmodSync(this.path, 0o600);
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.enqueuePersist();
+    }, 25);
+    this.persistTimer.unref();
+  }
+
+  private enqueuePersist(): void {
+    this.status.updated_at = new Date().toISOString();
+    const snapshot = `${JSON.stringify(this.status, null, 2)}\n`;
+    this.persistPromise = this.persistPromise.then(() => this.writeSnapshot(snapshot));
+  }
+
+  private async writeSnapshot(snapshot: string): Promise<void> {
+    const temporaryPath = `${this.path}.${process.pid}.tmp`;
+    try {
+      await mkdir(dirname(this.path), { recursive: true });
+      await writeFile(temporaryPath, snapshot, { encoding: "utf8", mode: 0o600 });
+      await chmod(temporaryPath, 0o600);
+      await rename(temporaryPath, this.path);
+    } catch {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
   }
 }
 

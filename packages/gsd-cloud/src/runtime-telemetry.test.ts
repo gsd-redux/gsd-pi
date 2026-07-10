@@ -1,13 +1,13 @@
 // Project/App: Open GSD
 // File Purpose: Contract tests for the token-free runtime telemetry consumed by desktop monitors.
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { RuntimeTelemetryStore } from "./runtime-telemetry.js";
 
-test("runtime telemetry persists connection state and traffic without credentials", () => {
+test("runtime telemetry persists connection state and traffic without credentials", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-telemetry-"));
   const configPath = join(root, "daemon.yaml");
   const telemetryPath = join(root, "cloud-runtime-status.json");
@@ -32,10 +32,10 @@ test("runtime telemetry persists connection state and traffic without credential
       requestId: "request-1",
       projectAlias: "project-one",
       toolName: "gsd_status",
-      sentBytes: 58,
       durationMs: 25,
       outcome: "success",
     });
+    await store.flush();
 
     const raw = readFileSync(telemetryPath, "utf8");
     const status = JSON.parse(raw) as Record<string, unknown>;
@@ -57,7 +57,7 @@ test("runtime telemetry persists connection state and traffic without credential
   }
 });
 
-test("runtime telemetry attributes requests and recent activity to advertised projects", () => {
+test("runtime telemetry attributes requests and recent activity to advertised projects", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-project-telemetry-"));
   const configPath = join(root, "daemon.yaml");
   const telemetryPath = join(root, "cloud-runtime-status.json");
@@ -92,10 +92,12 @@ test("runtime telemetry attributes requests and recent activity to advertised pr
       requestId: "request-1",
       projectAlias: "project-one",
       toolName: "gsd_execute",
-      sentBytes: 512,
       durationMs: 42,
       outcome: "success",
     });
+    store.sent("x".repeat(512), "/work/project-one");
+    store.sent("global");
+    await store.flush();
 
     const status = JSON.parse(readFileSync(telemetryPath, "utf8")) as {
       projects?: Array<Record<string, unknown>>;
@@ -139,7 +141,7 @@ test("runtime telemetry attributes requests and recent activity to advertised pr
   }
 });
 
-test("runtime telemetry bounds recent project activity", () => {
+test("runtime telemetry bounds recent project activity", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-project-telemetry-"));
   const configPath = join(root, "daemon.yaml");
   const telemetryPath = join(root, "cloud-runtime-status.json");
@@ -166,15 +168,16 @@ test("runtime telemetry bounds recent project activity", () => {
         requestId,
         projectAlias: "project-one",
         toolName: "gsd_status",
-        sentBytes: 20,
         durationMs: index,
         outcome: index === 54 ? "error" : "success",
         ...(index === 54 ? { error: "fixture failure" } : {}),
       });
     }
+    store.sent("global");
+    await store.flush();
 
     const status = JSON.parse(readFileSync(telemetryPath, "utf8")) as {
-      projects?: Array<{ error_count?: number }>;
+      projects?: Array<{ error_count?: number; sent_bytes?: number }>;
       recent_activity?: Array<{ request_id?: string; error?: string }>;
     };
     assert.equal(status.recent_activity?.length, 50);
@@ -182,12 +185,13 @@ test("runtime telemetry bounds recent project activity", () => {
     assert.equal(status.recent_activity?.at(-1)?.request_id, "request-54");
     assert.equal(status.recent_activity?.at(-1)?.error, "fixture failure");
     assert.equal(status.projects?.[0]?.error_count, 1);
+    assert.equal(status.projects?.[0]?.sent_bytes, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("runtime telemetry records reconnects and the latest failure", () => {
+test("runtime telemetry records reconnects and the latest failure", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-telemetry-"));
   const configPath = join(root, "daemon.yaml");
   const telemetryPath = join(root, "cloud-runtime-status.json");
@@ -201,12 +205,72 @@ test("runtime telemetry records reconnects and the latest failure", () => {
     store.connected();
     store.disconnected("socket closed");
     store.connecting();
+    await store.flush();
 
     const status = JSON.parse(readFileSync(telemetryPath, "utf8")) as Record<string, unknown>;
     assert.equal(status.state, "reconnecting");
     assert.equal(status.connection_attempts, 2);
     assert.equal(status.reconnects, 1);
     assert.equal(status.last_error, "socket closed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime telemetry distinguishes projects with duplicate aliases by path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-duplicate-alias-"));
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+
+  try {
+    store.projectsAdvertised([
+      { alias: "app", path: "/work/one/app", repoIdentity: "repo-one", markers: [".gsd"] },
+      { alias: "app", path: "/work/two/app", repoIdentity: "repo-two", markers: [".gsd"] },
+    ]);
+    store.requestStarted({
+      requestId: "request-2",
+      projectAlias: "app",
+      projectPath: "/work/two/app",
+      toolName: "gsd_status",
+      receivedBytes: 25,
+    });
+    store.requestFinished({
+      requestId: "request-2",
+      projectAlias: "app",
+      projectPath: "/work/two/app",
+      toolName: "gsd_status",
+      durationMs: 10,
+      outcome: "success",
+    });
+    store.sent("result", "/work/two/app");
+    await store.flush();
+
+    const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
+      projects: Array<{ path: string; request_count: number; received_bytes: number; sent_bytes: number }>;
+    };
+    assert.deepEqual(status.projects.map(({ path, request_count, received_bytes, sent_bytes }) => ({
+      path, request_count, received_bytes, sent_bytes,
+    })), [
+      { path: "/work/one/app", request_count: 0, received_bytes: 0, sent_bytes: 0 },
+      { path: "/work/two/app", request_count: 1, received_bytes: 25, sent_bytes: 6 },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime telemetry isolates persistence failures", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-persistence-failure-"));
+  const blocker = join(root, "not-a-directory");
+  writeFileSync(blocker, "fixture");
+  const store = new RuntimeTelemetryStore(join(blocker, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+
+  try {
+    store.connected();
+    await store.flush();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

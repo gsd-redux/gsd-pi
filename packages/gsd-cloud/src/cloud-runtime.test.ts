@@ -19,12 +19,13 @@ function makeRuntime(cloud: Record<string, unknown> = {}): CloudRuntime {
 }
 
 type FakeSocket = { readyState: number; sent: string[]; send: (t: string) => void; close: () => void };
-function fakeSocket(readyState = WebSocket.OPEN): FakeSocket {
+function fakeSocket(readyState: number = WebSocket.OPEN): FakeSocket {
   const sent: string[] = [];
   return { readyState, sent, send: (t: string) => sent.push(t), close: () => undefined };
 }
 type RuntimeInternals = {
   socket: FakeSocket | undefined;
+  advertisedProjects: Array<{ alias: string; path: string; repoIdentity: string; markers: string[] }>;
   firstConnectDeferred: PromiseWithResolvers<void> | undefined;
   initialConnectAttempts: number;
   reconnect: ReturnType<typeof setTimeout> | undefined;
@@ -33,6 +34,52 @@ type RuntimeInternals = {
   handleSocketMessage: (socket: unknown, text: string) => Promise<void>;
   connect: () => void;
 };
+
+test("queued project bytes are reported only after transmission", async () => {
+  const sentProjects: Array<string | undefined> = [];
+  const telemetry = {
+    ...Object.fromEntries([
+      "connecting", "connected", "disconnected", "socketError", "received",
+      "projectsAdvertised", "requestStarted", "requestFinished", "stopped",
+    ].map((name) => [name, () => undefined])),
+    sent: (_text: string, projectPath?: string) => sentProjects.push(projectPath),
+  } as never;
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "fixture", runtime_id: "runtime" },
+    {
+      execute: async () => ({ ok: true }),
+      advertisedProjects: async () => [
+        { alias: "app", path: "/work/one/app", repoIdentity: "one", markers: [".gsd"] },
+        { alias: "app", path: "/work/two/app", repoIdentity: "two", markers: [".gsd"] },
+      ],
+    } as never,
+    noopLogger as never,
+    telemetry,
+  );
+  const internals = runtime as unknown as RuntimeInternals;
+  internals.advertisedProjects = [
+    { alias: "app", path: "/work/one/app", repoIdentity: "one", markers: [".gsd"] },
+    { alias: "app", path: "/work/two/app", repoIdentity: "two", markers: [".gsd"] },
+  ];
+  internals.socket = fakeSocket(WebSocket.CLOSED);
+
+  try {
+    await internals.handleSocketMessage(internals.socket, JSON.stringify({
+      type: "tool_call",
+      requestId: "request-queued",
+      toolName: "gsd_status",
+      args: { projectDir: "/work/two/app" },
+    }));
+    assert.deepEqual(sentProjects, []);
+
+    const openSocket = fakeSocket();
+    internals.socket = openSocket;
+    internals.handleSocketOpen(openSocket);
+    assert.deepEqual(sentProjects, ["/work/two/app"]);
+  } finally {
+    runtime.stop();
+  }
+});
 
 test("start()'s first-connect promise resolves only when the relay socket opens", async () => {
   const runtime = makeRuntime();
@@ -162,7 +209,7 @@ test("socket activity is reported to runtime telemetry", async () => {
     const finished = events.find((event) => event.name === "request-finished");
     assert.equal((finished?.details as { projectAlias?: string }).projectAlias, "project-one");
     assert.equal((finished?.details as { outcome?: string }).outcome, "success");
-    assert.ok(((finished?.details as { sentBytes?: number }).sentBytes ?? 0) > 0);
+    assert.equal((finished?.details as { sentBytes?: number }).sentBytes, undefined);
     assert.ok(events.some((event) => event.name === "sent"));
   } finally {
     runtime.stop();

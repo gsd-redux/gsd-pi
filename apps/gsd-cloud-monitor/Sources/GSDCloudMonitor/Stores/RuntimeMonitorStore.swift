@@ -29,6 +29,7 @@ final class RuntimeMonitorStore: ObservableObject {
       let preview = RuntimeConfiguration(
         name: "Preview",
         telemetryPath: telemetryURL.path,
+        agentConfigPath: telemetryURL.deletingLastPathComponent().appendingPathComponent("daemon.yaml").path,
         agentExecutablePath: "/usr/bin/false"
       )
       configurations = [preview]
@@ -158,6 +159,7 @@ final class RuntimeMonitorStore: ObservableObject {
     let configuration = RuntimeConfiguration(
       name: "New Runtime",
       telemetryPath: RuntimeMonitorStore.defaultTelemetryURL.path,
+      agentConfigPath: RuntimeMonitorStore.defaultAgentConfigURL.path,
       agentExecutablePath: RuntimeMonitorStore.defaultAgentExecutablePath
     )
     configurations.append(configuration)
@@ -176,11 +178,13 @@ final class RuntimeMonitorStore: ObservableObject {
   func updateSelectedConfiguration(
     name: String? = nil,
     telemetryPath: String? = nil,
+    agentConfigPath: String? = nil,
     agentExecutablePath: String? = nil
   ) {
     guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else { return }
     if let name { configurations[index].name = name }
     if let telemetryPath { configurations[index].telemetryPath = telemetryPath }
+    if let agentConfigPath { configurations[index].agentConfigPath = agentConfigPath }
     if let agentExecutablePath { configurations[index].agentExecutablePath = agentExecutablePath }
     persistConfigurations()
   }
@@ -307,6 +311,7 @@ final class RuntimeMonitorStore: ObservableObject {
     let initial = RuntimeConfiguration(
       name: "Local Runtime",
       telemetryPath: defaultTelemetryURL.path,
+      agentConfigPath: defaultAgentConfigURL.path,
       agentExecutablePath: defaultAgentExecutablePath
     )
     return ([initial], initial.id)
@@ -316,6 +321,10 @@ final class RuntimeMonitorStore: ObservableObject {
     FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(".gsd", isDirectory: true)
       .appendingPathComponent("cloud-runtime-status.json")
+  }
+
+  private static var defaultAgentConfigURL: URL {
+    defaultTelemetryURL.deletingLastPathComponent().appendingPathComponent("daemon.yaml")
   }
 
   private static var defaultAgentExecutablePath: String {
