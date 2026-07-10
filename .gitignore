@@ -101,6 +101,9 @@ RELEASE-GUIDE.md
 TODOS.md
 AGENTS.md
 
+# Generated model registries
+packages/pi-ai/src/*.generated.ts
+
 # opencode local config
 .opencode/
 test-results/

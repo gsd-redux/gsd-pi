@@ -1326,7 +1326,9 @@ Create a new provider file (for example `amazon-bedrock.ts`) that exports:
 - Map chat/tool-capable provider model data to the standardized `Model` interface via `scripts/generate-models.ts`
 - Map image-generation provider model data to the standardized `ImagesModel` interface via `scripts/generate-image-models.ts`
 - Handle provider-specific quirks (pricing format, capability flags, model ID transformations)
-- Run `pnpm run generate` from `packages/pi-ai` when changing model generation; `pnpm run build` compiles the committed generated catalogs without refreshing them.
+- The generated catalogs (`src/*.generated.ts`) are ignored by git. Run `pnpm run generate` from `packages/pi-ai` when changing model generation or when you need to inspect the generated output locally.
+- `pnpm run build` and `pnpm test` regenerate the catalogs before compiling or running Vitest, so a fresh clone does not need committed generated files.
+- Generation fetches live model metadata from models.dev, OpenRouter, and Vercel AI Gateway. Run those commands with network access; for image-model generation, set `OPENROUTER_MODELS_URL` to point the OpenRouter image model fetch at a fixture or mirror when needed.
 
 #### 5. Tests (`test/`)
 
