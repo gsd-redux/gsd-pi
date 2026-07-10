@@ -26,6 +26,7 @@ import {
   stopBackgroundRuntime,
   writeRuntimeState,
 } from "./runtime-process.js";
+import { readRuntimeTelemetry, RuntimeTelemetryStore } from "./runtime-telemetry.js";
 import type { DaemonConfig } from "./types.js";
 
 export async function handleCloudCommand(argv: string[], opts: {
@@ -64,6 +65,7 @@ export async function handleCloudCommand(argv: string[], opts: {
       ...redactedCloudStatus(config),
       projects: config.projects.scan_roots,
       background: backgroundRuntimeStatus(configPath),
+      telemetry: readRuntimeTelemetry(configPath),
     }, null, 2)}\n`);
     return;
   }
@@ -72,6 +74,14 @@ export async function handleCloudCommand(argv: string[], opts: {
     await stopBackgroundRuntime(configPath);
     clearCloudConfig(configPath);
     process.stdout.write(`${opts.binaryName}: background runtime stopped and cloud credentials removed.\n`);
+    return;
+  }
+
+  if (command === "stop") {
+    const stopped = await stopBackgroundRuntime(configPath);
+    process.stdout.write(stopped
+      ? `${opts.binaryName}: background runtime stopped.\n`
+      : `${opts.binaryName}: background runtime is not running.\n`);
     return;
   }
 
@@ -97,7 +107,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     process.stdout.write(`${opts.binaryName}: cloud runtime ${runtimeId} paired — connecting...\n`);
     if (values.foreground) {
       await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+      await runCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs, {
         registerConfigPath: configPath,
       });
       return;
@@ -136,7 +146,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     config = saveCloudConfig(configPath, config.cloud, projectDirs);
     if (values.foreground) {
       await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+      await runCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs, {
         registerConfigPath: configPath,
       });
       return;
@@ -151,7 +161,7 @@ export async function handleCloudCommand(argv: string[], opts: {
       throw new Error("cloud runtime is not paired; run `login` first");
     }
     const projectDirs = selectedProjectDirs(config.projects.scan_roots);
-    await runCloudRuntime(config, opts.binaryName, values.verbose, projectDirs, {
+    await runCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs, {
       onConnected: () => {
         process.send?.({ type: "ready" });
       },
@@ -169,6 +179,7 @@ export async function handleCloudCommand(argv: string[], opts: {
  */
 async function runCloudRuntime(
   config: DaemonConfig,
+  configPath: string,
   binaryName: string,
   verbose: boolean,
   projectDirs: string[],
@@ -184,7 +195,12 @@ async function runCloudRuntime(
     verbose,
   });
   const executor = selectExecutor(logger, { projectDirs });
-  const runtime = new CloudRuntime(config.cloud, executor, logger);
+  const telemetry = new RuntimeTelemetryStore(configPath, {
+    gatewayUrl: config.cloud.gateway_url,
+    runtimeId: config.cloud.runtime_id,
+    runtimeName: config.cloud.runtime_name,
+  });
+  const runtime = new CloudRuntime(config.cloud, executor, logger, telemetry);
   // A foreground session owns the runtime itself, so it records its own PID in
   // the shared state file. That lets a later `connect`/`disconnect` find and
   // stop it, just like a detached background runtime. Background `_run` children
@@ -271,6 +287,7 @@ export function formatUsage(binaryName: string): string {
        ${binaryName} status [--config <path>]
        ${binaryName} pair --gateway <url> --code <code> [--runtime-name <name>] [--config <path>]
        ${binaryName} connect [--config <path>] [--verbose] [--foreground]
+       ${binaryName} stop [--config <path>]
        ${binaryName} disconnect [--config <path>]
 
 Commands:
@@ -280,6 +297,7 @@ Commands:
   status     Show current cloud runtime configuration and connection status.
   pair       Exchange a pairing code for a device token (headless/CI environments).
   connect    Start a background connection using saved credentials and projects.
+  stop       Stop the background runtime without removing saved credentials.
   disconnect Stop the background runtime and remove local cloud credentials.
 
 Options:

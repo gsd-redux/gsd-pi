@@ -1,0 +1,305 @@
+import Foundation
+import GSDCloudMonitorCore
+
+@main
+struct RuntimeTelemetryTests {
+  static func main() throws {
+    try readerLoadsAgentConnectionAndTrafficState()
+    try readerLoadsPerProjectTrafficAndRecentActivity()
+    try trafficRateUsesOnlyGrowthBetweenSamples()
+    try trafficRateDoesNotGoNegativeAfterAgentRestart()
+    try trafficSeriesCalculatesAndBoundsSamples()
+    try agentCommandsExecuteWithTheSelectedConfiguration()
+    try connectionTransitionsIdentifyNotifications()
+    try runtimeConfigurationsRoundTrip()
+    try diagnosticsRedactLocalPaths()
+    try releaseVersionsCompareMonitorTags()
+    print("GSDCloudMonitorCoreTests passed")
+  }
+
+  static func readerLoadsPerProjectTrafficAndRecentActivity() throws {
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension("json")
+    let json = """
+      {
+        "version": 1,
+        "pid": 4242,
+        "state": "connected",
+        "gateway_url": "https://cloud.opengsd.net",
+        "started_at": "2026-07-10T12:00:00.000Z",
+        "connected_at": "2026-07-10T12:00:01.000Z",
+        "updated_at": "2026-07-10T12:00:02.000Z",
+        "last_error": null,
+        "connection_attempts": 1,
+        "reconnects": 0,
+        "received_messages": 12,
+        "sent_messages": 9,
+        "received_bytes": 4096,
+        "sent_bytes": 2048,
+        "active_requests": 1,
+        "projects": [
+          {
+            "alias": "project-one",
+            "path": "/work/project-one",
+            "repo_identity": "repo-one",
+            "remote_label": "open-gsd/project-one",
+            "state": "active",
+            "active_requests": 1,
+            "request_count": 7,
+            "error_count": 1,
+            "received_bytes": 1024,
+            "sent_bytes": 512,
+            "last_tool": "gsd_execute",
+            "last_activity_at": "2026-07-10T12:00:02.000Z"
+          }
+        ],
+        "recent_activity": [
+          {
+            "request_id": "request-1",
+            "project_alias": "project-one",
+            "tool_name": "gsd_execute",
+            "outcome": "error",
+            "duration_ms": 42,
+            "at": "2026-07-10T12:00:02.000Z",
+            "error": "fixture failure"
+          }
+        ]
+      }
+      """
+    try Data(json.utf8).write(to: fileURL)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    let status = try RuntimeTelemetryReader().load(from: fileURL)
+
+    try expect(status.projects.count == 1, "expected one project")
+    try expect(status.projects[0].alias == "project-one", "expected project alias")
+    try expect(status.projects[0].state == .active, "expected active project")
+    try expect(status.projects[0].requestCount == 7, "expected project requests")
+    try expect(status.projects[0].errorCount == 1, "expected project errors")
+    try expect(status.projects[0].receivedBytes == 1024, "expected project received bytes")
+    try expect(status.recentActivity.count == 1, "expected recent activity")
+    try expect(status.recentActivity[0].outcome == .error, "expected activity failure")
+    try expect(status.recentActivity[0].durationMs == 42, "expected activity duration")
+    try expect(status.recentActivity[0].error == "fixture failure", "expected activity error")
+  }
+
+  static func readerLoadsAgentConnectionAndTrafficState() throws {
+    let fileURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString)
+      .appendingPathExtension("json")
+    let json = """
+      {
+        "version": 1,
+        "pid": 4242,
+        "state": "connected",
+        "gateway_url": "https://cloud.opengsd.net",
+        "runtime_id": "runtime-1",
+        "runtime_name": "Studio Mac",
+        "started_at": "2026-07-10T12:00:00.000Z",
+        "connected_at": "2026-07-10T12:00:01.000Z",
+        "updated_at": "2026-07-10T12:00:02.000Z",
+        "last_error": null,
+        "connection_attempts": 1,
+        "reconnects": 0,
+        "received_messages": 12,
+        "sent_messages": 9,
+        "received_bytes": 4096,
+        "sent_bytes": 2048,
+        "active_requests": 2
+      }
+      """
+    try Data(json.utf8).write(to: fileURL)
+    defer { try? FileManager.default.removeItem(at: fileURL) }
+
+    let status = try RuntimeTelemetryReader().load(from: fileURL)
+
+    try expect(status.state == .connected, "expected connected state")
+    try expect(status.pid == 4242, "expected agent PID")
+    try expect(status.gatewayURL.host == "cloud.opengsd.net", "expected gateway host")
+    try expect(status.runtimeName == "Studio Mac", "expected runtime name")
+    try expect(status.receivedMessages == 12, "expected received message count")
+    try expect(status.sentMessages == 9, "expected sent message count")
+    try expect(status.receivedBytes == 4096, "expected received byte count")
+    try expect(status.sentBytes == 2048, "expected sent byte count")
+    try expect(status.activeRequests == 2, "expected active request count")
+    try expect(status.projects.isEmpty, "legacy telemetry should default to no projects")
+    try expect(status.recentActivity.isEmpty, "legacy telemetry should default to no activity")
+  }
+
+  static func trafficRateUsesOnlyGrowthBetweenSamples() throws {
+    let previous = TrafficCounters(receivedBytes: 1_000, sentBytes: 500)
+    let current = TrafficCounters(receivedBytes: 1_600, sentBytes: 800)
+
+    let rate = current.rate(since: previous, elapsed: 2)
+
+    try expect(rate.receivedBytesPerSecond == 300, "expected received byte rate")
+    try expect(rate.sentBytesPerSecond == 150, "expected sent byte rate")
+  }
+
+  static func trafficRateDoesNotGoNegativeAfterAgentRestart() throws {
+    let previous = TrafficCounters(receivedBytes: 1_000, sentBytes: 500)
+    let restarted = TrafficCounters(receivedBytes: 10, sentBytes: 5)
+
+    let rate = restarted.rate(since: previous, elapsed: 1)
+
+    try expect(rate.receivedBytesPerSecond == 0, "received byte rate must reset to zero")
+    try expect(rate.sentBytesPerSecond == 0, "sent byte rate must reset to zero")
+  }
+
+  static func trafficSeriesCalculatesAndBoundsSamples() throws {
+    var series = TrafficSeries(limit: 2)
+    let startedAt = Date(timeIntervalSince1970: 1_000)
+
+    series.record(
+      counters: TrafficCounters(receivedBytes: 100, sentBytes: 50),
+      at: startedAt
+    )
+    series.record(
+      counters: TrafficCounters(receivedBytes: 500, sentBytes: 250),
+      at: startedAt.addingTimeInterval(2)
+    )
+    series.record(
+      counters: TrafficCounters(receivedBytes: 700, sentBytes: 350),
+      at: startedAt.addingTimeInterval(4)
+    )
+
+    try expect(series.samples.count == 2, "traffic history should honor its limit")
+    try expect(series.samples[0].receivedBytesPerSecond == 200, "expected first retained receive rate")
+    try expect(series.samples[0].sentBytesPerSecond == 100, "expected first retained send rate")
+    try expect(series.samples[1].receivedBytesPerSecond == 100, "expected latest receive rate")
+    try expect(series.samples[1].sentBytesPerSecond == 50, "expected latest send rate")
+  }
+
+  static func agentCommandsExecuteWithTheSelectedConfiguration() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-command-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("gsd-cloud-fixture.sh")
+    let invocations = root.appendingPathComponent("invocations.txt")
+    let script = "#!/bin/bash\necho \"$*\" >>\"$GSD_TEST_INVOCATIONS\"\n"
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+    let runner = AgentCommandRunner(
+      executableURL: executable,
+      configPath: "/work/daemon.yaml",
+      environment: ["GSD_TEST_INVOCATIONS": invocations.path]
+    )
+
+    try runner.run(.stop)
+    try runner.run(.reconnect)
+
+    let lines = try String(contentsOf: invocations, encoding: .utf8)
+      .split(separator: "\n")
+      .map(String.init)
+    try expect(lines == [
+      "stop --config /work/daemon.yaml",
+      "stop --config /work/daemon.yaml",
+      "connect --config /work/daemon.yaml",
+    ], "agent command sequence is incorrect")
+  }
+
+  static func connectionTransitionsIdentifyNotifications() throws {
+    try expect(
+      ConnectionTransition(previous: .connected, current: .reconnecting).notification == .disconnected,
+      "expected disconnect notification"
+    )
+    try expect(
+      ConnectionTransition(previous: .reconnecting, current: .connected).notification == .reconnected,
+      "expected reconnect notification"
+    )
+    try expect(
+      ConnectionTransition(previous: .connected, current: .connected).notification == nil,
+      "stable state should not notify"
+    )
+  }
+
+  static func runtimeConfigurationsRoundTrip() throws {
+    let configuration = RuntimeConfiguration(
+      name: "Studio Mac",
+      telemetryPath: "/Users/example/.gsd/cloud-runtime-status.json",
+      agentExecutablePath: "/opt/homebrew/bin/gsd-cloud"
+    )
+
+    let decoded = try JSONDecoder().decode(
+      RuntimeConfiguration.self,
+      from: JSONEncoder().encode(configuration)
+    )
+
+    try expect(decoded == configuration, "runtime configuration should round-trip")
+  }
+
+  static func diagnosticsRedactLocalPaths() throws {
+    let telemetryURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("telemetry-\(UUID().uuidString).json")
+    let json = """
+      {
+        "version": 1,
+        "pid": 4242,
+        "state": "connected",
+        "gateway_url": "https://cloud.opengsd.net",
+        "started_at": "2026-07-10T12:00:00.000Z",
+        "connected_at": "2026-07-10T12:00:01.000Z",
+        "updated_at": "2026-07-10T12:00:02.000Z",
+        "last_error": null,
+        "connection_attempts": 1,
+        "reconnects": 0,
+        "received_messages": 12,
+        "sent_messages": 9,
+        "received_bytes": 4096,
+        "sent_bytes": 2048,
+        "active_requests": 0,
+        "projects": [{
+          "alias": "private-project",
+          "path": "/Users/example/Secret/private-project",
+          "repo_identity": "private-repo",
+          "state": "idle",
+          "active_requests": 0,
+          "request_count": 1,
+          "error_count": 0,
+          "received_bytes": 10,
+          "sent_bytes": 20,
+          "last_tool": "gsd_status",
+          "last_activity_at": "2026-07-10T12:00:02.000Z"
+        }],
+        "recent_activity": []
+      }
+      """
+    try Data(json.utf8).write(to: telemetryURL)
+    defer { try? FileManager.default.removeItem(at: telemetryURL) }
+    let telemetry = try RuntimeTelemetryReader().load(from: telemetryURL)
+
+    let report = try DiagnosticsReport(telemetry: telemetry).jsonData()
+    let text = String(decoding: report, as: UTF8.self)
+
+    try expect(text.contains("private-project"), "diagnostics should retain project aliases")
+    try expect(!text.contains("/Users/example/Secret"), "diagnostics must redact project paths")
+    try expect(!text.contains("device_token"), "diagnostics must not contain credentials")
+  }
+
+  static func releaseVersionsCompareMonitorTags() throws {
+    guard let current = ReleaseVersion(tag: "gsd-cloud-monitor-v1.9.9"),
+          let update = ReleaseVersion(tag: "gsd-cloud-monitor-v1.10.0") else {
+      throw TestFailure(message: "valid monitor release tags should parse")
+    }
+
+    try expect(update > current, "release versions should compare numerically")
+    try expect(ReleaseVersion(tag: "v2.0.0") == nil, "unrelated release tags must be ignored")
+  }
+
+  static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+    guard condition() else {
+      throw TestFailure(message: message)
+    }
+  }
+}
+
+struct TestFailure: Error, CustomStringConvertible {
+  let message: String
+
+  var description: String { message }
+}

@@ -181,6 +181,45 @@ test("connect returns while a background runtime advertises the selected project
   }
 });
 
+test("stop terminates the background runtime without removing pairing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-command-"));
+  const projectDir = join(root, "project");
+  const configPath = join(root, "daemon.yaml");
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  const gateway = await createTestGateway();
+
+  saveCloudConfig(configPath, {
+    gateway_url: gateway.baseUrl,
+    device_token: "test",
+    runtime_id: "fixture-runtime",
+    enabled: true,
+  });
+
+  try {
+    const connect = await runCli(["connect", "--config", configPath], projectDir);
+    assert.equal(connect.code, 0, connect.stderr);
+    await gateway.hello;
+
+    const stop = await runCli(["stop", "--config", configPath], projectDir);
+    assert.equal(stop.code, 0, stop.stderr);
+    assert.match(stop.stdout, /background runtime stopped/i);
+
+    const status = await runCli(["status", "--config", configPath], projectDir);
+    const body = JSON.parse(status.stdout) as {
+      configured?: boolean;
+      runtime_id?: string;
+      background?: { running?: boolean };
+    };
+    assert.equal(body.configured, true);
+    assert.equal(body.runtime_id, "fixture-runtime");
+    assert.equal(body.background?.running, false);
+  } finally {
+    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("login returns after approval and keeps the selected project connected", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-login-background-"));
   const projectDir = join(root, "project");

@@ -30,6 +30,7 @@ type RuntimeInternals = {
   reconnect: ReturnType<typeof setTimeout> | undefined;
   handleSocketOpen: (socket: unknown) => void;
   handleSocketClose: (socket: unknown) => void;
+  handleSocketMessage: (socket: unknown, text: string) => Promise<void>;
   connect: () => void;
 };
 
@@ -103,6 +104,66 @@ test("connect() rejects the first-connect promise when the device token is missi
     internals.firstConnectDeferred = deferred;
     internals.connect();
     await assert.rejects(deferred.promise, /missing device token/);
+  } finally {
+    runtime.stop();
+  }
+});
+
+test("socket activity is reported to runtime telemetry", async () => {
+  const events: Array<{ name: string; details?: unknown }> = [];
+  const telemetry = {
+    connecting: () => events.push({ name: "connecting" }),
+    connected: () => events.push({ name: "connected" }),
+    disconnected: () => events.push({ name: "disconnected" }),
+    socketError: () => events.push({ name: "error" }),
+    received: () => events.push({ name: "received" }),
+    sent: () => events.push({ name: "sent" }),
+    projectsAdvertised: (details: unknown) => events.push({ name: "projects", details }),
+    requestStarted: (details: unknown) => events.push({ name: "request-started", details }),
+    requestFinished: (details: unknown) => events.push({ name: "request-finished", details }),
+    stopped: () => events.push({ name: "stopped" }),
+  };
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "fixture", runtime_id: "runtime" },
+    {
+      execute: async () => ({ ok: true }),
+      advertisedProjects: async () => [{
+        alias: "project-one",
+        path: "/work/project-one",
+        repoIdentity: "repo-one",
+        markers: [".gsd"],
+      }],
+    } as never,
+    noopLogger as never,
+    telemetry,
+  );
+  const internals = runtime as unknown as RuntimeInternals;
+  const socket = fakeSocket();
+  internals.socket = socket;
+
+  try {
+    internals.handleSocketOpen(socket);
+    await new Promise((resolve) => setImmediate(resolve));
+    await internals.handleSocketMessage(socket, JSON.stringify({
+      type: "tool_call",
+      requestId: "request-1",
+      toolName: "gsd_status",
+      projectAlias: "project-one",
+    }));
+
+    assert.ok(events.some((event) => event.name === "connected"));
+    assert.ok(events.some((event) => event.name === "received"));
+    const advertised = events.find((event) => event.name === "projects");
+    assert.equal((advertised?.details as Array<{ alias?: string }>)[0]?.alias, "project-one");
+    const started = events.find((event) => event.name === "request-started");
+    assert.equal((started?.details as { projectAlias?: string }).projectAlias, "project-one");
+    assert.equal((started?.details as { toolName?: string }).toolName, "gsd_status");
+    assert.ok(((started?.details as { receivedBytes?: number }).receivedBytes ?? 0) > 0);
+    const finished = events.find((event) => event.name === "request-finished");
+    assert.equal((finished?.details as { projectAlias?: string }).projectAlias, "project-one");
+    assert.equal((finished?.details as { outcome?: string }).outcome, "success");
+    assert.ok(((finished?.details as { sentBytes?: number }).sentBytes ?? 0) > 0);
+    assert.ok(events.some((event) => event.name === "sent"));
   } finally {
     runtime.stop();
   }

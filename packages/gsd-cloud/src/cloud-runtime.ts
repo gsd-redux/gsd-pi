@@ -1,8 +1,12 @@
 import WebSocket from "ws";
 import type { Logger } from "./logger.js";
 import type { DaemonConfig } from "./types.js";
-import type { Executor } from "./executors/executor.js";
+import type { AdvertisedProject, Executor } from "./executors/executor.js";
 import { createGatewayLookup, parseCloudGatewayUrl, validateGatewayNetworkTarget } from "./cloud-config.js";
+import {
+  noopRuntimeTelemetry,
+  type RuntimeTelemetryReporter,
+} from "./runtime-telemetry.js";
 
 const INITIAL_CONNECT_ATTEMPTS = 5;
 const INITIAL_CONNECT_HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -32,6 +36,7 @@ export class CloudRuntime {
   private reconnect: ReturnType<typeof setTimeout> | undefined;
   private readonly inFlight = new Map<string, GatewayMessage>();
   private outbox: string[] = [];
+  private advertisedProjects: AdvertisedProject[] = [];
   private stopped = false;
   private firstConnectDeferred: PromiseWithResolvers<void> | undefined;
   private initialConnectAttempts = 0;
@@ -40,6 +45,7 @@ export class CloudRuntime {
     private readonly cloud: NonNullable<DaemonConfig["cloud"]>,
     private readonly executor: Executor,
     private readonly logger: Logger,
+    private readonly telemetry: RuntimeTelemetryReporter = noopRuntimeTelemetry,
   ) {}
 
   start(): Promise<void> {
@@ -52,6 +58,7 @@ export class CloudRuntime {
 
   stop(): void {
     this.stopped = true;
+    this.telemetry.stopped();
     this.rejectFirstConnect(new Error("cloud runtime stopped"));
     if (this.reconnect) clearTimeout(this.reconnect);
     this.reconnect = undefined;
@@ -67,9 +74,12 @@ export class CloudRuntime {
   private connect(): void {
     if (this.reconnect) clearTimeout(this.reconnect);
     this.reconnect = undefined;
+    this.telemetry.connecting();
     if (!this.cloud.device_token || !this.cloud.runtime_id) {
+      const message = "cloud runtime missing device token or runtime id";
       this.logger.warn("cloud runtime skipped — missing device token or runtime id");
-      this.rejectFirstConnect(new Error("cloud runtime missing device token or runtime id"));
+      this.telemetry.socketError(message);
+      this.rejectFirstConnect(new Error(message));
       return;
     }
     const gatewayUrl = parseCloudGatewayUrl(this.cloud.gateway_url);
@@ -78,6 +88,7 @@ export class CloudRuntime {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn("cloud runtime skipped unsafe gateway URL", { error: message });
+      this.telemetry.socketError(message);
       this.rejectFirstConnect(new Error(`cloud runtime unsafe gateway URL: ${message}`));
       return;
     }
@@ -116,6 +127,7 @@ export class CloudRuntime {
 
   private handleSocketOpen(socket: WebSocket): void {
     if (socket !== this.socket) return;
+    this.telemetry.connected();
     this.resolveFirstConnect();
     this.logger.info("cloud runtime connected", { gateway_url: this.cloud.gateway_url, runtime_id: this.cloud.runtime_id });
     // Re-advertise projects (async: the hello is sent on a later microtask), then
@@ -126,7 +138,10 @@ export class CloudRuntime {
     const pending = this.outbox;
     this.outbox = [];
     for (const text of pending) {
-      if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(text);
+      if (this.socket?.readyState === WebSocket.OPEN) {
+        this.socket.send(text);
+        this.telemetry.sent(text);
+      }
       else this.outbox.push(text);
     }
     if (this.heartbeat) clearInterval(this.heartbeat);
@@ -135,6 +150,7 @@ export class CloudRuntime {
 
   private async handleSocketMessage(socket: WebSocket, text: string): Promise<void> {
     if (socket !== this.socket) return;
+    this.telemetry.received(text);
     await this.handleMessage(text);
   }
 
@@ -144,6 +160,7 @@ export class CloudRuntime {
     this.heartbeat = undefined;
     this.socket = undefined;
     if (this.stopped) return;
+    this.telemetry.disconnected();
     if (this.firstConnectDeferred) {
       // Still trying to establish the first connection: retry transient
       // handshake failures (like the daemon's reconnect loop) and only reject
@@ -172,10 +189,13 @@ export class CloudRuntime {
   private handleSocketError(socket: WebSocket, err: Error): void {
     if (socket !== this.socket) return;
     this.logger.warn("cloud runtime socket error", { error: err.message });
+    this.telemetry.socketError(err.message);
   }
 
   private async advertiseProjects(): Promise<void> {
     const projects = await this.executor.advertisedProjects();
+    this.advertisedProjects = projects;
+    this.telemetry.projectsAdvertised(projects);
     this.send({
       type: "hello",
       runtimeId: this.cloud.runtime_id,
@@ -196,21 +216,61 @@ export class CloudRuntime {
       return;
     }
     if (message.type !== "tool_call" || !message.requestId || !message.toolName) return;
+    const projectAlias = this.resolveProjectAlias(message);
+    const startedAt = Date.now();
+    const receivedBytes = Buffer.byteLength(text);
     this.inFlight.set(message.requestId, message);
+    this.telemetry.requestStarted({
+      requestId: message.requestId,
+      ...(projectAlias ? { projectAlias } : {}),
+      toolName: message.toolName,
+      receivedBytes,
+    });
+    let outcome: "success" | "error" | "cancelled" = "success";
+    let errorMessage: string | undefined;
+    let sentBytes = 0;
     try {
       const result = await this.executor.execute(message.toolName, message.args ?? {}, message.projectAlias);
-      if (!this.inFlight.has(message.requestId)) return;
-      this.send({ type: "tool_result", requestId: message.requestId, result });
+      if (!this.inFlight.has(message.requestId)) {
+        outcome = "cancelled";
+        return;
+      }
+      sentBytes = this.send({ type: "tool_result", requestId: message.requestId, result });
     } catch (err) {
-      if (!this.inFlight.has(message.requestId)) return;
-      this.send({
+      if (!this.inFlight.has(message.requestId)) {
+        outcome = "cancelled";
+        return;
+      }
+      outcome = "error";
+      errorMessage = err instanceof Error ? err.message : String(err);
+      sentBytes = this.send({
         type: "tool_result",
         requestId: message.requestId,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage,
       });
     } finally {
       this.inFlight.delete(message.requestId);
+      this.telemetry.requestFinished({
+        requestId: message.requestId,
+        ...(projectAlias ? { projectAlias } : {}),
+        toolName: message.toolName,
+        sentBytes,
+        durationMs: Date.now() - startedAt,
+        outcome,
+        ...(errorMessage ? { error: errorMessage } : {}),
+      });
     }
+  }
+
+  private resolveProjectAlias(message: GatewayMessage): string | undefined {
+    if (message.projectAlias) return message.projectAlias;
+    if (typeof message.args?.projectAlias === "string") return message.args.projectAlias;
+    const projectDir = message.args?.projectDir;
+    if (typeof projectDir === "string") {
+      return this.advertisedProjects.find((project) => project.path === projectDir)?.alias;
+    }
+    if (this.advertisedProjects.length === 1) return this.advertisedProjects[0]?.alias;
+    return undefined;
   }
 
   private async cancelInFlight(requestId: string): Promise<void> {
@@ -248,11 +308,13 @@ export class CloudRuntime {
     deferred.reject(err);
   }
 
-  private send(message: unknown): void {
+  private send(message: unknown): number {
     const text = JSON.stringify(message);
+    const bytes = Buffer.byteLength(text);
     if (this.socket?.readyState === WebSocket.OPEN) {
       this.socket.send(text);
-      return;
+      this.telemetry.sent(text);
+      return bytes;
     }
     // Buffer while disconnected; flushed on reconnect in handleSocketOpen. Bounded
     // so a long outage cannot grow memory without limit — a stale heartbeat is
@@ -261,5 +323,6 @@ export class CloudRuntime {
     if (this.outbox.length > CloudRuntime.MAX_OUTBOX) {
       this.outbox.shift();
     }
+    return bytes;
   }
 }
