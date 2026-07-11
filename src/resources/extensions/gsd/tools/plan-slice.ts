@@ -20,7 +20,7 @@ import {
 } from "../gsd-db.js";
 import type { GateEvaluationConfig, GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
-import { renderPlanFromDb } from "../markdown-renderer.js";
+import { renderPlanCheckboxes, renderPlanFromDb } from "../markdown-renderer.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
@@ -469,9 +469,13 @@ export async function handlePlanSlice(
     }
 
     const sliceTasks = getSliceTasks(params.milestoneId, params.sliceId);
+    const hasClosedTasks = sliceTasks.some((task) => isClosedStatus(task.status));
     const renderResult = sliceTasks.length === 0
       ? { planPath: "", taskPlanPaths: [] as string[] }
       : await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
+    if (sliceTasks.length > 0 && hasClosedTasks) {
+      await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
+    }
     if (sliceTasks.length > 0) {
       setSliceSketchFlag(params.milestoneId, params.sliceId, false);
     }

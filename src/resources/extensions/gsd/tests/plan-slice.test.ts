@@ -104,6 +104,30 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
   }
 });
 
+test('handlePlanSlice re-dispatch preserves completed task checkboxes', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+
+    const first = await handlePlanSlice(validParams(), base);
+    assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
+
+    updateTaskStatus('M001', 'S02', 'T01', 'complete', '2026-07-11T00:00:00.000Z');
+
+    const second = await handlePlanSlice(validParams(), base);
+    assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
+
+    const planPath = join(base, '.gsd', 'phases', '01-test', '01-02-PLAN.md');
+    const parsedPlan = parsePlan(readFileSync(planPath, 'utf-8'));
+    assert.equal(parsedPlan.tasks.find((task) => task.id === 'T01')?.done, true);
+    assert.equal(parsedPlan.tasks.find((task) => task.id === 'T02')?.done, false);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice persists explicit slice/task target repositories', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
