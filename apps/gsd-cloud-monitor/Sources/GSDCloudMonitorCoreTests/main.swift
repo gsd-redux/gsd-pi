@@ -16,6 +16,7 @@ struct RuntimeTelemetryTests {
     try agentCommandsReportValidatedRuntimeStatus()
     try stopRemainsAvailableWithoutTelemetry()
     try telemetryReadFailuresRemainUnavailableUntilStatusConfirmsStop()
+    try validatedOfflineStateSurvivesTelemetryFailures()
     try staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake()
     try connectionTransitionsIdentifyNotifications()
     try telemetryAvailabilityTransitionsRequireSuccessfulDecode()
@@ -364,6 +365,17 @@ struct RuntimeTelemetryTests {
       telemetryUnavailableState(validatedProcessIsRunning: false) == .stopped,
       "only validated process status may classify missing telemetry as stopped"
     )
+  }
+
+  static func validatedOfflineStateSurvivesTelemetryFailures() throws {
+    var tracker = TelemetryUnavailableStateTracker()
+
+    try expect(tracker.connectionState == .stale, "missing telemetry should initially be stale")
+    tracker.recordProcessValidation(isRunning: false)
+    try expect(tracker.connectionState == .stopped, "validated process status should publish Offline")
+    try expect(tracker.connectionState == .stopped, "later telemetry failures must retain Offline")
+    tracker.reset()
+    try expect(tracker.connectionState == .stale, "successful telemetry should clear prior process validation")
   }
 
   static func staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake() throws {

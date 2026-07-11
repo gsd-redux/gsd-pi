@@ -9,6 +9,8 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -52,9 +54,13 @@ const PROCESS_STARTUP_GRACE_MS = 5_000;
 const FORCED_STOP_TIMEOUT_MS = 5_000;
 const STOP_GRACE_PERIOD_MS = 5_000;
 const STOP_POLL_INTERVAL_MS = 50;
+const MALFORMED_START_LOCK_GRACE_MS = 5_000;
 
 export const BACKGROUND_RUNTIME_READY_TIMEOUT_MS =
   CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS + PROCESS_STARTUP_GRACE_MS;
+const START_LOCK_TIMEOUT_MS = BACKGROUND_RUNTIME_READY_TIMEOUT_MS
+  + 2 * (STOP_GRACE_PERIOD_MS + FORCED_STOP_TIMEOUT_MS)
+  + STOP_POLL_INTERVAL_MS;
 
 export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise<RuntimeProcessStatus> {
   const releaseStartLock = await acquireRuntimeStartLock(opts.configPath);
@@ -256,10 +262,7 @@ export async function acquireRuntimeStartLock(configPath: string): Promise<() =>
   };
   // Match worst-case `startBackgroundRuntime` hold time: stop prior runtime, wait for
   // ready, and tear down the child if ready fails, plus one poll interval.
-  const deadline = Date.now()
-    + BACKGROUND_RUNTIME_READY_TIMEOUT_MS
-    + 2 * (STOP_GRACE_PERIOD_MS + FORCED_STOP_TIMEOUT_MS)
-    + STOP_POLL_INTERVAL_MS;
+  const deadline = Date.now() + START_LOCK_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
       createRuntimeStartLock(lockPath, owner);
@@ -272,9 +275,8 @@ export async function acquireRuntimeStartLock(configPath: string): Promise<() =>
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
-        const currentOwner = readRuntimeStartLockOwner(lockPath);
-        if (currentOwner && !runtimeStartLockOwnerIsRunning(currentOwner)) {
-          unlinkSync(lockPath);
+        if (runtimeStartLockCanBeRecovered(lockPath)) {
+          quarantineRuntimeStartLock(lockPath);
           continue;
         }
       } catch {
@@ -321,6 +323,20 @@ function readRuntimeStartLockOwner(lockPath: string): RuntimeStartLockOwner | nu
 function runtimeStartLockOwnerIsRunning(owner: RuntimeStartLockOwner): boolean {
   if (!owner.process_start_identity) return processIsRunning(owner.pid);
   return processMatchesIdentity(owner.pid, owner.process_start_identity);
+}
+
+function runtimeStartLockCanBeRecovered(lockPath: string): boolean {
+  const owner = readRuntimeStartLockOwner(lockPath);
+  if (owner?.process_start_identity) return !runtimeStartLockOwnerIsRunning(owner);
+  const age = Date.now() - statSync(lockPath).mtimeMs;
+  if (owner) return !runtimeStartLockOwnerIsRunning(owner) || age > START_LOCK_TIMEOUT_MS;
+  return age > MALFORMED_START_LOCK_GRACE_MS;
+}
+
+function quarantineRuntimeStartLock(lockPath: string): void {
+  const quarantinePath = `${lockPath}.stale.${randomUUID()}`;
+  renameSync(lockPath, quarantinePath);
+  unlinkSync(quarantinePath);
 }
 
 function runtimeStartLockOwnersEqual(
@@ -542,16 +558,19 @@ function argsHaveCloudRuntimeLauncher(args: string[]): boolean {
 }
 
 function commandPrefixHasCloudRuntimeLauncher(prefix: string): boolean {
-  const trimmed = prefix.trim();
-  if (!/\s/.test(trimmed) && isCloudRuntimeExecutable(trimmed.replace(/^['"]|['"]$/g, ""))) return true;
-  const nodeLauncher = /^("[^"]*node(?:\.exe)?"|\S*node(?:\.exe)?)\s+([\s\S]+)$/i.exec(trimmed);
-  if (nodeLauncher) return commandPathEndsWithCloudRuntime(nodeLauncher[2]!);
-  return /^(?:[./\\]|[A-Za-z]:[\\/]|['"])/.test(trimmed)
-    && commandPathEndsWithCloudRuntime(trimmed);
+  const args = splitFlattenedCommandPrefix(prefix);
+  return args !== null && argsHaveCloudRuntimeLauncher(args);
 }
 
-function commandPathEndsWithCloudRuntime(path: string): boolean {
-  return /(?:^|[\\/])gsd-cloud(?:\.[cm]?js)?['"]?$/.test(path);
+function splitFlattenedCommandPrefix(prefix: string): string[] | null {
+  const args: string[] = [];
+  const token = /\s*(?:"([^"]*)"|'([^']*)'|(\S+))/gy;
+  while (token.lastIndex < prefix.length) {
+    const match = token.exec(prefix);
+    if (!match) return null;
+    args.push(match[1] ?? match[2] ?? match[3]!);
+  }
+  return args;
 }
 
 function findRuntimeCommand(command: string): { command: string; index: number } | null {

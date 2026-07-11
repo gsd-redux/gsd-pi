@@ -1,7 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Regression coverage for detached cloud runtime process timing and shutdown.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS } from "./cloud-runtime.js";
 import {
   BACKGROUND_RUNTIME_READY_TIMEOUT_MS,
+  acquireRuntimeStartLock,
   backgroundRuntimeStatus,
   commandLineMatchesRuntimeConfig,
   runtimeLogPath,
@@ -98,12 +99,13 @@ for (const runtimeArgs of [
   ["connect"],
   ["login", "--foreground"],
 ]) {
-  test(`custom configs migrate legacy ${runtimeArgs.join(" ")} runtime state`, (t) => {
-    const root = mkdtempSync(join(tmpdir(), "gsd cloud foreground legacy "));
+  test(`custom configs migrate legacy ${runtimeArgs.join(" ")} runtime state`, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "gsd-cloud-foreground-legacy-"));
     const configPath = join(root, "custom runtime.yaml");
     const legacyStatePath = join(root, "cloud-runtime.json");
+    const binaryPath = writeLegacyRuntime(root, "gsd-cloud.js");
     const child = spawn(process.execPath, [
-      writeLegacyRuntime(root, "gsd-cloud.js"),
+      binaryPath,
       ...runtimeArgs,
       "--config",
       configPath,
@@ -114,6 +116,7 @@ for (const runtimeArgs of [
     });
 
     assert.ok(child.pid);
+    await waitForCondition(() => processCommandIsRunning(binaryPath));
     writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
 
     const status = backgroundRuntimeStatus(configPath);
@@ -189,8 +192,8 @@ test("legacy migration rejects unrelated executables", async (t) => {
   assert.equal(existsSync(legacyStatePath), true);
 });
 
-test("legacy migration preserves config paths with spaces before short options", (t) => {
-  const root = mkdtempSync(join(tmpdir(), "gsd cloud argv legacy "));
+test("legacy migration preserves config paths with spaces before short options", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-argv-legacy-"));
   const configPath = join(root, "custom runtime.yaml");
   const legacyStatePath = join(root, "cloud-runtime.json");
   const binaryPath = writeLegacyRuntime(root, "gsd-cloud.js");
@@ -208,6 +211,7 @@ test("legacy migration preserves config paths with spaces before short options",
   });
 
   assert.ok(child.pid);
+  await waitForCondition(() => processCommandIsRunning(binaryPath));
   writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
 
   const status = backgroundRuntimeStatus(configPath);
@@ -249,6 +253,16 @@ test("command matching rejects gsd-cloud decoys before another launcher", () => 
     configPath,
     "linux",
   ), false);
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `/usr/bin/other /tmp/gsd-cloud.js connect --config ${configPath}`,
+    configPath,
+    "darwin",
+  ), false);
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `/usr/bin/node /usr/bin/other /tmp/gsd-cloud.js connect --config ${configPath}`,
+    configPath,
+    "darwin",
+  ), false);
 });
 
 test("command matching accepts a directly launched bare gsd-cloud executable", () => {
@@ -256,6 +270,11 @@ test("command matching accepts a directly launched bare gsd-cloud executable", (
 
   assert.equal(commandLineMatchesRuntimeConfig(
     `gsd-cloud connect --config ${configPath}`,
+    configPath,
+    "darwin",
+  ), true);
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `"/Applications/GSD Cloud/gsd-cloud" connect --config ${configPath}`,
     configPath,
     "darwin",
   ), true);
@@ -327,6 +346,37 @@ test("start lock does not reclaim a live legacy owner by age", { timeout: 5_000 
   rmSync(lockPath);
   await starting;
 });
+
+for (const staleOwner of ["", "not-json", `${process.pid}\n`]) {
+  test(`start lock recovers stale legacy owner ${JSON.stringify(staleOwner)}`, { timeout: 2_000 }, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stale-legacy-lock-"));
+    const configPath = join(root, "daemon.yaml");
+    const lockPath = runtimeArtifactPath(configPath, "start.lock");
+    writeFileSync(lockPath, staleOwner);
+    const old = new Date(0);
+    utimesSync(lockPath, old, old);
+    let release: (() => void) | undefined;
+    const acquiring = acquireRuntimeStartLock(configPath);
+    t.after(async () => {
+      if (!release) {
+        rmSync(lockPath, { force: true });
+        release = await acquiring.catch(() => undefined);
+      }
+      release?.();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    release = await Promise.race([
+      acquiring,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error("stale start lock was not recovered promptly")), 500);
+      }),
+    ]);
+    release();
+
+    assert.equal(existsSync(lockPath), false);
+  });
+}
 
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-"));

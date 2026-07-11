@@ -15,6 +15,24 @@ public func telemetryUnavailableState(
   validatedProcessIsRunning == false ? .stopped : .stale
 }
 
+public struct TelemetryUnavailableStateTracker: Sendable {
+  private var validatedProcessIsRunning: Bool?
+
+  public var connectionState: RuntimeConnectionState {
+    telemetryUnavailableState(validatedProcessIsRunning: validatedProcessIsRunning)
+  }
+
+  public init() {}
+
+  public mutating func recordProcessValidation(isRunning: Bool?) {
+    validatedProcessIsRunning = isRunning
+  }
+
+  public mutating func reset() {
+    validatedProcessIsRunning = nil
+  }
+}
+
 public struct TelemetryFreshnessTracker: Sendable {
   private var lastUpdatedAt: Date?
   private var missedObservations = 0

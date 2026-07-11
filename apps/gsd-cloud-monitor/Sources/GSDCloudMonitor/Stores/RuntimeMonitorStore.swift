@@ -26,7 +26,8 @@ final class RuntimeMonitorStore: ObservableObject {
   private var previousConnectionState: RuntimeConnectionState?
   private var previousTelemetryAvailability: TelemetryAvailability?
   private var freshnessTracker = TelemetryFreshnessTracker()
-  private var monitoredState: RuntimeConnectionState = .stopped
+  private var telemetryUnavailableStateTracker = TelemetryUnavailableStateTracker()
+  @Published private var monitoredState: RuntimeConnectionState = .stopped
   private var statusCheckInProgress = false
   private var timer: Timer?
 
@@ -119,6 +120,7 @@ final class RuntimeMonitorStore: ObservableObject {
         projectTraffic[project.id] = series
       }
       telemetry = current
+      telemetryUnavailableStateTracker.reset()
       handleTelemetryAvailability(.available)
       monitoredState = freshnessTracker.connectionState(
         reportedState: current.state,
@@ -129,7 +131,7 @@ final class RuntimeMonitorStore: ObservableObject {
       handleConnectionTransition(to: monitoredState)
     } catch {
       telemetry = nil
-      monitoredState = telemetryUnavailableState(validatedProcessIsRunning: nil)
+      monitoredState = telemetryUnavailableStateTracker.connectionState
       handleTelemetryAvailability(.unavailable)
       freshnessTracker.reset()
       trafficRate = .zero
@@ -322,6 +324,7 @@ final class RuntimeMonitorStore: ObservableObject {
     previousTelemetryAvailability = nil
     monitoredState = .stopped
     freshnessTracker.reset()
+    telemetryUnavailableStateTracker.reset()
   }
 
   private func validateRuntimeStatus() {
@@ -339,7 +342,8 @@ final class RuntimeMonitorStore: ObservableObject {
       let isRunning = try? await Task.detached { try runner.runtimeIsRunning() }.value
       statusCheckInProgress = false
       guard selectedConfigurationID == configuration.id, telemetry == nil else { return }
-      monitoredState = telemetryUnavailableState(validatedProcessIsRunning: isRunning)
+      telemetryUnavailableStateTracker.recordProcessValidation(isRunning: isRunning)
+      monitoredState = telemetryUnavailableStateTracker.connectionState
       if isRunning == false {
         handleConnectionTransition(to: monitoredState)
       }
