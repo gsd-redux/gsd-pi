@@ -4,8 +4,12 @@
 
 - **Project**: the complete body of work a user wants GSD to guide from discovery through delivery.
 - **Milestone**: a durable, resumable stage of a Project, including discovery, research, planning, or delivery work.
+- **Milestone Kind**: the purpose of a Milestone: discovery, research, requirements, roadmap, delivery, or remediation. Kind changes its expected outcomes, not its Lifecycle Status.
 - **Slice**: a coherent outcome within a Milestone, decomposed into Tasks and independently verifiable.
 - **Task**: the smallest planned piece of work whose completion produces evidence toward a Slice.
+- **Planning Horizon**: an advisory start, end, or review window for long-running work. A missed horizon prompts review and reforecasting; it is not a timeout, readiness gate, or failure.
+- **Open Question**: an unresolved choice scoped to work, carrying the current recommendation, rationale, alternatives, uncertainty, and a condition for revisiting it.
+- **Work Checkpoint**: a durable summary of confirmed context, unresolved questions, evidence, and suggested next work at a meaningful resume boundary.
 - **Lifecycle Status**: where a Milestone, Slice, or Task is in its durable progression: pending, ready, in progress, paused, completed, or cancelled.
 - **Attempt Result**: the immutable result of one execution attempt: succeeded, failed, or interrupted. An Attempt Result does not by itself complete or cancel the work.
 - **Requirement Disposition**: whether a requirement is unsatisfied, satisfied, or waived. Required Dependencies progress only from satisfied or explicitly waived requirements.
