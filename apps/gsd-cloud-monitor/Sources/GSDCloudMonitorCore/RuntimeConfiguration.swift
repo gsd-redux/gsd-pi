@@ -89,13 +89,16 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     agentExecutablePath = try values.decode(String.self, forKey: .agentExecutablePath)
     let savedAgentConfigPath = try values.decodeIfPresent(String.self, forKey: .agentConfigPath)
     requiresPersistence = savedTelemetryPathIsDerived == nil || savedAgentConfigPath == nil
-    agentConfigPath = savedAgentConfigPath
+    agentConfigPath =
+      savedAgentConfigPath
       ?? URL(fileURLWithPath: NSString(string: decodedTelemetryPath).expandingTildeInPath)
-        .deletingLastPathComponent()
-        .appendingPathComponent("daemon.yaml").path
-    let legacyDerivedPath = URL(fileURLWithPath: NSString(string: agentConfigPath).expandingTildeInPath)
       .deletingLastPathComponent()
-      .appendingPathComponent("cloud-runtime-status.json").path
+      .appendingPathComponent("daemon.yaml").path
+    let legacyDerivedPath = URL(
+      fileURLWithPath: NSString(string: agentConfigPath).expandingTildeInPath
+    )
+    .deletingLastPathComponent()
+    .appendingPathComponent("cloud-runtime-status.json").path
     let derivedPath = RuntimeArtifactPaths(configPath: agentConfigPath).telemetryPath
     if let savedTelemetryPathIsDerived {
       telemetryPathIsDerived = savedTelemetryPathIsDerived
@@ -104,8 +107,9 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
       telemetryPathIsDerived = true
       telemetryPath = decodedTelemetryPath
     } else if decodedTelemetryPath == legacyDerivedPath,
-              !FileManager.default.fileExists(atPath: legacyDerivedPath),
-              FileManager.default.fileExists(atPath: derivedPath) {
+      !FileManager.default.fileExists(atPath: legacyDerivedPath),
+      FileManager.default.fileExists(atPath: derivedPath)
+    {
       telemetryPathIsDerived = true
       telemetryPath = derivedPath
       requiresPersistence = true
@@ -125,7 +129,8 @@ public func decodeStoredRuntimeConfigurations(
   _ data: Data
 ) throws -> StoredRuntimeConfigurations {
   let configurations = try JSONDecoder().decode([RuntimeConfiguration].self, from: data)
-  let migratedData = configurations.contains(where: \.requiresPersistence)
+  let migratedData =
+    configurations.contains(where: \.requiresPersistence)
     ? try JSONEncoder().encode(configurations)
     : nil
   return StoredRuntimeConfigurations(

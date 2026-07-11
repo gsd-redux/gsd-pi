@@ -38,11 +38,12 @@ public struct TrafficSeries: Sendable {
     }
     previousCounters = counters
     previousDate = date
-    samples.append(TrafficSample(
-      at: date,
-      receivedBytesPerSecond: rate.receivedBytesPerSecond,
-      sentBytesPerSecond: rate.sentBytesPerSecond
-    ))
+    samples.append(
+      TrafficSample(
+        at: date,
+        receivedBytesPerSecond: rate.receivedBytesPerSecond,
+        sentBytesPerSecond: rate.sentBytesPerSecond
+      ))
     if samples.count > limit {
       samples.removeFirst(samples.count - limit)
     }

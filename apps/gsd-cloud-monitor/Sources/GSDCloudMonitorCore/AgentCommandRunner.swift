@@ -29,7 +29,7 @@ public enum AgentCommandError: Error, LocalizedError {
 
   public var errorDescription: String? {
     switch self {
-    case let .failed(command, status, output):
+    case .failed(let command, let status, let output):
       let detail = output.trimmingCharacters(in: .whitespacesAndNewlines)
       return detail.isEmpty
         ? "\(command) exited with status \(status)"
@@ -79,7 +79,9 @@ public struct AgentCommandRunner: Sendable {
     let process = Process()
     process.executableURL = executableURL
     process.arguments = [command, "--config", configPath]
-    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
+    process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in
+      override
+    }
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
     try process.run()

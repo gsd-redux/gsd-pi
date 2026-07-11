@@ -5,7 +5,7 @@ let package = Package(
   name: "GSDCloudMonitor",
   platforms: [.macOS(.v14)],
   products: [
-    .executable(name: "GSDCloudMonitor", targets: ["GSDCloudMonitor"]),
+    .executable(name: "GSDCloudMonitor", targets: ["GSDCloudMonitor"])
   ],
   targets: [
     .target(name: "GSDCloudMonitorCore"),

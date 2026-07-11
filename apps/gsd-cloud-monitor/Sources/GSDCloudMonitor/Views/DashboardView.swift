@@ -11,9 +11,11 @@ struct DashboardView: View {
       List(selection: $selection) {
         ForEach(monitor.telemetry?.projects ?? []) { project in
           HStack(spacing: 10) {
-            Image(systemName: project.state == .error ? "exclamationmark.circle.fill" : "folder.fill")
-              .foregroundStyle(project.state.presentationColor)
-              .frame(width: 16)
+            Image(
+              systemName: project.state == .error ? "exclamationmark.circle.fill" : "folder.fill"
+            )
+            .foregroundStyle(project.state.presentationColor)
+            .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
               Text(project.alias)
                 .lineLimit(1)
@@ -52,23 +54,26 @@ struct DashboardView: View {
         }
         .frame(maxWidth: 180)
         Button("Start") { monitor.runAgentAction(.start) }
-          .disabled(!isAgentActionEnabled(
-            .start,
-            connectionState: monitor.connectionState,
-            actionInProgress: monitor.actionInProgress
-          ))
+          .disabled(
+            !isAgentActionEnabled(
+              .start,
+              connectionState: monitor.connectionState,
+              actionInProgress: monitor.actionInProgress
+            ))
         Button("Stop") { monitor.runAgentAction(.stop) }
-          .disabled(!isAgentActionEnabled(
-            .stop,
-            connectionState: monitor.connectionState,
-            actionInProgress: monitor.actionInProgress
-          ))
+          .disabled(
+            !isAgentActionEnabled(
+              .stop,
+              connectionState: monitor.connectionState,
+              actionInProgress: monitor.actionInProgress
+            ))
         Button("Reconnect") { monitor.runAgentAction(.reconnect) }
-          .disabled(!isAgentActionEnabled(
-            .reconnect,
-            connectionState: monitor.connectionState,
-            actionInProgress: monitor.actionInProgress
-          ))
+          .disabled(
+            !isAgentActionEnabled(
+              .reconnect,
+              connectionState: monitor.connectionState,
+              actionInProgress: monitor.actionInProgress
+            ))
         Button {
           monitor.exportDiagnostics()
         } label: {
@@ -235,10 +240,11 @@ private struct ProjectDetailView: View {
   }
 
   private var recentActivity: [RuntimeActivity] {
-    Array((monitor.telemetry?.recentActivity ?? [])
-      .filter { $0.belongs(to: project) }
-      .suffix(12)
-      .reversed())
+    Array(
+      (monitor.telemetry?.recentActivity ?? [])
+        .filter { $0.belongs(to: project) }
+        .suffix(12)
+        .reversed())
   }
 
   private var stateImage: String {

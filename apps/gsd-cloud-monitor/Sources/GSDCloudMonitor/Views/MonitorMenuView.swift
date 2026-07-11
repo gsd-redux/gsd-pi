@@ -70,7 +70,8 @@ struct MonitorMenuView: View {
       Image(systemName: monitor.systemImage)
         .font(.title2)
         .foregroundStyle(monitor.statusColor)
-        .symbolEffect(.pulse, options: .repeating, isActive: monitor.connectionState == .reconnecting)
+        .symbolEffect(
+          .pulse, options: .repeating, isActive: monitor.connectionState == .reconnecting)
       VStack(alignment: .leading, spacing: 2) {
         Text("GSD Cloud Agent")
           .font(.headline)
@@ -98,14 +99,16 @@ struct MonitorMenuView: View {
         MetricCard(
           title: "Received",
           value: MonitorFormatting.byteRate(monitor.trafficRate.receivedBytesPerSecond),
-          detail: "\(MonitorFormatting.byteCount(telemetry.receivedBytes)) · \(telemetry.receivedMessages) msgs",
+          detail:
+            "\(MonitorFormatting.byteCount(telemetry.receivedBytes)) · \(telemetry.receivedMessages) msgs",
           systemImage: "arrow.down",
           tint: .blue
         )
         MetricCard(
           title: "Sent",
           value: MonitorFormatting.byteRate(monitor.trafficRate.sentBytesPerSecond),
-          detail: "\(MonitorFormatting.byteCount(telemetry.sentBytes)) · \(telemetry.sentMessages) msgs",
+          detail:
+            "\(MonitorFormatting.byteCount(telemetry.sentBytes)) · \(telemetry.sentMessages) msgs",
           systemImage: "arrow.up",
           tint: .purple
         )

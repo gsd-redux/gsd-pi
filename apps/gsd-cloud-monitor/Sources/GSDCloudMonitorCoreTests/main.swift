@@ -193,7 +193,9 @@ struct RuntimeTelemetryTests {
     let status = try RuntimeTelemetryReader().load(from: fileURL)
     try expect(status.projects[0].id != status.projects[1].id, "project IDs must be path-unique")
     try expect(
-      status.recentActivity.filter { $0.belongs(to: status.projects[1]) }.map(\.requestID) == ["two"],
+      status.recentActivity.filter { $0.belongs(to: status.projects[1]) }.map(\.requestID) == [
+        "two"
+      ],
       "activity must match the selected project path"
     )
   }
@@ -236,7 +238,8 @@ struct RuntimeTelemetryTests {
     )
 
     try expect(series.samples.count == 2, "traffic history should honor its limit")
-    try expect(series.samples[0].receivedBytesPerSecond == 200, "expected first retained receive rate")
+    try expect(
+      series.samples[0].receivedBytesPerSecond == 200, "expected first retained receive rate")
     try expect(series.samples[0].sentBytesPerSecond == 100, "expected first retained send rate")
     try expect(series.samples[1].receivedBytesPerSecond == 100, "expected latest receive rate")
     try expect(series.samples[1].sentBytesPerSecond == 50, "expected latest send rate")
@@ -263,7 +266,8 @@ struct RuntimeTelemetryTests {
     )
 
     try expect(series.samples.count == 1, "a new telemetry source must reset traffic history")
-    try expect(series.samples[0].receivedBytesPerSecond == 0, "a new source must start at zero rate")
+    try expect(
+      series.samples[0].receivedBytesPerSecond == 0, "a new source must start at zero rate")
     try expect(series.samples[0].sentBytesPerSecond == 0, "a new source must start at zero rate")
   }
 
@@ -292,11 +296,12 @@ struct RuntimeTelemetryTests {
     let lines = try String(contentsOf: invocations, encoding: .utf8)
       .split(separator: "\n")
       .map(String.init)
-    try expect(lines == [
-      "stop --config /work/custom-runtime.yaml",
-      "stop --config /work/custom-runtime.yaml",
-      "connect --config /work/custom-runtime.yaml",
-    ], "agent command sequence is incorrect")
+    try expect(
+      lines == [
+        "stop --config /work/custom-runtime.yaml",
+        "stop --config /work/custom-runtime.yaml",
+        "connect --config /work/custom-runtime.yaml",
+      ], "agent command sequence is incorrect")
   }
 
   static func agentCommandsDrainLargeOutputWhileRunning() throws {
@@ -437,10 +442,13 @@ struct RuntimeTelemetryTests {
 
     try expect(tracker.connectionState == .stale, "missing telemetry should initially be stale")
     tracker.recordProcessValidation(isRunning: false)
-    try expect(tracker.connectionState == .stopped, "validated process status should publish Offline")
+    try expect(
+      tracker.connectionState == .stopped, "validated process status should publish Offline")
     try expect(tracker.connectionState == .stopped, "later telemetry failures must retain Offline")
     tracker.reset()
-    try expect(tracker.connectionState == .stale, "successful telemetry should clear prior process validation")
+    try expect(
+      tracker.connectionState == .stale,
+      "successful telemetry should clear prior process validation")
   }
 
   static func staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake() throws {
@@ -481,11 +489,13 @@ struct RuntimeTelemetryTests {
 
   static func connectionTransitionsIdentifyNotifications() throws {
     try expect(
-      ConnectionTransition(previous: .connected, current: .reconnecting).notification == .disconnected,
+      ConnectionTransition(previous: .connected, current: .reconnecting).notification
+        == .disconnected,
       "expected disconnect notification"
     )
     try expect(
-      ConnectionTransition(previous: .reconnecting, current: .connected).notification == .reconnected,
+      ConnectionTransition(previous: .reconnecting, current: .connected).notification
+        == .reconnected,
       "expected reconnect notification"
     )
     try expect(
@@ -509,7 +519,8 @@ struct RuntimeTelemetryTests {
       "a failed telemetry decode should report telemetry unavailable"
     )
     try expect(
-      TelemetryAvailabilityTransition(previous: .unavailable, current: .unavailable).notification == nil,
+      TelemetryAvailabilityTransition(previous: .unavailable, current: .unavailable).notification
+        == nil,
       "process validation must not report telemetry restoration"
     )
     try expect(
@@ -547,7 +558,8 @@ struct RuntimeTelemetryTests {
       RuntimeConfiguration.self,
       from: JSONEncoder().encode(configuration)
     )
-    try expect(decoded.configPath == "/work/config/custom.yaml", "custom config path must round-trip")
+    try expect(
+      decoded.configPath == "/work/config/custom.yaml", "custom config path must round-trip")
   }
 
   static func runtimeConfigurationEditsPreservePathProvenance() throws {
@@ -566,7 +578,8 @@ struct RuntimeTelemetryTests {
 
     derived.updateTelemetryPath("/var/run/explicit-status.json")
     derived.updateAgentConfigPath("/work/third.yaml")
-    try expect(!derived.telemetryPathIsDerived, "manual telemetry edits must persist custom provenance")
+    try expect(
+      !derived.telemetryPathIsDerived, "manual telemetry edits must persist custom provenance")
     try expect(
       derived.telemetryPath == "/var/run/explicit-status.json",
       "explicit telemetry must not follow later config edits"
@@ -575,11 +588,14 @@ struct RuntimeTelemetryTests {
 
   static func legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath() throws {
     let id = UUID()
-    let data = Data("""
+    let data = Data(
+      """
       {"id":"\(id.uuidString)","name":"Legacy","telemetryPath":"/work/state/cloud-runtime-status.json","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
       """.utf8)
     let configuration = try JSONDecoder().decode(RuntimeConfiguration.self, from: data)
-    try expect(configuration.configPath == "/work/state/daemon.yaml", "legacy config should retain default path")
+    try expect(
+      configuration.configPath == "/work/state/daemon.yaml",
+      "legacy config should retain default path")
   }
 
   static func savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths() throws {
@@ -590,7 +606,8 @@ struct RuntimeTelemetryTests {
     let configPath = root.appendingPathComponent("custom.yaml").path
     let legacyPath = root.appendingPathComponent("cloud-runtime-status.json").path
     let namespacedPath = RuntimeArtifactPaths(configPath: configPath).telemetryPath
-    let ambiguous = Data("""
+    let ambiguous = Data(
+      """
       {"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"\(legacyPath)","agentConfigPath":"\(configPath)","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
       """.utf8)
 
@@ -609,10 +626,13 @@ struct RuntimeTelemetryTests {
     )
     try FileManager.default.removeItem(atPath: legacyPath)
     let migrated = try JSONDecoder().decode(RuntimeConfiguration.self, from: ambiguous)
-    try expect(migrated.telemetryPath == namespacedPath, "active namespaced telemetry should migrate")
-    try expect(migrated.telemetryPathIsDerived, "migrated telemetry should persist derived provenance")
+    try expect(
+      migrated.telemetryPath == namespacedPath, "active namespaced telemetry should migrate")
+    try expect(
+      migrated.telemetryPathIsDerived, "migrated telemetry should persist derived provenance")
 
-    let explicit = Data("""
+    let explicit = Data(
+      """
       {"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"/var/run/custom-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud","telemetryPathIsDerived":false}
       """.utf8)
     let preserved = try JSONDecoder().decode(RuntimeConfiguration.self, from: explicit)
@@ -635,7 +655,8 @@ struct RuntimeTelemetryTests {
     let namespacedPath = RuntimeArtifactPaths(configPath: configPath).telemetryPath
     try Data("{}".utf8).write(to: URL(fileURLWithPath: namespacedPath))
     let legacyPath = root.appendingPathComponent("cloud-runtime-status.json").path
-    let stored = Data("""
+    let stored = Data(
+      """
       [{"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"\(legacyPath)","agentConfigPath":"\(configPath)","agentExecutablePath":"/usr/local/bin/gsd-cloud"}]
       """.utf8)
 
@@ -650,14 +671,18 @@ struct RuntimeTelemetryTests {
     let second = RuntimeArtifactPaths(configPath: "/work/state/second.yaml")
     let legacy = RuntimeArtifactPaths(configPath: "/work/state/daemon.yaml")
 
-    try expect(first.telemetryPath != second.telemetryPath, "custom configs must not share telemetry")
+    try expect(
+      first.telemetryPath != second.telemetryPath, "custom configs must not share telemetry")
     try expect(first.logPath != second.logPath, "custom configs must not share logs")
     try expect(
       first.telemetryPath == "/work/state/cloud-runtime-58cb3ff924131c6e-status.json",
       "monitor and agent must derive the same stable namespace"
     )
-    try expect(legacy.telemetryPath == "/work/state/cloud-runtime-status.json", "daemon telemetry must keep its legacy name")
-    try expect(legacy.logPath == "/work/state/cloud-runtime.log", "daemon logs must keep their legacy name")
+    try expect(
+      legacy.telemetryPath == "/work/state/cloud-runtime-status.json",
+      "daemon telemetry must keep its legacy name")
+    try expect(
+      legacy.logPath == "/work/state/cloud-runtime.log", "daemon logs must keep their legacy name")
   }
 
   static func diagnosticsRedactLocalPaths() throws {
@@ -724,7 +749,8 @@ struct RuntimeTelemetryTests {
     ).jsonData()
     let object = try JSONSerialization.jsonObject(with: report) as? [String: Any]
 
-    try expect(object?["state"] as? String == "stopped", "diagnostics should include validated state")
+    try expect(
+      object?["state"] as? String == "stopped", "diagnostics should include validated state")
     try expect(
       object?["telemetryError"] as? String == "The telemetry file could not be decoded.",
       "diagnostics should include telemetry read failures"
@@ -739,7 +765,8 @@ struct RuntimeTelemetryTests {
 
   static func releaseVersionsCompareMonitorTags() throws {
     guard let current = ReleaseVersion(tag: "gsd-cloud-monitor-v1.9.9"),
-          let update = ReleaseVersion(tag: "gsd-cloud-monitor-v1.10.0") else {
+      let update = ReleaseVersion(tag: "gsd-cloud-monitor-v1.10.0")
+    else {
       throw TestFailure(message: "valid monitor release tags should parse")
     }
 
@@ -754,7 +781,8 @@ struct RuntimeTelemetryTests {
       downloadURL: URL(string: "https://example.com/release")!
     )
 
-    try expect(UpdateCheckState.checking.isChecking, "checking state should disable duplicate checks")
+    try expect(
+      UpdateCheckState.checking.isChecking, "checking state should disable duplicate checks")
     try expect(
       UpdateCheckState.upToDate(checkedAt: checkedAt).lastCheckedAt == checkedAt,
       "up-to-date state should expose its check time"
@@ -779,12 +807,14 @@ struct RuntimeTelemetryTests {
         "prerelease": false,
       ] as [String: Any]
     }
-    let monitorRelease: [[String: Any]] = [[
-      "tag_name": "gsd-cloud-monitor-v1.2.0",
-      "html_url": "https://example.com/monitor/1.2.0",
-      "draft": false,
-      "prerelease": false,
-    ]]
+    let monitorRelease: [[String: Any]] = [
+      [
+        "tag_name": "gsd-cloud-monitor-v1.2.0",
+        "html_url": "https://example.com/monitor/1.2.0",
+        "draft": false,
+        "prerelease": false,
+      ]
+    ]
     let checker = UpdateChecker { request in
       let page = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
         .queryItems?.first(where: { $0.name == "page" })?.value
@@ -800,7 +830,8 @@ struct RuntimeTelemetryTests {
 
     let update = try await checker.latestUpdate(currentVersion: "1.0.0")
 
-    try expect(update?.version.tag == "gsd-cloud-monitor-v1.2.0", "expected update from second page")
+    try expect(
+      update?.version.tag == "gsd-cloud-monitor-v1.2.0", "expected update from second page")
   }
 
   static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {

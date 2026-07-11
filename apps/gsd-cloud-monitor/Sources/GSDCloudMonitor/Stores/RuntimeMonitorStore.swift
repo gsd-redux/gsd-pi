@@ -37,7 +37,9 @@ final class RuntimeMonitorStore: ObservableObject {
         name: "Preview",
         telemetryPath: telemetryURL.path,
         telemetryPathIsDerived: false,
-        agentConfigPath: telemetryURL.deletingLastPathComponent().appendingPathComponent("daemon.yaml").path,
+        agentConfigPath: telemetryURL.deletingLastPathComponent().appendingPathComponent(
+          "daemon.yaml"
+        ).path,
         agentExecutablePath: "/usr/bin/false"
       )
       configurations = [preview]
@@ -50,7 +52,8 @@ final class RuntimeMonitorStore: ObservableObject {
       persistsConfigurations = true
     }
     refresh()
-    timer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) { [weak self] _ in
+    timer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) {
+      [weak self] _ in
       Task { @MainActor in self?.refresh() }
     }
     if telemetryURL == nil {
@@ -140,7 +143,8 @@ final class RuntimeMonitorStore: ObservableObject {
       trafficHistory = []
       totalTraffic = TrafficSeries()
       projectTraffic = [:]
-      readError = (error as NSError).code == NSFileReadNoSuchFileError
+      readError =
+        (error as NSError).code == NSFileReadNoSuchFileError
         ? "Waiting for gsd-cloud telemetry"
         : error.localizedDescription
       validateRuntimeStatus()
@@ -160,9 +164,10 @@ final class RuntimeMonitorStore: ObservableObject {
   }
 
   func revealLogs() {
-    let logURL = URL(fileURLWithPath: RuntimeArtifactPaths(
-      configPath: selectedConfiguration.configPath
-    ).logPath)
+    let logURL = URL(
+      fileURLWithPath: RuntimeArtifactPaths(
+        configPath: selectedConfiguration.configPath
+      ).logPath)
     let directory = logURL.deletingLastPathComponent()
     if FileManager.default.fileExists(atPath: logURL.path) {
       NSWorkspace.shared.activateFileViewerSelecting([logURL])
@@ -206,7 +211,9 @@ final class RuntimeMonitorStore: ObservableObject {
     agentConfigPath: String? = nil,
     agentExecutablePath: String? = nil
   ) {
-    guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else { return }
+    guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else {
+      return
+    }
     let previousTelemetryPath = configurations[index].telemetryPath
     if let name { configurations[index].name = name }
     if let telemetryPath { configurations[index].updateTelemetryPath(telemetryPath) }
@@ -277,7 +284,8 @@ final class RuntimeMonitorStore: ObservableObject {
 
   func checkForUpdates() {
     guard !updateCheckState.isChecking else { return }
-    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     updateCheckState = .checking
     Task {
       do {
@@ -304,11 +312,12 @@ final class RuntimeMonitorStore: ObservableObject {
   private func handleConnectionTransition(to state: RuntimeConnectionState) {
     defer { previousConnectionState = state }
     guard let previousConnectionState,
-          UserDefaults.standard.bool(forKey: "notificationsEnabled"),
-          let notification = ConnectionTransition(
-            previous: previousConnectionState,
-            current: state
-          ).notification else {
+      UserDefaults.standard.bool(forKey: "notificationsEnabled"),
+      let notification = ConnectionTransition(
+        previous: previousConnectionState,
+        current: state
+      ).notification
+    else {
       return
     }
     notificationService.post(notification, runtimeName: telemetry?.runtimeName)
@@ -317,11 +326,12 @@ final class RuntimeMonitorStore: ObservableObject {
   private func handleTelemetryAvailability(_ availability: TelemetryAvailability) {
     defer { previousTelemetryAvailability = availability }
     guard let previousTelemetryAvailability,
-          UserDefaults.standard.bool(forKey: "notificationsEnabled"),
-          let notification = TelemetryAvailabilityTransition(
-            previous: previousTelemetryAvailability,
-            current: availability
-          ).notification else {
+      UserDefaults.standard.bool(forKey: "notificationsEnabled"),
+      let notification = TelemetryAvailabilityTransition(
+        previous: previousTelemetryAvailability,
+        current: availability
+      ).notification
+    else {
       return
     }
     notificationService.post(notification, runtimeName: telemetry?.runtimeName)
@@ -367,7 +377,8 @@ final class RuntimeMonitorStore: ObservableObject {
     guard persistsConfigurations else { return }
     if let data = try? JSONEncoder().encode(configurations) {
       UserDefaults.standard.set(data, forKey: "runtimeConfigurations")
-      UserDefaults.standard.set(selectedConfigurationID.uuidString, forKey: "selectedRuntimeConfiguration")
+      UserDefaults.standard.set(
+        selectedConfigurationID.uuidString, forKey: "selectedRuntimeConfiguration")
     }
   }
 
@@ -376,8 +387,9 @@ final class RuntimeMonitorStore: ObservableObject {
     selectedID: RuntimeConfiguration.ID
   ) {
     if let data = UserDefaults.standard.data(forKey: "runtimeConfigurations"),
-       let decoded = try? decodeStoredRuntimeConfigurations(data),
-       let first = decoded.configurations.first {
+      let decoded = try? decodeStoredRuntimeConfigurations(data),
+      let first = decoded.configurations.first
+    {
       let saved = decoded.configurations
       if let migratedData = decoded.migratedData {
         UserDefaults.standard.set(migratedData, forKey: "runtimeConfigurations")

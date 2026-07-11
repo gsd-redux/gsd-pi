@@ -109,7 +109,9 @@ struct ReleasePackageTests {
       ]
     )
     try expect(status != 0, "bundle staging must reject arbitrary destinations")
-    try expect(FileManager.default.fileExists(atPath: sentinel.path), "unsafe staging must preserve destination contents")
+    try expect(
+      FileManager.default.fileExists(atPath: sentinel.path),
+      "unsafe staging must preserve destination contents")
   }
 
   static func stagesIntoMissingTrustedDirectory(packageRoot: URL) throws {

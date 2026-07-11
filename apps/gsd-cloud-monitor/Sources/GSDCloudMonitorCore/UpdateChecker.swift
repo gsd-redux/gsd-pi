@@ -23,19 +23,20 @@ public enum UpdateCheckState: Equatable, Sendable {
   }
 
   public var availableUpdate: AvailableUpdate? {
-    if case let .updateAvailable(update, _) = self { return update }
+    if case .updateAvailable(let update, _) = self { return update }
     return nil
   }
 
   public var lastCheckedAt: Date? {
     switch self {
     case .idle, .checking: nil
-    case let .upToDate(checkedAt), let .updateAvailable(_, checkedAt), let .failed(_, checkedAt): checkedAt
+    case .upToDate(let checkedAt), .updateAvailable(_, let checkedAt), .failed(_, let checkedAt):
+      checkedAt
     }
   }
 
   public var failureMessage: String? {
-    if case let .failed(message, _) = self { return message }
+    if case .failed(let message, _) = self { return message }
     return nil
   }
 }
@@ -60,9 +61,10 @@ public struct UpdateChecker: Sendable {
   private let loadPage: PageLoader
 
   public init(loadPage: PageLoader? = nil) {
-    self.loadPage = loadPage ?? { request in
-      try await URLSession.shared.data(for: request)
-    }
+    self.loadPage =
+      loadPage ?? { request in
+        try await URLSession.shared.data(for: request)
+      }
   }
 
   public func latestUpdate(currentVersion: String) async throws -> AvailableUpdate? {
@@ -73,15 +75,17 @@ public struct UpdateChecker: Sendable {
     var page = 1
     while true {
       let releases = try await releasePage(page, currentVersion: currentVersion)
-      available.append(contentsOf: releases.compactMap { release in
-        guard !release.draft,
-              !release.prerelease,
-              let version = ReleaseVersion(tag: release.tagName),
-              version > current else {
-          return nil
-        }
-        return AvailableUpdate(version: version, downloadURL: release.htmlURL)
-      })
+      available.append(
+        contentsOf: releases.compactMap { release in
+          guard !release.draft,
+            !release.prerelease,
+            let version = ReleaseVersion(tag: release.tagName),
+            version > current
+          else {
+            return nil
+          }
+          return AvailableUpdate(version: version, downloadURL: release.htmlURL)
+        })
       if releases.count < 100 { break }
       page += 1
     }

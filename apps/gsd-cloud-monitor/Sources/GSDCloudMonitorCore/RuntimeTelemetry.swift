@@ -219,7 +219,8 @@ public struct RuntimeTelemetry: Decodable, Sendable {
     sentBytes = try values.decode(Int64.self, forKey: .sentBytes)
     activeRequests = try values.decode(Int.self, forKey: .activeRequests)
     projects = try values.decodeIfPresent([RuntimeProjectTelemetry].self, forKey: .projects) ?? []
-    recentActivity = try values.decodeIfPresent([RuntimeActivity].self, forKey: .recentActivity) ?? []
+    recentActivity =
+      try values.decodeIfPresent([RuntimeActivity].self, forKey: .recentActivity) ?? []
   }
 }
 
@@ -265,7 +266,8 @@ public struct RuntimeTelemetryReader: Sendable {
       let container = try decoder.singleValueContainer()
       let value = try container.decode(String.self)
       if let date = Self.fractionalDateFormatter.date(from: value)
-        ?? Self.dateFormatter.date(from: value) {
+        ?? Self.dateFormatter.date(from: value)
+      {
         return date
       }
       throw DecodingError.dataCorruptedError(
@@ -293,18 +295,18 @@ public enum RuntimeTelemetryError: Error, Equatable {
   case unsupportedVersion(Int)
 }
 
-public extension RuntimeTelemetry {
-  var trafficCounters: TrafficCounters {
+extension RuntimeTelemetry {
+  public var trafficCounters: TrafficCounters {
     TrafficCounters(receivedBytes: receivedBytes, sentBytes: sentBytes)
   }
 }
 
-public extension RuntimeProjectTelemetry {
-  var trafficCounters: TrafficCounters {
+extension RuntimeProjectTelemetry {
+  public var trafficCounters: TrafficCounters {
     TrafficCounters(receivedBytes: receivedBytes, sentBytes: sentBytes)
   }
 
-  var activeToolSummary: String {
+  public var activeToolSummary: String {
     activeTools.isEmpty ? "\(activeRequests) active" : activeTools.joined(separator: ", ")
   }
 }
