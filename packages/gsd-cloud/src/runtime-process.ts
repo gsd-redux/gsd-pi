@@ -9,7 +9,6 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -249,7 +248,10 @@ function runtimeStartLockPath(configPath: string): string {
   return runtimeArtifactPath(configPath, "start.lock");
 }
 
-export async function acquireRuntimeStartLock(configPath: string): Promise<() => void> {
+export async function acquireRuntimeStartLock(
+  configPath: string,
+  onRecoveryClaimed?: () => void,
+): Promise<() => void> {
   const lockPath = runtimeStartLockPath(configPath);
   mkdirSync(dirname(lockPath), { recursive: true });
   const processStartIdentity = readProcessStartIdentity(process.pid);
@@ -275,8 +277,7 @@ export async function acquireRuntimeStartLock(configPath: string): Promise<() =>
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
-        if (runtimeStartLockCanBeRecovered(lockPath)) {
-          quarantineRuntimeStartLock(lockPath);
+        if (recoverRuntimeStartLock(lockPath, configPath, onRecoveryClaimed)) {
           continue;
         }
       } catch {
@@ -325,18 +326,50 @@ function runtimeStartLockOwnerIsRunning(owner: RuntimeStartLockOwner): boolean {
   return processMatchesIdentity(owner.pid, owner.process_start_identity);
 }
 
-function runtimeStartLockCanBeRecovered(lockPath: string): boolean {
+function runtimeStartLockCanBeRecovered(lockPath: string, configPath: string): boolean {
   const owner = readRuntimeStartLockOwner(lockPath);
   if (owner?.process_start_identity) return !runtimeStartLockOwnerIsRunning(owner);
   const age = Date.now() - statSync(lockPath).mtimeMs;
-  if (owner) return !runtimeStartLockOwnerIsRunning(owner) || age > START_LOCK_TIMEOUT_MS;
+  if (owner) {
+    if (!runtimeStartLockOwnerIsRunning(owner)) return true;
+    return age > START_LOCK_TIMEOUT_MS
+      && inspectProcessCommandConfig(owner.pid, configPath) === false;
+  }
   return age > MALFORMED_START_LOCK_GRACE_MS;
 }
 
-function quarantineRuntimeStartLock(lockPath: string): void {
-  const quarantinePath = `${lockPath}.stale.${randomUUID()}`;
-  renameSync(lockPath, quarantinePath);
-  unlinkSync(quarantinePath);
+function recoverRuntimeStartLock(
+  lockPath: string,
+  configPath: string,
+  onRecoveryClaimed?: () => void,
+): boolean {
+  const recoveryPath = `${lockPath}.recovery`;
+  try {
+    linkSync(lockPath, recoveryPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+
+  try {
+    if (!runtimeStartLockCanBeRecovered(recoveryPath, configPath)) return false;
+    onRecoveryClaimed?.();
+    if (!pathsReferenceSameFile(lockPath, recoveryPath)) return false;
+    unlinkSync(lockPath);
+    return true;
+  } finally {
+    removeRuntimeStateFile(recoveryPath);
+  }
+}
+
+function pathsReferenceSameFile(firstPath: string, secondPath: string): boolean {
+  try {
+    const first = statSync(firstPath, { bigint: true });
+    const second = statSync(secondPath, { bigint: true });
+    return first.dev === second.dev && first.ino === second.ino;
+  } catch {
+    return false;
+  }
 }
 
 function runtimeStartLockOwnersEqual(
@@ -447,6 +480,10 @@ function readProcessStartIdentity(pid: number): string | null {
 }
 
 function processCommandMatchesConfig(pid: number, configPath: string): boolean {
+  return inspectProcessCommandConfig(pid, configPath) === true;
+}
+
+function inspectProcessCommandConfig(pid: number, configPath: string): boolean | null {
   const expectedConfigPath = canonicalConfigPath(configPath);
   try {
     if (process.platform === "linux") {
@@ -469,9 +506,9 @@ function processCommandMatchesConfig(pid: number, configPath: string): boolean {
       return commandLineMatchesRuntimeConfig(command, expectedConfigPath, process.platform);
     }
   } catch {
-    return false;
+    return null;
   }
-  return false;
+  return null;
 }
 
 export function commandLineMatchesRuntimeConfig(

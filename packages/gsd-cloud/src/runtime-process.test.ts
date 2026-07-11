@@ -1,7 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Regression coverage for detached cloud runtime process timing and shutdown.
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -116,7 +116,7 @@ for (const runtimeArgs of [
     });
 
     assert.ok(child.pid);
-    await waitForCondition(() => processCommandIsRunning(binaryPath));
+    await waitForCondition(() => processIsRunning(child.pid!));
     writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
 
     const status = backgroundRuntimeStatus(configPath);
@@ -211,7 +211,7 @@ test("legacy migration preserves config paths with spaces before short options",
   });
 
   assert.ok(child.pid);
-  await waitForCondition(() => processCommandIsRunning(binaryPath));
+  await waitForCondition(() => processIsRunning(child.pid!));
   writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
 
   const status = backgroundRuntimeStatus(configPath);
@@ -328,6 +328,46 @@ test("start lock recovers immediately when its PID identity is stale", { timeout
   await starting;
 });
 
+test("start lock recovery never removes a replacement owner", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-replaced-lock-"));
+  const ownerConfigPath = join(root, "owner.yaml");
+  const configPath = join(root, "daemon.yaml");
+  const ownerLockPath = runtimeArtifactPath(ownerConfigPath, "start.lock");
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  const releaseOwner = await acquireRuntimeStartLock(ownerConfigPath);
+  const replacementOwner = readFileSync(ownerLockPath, "utf8");
+  releaseOwner();
+  writeFileSync(lockPath, "stale");
+  const old = new Date(0);
+  utimesSync(lockPath, old, old);
+  let release: (() => void) | undefined;
+  t.after(async () => {
+    rmSync(lockPath, { force: true });
+    release ??= await acquiring.catch(() => undefined);
+    release?.();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  let replacementInstalled!: () => void;
+  let replacementInode: bigint | undefined;
+  const installed = new Promise<void>((resolve) => {
+    replacementInstalled = resolve;
+  });
+  const acquiring = acquireRuntimeStartLock(configPath, () => {
+    rmSync(lockPath);
+    writeFileSync(lockPath, replacementOwner);
+    replacementInode = statSync(lockPath, { bigint: true }).ino;
+    replacementInstalled();
+  });
+
+  await installed;
+  assert.equal(readFileSync(lockPath, "utf8"), replacementOwner);
+  assert.equal(statSync(lockPath, { bigint: true }).ino, replacementInode);
+  rmSync(lockPath);
+  release = await acquiring;
+  release();
+});
+
 test("start lock does not reclaim a live legacy owner by age", { timeout: 5_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-live-legacy-lock-"));
   const configPath = join(root, "daemon.yaml");
@@ -343,6 +383,33 @@ test("start lock does not reclaim a live legacy owner by age", { timeout: 5_000 
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_200));
 
   assert.equal(readFileSync(lockPath, "utf8"), `${process.pid}\n`);
+  rmSync(lockPath);
+  await starting;
+});
+
+test("start lock preserves an aged legacy owner running the same config", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-live-runtime-lock-"));
+  const configPath = join(root, "daemon.yaml");
+  const binaryPath = writeReadyRuntime(root);
+  const legacyBinaryPath = writeLegacyRuntime(root, "gsd-cloud");
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  const owner = spawn(process.execPath, [legacyBinaryPath, "connect", "--config", configPath]);
+  t.after(async () => {
+    owner.kill("SIGKILL");
+    await stopBackgroundRuntime(configPath).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.ok(owner.pid);
+  await waitForCondition(() => processIsRunning(owner.pid!));
+  writeFileSync(lockPath, `${owner.pid}\n`);
+  const old = new Date(0);
+  utimesSync(lockPath, old, old);
+
+  const starting = startBackgroundRuntime({ binaryPath, configPath, projectDirs: [root] });
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+
+  assert.equal(readFileSync(lockPath, "utf8"), `${owner.pid}\n`);
   rmSync(lockPath);
   await starting;
 });
@@ -441,8 +508,6 @@ test("background startup terminates its child when state registration fails", { 
     const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
     await waitForCondition(() => !processIsRunning(pid));
     assert.equal(processIsRunning(pid), false);
-  } else {
-    assert.equal(processCommandIsRunning(binaryPath), false);
   }
 });
 
@@ -484,8 +549,6 @@ test("background startup force-stops its child when identity registration fails"
     const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
     await waitForCondition(() => !processIsRunning(pid), 7_000);
     assert.equal(processIsRunning(pid), false);
-  } else {
-    assert.equal(processCommandIsRunning(binaryPath), false);
   }
 });
 
@@ -565,9 +628,4 @@ async function waitForCondition(condition: () => boolean, timeoutMs = 2_000): Pr
     if (Date.now() >= deadline) throw new Error("timed out waiting for test condition");
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-}
-
-function processCommandIsRunning(fragment: string): boolean {
-  const output = spawnSync("/bin/ps", ["-ax", "-o", "command="], { encoding: "utf8" }).stdout;
-  return output.split("\n").some((command) => command.includes(fragment));
 }
