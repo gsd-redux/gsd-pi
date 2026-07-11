@@ -189,7 +189,7 @@ human-only by default.
 1. The project database is the only normal-runtime Workflow Authority.
 2. Files never mutate authority except through explicit, authorized import.
 3. Every cross-transport mutation is revision-checked, fenced, and idempotent.
-4. Exactly one active Attempt exists per work item; parallel work uses separate
+4. At most one active Attempt exists per work item; parallel work uses separate
    claims.
 5. Attempt, question, decision, evidence, recovery, and closeout progress
    survives restart.

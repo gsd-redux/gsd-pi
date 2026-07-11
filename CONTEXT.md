@@ -2,6 +2,13 @@
 
 ## Domain glossary
 
+### Proposed ADR-046 vocabulary
+
+These terms describe the proposed database-authoritative lifecycle contract in
+[ADR-046](docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md). They
+do not describe current runtime authority unless the ADR is accepted and the
+relevant cutover has completed.
+
 - **Project**: the complete body of work a user wants GSD to guide from discovery through delivery.
 - **Milestone**: a durable, resumable stage of a Project, including discovery, research, planning, or delivery work.
 - **Milestone Kind**: the purpose of a Milestone: discovery, research, requirements, roadmap, delivery, or remediation. Kind changes its expected outcomes, not its Lifecycle Status.
@@ -42,6 +49,9 @@
 - **Cutover**: the recorded advancement of a Project to a new Authority Epoch after migration evidence passes.
 - **Forward Repair**: correction of current canonical state while preserving accepted post-migration work, preferred over restoring an older snapshot.
 - **Removal Gate**: an evidence requirement that must pass before a legacy runtime path can be deleted.
+
+### Current runtime vocabulary
+
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.

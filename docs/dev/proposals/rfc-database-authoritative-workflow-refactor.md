@@ -68,7 +68,7 @@ To a user, GSD should feel like one capable collaborator:
 
 - Lifecycle Status, Attempt Result, Requirement Disposition, Waiver, and Blocker are separate concepts.
 - Every execution belongs to one durable Attempt. There is at most one active Attempt for the claimed work item.
-- A failed, interrupted, cancelled, skipped, blocked, or inconclusive Attempt is not completion.
+- A failed or interrupted Attempt does not complete its work item. Cancelled, skipped, blocked, or inconclusive work is not completed work.
 - Dependencies unlock only when requirements are satisfied or explicitly waived by authorized policy.
 - Every state transition is restart-safe, idempotent, and attributable.
 - Required closeout effects and their Settlement Receipts exist before completion and dependency unlock.
@@ -157,7 +157,7 @@ For each real choice, the agent presents:
 - confidence and material uncertainty when relevant; and
 - room for a free-form answer, objection, or alternative.
 
-The coordinator persists the question, options, recommendation, answer verbatim, normalized interpretation, decision or supersession, affected dependency set, and Work Checkpoint atomically. It does not silently average conflicting answers. It surfaces the conflict and recommends a route.
+Before presentation, the coordinator uses an idempotent Domain Operation to persist the question, options, recommendation, initial dependency scope, and interaction revision atomically. After the user responds, a separate revision-checked, idempotent Domain Operation atomically persists the answer verbatim, normalized interpretation, decision or supersession, resulting affected dependency set, and Work Checkpoint. A revision conflict preserves both inputs, surfaces the conflict, and recommends a route rather than silently averaging answers.
 
 Informational recaps never block. Choice and clarification interactions block only the dependent branch. Consent blocks the protected irreversible action. Subjective UAT blocks only when the criterion was explicitly declared human-only. A user may push back at any point; correction is a normal Domain Operation, not a destructive reset.
 
@@ -204,7 +204,7 @@ Application refuses changed inputs, active incompatible leases, or unresolved am
 - custom graph definitions and runs become database records; and
 - narrative content becomes database-backed content before projection.
 
-After import, Authority Epoch prevents fallback. Before commit, transaction rollback is sufficient. After import but before new canonical writes, a verified backup may be restored. After canonical writes, Forward Repair is the default; destructive restore requires consent and a post-event diff. Down migrations and restoration of disk authority are prohibited.
+Import Application and cutover are separate boundaries. Before the import transaction commits, transaction rollback is sufficient. After import but before cutover or any new canonical writes, a verified backup may be restored. Cutover closes that restore window and advances the Authority Epoch. After cutover or any new canonical writes, snapshot restoration is prohibited and Forward Repair is required. Down migrations and restoration of disk authority are prohibited.
 
 ## Lifecycle Kernel and ownership boundaries
 
@@ -292,13 +292,13 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 | 0. Architecture and deletion safety | 1–2 weeks | Approved RFC/ADR, database-seeded fixture, fault harness, workflow-authority baseline | `pnpm run verify:fast`; targeted baseline |
 | 1. Additive canonical database foundation | 2–4 weeks | Authority, lifecycle, conversation, recovery, projection, import, kernel, and closeout schema plus Domain Operations | Migration, invariant, single-writer tests; typecheck |
 | 2. Explicit import, backfill, and rollback | 2–3 weeks | Corpus, preview, verified backup, transactional application, Authority Epoch, rollback/Forward Repair | Import, backup, restore, fault, restart corpus |
-| 3. Database-only runtime and durable projection | 2–4 weeks | Canonical Query Module, no runtime disk fallback, durable Projection Worker | Workflow-authority baseline; projection benchmark |
-| 4. Resumable discovery and natural conversation | 3–4 weeks | Multi-week discovery Milestones, atomic interactions, restart-identical correction/resume | Conversation and checkpoint contract tests |
+| 3. Canonical queries and durable projection | 2–4 weeks | Canonical Query Module and durable Projection Worker exercised in shadow replacement paths without changing runtime authority | Workflow-authority baseline; projection benchmark |
+| 4. Resumable discovery and natural conversation | 3–4 weeks | Multi-week discovery Milestones, revision-linked interactions, restart-identical correction/resume | Conversation and checkpoint contract tests |
 | 5. Autonomous recovery, verification, and UAT | 3–4 weeks | Persisted classifier/budgets, evidence verdicts, remediation, automated UAT, narrow escalation | Fault, evidence freshness, sabotage, UAT tests |
 | 6. Lifecycle Kernel vertical slice | 3–5 weeks | Persisted five-stage kernel and two-part closeout running one low-risk unit | Restart-at-stage and semantic shadow tests |
-| 7. Adapter convergence and shared closeout | 4–6 weeks | Auto, interactive, custom, parallel, hooks, quick work, and remediation on one kernel | Normalized outcome parity; closeout fault tests |
+| 7. Adapter convergence and shared closeout | 4–6 weeks | Auto, interactive, custom, parallel, hooks, quick work, and remediation converged on one kernel and ready for project cutover | Normalized outcome parity; closeout fault tests |
 | 8. Canonical status and resume experience | 2–3 weeks | One read model, welcome-back recap, compact strip, journey view, projection freshness | Render/browser/transport/accessibility checks |
-| 9. Dogfood, canary, performance, docs, promotion | 3+ weeks | Telemetry, drills, development/next canaries, performance comparison, operator docs | Quantitative promotion thresholds; maintainer release approval |
+| 9. Cutover, dogfood, canary, and promotion | 3+ weeks | Per-Project database-only cutover, telemetry, drills, development/next canaries, performance comparison, operator docs, and stable promotion | Quantitative promotion thresholds; maintainer release approval |
 | 10. Compatibility retirement and deletion | 60+ day gate | Legacy authority, competing loops, duplicate closeout/recovery, local state authority removed | Structural deletion proofs; `verify:merge`; live workflow |
 | 11. Completion audit and release handoff | 1+ week | Requirement matrix, negative audit, cross-platform upgrade/restore proof, final canary | Every Wayfinder clause mapped to current evidence |
 
@@ -307,11 +307,11 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 - Milestone 0 begins first. No architecture code precedes explicit RFC approval.
 - Milestone 1 schema PRs are strictly sequential.
 - Milestone 2 begins when the import schema it consumes lands.
-- Milestones 3, 4, and 5 may proceed in parallel in isolated worktrees after their schema prerequisites.
+- Milestones 3, 4, and 5 may proceed in parallel in isolated worktrees after their schema prerequisites; none changes runtime authority.
 - Milestone 6 begins only when authority/projection, conversation, and recovery/UAT expose executable public primitives.
 - Milestone 8 may overlap late kernel and adapter work because it consumes the canonical read model.
 - Milestone 7 adapter Tasks may parallelize after the first kernel vertical slice, but files that implement shared closeout serialize.
-- Milestone 9 evidence accumulates after Import Application and Semantic Shadow Comparison ship.
+- Milestone 9 cutover begins only after adapter convergence in Milestone 7; its evidence accumulates after Import Application and Semantic Shadow Comparison ship.
 - Milestone 10 is strictly last after compatibility and removal gates.
 - Milestone 11 audits the requested end state; it cannot be replaced by a clean diff or a green narrow test.
 
@@ -320,7 +320,7 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 - One Task is one focused PR including useful tests, documentation, and migration notes for that concern.
 - Every code change uses the repository test-writer workflow, proves the test can fail for the intended defect, and runs the simplify review after implementation.
 - Run the smallest meaningful test, lint, typecheck, build, smoke, render, or fault gate while iterating.
-- Every push runs `pnpm run verify:fast`; code PRs run `pnpm run verify:pr`; Milestone and release boundaries run `pnpm run verify:merge`.
+- Every push runs `pnpm run verify:fast`. Code PRs may run `pnpm run verify:pr` while iterating, but any PR touching `src/`, `packages/`, or tests runs `pnpm run verify:merge` before review. Milestone and release boundaries also run `pnpm run verify:merge`.
 - Schema migrations, Authority Epoch changes, closeout settlement changes, and removal PRs require restart and fault-injection evidence.
 - Branches and worktrees isolate dependency-ready Tasks. Overlapping schema or closeout ownership is never parallelized.
 - Implementation PRs link the relevant database-tracked Task and ADR; no public release action happens without maintainer approval.
