@@ -97,6 +97,10 @@ async function readDirectDbAuthoritySnapshot(fixture: WorkflowAuthorityFixture) 
       task: state.activeTask?.id ?? null,
       requirements: state.requirements,
     },
+    registry: state.registry.map((milestone) => ({
+      id: milestone.id,
+      status: milestone.status,
+    })),
     slices: getMilestoneSlices(fixture.ids.milestone).map((slice) => ({
       id: slice.id,
       status: slice.status,
@@ -114,7 +118,7 @@ async function readDirectDbAuthoritySnapshot(fixture: WorkflowAuthorityFixture) 
       status: requirement.status,
       owner: requirement.primary_owner,
     })),
-    decisions: queryDecisionsFromMemories({ milestoneId: fixture.ids.milestone }).map((decision) => ({
+    decisions: queryDecisionsFromMemories().map((decision) => ({
       id: decision.id,
       choice: decision.choice,
     })),
@@ -142,6 +146,7 @@ test("direct DB authority queries ignore contradictory Markdown projections", as
         total: 1,
       },
     },
+    registry: [{ id: fixture.ids.milestone, status: "active" }],
     slices: [
       { id: fixture.ids.completedSlice, status: "complete", depends: [] },
       { id: fixture.ids.readySlice, status: "pending", depends: [fixture.ids.completedSlice] },

@@ -313,6 +313,27 @@ reopen the database and prove that contradictory Markdown projections cannot
 change database-derived lifecycle state, dependencies, requirements, or
 decisions.
 
+The focused proof command is:
+
+```bash
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types --test \
+  src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts \
+  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
+```
+
+Test-writer evidence captured during implementation:
+
+- **RED:** a provisional legacy-table decision seed produced no memory-backed
+  decision (`actual []`, `expected ["D001"]`).
+- **GREEN:** both focused tests passed after using the canonical memory-backed
+  decision writer and independently reopening the SQLite database.
+- **Controlled sabotage:** a temporary typed reverse import added
+  projection-only milestone and decision rows and rewrote the seeded slice,
+  task, and requirement state; the final before/after equality failed with
+  those exact authority changes. The sabotage was removed and the focused
+  command passed again.
+
 ### Dependency and parallel-work rules
 
 - Milestone 0 begins first. Its explicit RFC approval gate is satisfied by Decision `D001` and merged PR #1416; no architecture code may precede that recorded approval.
