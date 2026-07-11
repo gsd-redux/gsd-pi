@@ -1,5 +1,5 @@
 {
-  "pid": 86766,
+  "pid": 52097,
   "loopbackEndpoint": "http://127.0.0.1:50051",
   "uiPort": 3030,
   "memdbDataDir": "/Users/jeremymcspadden/.no-mistakes/worktrees/c2f4d848183f/01KX9C08HJ0SA9PNQ1Q40PNT71/.memdb",
@@ -8,6 +8,6 @@
   "vectorDim": 768,
   "status": "healthy",
   "memdbMode": "local",
-  "startedAtEpochMs": 1783800275319,
-  "updatedAtEpochMs": 1783801569893
+  "startedAtEpochMs": 1783802251509,
+  "updatedAtEpochMs": 1783802387537
 }

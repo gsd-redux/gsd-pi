@@ -306,6 +306,13 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 | 10. Compatibility retirement and deletion | 60+ day gate | Legacy authority, competing loops, duplicate closeout/recovery, local state authority removed | Structural deletion proofs; `verify:merge`; live workflow |
 | 11. Completion audit and release handoff | 1+ week | Requirement matrix, negative audit, cross-platform upgrade/restore proof, final canary | Every Wayfinder clause mapped to current evidence |
 
+The Milestone 0 workflow-authority baseline uses
+`src/resources/extensions/gsd/tests/workflow-authority-fixture.ts` to seed a
+real SQLite project through typed write APIs. Its focused tests independently
+reopen the database and prove that contradictory Markdown projections cannot
+change database-derived lifecycle state, dependencies, requirements, or
+decisions.
+
 ### Dependency and parallel-work rules
 
 - Milestone 0 begins first. Its explicit RFC approval gate is satisfied by Decision `D001` and merged PR #1416; no architecture code may precede that recorded approval.
