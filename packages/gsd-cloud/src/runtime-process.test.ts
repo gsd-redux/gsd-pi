@@ -63,7 +63,7 @@ test("stop refuses to signal a process whose identity does not match state", asy
 
   assert.equal(await stopBackgroundRuntime(configPath), false);
   assert.equal(processIsRunning(child.pid), true);
-  assert.equal(existsSync(statePath), false);
+  assert.equal(existsSync(statePath), true);
 });
 
 test("custom configs migrate matching live legacy runtime state", (t) => {
@@ -71,8 +71,7 @@ test("custom configs migrate matching live legacy runtime state", (t) => {
   const configPath = join(root, "custom.yaml");
   const legacyStatePath = join(root, "cloud-runtime.json");
   const child = spawn(process.execPath, [
-    "-e",
-    "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)",
+    writeLegacyRuntime(root, "gsd-cloud.js"),
     "_run",
     "--config",
     configPath,
@@ -102,8 +101,7 @@ for (const runtimeArgs of [
     const configPath = join(root, "custom runtime.yaml");
     const legacyStatePath = join(root, "cloud-runtime.json");
     const child = spawn(process.execPath, [
-      "-e",
-      "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)",
+      writeLegacyRuntime(root, "gsd-cloud.js"),
       ...runtimeArgs,
       "--config",
       configPath,
@@ -150,13 +148,89 @@ test("legacy runtime state for another config is not migrated or signalled", asy
   assert.equal(existsSync(legacyStatePath), true);
 });
 
+test("default config preserves shared legacy state owned by a custom config", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-shared-legacy-state-"));
+  const requestedConfig = join(root, "daemon.yaml");
+  const actualConfig = join(root, "custom.yaml");
+  const legacyStatePath = join(root, "cloud-runtime.json");
+  const binaryPath = writeLegacyRuntime(root, "gsd-cloud.js");
+  const child = spawn(process.execPath, [binaryPath, "connect", "--config", actualConfig]);
+  t.after(() => {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.ok(child.pid);
+  writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+
+  assert.equal(await stopBackgroundRuntime(requestedConfig), false);
+  assert.equal(processIsRunning(child.pid), true);
+  assert.equal(existsSync(legacyStatePath), true);
+});
+
+test("legacy migration rejects unrelated executables", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-unrelated-legacy-state-"));
+  const configPath = join(root, "daemon.yaml");
+  const legacyStatePath = join(root, "cloud-runtime.json");
+  const binaryPath = writeLegacyRuntime(root, "other-tool.js");
+  const child = spawn(process.execPath, [binaryPath, "connect", "--config", configPath]);
+  t.after(() => {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.ok(child.pid);
+  writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+
+  assert.equal(await stopBackgroundRuntime(configPath), false);
+  assert.equal(processIsRunning(child.pid), true);
+  assert.equal(existsSync(legacyStatePath), true);
+});
+
+test("legacy migration preserves config paths with spaces before short options", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd cloud argv legacy "));
+  const configPath = join(root, "custom runtime.yaml");
+  const legacyStatePath = join(root, "cloud-runtime.json");
+  const binaryPath = writeLegacyRuntime(root, "gsd-cloud.js");
+  const child = spawn(process.execPath, [
+    binaryPath,
+    "connect",
+    "--config",
+    configPath,
+    "-v",
+    "--foreground",
+  ]);
+  t.after(() => {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  assert.ok(child.pid);
+  writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+
+  const status = backgroundRuntimeStatus(configPath);
+
+  assert.equal(status.running, true);
+  assert.equal(status.pid, child.pid);
+  assert.equal(existsSync(runtimeStatePath(configPath)), true);
+  assert.equal(existsSync(legacyStatePath), false);
+});
+
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-"));
   const configPath = join(root, "daemon.yaml");
   const statePath = join(root, "cloud-runtime.json");
+  const binaryPath = join(root, "gsd-cloud.js");
+  writeFileSync(binaryPath, [
+    "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),200));",
+    "process.send?.('ready');",
+    "setInterval(()=>{},1000);",
+  ].join("\n"));
   const child = spawn(process.execPath, [
-    "-e",
-    "process.on('SIGTERM',()=>setTimeout(()=>process.exit(0),200));process.send?.('ready');setInterval(()=>{},1000)",
+    binaryPath,
+    "_run",
+    "--config",
+    configPath,
   ], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
   t.after(() => {
     child.kill("SIGKILL");
@@ -294,13 +368,22 @@ test("verbose background starts forward the flag to the runtime child", { timeou
 });
 
 function writeReadyRuntime(root: string): string {
-  const binaryPath = join(root, "runtime.mjs");
+  const binaryPath = join(root, "gsd-cloud.js");
   writeFileSync(binaryPath, [
     'import { writeFileSync } from "node:fs";',
     `writeFileSync(${JSON.stringify(join(root, "runtime-args.json"))}, JSON.stringify(process.argv.slice(2)));`,
     'process.on("SIGTERM", () => process.exit(0));',
     'process.send?.({ type: "ready" });',
     'setInterval(() => undefined, 1_000);',
+  ].join("\n"));
+  return binaryPath;
+}
+
+function writeLegacyRuntime(root: string, name: string): string {
+  const binaryPath = join(root, name);
+  writeFileSync(binaryPath, [
+    "process.on('SIGTERM', () => process.exit(0));",
+    "setInterval(() => undefined, 1_000);",
   ].join("\n"));
   return binaryPath;
 }

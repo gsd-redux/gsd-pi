@@ -13,7 +13,9 @@ struct RuntimeTelemetryTests {
     try trafficSeriesResetsWhenTelemetrySourceChanges()
     try agentCommandsExecuteWithTheSelectedConfiguration()
     try agentCommandsDrainLargeOutputWhileRunning()
+    try agentCommandsReportValidatedRuntimeStatus()
     try stopRemainsAvailableWithoutTelemetry()
+    try telemetryReadFailuresRemainUnavailableUntilStatusConfirmsStop()
     try staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake()
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
@@ -21,6 +23,7 @@ struct RuntimeTelemetryTests {
     try runtimeConfigurationEditsPreservePathProvenance()
     try legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath()
     try savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths()
+    try migratedRuntimeConfigurationsRequestPersistenceOnce()
     try runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory()
     try diagnosticsRedactLocalPaths()
     try releaseVersionsCompareMonitorTags()
@@ -302,6 +305,32 @@ struct RuntimeTelemetryTests {
     try expect(result.output.utf8.count == 1_048_576, "runner must drain all command output")
   }
 
+  static func agentCommandsReportValidatedRuntimeStatus() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-status-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("gsd-cloud-status.sh")
+    let script = """
+      #!/bin/bash
+      if [[ "$1" == "status" ]]; then
+        echo '{"background":{"running":true}}'
+      fi
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+
+    let running = try AgentCommandRunner(
+      executableURL: executable,
+      configPath: "/work/runtime.yaml"
+    ).runtimeIsRunning()
+
+    try expect(running, "validated CLI status should report the runtime as running")
+  }
+
   static func stopRemainsAvailableWithoutTelemetry() throws {
     try expect(
       isAgentActionEnabled(.stop, connectionState: .stopped, actionInProgress: false),
@@ -318,6 +347,21 @@ struct RuntimeTelemetryTests {
     try expect(
       isAgentActionEnabled(.reconnect, connectionState: .stale, actionInProgress: false),
       "reconnect must remain available when telemetry is stale"
+    )
+  }
+
+  static func telemetryReadFailuresRemainUnavailableUntilStatusConfirmsStop() throws {
+    try expect(
+      telemetryUnavailableState(validatedProcessIsRunning: nil) == .stale,
+      "an unreadable snapshot must remain telemetry unavailable before validation"
+    )
+    try expect(
+      telemetryUnavailableState(validatedProcessIsRunning: true) == .stale,
+      "a validated live process must remain telemetry unavailable"
+    )
+    try expect(
+      telemetryUnavailableState(validatedProcessIsRunning: false) == .stopped,
+      "only validated process status may classify missing telemetry as stopped"
     )
   }
 
@@ -485,6 +529,25 @@ struct RuntimeTelemetryTests {
     let encoded = try JSONEncoder().encode(migrated)
     let roundTripped = try JSONDecoder().decode(RuntimeConfiguration.self, from: encoded)
     try expect(roundTripped.telemetryPathIsDerived, "derived provenance must survive persistence")
+  }
+
+  static func migratedRuntimeConfigurationsRequestPersistenceOnce() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-config-persistence-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let configPath = root.appendingPathComponent("custom.yaml").path
+    let namespacedPath = RuntimeArtifactPaths(configPath: configPath).telemetryPath
+    try Data("{}".utf8).write(to: URL(fileURLWithPath: namespacedPath))
+    let legacyPath = root.appendingPathComponent("cloud-runtime-status.json").path
+    let stored = Data("""
+      [{"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"\(legacyPath)","agentConfigPath":"\(configPath)","agentExecutablePath":"/usr/local/bin/gsd-cloud"}]
+      """.utf8)
+
+    let firstLoad = try decodeStoredRuntimeConfigurations(stored)
+    try expect(firstLoad.migratedData != nil, "a migrated record must request persistence")
+    let secondLoad = try decodeStoredRuntimeConfigurations(firstLoad.migratedData!)
+    try expect(secondLoad.migratedData == nil, "persisted provenance must not migrate again")
   }
 
   static func runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory() throws {

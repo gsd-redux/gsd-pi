@@ -9,6 +9,12 @@ public enum RuntimeConnectionState: String, Codable, Sendable {
   case stale
 }
 
+public func telemetryUnavailableState(
+  validatedProcessIsRunning: Bool?
+) -> RuntimeConnectionState {
+  validatedProcessIsRunning == false ? .stopped : .stale
+}
+
 public struct TelemetryFreshnessTracker: Sendable {
   private var lastUpdatedAt: Date?
   private var missedObservations = 0

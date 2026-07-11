@@ -30,6 +30,7 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
   public var telemetryPathIsDerived: Bool
   public var agentConfigPath: String
   public var agentExecutablePath: String
+  var requiresPersistence: Bool
 
   public init(
     id: UUID = UUID(),
@@ -45,6 +46,7 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     self.telemetryPathIsDerived = telemetryPathIsDerived
     self.agentConfigPath = agentConfigPath
     self.agentExecutablePath = agentExecutablePath
+    requiresPersistence = false
   }
 
   public var telemetryURL: URL {
@@ -86,6 +88,7 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     )
     agentExecutablePath = try values.decode(String.self, forKey: .agentExecutablePath)
     let savedAgentConfigPath = try values.decodeIfPresent(String.self, forKey: .agentConfigPath)
+    requiresPersistence = savedTelemetryPathIsDerived == nil || savedAgentConfigPath == nil
     agentConfigPath = savedAgentConfigPath
       ?? URL(fileURLWithPath: NSString(string: decodedTelemetryPath).expandingTildeInPath)
         .deletingLastPathComponent()
@@ -105,9 +108,28 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
               FileManager.default.fileExists(atPath: derivedPath) {
       telemetryPathIsDerived = true
       telemetryPath = derivedPath
+      requiresPersistence = true
     } else {
       telemetryPathIsDerived = false
       telemetryPath = decodedTelemetryPath
     }
   }
+}
+
+public struct StoredRuntimeConfigurations: Sendable {
+  public let configurations: [RuntimeConfiguration]
+  public let migratedData: Data?
+}
+
+public func decodeStoredRuntimeConfigurations(
+  _ data: Data
+) throws -> StoredRuntimeConfigurations {
+  let configurations = try JSONDecoder().decode([RuntimeConfiguration].self, from: data)
+  let migratedData = configurations.contains(where: \.requiresPersistence)
+    ? try JSONEncoder().encode(configurations)
+    : nil
+  return StoredRuntimeConfigurations(
+    configurations: configurations,
+    migratedData: migratedData
+  )
 }

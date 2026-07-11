@@ -67,6 +67,12 @@ public struct AgentCommandRunner: Sendable {
     }
   }
 
+  public func runtimeIsRunning() throws -> Bool {
+    let result = try execute("status")
+    return try JSONDecoder().decode(AgentRuntimeStatus.self, from: Data(result.output.utf8))
+      .background.running
+  }
+
   private func execute(_ command: String) throws -> AgentCommandResult {
     let pipe = Pipe()
     let process = Process()
@@ -89,5 +95,13 @@ public struct AgentCommandRunner: Sendable {
       )
     }
     return AgentCommandResult(output: output)
+  }
+}
+
+private struct AgentRuntimeStatus: Decodable {
+  let background: Background
+
+  struct Background: Decodable {
+    let running: Bool
   }
 }

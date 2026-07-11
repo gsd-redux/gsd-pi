@@ -26,6 +26,7 @@ final class RuntimeMonitorStore: ObservableObject {
   private var previousConnectionState: RuntimeConnectionState?
   private var freshnessTracker = TelemetryFreshnessTracker()
   private var monitoredState: RuntimeConnectionState = .stopped
+  private var statusCheckInProgress = false
   private var timer: Timer?
 
   init(telemetryURL: URL? = nil) {
@@ -125,9 +126,9 @@ final class RuntimeMonitorStore: ObservableObject {
       readError = nil
       handleConnectionTransition(to: monitoredState)
     } catch {
-      handleConnectionTransition(to: .stopped)
       telemetry = nil
-      monitoredState = .stopped
+      monitoredState = telemetryUnavailableState(validatedProcessIsRunning: nil)
+      handleConnectionTransition(to: monitoredState)
       freshnessTracker.reset()
       trafficRate = .zero
       trafficHistory = []
@@ -136,6 +137,7 @@ final class RuntimeMonitorStore: ObservableObject {
       readError = (error as NSError).code == NSFileReadNoSuchFileError
         ? "Waiting for gsd-cloud telemetry"
         : error.localizedDescription
+      validateRuntimeStatus()
     }
   }
 
@@ -306,6 +308,26 @@ final class RuntimeMonitorStore: ObservableObject {
     freshnessTracker.reset()
   }
 
+  private func validateRuntimeStatus() {
+    guard !statusCheckInProgress else { return }
+    let configuration = selectedConfiguration
+    guard FileManager.default.isExecutableFile(atPath: configuration.agentExecutableURL.path) else {
+      return
+    }
+    statusCheckInProgress = true
+    let runner = AgentCommandRunner(
+      executableURL: configuration.agentExecutableURL,
+      configPath: configuration.configPath
+    )
+    Task {
+      let isRunning = try? await Task.detached { try runner.runtimeIsRunning() }.value
+      statusCheckInProgress = false
+      guard selectedConfigurationID == configuration.id, telemetry == nil else { return }
+      monitoredState = telemetryUnavailableState(validatedProcessIsRunning: isRunning)
+      handleConnectionTransition(to: monitoredState)
+    }
+  }
+
   private func persistConfigurations() {
     guard persistsConfigurations else { return }
     if let data = try? JSONEncoder().encode(configurations) {
@@ -319,8 +341,12 @@ final class RuntimeMonitorStore: ObservableObject {
     selectedID: RuntimeConfiguration.ID
   ) {
     if let data = UserDefaults.standard.data(forKey: "runtimeConfigurations"),
-       let saved = try? JSONDecoder().decode([RuntimeConfiguration].self, from: data),
-       let first = saved.first {
+       let decoded = try? decodeStoredRuntimeConfigurations(data),
+       let first = decoded.configurations.first {
+      let saved = decoded.configurations
+      if let migratedData = decoded.migratedData {
+        UserDefaults.standard.set(migratedData, forKey: "runtimeConfigurations")
+      }
       let selected = UserDefaults.standard.string(forKey: "selectedRuntimeConfiguration")
         .flatMap(UUID.init(uuidString:))
       let selectedID: RuntimeConfiguration.ID

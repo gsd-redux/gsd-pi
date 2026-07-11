@@ -295,12 +295,16 @@ function readRuntimeState(configPath: string): LocatedRuntimeProcessState | null
   const statePath = runtimeStatePath(configPath);
   const current = readRuntimeStateFile(statePath);
   if (current) {
-    return migrateLegacyRuntimeState(configPath, statePath, current) ?? { path: statePath, state: current };
+    if (typeof current.process_start_identity === "string"
+      && statePath !== legacyRuntimeStatePath(configPath)) {
+      return { path: statePath, state: current };
+    }
+    return migrateLegacyRuntimeState(configPath, statePath, current);
   }
   const legacyPath = legacyRuntimeStatePath(configPath);
   if (legacyPath === statePath) return null;
   const legacy = readRuntimeStateFile(legacyPath);
-  if (!legacy || !processCommandMatchesConfig(legacy.pid, configPath)) return null;
+  if (!legacy) return null;
   return migrateLegacyRuntimeState(configPath, legacyPath, legacy);
 }
 
@@ -326,6 +330,8 @@ function migrateLegacyRuntimeState(
   state: RuntimeProcessState,
 ): LocatedRuntimeProcessState | null {
   const destinationPath = runtimeStatePath(configPath);
+  if (sourcePath === legacyRuntimeStatePath(configPath)
+    && !processCommandMatchesConfig(state.pid, configPath)) return null;
   if (typeof state.process_start_identity === "string") {
     if (sourcePath !== destinationPath) {
       writeRuntimeStateWithIdentity(
@@ -338,7 +344,6 @@ function migrateLegacyRuntimeState(
     }
     return { path: destinationPath, state };
   }
-  if (!processCommandMatchesConfig(state.pid, configPath)) return null;
   const processStartIdentity = readProcessStartIdentity(state.pid);
   if (!processStartIdentity) return null;
   writeRuntimeStateWithIdentity(configPath, state.pid, state.projects, processStartIdentity);
@@ -414,34 +419,45 @@ function processCommandMatchesConfig(pid: number, configPath: string): boolean {
 }
 
 function commandStringMatchesConfig(command: string, configPath: string): boolean {
-  if (!commandStringRunsCloudRuntime(command)) return false;
-  const match = command.match(
-    /(?:^|\s)--config(?:=|\s+)(.*?)(?=\s+--(?:gateway|code|runtime-name|verbose|foreground|help)(?:=|\s|$)|$)/,
+  const runtimeCommand = findRuntimeCommand(command);
+  if (!runtimeCommand) return false;
+  const executablePrefix = command.slice(0, runtimeCommand.index);
+  if (!/(?:^|[\\/\s])gsd-cloud(?:\.[cm]?js)?(?:\s|$)/.test(executablePrefix)) return false;
+  if (runtimeCommand.command === "login"
+    && !/(?:^|\s)--foreground(?:\s|$)/.test(command.slice(runtimeCommand.index))) return false;
+  const match = command.slice(runtimeCommand.index).match(
+    /(?:^|\s)(?:--config|-c)(?:=|\s+)(.*?)(?=\s+-{1,2}[A-Za-z](?:[\w-]*)(?:=|\s|$)|$)/,
   );
-  const configuredPath = match?.[1]?.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
+  const configuredPath = match?.[1]?.trim().replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
   return configuredPath !== undefined && canonicalConfigPath(configuredPath) === configPath;
 }
 
 function commandArgsMatchConfig(args: string[], configPath: string): boolean {
-  if (!commandArgsRunCloudRuntime(args)) return false;
-  const configIndex = args.indexOf("--config");
+  const runtimeCommand = findRuntimeCommandInArgs(args);
+  if (!runtimeCommand) return false;
+  if (!args.slice(0, runtimeCommand.index).some(isCloudRuntimeExecutable)) return false;
+  if (runtimeCommand.command === "login" && !args.includes("--foreground")) return false;
+  const configIndex = args.findIndex((arg) => arg === "--config" || arg === "-c");
   const configuredPath = configIndex >= 0 ? args[configIndex + 1] : undefined;
-  const equalsArgument = args.find((arg) => arg.startsWith("--config="))?.slice("--config=".length);
+  const equalsArgument = args.find((arg) => arg.startsWith("--config=") || arg.startsWith("-c="))
+    ?.replace(/^(?:--config|-c)=/, "");
   return [configuredPath, equalsArgument].some(
     (value) => value !== undefined && canonicalConfigPath(value) === configPath,
   );
 }
 
-function commandStringRunsCloudRuntime(command: string): boolean {
-  return /(?:^|\s)_run(?:\s|$)/.test(command)
-    || /(?:^|\s)connect(?:\s|$)/.test(command)
-    || (/(?:^|\s)login(?:\s|$)/.test(command) && /(?:^|\s)--foreground(?:\s|$)/.test(command));
+function findRuntimeCommand(command: string): { command: string; index: number } | null {
+  const match = /(?:^|\s)(_run|connect|login)(?=\s|$)/.exec(command);
+  return match ? { command: match[1]!, index: match.index } : null;
 }
 
-function commandArgsRunCloudRuntime(args: string[]): boolean {
-  return args.includes("_run")
-    || args.includes("connect")
-    || (args.includes("login") && args.includes("--foreground"));
+function findRuntimeCommandInArgs(args: string[]): { command: string; index: number } | null {
+  const index = args.findIndex((arg) => arg === "_run" || arg === "connect" || arg === "login");
+  return index < 0 ? null : { command: args[index]!, index };
+}
+
+function isCloudRuntimeExecutable(argument: string): boolean {
+  return /(?:^|[\\/])gsd-cloud(?:\.[cm]?js)?$/.test(argument);
 }
 
 function processIsRunning(pid: number): boolean {
