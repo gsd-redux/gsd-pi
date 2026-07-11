@@ -17,6 +17,19 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
+if [[ "$(basename "$APP_BUNDLE")" != "$APP_NAME.app" ]]; then
+  echo "stage_app_bundle: destination must be named $APP_NAME.app" >&2
+  exit 2
+fi
+APP_PARENT="$(cd "$(dirname "$APP_BUNDLE")" && pwd -P)"
+case "$APP_PARENT" in
+  "$ROOT_DIR/dist"|"$ROOT_DIR/.build"/*) ;;
+  *)
+    echo "stage_app_bundle: destination must be inside $ROOT_DIR/dist or $ROOT_DIR/.build" >&2
+    exit 2
+    ;;
+esac
+
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS" "$APP_RESOURCES"
 cp "$SOURCE_BINARY" "$APP_BINARY"

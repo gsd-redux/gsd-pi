@@ -95,6 +95,36 @@ test("runtime telemetry publishes idle liveness until the runtime stops", async 
   }
 });
 
+test("runtime telemetry stops liveness after terminal startup failure", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-failed-liveness-"));
+  const telemetryPath = join(root, "cloud-runtime-status.json");
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "invalid gateway",
+  });
+
+  try {
+    store.connecting();
+    store.socketError("invalid gateway");
+    store.failed();
+    await store.flush();
+    const failed = JSON.parse(readFileSync(telemetryPath, "utf8")) as {
+      state: string;
+      updated_at: string;
+      last_error: string;
+    };
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    const afterFailure = JSON.parse(readFileSync(telemetryPath, "utf8")) as typeof failed;
+
+    assert.equal(failed.state, "error");
+    assert.equal(failed.last_error, "invalid gateway");
+    assert.equal(afterFailure.updated_at, failed.updated_at);
+  } finally {
+    store.stopped();
+    await store.flush();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runtime telemetry attributes requests and recent activity to advertised projects", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-project-telemetry-"));
   const configPath = join(root, "daemon.yaml");

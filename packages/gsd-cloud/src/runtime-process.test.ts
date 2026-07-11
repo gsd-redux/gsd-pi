@@ -10,12 +10,64 @@ import { CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS } from "./cloud-runtime.js";
 import {
   BACKGROUND_RUNTIME_READY_TIMEOUT_MS,
   backgroundRuntimeStatus,
+  runtimeLogPath,
+  runtimeStatePath,
   startBackgroundRuntime,
   stopBackgroundRuntime,
+  writeRuntimeState,
 } from "./runtime-process.js";
+import { runtimeTelemetryPath } from "./runtime-telemetry.js";
 
 test("background startup allows the cloud runtime's full initial reconnect window", () => {
   assert.ok(BACKGROUND_RUNTIME_READY_TIMEOUT_MS > CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS);
+});
+
+test("runtime artifacts are namespaced by config path while daemon.yaml stays legacy-compatible", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-artifacts-"));
+  const defaultConfig = join(root, "daemon.yaml");
+  const firstConfig = join(root, "first.yaml");
+  const secondConfig = join(root, "second.yaml");
+
+  try {
+    assert.equal(runtimeStatePath(defaultConfig), join(root, "cloud-runtime.json"));
+    assert.equal(runtimeLogPath(defaultConfig), join(root, "cloud-runtime.log"));
+    assert.equal(runtimeTelemetryPath(defaultConfig), join(root, "cloud-runtime-status.json"));
+    assert.notEqual(runtimeStatePath(firstConfig), runtimeStatePath(secondConfig));
+    assert.notEqual(runtimeLogPath(firstConfig), runtimeLogPath(secondConfig));
+    assert.notEqual(runtimeTelemetryPath(firstConfig), runtimeTelemetryPath(secondConfig));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime artifact namespace is stable across monitor implementations", () => {
+  assert.equal(
+    runtimeStatePath("/work/state/first.yaml"),
+    "/work/state/cloud-runtime-58cb3ff924131c6e.json",
+  );
+});
+
+test("stop refuses to signal a process whose identity does not match state", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-reused-pid-"));
+  const configPath = join(root, "daemon.yaml");
+  const statePath = join(root, "cloud-runtime.json");
+  const child = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"]);
+
+  try {
+    assert.ok(child.pid);
+    writeFileSync(statePath, `${JSON.stringify({
+      pid: child.pid,
+      projects: [root],
+      process_start_identity: "not-this-process",
+    })}\n`);
+
+    assert.equal(await stopBackgroundRuntime(configPath), false);
+    assert.equal(processIsRunning(child.pid), true);
+    assert.equal(existsSync(statePath), false);
+  } finally {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async () => {
@@ -33,7 +85,7 @@ test("stop waits for the detached runtime to exit before removing its state", { 
       child.once("message", () => resolve());
     });
     assert.ok(child.pid);
-    writeFileSync(statePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+    writeRuntimeState(configPath, child.pid, [root]);
 
     const startedAt = Date.now();
     assert.equal(await stopBackgroundRuntime(configPath), true);

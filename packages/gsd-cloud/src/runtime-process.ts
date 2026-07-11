@@ -1,6 +1,6 @@
 // Project/App: Open GSD
 // File Purpose: Detached cloud runtime process lifecycle and status persistence.
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -11,12 +11,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS } from "./cloud-runtime.js";
+import { runtimeArtifactPath } from "./runtime-artifacts.js";
 
 interface RuntimeProcessState {
   pid: number;
   projects: string[];
+  process_start_identity?: string;
 }
 
 export interface RuntimeProcessStatus {
@@ -103,9 +105,17 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
  * same device token.
  */
 export function writeRuntimeState(configPath: string, pid: number, projects: string[]): void {
+  const processStartIdentity = readProcessStartIdentity(pid);
+  if (!processStartIdentity) {
+    throw new Error(`could not determine process identity for PID ${pid}`);
+  }
   const statePath = runtimeStatePath(configPath);
   mkdirSync(dirname(statePath), { recursive: true });
-  writePrivateJson(statePath, { pid, projects } satisfies RuntimeProcessState);
+  writePrivateJson(statePath, {
+    pid,
+    projects,
+    process_start_identity: processStartIdentity,
+  } satisfies RuntimeProcessState);
 }
 
 export function clearRuntimeState(configPath: string): void {
@@ -115,6 +125,10 @@ export function clearRuntimeState(configPath: string): void {
 export async function stopBackgroundRuntime(configPath: string): Promise<boolean> {
   const state = readRuntimeState(configPath);
   if (!state) return false;
+  if (!runtimeProcessMatches(state)) {
+    removeRuntimeState(configPath);
+    return false;
+  }
   await terminateProcess(state.pid);
   removeRuntimeState(configPath);
   return true;
@@ -125,7 +139,7 @@ export function backgroundRuntimeStatus(configPath: string): RuntimeProcessStatu
   if (!state) {
     return { running: false, pid: null, projects: [], log_file: runtimeLogPath(configPath) };
   }
-  if (!processIsRunning(state.pid)) {
+  if (!runtimeProcessMatches(state)) {
     removeRuntimeState(configPath);
     return {
       running: false,
@@ -175,16 +189,16 @@ function waitUntilReady(child: ChildProcess, timeoutMs: number): Promise<void> {
   });
 }
 
-function runtimeStatePath(configPath: string): string {
-  return join(dirname(configPath), "cloud-runtime.json");
+export function runtimeStatePath(configPath: string): string {
+  return runtimeArtifactPath(configPath, "state");
 }
 
-function runtimeLogPath(configPath: string): string {
-  return join(dirname(configPath), "cloud-runtime.log");
+export function runtimeLogPath(configPath: string): string {
+  return runtimeArtifactPath(configPath, "log");
 }
 
 function runtimeStartLockPath(configPath: string): string {
-  return join(dirname(configPath), "cloud-runtime.start.lock");
+  return runtimeArtifactPath(configPath, "start.lock");
 }
 
 async function acquireRuntimeStartLock(configPath: string): Promise<void> {
@@ -245,14 +259,48 @@ function readRuntimeState(configPath: string): RuntimeProcessState | null {
   try {
     const value = JSON.parse(readFileSync(runtimeStatePath(configPath), "utf8")) as Partial<RuntimeProcessState>;
     const pid = value.pid;
-    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || !Array.isArray(value.projects)) return null;
+    if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0
+      || !Array.isArray(value.projects)) return null;
     return {
       pid,
       projects: value.projects.filter((project): project is string => typeof project === "string"),
+      process_start_identity: value.process_start_identity,
     };
   } catch {
     return null;
   }
+}
+
+function runtimeProcessMatches(state: RuntimeProcessState): boolean {
+  return typeof state.process_start_identity === "string"
+    && processIsRunning(state.pid)
+    && readProcessStartIdentity(state.pid) === state.process_start_identity;
+}
+
+function readProcessStartIdentity(pid: number): string | null {
+  try {
+    if (process.platform === "linux") {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      return fields[19] ?? null;
+    }
+    if (process.platform === "darwin" || process.platform === "freebsd") {
+      return execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim() || null;
+    }
+    if (process.platform === "win32") {
+      return execFileSync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks`,
+      ], { encoding: "utf8" }).trim() || null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function processIsRunning(pid: number): boolean {

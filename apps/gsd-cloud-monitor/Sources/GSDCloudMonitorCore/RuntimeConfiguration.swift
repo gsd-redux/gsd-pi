@@ -1,4 +1,27 @@
+import CryptoKit
 import Foundation
+
+public struct RuntimeArtifactPaths: Equatable, Sendable {
+  public let telemetryPath: String
+  public let logPath: String
+
+  public init(configPath: String) {
+    let expandedPath = NSString(string: configPath).expandingTildeInPath
+    let configURL = URL(fileURLWithPath: expandedPath)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+    let namespace: String
+    if configURL.lastPathComponent == "daemon.yaml" {
+      namespace = ""
+    } else {
+      let digest = SHA256.hash(data: Data(configURL.path.utf8))
+      namespace = "-" + digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+    let directory = configURL.deletingLastPathComponent()
+    telemetryPath = directory.appendingPathComponent("cloud-runtime\(namespace)-status.json").path
+    logPath = directory.appendingPathComponent("cloud-runtime\(namespace).log").path
+  }
+}
 
 public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID

@@ -9,16 +9,35 @@ public enum RuntimeConnectionState: String, Codable, Sendable {
   case stale
 }
 
-public func monitoredConnectionState(
-  reportedState: RuntimeConnectionState,
-  updatedAt: Date,
-  processIsRunning: Bool,
-  now: Date = Date(),
-  pollingInterval: TimeInterval
-) -> RuntimeConnectionState {
-  guard processIsRunning else { return .stopped }
-  guard now.timeIntervalSince(updatedAt) <= pollingInterval * 2 else { return .stale }
-  return reportedState
+public struct TelemetryFreshnessTracker: Sendable {
+  private var lastUpdatedAt: Date?
+  private var missedObservations = 0
+
+  public init() {}
+
+  public mutating func connectionState(
+    reportedState: RuntimeConnectionState,
+    updatedAt: Date,
+    processIsRunning: Bool,
+    now _: Date = Date()
+  ) -> RuntimeConnectionState {
+    guard processIsRunning else {
+      reset()
+      return .stopped
+    }
+    if lastUpdatedAt == updatedAt {
+      missedObservations += 1
+    } else {
+      lastUpdatedAt = updatedAt
+      missedObservations = 0
+    }
+    return missedObservations >= 2 ? .stale : reportedState
+  }
+
+  public mutating func reset() {
+    lastUpdatedAt = nil
+    missedObservations = 0
+  }
 }
 
 public enum RuntimeProjectState: String, Codable, Sendable {

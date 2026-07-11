@@ -35,6 +35,7 @@ if [[ -z "$VERSION" ]]; then
   echo "package_release: --version is required" >&2
   exit 2
 fi
+/bin/bash "$ROOT_DIR/script/validate_release_version.sh" "$VERSION"
 
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/dist/release}"
 WORK_DIR="$ROOT_DIR/.build/release-package"

@@ -14,6 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Validate release tag
+        working-directory: apps/gsd-cloud-monitor
+        run: |
+          VERSION="${GITHUB_REF_NAME#gsd-cloud-monitor-v}"
+          ./script/validate_release_version.sh "$VERSION"
+
       - name: Verify monitor behavior
         working-directory: apps/gsd-cloud-monitor
         run: |

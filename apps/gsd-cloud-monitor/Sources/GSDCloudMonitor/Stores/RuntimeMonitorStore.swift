@@ -24,6 +24,8 @@ final class RuntimeMonitorStore: ObservableObject {
   private var totalTraffic = TrafficSeries()
   private var projectTraffic: [String: TrafficSeries] = [:]
   private var previousConnectionState: RuntimeConnectionState?
+  private var freshnessTracker = TelemetryFreshnessTracker()
+  private var monitoredState: RuntimeConnectionState = .stopped
   private var timer: Timer?
 
   init(telemetryURL: URL? = nil) {
@@ -57,13 +59,7 @@ final class RuntimeMonitorStore: ObservableObject {
   }
 
   var connectionState: RuntimeConnectionState {
-    guard let telemetry else { return .stopped }
-    return monitoredConnectionState(
-      reportedState: telemetry.state,
-      updatedAt: telemetry.updatedAt,
-      processIsRunning: processIsRunning(telemetry.pid),
-      pollingInterval: Self.pollingInterval
-    )
+    monitoredState
   }
 
   var selectedConfiguration: RuntimeConfiguration {
@@ -120,11 +116,18 @@ final class RuntimeMonitorStore: ObservableObject {
         projectTraffic[project.id] = series
       }
       telemetry = current
+      monitoredState = freshnessTracker.connectionState(
+        reportedState: current.state,
+        updatedAt: current.updatedAt,
+        processIsRunning: processIsRunning(current.pid)
+      )
       readError = nil
-      handleConnectionTransition(to: connectionState)
+      handleConnectionTransition(to: monitoredState)
     } catch {
       handleConnectionTransition(to: .stopped)
       telemetry = nil
+      monitoredState = .stopped
+      freshnessTracker.reset()
       trafficRate = .zero
       trafficHistory = []
       totalTraffic = TrafficSeries()
@@ -148,9 +151,10 @@ final class RuntimeMonitorStore: ObservableObject {
   }
 
   func revealLogs() {
-    let telemetryURL = selectedConfiguration.telemetryURL
-    let directory = telemetryURL.deletingLastPathComponent()
-    let logURL = directory.appendingPathComponent("cloud-runtime.log")
+    let logURL = URL(fileURLWithPath: RuntimeArtifactPaths(
+      configPath: selectedConfiguration.configPath
+    ).logPath)
+    let directory = logURL.deletingLastPathComponent()
     if FileManager.default.fileExists(atPath: logURL.path) {
       NSWorkspace.shared.activateFileViewerSelecting([logURL])
     } else {
@@ -193,12 +197,20 @@ final class RuntimeMonitorStore: ObservableObject {
     agentExecutablePath: String? = nil
   ) {
     guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else { return }
-    let telemetrySourceChanged = telemetryPath.map { $0 != configurations[index].telemetryPath } ?? false
+    let previousTelemetryPath = configurations[index].telemetryPath
+    let previousArtifacts = RuntimeArtifactPaths(configPath: configurations[index].configPath)
     if let name { configurations[index].name = name }
     if let telemetryPath { configurations[index].telemetryPath = telemetryPath }
-    if let agentConfigPath { configurations[index].agentConfigPath = agentConfigPath }
+    if let agentConfigPath {
+      configurations[index].agentConfigPath = agentConfigPath
+      if configurations[index].telemetryPath == previousArtifacts.telemetryPath {
+        configurations[index].telemetryPath = RuntimeArtifactPaths(
+          configPath: agentConfigPath
+        ).telemetryPath
+      }
+    }
     if let agentExecutablePath { configurations[index].agentExecutablePath = agentExecutablePath }
-    if telemetrySourceChanged { resetSamples() }
+    if configurations[index].telemetryPath != previousTelemetryPath { resetSamples() }
     persistConfigurations()
   }
 
@@ -294,6 +306,8 @@ final class RuntimeMonitorStore: ObservableObject {
     totalTraffic = TrafficSeries()
     projectTraffic = [:]
     previousConnectionState = nil
+    monitoredState = .stopped
+    freshnessTracker.reset()
   }
 
   private func persistConfigurations() {

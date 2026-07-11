@@ -2,8 +2,9 @@
 // File Purpose: Persist token-free cloud runtime status and traffic counters for local monitors.
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import type { AdvertisedProject } from "./executors/executor.js";
+import { runtimeArtifactPath } from "./runtime-artifacts.js";
 
 export type RuntimeConnectionState = "connecting" | "connected" | "reconnecting" | "error" | "stopped";
 export type RuntimeProjectState = "idle" | "active" | "error";
@@ -86,6 +87,7 @@ export interface RuntimeTelemetryReporter {
   requestStarted(request: RuntimeRequestStarted): void;
   requestFinished(request: RuntimeRequestFinished): void;
   stopped(): void;
+  failed?(): void;
   flush?(): Promise<void>;
 }
 
@@ -106,6 +108,7 @@ export const noopRuntimeTelemetry: RuntimeTelemetryReporter = {
   requestStarted(): void {},
   requestFinished(): void {},
   stopped(): void {},
+  failed(): void {},
 };
 
 export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
@@ -274,6 +277,11 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     void this.flush();
   }
 
+  failed(): void {
+    if (this.livenessTimer) clearInterval(this.livenessTimer);
+    this.livenessTimer = undefined;
+  }
+
   async flush(): Promise<void> {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -328,8 +336,8 @@ export function readRuntimeTelemetry(configPath: string): RuntimeTelemetryStatus
   }
 }
 
-function runtimeTelemetryPath(configPath: string): string {
-  return join(dirname(configPath), "cloud-runtime-status.json");
+export function runtimeTelemetryPath(configPath: string): string {
+  return runtimeArtifactPath(configPath, "status");
 }
 
 function credentialFreeRemoteLabel(remoteLabel: string): string {

@@ -14,11 +14,12 @@ struct RuntimeTelemetryTests {
     try agentCommandsExecuteWithTheSelectedConfiguration()
     try agentCommandsDrainLargeOutputWhileRunning()
     try stopRemainsAvailableWithoutTelemetry()
-    try staleTelemetryBecomesUnknownAfterTwoPollingIntervals()
+    try staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake()
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
     try legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath()
+    try runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory()
     try diagnosticsRedactLocalPaths()
     try releaseVersionsCompareMonitorTags()
     try await updateCheckerSearchesAllReleasePages()
@@ -318,27 +319,39 @@ struct RuntimeTelemetryTests {
     )
   }
 
-  static func staleTelemetryBecomesUnknownAfterTwoPollingIntervals() throws {
+  static func staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake() throws {
     let updatedAt = Date(timeIntervalSince1970: 1_000)
+    var tracker = TelemetryFreshnessTracker()
     try expect(
-      monitoredConnectionState(
+      tracker.connectionState(
         reportedState: .connected,
         updatedAt: updatedAt,
         processIsRunning: true,
-        now: updatedAt.addingTimeInterval(2),
-        pollingInterval: 1
+        now: updatedAt
       ) == .connected,
-      "telemetry should remain live through two polling intervals"
+      "the first observation should be live"
     )
     try expect(
-      monitoredConnectionState(
+      tracker.connectionState(
         reportedState: .connected,
         updatedAt: updatedAt,
         processIsRunning: true,
-        now: updatedAt.addingTimeInterval(2.001),
-        pollingInterval: 1
+        now: updatedAt.addingTimeInterval(3_600)
+      ) == .connected,
+      "the first observation after wake must receive a grace poll"
+    )
+    try expect(
+      tracker.connectionState(
+        reportedState: .connected,
+        updatedAt: updatedAt,
+        processIsRunning: true,
+        now: updatedAt.addingTimeInterval(3_601)
       ) == .stale,
-      "telemetry must become stale after missing two polling intervals"
+      "telemetry must become stale after two unchanged observations"
+    )
+    try expect(
+      ConnectionTransition(previous: .connected, current: .connected).notification == nil,
+      "the wake grace poll must not trigger a false notification"
     )
   }
 
@@ -394,6 +407,21 @@ struct RuntimeTelemetryTests {
       """.utf8)
     let configuration = try JSONDecoder().decode(RuntimeConfiguration.self, from: data)
     try expect(configuration.configPath == "/work/state/daemon.yaml", "legacy config should retain default path")
+  }
+
+  static func runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory() throws {
+    let first = RuntimeArtifactPaths(configPath: "/work/state/first.yaml")
+    let second = RuntimeArtifactPaths(configPath: "/work/state/second.yaml")
+    let legacy = RuntimeArtifactPaths(configPath: "/work/state/daemon.yaml")
+
+    try expect(first.telemetryPath != second.telemetryPath, "custom configs must not share telemetry")
+    try expect(first.logPath != second.logPath, "custom configs must not share logs")
+    try expect(
+      first.telemetryPath == "/work/state/cloud-runtime-58cb3ff924131c6e-status.json",
+      "monitor and agent must derive the same stable namespace"
+    )
+    try expect(legacy.telemetryPath == "/work/state/cloud-runtime-status.json", "daemon telemetry must keep its legacy name")
+    try expect(legacy.logPath == "/work/state/cloud-runtime.log", "daemon logs must keep their legacy name")
   }
 
   static func diagnosticsRedactLocalPaths() throws {

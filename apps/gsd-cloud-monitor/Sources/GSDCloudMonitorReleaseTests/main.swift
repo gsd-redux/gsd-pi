@@ -14,6 +14,9 @@ struct ReleasePackageTests {
     let sentinel = output.appendingPathComponent("keep-me.txt")
     try Data("preserve".utf8).write(to: sentinel)
 
+    try rejectsUnsafeBundleDestination(packageRoot: packageRoot, output: output)
+    try rejectsInvalidVersion(packageRoot: packageRoot)
+
     try run(
       "/bin/bash",
       [
@@ -92,6 +95,32 @@ struct ReleasePackageTests {
     print("GSDCloudMonitorReleaseTests passed")
   }
 
+  static func rejectsUnsafeBundleDestination(packageRoot: URL, output: URL) throws {
+    let sentinel = output.appendingPathComponent("bundle-sentinel.txt")
+    try Data("preserve".utf8).write(to: sentinel)
+    let status = try terminationStatus(
+      "/bin/bash",
+      [
+        packageRoot.appendingPathComponent("script/stage_app_bundle.sh").path,
+        "/usr/bin/true",
+        output.path,
+      ]
+    )
+    try expect(status != 0, "bundle staging must reject arbitrary destinations")
+    try expect(FileManager.default.fileExists(atPath: sentinel.path), "unsafe staging must preserve destination contents")
+  }
+
+  static func rejectsInvalidVersion(packageRoot: URL) throws {
+    let validator = packageRoot.appendingPathComponent("script/validate_release_version.sh").path
+    let invalidStatus = try terminationStatus(
+      "/bin/bash",
+      [validator, "1.2"]
+    )
+    let validStatus = try terminationStatus("/bin/bash", [validator, "1.2.3"])
+    try expect(invalidStatus != 0, "release packaging must reject non-semantic versions")
+    try expect(validStatus == 0, "release packaging must accept semantic versions")
+  }
+
   static func run(_ executable: String, _ arguments: [String], cwd: URL? = nil) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -115,6 +144,17 @@ struct ReleasePackageTests {
     process.waitUntilExit()
     try expect(process.terminationStatus == 0, "\(executable) exited \(process.terminationStatus)")
     return String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+  }
+
+  static func terminationStatus(_ executable: String, _ arguments: [String]) throws -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    return process.terminationStatus
   }
 
   static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
