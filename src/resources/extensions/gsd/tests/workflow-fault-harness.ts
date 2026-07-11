@@ -1,3 +1,7 @@
+import { mkdirSync } from "node:fs";
+
+import { getDb } from "../gsd-db.js";
+
 export type WorkflowFaultPoint =
   | "before-transaction-commit"
   | "after-db-commit-before-render"
@@ -8,6 +12,13 @@ export type WorkflowFaultPoint =
 export interface WorkflowFaultHarness {
   hit(point: WorkflowFaultPoint, operation?: string): void;
   count(point: WorkflowFaultPoint): number;
+  armDatabaseAbort(
+    column: "status" | "full_summary_md",
+    predicate:
+      | "NEW.status = 'complete' AND OLD.status <> 'complete'"
+      | "NEW.full_summary_md IS NOT OLD.full_summary_md",
+  ): void;
+  obstructProjection(path: string): void;
 }
 
 export class WorkflowFaultError extends Error {
@@ -41,6 +52,21 @@ export function createWorkflowFaultHarness(
     },
     count(point) {
       return counts.get(point) ?? 0;
+    },
+    armDatabaseAbort(column, predicate) {
+      const triggerName = `workflow_fault_${armedPoint.replaceAll("-", "_")}`;
+      const message = `complete-dependent-slice fault at ${armedPoint}`;
+      getDb().exec(`
+        CREATE TEMP TRIGGER ${triggerName}
+        BEFORE UPDATE OF ${column} ON slices
+        WHEN ${predicate}
+        BEGIN
+          SELECT RAISE(ABORT, '${message}');
+        END
+      `);
+    },
+    obstructProjection(path) {
+      mkdirSync(path, { recursive: true });
     },
   };
 }
