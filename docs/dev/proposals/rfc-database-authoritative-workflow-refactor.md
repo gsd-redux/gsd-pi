@@ -308,10 +308,14 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 
 The Milestone 0 workflow-authority baseline uses
 `src/resources/extensions/gsd/tests/workflow-authority-fixture.ts` to seed a
-real SQLite project through typed write APIs. Its focused tests independently
-reopen the database and prove that contradictory Markdown projections cannot
-change database-derived lifecycle state, dependencies, requirements, or
-decisions.
+real SQLite project through typed write APIs. The fixture persists an active
+milestone, a completed prerequisite slice and task, a pending dependent slice
+and task, an active requirement, and a memory-backed architecture decision.
+Both focused tests independently reopen the database. The fixture test verifies
+the reopened state, while the projection-conflict test proves that contradictory
+`STATE.md`, `PROJECT.md`, `REQUIREMENTS.md`, `DECISIONS.md`, roadmap, and plan
+projections cannot change database-derived lifecycle state, dependencies,
+requirements, or decisions.
 
 Baseline failure evidence was captured on 2026-07-11 with:
 
@@ -327,8 +331,19 @@ it completed S02 and T01, cleared S02's dependency, validated and reassigned
 R001, and inserted the Markdown-backed D999 memory. The command exited 1 at the
 final deep-equality assertion, reporting each of those database-authority
 changes. After removing the sabotage, the command exited 0 with one passing
-test. The fixture test and projection-conflict test also passed together with
-two tests and zero failures.
+test.
+
+The complete baseline runs both focused tests:
+
+```sh
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types --test \
+  src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts \
+  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
+```
+
+That command passed with two tests and zero failures after the sabotage was
+removed.
 
 ### Dependency and parallel-work rules
 
