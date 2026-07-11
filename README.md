@@ -194,6 +194,7 @@ Then use slash commands inside the GSD session:
 | --- | --- |
 | `src/` | Core runtime resources and bundled extensions |
 | `packages/` | Workspace packages used by the CLI, agent, TUI, RPC, and native bridge |
+| `apps/` | Standalone native apps, such as the GSD Cloud Monitor menu bar app |
 | `native/` | Native engine packaging and platform binaries |
 | `studio/` | Desktop studio app |
 | `web/` | Web UI and API surface |

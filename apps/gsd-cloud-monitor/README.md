@@ -3,11 +3,22 @@
 A macOS 14+ menu bar app for monitoring the standalone `gsd-cloud` agent.
 It shows the live WebSocket connection state, agent process, gateway, active
 tool calls, reconnect history, message counts, byte totals, and current traffic
-rates.
+rates, plus a per-project dashboard (requests, errors, bytes, active tools,
+and recent activity).
 
 The app is intentionally menu-bar-only. It does not read or display the cloud
-device token. It polls the token-free `~/.gsd/cloud-runtime-status.json` file
-written by `gsd-cloud` once per second.
+device token. It polls the token-free status file written by `gsd-cloud` once
+per second — `~/.gsd/cloud-runtime-status.json` for the default
+`~/.gsd/daemon.yaml` config. The menu bar app can track more than one runtime
+configuration (including configs that share a directory); each non-default
+config gets its own status/log file, namespaced by a hash of the config path,
+managed from **Settings**.
+
+From the dashboard toolbar you can **Start**, **Stop**, and **Reconnect** the
+selected runtime, and **Export Diagnostics** to a failure-safe report for bug
+reports — none of these actions touch the stored pairing credentials. Settings
+also covers connection-change notifications, launch at login, and manual
+update checks.
 
 ## Run
 

@@ -21,11 +21,14 @@ Requires the `gsd` CLI (from `@opengsd/gsd-pi`) to be installed and on your
 # the background and the terminal prompt returns. No --gateway needed.
 npx @opengsd/gsd-cloud login
 
-# Show current cloud runtime configuration and connection status.
+# Show current cloud runtime configuration, connection status, and telemetry.
 npx @opengsd/gsd-cloud status
 
 # Start or restart the background runtime using saved credentials and projects.
 npx @opengsd/gsd-cloud connect
+
+# Stop the background runtime without removing saved credentials.
+npx @opengsd/gsd-cloud stop
 
 # Remove cloud runtime configuration from the local config file.
 npx @opengsd/gsd-cloud disconnect
@@ -33,7 +36,14 @@ npx @opengsd/gsd-cloud disconnect
 
 `login` (and `pair`) default to `https://cloud.opengsd.net`. To target a
 different gateway, pass `--gateway <url>` explicitly — the explicit flag always
-wins. The `status`, `connect`, and `disconnect` commands do not use a gateway.
+wins. The `status`, `connect`, `stop`, and `disconnect` commands do not use a
+gateway. `disconnect` also stops the runtime; `stop` leaves pairing intact so a
+later `connect` reconnects with the same credentials.
+
+`status` reports a token-free `telemetry` object (connection state, traffic
+counters, per-project activity) read from the runtime's status file — this is
+the same file the GSD Cloud Monitor macOS app polls. See
+[`apps/gsd-cloud-monitor`](../../apps/gsd-cloud-monitor/README.md).
 
 ## Environment
 
