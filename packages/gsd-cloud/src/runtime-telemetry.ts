@@ -330,8 +330,12 @@ function credentialFreeRemoteLabel(remoteLabel: string): string {
     const url = new URL(remoteLabel);
     url.username = "";
     url.password = "";
+    url.search = "";
+    url.hash = "";
     return url.toString();
   } catch {
-    return remoteLabel.replace(/^[^/@]+@([^:]+):/, "$1:");
+    return remoteLabel
+      .replace(/^[^/@]+@([^:]+):/, "$1:")
+      .replace(/[?#].*$/, "");
   }
 }

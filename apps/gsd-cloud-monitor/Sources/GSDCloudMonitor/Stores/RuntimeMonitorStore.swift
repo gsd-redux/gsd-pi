@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class RuntimeMonitorStore: ObservableObject {
+  private static let pollingInterval: TimeInterval = 1
+
   @Published private(set) var telemetry: RuntimeTelemetry?
   @Published private(set) var trafficRate = TrafficRate.zero
   @Published private(set) var trafficHistory: [TrafficSample] = []
@@ -42,7 +44,7 @@ final class RuntimeMonitorStore: ObservableObject {
       persistsConfigurations = true
     }
     refresh()
-    timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+    timer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.refresh() }
     }
     if telemetryURL == nil {
@@ -56,7 +58,12 @@ final class RuntimeMonitorStore: ObservableObject {
 
   var connectionState: RuntimeConnectionState {
     guard let telemetry else { return .stopped }
-    return processIsRunning(telemetry.pid) ? telemetry.state : .stopped
+    return monitoredConnectionState(
+      reportedState: telemetry.state,
+      updatedAt: telemetry.updatedAt,
+      processIsRunning: processIsRunning(telemetry.pid),
+      pollingInterval: Self.pollingInterval
+    )
   }
 
   var selectedConfiguration: RuntimeConfiguration {
@@ -69,6 +76,7 @@ final class RuntimeMonitorStore: ObservableObject {
     case .connecting, .reconnecting: "arrow.triangle.2.circlepath"
     case .error: "exclamationmark.icloud.fill"
     case .stopped: "icloud.slash"
+    case .stale: "questionmark.circle"
     }
   }
 
@@ -79,6 +87,7 @@ final class RuntimeMonitorStore: ObservableObject {
     case .reconnecting: "Reconnecting"
     case .error: "Connection Error"
     case .stopped: "Agent Offline"
+    case .stale: "Telemetry Stale"
     }
   }
 
@@ -88,6 +97,7 @@ final class RuntimeMonitorStore: ObservableObject {
     case .connecting, .reconnecting: .orange
     case .error: .red
     case .stopped: .secondary
+    case .stale: .orange
     }
   }
 
@@ -95,7 +105,8 @@ final class RuntimeMonitorStore: ObservableObject {
     do {
       let current = try reader.load(from: selectedConfiguration.telemetryURL)
       let now = Date()
-      totalTraffic.record(counters: current.trafficCounters, at: now)
+      let sourceID = selectedConfiguration.telemetryURL.standardizedFileURL.path
+      totalTraffic.record(counters: current.trafficCounters, sourceID: sourceID, at: now)
       trafficHistory = totalTraffic.samples
       if let latest = trafficHistory.last {
         trafficRate = TrafficRate(
@@ -105,7 +116,7 @@ final class RuntimeMonitorStore: ObservableObject {
       }
       for project in current.projects {
         var series = projectTraffic[project.id] ?? TrafficSeries()
-        series.record(counters: project.trafficCounters, at: now)
+        series.record(counters: project.trafficCounters, sourceID: sourceID, at: now)
         projectTraffic[project.id] = series
       }
       telemetry = current
@@ -182,10 +193,12 @@ final class RuntimeMonitorStore: ObservableObject {
     agentExecutablePath: String? = nil
   ) {
     guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else { return }
+    let telemetrySourceChanged = telemetryPath.map { $0 != configurations[index].telemetryPath } ?? false
     if let name { configurations[index].name = name }
     if let telemetryPath { configurations[index].telemetryPath = telemetryPath }
     if let agentConfigPath { configurations[index].agentConfigPath = agentConfigPath }
     if let agentExecutablePath { configurations[index].agentExecutablePath = agentExecutablePath }
+    if telemetrySourceChanged { resetSamples() }
     persistConfigurations()
   }
 

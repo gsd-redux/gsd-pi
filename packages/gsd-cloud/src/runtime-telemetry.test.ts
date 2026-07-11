@@ -322,20 +322,31 @@ test("runtime telemetry removes credentials from remote labels", async () => {
   });
 
   try {
-    store.projectsAdvertised([{
-      alias: "project-one",
-      path: "/work/project-one",
-      repoIdentity: "repo-one",
-      remoteLabel: "https://token:secret@github.com/open-gsd/project-one.git",
-      markers: [".gsd"],
-    }]);
+    store.projectsAdvertised([
+      {
+        alias: "project-one",
+        path: "/work/project-one",
+        repoIdentity: "repo-one",
+        remoteLabel: "https://token:secret@github.com/open-gsd/project-one.git?access_token=query-secret#fragment-secret",
+        markers: [".gsd"],
+      },
+      {
+        alias: "project-two",
+        path: "/work/project-two",
+        repoIdentity: "repo-two",
+        remoteLabel: "git@github.com:open-gsd/project-two.git?token=scp-secret#scp-fragment",
+        markers: [".gsd"],
+      },
+    ]);
     await store.flush();
 
     const raw = readFileSync(join(root, "cloud-runtime-status.json"), "utf8");
     const status = JSON.parse(raw) as { projects: Array<{ remote_label?: string }> };
     assert.equal(status.projects[0]?.remote_label, "https://github.com/open-gsd/project-one.git");
+    assert.equal(status.projects[1]?.remote_label, "github.com:open-gsd/project-two.git");
     assert.equal(raw.includes("token"), false);
     assert.equal(raw.includes("secret"), false);
+    assert.equal(raw.includes("fragment"), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

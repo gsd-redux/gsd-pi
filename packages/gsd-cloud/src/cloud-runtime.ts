@@ -29,6 +29,11 @@ interface QueuedFrame {
   projectPath?: string;
 }
 
+interface InFlightRequest {
+  message: GatewayMessage;
+  routingKey?: string;
+}
+
 export class CloudRuntime {
   private static readonly MAX_OUTBOX = 200;
   // How many times to retry the initial connect before rejecting start(). A
@@ -39,7 +44,7 @@ export class CloudRuntime {
   private socket: WebSocket | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private reconnect: ReturnType<typeof setTimeout> | undefined;
-  private readonly inFlight = new Map<string, GatewayMessage>();
+  private readonly inFlight = new Map<string, InFlightRequest>();
   private outbox: QueuedFrame[] = [];
   private advertisedProjects: AdvertisedProject[] = [];
   private stopped = false;
@@ -58,11 +63,18 @@ export class CloudRuntime {
     this.initialConnectAttempts = 0;
     const firstConnect = Promise.withResolvers<void>();
     this.firstConnectDeferred = firstConnect;
-    this.connect();
-    return firstConnect.promise.catch(async (error: unknown) => {
+    const result = firstConnect.promise.catch(async (error: unknown) => {
       await this.telemetry.flush?.();
       throw error;
     });
+    try {
+      this.connect();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.telemetry.socketError(message);
+      this.rejectFirstConnect(error instanceof Error ? error : new Error(message));
+    }
+    return result;
   }
 
   stop(): void {
@@ -225,12 +237,16 @@ export class CloudRuntime {
       return;
     }
     if (message.type !== "tool_call" || !message.requestId || !message.toolName) return;
-    const project = this.resolveProject(message);
-    const projectAlias = project?.alias ?? message.projectAlias;
+    const routingKey = this.resolveRoutingKey(message);
+    const project = this.resolveProject(routingKey);
+    const projectAlias = project?.alias;
     const projectPath = project?.path;
     const startedAt = Date.now();
     const receivedBytes = Buffer.byteLength(text);
-    this.inFlight.set(message.requestId, message);
+    this.inFlight.set(message.requestId, {
+      message,
+      ...(routingKey !== undefined ? { routingKey } : {}),
+    });
     this.telemetry.requestStarted({
       requestId: message.requestId,
       ...(projectAlias ? { projectAlias } : {}),
@@ -241,7 +257,7 @@ export class CloudRuntime {
     let outcome: "success" | "error" | "cancelled" = "success";
     let errorMessage: string | undefined;
     try {
-      const result = await this.executor.execute(message.toolName, message.args ?? {}, message.projectAlias);
+      const result = await this.executor.execute(message.toolName, message.args ?? {}, routingKey);
       if (!this.inFlight.has(message.requestId)) {
         outcome = "cancelled";
         return;
@@ -273,14 +289,19 @@ export class CloudRuntime {
     }
   }
 
-  private resolveProject(message: GatewayMessage): AdvertisedProject | undefined {
-    const projectDir = message.args?.projectDir;
-    if (typeof projectDir === "string") {
-      return this.advertisedProjects.find((project) => project.path === projectDir);
-    }
-    const alias = message.projectAlias
+  private resolveRoutingKey(message: GatewayMessage): string | undefined {
+    return message.projectAlias
+      ?? (typeof message.args?.projectDir === "string" ? message.args.projectDir : undefined)
       ?? (typeof message.args?.projectAlias === "string" ? message.args.projectAlias : undefined);
-    if (alias) return this.advertisedProjects.find((project) => project.alias === alias);
+  }
+
+  private resolveProject(routingKey?: string): AdvertisedProject | undefined {
+    if (routingKey !== undefined) {
+      const exact = this.advertisedProjects.find((project) => project.path === routingKey);
+      if (exact) return exact;
+      const matches = this.advertisedProjects.filter((project) => project.alias === routingKey);
+      return matches.length === 1 ? matches[0] : undefined;
+    }
     if (this.advertisedProjects.length === 1) return this.advertisedProjects[0];
     return undefined;
   }
@@ -290,13 +311,20 @@ export class CloudRuntime {
     if (!pending) return;
     this.inFlight.delete(requestId);
     try {
-      if (typeof pending.args?.sessionId === "string") {
-        await this.executor.execute("gsd_cancel", { sessionId: pending.args.sessionId }, pending.projectAlias);
+      if (typeof pending.message.args?.sessionId === "string") {
+        await this.executor.execute(
+          "gsd_cancel",
+          { sessionId: pending.message.args.sessionId },
+          pending.routingKey,
+        );
         return;
       }
-      const projectDir = typeof pending.args?.projectDir === "string" ? pending.args.projectDir : pending.projectAlias;
-      if (projectDir) {
-        await this.executor.execute("gsd_cancel", { projectDir });
+      if (pending.routingKey !== undefined) {
+        await this.executor.execute(
+          "gsd_cancel",
+          { projectDir: pending.routingKey },
+          pending.routingKey,
+        );
       }
     } catch (err) {
       this.logger.warn("cloud runtime cancel failed", {

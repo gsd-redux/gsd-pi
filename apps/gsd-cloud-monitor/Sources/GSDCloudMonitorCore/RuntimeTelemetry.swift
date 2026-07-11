@@ -6,6 +6,19 @@ public enum RuntimeConnectionState: String, Codable, Sendable {
   case reconnecting
   case error
   case stopped
+  case stale
+}
+
+public func monitoredConnectionState(
+  reportedState: RuntimeConnectionState,
+  updatedAt: Date,
+  processIsRunning: Bool,
+  now: Date = Date(),
+  pollingInterval: TimeInterval
+) -> RuntimeConnectionState {
+  guard processIsRunning else { return .stopped }
+  guard now.timeIntervalSince(updatedAt) <= pollingInterval * 2 else { return .stale }
+  return reportedState
 }
 
 public enum RuntimeProjectState: String, Codable, Sendable {

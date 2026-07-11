@@ -10,6 +10,9 @@ struct ReleasePackageTests {
     let output = FileManager.default.temporaryDirectory
       .appendingPathComponent("gsd-cloud-monitor-release-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: output) }
+    try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+    let sentinel = output.appendingPathComponent("keep-me.txt")
+    try Data("preserve".utf8).write(to: sentinel)
 
     try run(
       "/bin/bash",
@@ -19,6 +22,10 @@ struct ReleasePackageTests {
         "--version", "0.1.0",
         "--output", output.path,
       ]
+    )
+    try expect(
+      FileManager.default.fileExists(atPath: sentinel.path),
+      "release packaging must preserve unrelated output files"
     )
     try run(
       "/bin/bash",

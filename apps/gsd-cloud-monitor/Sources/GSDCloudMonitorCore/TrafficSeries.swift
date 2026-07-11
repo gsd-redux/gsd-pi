@@ -13,12 +13,23 @@ public struct TrafficSeries: Sendable {
   private let limit: Int
   private var previousCounters: TrafficCounters?
   private var previousDate: Date?
+  private var sourceID: String?
 
   public init(limit: Int = 60) {
     self.limit = max(1, limit)
   }
 
-  public mutating func record(counters: TrafficCounters, at date: Date = Date()) {
+  public mutating func record(
+    counters: TrafficCounters,
+    sourceID: String? = nil,
+    at date: Date = Date()
+  ) {
+    if sourceID != self.sourceID {
+      samples = []
+      previousCounters = nil
+      previousDate = nil
+      self.sourceID = sourceID
+    }
     let rate: TrafficRate
     if let previousCounters, let previousDate {
       rate = counters.rate(since: previousCounters, elapsed: date.timeIntervalSince(previousDate))

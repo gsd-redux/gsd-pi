@@ -46,8 +46,9 @@ ZIP_PATH="$OUTPUT_DIR/$APP_NAME-$VERSION-macos.zip"
 DMG_PATH="$OUTPUT_DIR/$APP_NAME-$VERSION-macos.dmg"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
-rm -rf "$WORK_DIR" "$OUTPUT_DIR"
+rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR" "$OUTPUT_DIR"
+rm -f "$ZIP_PATH" "$DMG_PATH" "$OUTPUT_DIR/SHA256SUMS"
 
 cd "$ROOT_DIR"
 swift build \

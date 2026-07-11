@@ -10,8 +10,11 @@ struct RuntimeTelemetryTests {
     try trafficRateUsesOnlyGrowthBetweenSamples()
     try trafficRateDoesNotGoNegativeAfterAgentRestart()
     try trafficSeriesCalculatesAndBoundsSamples()
+    try trafficSeriesResetsWhenTelemetrySourceChanges()
     try agentCommandsExecuteWithTheSelectedConfiguration()
+    try agentCommandsDrainLargeOutputWhileRunning()
     try stopRemainsAvailableWithoutTelemetry()
+    try staleTelemetryBecomesUnknownAfterTwoPollingIntervals()
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
@@ -218,6 +221,31 @@ struct RuntimeTelemetryTests {
     try expect(series.samples[1].sentBytesPerSecond == 50, "expected latest send rate")
   }
 
+  static func trafficSeriesResetsWhenTelemetrySourceChanges() throws {
+    var series = TrafficSeries(limit: 60)
+    let startedAt = Date(timeIntervalSince1970: 1_000)
+
+    series.record(
+      counters: TrafficCounters(receivedBytes: 100, sentBytes: 50),
+      sourceID: "/runtime/one/status.json",
+      at: startedAt
+    )
+    series.record(
+      counters: TrafficCounters(receivedBytes: 500, sentBytes: 250),
+      sourceID: "/runtime/one/status.json",
+      at: startedAt.addingTimeInterval(1)
+    )
+    series.record(
+      counters: TrafficCounters(receivedBytes: 10_000, sentBytes: 8_000),
+      sourceID: "/runtime/two/status.json",
+      at: startedAt.addingTimeInterval(2)
+    )
+
+    try expect(series.samples.count == 1, "a new telemetry source must reset traffic history")
+    try expect(series.samples[0].receivedBytesPerSecond == 0, "a new source must start at zero rate")
+    try expect(series.samples[0].sentBytesPerSecond == 0, "a new source must start at zero rate")
+  }
+
   static func agentCommandsExecuteWithTheSelectedConfiguration() throws {
     let root = FileManager.default.temporaryDirectory
       .appendingPathComponent("gsd-cloud-command-\(UUID().uuidString)")
@@ -250,6 +278,27 @@ struct RuntimeTelemetryTests {
     ], "agent command sequence is incorrect")
   }
 
+  static func agentCommandsDrainLargeOutputWhileRunning() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-command-output-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("gsd-cloud-large-output.sh")
+    let script = "#!/bin/bash\n/usr/bin/head -c 1048576 /dev/zero | /usr/bin/tr '\\0' x\n"
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+
+    let result = try AgentCommandRunner(
+      executableURL: executable,
+      configPath: "/work/runtime.yaml"
+    ).run(.start)
+
+    try expect(result.output.utf8.count == 1_048_576, "runner must drain all command output")
+  }
+
   static func stopRemainsAvailableWithoutTelemetry() throws {
     try expect(
       isAgentActionEnabled(.stop, connectionState: .stopped, actionInProgress: false),
@@ -258,6 +307,38 @@ struct RuntimeTelemetryTests {
     try expect(
       !isAgentActionEnabled(.stop, connectionState: .connected, actionInProgress: true),
       "agent actions must remain disabled while another command is running"
+    )
+    try expect(
+      isAgentActionEnabled(.stop, connectionState: .stale, actionInProgress: false),
+      "stop must remain available when telemetry is stale"
+    )
+    try expect(
+      isAgentActionEnabled(.reconnect, connectionState: .stale, actionInProgress: false),
+      "reconnect must remain available when telemetry is stale"
+    )
+  }
+
+  static func staleTelemetryBecomesUnknownAfterTwoPollingIntervals() throws {
+    let updatedAt = Date(timeIntervalSince1970: 1_000)
+    try expect(
+      monitoredConnectionState(
+        reportedState: .connected,
+        updatedAt: updatedAt,
+        processIsRunning: true,
+        now: updatedAt.addingTimeInterval(2),
+        pollingInterval: 1
+      ) == .connected,
+      "telemetry should remain live through two polling intervals"
+    )
+    try expect(
+      monitoredConnectionState(
+        reportedState: .connected,
+        updatedAt: updatedAt,
+        processIsRunning: true,
+        now: updatedAt.addingTimeInterval(2.001),
+        pollingInterval: 1
+      ) == .stale,
+      "telemetry must become stale after missing two polling intervals"
     )
   }
 

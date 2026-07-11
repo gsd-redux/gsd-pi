@@ -39,6 +39,75 @@ type RuntimeInternals = {
   connect: () => void;
 };
 
+test("one routing selector drives execution, cancellation, and telemetry", async () => {
+  const selectors: Array<string | undefined> = [];
+  const started: Array<{ projectAlias?: string; projectPath?: string }> = [];
+  const execution = Promise.withResolvers<unknown>();
+  const telemetry = {
+    ...Object.fromEntries([
+      "connecting", "connected", "disconnected", "socketError", "received", "sent",
+      "projectsAdvertised", "requestFinished", "stopped",
+    ].map((name) => [name, () => undefined])),
+    requestStarted: (request: { projectAlias?: string; projectPath?: string }) => started.push(request),
+  } as never;
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "fixture", runtime_id: "runtime" },
+    {
+      execute: async (toolName: string, _args: unknown, selector?: string) => {
+        selectors.push(selector);
+        if (toolName === "gsd_cancel") return {};
+        return execution.promise;
+      },
+      advertisedProjects: async () => [],
+    } as never,
+    noopLogger as never,
+    telemetry,
+  );
+  const internals = runtime as unknown as RuntimeInternals;
+  internals.advertisedProjects = [
+    { alias: "one", path: "/work/one", repoIdentity: "one", markers: [".gsd"] },
+    { alias: "two", path: "/work/two", repoIdentity: "two", markers: [".gsd"] },
+  ];
+  const socket = fakeSocket();
+  internals.socket = socket;
+
+  try {
+    const request = internals.handleSocketMessage(socket, JSON.stringify({
+      type: "tool_call",
+      requestId: "request-routing",
+      toolName: "gsd_status",
+      projectAlias: "one",
+      args: { projectDir: "/work/two" },
+    }));
+    await Promise.resolve();
+    await internals.handleSocketMessage(socket, JSON.stringify({
+      type: "cancel",
+      requestId: "request-routing",
+    }));
+    execution.resolve({});
+    await request;
+
+    assert.deepEqual(selectors, ["one", "one"]);
+    assert.equal(started[0]?.projectAlias, "one");
+    assert.equal(started[0]?.projectPath, "/work/one");
+
+    internals.advertisedProjects = [
+      { alias: "app", path: "/work/one/app", repoIdentity: "one", markers: [".gsd"] },
+      { alias: "app", path: "/work/two/app", repoIdentity: "two", markers: [".gsd"] },
+    ];
+    await internals.handleSocketMessage(socket, JSON.stringify({
+      type: "tool_call",
+      requestId: "request-ambiguous",
+      toolName: "gsd_status",
+      projectAlias: "app",
+    }));
+    assert.equal(started[1]?.projectAlias, undefined);
+    assert.equal(started[1]?.projectPath, undefined);
+  } finally {
+    runtime.stop();
+  }
+});
+
 test("queued project bytes are reported only after transmission", async () => {
   const sentProjects: Array<string | undefined> = [];
   const telemetry = {
@@ -240,6 +309,31 @@ test("startup failures flush runtime telemetry before rejecting", async () => {
     };
     assert.equal(status.state, "error");
     assert.equal(status.last_error, "cloud runtime missing device token or runtime id");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("malformed gateway failures flush runtime telemetry before rejecting", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-startup-url-error-"));
+  const telemetry = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "not-a-url",
+  });
+  const runtime = new CloudRuntime(
+    { gateway_url: "not-a-url", device_token: "fixture", runtime_id: "runtime" },
+    noopExecutor as never,
+    noopLogger as never,
+    telemetry,
+  );
+
+  try {
+    await assert.rejects(runtime.start(), /absolute HTTP\(S\) URL/);
+    const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
+      state?: string;
+      last_error?: string;
+    };
+    assert.equal(status.state, "error");
+    assert.match(status.last_error ?? "", /absolute HTTP\(S\) URL/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

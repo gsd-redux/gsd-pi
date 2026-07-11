@@ -76,11 +76,11 @@ public struct AgentCommandRunner: Sendable {
     process.standardOutput = pipe
     process.standardError = pipe
     try process.run()
-    process.waitUntilExit()
     let output = String(
       decoding: pipe.fileHandleForReading.readDataToEndOfFile(),
       as: UTF8.self
     )
+    process.waitUntilExit()
     guard process.terminationStatus == 0 else {
       throw AgentCommandError.failed(
         command: command,
