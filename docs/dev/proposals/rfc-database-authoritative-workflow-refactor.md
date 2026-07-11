@@ -1,8 +1,8 @@
 # RFC: Database-Authoritative Workflow Refactor
 
-> **Status:** Proposed — implementation requires explicit maintainer approval  
-> **Date:** 2026-07-11  
-> **Scope:** GSD workflow orchestration, persistence, projection, conversation, verification, UAT, recovery, migration, and status surfaces  
+> **Status:** Proposed — implementation requires explicit maintainer approval
+> **Date:** 2026-07-11
+> **Scope:** GSD workflow orchestration, persistence, projection, conversation, verification, UAT, recovery, migration, and status surfaces
 > **Decision map:** [Wayfinder: Database-authoritative GSD workflow refactor](https://github.com/open-gsd/gsd-pi/issues/1405)
 >
 > **Proposed ADR:** [ADR-046: Database-Authoritative Workflow Lifecycle](../ADR-046-database-authoritative-workflow-lifecycle.md)
