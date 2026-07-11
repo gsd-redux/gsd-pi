@@ -73,6 +73,7 @@ docs/coherence-audit/
 !.env.example
 
 # Local caches
+.memdb/
 .repowise/
 repowise.db
 repowise.db-*
