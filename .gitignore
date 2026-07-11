@@ -59,6 +59,9 @@ docs/coherence-audit/
 # Local MCP client config
 .mcp.json
 
+# Local MemDB daemon runtime state (machine-local pid/endpoint metadata)
+.memdb/
+
 # Local agent/editor state
 .claude/
 .agents/
