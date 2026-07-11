@@ -2,6 +2,16 @@
 
 ## Domain glossary
 
+- **Project**: the complete body of work a user wants GSD to guide from discovery through delivery.
+- **Milestone**: a durable, resumable stage of a Project, including discovery, research, planning, or delivery work.
+- **Slice**: a coherent outcome within a Milestone, decomposed into Tasks and independently verifiable.
+- **Task**: the smallest planned piece of work whose completion produces evidence toward a Slice.
+- **Lifecycle Status**: where a Milestone, Slice, or Task is in its durable progression: pending, ready, in progress, paused, completed, or cancelled.
+- **Attempt Result**: the immutable result of one execution attempt: succeeded, failed, or interrupted. An Attempt Result does not by itself complete or cancel the work.
+- **Requirement Disposition**: whether a requirement is unsatisfied, satisfied, or waived. Required Dependencies progress only from satisfied or explicitly waived requirements.
+- **Required Dependency**: a relationship that prevents downstream work from progressing until the upstream work is complete or explicitly waived.
+- **Waiver**: a recorded decision that releases a Required Dependency without claiming the upstream work was completed. Skipping work does not imply a Waiver.
+- **Blocker**: a durable impediment attached to affected work, with an owner and resolution state. A Blocker is not a Lifecycle Status or an Attempt Result.
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
