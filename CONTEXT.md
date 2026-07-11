@@ -20,6 +20,12 @@
 - **Required Dependency**: a relationship that prevents downstream work from progressing until the upstream work is complete or explicitly waived.
 - **Waiver**: a recorded decision that releases a Required Dependency without claiming the upstream work was completed. Skipping work does not imply a Waiver.
 - **Blocker**: a durable impediment attached to affected work, with an owner and resolution state. A Blocker is not a Lifecycle Status or an Attempt Result.
+- **Database Authority**: the rule that workflow decisions and progress are derived only from canonical database state during normal operation. Missing database state is an error, not permission to infer truth from a Projection.
+- **Domain Operation**: one validated, atomic change to workflow state and its durable history.
+- **Projection**: a rebuildable human- or tool-readable representation of database state. A Projection never authorizes or reverses workflow progress.
+- **Projection Work**: durable work to bring a Projection to a specific database revision, including retry and visible staleness.
+- **Import Preview**: a read-only candidate interpretation and exact diff of legacy material before it may affect Database Authority.
+- **Import Application**: the explicitly authorized, backed-up, atomic application of an unchanged Import Preview.
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
