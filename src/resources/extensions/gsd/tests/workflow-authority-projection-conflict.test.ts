@@ -87,7 +87,7 @@ function writeContradictoryProjections(root: string): void {
   );
 }
 
-async function readAuthoritySnapshot(fixture: WorkflowAuthorityFixture) {
+async function readDirectDbAuthoritySnapshot(fixture: WorkflowAuthorityFixture) {
   const state = await deriveStateFromDb(fixture.root);
   return {
     state: {
@@ -121,46 +121,43 @@ async function readAuthoritySnapshot(fixture: WorkflowAuthorityFixture) {
   };
 }
 
-test("contradictory Markdown cannot change DB-derived workflow authority", async () => {
+test("direct DB authority queries ignore contradictory Markdown projections", async (t) => {
   const fixture = await createWorkflowAuthorityFixture();
-  try {
-    fixture.reopen();
-    const before = await readAuthoritySnapshot(fixture);
+  t.after(() => fixture.cleanup());
+  fixture.reopen();
+  const before = await readDirectDbAuthoritySnapshot(fixture);
 
-    assert.deepEqual(before, {
-      state: {
-        phase: "executing",
-        milestone: fixture.ids.milestone,
-        slice: fixture.ids.readySlice,
-        task: fixture.ids.readyTask,
-        requirements: {
-          active: 1,
-          validated: 0,
-          deferred: 0,
-          outOfScope: 0,
-          blocked: 0,
-          total: 1,
-        },
+  assert.deepEqual(before, {
+    state: {
+      phase: "executing",
+      milestone: fixture.ids.milestone,
+      slice: fixture.ids.readySlice,
+      task: fixture.ids.readyTask,
+      requirements: {
+        active: 1,
+        validated: 0,
+        deferred: 0,
+        outOfScope: 0,
+        blocked: 0,
+        total: 1,
       },
-      slices: [
-        { id: fixture.ids.completedSlice, status: "complete", depends: [] },
-        { id: fixture.ids.readySlice, status: "pending", depends: [fixture.ids.completedSlice] },
-      ],
-      tasks: [{ id: fixture.ids.readyTask, status: "pending" }],
-      requirements: [
-        { id: fixture.ids.requirement, status: "active", owner: "M001/S02" },
-      ],
-      decisions: [
-        { id: fixture.ids.decision, choice: "SQLite is authoritative" },
-      ],
-    });
+    },
+    slices: [
+      { id: fixture.ids.completedSlice, status: "complete", depends: [] },
+      { id: fixture.ids.readySlice, status: "pending", depends: [fixture.ids.completedSlice] },
+    ],
+    tasks: [{ id: fixture.ids.readyTask, status: "pending" }],
+    requirements: [
+      { id: fixture.ids.requirement, status: "active", owner: "M001/S02" },
+    ],
+    decisions: [
+      { id: fixture.ids.decision, choice: "SQLite is authoritative" },
+    ],
+  });
 
-    writeContradictoryProjections(fixture.root);
-    fixture.reopen();
+  writeContradictoryProjections(fixture.root);
+  fixture.reopen();
 
-    const after = await readAuthoritySnapshot(fixture);
-    assert.deepEqual(after, before);
-  } finally {
-    fixture.cleanup();
-  }
+  const after = await readDirectDbAuthoritySnapshot(fixture);
+  assert.deepEqual(after, before);
 });
