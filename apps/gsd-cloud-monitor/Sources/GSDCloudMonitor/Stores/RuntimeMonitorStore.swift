@@ -119,6 +119,8 @@ final class RuntimeMonitorStore: ObservableObject {
         series.record(counters: project.trafficCounters, sourceID: sourceID, at: now)
         projectTraffic[project.id] = series
       }
+      let currentProjectIDs = Set(current.projects.map(\.id))
+      projectTraffic = projectTraffic.filter { currentProjectIDs.contains($0.key) }
       telemetry = current
       telemetryUnavailableStateTracker.reset()
       handleTelemetryAvailability(.available)

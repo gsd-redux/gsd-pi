@@ -1,6 +1,19 @@
 import AppKit
 import SwiftUI
 
+private func previewTelemetryURL() -> URL? {
+  guard let flagIndex = CommandLine.arguments.firstIndex(of: "--telemetry-path") else {
+    return nil
+  }
+  let pathIndex = CommandLine.arguments.index(after: flagIndex)
+  guard CommandLine.arguments.indices.contains(pathIndex) else { return nil }
+  return URL(fileURLWithPath: CommandLine.arguments[pathIndex])
+}
+
+enum AppMonitor {
+  @MainActor static let shared = RuntimeMonitorStore(telemetryURL: previewTelemetryURL())
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var previewWindow: NSWindow?
 
@@ -10,10 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       return
     }
     NSApp.setActivationPolicy(.regular)
-    let telemetryURL = previewTelemetryURL()
-    let monitor = RuntimeMonitorStore(telemetryURL: telemetryURL)
     let content = NSHostingController(
-      rootView: DashboardView(monitor: monitor)
+      rootView: DashboardView(monitor: AppMonitor.shared)
     )
     let window = NSWindow(contentViewController: content)
     window.title = "GSD Cloud Monitor"
@@ -25,21 +36,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     previewWindow = window
     NSApp.activate(ignoringOtherApps: true)
   }
-
-  private func previewTelemetryURL() -> URL? {
-    guard let flagIndex = CommandLine.arguments.firstIndex(of: "--telemetry-path") else {
-      return nil
-    }
-    let pathIndex = CommandLine.arguments.index(after: flagIndex)
-    guard CommandLine.arguments.indices.contains(pathIndex) else { return nil }
-    return URL(fileURLWithPath: CommandLine.arguments[pathIndex])
-  }
 }
 
 @main
 struct GSDCloudMonitorApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-  @StateObject private var monitor = RuntimeMonitorStore()
+  @StateObject private var monitor = AppMonitor.shared
 
   var body: some Scene {
     MenuBarExtra {

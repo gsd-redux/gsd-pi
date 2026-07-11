@@ -27,7 +27,7 @@ import {
   stopBackgroundRuntime,
   writeRuntimeState,
 } from "./runtime-process.js";
-import { readRuntimeTelemetry, RuntimeTelemetryStore } from "./runtime-telemetry.js";
+import { clearRuntimeTelemetry, readRuntimeTelemetry, RuntimeTelemetryStore } from "./runtime-telemetry.js";
 import type { DaemonConfig } from "./types.js";
 
 export async function handleCloudCommand(argv: string[], opts: {
@@ -74,6 +74,7 @@ export async function handleCloudCommand(argv: string[], opts: {
   if (command === "disconnect") {
     await stopBackgroundRuntime(configPath);
     clearCloudConfig(configPath);
+    clearRuntimeTelemetry(configPath);
     process.stdout.write(`${opts.binaryName}: background runtime stopped and cloud credentials removed.\n`);
     return;
   }

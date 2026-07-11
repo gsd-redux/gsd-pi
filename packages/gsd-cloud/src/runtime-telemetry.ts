@@ -1,6 +1,6 @@
 // Project/App: Open GSD
 // File Purpose: Persist token-free cloud runtime status and traffic counters for local monitors.
-import { readFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AdvertisedProject } from "./executors/executor.js";
@@ -356,6 +356,14 @@ export function readRuntimeTelemetry(configPath: string): RuntimeTelemetryStatus
 
 export function runtimeTelemetryPath(configPath: string): string {
   return runtimeArtifactPath(configPath, "status");
+}
+
+export function clearRuntimeTelemetry(configPath: string): void {
+  try {
+    unlinkSync(runtimeTelemetryPath(configPath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 function credentialFreeRemoteLabel(remoteLabel: string): string {

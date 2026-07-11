@@ -214,10 +214,12 @@ test("stop terminates the background runtime without removing pairing", async (t
       configured?: boolean;
       runtime_id?: string;
       background?: { running?: boolean };
+      telemetry?: unknown;
     };
     assert.equal(body.configured, true);
     assert.equal(body.runtime_id, "fixture-runtime");
-  assert.equal(body.background?.running, false);
+    assert.equal(body.background?.running, false);
+  assert.notEqual(body.telemetry, null);
 });
 
 test("login returns after approval and keeps the selected project connected", async (t) => {
@@ -252,9 +254,11 @@ test("login returns after approval and keeps the selected project connected", as
     const statusBody = JSON.parse(status.stdout) as {
       configured?: boolean;
       background?: { running?: boolean };
+      telemetry?: unknown;
     };
     assert.equal(statusBody.configured, false);
-  assert.equal(statusBody.background?.running, false);
+    assert.equal(statusBody.background?.running, false);
+  assert.equal(statusBody.telemetry, null);
 });
 
 test("advertised project paths are canonicalized through symlinks", async (t) => {

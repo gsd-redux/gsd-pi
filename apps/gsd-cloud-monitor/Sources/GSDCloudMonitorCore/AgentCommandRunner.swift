@@ -74,27 +74,43 @@ public struct AgentCommandRunner: Sendable {
   }
 
   private func execute(_ command: String) throws -> AgentCommandResult {
-    let pipe = Pipe()
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
     let process = Process()
     process.executableURL = executableURL
     process.arguments = [command, "--config", configPath]
     process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
-    process.standardOutput = pipe
-    process.standardError = pipe
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
     try process.run()
-    let output = String(
-      decoding: pipe.fileHandleForReading.readDataToEndOfFile(),
-      as: UTF8.self
-    )
+    var stdoutData = Data()
+    var stderrData = Data()
+    let readGroup = DispatchGroup()
+    readGroup.enter()
+    DispatchQueue.global(qos: .utility).async {
+      stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+      readGroup.leave()
+    }
+    readGroup.enter()
+    DispatchQueue.global(qos: .utility).async {
+      stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+      readGroup.leave()
+    }
+    readGroup.wait()
+    let stdout = String(decoding: stdoutData, as: UTF8.self)
+    let stderr = String(decoding: stderrData, as: UTF8.self)
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
+      let combined = [stdout, stderr]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
       throw AgentCommandError.failed(
         command: command,
         status: process.terminationStatus,
-        output: output
+        output: combined
       )
     }
-    return AgentCommandResult(output: output)
+    return AgentCommandResult(output: stdout)
   }
 }
 

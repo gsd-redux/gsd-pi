@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { RuntimeTelemetryStore } from "./runtime-telemetry.js";
+import { clearRuntimeTelemetry, readRuntimeTelemetry, RuntimeTelemetryStore } from "./runtime-telemetry.js";
 
 test("runtime telemetry persists connection state and traffic without credentials", async (t) => {
   const root = makeTempDir(t, "gsd-cloud-telemetry-");
@@ -474,6 +474,23 @@ test("runtime telemetry isolates persistence failures", async (t) => {
 
     store.connected();
     await store.flush();
+});
+
+test("clearRuntimeTelemetry removes the persisted snapshot for the config namespace", async (t) => {
+  const root = makeTempDir(t, "gsd-cloud-clear-telemetry-");
+  const configPath = join(root, "daemon.yaml");
+  const store = new RuntimeTelemetryStore(configPath, {
+    gatewayUrl: "https://cloud.example.com",
+    runtimeId: "runtime-1",
+  });
+  store.connected();
+  await store.flush();
+  assert.notEqual(readRuntimeTelemetry(configPath), null);
+
+  clearRuntimeTelemetry(configPath);
+
+  assert.equal(readRuntimeTelemetry(configPath), null);
+  clearRuntimeTelemetry(configPath);
 });
 
 function makeTempDir(t: TestContext, prefix: string): string {

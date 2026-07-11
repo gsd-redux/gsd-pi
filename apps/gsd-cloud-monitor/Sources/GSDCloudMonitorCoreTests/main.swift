@@ -14,6 +14,8 @@ struct RuntimeTelemetryTests {
     try agentCommandsExecuteWithTheSelectedConfiguration()
     try agentCommandsDrainLargeOutputWhileRunning()
     try agentCommandsReportValidatedRuntimeStatus()
+    try agentCommandsIgnoreStderrNoiseWhenReportingRuntimeStatus()
+    try agentCommandsIncludeStderrInFailureDiagnostics()
     try stopRemainsAvailableWithoutTelemetry()
     try telemetryReadFailuresRemainUnavailableUntilStatusConfirmsStop()
     try validatedOfflineStateSurvivesTelemetryFailures()
@@ -342,6 +344,58 @@ struct RuntimeTelemetryTests {
     ).runtimeIsRunning()
 
     try expect(running, "validated CLI status should report the runtime as running")
+  }
+
+  static func agentCommandsIgnoreStderrNoiseWhenReportingRuntimeStatus() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-status-stderr-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("gsd-cloud-status-noisy.sh")
+    let script = """
+      #!/bin/bash
+      echo "(node:1234) DeprecationWarning: noisy warning" >&2
+      if [[ "$1" == "status" ]]; then
+        echo '{"background":{"running":true}}'
+      fi
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+
+    let running = try AgentCommandRunner(
+      executableURL: executable,
+      configPath: "/work/runtime.yaml"
+    ).runtimeIsRunning()
+
+    try expect(running, "stderr noise must not corrupt the stdout status decode")
+  }
+
+  static func agentCommandsIncludeStderrInFailureDiagnostics() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-failure-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = root.appendingPathComponent("gsd-cloud-failing.sh")
+    let script = "#!/bin/bash\necho \"boom\" >&2\nexit 1\n"
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o700],
+      ofItemAtPath: executable.path
+    )
+
+    do {
+      _ = try AgentCommandRunner(
+        executableURL: executable,
+        configPath: "/work/runtime.yaml"
+      ).run(.stop)
+      try expect(false, "expected a failure from the non-zero exit status")
+    } catch let AgentCommandError.failed(_, status, output) {
+      try expect(status == 1, "expected the process exit status to surface")
+      try expect(output.contains("boom"), "expected stderr diagnostics on failure")
+    }
   }
 
   static func stopRemainsAvailableWithoutTelemetry() throws {
