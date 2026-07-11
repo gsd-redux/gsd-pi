@@ -7,6 +7,13 @@
 **Related:** ADR-003 (pipeline simplification), ADR-009 (orchestration kernel refactor)
 **Prior art:** PR #3468 (enhanced verification), PR #3602 (discussion system), PR #3766 (tiered context injection), PR #4079 (layered depth enforcement)
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> retains progressive sketch-then-refine planning. It supersedes escalation
+> JSON files, `DECISIONS.md` authority, DAG-owned refinement lifecycle,
+> forward-only correction, and broad pause behavior with database Open
+> Questions and Decisions, dependency revalidation, and the narrow human-only
+> blocking boundary. The body below is retained as history.
+
 ## Implementation status
 
 ### Phase 1 — Progressive Planning (sketch in plan-milestone)

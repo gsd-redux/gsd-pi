@@ -5,6 +5,14 @@
 **Author:** GSD architecture review
 **Related:** ADR-009 (orchestration kernel refactor), ADR-010 (clean seam architecture)
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> amends and generalizes this decision. The deep-module principle and small
+> `start` / `advance` / `resume` / `stop` control surface remain valid, but a
+> persisted Lifecycle Kernel shared by auto, interactive, custom, parallel,
+> and legacy adapters replaces Auto-only lifecycle ownership, process-local
+> progression, and a global single-active-Unit rule. The body below is
+> retained as history.
+
 ## Context
 
 `src/resources/extensions/gsd/auto.ts` currently carries multiple concerns in one place (dispatch, recovery, worktree coordination, health/escalation, locks/journaling, notifications). The module’s interface is broad relative to its implementation details, reducing locality and making failure diagnosis (especially wrong-dispatch and stuck-loop behavior) expensive.

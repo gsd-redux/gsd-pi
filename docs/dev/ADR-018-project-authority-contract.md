@@ -3,6 +3,8 @@
 
 # ADR-018: PROJECT Authority Contract
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Retained and generalized.** The PROJECT database-authority rule now applies to every workflow artifact. A DB-backed Domain Operation may atomically record narrative and normalized facts; direct prose or disk parsing cannot create machine state, and legacy recovery uses explicit Import Preview and Application.
+
 **Status:** Accepted
 **Date:** 2026-05-13
 **Author:** GSD architecture review

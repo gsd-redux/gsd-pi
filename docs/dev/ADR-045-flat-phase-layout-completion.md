@@ -3,6 +3,8 @@
 
 # ADR-045: Flat-Phase Layout Migration Completion
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded before adoption.** Readable layout compatibility remains an explicit import, export, and projection concern. Startup layout detection, automatic filesystem migration, and either on-disk layout influencing runtime authority are superseded by database-only reads and one-way projections.
+
 **Status:** Proposed — maintainer decision required before any code follows
 **Date:** 2026-07-07
 **Author:** GSD architecture review

@@ -1,11 +1,12 @@
 # RFC: Database-Authoritative Workflow Refactor
 
-> **Status:** Proposed — implementation requires explicit maintainer approval
+> **Status:** Accepted (2026-07-11)
 > **Date:** 2026-07-11
 > **Scope:** GSD workflow orchestration, persistence, projection, conversation, verification, UAT, recovery, migration, and status surfaces
 > **Decision map:** [Wayfinder: Database-authoritative GSD workflow refactor](https://github.com/open-gsd/gsd-pi/issues/1405)
 >
-> **Proposed ADR:** [ADR-046: Database-Authoritative Workflow Lifecycle](../ADR-046-database-authoritative-workflow-lifecycle.md)
+> **Accepted ADR:** [ADR-046: Database-Authoritative Workflow Lifecycle](../ADR-046-database-authoritative-workflow-lifecycle.md)
+> **Approval provenance:** Direct maintainer instruction recorded in the project database as Decision `D001`; proposal merged in [PR #1416](https://github.com/open-gsd/gsd-pi/pull/1416) at commit [`93cd35e5`](https://github.com/open-gsd/gsd-pi/commit/93cd35e5)
 
 ## Executive recommendation
 
@@ -21,7 +22,7 @@ Refactor the GSD workflow incrementally around one durable model:
 
 The work should ship as twelve long-running, dependency-ordered Milestones rather than a big-bang rewrite. Each implementation Task is one focused PR with its own tests and evidence. Schema migrations serialize; independent authority/projection, discovery/conversation, and recovery/UAT streams may run in parallel after the schema they consume exists.
 
-This RFC contains no unresolved product decision. Its remaining gate is explicit maintainer approval of the complete direction before architectural code changes begin.
+This RFC contains no unresolved product decision. Explicit maintainer approval has been recorded; architectural implementation may proceed in the approved dependency order and remains subject to normal review, testing, migration, and release gates.
 
 ## Why this refactor is necessary
 
@@ -307,7 +308,7 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 
 ### Dependency and parallel-work rules
 
-- Milestone 0 begins first. No architecture code precedes explicit RFC approval.
+- Milestone 0 begins first. Its explicit RFC approval gate is satisfied by Decision `D001` and merged PR #1416; no architecture code may precede that recorded approval.
 - Milestone 1 schema PRs are strictly sequential.
 - Milestone 2 begins when the import schema it consumes lands.
 - Milestones 3, 4, and 5 may proceed in parallel in isolated worktrees after their schema prerequisites; none changes runtime authority.
@@ -392,16 +393,16 @@ This RFC consolidates, rather than reopens, the resolved Wayfinder contracts:
 
 ## Approval checklist
 
-The RFC is ready for a maintainer decision. There are no unresolved product or architecture choices hidden behind implementation.
+The RFC was accepted on 2026-07-11. There are no unresolved product or architecture choices hidden behind implementation.
 
-- [ ] Explicit maintainer approval of SQLite as the sole post-cutover runtime authority.
-- [ ] Explicit maintainer approval of discovery, research, requirements, and roadmap as ordinary long-running Milestones.
-- [ ] Explicit maintainer approval of the one-question conversation and recommendation contract.
-- [ ] Explicit maintainer approval of the Lifecycle Kernel ownership boundary and shared two-part closeout.
-- [ ] Explicit maintainer approval of automated objective UAT, persisted recovery budgets, and the narrow human-blocking boundary.
-- [ ] Explicit maintainer approval of Import Preview/Application, Authority Epoch, Forward Repair, and no split-authority rollback.
-- [ ] Explicit maintainer approval of the compatibility window: two stable releases and at least 60 days, whichever is longer.
-- [ ] Explicit maintainer approval of the twelve-Milestone program, serialized schema work, parallel stream rules, and final contradiction audit.
-- [ ] ADR-046 records the accepted decision and disposition of conflicting ADR guidance before implementation begins.
+- [x] Explicit maintainer approval of SQLite as the sole post-cutover runtime authority.
+- [x] Explicit maintainer approval of discovery, research, requirements, and roadmap as ordinary long-running Milestones.
+- [x] Explicit maintainer approval of the one-question conversation and recommendation contract.
+- [x] Explicit maintainer approval of the Lifecycle Kernel ownership boundary and shared two-part closeout.
+- [x] Explicit maintainer approval of automated objective UAT, persisted recovery budgets, and the narrow human-blocking boundary.
+- [x] Explicit maintainer approval of Import Preview/Application, Authority Epoch, Forward Repair, and no split-authority rollback.
+- [x] Explicit maintainer approval of the compatibility window: two stable releases and at least 60 days, whichever is longer.
+- [x] Explicit maintainer approval of the twelve-Milestone program, serialized schema work, parallel stream rules, and final contradiction audit.
+- [x] ADR-046 records the accepted decision and disposition of conflicting ADR guidance before implementation begins.
 
-Approval authorizes the program direction, not an unreviewed bulk rewrite. Every implementation Task remains independently reviewable and must pass its named evidence gates.
+This approval authorizes the program direction, not an unreviewed bulk rewrite. Every implementation Task remains independently reviewable and must pass its named evidence gates.

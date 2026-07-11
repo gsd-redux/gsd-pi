@@ -1,5 +1,7 @@
 # Preload-Authoritative Auto-Mode Research & Validation
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended and retained.** Forwarded evidence, bounded research context, and avoiding redundant surveys remain valid. Workflow context and resume state must derive from a canonical database snapshot; readable artifacts may be evidence references or projections, never lifecycle authority.
+
 The auto-orchestration loop does far too much per unit on small projects. A run trace for a 3-file vanilla-JS app (`index.html`, `script.js`, `styles.css`) showed three pathologies:
 
 - **research-milestone** burned ~115 tool calls across a retry pair (14–19 `gsd_exec` each), re-extracting the same three files at many granularities (~80–100% redundant), and one unit hit a hard timeout whose retry run repeated **100%** of the first run's commands.

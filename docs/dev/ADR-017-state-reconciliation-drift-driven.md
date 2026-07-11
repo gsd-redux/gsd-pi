@@ -8,6 +8,15 @@
 **Author:** GSD architecture review
 **Related:** ADR-014 (deep Auto Orchestration module), ADR-015 (runtime invariant modules), ADR-016 trio (worktree split + fail-closed)
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> supersedes this reconciliation model. Typed, idempotent database-invariant
+> repairs and bounded re-derivation remain valid; pre-dispatch filesystem
+> detection, external Markdown/planning reverse import, filesystem-ledger
+> repair authority, and projection drift as a lifecycle blocker do not. Disk
+> may enter authority only through explicit Import Preview and Application,
+> and projection repair is asynchronous and non-authoritative. The body below
+> is retained as history.
+
 ## Context
 
 ADR-015 named the **State Reconciliation Module** as one of four runtime invariant modules and specified `reconcileBeforeDispatch(basePath)` as its Interface. The module landed at `src/resources/extensions/gsd/state-reconciliation.ts` (57 lines) but its current implementation only invalidates the state cache and calls `deriveState`. The Interface returns `repaired: readonly string[]` but the only value ever returned is `["derive-state-cache-invalidated"]` — the cache invalidation itself, dressed up as a repair.

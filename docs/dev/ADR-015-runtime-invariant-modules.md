@@ -1,5 +1,7 @@
 # ADR-015: Make Runtime Invariants First-Class Modules
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended and retained.** Deep Worktree Safety, Recovery Classification, and Tool Contract modules remain valid. State Reconciliation is restricted to typed database-invariant repair and may never restore authority from disk.
+
 **Status:** Accepted
 **Date:** 2026-05-05
 **Author:** GSD architecture review

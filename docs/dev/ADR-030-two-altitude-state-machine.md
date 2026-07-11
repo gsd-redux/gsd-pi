@@ -3,6 +3,8 @@
 
 # ADR-030: Two-Altitude State Machine — Phase Transition Invariant, Status Transition Core, Typed Vocabulary
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended.** The Single Writer chokepoint and typed transition vocabulary remain valid. In-memory phase authority, `skipped` as a completion-like status, and filesystem replay into authority are superseded by the persisted Lifecycle Kernel and database-only state.
+
 **Status:** Accepted
 **Date:** 2026-06-09
 **Author:** GSD architecture review

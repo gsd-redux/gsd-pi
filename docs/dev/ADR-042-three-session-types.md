@@ -1,5 +1,7 @@
 # ADR-042: Three Session Types — SessionManager, AgentSession, AutoSession
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended and retained.** Session-type separation and host lifecycle ownership remain valid. `AutoSession` and other process-local session state cannot own durable workflow lifecycle; the project database and Lifecycle Kernel do.
+
 **Status:** Accepted  
 **Date:** 2026-06-28  
 **Context:** Pi/TUI state refactor Phase 0

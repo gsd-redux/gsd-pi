@@ -1,5 +1,7 @@
 # ADR-041: Engine Hook Contract
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended and retained.** The hook fire matrix and tool-name normalization remain valid. Hooks may submit typed results to the Lifecycle Kernel, but lifecycle correctness cannot depend on native-only hooks or hook-owned state transitions.
+
 ## Status
 
 Accepted (2026-06-12)

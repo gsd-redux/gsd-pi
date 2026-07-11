@@ -1,5 +1,7 @@
 # ADR-039: Consent Question module with per-kind fail policy
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded.** Explicit question kinds and a narrow, fail-closed consent boundary remain valid. The process-local consent-question lifecycle and broad pause routing are replaced by persisted Interaction kinds, durable answers and decisions, and branch-scoped human blocking.
+
 ## Status
 
 Accepted (2026-06-12)

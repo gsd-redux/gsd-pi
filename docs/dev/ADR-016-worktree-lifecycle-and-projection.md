@@ -5,6 +5,14 @@
 **Author:** GSD architecture review
 **Related:** ADR-014 (deep Auto Orchestration module), ADR-015 (runtime invariant modules), ADR-001 (branchless worktree architecture)
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> retains Worktree Lifecycle ownership of source isolation and typed
+> create/enter/exit/merge mechanics. It supersedes workflow-state copying,
+> worktree-local database authority, and reconciliation between root and
+> worktree state: every worktree uses the one project database, while readable
+> files are non-authoritative projections rebuilt from it. The body below is
+> retained as history.
+
 ## Context
 
 Worktree handling currently lives in two places:

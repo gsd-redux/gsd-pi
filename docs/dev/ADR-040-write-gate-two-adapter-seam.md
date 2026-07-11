@@ -1,5 +1,7 @@
 # ADR-040: Write-gate two-process seam — host/child adapters, merged snapshot writes
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded.** Cross-process write coordination and fail-closed protected actions remain valid requirements. File-backed host/child snapshot adapters are replaced by atomic Domain Operations with expected revisions, fencing, idempotency, and a monotonic Authority Epoch.
+
 ## Status
 
 Accepted (2026-06-12)

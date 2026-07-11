@@ -3,6 +3,8 @@
 
 # ADR-034: Finish the Merge Verb; Split Publication Out
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Amended and retained.** Merge and publication remain separate mechanics. Required source, worktree, and Git effects settle with receipts before completion; publication remains non-authoritative and follows explicit consent and policy.
+
 **Status:** Accepted
 **Date:** 2026-06-10
 **Author:** GSD architecture review

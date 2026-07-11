@@ -3,6 +3,14 @@
 **Status:** Accepted
 **Date:** 2026-06-03
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> retains shared progression enforcement, typed Recovery Classification,
+> explicit remediation routing, and stable finding deduplication. The shared
+> Lifecycle Kernel replaces Auto-specific enforcement; fresh database
+> Verification Evidence and Technical Verdicts replace artifact-derived gate
+> authority; machine-fixable failures create remediation, and only the narrow
+> human-only taxonomy may pause. The body below is retained as history.
+
 Post-Unit Gates block Unit progression, so gate enforcement belongs to Auto Orchestration and post-unit finalization rather than the hook registry. The registry should identify configured Post-Unit Hooks, preserve hook state, and provide active hook metadata; it should not decide whether auto-mode may advance.
 
 Failed, cancelled, timed-out, or unverified gate execution should flow through Recovery Classification so runtime failures produce the same retry, pause, or remediation behavior as other Unit failures. This keeps progression decisions in the orchestration layer while still allowing Advisory Post-Unit Hooks to record outcomes without blocking advancement.

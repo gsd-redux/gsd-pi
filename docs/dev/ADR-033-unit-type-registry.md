@@ -3,6 +3,8 @@
 
 # ADR-033: Unit Registry — One Declaration per Unit Type
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Retained with a scope boundary.** The Unit Registry remains the source for adapter, prompt, phase-routing, and tool metadata. It does not own lifecycle progression, dependency scheduling, claims, recovery, or completion.
+
 **Status:** Accepted
 **Date:** 2026-06-10
 **Author:** GSD architecture review

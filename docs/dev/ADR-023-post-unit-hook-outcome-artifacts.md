@@ -3,6 +3,13 @@
 **Status:** Accepted
 **Date:** 2026-06-03
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> supersedes artifact frontmatter as a canonical outcome, required-work,
+> idempotency, or routing contract. Hook artifacts and frontmatter may remain
+> human-readable projections or durable output references, but immutable
+> Verification Evidence, Technical Verdicts, and recovery routing live in the
+> project database. The body below is retained as history.
+
 Post-Unit Hook Outcomes use YAML frontmatter on the configured hook artifact as the canonical machine-readable contract. The artifact body remains human-readable review, verification, or diagnostic prose, while frontmatter records the verdict, severity, and required work needed for orchestration decisions.
 
 Hook-authored verdicts describe the finding. Hook execution state is recorded separately by the runtime, so a cancelled, timed-out, or failed hook is not represented by a `failed` verdict in the artifact.

@@ -5,6 +5,13 @@
 **Deciders:** Jeremy McSpadden, GSD Core Team
 **Related:** ADR-001 (worktree architecture), ADR-003 (pipeline simplification), ADR-004 (capability-aware routing), ADR-005 (multi-provider strategy), ADR-008 (tools over MCP)
 
+> **ADR-046 disposition:** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> supersedes this ADR's workflow-orchestration design: the six-plane UOK, DAG
+> scheduler, JSONL recovery authority, mandatory git action per turn, and
+> emergency legacy decision loop are not current architecture. Capability-based
+> model eligibility, provider/TOS policy, and automation-first testing remain
+> valid outside lifecycle authority. The body below is retained as history.
+
 ## Context
 
 GSD already ships many advanced features:

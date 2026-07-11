@@ -3,6 +3,8 @@
 
 # ADR-035: Projection Rides the Write — Dirty Scope and One Flush Seam
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded before adoption.** The goal of deriving readable artifacts from authoritative writes remains valid. Process-local dirty scope and the synchronous flush seam are replaced by durable, revision-aware Projection Work stored with the domain mutation.
+
 **Status:** Proposed — adopt when the trigger condition fires (see "Trigger")
 **Date:** 2026-06-10
 **Author:** GSD architecture review

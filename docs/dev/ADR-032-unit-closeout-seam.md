@@ -3,6 +3,8 @@
 
 # ADR-032: Unit Closeout Module — One Seam, Two Adapters
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded.** The diagnosis that all execution paths need one closeout boundary remains valid. The Unit Closeout module contract is replaced by persisted `prepareCloseout` and `settleCloseout`, with required effects proven by Settlement Receipts before completion unlocks dependencies.
+
 **Status:** Accepted
 **Date:** 2026-06-10
 **Author:** GSD architecture review
