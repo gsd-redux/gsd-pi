@@ -407,6 +407,38 @@ test("checkEngineHealth reports artifact rows whose files are missing on disk", 
   assert.equal(missing.fixable, false);
 });
 
+test("checkEngineHealth resolves artifact rows through the canonical milestone worktree", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-artifact-worktree-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  const gsdDir = join(base, ".gsd");
+  const artifactPath = "phases/03-milestone/03-01-PLAN.md";
+  const worktree = join(base, ".gsd-worktrees", "M003");
+  mkdirSync(gsdDir, { recursive: true });
+  mkdirSync(join(worktree, ".gsd", "phases", "03-milestone"), { recursive: true });
+  writeFileSync(join(worktree, ".git"), `gitdir: ${join(base, ".git", "worktrees", "M003")}\n`);
+  writeFileSync(join(worktree, ".gsd", artifactPath), "# Plan\n", "utf-8");
+
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertArtifact({
+    path: artifactPath,
+    artifact_type: "PLAN",
+    milestone_id: "M003",
+    slice_id: "S01",
+    task_id: null,
+    full_content: "# Plan\n",
+  });
+
+  const issues: any[] = [];
+  await checkEngineHealth(base, issues, []);
+
+  assert.equal(
+    issues.some((issue) => issue.code === "artifact_file_missing" && issue.file === artifactPath),
+    false,
+    "worktree-local artifact rows must not be reported missing from the project root",
+  );
+});
+
 test("checkEngineHealth resolves escaped .gsd artifact rows against the project .gsd directory", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-doctor-escaped-artifact-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));

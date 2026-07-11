@@ -194,7 +194,7 @@ function artifactExistsOnDisk(basePath: string, artifactPath: string, row?: Arti
   return resolveArtifactDiskPath(basePath, artifactPath, row) !== null;
 }
 
-function resolveLiteralArtifactDiskPath(basePath: string, artifactPath: string): string | null {
+function resolveLiteralArtifactDiskPath(basePath: string, artifactPath: string, row?: ArtifactRow): string | null {
   const relativeArtifactPath = artifactPathRelativeToGsd(artifactPath);
   if (isAbsolute(relativeArtifactPath)) {
     return existsSync(relativeArtifactPath) ? relativeArtifactPath : null;
@@ -202,6 +202,15 @@ function resolveLiteralArtifactDiskPath(basePath: string, artifactPath: string):
   for (const root of [gsdProjectionRoot(basePath), gsdRoot(basePath)]) {
     const candidate = join(root, relativeArtifactPath);
     if (isPathInside(root, candidate) && existsSync(candidate)) return candidate;
+  }
+  if (row?.milestone_id) {
+    const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, row.milestone_id);
+    if (artifactBasePath !== basePath) {
+      for (const root of [gsdProjectionRoot(artifactBasePath), gsdRoot(artifactBasePath)]) {
+        const candidate = join(root, relativeArtifactPath);
+        if (isPathInside(root, candidate) && existsSync(candidate)) return candidate;
+      }
+    }
   }
   return null;
 }
@@ -245,7 +254,7 @@ function resolveArtifactDiskPath(basePath: string, artifactPath: string, row?: A
     const flatPath = resolveFlatPhaseArtifactDiskPath(basePath, row);
     if (flatPath) return flatPath;
   }
-  return resolveLiteralArtifactDiskPath(basePath, artifactPath);
+  return resolveLiteralArtifactDiskPath(basePath, artifactPath, row);
 }
 
 function taskExistsInPlan(basePath: string, milestoneId: string, sliceId: string, taskId: string): boolean {
