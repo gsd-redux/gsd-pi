@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conversation contract prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f1ea;
+      color: #1f2933;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
+
+    header {
+      padding: 28px clamp(20px, 4vw, 56px) 20px;
+      border-bottom: 1px solid #d8d2c7;
+      background: #fffdf8;
+    }
+
+    h1 { margin: 0 0 8px; font-size: clamp(24px, 4vw, 38px); }
+    h2 { margin-top: 0; font-size: 19px; }
+    p { line-height: 1.55; }
+    .lede { max-width: 780px; margin: 0; color: #52606d; }
+
+    nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 16px clamp(20px, 4vw, 56px);
+      background: #ebe6dc;
+      border-bottom: 1px solid #d8d2c7;
+    }
+
+    nav button, .actions button {
+      border: 1px solid #8f826d;
+      border-radius: 999px;
+      padding: 9px 14px;
+      background: #fffdf8;
+      color: #243b53;
+    }
+
+    nav button[aria-pressed="true"], .actions button.primary {
+      border-color: #173f5f;
+      background: #173f5f;
+      color: white;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(360px, .9fr);
+      gap: 18px;
+      padding: 20px clamp(20px, 4vw, 56px) 88px;
+    }
+
+    .panel {
+      min-width: 0;
+      padding: 20px;
+      border: 1px solid #d8d2c7;
+      border-radius: 16px;
+      background: #fffdf8;
+      box-shadow: 0 8px 24px rgba(58, 48, 36, .06);
+    }
+
+    .chat {
+      display: grid;
+      gap: 12px;
+      min-height: 240px;
+      margin-bottom: 18px;
+    }
+
+    .message {
+      max-width: 88%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      line-height: 1.5;
+      white-space: pre-line;
+    }
+
+    .agent { background: #e7f0f5; border-bottom-left-radius: 4px; }
+    .user { justify-self: end; background: #efe7d3; border-bottom-right-radius: 4px; }
+    .system { max-width: 100%; background: #edf4ec; color: #2f5d3a; }
+
+    .recommendation {
+      margin: 10px 0;
+      padding: 12px;
+      border-left: 4px solid #c47f17;
+      background: #fff6dc;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 86px;
+      resize: vertical;
+      padding: 10px;
+      border: 1px solid #9aa5b1;
+      border-radius: 10px;
+      background: white;
+    }
+
+    .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 10px; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .metric { padding: 10px; border-radius: 10px; background: #f1eee7; }
+    .metric strong { display: block; margin-bottom: 3px; color: #52606d; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+
+    pre {
+      max-height: 470px;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 10px;
+      background: #17212b;
+      color: #d9e2ec;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .checks { margin-top: 16px; padding-top: 14px; border-top: 1px solid #d8d2c7; }
+    .checks ul { padding-left: 20px; }
+    .pass { color: #236b36; }
+    .fail { color: #a61b1b; }
+
+    footer {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      width: min(720px, calc(100% - 28px));
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #17212b;
+      color: white;
+      text-align: center;
+      box-shadow: 0 8px 26px rgba(0, 0, 0, .22);
+      font-size: 13px;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <!-- PROTOTYPE — throw away after the conversation contract is decided.
+       Question: can one small state model make recommendations, pushback,
+       restart, recaps, and UAT feel natural without creating routine gates? -->
+  <header>
+    <h1>Conversation contract prototype</h1>
+    <p class="lede">Drive three difficult cases and inspect the canonical state after every action. The prototype tests behavior and persistence shape, not production styling.</p>
+  </header>
+
+  <nav aria-label="Prototype scenarios">
+    <button data-scenario="discovery" aria-pressed="true">1 · Recommendation and pushback</button>
+    <button data-scenario="restart" aria-pressed="false">2 · Restart exactly once</button>
+    <button data-scenario="uat" aria-pressed="false">3 · Automated and subjective UAT</button>
+  </nav>
+
+  <main>
+    <section class="panel" aria-labelledby="conversation-heading">
+      <h2 id="conversation-heading">Conversation</h2>
+      <div id="chat" class="chat" aria-live="polite"></div>
+      <div id="controls"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="state-heading">
+      <h2 id="state-heading">Canonical state</h2>
+      <div class="metrics">
+        <div class="metric"><strong>Next action</strong><span id="next-action"></span></div>
+        <div class="metric"><strong>Blocked scopes</strong><span id="blocked-scopes"></span></div>
+        <div class="metric"><strong>Decisions</strong><span id="decision-count"></span></div>
+        <div class="metric"><strong>Answer events</strong><span id="answer-event-count"></span></div>
+        <div class="metric"><strong>Revalidation</strong><span id="revalidation-scopes"></span></div>
+        <div class="metric"><strong>Remediation</strong><span id="remediation-count"></span></div>
+        <div class="metric"><strong>Human questions</strong><span id="human-question-count"></span></div>
+        <div class="metric"><strong>Latest verbatim answer</strong><span id="verbatim-answer"></span></div>
+      </div>
+      <pre id="state-json" aria-label="Serialized canonical state"></pre>
+      <div class="checks">
+        <button class="primary" data-action="run-checks">Run contract checks</button>
+        <strong id="check-summary" aria-live="polite">Not run</strong>
+        <ul id="check-results"></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer>Keyboard: 1–3 switch scenarios · R restarts · C runs contract checks</footer>
+
+  <script>
+    "use strict";
+
+    let scenario = "discovery";
+    let state = createDiscoveryState();
+
+    function createEmptyState() {
+      return {
+        revision: 0,
+        work: { id: "project-demo", status: "in_progress" },
+        openQuestions: [],
+        answerEvents: [],
+        decisions: [],
+        checkpoints: [],
+        revalidation: [],
+        blockers: [],
+        remediation: [],
+        evidence: [],
+        recaps: []
+      };
+    }
+
+    function reduce(current, event) {
+      const next = structuredClone(current);
+
+      if (event.type === "OPEN_QUESTION") {
+        if (!next.openQuestions.some(function (question) { return question.id === event.question.id; })) {
+          next.openQuestions.push(event.question);
+        }
+        return next;
+      }
+
+      if (event.type === "ANSWER") {
+        const question = next.openQuestions.find(function (candidate) { return candidate.id === event.questionId; });
+        if (!question || question.status === "answered") return next;
+
+        question.status = "answered";
+        next.revision += 1;
+        next.answerEvents.push({
+          id: "answer-" + next.revision,
+          questionId: question.id,
+          verbatim: event.verbatim,
+          interpretation: event.interpretation
+        });
+        next.decisions.push({
+          id: "decision-" + next.revision,
+          questionId: question.id,
+          choice: event.choice,
+          rationale: event.rationale,
+          supersedes: null,
+          supersededBy: null
+        });
+        checkpoint(next, "Answer accepted");
+        return next;
+      }
+
+      if (event.type === "CORRECTION") {
+        const previous = latestActiveDecision(next);
+        if (!previous) return next;
+
+        next.revision += 1;
+        const replacement = {
+          id: "decision-" + next.revision,
+          questionId: previous.questionId,
+          choice: event.choice,
+          rationale: event.rationale,
+          supersedes: previous.id,
+          supersededBy: null
+        };
+        previous.supersededBy = replacement.id;
+        next.decisions.push(replacement);
+        next.revalidation = unique(next.revalidation.concat(event.affectedScopes));
+        checkpoint(next, "Correction accepted");
+        return next;
+      }
+
+      if (event.type === "RECAP_RECORDED") {
+        next.revision += 1;
+        next.recaps.push({ id: "recap-" + next.revision, text: event.text });
+        checkpoint(next, "Nonblocking recap recorded");
+        return next;
+      }
+
+      if (event.type === "CONSENT_UNANSWERED") {
+        const question = next.openQuestions.find(function (candidate) { return candidate.id === event.questionId; });
+        if (!question || !["consent", "subjective-uat"].includes(question.kind)) return next;
+        if (!next.blockers.some(function (blocker) { return blocker.questionId === question.id; })) {
+          next.blockers.push({ questionId: question.id, scope: question.scope, reason: event.reason });
+        }
+        return next;
+      }
+
+      if (event.type === "UAT_EVIDENCE_RECORDED") {
+        next.revision += 1;
+        next.evidence.push({ verdict: event.verdict, scope: event.scope });
+        if (event.verdict === "FAIL") {
+          next.remediation.push({ scope: event.scope, reason: "Automated UAT failed" });
+        }
+        checkpoint(next, "Automated UAT evidence recorded");
+        return next;
+      }
+
+      if (event.type === "RESTART") {
+        return JSON.parse(JSON.stringify(next));
+      }
+
+      throw new Error("Unknown event: " + event.type);
+    }
+
+    function checkpoint(target, summary) {
+      target.checkpoints.push({
+        revision: target.revision,
+        summary,
+        openQuestionIds: target.openQuestions.filter(function (question) { return question.status === "open"; }).map(function (question) { return question.id; })
+      });
+    }
+
+    function latestActiveDecision(target) {
+      return [...target.decisions].reverse().find(function (decision) { return !decision.supersededBy; });
+    }
+
+    function unique(values) {
+      return [...new Set(values)];
+    }
+
+    function derive(target) {
+      const blockedScopes = unique(target.blockers.map(function (blocker) { return blocker.scope; }));
+      const nextQuestion = target.openQuestions.find(function (question) { return question.status === "open"; });
+      let nextAction = "Continue to the next task";
+      if (nextQuestion) nextAction = "Ask stable question " + nextQuestion.id;
+      if (blockedScopes.length) nextAction = "Wait for " + blockedScopes.join(", ");
+      return { blockedScopes, nextAction };
+    }
+
+    function question(input) {
+      return Object.assign({
+        status: "open",
+        required: true,
+        options: [],
+        recommendation: null,
+        confidence: null,
+        uncertainty: null
+      }, input);
+    }
+
+    function createDiscoveryState() {
+      return reduce(createEmptyState(), {
+        type: "OPEN_QUESTION",
+        question: question({
+          id: "q-direction",
+          kind: "choice",
+          scope: "discovery",
+          prompt: "Which direction should we use for the first release?",
+          options: ["local-first", "hosted-first", "hybrid"],
+          recommendation: "local-first",
+          confidence: "high",
+          uncertainty: "A hard multi-device requirement would change this recommendation."
+        })
+      });
+    }
+
+    function createRestartState() {
+      return reduce(createEmptyState(), {
+        type: "OPEN_QUESTION",
+        question: question({
+          id: "q-restart",
+          kind: "open",
+          scope: "discovery",
+          prompt: "What should someone accomplish in their first ten minutes?"
+        })
+      });
+    }
+
+    function createUatState() {
+      return createEmptyState();
+    }
+
+    function setScenario(nextScenario) {
+      scenario = nextScenario;
+      if (scenario === "discovery") state = createDiscoveryState();
+      if (scenario === "restart") state = createRestartState();
+      if (scenario === "uat") state = createUatState();
+      render();
+    }
+
+    function dispatch(event) {
+      state = reduce(state, event);
+      render();
+    }
+
+    function render() {
+      document.querySelectorAll("[data-scenario]").forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.scenario === scenario));
+      });
+      renderConversation();
+      renderState();
+    }
+
+    function renderConversation() {
+      const chat = document.querySelector("#chat");
+      const controls = document.querySelector("#controls");
+      if (scenario === "discovery") renderDiscovery(chat, controls);
+      if (scenario === "restart") renderRestart(chat, controls);
+      if (scenario === "uat") renderUat(chat, controls);
+    }
+
+    function renderDiscovery(chat, controls) {
+      const active = latestActiveDecision(state);
+      const answer = state.answerEvents.at(-1);
+      chat.innerHTML = [
+        message("agent", "You want a dependable first release without a lot of operational work."),
+        message("agent", "Which direction should we use for the first release?\n\nLocal-first · Hosted-first · Hybrid"),
+        '<div class="recommendation"><strong>My recommendation: Local-first</strong><br>It keeps setup and operating cost low while we validate the core workflow.<br><strong>Confidence:</strong> High<br><strong>Could change if:</strong> multi-device access is required immediately.</div>',
+        answer ? message("user", answer.verbatim) : "",
+        active && active.supersedes ? message("agent", "That changes the tradeoff. I’m revising the decision to Hybrid and marking requirements and roadmap work for revalidation.") : "",
+        state.recaps.length ? message("system", "Here’s what I’m carrying forward: start local-first, preserve a hosted path, and re-check downstream assumptions. This recap does not pause work.") : ""
+      ].join("");
+
+      controls.innerHTML = '<label for="freeform-answer"><strong>Push back or answer in your own words</strong></label>' +
+        '<textarea id="freeform-answer">I prefer the smaller local-first route.</textarea>' +
+        '<div class="actions">' +
+          '<button class="primary" data-action="pushback">Answer with pushback</button>' +
+          '<button data-action="correct">Correct the decision</button>' +
+          '<button data-action="recap">Record nonblocking recap</button>' +
+        '</div>';
+    }
+
+    function renderRestart(chat, controls) {
+      const answered = state.answerEvents.length > 0;
+      chat.innerHTML = message("agent", "What should someone accomplish in their first ten minutes?") +
+        (answered ? message("user", state.answerEvents[0].verbatim) : "") +
+        message("system", answered ? "Restart reconstructed completed question state without re-asking it." : "Restart will reconstruct this same stable question from canonical state.");
+      controls.innerHTML = '<div class="actions">' +
+        '<button class="primary" data-action="restart">Restart from serialized state</button>' +
+        '<button data-action="answer-restart">Answer once</button>' +
+      '</div>';
+    }
+
+    function renderUat(chat, controls) {
+      chat.innerHTML = message("agent", "I’ll run everything observable before asking you.") +
+        (state.remediation.length ? message("system", "Automated UAT failed. Remediation was scheduled without asking for routine approval.") : "") +
+        (state.blockers.length ? message("agent", "One required experience check remains unanswered: does the interaction feel clear? Only subjective UAT is paused.") : "");
+      controls.innerHTML = '<div class="actions">' +
+        '<button class="primary" data-action="uat-fail">Record automated UAT failure</button>' +
+        '<button data-action="uat-pass">Record automated UAT pass</button>' +
+        '<button data-action="subjective-timeout">Time out subjective UAT</button>' +
+      '</div>';
+    }
+
+    function message(kind, text) {
+      return '<div class="message ' + kind + '">' + escapeHtml(text) + '</div>';
+    }
+
+    function escapeHtml(text) {
+      const container = document.createElement("div");
+      container.textContent = text;
+      return container.innerHTML;
+    }
+
+    function renderState() {
+      const derived = derive(state);
+      setText("#next-action", derived.nextAction);
+      setText("#blocked-scopes", derived.blockedScopes.join(", ") || "None");
+      setText("#decision-count", String(state.decisions.length));
+      setText("#answer-event-count", String(state.answerEvents.length));
+      setText("#revalidation-scopes", state.revalidation.join(", ") || "None");
+      setText("#remediation-count", String(state.remediation.length));
+      setText("#human-question-count", String(state.openQuestions.filter(function (item) { return item.kind === "subjective-uat"; }).length));
+      setText("#verbatim-answer", state.answerEvents.at(-1)?.verbatim || "None");
+      document.querySelector("#state-json").textContent = JSON.stringify({ state, derived }, null, 2);
+    }
+
+    function setText(selector, text) {
+      document.querySelector(selector).textContent = text;
+    }
+
+    function handleAction(action) {
+      switch (action) {
+        case "pushback": {
+          const verbatim = document.querySelector("#freeform-answer").value;
+          dispatch({ type: "ANSWER", questionId: "q-direction", verbatim, interpretation: "Prefer local-first with minimal scope", choice: "local-first", rationale: "User prioritizes a smaller first release" });
+          break;
+        }
+        case "correct":
+          dispatch({ type: "CORRECTION", choice: "hybrid", rationale: "User correction changes the tradeoff", affectedScopes: ["requirements", "roadmap"] });
+          break;
+        case "recap":
+          dispatch({ type: "RECAP_RECORDED", text: "Carry revised direction forward" });
+          break;
+        case "restart":
+          dispatch({ type: "RESTART" });
+          break;
+        case "answer-restart":
+          dispatch({ type: "ANSWER", questionId: "q-restart", verbatim: "Finish one meaningful workflow.", interpretation: "First-run success is one completed workflow", choice: "free-form", rationale: "Direct user outcome" });
+          break;
+        case "uat-fail":
+          dispatch({ type: "UAT_EVIDENCE_RECORDED", verdict: "FAIL", scope: "automated-uat" });
+          break;
+        case "uat-pass":
+          dispatch({ type: "UAT_EVIDENCE_RECORDED", verdict: "PASS", scope: "automated-uat" });
+          break;
+        case "subjective-timeout":
+          state = reduce(state, { type: "OPEN_QUESTION", question: question({ id: "q-subjective", kind: "subjective-uat", scope: "subjective-uat", prompt: "Does this interaction feel clear?" }) });
+          dispatch({ type: "CONSENT_UNANSWERED", questionId: "q-subjective", reason: "timeout" });
+          break;
+        case "run-checks":
+          renderChecks(runContractChecks());
+          break;
+      }
+    }
+
+    function runContractChecks() {
+      const checks = [];
+      let sample = createDiscoveryState();
+      sample = reduce(sample, { type: "ANSWER", questionId: "q-direction", verbatim: "Local first", interpretation: "local-first", choice: "local-first", rationale: "smaller" });
+      checks.push(result("Answer commits event, decision, and checkpoint together", sample.answerEvents.length === 1 && sample.decisions.length === 1 && sample.checkpoints.length === 1));
+
+      sample = reduce(sample, { type: "CORRECTION", choice: "hybrid", rationale: "correction", affectedScopes: ["requirements"] });
+      checks.push(result("Correction preserves history and marks revalidation", sample.decisions.length === 2 && sample.decisions[0].supersededBy === sample.decisions[1].id && sample.revalidation.includes("requirements")));
+
+      const beforeRecapBlockers = sample.blockers.length;
+      sample = reduce(sample, { type: "RECAP_RECORDED", text: "summary" });
+      checks.push(result("Recap never creates a gate", sample.blockers.length === beforeRecapBlockers));
+
+      let consent = reduce(createEmptyState(), { type: "OPEN_QUESTION", question: question({ id: "consent", kind: "consent", scope: "publish", prompt: "Publish?" }) });
+      consent = reduce(consent, { type: "CONSENT_UNANSWERED", questionId: "consent", reason: "cancelled" });
+      checks.push(result("Only consent or subjective UAT can block", derive(consent).blockedScopes[0] === "publish"));
+
+      const uat = reduce(createEmptyState(), { type: "UAT_EVIDENCE_RECORDED", verdict: "FAIL", scope: "browser" });
+      checks.push(result("Automated UAT failure creates remediation without a human question", uat.remediation.length === 1 && uat.openQuestions.length === 0));
+
+      const restart = createRestartState();
+      const restarted = reduce(restart, { type: "RESTART" });
+      checks.push(result("Restart derives the same question without duplicate events", derive(restarted).nextAction === derive(restart).nextAction && restarted.answerEvents.length === 0 && restarted.openQuestions.length === 1));
+      return checks;
+    }
+
+    function result(name, passed) {
+      return { name, passed };
+    }
+
+    function renderChecks(checks) {
+      const passed = checks.filter(function (check) { return check.passed; }).length;
+      const summary = passed + "/" + checks.length + " contract checks pass";
+      setText("#check-summary", summary);
+      document.querySelector("#check-summary").className = passed === checks.length ? "pass" : "fail";
+      document.querySelector("#check-results").innerHTML = checks.map(function (check) {
+        return '<li class="' + (check.passed ? "pass" : "fail") + '">' + (check.passed ? "PASS · " : "FAIL · ") + escapeHtml(check.name) + '</li>';
+      }).join("");
+    }
+
+    document.addEventListener("click", function (event) {
+      const scenarioButton = event.target.closest("[data-scenario]");
+      if (scenarioButton) setScenario(scenarioButton.dataset.scenario);
+      const actionButton = event.target.closest("[data-action]");
+      if (actionButton) handleAction(actionButton.dataset.action);
+    });
+
+    document.addEventListener("keydown", function (event) {
+      if (["INPUT", "TEXTAREA"].includes(event.target.tagName) || event.target.isContentEditable) return;
+      if (event.key === "1") setScenario("discovery");
+      if (event.key === "2") setScenario("restart");
+      if (event.key === "3") setScenario("uat");
+      if (event.key.toLowerCase() === "r") handleAction("restart");
+      if (event.key.toLowerCase() === "c") handleAction("run-checks");
+    });
+
+    render();
+  </script>
+</body>
+</html>

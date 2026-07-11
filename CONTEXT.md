@@ -9,6 +9,10 @@
 - **Task**: the smallest planned piece of work whose completion produces evidence toward a Slice.
 - **Planning Horizon**: an advisory start, end, or review window for long-running work. A missed horizon prompts review and reforecasting; it is not a timeout, readiness gate, or failure.
 - **Open Question**: an unresolved choice scoped to work, carrying the current recommendation, rationale, alternatives, uncertainty, and a condition for revisiting it.
+- **Conversation Kind**: the interaction contract for an Open Question or update: open, choice, clarification, recap, consent, or subjective UAT. Kind determines whether an answer is required and whether affected work may pause.
+- **Nonblocking Recap**: a concise statement of decisions, assumptions, and uncertainty offered for correction while reversible work continues.
+- **Consent**: explicit authorization for an irreversible, public, paid, destructive, or account-level action. Silence, cancellation, and timeout are never Consent.
+- **Subjective UAT**: an acceptance check that requires a person's experiential judgment because tools cannot observe the result.
 - **Work Checkpoint**: a durable summary of confirmed context, unresolved questions, evidence, and suggested next work at a meaningful resume boundary.
 - **Lifecycle Status**: where a Milestone, Slice, or Task is in its durable progression: pending, ready, in progress, paused, completed, or cancelled.
 - **Attempt Result**: the immutable result of one execution attempt: succeeded, failed, or interrupted. An Attempt Result does not by itself complete or cancel the work.
