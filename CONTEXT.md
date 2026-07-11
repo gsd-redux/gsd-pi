@@ -88,7 +88,12 @@ completed.
 - **`tool-unavailable` (Recovery kind)**: the Recovery Classification failure kind for a tool call that raced the workflow MCP server's registration (`No such tool available` / a Tool Surface Readiness abort). Transient — action `retry` with bounded attempts and its own exit reason; distinct from `tool-schema`/`tool-contract`, which are deterministic stops. The system retries; the model must never improvise a fallback around a missing workflow tool.
 - **Workflow Bridge Warm-up**: the stdio MCP server's eager load + shape-check of the executor and write-gate bridges at startup. A broken bridge fails the spawn with the actionable error (fail closed) instead of advertising tools that error on first call; a healthy spawn pre-pays the bridge import.
 
-## Architecture terms adopted for this area
+## Current pre-cutover architecture
+
+> [ADR-046](docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md)
+> defines the accepted post-cutover direction. The entries below describe the
+> current pre-cutover runtime only. Future-looking recommendations inherited
+> from earlier ADRs are historical and do not override ADR-046.
 
 - **Auto Orchestration module**: the module that owns the pre-dispatch invariant pipeline and lifecycle telemetry. It runs the resource-version guard and pre-dispatch health gate before reconciliation, then gates whether a Unit may dispatch (resource-version guard → pre-dispatch health gate → State Reconciliation → Dispatch decision → Tool Contract → Worktree Safety) and journals lifecycle transitions, but does not execute the Unit or own runtime recovery for Unit-execution failures. The auto-loop runs the Unit and calls Recovery Classification directly when it fails.
 - **Dispatch adapter**: adapter behind the Dispatch seam.
@@ -263,7 +268,7 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
 - Tool-hook guarantees are declared once in the **Engine Hook Contract**; decision reads of markdown projections are banned from dispatch/gate/completion paths (structural test `tests/parsers-legacy-importers.test.ts`; allowlist with per-entry justification). Open follow-up from the contract work: nine `tool_call`-only guards have no universal-hook mirror and are silently dead under external engines — see ADR-041's consequences for the list. See `docs/dev/ADR-041-engine-hook-contract.md`.
 
-- **Proposed, not in force:** projection-after-write moves from an 11-site caller convention to Dirty Projection Scope marking at the write seam plus one Projection Flush seam. Contradicts the Domain Write Operation scoping note above ("markdown re-projection … remain in callers") — adopt only when the recorded trigger fires (recurring `stale-render` drift in telemetry, or a mutation surface that bypasses `reconcileBeforeDispatch`; note the Interactive Closeout adapter from ADR-032 is exactly such a surface candidate — watch it).
+- **Historical proposal, superseded before adoption:** ADR-035 proposed moving projection-after-write from an 11-site caller convention to Dirty Projection Scope marking at the write seam plus one Projection Flush seam. ADR-046 replaces that process-local design with durable, revision-aware Projection Work stored with the Domain Operation.
 
   See `docs/dev/ADR-035-projection-dirty-scope.md`.
 

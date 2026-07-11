@@ -321,8 +321,8 @@ available through that window and at least one later stable release.
 | ADR-042 Three Session Types | Session separation retained; durable GSD lifecycle moves out of AutoSession. |
 | ADR-045 Flat-Phase Migration | Superseded before adoption; legacy layouts are explicit import/export formats, not startup authority. |
 
-Each superseded or amended ADR receives a short top-of-file status notice
-linking here as its documentation task lands. Historical bodies remain intact.
+Each superseded or amended ADR has a short top-of-file status notice linking
+here. Historical bodies remain intact.
 
 ## Implementation boundary and references
 
