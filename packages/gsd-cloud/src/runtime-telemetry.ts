@@ -125,7 +125,7 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
       version: 1,
       pid: process.pid,
       state: "connecting",
-      gateway_url: metadata.gatewayUrl,
+      gateway_url: credentialFreeGatewayLabel(metadata.gatewayUrl),
       ...(metadata.runtimeId ? { runtime_id: metadata.runtimeId } : {}),
       ...(metadata.runtimeName ? { runtime_name: metadata.runtimeName } : {}),
       started_at: now,
@@ -352,5 +352,15 @@ function credentialFreeRemoteLabel(remoteLabel: string): string {
     return remoteLabel
       .replace(/^[^/@]+@([^:]+):/, "$1:")
       .replace(/[?#].*$/, "");
+  }
+}
+
+function credentialFreeGatewayLabel(gatewayUrl: string): string {
+  try {
+    const url = new URL(gatewayUrl);
+    const path = url.pathname === "/" ? "" : url.pathname;
+    return `${url.protocol}//${url.host}${path}`;
+  } catch {
+    return "invalid gateway";
   }
 }

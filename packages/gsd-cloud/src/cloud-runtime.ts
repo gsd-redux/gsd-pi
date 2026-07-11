@@ -190,11 +190,11 @@ export class CloudRuntime {
       // not kill the runtime while a persistent outage still surfaces an error.
       this.initialConnectAttempts += 1;
       if (this.initialConnectAttempts >= INITIAL_CONNECT_ATTEMPTS) {
-        this.rejectFirstConnect(
-          new Error(
-            `cloud runtime connection failed after ${this.initialConnectAttempts} attempt(s)`,
-          ),
+        const error = new Error(
+          `cloud runtime connection failed after ${this.initialConnectAttempts} attempt(s)`,
         );
+        this.telemetry.socketError(error.message);
+        this.rejectFirstConnect(error);
         return;
       }
       this.logger.warn("cloud runtime initial connect failed; retrying", {

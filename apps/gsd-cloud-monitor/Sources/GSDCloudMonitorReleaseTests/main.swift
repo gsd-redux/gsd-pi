@@ -15,6 +15,8 @@ struct ReleasePackageTests {
     try Data("preserve".utf8).write(to: sentinel)
 
     try rejectsUnsafeBundleDestination(packageRoot: packageRoot, output: output)
+    try rejectsSymlinkedBundleParent(packageRoot: packageRoot, output: output)
+    try stagesIntoMissingTrustedDirectory(packageRoot: packageRoot)
     try rejectsInvalidVersion(packageRoot: packageRoot)
 
     try run(
@@ -108,6 +110,48 @@ struct ReleasePackageTests {
     )
     try expect(status != 0, "bundle staging must reject arbitrary destinations")
     try expect(FileManager.default.fileExists(atPath: sentinel.path), "unsafe staging must preserve destination contents")
+  }
+
+  static func stagesIntoMissingTrustedDirectory(packageRoot: URL) throws {
+    let buildRoot = packageRoot.appendingPathComponent(".build/staging-regression")
+    let app = buildRoot.appendingPathComponent("GSDCloudMonitor.app")
+    try? FileManager.default.removeItem(at: buildRoot)
+    defer { try? FileManager.default.removeItem(at: buildRoot) }
+
+    try run(
+      "/bin/bash",
+      [
+        packageRoot.appendingPathComponent("script/stage_app_bundle.sh").path,
+        "/usr/bin/true",
+        app.path,
+      ]
+    )
+    try expect(
+      FileManager.default.fileExists(atPath: app.path),
+      "bundle staging must create a missing trusted destination parent"
+    )
+  }
+
+  static func rejectsSymlinkedBundleParent(packageRoot: URL, output: URL) throws {
+    let link = packageRoot.appendingPathComponent(".build/staging-symlink")
+    let redirectedParent = output.appendingPathComponent("redirected")
+    try? FileManager.default.removeItem(at: link)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: output)
+    defer { try? FileManager.default.removeItem(at: link) }
+
+    let status = try terminationStatus(
+      "/bin/bash",
+      [
+        packageRoot.appendingPathComponent("script/stage_app_bundle.sh").path,
+        "/usr/bin/true",
+        link.appendingPathComponent("redirected/GSDCloudMonitor.app").path,
+      ]
+    )
+    try expect(status != 0, "bundle staging must reject symlinked parents outside the build tree")
+    try expect(
+      !FileManager.default.fileExists(atPath: redirectedParent.path),
+      "rejected staging must not create directories through an untrusted symlink"
+    )
   }
 
   static func rejectsInvalidVersion(packageRoot: URL) throws {

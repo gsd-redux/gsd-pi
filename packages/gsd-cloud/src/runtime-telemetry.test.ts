@@ -57,6 +57,31 @@ test("runtime telemetry persists connection state and traffic without credential
   }
 });
 
+test("runtime telemetry removes credentials from gateway metadata", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-gateway-metadata-"));
+  const telemetryPath = join(root, "cloud-runtime-status.json");
+
+  try {
+    const credentialed = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+      gatewayUrl: "https://user:password@cloud.example.com/runtime?access_token=secret#private",
+    });
+    await credentialed.flush();
+    const status = JSON.parse(readFileSync(telemetryPath, "utf8")) as { gateway_url: string };
+    assert.equal(status.gateway_url, "https://cloud.example.com/runtime");
+
+    const malformed = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+      gatewayUrl: "not a URL?access_token=secret#private",
+    });
+    await malformed.flush();
+    const raw = readFileSync(telemetryPath, "utf8");
+    assert.equal((JSON.parse(raw) as { gateway_url: string }).gateway_url, "invalid gateway");
+    assert.equal(raw.includes("secret"), false);
+    assert.equal(raw.includes("private"), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runtime telemetry publishes idle liveness until the runtime stops", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-idle-liveness-"));
   const telemetryPath = join(root, "cloud-runtime-status.json");

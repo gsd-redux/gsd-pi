@@ -19,6 +19,7 @@ struct RuntimeTelemetryTests {
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
     try legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath()
+    try savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths()
     try runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory()
     try diagnosticsRedactLocalPaths()
     try releaseVersionsCompareMonitorTags()
@@ -371,10 +372,11 @@ struct RuntimeTelemetryTests {
   }
 
   static func runtimeConfigurationsRoundTrip() throws {
+    let configPath = "/Users/example/.gsd/custom-runtime.yaml"
     let configuration = RuntimeConfiguration(
       name: "Studio Mac",
-      telemetryPath: "/Users/example/.gsd/cloud-runtime-status.json",
-      agentConfigPath: "/Users/example/.gsd/custom-runtime.yaml",
+      telemetryPath: RuntimeArtifactPaths(configPath: configPath).telemetryPath,
+      agentConfigPath: configPath,
       agentExecutablePath: "/opt/homebrew/bin/gsd-cloud"
     )
 
@@ -407,6 +409,27 @@ struct RuntimeTelemetryTests {
       """.utf8)
     let configuration = try JSONDecoder().decode(RuntimeConfiguration.self, from: data)
     try expect(configuration.configPath == "/work/state/daemon.yaml", "legacy config should retain default path")
+  }
+
+  static func savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths() throws {
+    let id = UUID()
+    let formerlyDerived = Data("""
+      {"id":"\(id.uuidString)","name":"Custom","telemetryPath":"/work/state/cloud-runtime-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
+      """.utf8)
+    let migrated = try JSONDecoder().decode(RuntimeConfiguration.self, from: formerlyDerived)
+    try expect(
+      migrated.telemetryPath == RuntimeArtifactPaths(configPath: migrated.configPath).telemetryPath,
+      "formerly derived custom telemetry paths must migrate to their namespaced path"
+    )
+
+    let explicit = Data("""
+      {"id":"\(id.uuidString)","name":"Custom","telemetryPath":"/var/run/custom-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
+      """.utf8)
+    let preserved = try JSONDecoder().decode(RuntimeConfiguration.self, from: explicit)
+    try expect(
+      preserved.telemetryPath == "/var/run/custom-status.json",
+      "explicit custom telemetry paths must be preserved"
+    )
   }
 
   static func runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory() throws {

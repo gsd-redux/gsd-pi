@@ -21,7 +21,33 @@ if [[ "$(basename "$APP_BUNDLE")" != "$APP_NAME.app" ]]; then
   echo "stage_app_bundle: destination must be named $APP_NAME.app" >&2
   exit 2
 fi
-APP_PARENT="$(cd "$(dirname "$APP_BUNDLE")" && pwd -P)"
+APP_PARENT_INPUT="$(dirname "$APP_BUNDLE")"
+case "$APP_PARENT_INPUT" in
+  "$ROOT_DIR/dist"|"$ROOT_DIR/.build"/*) ;;
+  *)
+    echo "stage_app_bundle: destination must be inside $ROOT_DIR/dist or $ROOT_DIR/.build" >&2
+    exit 2
+    ;;
+esac
+EXISTING_PARENT="$APP_PARENT_INPUT"
+while [[ ! -d "$EXISTING_PARENT" ]]; do
+  NEXT_PARENT="$(dirname "$EXISTING_PARENT")"
+  if [[ "$NEXT_PARENT" == "$EXISTING_PARENT" ]]; then
+    echo "stage_app_bundle: could not resolve destination parent" >&2
+    exit 2
+  fi
+  EXISTING_PARENT="$NEXT_PARENT"
+done
+EXISTING_PARENT="$(cd "$EXISTING_PARENT" && pwd -P)"
+case "$EXISTING_PARENT" in
+  "$ROOT_DIR"|"$ROOT_DIR/dist"|"$ROOT_DIR/.build"|"$ROOT_DIR/.build"/*) ;;
+  *)
+    echo "stage_app_bundle: destination must be inside $ROOT_DIR/dist or $ROOT_DIR/.build" >&2
+    exit 2
+    ;;
+esac
+mkdir -p "$APP_PARENT_INPUT"
+APP_PARENT="$(cd "$APP_PARENT_INPUT" && pwd -P)"
 case "$APP_PARENT" in
   "$ROOT_DIR/dist"|"$ROOT_DIR/.build"/*) ;;
   *)

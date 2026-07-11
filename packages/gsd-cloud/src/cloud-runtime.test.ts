@@ -198,7 +198,20 @@ test("an early socket close retries instead of rejecting while attempts remain",
 });
 
 test("start()'s first-connect promise rejects once the initial connect attempts are exhausted", async () => {
-  const runtime = makeRuntime();
+  const errors: string[] = [];
+  const telemetry = {
+    ...Object.fromEntries([
+      "connecting", "connected", "disconnected", "received", "sent", "projectsAdvertised",
+      "requestStarted", "requestFinished", "stopped",
+    ].map((name) => [name, () => undefined])),
+    socketError: (message: string) => errors.push(message),
+  } as never;
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "fixture", runtime_id: "runtime" },
+    noopExecutor as never,
+    noopLogger as never,
+    telemetry,
+  );
   const internals = runtime as unknown as RuntimeInternals;
   try {
     const deferred = Promise.withResolvers<void>();
@@ -211,6 +224,7 @@ test("start()'s first-connect promise rejects once the initial connect attempts 
 
     internals.handleSocketClose(socket);
     await assert.rejects(deferred.promise, /connection failed/);
+    assert.deepEqual(errors, ["cloud runtime connection failed after 5 attempt(s)"]);
   } finally {
     runtime.stop();
   }

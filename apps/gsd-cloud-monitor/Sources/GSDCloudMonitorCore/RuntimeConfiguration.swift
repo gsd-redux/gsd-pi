@@ -64,11 +64,20 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     id = try values.decode(UUID.self, forKey: .id)
     name = try values.decode(String.self, forKey: .name)
-    telemetryPath = try values.decode(String.self, forKey: .telemetryPath)
+    let decodedTelemetryPath = try values.decode(String.self, forKey: .telemetryPath)
     agentExecutablePath = try values.decode(String.self, forKey: .agentExecutablePath)
-    agentConfigPath = try values.decodeIfPresent(String.self, forKey: .agentConfigPath)
-      ?? URL(fileURLWithPath: NSString(string: telemetryPath).expandingTildeInPath)
+    let savedAgentConfigPath = try values.decodeIfPresent(String.self, forKey: .agentConfigPath)
+    agentConfigPath = savedAgentConfigPath
+      ?? URL(fileURLWithPath: NSString(string: decodedTelemetryPath).expandingTildeInPath)
         .deletingLastPathComponent()
         .appendingPathComponent("daemon.yaml").path
+    let legacyDerivedPath = URL(fileURLWithPath: NSString(string: agentConfigPath).expandingTildeInPath)
+      .deletingLastPathComponent()
+      .appendingPathComponent("cloud-runtime-status.json").path
+    if savedAgentConfigPath != nil, decodedTelemetryPath == legacyDerivedPath {
+      telemetryPath = RuntimeArtifactPaths(configPath: agentConfigPath).telemetryPath
+    } else {
+      telemetryPath = decodedTelemetryPath
+    }
   }
 }

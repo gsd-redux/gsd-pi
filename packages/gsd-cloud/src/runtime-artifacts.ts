@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
-function canonicalConfigPath(configPath: string): string {
+export function canonicalConfigPath(configPath: string): string {
   const absolutePath = resolve(configPath);
   try {
     return realpathSync(absolutePath);

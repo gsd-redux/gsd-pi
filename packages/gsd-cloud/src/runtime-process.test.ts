@@ -1,7 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Regression coverage for detached cloud runtime process timing and shutdown.
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -70,6 +70,60 @@ test("stop refuses to signal a process whose identity does not match state", asy
   }
 });
 
+test("custom configs migrate matching live legacy runtime state", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-legacy-state-"));
+  const configPath = join(root, "custom.yaml");
+  const legacyStatePath = join(root, "cloud-runtime.json");
+  const child = spawn(process.execPath, [
+    "-e",
+    "process.on('SIGTERM',()=>process.exit(0));setInterval(()=>{},1000)",
+    "_run",
+    "--config",
+    configPath,
+  ]);
+
+  try {
+    assert.ok(child.pid);
+    writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+
+    const status = backgroundRuntimeStatus(configPath);
+
+    assert.equal(status.running, true);
+    assert.equal(status.pid, child.pid);
+    assert.equal(existsSync(runtimeStatePath(configPath)), true);
+    assert.equal(existsSync(legacyStatePath), false);
+  } finally {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy runtime state for another config is not migrated or signalled", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-foreign-legacy-state-"));
+  const requestedConfig = join(root, "requested.yaml");
+  const actualConfig = join(root, "actual.yaml");
+  const legacyStatePath = join(root, "cloud-runtime.json");
+  const child = spawn(process.execPath, [
+    "-e",
+    "setInterval(()=>{},1000)",
+    "_run",
+    "--config",
+    actualConfig,
+  ]);
+
+  try {
+    assert.ok(child.pid);
+    writeFileSync(legacyStatePath, `${JSON.stringify({ pid: child.pid, projects: [root] })}\n`);
+
+    assert.equal(await stopBackgroundRuntime(requestedConfig), false);
+    assert.equal(processIsRunning(child.pid), true);
+    assert.equal(existsSync(legacyStatePath), true);
+  } finally {
+    child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-"));
   const configPath = join(root, "daemon.yaml");
@@ -94,6 +148,40 @@ test("stop waits for the detached runtime to exit before removing its state", { 
     assert.equal(existsSync(statePath), false);
   } finally {
     child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("background startup terminates its child when state registration fails", { timeout: 5_000 }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-registration-failure-"));
+  const configPath = join(root, "daemon.yaml");
+  const pidPath = join(root, "runtime-pid.txt");
+  const binaryPath = join(root, "runtime.mjs");
+  writeFileSync(binaryPath, [
+    'import { writeFileSync } from "node:fs";',
+    `writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+    'process.on("SIGTERM", () => process.exit(0));',
+    'setInterval(() => undefined, 1_000);',
+  ].join("\n"));
+  mkdirSync(runtimeStatePath(configPath));
+
+  try {
+    await assert.rejects(
+      startBackgroundRuntime({ binaryPath, configPath, projectDirs: [root] }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (existsSync(pidPath)) {
+      const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
+      await waitForCondition(() => !processIsRunning(pid));
+      assert.equal(processIsRunning(pid), false);
+    } else {
+      assert.equal(processCommandIsRunning(binaryPath), false);
+    }
+  } finally {
+    if (existsSync(pidPath)) {
+      const pid = Number.parseInt(readFileSync(pidPath, "utf8"), 10);
+      if (processIsRunning(pid)) process.kill(pid, "SIGKILL");
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -159,4 +247,17 @@ function processIsRunning(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for test condition");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+function processCommandIsRunning(fragment: string): boolean {
+  const output = spawnSync("/bin/ps", ["-ax", "-o", "command="], { encoding: "utf8" }).stdout;
+  return output.split("\n").some((command) => command.includes(fragment));
 }
