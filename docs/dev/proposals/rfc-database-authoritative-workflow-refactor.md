@@ -311,11 +311,24 @@ The Milestone 0 workflow-authority baseline uses
 real SQLite project through typed write APIs. The fixture persists an active
 milestone, a completed prerequisite slice and task, a pending dependent slice
 and task, an active requirement, and a memory-backed architecture decision.
-Both focused tests independently reopen the database. The fixture test verifies
-the reopened state, while the projection-conflict test proves that contradictory
-`STATE.md`, `PROJECT.md`, `REQUIREMENTS.md`, `DECISIONS.md`, roadmap, and plan
-projections cannot change database-derived lifecycle state, dependencies,
-requirements, or decisions.
+The fixture test verifies reopened state, while the projection-conflict test
+proves that contradictory `STATE.md`, `PROJECT.md`, `REQUIREMENTS.md`,
+`DECISIONS.md`, roadmap, and plan projections cannot change database-derived
+lifecycle state, dependencies, requirements, or decisions.
+
+The test-only fault harness adds five named boundaries without production flags,
+global state, or runtime hooks: `before-transaction-commit`,
+`after-db-commit-before-render`, `during-projection-write`,
+`before-independent-reopen`, and `after-independent-reopen`. Its unit tests prove
+that a harness throws once at only its armed boundary and that harness instances
+do not share state. The authority fault matrix drives the production
+`handleCompleteSlice` path, using temporary SQLite abort triggers for transaction
+boundaries and a filesystem obstruction for projection failure. It verifies that
+the pre-commit failure rolls back the slice transition, post-commit failures
+preserve it, and a stale projection is surfaced without undoing committed intent.
+Each scenario then closes the original connection and reads authority in a fresh
+process. Contradictory roadmap and state projections cannot fabricate dependency
+unlock or change the next database-derived slice.
 
 Baseline failure evidence was captured on 2026-07-11 with:
 
@@ -335,17 +348,21 @@ exited 0 with one passing test. An earlier RED also proved the memory-backed
 decision seam: a provisional legacy-table seed produced `actual []` instead of
 the expected `["D001"]`.
 
-The complete baseline runs both focused tests:
+The complete baseline runs the fixture, projection-conflict, harness, and fault
+matrix tests:
 
 ```sh
 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --experimental-strip-types --test \
   src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts \
-  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
+  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts \
+  src/resources/extensions/gsd/tests/workflow-fault-harness.test.ts \
+  src/resources/extensions/gsd/tests/workflow-authority-faults.test.ts
 ```
 
-That command passed with two tests and zero failures after the sabotage was
-removed.
+That command passed with ten tests and zero failures after the sabotage was
+removed: two authority baseline tests, three harness contract tests, and five
+fault-boundary scenarios.
 
 ### Dependency and parallel-work rules
 
