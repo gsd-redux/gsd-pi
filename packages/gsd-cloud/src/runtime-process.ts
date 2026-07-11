@@ -343,11 +343,11 @@ function recoverRuntimeStartLock(
   configPath: string,
   onRecoveryClaimed?: () => void,
 ): boolean {
-  const recoveryPath = `${lockPath}.recovery`;
+  const recoveryPath = `${lockPath}.recovery.${process.pid}.${randomUUID()}`;
   try {
     linkSync(lockPath, recoveryPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 

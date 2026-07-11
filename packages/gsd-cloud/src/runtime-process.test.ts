@@ -368,6 +368,38 @@ test("start lock recovery never removes a replacement owner", { timeout: 5_000 }
   release();
 });
 
+test("start lock recovery ignores an abandoned recovery claim", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-abandoned-recovery-"));
+  const configPath = join(root, "daemon.yaml");
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  const recoveryPath = `${lockPath}.recovery`;
+  writeFileSync(lockPath, "stale");
+  writeFileSync(recoveryPath, "abandoned");
+  const old = new Date(0);
+  utimesSync(lockPath, old, old);
+  utimesSync(recoveryPath, old, old);
+  let release: (() => void) | undefined;
+  const acquiring = acquireRuntimeStartLock(configPath);
+  t.after(async () => {
+    rmSync(lockPath, { force: true });
+    rmSync(recoveryPath, { force: true });
+    release ??= await acquiring.catch(() => undefined);
+    release?.();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  release = await Promise.race([
+    acquiring,
+    new Promise<never>((_resolve, reject) => {
+      setTimeout(() => reject(new Error("abandoned recovery claim blocked start")), 500);
+    }),
+  ]);
+  release();
+
+  assert.equal(existsSync(lockPath), false);
+  assert.equal(readFileSync(recoveryPath, "utf8"), "abandoned");
+});
+
 test("start lock does not reclaim a live legacy owner by age", { timeout: 5_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-live-legacy-lock-"));
   const configPath = join(root, "daemon.yaml");

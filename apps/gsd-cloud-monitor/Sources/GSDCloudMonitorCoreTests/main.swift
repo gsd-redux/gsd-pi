@@ -28,7 +28,9 @@ struct RuntimeTelemetryTests {
     try migratedRuntimeConfigurationsRequestPersistenceOnce()
     try runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory()
     try diagnosticsRedactLocalPaths()
+    try diagnosticsRemainAvailableWithoutTelemetry()
     try releaseVersionsCompareMonitorTags()
+    try updateCheckStatesExposeVisibleFeedback()
     try await updateCheckerSearchesAllReleasePages()
     print("GSDCloudMonitorCoreTests passed")
   }
@@ -62,6 +64,7 @@ struct RuntimeTelemetryTests {
             "remote_label": "open-gsd/project-one",
             "state": "active",
             "active_requests": 1,
+            "active_tools": ["gsd_execute", "gsd_status"],
             "request_count": 7,
             "error_count": 1,
             "received_bytes": 1024,
@@ -91,6 +94,14 @@ struct RuntimeTelemetryTests {
     try expect(status.projects.count == 1, "expected one project")
     try expect(status.projects[0].alias == "project-one", "expected project alias")
     try expect(status.projects[0].state == .active, "expected active project")
+    try expect(
+      status.projects[0].activeTools == ["gsd_execute", "gsd_status"],
+      "expected all concurrent active tools"
+    )
+    try expect(
+      status.projects[0].activeToolSummary == "gsd_execute, gsd_status",
+      "active tool presentation should name concurrent calls"
+    )
     try expect(status.projects[0].requestCount == 7, "expected project requests")
     try expect(status.projects[0].errorCount == 1, "expected project errors")
     try expect(status.projects[0].receivedBytes == 1024, "expected project received bytes")
@@ -643,6 +654,35 @@ struct RuntimeTelemetryTests {
     try expect(!text.contains("device_token"), "diagnostics must not contain credentials")
   }
 
+  static func diagnosticsRemainAvailableWithoutTelemetry() throws {
+    let configuration = RuntimeConfiguration(
+      name: "Broken Runtime",
+      telemetryPath: "/Users/example/.gsd/cloud-runtime-status.json",
+      agentConfigPath: "/Users/example/.gsd/daemon.yaml",
+      agentExecutablePath: "/usr/local/bin/gsd-cloud"
+    )
+
+    let report = try DiagnosticsReport(
+      telemetry: nil,
+      configuration: configuration,
+      validatedState: .stopped,
+      telemetryError: "The telemetry file could not be decoded."
+    ).jsonData()
+    let object = try JSONSerialization.jsonObject(with: report) as? [String: Any]
+
+    try expect(object?["state"] as? String == "stopped", "diagnostics should include validated state")
+    try expect(
+      object?["telemetryError"] as? String == "The telemetry file could not be decoded.",
+      "diagnostics should include telemetry read failures"
+    )
+    try expect(
+      object?["configPath"] as? String == configuration.configPath,
+      "diagnostics should include the selected configuration path"
+    )
+    try expect(object?["telemetryPath"] != nil, "diagnostics should include the telemetry path")
+    try expect(object?["logPath"] != nil, "diagnostics should include the log path")
+  }
+
   static func releaseVersionsCompareMonitorTags() throws {
     guard let current = ReleaseVersion(tag: "gsd-cloud-monitor-v1.9.9"),
           let update = ReleaseVersion(tag: "gsd-cloud-monitor-v1.10.0") else {
@@ -651,6 +691,29 @@ struct RuntimeTelemetryTests {
 
     try expect(update > current, "release versions should compare numerically")
     try expect(ReleaseVersion(tag: "v2.0.0") == nil, "unrelated release tags must be ignored")
+  }
+
+  static func updateCheckStatesExposeVisibleFeedback() throws {
+    let checkedAt = Date(timeIntervalSince1970: 1_000)
+    let update = AvailableUpdate(
+      version: ReleaseVersion(tag: "gsd-cloud-monitor-v1.2.0")!,
+      downloadURL: URL(string: "https://example.com/release")!
+    )
+
+    try expect(UpdateCheckState.checking.isChecking, "checking state should disable duplicate checks")
+    try expect(
+      UpdateCheckState.upToDate(checkedAt: checkedAt).lastCheckedAt == checkedAt,
+      "up-to-date state should expose its check time"
+    )
+    try expect(
+      UpdateCheckState.updateAvailable(update, checkedAt: checkedAt).availableUpdate == update,
+      "available state should retain the release"
+    )
+    try expect(
+      UpdateCheckState.failed("network unavailable", checkedAt: checkedAt).failureMessage
+        == "network unavailable",
+      "failed state should expose visible feedback"
+    )
   }
 
   static func updateCheckerSearchesAllReleasePages() async throws {

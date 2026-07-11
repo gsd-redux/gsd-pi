@@ -16,7 +16,7 @@ final class RuntimeMonitorStore: ObservableObject {
   @Published private(set) var selectedConfigurationID: RuntimeConfiguration.ID
   @Published private(set) var actionInProgress = false
   @Published private(set) var actionMessage: String?
-  @Published private(set) var availableUpdate: AvailableUpdate?
+  @Published private(set) var updateCheckState = UpdateCheckState.idle
 
   private let reader = RuntimeTelemetryReader()
   private let notificationService = NotificationService()
@@ -256,16 +256,17 @@ final class RuntimeMonitorStore: ObservableObject {
   }
 
   func exportDiagnostics() {
-    guard let telemetry else {
-      actionMessage = "No telemetry is available to export."
-      return
-    }
     let panel = NSSavePanel()
     panel.nameFieldStringValue = "gsd-cloud-diagnostics.json"
     panel.allowedContentTypes = [.json]
     guard panel.runModal() == .OK, let url = panel.url else { return }
     do {
-      try DiagnosticsReport(telemetry: telemetry).jsonData().write(to: url, options: .atomic)
+      try DiagnosticsReport(
+        telemetry: telemetry,
+        configuration: selectedConfiguration,
+        validatedState: connectionState,
+        telemetryError: readError
+      ).jsonData().write(to: url, options: .atomic)
       actionMessage = "Diagnostics exported."
     } catch {
       actionMessage = error.localizedDescription
@@ -273,14 +274,24 @@ final class RuntimeMonitorStore: ObservableObject {
   }
 
   func checkForUpdates() {
+    guard !updateCheckState.isChecking else { return }
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    updateCheckState = .checking
     Task {
-      availableUpdate = try? await UpdateChecker().latestUpdate(currentVersion: version)
+      do {
+        if let update = try await UpdateChecker().latestUpdate(currentVersion: version) {
+          updateCheckState = .updateAvailable(update, checkedAt: Date())
+        } else {
+          updateCheckState = .upToDate(checkedAt: Date())
+        }
+      } catch {
+        updateCheckState = .failed(error.localizedDescription, checkedAt: Date())
+      }
     }
   }
 
   func openAvailableUpdate() {
-    guard let url = availableUpdate?.downloadURL else { return }
+    guard let url = updateCheckState.availableUpdate?.downloadURL else { return }
     NSWorkspace.shared.open(url)
   }
 

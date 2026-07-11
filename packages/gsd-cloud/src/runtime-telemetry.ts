@@ -17,6 +17,7 @@ export interface RuntimeProjectTelemetry {
   remote_label?: string;
   state: RuntimeProjectState;
   active_requests: number;
+  active_tools: string[];
   request_count: number;
   error_count: number;
   received_bytes: number;
@@ -113,6 +114,7 @@ export const noopRuntimeTelemetry: RuntimeTelemetryReporter = {
 
 export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   private readonly path: string;
+  private readonly activeRequests = new Map<string, { projectPath: string; toolName: string }>();
   private status: RuntimeTelemetryStatus;
   private livenessTimer: ReturnType<typeof setInterval> | undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
@@ -207,6 +209,7 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
         ...(remoteLabel ? { remote_label: remoteLabel } : {}),
         state: existing?.state ?? "idle",
         active_requests: existing?.active_requests ?? 0,
+        active_tools: existing?.active_tools ?? [],
         request_count: existing?.request_count ?? 0,
         error_count: existing?.error_count ?? 0,
         received_bytes: existing?.received_bytes ?? 0,
@@ -222,8 +225,13 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     this.status.active_requests += 1;
     const project = this.findProject(request.projectPath, request.projectAlias);
     if (project) {
+      this.activeRequests.set(request.requestId, {
+        projectPath: project.path,
+        toolName: request.toolName,
+      });
       project.state = "active";
       project.active_requests += 1;
+      project.active_tools = this.activeToolsForProject(project.path);
       project.received_bytes += request.receivedBytes;
       project.last_tool = request.toolName;
       project.last_activity_at = new Date().toISOString();
@@ -235,8 +243,10 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     this.status.active_requests = Math.max(0, this.status.active_requests - 1);
     const now = new Date().toISOString();
     const project = this.findProject(request.projectPath, request.projectAlias);
+    this.activeRequests.delete(request.requestId);
     if (project) {
       project.active_requests = Math.max(0, project.active_requests - 1);
+      project.active_tools = this.activeToolsForProject(project.path);
       project.request_count += 1;
       project.last_tool = request.toolName;
       project.last_activity_at = now;
@@ -270,8 +280,10 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     this.livenessTimer = undefined;
     this.status.state = "stopped";
     this.status.active_requests = 0;
+    this.activeRequests.clear();
     for (const project of this.status.projects) {
       project.active_requests = 0;
+      project.active_tools = [];
       project.state = "idle";
     }
     void this.flush();
@@ -296,6 +308,12 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
     if (alias) return this.status.projects.find((project) => project.alias === alias);
     if (this.status.projects.length === 1) return this.status.projects[0];
     return undefined;
+  }
+
+  private activeToolsForProject(projectPath: string): string[] {
+    return [...this.activeRequests.values()]
+      .filter((request) => request.projectPath === projectPath)
+      .map((request) => request.toolName);
   }
 
   private persist(): void {
@@ -358,6 +376,7 @@ function credentialFreeRemoteLabel(remoteLabel: string): string {
 function credentialFreeGatewayLabel(gatewayUrl: string): string {
   try {
     const url = new URL(gatewayUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "invalid gateway";
     const path = url.pathname === "/" ? "" : url.pathname;
     return `${url.protocol}//${url.host}${path}`;
   } catch {

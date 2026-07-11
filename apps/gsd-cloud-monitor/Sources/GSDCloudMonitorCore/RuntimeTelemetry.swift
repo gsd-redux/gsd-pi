@@ -85,6 +85,7 @@ public struct RuntimeProjectTelemetry: Decodable, Identifiable, Sendable {
   public let remoteLabel: String?
   public let state: RuntimeProjectState
   public let activeRequests: Int
+  public let activeTools: [String]
   public let requestCount: Int
   public let errorCount: Int
   public let receivedBytes: Int64
@@ -99,12 +100,30 @@ public struct RuntimeProjectTelemetry: Decodable, Identifiable, Sendable {
     case remoteLabel = "remote_label"
     case state
     case activeRequests = "active_requests"
+    case activeTools = "active_tools"
     case requestCount = "request_count"
     case errorCount = "error_count"
     case receivedBytes = "received_bytes"
     case sentBytes = "sent_bytes"
     case lastTool = "last_tool"
     case lastActivityAt = "last_activity_at"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let values = try decoder.container(keyedBy: CodingKeys.self)
+    alias = try values.decode(String.self, forKey: .alias)
+    path = try values.decode(String.self, forKey: .path)
+    repoIdentity = try values.decode(String.self, forKey: .repoIdentity)
+    remoteLabel = try values.decodeIfPresent(String.self, forKey: .remoteLabel)
+    state = try values.decode(RuntimeProjectState.self, forKey: .state)
+    activeRequests = try values.decode(Int.self, forKey: .activeRequests)
+    activeTools = try values.decodeIfPresent([String].self, forKey: .activeTools) ?? []
+    requestCount = try values.decode(Int.self, forKey: .requestCount)
+    errorCount = try values.decode(Int.self, forKey: .errorCount)
+    receivedBytes = try values.decode(Int64.self, forKey: .receivedBytes)
+    sentBytes = try values.decode(Int64.self, forKey: .sentBytes)
+    lastTool = try values.decodeIfPresent(String.self, forKey: .lastTool)
+    lastActivityAt = try values.decodeIfPresent(Date.self, forKey: .lastActivityAt)
   }
 }
 
@@ -283,5 +302,9 @@ public extension RuntimeTelemetry {
 public extension RuntimeProjectTelemetry {
   var trafficCounters: TrafficCounters {
     TrafficCounters(receivedBytes: receivedBytes, sentBytes: sentBytes)
+  }
+
+  var activeToolSummary: String {
+    activeTools.isEmpty ? "\(activeRequests) active" : activeTools.joined(separator: ", ")
   }
 }

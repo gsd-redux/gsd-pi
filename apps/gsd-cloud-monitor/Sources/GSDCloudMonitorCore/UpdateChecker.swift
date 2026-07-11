@@ -3,6 +3,41 @@ import Foundation
 public struct AvailableUpdate: Equatable, Sendable {
   public let version: ReleaseVersion
   public let downloadURL: URL
+
+  public init(version: ReleaseVersion, downloadURL: URL) {
+    self.version = version
+    self.downloadURL = downloadURL
+  }
+}
+
+public enum UpdateCheckState: Equatable, Sendable {
+  case idle
+  case checking
+  case upToDate(checkedAt: Date)
+  case updateAvailable(AvailableUpdate, checkedAt: Date)
+  case failed(String, checkedAt: Date)
+
+  public var isChecking: Bool {
+    if case .checking = self { return true }
+    return false
+  }
+
+  public var availableUpdate: AvailableUpdate? {
+    if case let .updateAvailable(update, _) = self { return update }
+    return nil
+  }
+
+  public var lastCheckedAt: Date? {
+    switch self {
+    case .idle, .checking: nil
+    case let .upToDate(checkedAt), let .updateAvailable(_, checkedAt), let .failed(_, checkedAt): checkedAt
+    }
+  }
+
+  public var failureMessage: String? {
+    if case let .failed(message, _) = self { return message }
+    return nil
+  }
 }
 
 public struct UpdateChecker: Sendable {

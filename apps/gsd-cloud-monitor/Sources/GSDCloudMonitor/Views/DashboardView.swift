@@ -12,7 +12,7 @@ struct DashboardView: View {
         ForEach(monitor.telemetry?.projects ?? []) { project in
           HStack(spacing: 10) {
             Image(systemName: project.state == .error ? "exclamationmark.circle.fill" : "folder.fill")
-              .foregroundStyle(projectColor(project.state))
+              .foregroundStyle(project.state.presentationColor)
               .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
               Text(project.alias)
@@ -110,14 +110,6 @@ struct DashboardView: View {
       selection = projects.first?.id
     }
   }
-
-  private func projectColor(_ state: RuntimeProjectState) -> Color {
-    switch state {
-    case .idle: .secondary
-    case .active: .green
-    case .error: .red
-    }
-  }
 }
 
 private struct ProjectDetailView: View {
@@ -149,6 +141,11 @@ private struct ProjectDetailView: View {
       Text(project.remoteLabel ?? project.path)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
+      if !project.activeTools.isEmpty {
+        Label(project.activeToolSummary, systemImage: "hammer.fill")
+          .font(.subheadline.monospaced())
+          .foregroundStyle(.green)
+      }
     }
   }
 
@@ -253,11 +250,7 @@ private struct ProjectDetailView: View {
   }
 
   private var stateColor: Color {
-    switch project.state {
-    case .idle: .secondary
-    case .active: .green
-    case .error: .red
-    }
+    project.state.presentationColor
   }
 
   private func activityImage(_ outcome: RuntimeActivityOutcome) -> String {

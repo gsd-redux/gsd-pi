@@ -44,12 +44,27 @@ struct MonitorSettingsView: View {
       }
 
       Section("Updates") {
-        if let update = monitor.availableUpdate {
+        if let update = monitor.updateCheckState.availableUpdate {
           Button("Download \(update.version.tag)") {
             monitor.openAvailableUpdate()
           }
+        } else if monitor.updateCheckState.isChecking {
+          ProgressView("Checking for updates…")
         } else {
           Button("Check for Updates") { monitor.checkForUpdates() }
+        }
+        if case .upToDate = monitor.updateCheckState {
+          Text("GSD Cloud Monitor is up to date.")
+            .foregroundStyle(.secondary)
+        }
+        if let failure = monitor.updateCheckState.failureMessage {
+          Text("Update check failed: \(failure)")
+            .foregroundStyle(.red)
+        }
+        if let checkedAt = monitor.updateCheckState.lastCheckedAt {
+          Text("Last checked \(checkedAt.formatted(date: .abbreviated, time: .shortened))")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
     }

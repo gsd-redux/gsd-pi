@@ -72,6 +72,14 @@ test("runtime telemetry removes credentials from gateway metadata", async (t) =>
     assert.equal((JSON.parse(raw) as { gateway_url: string }).gateway_url, "invalid gateway");
     assert.equal(raw.includes("secret"), false);
     assert.equal(raw.includes("private"), false);
+
+    const opaque = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+      gatewayUrl: "javascript:access_token=opaque-secret",
+    });
+    await opaque.flush();
+    const opaqueRaw = readFileSync(telemetryPath, "utf8");
+    assert.equal((JSON.parse(opaqueRaw) as { gateway_url: string }).gateway_url, "invalid gateway");
+    assert.equal(opaqueRaw.includes("opaque-secret"), false);
 });
 
 test("runtime telemetry publishes idle liveness until the runtime stops", async (t) => {
@@ -191,6 +199,7 @@ test("runtime telemetry attributes requests and recent activity to advertised pr
       remote_label: "open-gsd/project-one",
       state: "idle",
       active_requests: 0,
+      active_tools: [],
       request_count: 1,
       error_count: 0,
       received_bytes: 128,
@@ -204,6 +213,7 @@ test("runtime telemetry attributes requests and recent activity to advertised pr
       repo_identity: "repo-two",
       state: "idle",
       active_requests: 0,
+      active_tools: [],
       request_count: 0,
       error_count: 0,
       received_bytes: 0,
@@ -216,6 +226,51 @@ test("runtime telemetry attributes requests and recent activity to advertised pr
     assert.equal(status.recent_activity?.[0]?.tool_name, "gsd_execute");
     assert.equal(status.recent_activity?.[0]?.outcome, "success");
     assert.equal(status.recent_activity?.[0]?.duration_ms, 42);
+});
+
+test("runtime telemetry tracks concurrent in-flight tool names", async (t) => {
+  const root = makeTempDir(t, "gsd-cloud-active-tools-");
+  const telemetryPath = join(root, "cloud-runtime-status.json");
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+  store.projectsAdvertised([{
+    alias: "project-one",
+    path: "/work/project-one",
+    repoIdentity: "repo-one",
+    markers: [".gsd"],
+  }]);
+
+  store.requestStarted({
+    requestId: "request-1",
+    projectPath: "/work/project-one",
+    toolName: "gsd_execute",
+    receivedBytes: 10,
+  });
+  store.requestStarted({
+    requestId: "request-2",
+    projectPath: "/work/project-one",
+    toolName: "gsd_status",
+    receivedBytes: 10,
+  });
+  await store.flush();
+
+  let status = JSON.parse(readFileSync(telemetryPath, "utf8")) as {
+    projects: Array<{ active_requests: number; active_tools: string[] }>;
+  };
+  assert.equal(status.projects[0]?.active_requests, 2);
+  assert.deepEqual(status.projects[0]?.active_tools, ["gsd_execute", "gsd_status"]);
+
+  store.requestFinished({
+    requestId: "request-1",
+    projectPath: "/work/project-one",
+    toolName: "gsd_execute",
+    durationMs: 5,
+    outcome: "success",
+  });
+  await store.flush();
+  status = JSON.parse(readFileSync(telemetryPath, "utf8")) as typeof status;
+  assert.deepEqual(status.projects[0]?.active_tools, ["gsd_status"]);
 });
 
 test("runtime telemetry bounds recent project activity", async (t) => {

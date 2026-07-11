@@ -46,14 +46,15 @@ struct MonitorMenuView: View {
       ForEach(telemetry.projects.prefix(3)) { project in
         HStack(spacing: 8) {
           Circle()
-            .fill(projectColor(project.state))
+            .fill(project.state.presentationColor)
             .frame(width: 7, height: 7)
           Text(project.alias)
             .lineLimit(1)
           Spacer()
-          Text("\(project.activeRequests) active")
+          Text(project.activeToolSummary)
             .font(.caption)
             .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
       }
       if telemetry.projects.isEmpty {
@@ -61,14 +62,6 @@ struct MonitorMenuView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-    }
-  }
-
-  private func projectColor(_ state: RuntimeProjectState) -> Color {
-    switch state {
-    case .idle: .secondary
-    case .active: .green
-    case .error: .red
     }
   }
 
