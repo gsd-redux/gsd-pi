@@ -31,6 +31,11 @@
 - **Verification Evidence**: an immutable, fresh observation tied to an acceptance criterion, Attempt, source revision, and execution environment.
 - **Technical Verdict**: a mechanically derived pass, fail, or inconclusive result from required Verification Evidence.
 - **Human Acceptance**: an explicit disposition of a required Subjective UAT check, separate from the Technical Verdict.
+- **Attempt**: one claimed execution of a Unit against an observed database revision and lease token.
+- **Lifecycle Kernel**: the sole durable sequencer of an Attempt through advance, execute, verify, route, and closeout. It owns stage progression and normalized outcomes, not the mechanics behind each stage.
+- **Kernel Outcome**: the normalized result of one Lifecycle Kernel call: progressed, scheduled, needs interaction, waiting, closed, complete, or aborted.
+- **Closeout Plan**: durable proof that canonical completion requirements are satisfied, plus the host effects that still require settlement.
+- **Settlement Receipt**: the durable idempotency and completion record for one host effect from a Closeout Plan.
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
