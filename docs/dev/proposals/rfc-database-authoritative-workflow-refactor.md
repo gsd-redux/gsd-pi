@@ -308,31 +308,44 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 
 The Milestone 0 workflow-authority baseline uses
 `src/resources/extensions/gsd/tests/workflow-authority-fixture.ts` to seed a
-real SQLite project through typed write APIs. Its focused tests independently
-reopen the database and prove that contradictory Markdown projections cannot
-change database-derived lifecycle state, dependencies, requirements, or
-decisions.
+real SQLite project through typed write APIs. The fixture persists an active
+milestone, a completed prerequisite slice and task, a pending dependent slice
+and task, an active requirement, and a memory-backed architecture decision.
+Both focused tests independently reopen the database. The fixture test verifies
+the reopened state, while the projection-conflict test proves that contradictory
+`STATE.md`, `PROJECT.md`, `REQUIREMENTS.md`, `DECISIONS.md`, roadmap, and plan
+projections cannot change database-derived lifecycle state, dependencies,
+requirements, or decisions.
 
-The focused proof command is:
+Baseline failure evidence was captured on 2026-07-11 with:
 
-```bash
+```sh
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types --test \
+  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
+```
+
+For the controlled RED run, the test temporarily simulated a forbidden reverse
+projection through typed write APIs after writing the contradictory Markdown:
+it added M999 to the registry, completed S02 and T01, cleared S02's dependency,
+validated and reassigned R001, and inserted the Markdown-backed D999 memory.
+The command exited 1 at the final deep-equality assertion, reporting each of
+those database-authority changes. After removing the sabotage, the command
+exited 0 with one passing test. An earlier RED also proved the memory-backed
+decision seam: a provisional legacy-table seed produced `actual []` instead of
+the expected `["D001"]`.
+
+The complete baseline runs both focused tests:
+
+```sh
 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --experimental-strip-types --test \
   src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts \
   src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
 ```
 
-Test-writer evidence captured during implementation:
-
-- **RED:** a provisional legacy-table decision seed produced no memory-backed
-  decision (`actual []`, `expected ["D001"]`).
-- **GREEN:** both focused tests passed after using the canonical memory-backed
-  decision writer and independently reopening the SQLite database.
-- **Controlled sabotage:** a temporary typed reverse import added
-  projection-only milestone and decision rows and rewrote the seeded slice,
-  task, and requirement state; the final before/after equality failed with
-  those exact authority changes. The sabotage was removed and the focused
-  command passed again.
+That command passed with two tests and zero failures after the sabotage was
+removed.
 
 ### Dependency and parallel-work rules
 
