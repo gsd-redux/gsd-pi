@@ -313,6 +313,23 @@ reopen the database and prove that contradictory Markdown projections cannot
 change database-derived lifecycle state, dependencies, requirements, or
 decisions.
 
+Baseline failure evidence was captured on 2026-07-11 with:
+
+```sh
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types --test \
+  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts
+```
+
+For the controlled RED run, the test temporarily simulated a forbidden reverse
+projection through typed write APIs after writing the contradictory Markdown:
+it completed S02 and T01, cleared S02's dependency, validated and reassigned
+R001, and inserted the Markdown-backed D999 memory. The command exited 1 at the
+final deep-equality assertion, reporting each of those database-authority
+changes. After removing the sabotage, the command exited 0 with one passing
+test. The fixture test and projection-conflict test also passed together with
+two tests and zero failures.
+
 ### Dependency and parallel-work rules
 
 - Milestone 0 begins first. Its explicit RFC approval gate is satisfied by Decision `D001` and merged PR #1416; no architecture code may precede that recorded approval.

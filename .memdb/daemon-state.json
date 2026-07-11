@@ -1,0 +1,13 @@
+{
+  "pid": 74212,
+  "loopbackEndpoint": "http://127.0.0.1:50051",
+  "uiPort": 3030,
+  "memdbDataDir": "/Users/jeremymcspadden/.no-mistakes/worktrees/c2f4d848183f/01KX9ESR8T3K5J1H2D4TKEXCGC/.memdb",
+  "dataDir": "/Users/jeremymcspadden/.no-mistakes/worktrees/c2f4d848183f/01KX9ESR8T3K5J1H2D4TKEXCGC/.memtrace",
+  "memdbDatabase": "memtrace",
+  "vectorDim": 768,
+  "status": "healthy",
+  "memdbMode": "local",
+  "startedAtEpochMs": 1783802925263,
+  "updatedAtEpochMs": 1783804077299
+}
