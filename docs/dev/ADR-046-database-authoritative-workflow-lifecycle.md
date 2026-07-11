@@ -145,6 +145,10 @@ capacity stay in their owning deep modules. They return typed results and do
 not mutate lifecycle independently. Parallelism is database-claim concurrency,
 not a second lifecycle or a DAG wrapped around one work item.
 
+The refactor remains provider-neutral and extension-first. Provider-specific
+execution stays behind typed adapters, and capabilities that do not require
+core lifecycle authority remain extensions rather than kernel responsibilities.
+
 ### Closeout is prepared, then settled
 
 `prepareCloseout` verifies children, waivers, fresh evidence, required Human

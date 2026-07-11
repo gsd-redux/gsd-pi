@@ -50,6 +50,8 @@ Design documents, ADRs, and internal references. Located in [`dev/`](./dev/).
 | [ADR-007: Model Catalog Split](./dev/ADR-007-model-catalog-split.md) | Separate model metadata from routing logic for extensibility |
 | [ADR-008: GSD Tools over MCP](./dev/ADR-008-gsd-tools-over-mcp-for-provider-parity.md) | Native tools over MCP for provider parity |
 | [ADR-008: Implementation Plan](./dev/ADR-008-IMPLEMENTATION-PLAN.md) | Implementation plan for ADR-008 |
+| [ADR-046: Database-Authoritative Workflow Lifecycle](./dev/ADR-046-database-authoritative-workflow-lifecycle.md) | Proposed database-authoritative lifecycle and migration contract |
+| [RFC: Database-Authoritative Workflow Refactor](./dev/proposals/rfc-database-authoritative-workflow-refactor.md) | Proposed implementation direction, gates, and milestone program |
 | [Context Optimization Opportunities](./dev/pi-context-optimization-opportunities.md) | Analysis of context window usage and optimization strategies |
 | [File System Map](./dev/FILE-SYSTEM-MAP.md) | Complete file system reference |
 | [CI/CD Pipeline](./dev/ci-cd-pipeline.md) | Continuous integration and deployment pipeline |

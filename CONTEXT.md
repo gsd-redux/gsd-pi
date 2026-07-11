@@ -16,7 +16,7 @@ relevant cutover has completed.
 - **Task**: the smallest planned piece of work whose completion produces evidence toward a Slice.
 - **Planning Horizon**: an advisory start, end, or review window for long-running work. A missed horizon prompts review and reforecasting; it is not a timeout, readiness gate, or failure.
 - **Open Question**: an unresolved choice scoped to work, carrying the current recommendation, rationale, alternatives, uncertainty, and a condition for revisiting it.
-- **Conversation Kind**: the interaction contract for an Open Question or update: open, choice, clarification, recap, consent, or subjective UAT. Kind determines whether an answer is required and whether affected work may pause.
+- **Interaction Kind**: the interaction contract for an Open Question or update: open, choice, clarification, recap, consent, or subjective UAT. Kind determines whether an answer is required and whether affected work may pause.
 - **Nonblocking Recap**: a concise statement of decisions, assumptions, and uncertainty offered for correction while reversible work continues.
 - **Consent**: explicit authorization for an irreversible, public, paid, destructive, or account-level action. Silence, cancellation, and timeout are never Consent.
 - **Subjective UAT**: an acceptance check that requires a person's experiential judgment because tools cannot observe the result.
@@ -38,7 +38,7 @@ relevant cutover has completed.
 - **Verification Evidence**: an immutable, fresh observation tied to an acceptance criterion, Attempt, source revision, and execution environment.
 - **Technical Verdict**: a mechanically derived pass, fail, or inconclusive result from required Verification Evidence.
 - **Human Acceptance**: an explicit disposition of a required Subjective UAT check, separate from the Technical Verdict.
-- **Attempt**: one claimed execution of a Unit against an observed database revision and lease token.
+- **Attempt**: one claimed execution of a Task or other executable work item against an observed database revision and lease token.
 - **Lifecycle Kernel**: the sole durable sequencer of an Attempt through advance, execute, verify, route, and closeout. It owns stage progression and normalized outcomes, not the mechanics behind each stage.
 - **Kernel Outcome**: the normalized result of one Lifecycle Kernel call: progressed, scheduled, needs interaction, waiting, closed, complete, or aborted.
 - **Closeout Plan**: durable proof that canonical completion requirements are satisfied, plus the host effects that still require settlement.

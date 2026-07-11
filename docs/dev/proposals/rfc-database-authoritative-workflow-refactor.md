@@ -4,6 +4,8 @@
 > **Date:** 2026-07-11  
 > **Scope:** GSD workflow orchestration, persistence, projection, conversation, verification, UAT, recovery, migration, and status surfaces  
 > **Decision map:** [Wayfinder: Database-authoritative GSD workflow refactor](https://github.com/open-gsd/gsd-pi/issues/1405)
+>
+> **Proposed ADR:** [ADR-046: Database-Authoritative Workflow Lifecycle](../ADR-046-database-authoritative-workflow-lifecycle.md)
 
 ## Executive recommendation
 
@@ -85,6 +87,7 @@ To a user, GSD should feel like one capable collaborator:
 ### Simplicity
 
 - The Lifecycle Kernel owns sequencing, persisted stage, claims, idempotency, and typed outcomes—not provider, SQL, Git, worktree, projection, UI, or scheduling mechanics.
+- The architecture remains provider-neutral and extension-first; provider-specific execution stays behind typed adapters, and capabilities outside core lifecycle authority remain extensions.
 - Deterministic routing, retries, status handling, and transforms remain code, not model judgment.
 - No speculative plugin system, dependency-injection container, alternate state machine, or framework swap is introduced.
 - Replacement paths must be executable and tested before the old path is removed; old and new paths must not become two authorities.
