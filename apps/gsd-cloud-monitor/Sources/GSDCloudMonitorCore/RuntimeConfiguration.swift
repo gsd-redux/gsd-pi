@@ -27,6 +27,7 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
   public let id: UUID
   public var name: String
   public var telemetryPath: String
+  public var telemetryPathIsDerived: Bool
   public var agentConfigPath: String
   public var agentExecutablePath: String
 
@@ -34,12 +35,14 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     id: UUID = UUID(),
     name: String,
     telemetryPath: String,
+    telemetryPathIsDerived: Bool = false,
     agentConfigPath: String,
     agentExecutablePath: String
   ) {
     self.id = id
     self.name = name
     self.telemetryPath = telemetryPath
+    self.telemetryPathIsDerived = telemetryPathIsDerived
     self.agentConfigPath = agentConfigPath
     self.agentExecutablePath = agentExecutablePath
   }
@@ -56,8 +59,20 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     URL(fileURLWithPath: NSString(string: agentExecutablePath).expandingTildeInPath)
   }
 
+  public mutating func updateTelemetryPath(_ path: String) {
+    telemetryPath = path
+    telemetryPathIsDerived = false
+  }
+
+  public mutating func updateAgentConfigPath(_ path: String) {
+    agentConfigPath = path
+    if telemetryPathIsDerived {
+      telemetryPath = RuntimeArtifactPaths(configPath: path).telemetryPath
+    }
+  }
+
   private enum CodingKeys: String, CodingKey {
-    case id, name, telemetryPath, agentConfigPath, agentExecutablePath
+    case id, name, telemetryPath, telemetryPathIsDerived, agentConfigPath, agentExecutablePath
   }
 
   public init(from decoder: Decoder) throws {
@@ -65,6 +80,10 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     id = try values.decode(UUID.self, forKey: .id)
     name = try values.decode(String.self, forKey: .name)
     let decodedTelemetryPath = try values.decode(String.self, forKey: .telemetryPath)
+    let savedTelemetryPathIsDerived = try values.decodeIfPresent(
+      Bool.self,
+      forKey: .telemetryPathIsDerived
+    )
     agentExecutablePath = try values.decode(String.self, forKey: .agentExecutablePath)
     let savedAgentConfigPath = try values.decodeIfPresent(String.self, forKey: .agentConfigPath)
     agentConfigPath = savedAgentConfigPath
@@ -74,9 +93,20 @@ public struct RuntimeConfiguration: Codable, Equatable, Identifiable, Sendable {
     let legacyDerivedPath = URL(fileURLWithPath: NSString(string: agentConfigPath).expandingTildeInPath)
       .deletingLastPathComponent()
       .appendingPathComponent("cloud-runtime-status.json").path
-    if savedAgentConfigPath != nil, decodedTelemetryPath == legacyDerivedPath {
-      telemetryPath = RuntimeArtifactPaths(configPath: agentConfigPath).telemetryPath
+    let derivedPath = RuntimeArtifactPaths(configPath: agentConfigPath).telemetryPath
+    if let savedTelemetryPathIsDerived {
+      telemetryPathIsDerived = savedTelemetryPathIsDerived
+      telemetryPath = savedTelemetryPathIsDerived ? derivedPath : decodedTelemetryPath
+    } else if savedAgentConfigPath == nil {
+      telemetryPathIsDerived = true
+      telemetryPath = decodedTelemetryPath
+    } else if decodedTelemetryPath == legacyDerivedPath,
+              !FileManager.default.fileExists(atPath: legacyDerivedPath),
+              FileManager.default.fileExists(atPath: derivedPath) {
+      telemetryPathIsDerived = true
+      telemetryPath = derivedPath
     } else {
+      telemetryPathIsDerived = false
       telemetryPath = decodedTelemetryPath
     }
   }

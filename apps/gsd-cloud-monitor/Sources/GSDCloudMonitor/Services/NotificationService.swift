@@ -17,6 +17,10 @@ struct NotificationService {
       content.body = "The cloud agent reconnected."
     case .error:
       content.body = "The cloud agent reported a connection error."
+    case .telemetryUnavailable:
+      content.body = "Cloud agent telemetry is temporarily unavailable."
+    case .telemetryRestored:
+      content.body = "Cloud agent telemetry is available again."
     }
     content.sound = .default
     UNUserNotificationCenter.current().add(

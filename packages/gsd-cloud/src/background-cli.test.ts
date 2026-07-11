@@ -138,7 +138,7 @@ async function createTestGateway(deviceFlow = false): Promise<TestGateway> {
   };
 }
 
-test("connect returns while a background runtime advertises the selected project", async () => {
+test("connect returns while a background runtime advertises the selected project", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-background-"));
   const projectDir = join(root, "project");
   const expectedProjectDir = join(realpathSync(root), "project");
@@ -146,6 +146,11 @@ test("connect returns while a background runtime advertises the selected project
   mkdirSync(join(projectDir, ".gsd"), { recursive: true });
 
   const gateway = await createTestGateway();
+  t.after(async () => {
+    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
 
   saveCloudConfig(configPath, {
     gateway_url: gateway.baseUrl,
@@ -154,8 +159,7 @@ test("connect returns while a background runtime advertises the selected project
     enabled: true,
   });
 
-  try {
-    const connect = await runCli(["connect", "--config", configPath], projectDir);
+  const connect = await runCli(["connect", "--config", configPath], projectDir);
     assert.equal(connect.code, 0, connect.stderr);
     assert.match(connect.stdout, /connected in the background/i);
 
@@ -173,20 +177,20 @@ test("connect returns while a background runtime advertises the selected project
     };
     assert.equal(statusBody.background?.running, true);
     assert.equal(typeof statusBody.background?.pid, "number");
-    assert.deepEqual(statusBody.projects, [expectedProjectDir]);
-  } finally {
-    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
-    await gateway.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(statusBody.projects, [expectedProjectDir]);
 });
 
-test("stop terminates the background runtime without removing pairing", async () => {
+test("stop terminates the background runtime without removing pairing", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-command-"));
   const projectDir = join(root, "project");
   const configPath = join(root, "daemon.yaml");
   mkdirSync(join(projectDir, ".gsd"), { recursive: true });
   const gateway = await createTestGateway();
+  t.after(async () => {
+    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
 
   saveCloudConfig(configPath, {
     gateway_url: gateway.baseUrl,
@@ -195,8 +199,7 @@ test("stop terminates the background runtime without removing pairing", async ()
     enabled: true,
   });
 
-  try {
-    const connect = await runCli(["connect", "--config", configPath], projectDir);
+  const connect = await runCli(["connect", "--config", configPath], projectDir);
     assert.equal(connect.code, 0, connect.stderr);
     await gateway.hello;
 
@@ -212,24 +215,23 @@ test("stop terminates the background runtime without removing pairing", async ()
     };
     assert.equal(body.configured, true);
     assert.equal(body.runtime_id, "fixture-runtime");
-    assert.equal(body.background?.running, false);
-  } finally {
-    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
-    await gateway.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.equal(body.background?.running, false);
 });
 
-test("login returns after approval and keeps the selected project connected", async () => {
+test("login returns after approval and keeps the selected project connected", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-login-background-"));
   const projectDir = join(root, "project");
   const expectedProjectDir = join(realpathSync(root), "project");
   const configPath = join(root, "daemon.yaml");
   mkdirSync(join(projectDir, ".gsd"), { recursive: true });
   const gateway = await createTestGateway(true);
+  t.after(async () => {
+    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
 
-  try {
-    const login = await runCli([
+  const login = await runCli([
       "login",
       "--gateway", gateway.baseUrl,
       "--config", configPath,
@@ -250,15 +252,10 @@ test("login returns after approval and keeps the selected project connected", as
       background?: { running?: boolean };
     };
     assert.equal(statusBody.configured, false);
-    assert.equal(statusBody.background?.running, false);
-  } finally {
-    await runCli(["disconnect", "--config", configPath], projectDir).catch(() => undefined);
-    await gateway.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.equal(statusBody.background?.running, false);
 });
 
-test("advertised project paths are canonicalized through symlinks", async () => {
+test("advertised project paths are canonicalized through symlinks", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cloud-symlink-")));
   const realProject = join(root, "real-project");
   mkdirSync(join(realProject, ".gsd"), { recursive: true });
@@ -266,6 +263,11 @@ test("advertised project paths are canonicalized through symlinks", async () => 
   symlinkSync(realProject, linkProject);
   const configPath = join(root, "daemon.yaml");
   const gateway = await createTestGateway();
+  t.after(async () => {
+    await runCli(["disconnect", "--config", configPath], realProject).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
 
   saveCloudConfig(configPath, {
     gateway_url: gateway.baseUrl,
@@ -274,8 +276,7 @@ test("advertised project paths are canonicalized through symlinks", async () => 
     enabled: true,
   });
 
-  try {
-    // Point the runtime at the symlink; the advertised path must be the real dir.
+  // Point the runtime at the symlink; the advertised path must be the real dir.
     const connect = await runCli(
       ["connect", "--config", configPath],
       realProject,
@@ -291,15 +292,10 @@ test("advertised project paths are canonicalized through symlinks", async () => 
 
     const status = await runCli(["status", "--config", configPath], realProject);
     const statusBody = JSON.parse(status.stdout) as { projects?: string[] };
-    assert.deepEqual(statusBody.projects, [realProject]);
-  } finally {
-    await runCli(["disconnect", "--config", configPath], realProject).catch(() => undefined);
-    await gateway.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(statusBody.projects, [realProject]);
 });
 
-test("a foreground runtime registers its PID so disconnect can stop it", async () => {
+test("a foreground runtime registers its PID so disconnect can stop it", async (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cloud-foreground-")));
   const projectDir = join(root, "project");
   const configPath = join(root, "daemon.yaml");
@@ -314,8 +310,13 @@ test("a foreground runtime registers its PID so disconnect can stop it", async (
   });
 
   const foreground = spawnForegroundCli(["connect", "--foreground", "--config", configPath], projectDir);
-  try {
-    // Once the foreground runtime advertises its project it is fully connected.
+  t.after(async () => {
+    foreground.child.kill("SIGKILL");
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // Once the foreground runtime advertises its project it is fully connected.
     await gateway.hello;
 
     // The foreground session must record its own PID in the shared runtime state
@@ -336,10 +337,5 @@ test("a foreground runtime registers its PID so disconnect can stop it", async (
 
     const afterStatus = await runCli(["status", "--config", configPath], projectDir);
     const afterBody = JSON.parse(afterStatus.stdout) as { background?: { running?: boolean } };
-    assert.equal(afterBody.background?.running, false);
-  } finally {
-    foreground.child.kill("SIGKILL");
-    await gateway.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  assert.equal(afterBody.background?.running, false);
 });

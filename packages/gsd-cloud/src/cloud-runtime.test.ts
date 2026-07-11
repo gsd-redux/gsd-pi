@@ -39,7 +39,7 @@ type RuntimeInternals = {
   connect: () => void;
 };
 
-test("one routing selector drives execution, cancellation, and telemetry", async () => {
+test("one routing selector drives execution, cancellation, and telemetry", async (t) => {
   const selectors: Array<string | undefined> = [];
   const started: Array<{ projectAlias?: string; projectPath?: string }> = [];
   const execution = Promise.withResolvers<unknown>();
@@ -64,6 +64,7 @@ test("one routing selector drives execution, cancellation, and telemetry", async
     telemetry,
   );
   const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
   internals.advertisedProjects = [
     { alias: "one", path: "/work/one", repoIdentity: "one", markers: [".gsd"] },
     { alias: "two", path: "/work/two", repoIdentity: "two", markers: [".gsd"] },
@@ -71,7 +72,6 @@ test("one routing selector drives execution, cancellation, and telemetry", async
   const socket = fakeSocket();
   internals.socket = socket;
 
-  try {
     const request = internals.handleSocketMessage(socket, JSON.stringify({
       type: "tool_call",
       requestId: "request-routing",
@@ -103,12 +103,10 @@ test("one routing selector drives execution, cancellation, and telemetry", async
     }));
     assert.equal(started[1]?.projectAlias, undefined);
     assert.equal(started[1]?.projectPath, undefined);
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("queued project bytes are reported only after transmission", async () => {
+test("queued project bytes are reported only after transmission", async (t) => {
   const sentProjects: Array<string | undefined> = [];
   const telemetry = {
     ...Object.fromEntries([
@@ -130,13 +128,13 @@ test("queued project bytes are reported only after transmission", async () => {
     telemetry,
   );
   const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
   internals.advertisedProjects = [
     { alias: "app", path: "/work/one/app", repoIdentity: "one", markers: [".gsd"] },
     { alias: "app", path: "/work/two/app", repoIdentity: "two", markers: [".gsd"] },
   ];
   internals.socket = fakeSocket(WebSocket.CLOSED);
 
-  try {
     await internals.handleSocketMessage(internals.socket, JSON.stringify({
       type: "tool_call",
       requestId: "request-queued",
@@ -149,15 +147,13 @@ test("queued project bytes are reported only after transmission", async () => {
     internals.socket = openSocket;
     internals.handleSocketOpen(openSocket);
     assert.deepEqual(sentProjects, ["/work/two/app"]);
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("start()'s first-connect promise resolves only when the relay socket opens", async () => {
+test("start()'s first-connect promise resolves only when the relay socket opens", async (t) => {
   const runtime = makeRuntime();
   const internals = runtime as unknown as RuntimeInternals;
-  try {
+  t.after(() => runtime.stop());
     const deferred = Promise.withResolvers<void>();
     internals.firstConnectDeferred = deferred;
     const socket = fakeSocket();
@@ -170,15 +166,13 @@ test("start()'s first-connect promise resolves only when the relay socket opens"
 
     internals.handleSocketOpen(socket);
     await deferred.promise; // resolves — otherwise this hangs/throws
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("an early socket close retries instead of rejecting while attempts remain", async () => {
+test("an early socket close retries instead of rejecting while attempts remain", async (t) => {
   const runtime = makeRuntime();
   const internals = runtime as unknown as RuntimeInternals;
-  try {
+  t.after(() => runtime.stop());
     const deferred = Promise.withResolvers<void>();
     internals.firstConnectDeferred = deferred;
     const socket = fakeSocket();
@@ -192,12 +186,10 @@ test("an early socket close retries instead of rejecting while attempts remain",
     assert.equal(settled, false, "a single early close must not settle start()");
     assert.equal(internals.initialConnectAttempts, 1);
     assert.notEqual(internals.reconnect, undefined, "a reconnect must be scheduled");
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("start()'s first-connect promise rejects once the initial connect attempts are exhausted", async () => {
+test("start()'s first-connect promise rejects once the initial connect attempts are exhausted", async (t) => {
   const errors: string[] = [];
   const telemetry = {
     ...Object.fromEntries([
@@ -213,7 +205,7 @@ test("start()'s first-connect promise rejects once the initial connect attempts 
     telemetry,
   );
   const internals = runtime as unknown as RuntimeInternals;
-  try {
+  t.after(() => runtime.stop());
     const deferred = Promise.withResolvers<void>();
     internals.firstConnectDeferred = deferred;
     // Simulate having already burned every retry but the last so the next close
@@ -225,25 +217,21 @@ test("start()'s first-connect promise rejects once the initial connect attempts 
     internals.handleSocketClose(socket);
     await assert.rejects(deferred.promise, /connection failed/);
     assert.deepEqual(errors, ["cloud runtime connection failed after 5 attempt(s)"]);
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("connect() rejects the first-connect promise when the device token is missing", async () => {
+test("connect() rejects the first-connect promise when the device token is missing", async (t) => {
   const runtime = makeRuntime({ device_token: "" });
   const internals = runtime as unknown as RuntimeInternals;
-  try {
+  t.after(() => runtime.stop());
     const deferred = Promise.withResolvers<void>();
     internals.firstConnectDeferred = deferred;
     internals.connect();
     await assert.rejects(deferred.promise, /missing device token/);
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("socket activity is reported to runtime telemetry", async () => {
+test("socket activity is reported to runtime telemetry", async (t) => {
   const events: Array<{ name: string; details?: unknown }> = [];
   const telemetry = {
     connecting: () => events.push({ name: "connecting" }),
@@ -272,10 +260,10 @@ test("socket activity is reported to runtime telemetry", async () => {
     telemetry,
   );
   const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
   const socket = fakeSocket();
   internals.socket = socket;
 
-  try {
     internals.handleSocketOpen(socket);
     await new Promise((resolve) => setImmediate(resolve));
     await internals.handleSocketMessage(socket, JSON.stringify({
@@ -298,13 +286,12 @@ test("socket activity is reported to runtime telemetry", async () => {
     assert.equal((finished?.details as { outcome?: string }).outcome, "success");
     assert.equal((finished?.details as { sentBytes?: number }).sentBytes, undefined);
     assert.ok(events.some((event) => event.name === "sent"));
-  } finally {
-    runtime.stop();
-  }
+
 });
 
-test("startup failures flush runtime telemetry before rejecting", async () => {
+test("startup failures flush runtime telemetry before rejecting", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-startup-error-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const telemetry = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
     gatewayUrl: "wss://cloud.example.net",
   });
@@ -314,8 +301,8 @@ test("startup failures flush runtime telemetry before rejecting", async () => {
     noopLogger as never,
     telemetry,
   );
+  t.after(() => runtime.stop());
 
-  try {
     await assert.rejects(runtime.start(), /missing device token/);
     const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
       state?: string;
@@ -323,13 +310,12 @@ test("startup failures flush runtime telemetry before rejecting", async () => {
     };
     assert.equal(status.state, "error");
     assert.equal(status.last_error, "cloud runtime missing device token or runtime id");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+
 });
 
-test("malformed gateway failures flush runtime telemetry before rejecting", async () => {
+test("malformed gateway failures flush runtime telemetry before rejecting", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-startup-url-error-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const telemetry = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
     gatewayUrl: "not-a-url",
   });
@@ -339,8 +325,8 @@ test("malformed gateway failures flush runtime telemetry before rejecting", asyn
     noopLogger as never,
     telemetry,
   );
+  t.after(() => runtime.stop());
 
-  try {
     await assert.rejects(runtime.start(), /absolute HTTP\(S\) URL/);
     const status = JSON.parse(readFileSync(join(root, "cloud-runtime-status.json"), "utf8")) as {
       state?: string;
@@ -348,7 +334,5 @@ test("malformed gateway failures flush runtime telemetry before rejecting", asyn
     };
     assert.equal(status.state, "error");
     assert.match(status.last_error ?? "", /absolute HTTP\(S\) URL/);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+
 });

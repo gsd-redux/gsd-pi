@@ -2,6 +2,8 @@ public enum ConnectionNotification: Sendable {
   case disconnected
   case reconnected
   case error
+  case telemetryUnavailable
+  case telemetryRestored
 }
 
 public struct ConnectionTransition: Sendable {
@@ -17,10 +19,16 @@ public struct ConnectionTransition: Sendable {
     if current == .error && previous != .error {
       return .error
     }
-    if previous == .connected && current != .connected {
+    if current == .stale && previous != .stale {
+      return .telemetryUnavailable
+    }
+    if previous == .stale && current != .stale {
+      return .telemetryRestored
+    }
+    if previous == .connected && (current == .reconnecting || current == .stopped) {
       return .disconnected
     }
-    if previous != .connected && current == .connected {
+    if (previous == .reconnecting || previous == .stopped) && current == .connected {
       return .reconnected
     }
     return nil

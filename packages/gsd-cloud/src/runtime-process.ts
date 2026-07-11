@@ -39,6 +39,7 @@ interface StartRuntimeOptions {
   projectDirs: string[];
   readyTimeoutMs?: number;
   verbose?: boolean;
+  processIdentityReader?: (pid: number) => string | null;
 }
 
 const PROCESS_STARTUP_GRACE_MS = 5_000;
@@ -80,7 +81,7 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
 
     let processStartIdentity: string | null = null;
     try {
-      processStartIdentity = readProcessStartIdentity(pid);
+      processStartIdentity = (opts.processIdentityReader ?? readProcessStartIdentity)(pid);
       if (!processStartIdentity) {
         throw new Error(`could not determine process identity for PID ${pid}`);
       }
@@ -95,7 +96,7 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
       if (processStartIdentity) {
         await terminateProcess(pid, processStartIdentity);
       } else {
-        child.kill();
+        await terminateKnownChild(child);
       }
       throw error;
     }
@@ -413,20 +414,34 @@ function processCommandMatchesConfig(pid: number, configPath: string): boolean {
 }
 
 function commandStringMatchesConfig(command: string, configPath: string): boolean {
-  if (!/(?:^|\s)_run(?:\s|$)/.test(command)) return false;
-  const match = command.match(/(?:^|\s)--config(?:=|\s+)(?:"([^"]+)"|'([^']+)'|(\S+))/);
-  const configuredPath = match?.[1] ?? match?.[2] ?? match?.[3];
+  if (!commandStringRunsCloudRuntime(command)) return false;
+  const match = command.match(
+    /(?:^|\s)--config(?:=|\s+)(.*?)(?=\s+--(?:gateway|code|runtime-name|verbose|foreground|help)(?:=|\s|$)|$)/,
+  );
+  const configuredPath = match?.[1]?.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
   return configuredPath !== undefined && canonicalConfigPath(configuredPath) === configPath;
 }
 
 function commandArgsMatchConfig(args: string[], configPath: string): boolean {
-  if (!args.includes("_run")) return false;
+  if (!commandArgsRunCloudRuntime(args)) return false;
   const configIndex = args.indexOf("--config");
   const configuredPath = configIndex >= 0 ? args[configIndex + 1] : undefined;
   const equalsArgument = args.find((arg) => arg.startsWith("--config="))?.slice("--config=".length);
   return [configuredPath, equalsArgument].some(
     (value) => value !== undefined && canonicalConfigPath(value) === configPath,
   );
+}
+
+function commandStringRunsCloudRuntime(command: string): boolean {
+  return /(?:^|\s)_run(?:\s|$)/.test(command)
+    || /(?:^|\s)connect(?:\s|$)/.test(command)
+    || (/(?:^|\s)login(?:\s|$)/.test(command) && /(?:^|\s)--foreground(?:\s|$)/.test(command));
+}
+
+function commandArgsRunCloudRuntime(args: string[]): boolean {
+  return args.includes("_run")
+    || args.includes("connect")
+    || (args.includes("login") && args.includes("--foreground"));
 }
 
 function processIsRunning(pid: number): boolean {
@@ -458,6 +473,31 @@ async function terminateProcess(pid: number, expectedIdentity: string): Promise<
   if (!await waitForProcessExit(pid, expectedIdentity, FORCED_STOP_TIMEOUT_MS)) {
     throw new Error(`background runtime PID ${pid} did not stop`);
   }
+}
+
+async function terminateKnownChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForChildExit(child, STOP_GRACE_PERIOD_MS)) return;
+  child.kill("SIGKILL");
+  if (!await waitForChildExit(child, FORCED_STOP_TIMEOUT_MS)) {
+    throw new Error(`background runtime PID ${child.pid ?? "unknown"} did not stop`);
+  }
+}
+
+function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onExit = (): void => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    const timeout = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
 }
 
 function signalProcess(pid: number, expectedIdentity: string, signal: NodeJS.Signals): boolean {

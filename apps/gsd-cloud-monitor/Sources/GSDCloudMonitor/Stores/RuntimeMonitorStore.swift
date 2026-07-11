@@ -33,6 +33,7 @@ final class RuntimeMonitorStore: ObservableObject {
       let preview = RuntimeConfiguration(
         name: "Preview",
         telemetryPath: telemetryURL.path,
+        telemetryPathIsDerived: false,
         agentConfigPath: telemetryURL.deletingLastPathComponent().appendingPathComponent("daemon.yaml").path,
         agentExecutablePath: "/usr/bin/false"
       )
@@ -174,6 +175,7 @@ final class RuntimeMonitorStore: ObservableObject {
     let configuration = RuntimeConfiguration(
       name: "New Runtime",
       telemetryPath: RuntimeMonitorStore.defaultTelemetryURL.path,
+      telemetryPathIsDerived: true,
       agentConfigPath: RuntimeMonitorStore.defaultAgentConfigURL.path,
       agentExecutablePath: RuntimeMonitorStore.defaultAgentExecutablePath
     )
@@ -198,16 +200,10 @@ final class RuntimeMonitorStore: ObservableObject {
   ) {
     guard let index = configurations.firstIndex(where: { $0.id == selectedConfigurationID }) else { return }
     let previousTelemetryPath = configurations[index].telemetryPath
-    let previousArtifacts = RuntimeArtifactPaths(configPath: configurations[index].configPath)
     if let name { configurations[index].name = name }
-    if let telemetryPath { configurations[index].telemetryPath = telemetryPath }
+    if let telemetryPath { configurations[index].updateTelemetryPath(telemetryPath) }
     if let agentConfigPath {
-      configurations[index].agentConfigPath = agentConfigPath
-      if configurations[index].telemetryPath == previousArtifacts.telemetryPath {
-        configurations[index].telemetryPath = RuntimeArtifactPaths(
-          configPath: agentConfigPath
-        ).telemetryPath
-      }
+      configurations[index].updateAgentConfigPath(agentConfigPath)
     }
     if let agentExecutablePath { configurations[index].agentExecutablePath = agentExecutablePath }
     if configurations[index].telemetryPath != previousTelemetryPath { resetSamples() }
@@ -338,6 +334,7 @@ final class RuntimeMonitorStore: ObservableObject {
     let initial = RuntimeConfiguration(
       name: "Local Runtime",
       telemetryPath: defaultTelemetryURL.path,
+      telemetryPathIsDerived: true,
       agentConfigPath: defaultAgentConfigURL.path,
       agentExecutablePath: defaultAgentExecutablePath
     )

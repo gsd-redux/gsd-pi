@@ -18,6 +18,7 @@ struct RuntimeTelemetryTests {
     try connectionTransitionsIdentifyNotifications()
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
+    try runtimeConfigurationEditsPreservePathProvenance()
     try legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath()
     try savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths()
     try runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory()
@@ -369,6 +370,14 @@ struct RuntimeTelemetryTests {
       ConnectionTransition(previous: .connected, current: .connected).notification == nil,
       "stable state should not notify"
     )
+    try expect(
+      ConnectionTransition(previous: .connected, current: .stale).notification == .telemetryUnavailable,
+      "stale telemetry must not report a connection disconnect"
+    )
+    try expect(
+      ConnectionTransition(previous: .stale, current: .connected).notification == .telemetryRestored,
+      "fresh telemetry must not report a connection reconnect"
+    )
   }
 
   static func runtimeConfigurationsRoundTrip() throws {
@@ -402,6 +411,29 @@ struct RuntimeTelemetryTests {
     try expect(decoded.configPath == "/work/config/custom.yaml", "custom config path must round-trip")
   }
 
+  static func runtimeConfigurationEditsPreservePathProvenance() throws {
+    var derived = RuntimeConfiguration(
+      name: "Derived",
+      telemetryPath: RuntimeArtifactPaths(configPath: "/work/first.yaml").telemetryPath,
+      telemetryPathIsDerived: true,
+      agentConfigPath: "/work/first.yaml",
+      agentExecutablePath: "/usr/local/bin/gsd-cloud"
+    )
+    derived.updateAgentConfigPath("/work/second.yaml")
+    try expect(
+      derived.telemetryPath == RuntimeArtifactPaths(configPath: "/work/second.yaml").telemetryPath,
+      "derived telemetry must follow agent config edits"
+    )
+
+    derived.updateTelemetryPath("/var/run/explicit-status.json")
+    derived.updateAgentConfigPath("/work/third.yaml")
+    try expect(!derived.telemetryPathIsDerived, "manual telemetry edits must persist custom provenance")
+    try expect(
+      derived.telemetryPath == "/var/run/explicit-status.json",
+      "explicit telemetry must not follow later config edits"
+    )
+  }
+
   static func legacyRuntimeConfigurationsInferTheDefaultAgentConfigPath() throws {
     let id = UUID()
     let data = Data("""
@@ -412,24 +444,47 @@ struct RuntimeTelemetryTests {
   }
 
   static func savedRuntimeConfigurationsMigrateFormerlyDerivedTelemetryPaths() throws {
-    let id = UUID()
-    let formerlyDerived = Data("""
-      {"id":"\(id.uuidString)","name":"Custom","telemetryPath":"/work/state/cloud-runtime-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("gsd-cloud-config-migration-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let configPath = root.appendingPathComponent("custom.yaml").path
+    let legacyPath = root.appendingPathComponent("cloud-runtime-status.json").path
+    let namespacedPath = RuntimeArtifactPaths(configPath: configPath).telemetryPath
+    let ambiguous = Data("""
+      {"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"\(legacyPath)","agentConfigPath":"\(configPath)","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
       """.utf8)
-    let migrated = try JSONDecoder().decode(RuntimeConfiguration.self, from: formerlyDerived)
+
+    let preservedAmbiguous = try JSONDecoder().decode(RuntimeConfiguration.self, from: ambiguous)
     try expect(
-      migrated.telemetryPath == RuntimeArtifactPaths(configPath: migrated.configPath).telemetryPath,
-      "formerly derived custom telemetry paths must migrate to their namespaced path"
+      preservedAmbiguous.telemetryPath == legacyPath,
+      "ambiguous legacy telemetry paths must be preserved when no artifact proves derivation"
     )
 
+    try Data("{}".utf8).write(to: URL(fileURLWithPath: legacyPath))
+    try Data("{}".utf8).write(to: URL(fileURLWithPath: namespacedPath))
+    let preservedActiveLegacy = try JSONDecoder().decode(RuntimeConfiguration.self, from: ambiguous)
+    try expect(
+      preservedActiveLegacy.telemetryPath == legacyPath,
+      "an existing legacy telemetry artifact must preserve an ambiguous saved path"
+    )
+    try FileManager.default.removeItem(atPath: legacyPath)
+    let migrated = try JSONDecoder().decode(RuntimeConfiguration.self, from: ambiguous)
+    try expect(migrated.telemetryPath == namespacedPath, "active namespaced telemetry should migrate")
+    try expect(migrated.telemetryPathIsDerived, "migrated telemetry should persist derived provenance")
+
     let explicit = Data("""
-      {"id":"\(id.uuidString)","name":"Custom","telemetryPath":"/var/run/custom-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud"}
+      {"id":"\(UUID().uuidString)","name":"Custom","telemetryPath":"/var/run/custom-status.json","agentConfigPath":"/work/state/custom.yaml","agentExecutablePath":"/usr/local/bin/gsd-cloud","telemetryPathIsDerived":false}
       """.utf8)
     let preserved = try JSONDecoder().decode(RuntimeConfiguration.self, from: explicit)
     try expect(
       preserved.telemetryPath == "/var/run/custom-status.json",
       "explicit custom telemetry paths must be preserved"
     )
+
+    let encoded = try JSONEncoder().encode(migrated)
+    let roundTripped = try JSONDecoder().decode(RuntimeConfiguration.self, from: encoded)
+    try expect(roundTripped.telemetryPathIsDerived, "derived provenance must survive persistence")
   }
 
   static func runtimeConfigurationsDeriveDistinctArtifactsInOneDirectory() throws {
