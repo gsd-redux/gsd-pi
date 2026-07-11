@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
 
