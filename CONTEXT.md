@@ -26,6 +26,11 @@
 - **Projection Work**: durable work to bring a Projection to a specific database revision, including retry and visible staleness.
 - **Import Preview**: a read-only candidate interpretation and exact diff of legacy material before it may affect Database Authority.
 - **Import Application**: the explicitly authorized, backed-up, atomic application of an unchanged Import Preview.
+- **Failure Observation**: an immutable record of one failed Attempt, its normalized cause and evidence, and the Recovery Action selected under a named policy version.
+- **Recovery Action**: exactly one response to a Failure Observation: retry, repair, replan, remediate, clarify, pause, or abort.
+- **Verification Evidence**: an immutable, fresh observation tied to an acceptance criterion, Attempt, source revision, and execution environment.
+- **Technical Verdict**: a mechanically derived pass, fail, or inconclusive result from required Verification Evidence.
+- **Human Acceptance**: an explicit disposition of a required Subjective UAT check, separate from the Technical Verdict.
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
