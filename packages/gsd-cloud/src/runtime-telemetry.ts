@@ -111,6 +111,7 @@ export const noopRuntimeTelemetry: RuntimeTelemetryReporter = {
 export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   private readonly path: string;
   private status: RuntimeTelemetryStatus;
+  private livenessTimer: ReturnType<typeof setInterval> | undefined;
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
   private persistPromise = Promise.resolve();
 
@@ -141,6 +142,10 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   }
 
   connecting(): void {
+    if (!this.livenessTimer) {
+      this.livenessTimer = setInterval(() => this.persist(), 1_000);
+      this.livenessTimer.unref();
+    }
     this.status.state = this.status.connection_attempts === 0 ? "connecting" : "reconnecting";
     this.status.connection_attempts += 1;
     this.persist();
@@ -258,6 +263,8 @@ export class RuntimeTelemetryStore implements RuntimeTelemetryReporter {
   }
 
   stopped(): void {
+    if (this.livenessTimer) clearInterval(this.livenessTimer);
+    this.livenessTimer = undefined;
     this.status.state = "stopped";
     this.status.active_requests = 0;
     for (const project of this.status.projects) {

@@ -57,6 +57,44 @@ test("runtime telemetry persists connection state and traffic without credential
   }
 });
 
+test("runtime telemetry publishes idle liveness until the runtime stops", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-idle-liveness-"));
+  const telemetryPath = join(root, "cloud-runtime-status.json");
+  const store = new RuntimeTelemetryStore(join(root, "daemon.yaml"), {
+    gatewayUrl: "https://cloud.example.com",
+  });
+
+  try {
+    store.connecting();
+    store.connected();
+    await store.flush();
+    const initial = JSON.parse(readFileSync(telemetryPath, "utf8")) as {
+      updated_at: string;
+      received_messages: number;
+      sent_messages: number;
+      recent_activity: unknown[];
+    };
+
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    const idle = JSON.parse(readFileSync(telemetryPath, "utf8")) as typeof initial;
+    assert.ok(new Date(idle.updated_at) > new Date(initial.updated_at));
+    assert.equal(idle.received_messages, initial.received_messages);
+    assert.equal(idle.sent_messages, initial.sent_messages);
+    assert.deepEqual(idle.recent_activity, initial.recent_activity);
+
+    store.stopped();
+    await store.flush();
+    const stopped = JSON.parse(readFileSync(telemetryPath, "utf8")) as typeof initial;
+    await new Promise((resolve) => setTimeout(resolve, 1_250));
+    const afterStop = JSON.parse(readFileSync(telemetryPath, "utf8")) as typeof initial;
+    assert.equal(afterStop.updated_at, stopped.updated_at);
+  } finally {
+    store.stopped();
+    await store.flush();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runtime telemetry attributes requests and recent activity to advertised projects", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-project-telemetry-"));
   const configPath = join(root, "daemon.yaml");
