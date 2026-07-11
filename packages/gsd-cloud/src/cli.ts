@@ -20,6 +20,7 @@ import { runDeviceFlow } from "./device-flow.js";
 import { CloudRuntime } from "./cloud-runtime.js";
 import { selectExecutor } from "./executors/index.js";
 import {
+  acquireRuntimeStartLock,
   backgroundRuntimeStatus,
   clearRuntimeState,
   startBackgroundRuntime,
@@ -106,10 +107,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     }, projectDirs);
     process.stdout.write(`${opts.binaryName}: cloud runtime ${runtimeId} paired — connecting...\n`);
     if (values.foreground) {
-      await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs, {
-        registerConfigPath: configPath,
-      });
+      await runForegroundCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs);
       return;
     }
     await startAndReportBackgroundRuntime(configPath, projectDirs, opts.binaryName, values.verbose);
@@ -145,10 +143,7 @@ export async function handleCloudCommand(argv: string[], opts: {
     const projectDirs = selectedProjectDirs(config.projects.scan_roots);
     config = saveCloudConfig(configPath, config.cloud, projectDirs);
     if (values.foreground) {
-      await stopBackgroundRuntime(configPath);
-      await runCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs, {
-        registerConfigPath: configPath,
-      });
+      await runForegroundCloudRuntime(config, configPath, opts.binaryName, values.verbose, projectDirs);
       return;
     }
     await startAndReportBackgroundRuntime(configPath, projectDirs, opts.binaryName, values.verbose);
@@ -170,6 +165,25 @@ export async function handleCloudCommand(argv: string[], opts: {
   }
 
   throw new Error(`Unknown cloud runtime command: ${command}`);
+}
+
+async function runForegroundCloudRuntime(
+  config: DaemonConfig,
+  configPath: string,
+  binaryName: string,
+  verbose: boolean,
+  projectDirs: string[],
+): Promise<void> {
+  const releaseStartLock = await acquireRuntimeStartLock(configPath);
+  try {
+    await stopBackgroundRuntime(configPath);
+    await runCloudRuntime(config, configPath, binaryName, verbose, projectDirs, {
+      registerConfigPath: configPath,
+      onConnected: releaseStartLock,
+    });
+  } finally {
+    releaseStartLock();
+  }
 }
 
 /**

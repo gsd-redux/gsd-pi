@@ -1,7 +1,7 @@
 // Project/App: Open GSD
 // File Purpose: Acceptance coverage for the detached gsd-cloud runtime lifecycle.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +10,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocketServer } from "ws";
 import { saveCloudConfig } from "./cloud-config.js";
+import { runtimeArtifactPath } from "./runtime-artifacts.js";
+import { startBackgroundRuntime, stopBackgroundRuntime } from "./runtime-process.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = join(packageRoot, "bin", "gsd-cloud.js");
@@ -339,3 +341,60 @@ test("a foreground runtime registers its PID so disconnect can stop it", async (
     const afterBody = JSON.parse(afterStatus.stdout) as { background?: { running?: boolean } };
   assert.equal(afterBody.background?.running, false);
 });
+
+test("foreground connect waits for an in-progress background start", { timeout: 10_000 }, async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "gsd-cloud-foreground-lock-")));
+  const projectDir = join(root, "project");
+  const configPath = join(root, "daemon.yaml");
+  const delayedRuntimePath = join(root, "delayed-runtime.mjs");
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  writeFileSync(delayedRuntimePath, [
+    'process.on("SIGTERM", () => process.exit(0));',
+    'setTimeout(() => process.send?.({ type: "ready" }), 3_000);',
+    'setInterval(() => undefined, 1_000);',
+  ].join("\n"));
+  const gateway = await createTestGateway();
+
+  saveCloudConfig(configPath, {
+    gateway_url: gateway.baseUrl,
+    device_token: "test",
+    runtime_id: "fixture-runtime",
+    enabled: true,
+  });
+
+  const backgroundStart = startBackgroundRuntime({
+    binaryPath: delayedRuntimePath,
+    configPath,
+    projectDirs: [projectDir],
+  });
+  await waitForCondition(() => existsSync(runtimeArtifactPath(configPath, "start.lock")));
+  await waitForCondition(() => existsSync(runtimeArtifactPath(configPath, "state")));
+  const foreground = spawnForegroundCli(["connect", "--foreground", "--config", configPath], projectDir);
+  t.after(async () => {
+    foreground.child.kill("SIGKILL");
+    await stopBackgroundRuntime(configPath).catch(() => undefined);
+    await gateway.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const connectedBeforeBackgroundStartFinished = await Promise.race([
+    gateway.hello.then(() => true),
+    new Promise<false>((resolveDelay) => setTimeout(() => resolveDelay(false), 500)),
+  ]);
+  assert.equal(connectedBeforeBackgroundStartFinished, false);
+  const background = await backgroundStart;
+  assert.equal(background.running, true);
+  await gateway.hello;
+
+  const disconnect = await runCli(["disconnect", "--config", configPath], projectDir);
+  assert.equal(disconnect.code, 0, disconnect.stderr);
+  assert.equal(await foreground.exited, 0);
+});
+
+async function waitForCondition(condition: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for test condition");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}

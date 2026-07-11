@@ -1,13 +1,14 @@
 // Project/App: Open GSD
 // File Purpose: Detached cloud runtime process lifecycle and status persistence.
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -24,6 +25,11 @@ interface RuntimeProcessState {
 interface LocatedRuntimeProcessState {
   path: string;
   state: RuntimeProcessState;
+}
+
+interface RuntimeStartLockOwner {
+  pid: number;
+  process_start_identity?: string;
 }
 
 export interface RuntimeProcessStatus {
@@ -51,7 +57,7 @@ export const BACKGROUND_RUNTIME_READY_TIMEOUT_MS =
   CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS + PROCESS_STARTUP_GRACE_MS;
 
 export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise<RuntimeProcessStatus> {
-  await acquireRuntimeStartLock(opts.configPath);
+  const releaseStartLock = await acquireRuntimeStartLock(opts.configPath);
   try {
     await stopBackgroundRuntime(opts.configPath);
 
@@ -120,7 +126,7 @@ export async function startBackgroundRuntime(opts: StartRuntimeOptions): Promise
       log_file: logFile,
     };
   } finally {
-    releaseRuntimeStartLock(opts.configPath);
+    releaseStartLock();
   }
 }
 
@@ -237,9 +243,17 @@ function runtimeStartLockPath(configPath: string): string {
   return runtimeArtifactPath(configPath, "start.lock");
 }
 
-async function acquireRuntimeStartLock(configPath: string): Promise<void> {
+export async function acquireRuntimeStartLock(configPath: string): Promise<() => void> {
   const lockPath = runtimeStartLockPath(configPath);
   mkdirSync(dirname(lockPath), { recursive: true });
+  const processStartIdentity = readProcessStartIdentity(process.pid);
+  if (!processStartIdentity) {
+    throw new Error(`could not determine process identity for PID ${process.pid}`);
+  }
+  const owner: RuntimeStartLockOwner = {
+    pid: process.pid,
+    process_start_identity: processStartIdentity,
+  };
   // Match worst-case `startBackgroundRuntime` hold time: stop prior runtime, wait for
   // ready, and tear down the child if ready fails, plus one poll interval.
   const deadline = Date.now()
@@ -248,17 +262,18 @@ async function acquireRuntimeStartLock(configPath: string): Promise<void> {
     + STOP_POLL_INTERVAL_MS;
   while (Date.now() < deadline) {
     try {
-      const fd = openSync(lockPath, "wx");
-      writeFileSync(fd, `${process.pid}\n`, "utf8");
-      closeSync(fd);
-      return;
+      createRuntimeStartLock(lockPath, owner);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        releaseRuntimeStartLock(lockPath, owner);
+      };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       try {
-        const ownerPid = readRuntimeStartLockOwner(lockPath);
-        const incompleteLockIsStale = ownerPid === null
-          && Date.now() - statSync(lockPath).mtimeMs > 1_000;
-        if ((ownerPid !== null && !processIsRunning(ownerPid)) || incompleteLockIsStale) {
+        const currentOwner = readRuntimeStartLockOwner(lockPath);
+        if (currentOwner && !runtimeStartLockOwnerIsRunning(currentOwner)) {
           unlinkSync(lockPath);
           continue;
         }
@@ -271,24 +286,49 @@ async function acquireRuntimeStartLock(configPath: string): Promise<void> {
   throw new Error("timed out waiting for the background runtime start lock");
 }
 
-function releaseRuntimeStartLock(configPath: string): void {
-  const lockPath = runtimeStartLockPath(configPath);
-  if (readRuntimeStartLockOwner(lockPath) !== process.pid) return;
+function createRuntimeStartLock(lockPath: string, owner: RuntimeStartLockOwner): void {
+  const temporaryPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    unlinkSync(lockPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    writePrivateJson(temporaryPath, owner);
+    linkSync(temporaryPath, lockPath);
+  } finally {
+    removeRuntimeStateFile(temporaryPath);
   }
 }
 
-function readRuntimeStartLockOwner(lockPath: string): number | null {
+function releaseRuntimeStartLock(lockPath: string, owner: RuntimeStartLockOwner): void {
+  if (!runtimeStartLockOwnersEqual(readRuntimeStartLockOwner(lockPath), owner)) return;
+  removeRuntimeStateFile(lockPath);
+}
+
+function readRuntimeStartLockOwner(lockPath: string): RuntimeStartLockOwner | null {
   try {
-    const pid = Number.parseInt(readFileSync(lockPath, "utf8").trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const text = readFileSync(lockPath, "utf8").trim();
+    if (/^\d+$/.test(text)) {
+      const pid = Number.parseInt(text, 10);
+      return pid > 0 ? { pid } : null;
+    }
+    const value = JSON.parse(text) as Partial<RuntimeStartLockOwner>;
+    if (!Number.isInteger(value.pid) || (value.pid ?? 0) <= 0) return null;
+    if (typeof value.process_start_identity !== "string") return null;
+    return { pid: value.pid!, process_start_identity: value.process_start_identity };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+    return null;
   }
+}
+
+function runtimeStartLockOwnerIsRunning(owner: RuntimeStartLockOwner): boolean {
+  if (!owner.process_start_identity) return processIsRunning(owner.pid);
+  return processMatchesIdentity(owner.pid, owner.process_start_identity);
+}
+
+function runtimeStartLockOwnersEqual(
+  first: RuntimeStartLockOwner | null,
+  second: RuntimeStartLockOwner,
+): boolean {
+  return first?.pid === second.pid
+    && first.process_start_identity === second.process_start_identity;
 }
 
 function readRuntimeState(configPath: string): LocatedRuntimeProcessState | null {
@@ -469,7 +509,7 @@ function commandStringMatchesConfig(command: string, configPath: string): boolea
   const runtimeCommand = findRuntimeCommand(command);
   if (!runtimeCommand) return false;
   const executablePrefix = command.slice(0, runtimeCommand.index);
-  if (!/(?:^|[\\/\s])gsd-cloud(?:\.[cm]?js)?(?:\s|$)/.test(executablePrefix)) return false;
+  if (!commandPrefixHasCloudRuntimeLauncher(executablePrefix)) return false;
   if (runtimeCommand.command === "login"
     && !/(?:^|\s)--foreground(?:\s|$)/.test(command.slice(runtimeCommand.index))) return false;
   const match = command.slice(runtimeCommand.index).match(
@@ -482,15 +522,36 @@ function commandStringMatchesConfig(command: string, configPath: string): boolea
 function commandArgsMatchConfig(args: string[], configPath: string): boolean {
   const runtimeCommand = findRuntimeCommandInArgs(args);
   if (!runtimeCommand) return false;
-  if (!args.slice(0, runtimeCommand.index).some(isCloudRuntimeExecutable)) return false;
-  if (runtimeCommand.command === "login" && !args.includes("--foreground")) return false;
-  const configIndex = args.findIndex((arg) => arg === "--config" || arg === "-c");
-  const configuredPath = configIndex >= 0 ? args[configIndex + 1] : undefined;
-  const equalsArgument = args.find((arg) => arg.startsWith("--config=") || arg.startsWith("-c="))
+  if (!argsHaveCloudRuntimeLauncher(args.slice(0, runtimeCommand.index))) return false;
+  const runtimeArgs = args.slice(runtimeCommand.index + 1);
+  if (runtimeCommand.command === "login" && !runtimeArgs.includes("--foreground")) return false;
+  const configIndex = runtimeArgs.findIndex((arg) => arg === "--config" || arg === "-c");
+  const configuredPath = configIndex >= 0 ? runtimeArgs[configIndex + 1] : undefined;
+  const equalsArgument = runtimeArgs.find((arg) => arg.startsWith("--config=") || arg.startsWith("-c="))
     ?.replace(/^(?:--config|-c)=/, "");
   return [configuredPath, equalsArgument].some(
     (value) => value !== undefined && canonicalConfigPath(value) === configPath,
   );
+}
+
+function argsHaveCloudRuntimeLauncher(args: string[]): boolean {
+  if (args.length === 1) return isCloudRuntimeExecutable(args[0]!);
+  return args.length === 2
+    && isNodeExecutable(args[0]!)
+    && isCloudRuntimeExecutable(args[1]!);
+}
+
+function commandPrefixHasCloudRuntimeLauncher(prefix: string): boolean {
+  const trimmed = prefix.trim();
+  if (!/\s/.test(trimmed) && isCloudRuntimeExecutable(trimmed.replace(/^['"]|['"]$/g, ""))) return true;
+  const nodeLauncher = /^("[^"]*node(?:\.exe)?"|\S*node(?:\.exe)?)\s+([\s\S]+)$/i.exec(trimmed);
+  if (nodeLauncher) return commandPathEndsWithCloudRuntime(nodeLauncher[2]!);
+  return /^(?:[./\\]|[A-Za-z]:[\\/]|['"])/.test(trimmed)
+    && commandPathEndsWithCloudRuntime(trimmed);
+}
+
+function commandPathEndsWithCloudRuntime(path: string): boolean {
+  return /(?:^|[\\/])gsd-cloud(?:\.[cm]?js)?['"]?$/.test(path);
 }
 
 function findRuntimeCommand(command: string): { command: string; index: number } | null {
@@ -505,6 +566,10 @@ function findRuntimeCommandInArgs(args: string[]): { command: string; index: num
 
 function isCloudRuntimeExecutable(argument: string): boolean {
   return /(?:^|[\\/])gsd-cloud(?:\.[cm]?js)?$/.test(argument);
+}
+
+function isNodeExecutable(argument: string): boolean {
+  return /(?:^|[\\/])node(?:\.exe)?$/i.test(argument);
 }
 
 function processIsRunning(pid: number): boolean {

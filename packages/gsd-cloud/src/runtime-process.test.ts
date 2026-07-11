@@ -17,6 +17,7 @@ import {
   stopBackgroundRuntime,
   writeRuntimeState,
 } from "./runtime-process.js";
+import { runtimeArtifactPath } from "./runtime-artifacts.js";
 import { runtimeTelemetryPath } from "./runtime-telemetry.js";
 
 test("background startup allows the cloud runtime's full initial reconnect window", () => {
@@ -230,6 +231,103 @@ test("Windows command matching accepts quoted gsd-cloud.js paths", () => {
   assert.equal(commandLineMatchesRuntimeConfig(command, configPath, "win32"), true);
 });
 
+test("command matching rejects gsd-cloud decoys before another launcher", () => {
+  const configPath = "/work/runtime/daemon.yaml";
+
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `other-tool /tmp/gsd-cloud.js connect --config ${configPath}`,
+    configPath,
+    "linux",
+  ), false);
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `"C:\\Tools\\other-tool.exe" "C:\\tmp\\gsd-cloud.js" connect --config "${configPath}"`,
+    configPath,
+    "win32",
+  ), false);
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `/usr/bin/node /tmp/gsd-cloud.js --config ${configPath} connect --config /other.yaml`,
+    configPath,
+    "linux",
+  ), false);
+});
+
+test("command matching accepts a directly launched bare gsd-cloud executable", () => {
+  const configPath = "/work/runtime/daemon.yaml";
+
+  assert.equal(commandLineMatchesRuntimeConfig(
+    `gsd-cloud connect --config ${configPath}`,
+    configPath,
+    "darwin",
+  ), true);
+});
+
+test("start lock atomically records PID and process identity", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-lock-owner-"));
+  const configPath = join(root, "daemon.yaml");
+  const binaryPath = writeReadyRuntime(root, 500);
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  t.after(async () => {
+    await stopBackgroundRuntime(configPath).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const starting = startBackgroundRuntime({ binaryPath, configPath, projectDirs: [root] });
+  await waitForCondition(() => existsSync(lockPath));
+
+  const owner = JSON.parse(readFileSync(lockPath, "utf8")) as {
+    pid?: number;
+    process_start_identity?: string;
+  };
+  assert.equal(owner.pid, process.pid);
+  assert.equal(typeof owner.process_start_identity, "string");
+  assert.ok(owner.process_start_identity);
+
+  await starting;
+});
+
+test("start lock recovers immediately when its PID identity is stale", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stale-lock-"));
+  const configPath = join(root, "daemon.yaml");
+  const binaryPath = writeReadyRuntime(root);
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  writeFileSync(lockPath, `${JSON.stringify({
+    pid: process.pid,
+    process_start_identity: "reused-process",
+  })}\n`);
+  t.after(async () => {
+    await stopBackgroundRuntime(configPath).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const starting = startBackgroundRuntime({ binaryPath, configPath, projectDirs: [root] });
+  await new Promise<void>((resolveImmediate) => setImmediate(resolveImmediate));
+  const owner = JSON.parse(readFileSync(lockPath, "utf8")) as {
+    process_start_identity?: string;
+  };
+
+  assert.notEqual(owner.process_start_identity, "reused-process");
+  await starting;
+});
+
+test("start lock does not reclaim a live legacy owner by age", { timeout: 5_000 }, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-live-legacy-lock-"));
+  const configPath = join(root, "daemon.yaml");
+  const binaryPath = writeReadyRuntime(root);
+  const lockPath = runtimeArtifactPath(configPath, "start.lock");
+  writeFileSync(lockPath, `${process.pid}\n`);
+  t.after(async () => {
+    await stopBackgroundRuntime(configPath).catch(() => undefined);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const starting = startBackgroundRuntime({ binaryPath, configPath, projectDirs: [root] });
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_200));
+
+  assert.equal(readFileSync(lockPath, "utf8"), `${process.pid}\n`);
+  rmSync(lockPath);
+  await starting;
+});
+
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-stop-"));
   const configPath = join(root, "daemon.yaml");
@@ -381,13 +479,13 @@ test("verbose background starts forward the flag to the runtime child", { timeou
   assert.ok(args.includes("--verbose"));
 });
 
-function writeReadyRuntime(root: string): string {
+function writeReadyRuntime(root: string, readyDelayMs = 0): string {
   const binaryPath = join(root, "gsd-cloud.js");
   writeFileSync(binaryPath, [
     'import { writeFileSync } from "node:fs";',
     `writeFileSync(${JSON.stringify(join(root, "runtime-args.json"))}, JSON.stringify(process.argv.slice(2)));`,
     'process.on("SIGTERM", () => process.exit(0));',
-    'process.send?.({ type: "ready" });',
+    `setTimeout(() => process.send?.({ type: "ready" }), ${readyDelayMs});`,
     'setInterval(() => undefined, 1_000);',
   ].join("\n"));
   return binaryPath;
