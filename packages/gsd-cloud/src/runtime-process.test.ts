@@ -10,6 +10,7 @@ import { CLOUD_RUNTIME_INITIAL_CONNECT_WINDOW_MS } from "./cloud-runtime.js";
 import {
   BACKGROUND_RUNTIME_READY_TIMEOUT_MS,
   backgroundRuntimeStatus,
+  commandLineMatchesRuntimeConfig,
   runtimeLogPath,
   runtimeStatePath,
   startBackgroundRuntime,
@@ -214,6 +215,19 @@ test("legacy migration preserves config paths with spaces before short options",
   assert.equal(status.pid, child.pid);
   assert.equal(existsSync(runtimeStatePath(configPath)), true);
   assert.equal(existsSync(legacyStatePath), false);
+});
+
+test("Windows command matching accepts quoted gsd-cloud.js paths", () => {
+  const configPath = "/work/runtime/daemon.yaml";
+  const command = [
+    '"C:\\Program Files\\nodejs\\node.exe"',
+    '"C:\\Program Files\\gsd-cloud\\gsd-cloud.js"',
+    "connect",
+    "--config",
+    `"${configPath}"`,
+  ].join(" ");
+
+  assert.equal(commandLineMatchesRuntimeConfig(command, configPath, "win32"), true);
 });
 
 test("stop waits for the detached runtime to exit before removing its state", { timeout: 5_000 }, async (t) => {

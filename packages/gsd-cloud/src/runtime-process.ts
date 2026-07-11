@@ -401,7 +401,7 @@ function processCommandMatchesConfig(pid: number, configPath: string): boolean {
       const command = execFileSync("/bin/ps", ["-ww", "-o", "command=", "-p", String(pid)], {
         encoding: "utf8",
       }).trim();
-      return commandStringMatchesConfig(command, expectedConfigPath);
+      return commandLineMatchesRuntimeConfig(command, expectedConfigPath, process.platform);
     }
     if (process.platform === "win32") {
       const command = execFileSync("powershell.exe", [
@@ -410,12 +410,59 @@ function processCommandMatchesConfig(pid: number, configPath: string): boolean {
         "-Command",
         `(Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\").CommandLine`,
       ], { encoding: "utf8" }).trim();
-      return commandStringMatchesConfig(command, expectedConfigPath);
+      return commandLineMatchesRuntimeConfig(command, expectedConfigPath, process.platform);
     }
   } catch {
     return false;
   }
   return false;
+}
+
+export function commandLineMatchesRuntimeConfig(
+  command: string,
+  configPath: string,
+  platform: NodeJS.Platform,
+): boolean {
+  if (platform === "win32") {
+    return commandArgsMatchConfig(splitWindowsCommandLine(command), canonicalConfigPath(configPath));
+  }
+  return commandStringMatchesConfig(command, canonicalConfigPath(configPath));
+}
+
+function splitWindowsCommandLine(command: string): string[] {
+  const args: string[] = [];
+  let index = 0;
+  while (index < command.length) {
+    while (/\s/.test(command[index] ?? "")) index += 1;
+    if (index >= command.length) break;
+    let argument = "";
+    let inQuotes = false;
+    while (index < command.length) {
+      if (!inQuotes && /\s/.test(command[index] ?? "")) break;
+      let backslashes = 0;
+      while (command[index] === "\\") {
+        backslashes += 1;
+        index += 1;
+      }
+      if (command[index] === '"') {
+        argument += "\\".repeat(Math.floor(backslashes / 2));
+        if (backslashes % 2 === 0) {
+          inQuotes = !inQuotes;
+        } else {
+          argument += '"';
+        }
+        index += 1;
+        continue;
+      }
+      argument += "\\".repeat(backslashes);
+      if (index < command.length) {
+        argument += command[index];
+        index += 1;
+      }
+    }
+    args.push(argument);
+  }
+  return args;
 }
 
 function commandStringMatchesConfig(command: string, configPath: string): boolean {

@@ -18,6 +18,7 @@ struct RuntimeTelemetryTests {
     try telemetryReadFailuresRemainUnavailableUntilStatusConfirmsStop()
     try staleTelemetryRequiresTwoObservedMissedPollsAndSurvivesWake()
     try connectionTransitionsIdentifyNotifications()
+    try telemetryAvailabilityTransitionsRequireSuccessfulDecode()
     try runtimeConfigurationsRoundTrip()
     try runtimeConfigurationsPreserveCustomAgentConfigPath()
     try runtimeConfigurationEditsPreservePathProvenance()
@@ -415,12 +416,29 @@ struct RuntimeTelemetryTests {
       "stable state should not notify"
     )
     try expect(
-      ConnectionTransition(previous: .connected, current: .stale).notification == .telemetryUnavailable,
-      "stale telemetry must not report a connection disconnect"
+      ConnectionTransition(previous: .connected, current: .stale).notification == nil,
+      "telemetry loss must not be modeled as a connection transition"
     )
     try expect(
-      ConnectionTransition(previous: .stale, current: .connected).notification == .telemetryRestored,
-      "fresh telemetry must not report a connection reconnect"
+      ConnectionTransition(previous: .stale, current: .connected).notification == nil,
+      "telemetry recovery must not be modeled as a connection transition"
+    )
+  }
+
+  static func telemetryAvailabilityTransitionsRequireSuccessfulDecode() throws {
+    try expect(
+      TelemetryAvailabilityTransition(previous: .available, current: .unavailable).notification
+        == .telemetryUnavailable,
+      "a failed telemetry decode should report telemetry unavailable"
+    )
+    try expect(
+      TelemetryAvailabilityTransition(previous: .unavailable, current: .unavailable).notification == nil,
+      "process validation must not report telemetry restoration"
+    )
+    try expect(
+      TelemetryAvailabilityTransition(previous: .unavailable, current: .available).notification
+        == .telemetryRestored,
+      "only a successful telemetry decode should report restoration"
     )
   }
 

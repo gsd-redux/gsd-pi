@@ -24,6 +24,7 @@ final class RuntimeMonitorStore: ObservableObject {
   private var totalTraffic = TrafficSeries()
   private var projectTraffic: [String: TrafficSeries] = [:]
   private var previousConnectionState: RuntimeConnectionState?
+  private var previousTelemetryAvailability: TelemetryAvailability?
   private var freshnessTracker = TelemetryFreshnessTracker()
   private var monitoredState: RuntimeConnectionState = .stopped
   private var statusCheckInProgress = false
@@ -118,6 +119,7 @@ final class RuntimeMonitorStore: ObservableObject {
         projectTraffic[project.id] = series
       }
       telemetry = current
+      handleTelemetryAvailability(.available)
       monitoredState = freshnessTracker.connectionState(
         reportedState: current.state,
         updatedAt: current.updatedAt,
@@ -128,7 +130,7 @@ final class RuntimeMonitorStore: ObservableObject {
     } catch {
       telemetry = nil
       monitoredState = telemetryUnavailableState(validatedProcessIsRunning: nil)
-      handleConnectionTransition(to: monitoredState)
+      handleTelemetryAvailability(.unavailable)
       freshnessTracker.reset()
       trafficRate = .zero
       trafficHistory = []
@@ -297,6 +299,19 @@ final class RuntimeMonitorStore: ObservableObject {
     notificationService.post(notification, runtimeName: telemetry?.runtimeName)
   }
 
+  private func handleTelemetryAvailability(_ availability: TelemetryAvailability) {
+    defer { previousTelemetryAvailability = availability }
+    guard let previousTelemetryAvailability,
+          UserDefaults.standard.bool(forKey: "notificationsEnabled"),
+          let notification = TelemetryAvailabilityTransition(
+            previous: previousTelemetryAvailability,
+            current: availability
+          ).notification else {
+      return
+    }
+    notificationService.post(notification, runtimeName: telemetry?.runtimeName)
+  }
+
   private func resetSamples() {
     telemetry = nil
     trafficRate = .zero
@@ -304,6 +319,7 @@ final class RuntimeMonitorStore: ObservableObject {
     totalTraffic = TrafficSeries()
     projectTraffic = [:]
     previousConnectionState = nil
+    previousTelemetryAvailability = nil
     monitoredState = .stopped
     freshnessTracker.reset()
   }
@@ -324,7 +340,9 @@ final class RuntimeMonitorStore: ObservableObject {
       statusCheckInProgress = false
       guard selectedConfigurationID == configuration.id, telemetry == nil else { return }
       monitoredState = telemetryUnavailableState(validatedProcessIsRunning: isRunning)
-      handleConnectionTransition(to: monitoredState)
+      if isRunning == false {
+        handleConnectionTransition(to: monitoredState)
+      }
     }
   }
 
