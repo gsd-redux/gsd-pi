@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -121,17 +121,34 @@ function armProductionFault(
   }
 }
 
-function readAuthorityInFreshProcess(root: string, dbPath: string): AuthoritySnapshot {
+function runAuthorityProcess(
+  root: string,
+  dbPath: string,
+  faultPoint?: WorkflowFaultPoint,
+): SpawnSyncReturns<string> {
   const resolver = join(process.cwd(), "src/resources/extensions/gsd/tests/resolve-ts.mjs");
   const databaseModule = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/gsd-db.ts")).href;
   const stateModule = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/state.ts")).href;
+  const faultHarnessModule = pathToFileURL(join(
+    process.cwd(),
+    "src/resources/extensions/gsd/tests/workflow-fault-harness.ts",
+  )).href;
   const script = `
-    const [{ openDatabase, closeDatabase, getSlice, getTask }, { deriveStateFromDb }] = await Promise.all([
+    const [
+      { openDatabase, closeDatabase, getSlice, getTask },
+      { deriveStateFromDb },
+      { createWorkflowFaultHarness },
+    ] = await Promise.all([
       import(${JSON.stringify(databaseModule)}),
       import(${JSON.stringify(stateModule)}),
+      import(${JSON.stringify(faultHarnessModule)}),
     ]);
-    const [root, dbPath] = process.argv.slice(-2);
+    const [root, dbPath, faultPoint] = process.argv.slice(-3);
     if (!openDatabase(dbPath)) throw new Error("fresh process could not open workflow database");
+    if (faultPoint) {
+      process.stderr.write("DATABASE_OPENED_BEFORE_FAULT=" + process.pid + "\\n");
+      createWorkflowFaultHarness(faultPoint).hit(faultPoint, "fresh-process-reopen");
+    }
     const state = await deriveStateFromDb(root);
     const snapshot = {
       pid: process.pid,
@@ -142,7 +159,7 @@ function readAuthorityInFreshProcess(root: string, dbPath: string): AuthoritySna
     closeDatabase();
     process.stdout.write("AUTHORITY_SNAPSHOT=" + JSON.stringify(snapshot) + "\\n");
   `;
-  const child = spawnSync(
+  return spawnSync(
     process.execPath,
     [
       "--import",
@@ -153,9 +170,14 @@ function readAuthorityInFreshProcess(root: string, dbPath: string): AuthoritySna
       script,
       root,
       dbPath,
+      faultPoint ?? "",
     ],
     { cwd: process.cwd(), encoding: "utf8" },
   );
+}
+
+function readAuthorityInFreshProcess(root: string, dbPath: string): AuthoritySnapshot {
+  const child = runAuthorityProcess(root, dbPath);
 
   assert.equal(child.status, 0, child.stderr || child.stdout);
   const line = child.stdout.split("\n").find((entry) => entry.startsWith("AUTHORITY_SNAPSHOT="));
@@ -184,26 +206,23 @@ for (const scenario of SCENARIOS) {
 
     if (scenario.point === "during-projection-write") {
       assert.equal(completionStale, true, "the production renderer must surface a stale projection");
-    } else if (scenario.point !== "after-independent-reopen") {
+    } else if (scenario.point === "after-independent-reopen") {
+      assert.equal(completionError, undefined, "completion must succeed before the reopen fault");
+      assert.equal(completionStale, false, "completion must not be stale before the reopen fault");
+    } else {
       assert.match(String(completionError), new RegExp(scenario.point));
     }
 
     writeContradictoryProjection(fixture.root, scenario.committed);
     closeDatabase();
-    let snapshot: AuthoritySnapshot;
-    try {
-      snapshot = readAuthorityInFreshProcess(fixture.root, fixture.dbPath);
-      harness.hit("after-independent-reopen", "complete-dependent-slice");
-    } catch (error) {
-      if (scenario.point === "after-independent-reopen") {
-        assert.match(String(error), /after-independent-reopen/);
-        snapshot = readAuthorityInFreshProcess(fixture.root, fixture.dbPath);
-      } else {
-        throw error;
-      }
-    } finally {
-      fixture.reopen();
+    if (scenario.point === "after-independent-reopen") {
+      const faultedChild = runAuthorityProcess(fixture.root, fixture.dbPath, scenario.point);
+      assert.notEqual(faultedChild.status, 0, "fresh process must fault after opening the database");
+      assert.match(faultedChild.stderr, /DATABASE_OPENED_BEFORE_FAULT=/);
+      assert.match(faultedChild.stderr, /after-independent-reopen/);
     }
+    const snapshot = readAuthorityInFreshProcess(fixture.root, fixture.dbPath);
+    fixture.reopen();
 
     const expectedStatus = scenario.committed ? "complete" : "pending";
     const { pid, ...authority } = snapshot;
