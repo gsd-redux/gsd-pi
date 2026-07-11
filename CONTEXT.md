@@ -36,6 +36,12 @@
 - **Kernel Outcome**: the normalized result of one Lifecycle Kernel call: progressed, scheduled, needs interaction, waiting, closed, complete, or aborted.
 - **Closeout Plan**: durable proof that canonical completion requirements are satisfied, plus the host effects that still require settlement.
 - **Settlement Receipt**: the durable idempotency and completion record for one host effect from a Closeout Plan.
+- **Compatibility Window**: the bounded period when legacy sources remain available through explicit import/export, never as competing runtime authority.
+- **Authority Epoch**: the durable per-Project version of the authority contract. Advancing it prevents normal runtime from downgrading to an earlier authority source.
+- **Shadow Comparison**: a read-only comparison of normalized decisions from old and replacement paths without changing lifecycle truth.
+- **Cutover**: the recorded advancement of a Project to a new Authority Epoch after migration evidence passes.
+- **Forward Repair**: correction of current canonical state while preserving accepted post-migration work, preferred over restoring an older snapshot.
+- **Removal Gate**: an evidence requirement that must pass before a legacy runtime path can be deleted.
 - **Auto Orchestration**: runtime coordination of GSD auto-mode units from start to completion, including dispatch and stop/resume behavior; unit-execution failure recovery is classified by the Recovery Classification module.
 - **Unit**: the smallest executable workflow step (e.g., plan slice, execute task, complete slice).
 - **Unit progression**: movement from one Unit to the next under orchestration rules.
