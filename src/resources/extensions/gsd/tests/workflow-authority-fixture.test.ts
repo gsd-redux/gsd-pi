@@ -13,6 +13,7 @@ test("workflow authority fixture seeds a reopenable DB-backed workflow", async (
 
   const state = await deriveStateFromDb(fixture.root);
   const slices = getMilestoneSlices(fixture.ids.milestone);
+  const completedTasks = getSliceTasks(fixture.ids.milestone, fixture.ids.completedSlice);
   const readyTasks = getSliceTasks(fixture.ids.milestone, fixture.ids.readySlice);
   const requirements = queryRequirements({
     milestoneId: fixture.ids.milestone,
@@ -30,6 +31,10 @@ test("workflow authority fixture seeds a reopenable DB-backed workflow", async (
       { id: fixture.ids.completedSlice, status: "complete", depends: [] },
       { id: fixture.ids.readySlice, status: "pending", depends: [fixture.ids.completedSlice] },
     ],
+  );
+  assert.deepEqual(
+    completedTasks.map((task) => ({ id: task.id, status: task.status })),
+    [{ id: fixture.ids.completedTask, status: "complete" }],
   );
   assert.deepEqual(
     readyTasks.map((task) => ({ id: task.id, status: task.status })),
