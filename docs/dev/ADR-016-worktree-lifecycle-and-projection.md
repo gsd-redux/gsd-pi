@@ -9,8 +9,9 @@
 > retains Worktree Lifecycle ownership of source isolation and typed
 > create/enter/exit/merge mechanics. It supersedes workflow-state copying,
 > worktree-local database authority, and reconciliation between root and
-> worktree state: every worktree uses the one project database, while readable
-> files are non-authoritative projections rebuilt from it. The body below is
+> worktree state. After the ADR-046 cutover, every worktree uses the one project
+> database, while readable files are non-authoritative projections rebuilt from
+> it. The body below is
 > retained as history.
 
 ## Context

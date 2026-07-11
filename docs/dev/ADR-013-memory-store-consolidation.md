@@ -2,6 +2,13 @@
 
 # ADR-013: Memory Store Consolidation
 
+> **ADR-046 disposition (accepted target effective at cutover):** [ADR-046](./ADR-046-database-authoritative-workflow-lifecycle.md)
+> retains `memories` as the durable store for reusable cross-session knowledge,
+> but moves workflow Decisions, answers, supersessions, and lifecycle effects
+> into the Conversation domain. Memory extraction may follow a committed
+> workflow decision, but it is noncritical and cannot own or authorize workflow
+> state. The body below is retained as history.
+
 **Status:** Accepted (mostly implemented — Phase 6 preflight/cutover outstanding)
 **Date:** 2026-04-19
 **Implemented:** 2026-04 to 2026-05 (Phases 0–5; Phase 6 preflight/cutover tracked on #5751 / #5755 / #5756)

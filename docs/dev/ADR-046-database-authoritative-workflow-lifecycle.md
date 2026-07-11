@@ -293,11 +293,16 @@ available through that window and at least one later stable release.
 
 ## Existing ADR disposition
 
+These dispositions define the accepted post-cutover architecture. They do not
+claim that current runtime behavior has changed before the corresponding
+migration and cutover gates complete.
+
 | Existing decision | Disposition under ADR-046 |
 |---|---|
 | ADR-003 Pipeline Simplification | Superseded before adoption. Research remains first-class, resumable Milestone work rather than being merged into planning or reduced to optional artifacts; its ceremony-reduction goal remains valid through the shared Lifecycle Kernel, automated verification, and durable closeout. |
 | ADR-009 Unified Orchestration Kernel | Superseded for workflow orchestration. Provider/model/TOS policy remains independently valid. |
 | ADR-011 Progressive Planning and Escalation | Progressive refinement retained; file-backed escalation, DAG, broad pauses, and forward-only correction superseded. |
+| ADR-013 Memory Store Consolidation | Amended. `memories` remains canonical for reusable cross-session knowledge, while workflow Decisions and their lifecycle effects move to the Conversation domain; memory extraction is noncritical follow-on work. |
 | ADR-014 Auto Orchestration Deep Module | Amended and generalized into the shared Lifecycle Kernel. |
 | ADR-015 Runtime Invariant Modules | Retained with database-only reconciliation and typed module results. |
 | ADR-016 Worktree Lifecycle and Projection | Worktree Lifecycle retained; workflow-state copying and worktree-local authority reconciliation superseded. |
