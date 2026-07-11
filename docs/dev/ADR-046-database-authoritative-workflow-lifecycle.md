@@ -295,6 +295,7 @@ available through that window and at least one later stable release.
 
 | Existing decision | Disposition under ADR-046 |
 |---|---|
+| ADR-003 Pipeline Simplification | Superseded before adoption. Research remains first-class, resumable Milestone work rather than being merged into planning or reduced to optional artifacts; its ceremony-reduction goal remains valid through the shared Lifecycle Kernel, automated verification, and durable closeout. |
 | ADR-009 Unified Orchestration Kernel | Superseded for workflow orchestration. Provider/model/TOS policy remains independently valid. |
 | ADR-011 Progressive Planning and Escalation | Progressive refinement retained; file-backed escalation, DAG, broad pauses, and forward-only correction superseded. |
 | ADR-014 Auto Orchestration Deep Module | Amended and generalized into the shared Lifecycle Kernel. |

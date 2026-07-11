@@ -2,12 +2,12 @@
 
 ## Domain glossary
 
-### Proposed ADR-046 vocabulary
+### Accepted ADR-046 vocabulary
 
-These terms describe the proposed database-authoritative lifecycle contract in
+These terms describe the accepted database-authoritative lifecycle contract in
 [ADR-046](docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md). They
-do not describe current runtime authority unless the ADR is accepted and the
-relevant cutover has completed.
+do not describe current runtime authority until the relevant cutover has
+completed.
 
 - **Project**: the complete body of work a user wants GSD to guide from discovery through delivery.
 - **Milestone**: a durable, resumable stage of a Project, including discovery, research, planning, or delivery work.

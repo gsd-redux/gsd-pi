@@ -1,5 +1,7 @@
 # ADR-003: Auto-Mode Pipeline Simplification
 
+> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded before adoption.** Research remains first-class, resumable Milestone work rather than being folded into planning or reduced to optional artifacts. The goal of reducing ceremony remains valid through the shared Lifecycle Kernel, automated verification, and durable closeout.
+
 **Status:** Proposed
 **Date:** 2026-03-18
 **Deciders:** Open GSD
