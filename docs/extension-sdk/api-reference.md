@@ -92,7 +92,7 @@ Handlers receive the event payload and an `ExtensionContext`. Return values vary
 | `pi.getThinkingLevel()` | `getThinkingLevel(): ThinkingLevel` | Get current thinking level |
 | `pi.setThinkingLevel(level)` | `setThinkingLevel(level: ThinkingLevel)` | Set thinking level (clamped to model capabilities) |
 
-`ThinkingLevel` values: `"off"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`
+`ThinkingLevel` values: `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`
 
 ### Utilities
 
@@ -442,5 +442,5 @@ if (isToolResultEventType<"my_tool", MyDetails>("my_tool", event)) {
 | `ExtensionFactory` | `@gsd/pi-coding-agent` | `(pi: ExtensionAPI) => void \| Promise<void>` |
 | `ContextUsage` | `@gsd/pi-coding-agent` | `{ tokens, contextWindow, percent }` |
 | `AgentAbortOrigin` | `@gsd/pi-agent-core` | `"session-transition" \| "user" \| "timeout" \| "unknown"` |
-| `ThinkingLevel` | `@gsd/pi-agent-core` | `"off" \| "low" \| "medium" \| "high" \| "xhigh"` |
+| `ThinkingLevel` | `@gsd/pi-agent-core` | `"off" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| "max"` |
 | `TSchema` | `@sinclair/typebox` | TypeBox schema type for tool parameters |

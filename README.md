@@ -32,7 +32,7 @@ Latest release: **v1.10.0**
 
 - **pi-ai:** Add Meta Muse Spark 1.1 to the model catalog.
 - **gsd:** Surface cacheRetention as a settable prompt-cache TTL preference.
-- **models:** Add GPT-5.6 as a first-class model.
+- **models:** Add `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` as first-class models.
 - **models:** Add Grok 4.5 as a first-class xAI model.
 - **agent-core:** Pin compaction summarization reasoning to low, bound degenerate-chunk retry.
 - **gsd:** Filter superseded context injections from provider payload.

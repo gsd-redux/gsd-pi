@@ -779,7 +779,7 @@ if (model) await pi.setModel(model, { persist: true });
 
 // Thinking level control
 const level = pi.getThinkingLevel();
-pi.setThinkingLevel("high");  // "off" through "xhigh"
+pi.setThinkingLevel("high");  // "off", "minimal", "low", "medium", "high", "xhigh", or "max"
 ```
 
 ---

@@ -51,7 +51,7 @@ The `pi` object (received in your default export function) is your registration 
 |--------|---------|
 | `pi.setModel(model)` | Switch model. Returns `false` if no API key. |
 | `pi.getThinkingLevel()` | Get current thinking level |
-| `pi.setThinkingLevel(level)` | Set thinking level (`"off"` through `"xhigh"`) |
+| `pi.setThinkingLevel(level)` | Set thinking level (`"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`) |
 
 ### Utilities
 
