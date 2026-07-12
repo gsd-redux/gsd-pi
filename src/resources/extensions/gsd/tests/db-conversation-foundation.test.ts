@@ -340,7 +340,7 @@ afterEach(() => {
 });
 
 test("fresh v33 databases expose exact Milestone and Interaction Kind vocabularies", () => {
-  assert.equal(SCHEMA_VERSION, 33);
+  assert.ok(SCHEMA_VERSION >= 33);
   const { db } = openFreshFixture();
   try {
     for (const table of [
@@ -939,7 +939,7 @@ test("v32 upgrade is additive, backed up, and does not reinterpret legacy rows",
 
   const upgraded = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(upgraded), 33);
+    assert.equal(maxSchemaVersion(upgraded), SCHEMA_VERSION);
     assert.equal(upgraded.prepare("SELECT status FROM milestones WHERE id = 'M-DISC'").get()?.status, "active");
     assert.equal(upgraded.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Preserve me");
     for (const table of [
@@ -970,7 +970,7 @@ test("v32 upgrade is additive, backed up, and does not reinterpret legacy rows",
   closeDatabase();
   const restored = openRawDatabase(restoredPath);
   try {
-    assert.equal(maxSchemaVersion(restored), 33);
+    assert.equal(maxSchemaVersion(restored), SCHEMA_VERSION);
     assert.equal(restored.prepare("SELECT COUNT(*) AS count FROM workflow_open_questions").get()?.count, 0);
   } finally {
     restored.close();
@@ -1027,7 +1027,7 @@ test("faulted v32 migration rolls back all v33 state and retries cleanly", () =>
   closeDatabase();
   const retried = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(retried), 33);
+    assert.equal(maxSchemaVersion(retried), SCHEMA_VERSION);
     assert.equal(tableExists(retried, "workflow_work_checkpoints"), true);
     assert.equal(retried.prepare("SELECT COUNT(*) AS count FROM workflow_open_questions").get()?.count, 0);
   } finally {

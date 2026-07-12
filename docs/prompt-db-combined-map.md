@@ -349,6 +349,7 @@ unit completes
 | `db-canonical-foundation-schema.ts` | project_authority, workflow_operations, workflow_domain_events, workflow_outbox + domain-event immutability triggers and canonical-foundation indexes (V31, additive and not runtime-routed yet) |
 | `db-lifecycle-foundation-schema.ts` | workflow_item_lifecycles, workflow_execution_attempts, workflow_attempt_results, workflow_blockers, workflow_waivers, workflow_requirement_dispositions + lifecycle, fencing, provenance, history, and vocabulary constraints (V32, additive and not runtime-routed yet) |
 | `db-conversation-foundation-schema.ts` | workflow_milestone_contexts, workflow_open_questions, workflow_question_dependencies, workflow_interactions, workflow_interaction_options, workflow_answers, workflow_conversation_decisions, workflow_decision_impacts, workflow_work_checkpoints + recommendation-first, causal provenance, targeted revalidation, immutability, and single-head history constraints (V33, additive and not runtime-routed yet) |
+| `db-recovery-evidence-foundation-schema.ts` | workflow_failure_observations, workflow_recovery_budgets, workflow_recovery_actions, workflow_acceptance_criteria, workflow_technical_verdicts, workflow_verification_evidence, workflow_human_acceptances, workflow_remediation_links + immutable count budgets derived from linked Actions, criterion lineage, verdict-owned objective evidence, separate subjective acceptance, and immutable rework/remediation routing (V34, additive and not runtime-routed yet) |
 | `db-coordination-schema.ts` | workers, milestone_leases, unit_dispatches, cancellation_requests, command_queue |
 | `db-memory-fts-schema.ts` | memories_fts (FTS5 virtual table), memories_ai/ad/au triggers |
 | `db-runtime-kv-schema.ts` | runtime_kv |
@@ -374,7 +375,7 @@ unit completes
 
 | Invariant | Where Enforced |
 |-----------|---------------|
-| Single-writer: all write SQL in the explicit single-writer allowlist (`db/engine.ts`, `db/writers/**`, `gsd-db.ts`, typed coordination/runtime writers `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, `db/command-queue.ts`, schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, `db-verification-evidence-schema.ts`, and ADR migration/backfill helper `memory-backfill.ts`); this is not permission for arbitrary writes under `db/`; `unit-ownership.ts` owns separate `.gsd/unit-claims.db`; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (explicit allowlist) |
+| Single-writer: all write SQL in the explicit single-writer allowlist (`db/engine.ts`, `db/writers/**`, `gsd-db.ts`, typed coordination/runtime writers `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, `db/command-queue.ts`, schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, `db-verification-evidence-schema.ts`, and ADR migration/backfill helper `memory-backfill.ts`); this is not permission for arbitrary writes under `db/`; `unit-ownership.ts` owns separate `.gsd/unit-claims.db`; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (explicit allowlist) |
 | Cascade on slice complete: pending tasks → skipped | `gsd_slice_complete` transaction |
 | Cascade on milestone reopen: all slices → in_progress, tasks → pending | `gsd_milestone_reopen` transaction |
 | No nested write transactions: `transaction()` and `immediateTransaction()` share one depth counter; read-then-write claims use `immediateTransaction()` and gate verdict + ledger writes commit atomically | `db-transaction.test.ts`, `command-queue.test.ts`, `gate-storage.test.ts` |
@@ -384,3 +385,23 @@ unit completes
 | Pre-migration backup: file-backed migrations checkpoint WAL before replacing `.gsd/gsd.db.backup-vN`; the copied database must have the expected schema version and pass SQLite `quick_check`, and checkpoint/copy/validation failures warn then stop before migration DDL | `db-migration-backup.ts` |
 | Prompt template vars: all `{{vars}}` must be provided before substitution | `prompt-loader.ts` pre-substitution validation |
 | Prompt cache stability: static sections always before dynamic | `prompt-ordering.ts` reorderForCaching |
+
+V34 keeps four truths separate: a Failure Observation records what happened; a
+Recovery Action records the one selected route; a Technical Verdict records the
+policy conclusion for one current technical criterion and settled Attempt; and
+Verification Evidence records the immutable objective observation owned by that
+verdict. A subjective-UAT criterion uses Human Acceptance linked to the current
+accepted V33 `subjective-uat` Answer instead of a Technical Verdict. Immutable
+Recovery Budgets store only `max_uses`; consumption is derived by counting
+linked immutable Recovery Actions, so restart cannot reset a budget. Criterion
+changes append a same-key supersession head, and failed/inconclusive verdicts or
+current rejected Human Acceptance route through immutable `rework | remediation`
+links.
+
+Legacy `verification_evidence`, assessments, quality gates, gate runs, UAT
+files, rework briefs, dispatch retry fields, runtime JSON/KV, and process-local
+counters are not repurposed or backfilled by V34. V34 also does not cut runtime
+recovery, verification, UAT, lifecycle completion, projections, manifest
+restore, or worktree reconciliation over to the new tables. S06 Domain
+Operations must atomically commit failure/action and verdict/evidence/remediation
+bundles and require bundle completeness before dispatch or closeout.

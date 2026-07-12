@@ -50,10 +50,12 @@ import {
   applyMigrationV31CanonicalFoundation,
   applyMigrationV32LifecycleFoundation,
   applyMigrationV33ConversationFoundation,
+  applyMigrationV34RecoveryEvidenceFoundation,
 } from "../db-migration-steps.js";
 import { createCanonicalFoundationSchemaV31 } from "../db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "../db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "../db-lifecycle-foundation-schema.js";
+import { createRecoveryEvidenceFoundationSchemaV34 } from "../db-recovery-evidence-foundation-schema.js";
 import {
   isMemoriesFtsAvailableSchema,
   rebuildMemoriesFtsSchemaOnce,
@@ -103,7 +105,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
   const conservativeFilePragmas = fileBacked && _isLikelyWslDrvFsPathForTest(dbPath);
   if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
@@ -144,6 +146,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
         createCanonicalFoundationSchemaV31(db);
         createLifecycleFoundationSchemaV32(db);
         createConversationFoundationSchemaV33(db);
+        createRecoveryEvidenceFoundationSchemaV34(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -410,6 +413,11 @@ function migrateSchema(db: DbAdapter, dbPath: string | null): void {
     if (currentVersion < 33) {
       applyMigrationV33ConversationFoundation(db);
       recordSchemaVersion(db, 33);
+    }
+
+    if (currentVersion < 34) {
+      applyMigrationV34RecoveryEvidenceFoundation(db);
+      recordSchemaVersion(db, 34);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");

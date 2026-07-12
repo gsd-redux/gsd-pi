@@ -66,7 +66,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V33**
+Current version: **V34**
 
 | Version | What Changed |
 |---------|-------------|
@@ -103,6 +103,7 @@ Current version: **V33**
 | V31 | **Additive canonical foundation**: singleton project authority with revision and Authority Epoch, workflow operation provenance/idempotency receipts, immutable revision-linked domain events, and a durable event outbox |
 | V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, human-only Blockers, authorized Waivers, and immutable Requirement Disposition history |
 | V33 | **Additive guided-conversation foundation**: milestone context and advisory horizons, focused recommendation-first interactions, immutable verbatim Answers and correction-safe Decisions, dependency-targeted impacts, and restart-safe Work Checkpoints |
+| V34 | **Additive recovery and evidence foundation**: immutable Failure Observations and Recovery Actions, immutable count budgets whose use is derived from linked Actions, versioned acceptance criteria, verdict-owned objective evidence, separate subjective Human Acceptance, and immutable remediation routing |
 
 ---
 
@@ -1163,6 +1164,245 @@ before runtime cutover.
 
 ---
 
+### 3h. Additive Recovery And Evidence Foundation (V34)
+
+V34 adds eight canonical shadow tables. It deliberately reuses V32 Lifecycles,
+Attempts, Attempt Results, and human-only Blockers instead of creating another
+execution, UAT-run, or blocker model. It does not backfill or reinterpret legacy
+verification evidence, assessments, quality gates, gate runs, UAT files, rework
+briefs, dispatch retry fields, runtime JSON, or process-local counters. Those
+surfaces retain their existing compatibility meaning until the explicit
+runtime cutover.
+
+#### `workflow_failure_observations`
+```
+failure_observation_id  TEXT PRIMARY KEY
+project_id              TEXT NOT NULL
+lifecycle_id            TEXT NOT NULL
+attempt_id              TEXT DEFAULT NULL
+result_id               TEXT DEFAULT NULL
+boundary_stage          TEXT NOT NULL
+failure_kind            TEXT NOT NULL
+failure_fingerprint     TEXT NOT NULL
+summary                 TEXT NOT NULL
+evidence_json           TEXT NOT NULL DEFAULT '{}'
+observed_at             TEXT NOT NULL
+operation_id            TEXT NOT NULL
+project_revision        INTEGER NOT NULL
+authority_epoch         INTEGER NOT NULL
+```
+- Boundary stage is `advance | execute | verify | route | closeout`.
+- Failure kinds and fingerprints are non-empty, trimmed, lowercase normalized
+  values. The kind vocabulary remains extensible so a newer deterministic
+  classifier can persist a new normalized kind without a schema migration.
+- An `execute` observation requires the matching V32 Attempt and its immutable
+  `failed` or `interrupted` Attempt Result. Result provenance must be causally
+  older than the observation. Updates and deletes fail.
+- Index: `idx_workflow_failure_fingerprint`
+  (lifecycle_id, failure_fingerprint, project_revision)
+
+#### `workflow_recovery_budgets`
+```
+recovery_budget_id  TEXT PRIMARY KEY
+project_id          TEXT NOT NULL
+lifecycle_id        TEXT NOT NULL
+failure_kind        TEXT NOT NULL
+failure_fingerprint TEXT NOT NULL
+policy_class        TEXT NOT NULL
+max_uses            INTEGER NOT NULL
+policy_version      TEXT NOT NULL
+created_at          TEXT NOT NULL
+operation_id        TEXT NOT NULL
+project_revision    INTEGER NOT NULL
+authority_epoch     INTEGER NOT NULL
+```
+- A budget is an immutable count allocation for one lifecycle, normalized
+  failure kind/fingerprint, policy class, and policy version.
+- There is no mutable `consumed` counter. Consumption is the authoritative
+  `COUNT(*)` of immutable `workflow_recovery_actions` referencing the budget.
+  The retry trigger rejects the next Action when that count reaches
+  `max_uses`, so restart cannot reset or double-spend the allowance.
+- V34 intentionally does not add cost or elapsed-time budget ledgers. Those
+  require canonical Attempt metrics and later policy work.
+
+#### `workflow_recovery_actions`
+```
+recovery_action_id     TEXT PRIMARY KEY
+project_id             TEXT NOT NULL
+lifecycle_id           TEXT NOT NULL
+failure_observation_id TEXT NOT NULL UNIQUE
+action                 TEXT NOT NULL
+recovery_budget_id     TEXT DEFAULT NULL
+target_lifecycle_id    TEXT DEFAULT NULL
+blocker_id             TEXT DEFAULT NULL
+rationale              TEXT NOT NULL
+policy_version         TEXT NOT NULL
+selected_at            TEXT NOT NULL
+operation_id           TEXT NOT NULL
+project_revision       INTEGER NOT NULL
+authority_epoch        INTEGER NOT NULL
+```
+- Action is exactly `retry | repair | replan | remediate | clarify | pause |
+  abort`; one Failure Observation can have only one selected Action.
+- Retry requires a matching unexhausted budget and the same lifecycle target.
+  Repair, replan, and remediate require a target lifecycle. Clarify and pause
+  require an existing open V32 human-only Blocker. Abort has no budget, target,
+  or blocker.
+- The Action must causally follow its Failure Observation. Updates and deletes
+  fail.
+- Index: `idx_workflow_recovery_actions_budget`
+  (recovery_budget_id, project_revision)
+
+#### `workflow_acceptance_criteria`
+```
+criterion_id             TEXT PRIMARY KEY
+criterion_key            TEXT NOT NULL
+project_id               TEXT NOT NULL
+lifecycle_id             TEXT NOT NULL
+criterion_kind           TEXT NOT NULL
+evidence_class           TEXT NOT NULL
+required                 INTEGER NOT NULL
+description              TEXT NOT NULL
+supersedes_criterion_id  TEXT DEFAULT NULL UNIQUE
+created_at               TEXT NOT NULL
+operation_id             TEXT NOT NULL
+project_revision         INTEGER NOT NULL
+authority_epoch          INTEGER NOT NULL
+```
+- Criterion kind is `technical | subjective_uat`. Evidence class is `command |
+  runtime | browser | artifact | human`; technical criteria cannot use `human`
+  and subjective UAT must use it.
+- `criterion_key` identifies a lineage within one project/lifecycle. A changed
+  criterion is appended and must supersede the causally older current head of
+  the same key and kind. Old proof remains historical and cannot authorize a
+  verdict for the new head. Updates and deletes fail.
+
+#### `workflow_technical_verdicts`
+```
+verdict_id             TEXT PRIMARY KEY
+project_id             TEXT NOT NULL
+criterion_id           TEXT NOT NULL
+lifecycle_id           TEXT NOT NULL
+attempt_id             TEXT NOT NULL
+tested_source_revision TEXT NOT NULL
+verdict                TEXT NOT NULL
+policy_id              TEXT NOT NULL
+policy_version         TEXT NOT NULL
+rationale              TEXT NOT NULL
+created_at             TEXT NOT NULL
+operation_id           TEXT NOT NULL
+project_revision       INTEGER NOT NULL
+authority_epoch        INTEGER NOT NULL
+```
+- Verdict is `pass | fail | inconclusive` and is unique for a criterion,
+  Attempt, and tested source revision.
+- Only the current technical criterion and a matching settled V32 Attempt may
+  receive a verdict. PASS additionally requires the Attempt Result to be
+  `succeeded`. Verdicts are immutable.
+
+#### `workflow_verification_evidence`
+```
+evidence_id              TEXT PRIMARY KEY
+project_id               TEXT NOT NULL
+verdict_id               TEXT NOT NULL
+criterion_id             TEXT NOT NULL
+lifecycle_id             TEXT NOT NULL
+attempt_id               TEXT NOT NULL
+evidence_class           TEXT NOT NULL
+command_or_tool          TEXT NOT NULL
+working_directory        TEXT NOT NULL
+started_at               TEXT NOT NULL
+ended_at                 TEXT NOT NULL
+exit_code                INTEGER DEFAULT NULL
+observation              TEXT NOT NULL
+source_revision          TEXT NOT NULL
+observed_project_revision INTEGER NOT NULL
+content_hash             TEXT NOT NULL
+durable_output_ref       TEXT NOT NULL
+environment_json         TEXT NOT NULL
+created_at               TEXT NOT NULL
+operation_id             TEXT NOT NULL
+project_revision         INTEGER NOT NULL
+authority_epoch          INTEGER NOT NULL
+```
+- Evidence class is objective only: `command | runtime | browser | artifact`.
+  Observation is `passed | failed | inconclusive`.
+- Evidence is owned directly by one Technical Verdict; there is no separate
+  membership table. Its criterion, lifecycle, Attempt, source revision,
+  operation, project revision, Authority Epoch, evidence class, and observation
+  must exactly match the owning verdict bundle. PASS owns passed evidence,
+  FAIL owns failed evidence, and INCONCLUSIVE owns inconclusive evidence.
+- The observed project revision must be at or after Attempt settlement and
+  before the verdict operation. Updates and deletes fail.
+- Index: `idx_workflow_evidence_verdict` (verdict_id, evidence_id)
+
+#### `workflow_human_acceptances`
+```
+human_acceptance_id            TEXT PRIMARY KEY
+project_id                     TEXT NOT NULL
+criterion_id                   TEXT NOT NULL
+lifecycle_id                   TEXT NOT NULL
+answer_id                      TEXT NOT NULL
+question_id                    TEXT NOT NULL
+interaction_id                 TEXT NOT NULL
+disposition                    TEXT NOT NULL
+actor_id                       TEXT NOT NULL
+rationale                      TEXT NOT NULL
+supersedes_human_acceptance_id TEXT DEFAULT NULL UNIQUE
+created_at                     TEXT NOT NULL
+operation_id                   TEXT NOT NULL
+project_revision               INTEGER NOT NULL
+authority_epoch                INTEGER NOT NULL
+```
+- Disposition is `accepted | rejected`; pending is represented by no row.
+- Human Acceptance is separate from Technical Verdict. It requires the current
+  `subjective_uat` criterion and the current accepted V33 Answer from an
+  answered Question and a `subjective-uat` Interaction. Generic consent cannot
+  satisfy this relation.
+- Corrections append a new current head for the same criterion. Updates and
+  deletes fail.
+
+#### `workflow_remediation_links`
+```
+remediation_link_id     TEXT PRIMARY KEY
+project_id              TEXT NOT NULL
+source_lifecycle_id     TEXT NOT NULL
+technical_verdict_id    TEXT DEFAULT NULL
+human_acceptance_id     TEXT DEFAULT NULL
+route_kind              TEXT NOT NULL
+remediation_fingerprint TEXT NOT NULL
+required_outcome        TEXT NOT NULL
+target_lifecycle_id     TEXT NOT NULL
+created_at              TEXT NOT NULL
+operation_id            TEXT NOT NULL
+project_revision        INTEGER NOT NULL
+authority_epoch         INTEGER NOT NULL
+```
+- Exactly one source is required: a `fail | inconclusive` Technical Verdict or
+  the current rejected Human Acceptance.
+- Route kind is `rework | remediation`. Rework targets the source lifecycle;
+  remediation targets a distinct corrective lifecycle. Fingerprints are
+  normalized and duplicate source/target/fingerprint routes are rejected.
+- Links are immutable durable history; later fresh verdicts or acceptance
+  facts show that the required outcome was achieved rather than mutating the
+  original link.
+
+All eight tables bind to the exact V31 Domain Operation, project revision, and
+Authority Epoch that created the fact. V34 validates individual causal facts,
+scope, immutability, criterion lineage, count-budget eligibility, proof
+ownership, subjective acceptance, and remediation routing. It does not yet
+guarantee that every Failure Observation has a Recovery Action or that every
+Technical Verdict has its Evidence: SQLite immediate insert constraints cannot
+safely enforce those circular bundle-completeness rules.
+
+S06 Domain Operations must atomically commit each failure/action bundle and
+each verdict/evidence/remediation bundle, and kernel queries must require bundle
+completeness before dispatch or closeout. Runtime readers/writers, UAT,
+recovery policy, legacy projections, and lifecycle completion do not cut over
+in V34.
+
+---
+
 ## 4. Entity Relationship Diagram
 
 ```
@@ -1230,9 +1470,24 @@ workflow_interactions ──► workflow_answers ──► workflow_conversation
 workflow_conversation_decisions ──► workflow_decision_impacts ──► workflow_item_lifecycles
 workflow_item_lifecycles ──► workflow_work_checkpoints
 
+workflow_item_lifecycles ──► workflow_failure_observations
+workflow_failure_observations ──► workflow_recovery_actions
+workflow_recovery_budgets ──► workflow_recovery_actions
+workflow_item_lifecycles ──► workflow_acceptance_criteria
+workflow_acceptance_criteria ──► workflow_acceptance_criteria (supersession lineage)
+workflow_acceptance_criteria ──► workflow_technical_verdicts
+workflow_execution_attempts ──► workflow_technical_verdicts
+workflow_technical_verdicts ──► workflow_verification_evidence
+workflow_answers ──► workflow_human_acceptances
+workflow_technical_verdicts ──┐
+                              ├──► workflow_remediation_links ──► workflow_item_lifecycles
+workflow_human_acceptances ───┘
+
 workflow_operations ──► all V32 lifecycle records
   (operation + project + revision + Authority Epoch provenance)
 workflow_operations ──► all V33 guided-conversation records
+  (operation + project + revision + Authority Epoch provenance)
+workflow_operations ──► all V34 recovery/evidence records
   (operation + project + revision + Authority Epoch provenance)
 ```
 
@@ -1245,8 +1500,8 @@ artifacts, milestones, slices, tasks, decisions, replan history, assessments,
 quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
 optional rows when reading older manifests that predate the extended arrays.
-The additive V31 canonical-foundation, V32 lifecycle-foundation, and V33
-guided-conversation tables are
+The additive V31 canonical-foundation, V32 lifecycle-foundation, V33
+guided-conversation, and V34 recovery/evidence tables are
 not yet part of this legacy manifest surface because runtime reads/writes have
 not cut over to them.
 
@@ -1256,7 +1511,7 @@ assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
 remain outside manifest restore. The V31 canonical-foundation, V32
-lifecycle-foundation, and V33 guided-conversation tables likewise remain outside worktree reconciliation
+lifecycle-foundation, V33 guided-conversation, and V34 recovery/evidence tables likewise remain outside worktree reconciliation
 until a later runtime-routing slice.
 
 ---
@@ -1329,7 +1584,7 @@ until a later runtime-routing slice.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
