@@ -123,6 +123,10 @@ function validatePlanPromotion(
       return `cannot re-plan milestone ${params.milestoneId}: ${droppedCompleted.length} completed slice(s) would be dropped (${droppedCompleted.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
     }
   }
+  const droppedPending = existingSlices.find((slice) => !incomingSliceIds.has(slice.id));
+  if (droppedPending) {
+    return `cannot re-plan milestone ${params.milestoneId}: pending slice ${droppedPending.id} would be dropped. Use gsd_reassess_roadmap to remove it.`;
+  }
 
   // Validate depends_on: all dependencies must exist and be complete
   if (params.dependsOn && params.dependsOn.length > 0) {

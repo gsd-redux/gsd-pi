@@ -17,7 +17,6 @@ import { logWarning } from "../workflow-logger.js";
 import {
   adoptLifecycleIfMissing,
   normalizeLegacyLifecycleStatus,
-  type CanonicalLifecycleStatus,
 } from "../db/writers/lifecycle-commands.js";
 import {
   executePlanningDomainOperation,
@@ -73,12 +72,6 @@ function replanSummary(params: ReplanTaskParams): string {
     : `Task ${params.taskId} replanned`;
 }
 
-function lifecycleStatusForAdoption(legacyStatus: string): CanonicalLifecycleStatus {
-  if (legacyStatus === "pending") return "pending";
-  if (legacyStatus === "active" || legacyStatus === "queued" || legacyStatus === "planned") return "ready";
-  return normalizeLegacyLifecycleStatus(legacyStatus) ?? "ready";
-}
-
 export async function handleReplanTask(
   rawParams: ReplanTaskParams,
   basePath: string,
@@ -130,7 +123,7 @@ export async function handleReplanTask(
           itemKind: "slice",
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
-          lifecycleStatus: lifecycleStatusForAdoption(parentSlice.status),
+          lifecycleStatus: normalizeLegacyLifecycleStatus(parentSlice.status) ?? "ready",
         });
         if (parentLifecycle.lifecycleStatus === "completed" || parentLifecycle.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(
@@ -150,7 +143,7 @@ export async function handleReplanTask(
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
           taskId: params.taskId,
-          lifecycleStatus: lifecycleStatusForAdoption(task.status),
+          lifecycleStatus: normalizeLegacyLifecycleStatus(task.status) ?? "ready",
         });
         if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(

@@ -1,10 +1,7 @@
-import { rmSync } from "node:fs";
-import { relative } from "node:path";
 import { clearParseCache } from "../files.js";
 import {
   adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
-  deleteArtifactByPath,
   getSlice,
   getSliceTasks,
   getTask,
@@ -23,8 +20,9 @@ import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
-import { gsdProjectionRoot, resolveTaskFile } from "../paths.js";
+import { resolveTaskFile } from "../paths.js";
 import type { PlanningInvocation } from "../planning-invocation.js";
+import { removeOwnedPlanProjection } from "../projection-cleanup.js";
 import {
   executePlanningDomainOperation,
   PlanningGuardError,
@@ -239,14 +237,14 @@ export async function handleReplanSlice(
             throw new PlanningGuardError(`cannot remove completed task ${taskId}`);
           }
           const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
+          const observedLifecycleStatus = legacyLifecycleStatus ?? "ready";
           const lifecycle = adoptLifecycleIfMissing(context, {
             itemKind: "task",
             milestoneId: params.milestoneId,
             sliceId: params.sliceId,
             taskId,
-            lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
-              ? legacyLifecycleStatus
-              : "cancelled",
+            lifecycleStatus: observedLifecycleStatus === "completed" ? "completed" : "cancelled",
+            adoptedFromStatus: observedLifecycleStatus,
           });
           if (lifecycle.lifecycleStatus === "completed") {
             throw new PlanningGuardError(`cannot remove completed task ${taskId}`);
@@ -309,7 +307,7 @@ export async function handleReplanSlice(
             milestoneId: params.milestoneId,
             sliceId: params.sliceId,
             taskId: removedTask.id,
-            lifecycleStatus: "cancelled",
+            lifecycleStatus: normalizeLegacyLifecycleStatus(removedTask.status) ?? "ready",
           });
           if (lifecycle.lifecycleStatus !== "cancelled") {
             adoptOrTransitionLifecycle(context, {
@@ -331,13 +329,11 @@ export async function handleReplanSlice(
 
   // ── Render artifacts ──────────────────────────────────────────────
   try {
-    const projectionRoot = gsdProjectionRoot(basePath);
     for (const task of getSliceTasks(params.milestoneId, params.sliceId)) {
       if (task.status !== "skipped") continue;
       const taskPlanPath = resolveTaskFile(basePath, params.milestoneId, params.sliceId, task.id, "PLAN");
       if (!taskPlanPath) continue;
-      rmSync(taskPlanPath, { force: true });
-      deleteArtifactByPath(relative(projectionRoot, taskPlanPath).replace(/\\/g, "/"));
+      removeOwnedPlanProjection(basePath, taskPlanPath);
     }
     const renderResult = await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
     const durableReplan = getLatestWorkflowDomainEvent(

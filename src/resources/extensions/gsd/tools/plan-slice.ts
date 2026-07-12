@@ -1,5 +1,4 @@
-import { rmSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
@@ -7,7 +6,6 @@ import { getGateIdsForTurn } from "../gate-registry.js";
 import {
   adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
-  deleteArtifactByPath,
   getMilestone,
   getSlice,
   getSliceTasks,
@@ -30,9 +28,10 @@ import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../pl
 import { runTaskPathChecks } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
-import { gsdProjectionRoot, normalizeRealPath, resolveSliceFile, resolveTaskFile } from "../paths.js";
+import { normalizeRealPath, resolveSliceFile, resolveTaskFile } from "../paths.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets, type RepositoryRegistry } from "../repository-registry.js";
+import { removeOwnedPlanProjection } from "../projection-cleanup.js";
 import {
   executePlanningDomainOperation,
   PlanningGuardError,
@@ -448,18 +447,17 @@ export async function handlePlanSlice(
         if (hasTaskPayload) {
           for (const task of existingTasks) {
             const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
-            let lifecycleStatus: "ready" | "completed" | "cancelled";
-            if (legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled") {
-              lifecycleStatus = legacyLifecycleStatus;
-            } else {
-              lifecycleStatus = newTaskIds.has(task.id) ? "ready" : "cancelled";
-            }
+            const observedLifecycleStatus = legacyLifecycleStatus ?? "ready";
+            const omitted = !newTaskIds.has(task.id);
             const lifecycle = adoptLifecycleIfMissing(context, {
               itemKind: "task",
               milestoneId: params.milestoneId,
               sliceId: params.sliceId,
               taskId: task.id,
-              lifecycleStatus,
+              lifecycleStatus: omitted && observedLifecycleStatus !== "completed"
+                ? "cancelled"
+                : observedLifecycleStatus,
+              ...(omitted ? { adoptedFromStatus: observedLifecycleStatus } : {}),
             });
             if (
               newTaskIds.has(task.id) &&
@@ -469,7 +467,7 @@ export async function handlePlanSlice(
                 `cannot re-plan ${lifecycle.lifecycleStatus} task ${task.id} — use gsd_task_reopen first`,
               );
             }
-            if (!newTaskIds.has(task.id) && lifecycle.lifecycleStatus === "completed") {
+            if (omitted && lifecycle.lifecycleStatus === "completed") {
               throw new PlanningGuardError(`cannot remove completed task ${task.id}`);
             }
           }
@@ -593,18 +591,15 @@ export async function handlePlanSlice(
   try {
     const allSliceTasks = getSliceTasks(params.milestoneId, params.sliceId);
     const sliceTasks = allSliceTasks.filter((task) => task.status !== "skipped");
-    const projectionRoot = gsdProjectionRoot(basePath);
     for (const task of allSliceTasks.filter((candidate) => candidate.status === "skipped")) {
       const taskPlanPath = resolveTaskFile(basePath, params.milestoneId, params.sliceId, task.id, "PLAN");
       if (!taskPlanPath) continue;
-      rmSync(taskPlanPath, { force: true });
-      deleteArtifactByPath(relative(projectionRoot, taskPlanPath).replace(/\\/g, "/"));
+      removeOwnedPlanProjection(basePath, taskPlanPath);
     }
     if (sliceTasks.length === 0) {
       const slicePlanPath = resolveSliceFile(basePath, params.milestoneId, params.sliceId, "PLAN");
       if (slicePlanPath) {
-        rmSync(slicePlanPath, { force: true });
-        deleteArtifactByPath(relative(projectionRoot, slicePlanPath).replace(/\\/g, "/"));
+        removeOwnedPlanProjection(basePath, slicePlanPath);
       }
     }
     const hasClosedTasks = sliceTasks.some((task) => isClosedStatus(task.status));

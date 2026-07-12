@@ -2,7 +2,7 @@
 // File Purpose: Domain Operation contracts for roadmap reassessment.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -394,6 +394,22 @@ test("removed slices are cancelled durably, excluded from the roadmap, and requi
   }, before);
 });
 
+test("removing a legacy-only pending slice records adoption before cancellation", async () => {
+  const { base } = fixture();
+  insertSlice({ id: "S05", milestoneId: "M001", title: "Legacy-only future work", status: "pending", sequence: 5 });
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: ["S05"] },
+  }, base, invocation("reassess/remove-legacy-only"));
+  assert.ok(!("error" in result));
+  assert.deepEqual(db().prepare(`
+    SELECT lifecycle_status, state_version
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S05'
+  `).get(), { lifecycle_status: "cancelled", state_version: 1 });
+});
+
 test("removing a slice cancels runnable descendants and deletes obsolete plan projections", async () => {
   const { base } = fixture();
   const planned = await handlePlanSlice({
@@ -430,6 +446,34 @@ test("removing a slice cancels runnable descendants and deletes obsolete plan pr
     Number(db().prepare("SELECT COUNT(*) AS count FROM artifacts WHERE milestone_id = 'M001' AND slice_id = 'S02'").get()?.["count"] ?? 0),
     0,
   );
+});
+
+test("removing a slice preserves externally edited plan projections", async () => {
+  const { base } = fixture();
+  const planned = await handlePlanSlice({
+    milestoneId: "M001",
+    sliceId: "S02",
+    goal: "Create a projection that is then externally edited.",
+    tasks: [{
+      taskId: "T01",
+      title: "Externally maintained task",
+      description: "The plan content is no longer writer-owned.",
+      estimate: "15m",
+      files: [],
+      verify: "node --test",
+      inputs: [],
+      expectedOutput: [],
+    }],
+  }, base, invocation("plan-slice/before-external-edit"));
+  assert.ok(!("error" in planned));
+  writeFileSync(planned.planPath, "# Manually maintained plan\n", "utf8");
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: ["S02"] },
+  }, base, invocation("reassess/preserve-external-plan"));
+  assert.ok(!("error" in result));
+  assert.equal(readFileSync(planned.planPath, "utf8"), "# Manually maintained plan\n");
 });
 
 test("removing a slice rejects completed descendants without residue", async () => {

@@ -44,6 +44,7 @@ export interface LifecycleIdentity {
 
 export interface LifecycleCommandInput extends LifecycleIdentity {
   lifecycleStatus: CanonicalLifecycleStatus;
+  adoptedFromStatus?: CanonicalLifecycleStatus;
   occurredAt?: string;
 }
 
@@ -173,6 +174,9 @@ function validateLifecycleIdentity(input: LifecycleCommandInput): void {
   if (normalizeCanonicalLifecycleStatus(input.lifecycleStatus) === null) {
     throw new Error(`invalid lifecycle status ${input.lifecycleStatus}`);
   }
+  if (input.adoptedFromStatus !== undefined && normalizeCanonicalLifecycleStatus(input.adoptedFromStatus) === null) {
+    throw new Error(`invalid adopted lifecycle status ${input.adoptedFromStatus}`);
+  }
   const hasSlice = typeof input.sliceId === "string" && input.sliceId.trim().length > 0;
   const hasTask = typeof input.taskId === "string" && input.taskId.trim().length > 0;
   if (input.itemKind === "milestone" && (input.sliceId !== undefined || input.taskId !== undefined)) {
@@ -184,6 +188,18 @@ function validateLifecycleIdentity(input: LifecycleCommandInput): void {
   if (input.itemKind === "task" && (!hasSlice || !hasTask)) {
     throw new Error("task lifecycle identity shape requires sliceId and taskId");
   }
+}
+
+function isValidLifecycleTransition(
+  from: CanonicalLifecycleStatus,
+  to: CanonicalLifecycleStatus,
+): boolean {
+  if (from === to) return true;
+  if (from === "pending") return to === "ready" || to === "cancelled";
+  if (from === "ready") return to === "in_progress" || to === "paused" || to === "cancelled";
+  if (from === "in_progress") return to === "paused" || to === "completed" || to === "cancelled";
+  if (from === "paused") return to === "ready" || to === "in_progress" || to === "cancelled";
+  return (from === "completed" || from === "cancelled") && to === "ready";
 }
 
 function requireHierarchyRow(input: LifecycleCommandInput): void {
@@ -285,6 +301,11 @@ export function adoptOrTransitionLifecycle(
   const existing = findLifecycle(context, input);
 
   if (!existing) {
+    const adoptedFromStatus = input.adoptedFromStatus ?? input.lifecycleStatus;
+    if (!isValidLifecycleTransition(adoptedFromStatus, input.lifecycleStatus)) {
+      throw new Error("invalid workflow lifecycle transition");
+    }
+    const stateVersion = adoptedFromStatus === input.lifecycleStatus ? 0 : 1;
     const lifecycleId = randomUUID();
     getDb().prepare(`
       INSERT INTO workflow_item_lifecycles (
@@ -293,7 +314,7 @@ export function adoptOrTransitionLifecycle(
         last_operation_id, last_project_revision, last_authority_epoch
       ) VALUES (
         :lifecycle_id, :project_id, :item_kind, :milestone_id, :slice_id, :task_id,
-        :lifecycle_status, 0, :created_at, :updated_at,
+        :lifecycle_status, :state_version, :created_at, :updated_at,
         :operation_id, :project_revision, :authority_epoch
       )
     `).run({
@@ -304,13 +325,14 @@ export function adoptOrTransitionLifecycle(
       ":slice_id": input.sliceId ?? null,
       ":task_id": input.taskId ?? null,
       ":lifecycle_status": input.lifecycleStatus,
+      ":state_version": stateVersion,
       ":created_at": now,
       ":updated_at": now,
       ":operation_id": context.operationId,
       ":project_revision": context.resultingRevision,
       ":authority_epoch": context.resultingAuthorityEpoch,
     });
-    return { lifecycleId, lifecycleStatus: input.lifecycleStatus, stateVersion: 0, adopted: true };
+    return { lifecycleId, lifecycleStatus: input.lifecycleStatus, stateVersion, adopted: true };
   }
 
   if (existing.lifecycle_status === input.lifecycleStatus) {

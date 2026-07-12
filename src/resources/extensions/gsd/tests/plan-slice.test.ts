@@ -949,6 +949,7 @@ test('handlePlanSlice durably cancels omitted pending tasks when replanning a sm
 
     const first = await handlePlanSlice(fourTaskPlan, base);
     assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
+    insertTask({ id: 'T05', sliceId: 'S02', milestoneId: 'M001', title: 'Legacy-only stale task', status: 'pending' });
     // In flat-phase mode tasks are checkboxes in the slice plan; no per-task plan files.
     const slicePlanPath = join(base, '.gsd', 'phases', '01-test', '01-02-PLAN.md');
     assert.ok(existsSync(slicePlanPath), 'initial plan should exist');
@@ -965,6 +966,7 @@ test('handlePlanSlice durably cancels omitted pending tasks when replanning a sm
       ['T02', 'pending'],
       ['T03', 'pending'],
       ['T04', 'skipped'],
+      ['T05', 'skipped'],
     ]);
     assert.equal(getGateResults('M001', 'S02', 'task').some((gate) => gate.task_id === 'T04'), true, 'cancelled task gates remain durable history');
     const adapter = _getAdapter();
@@ -973,6 +975,11 @@ test('handlePlanSlice durably cancels omitted pending tasks when replanning a sm
       SELECT lifecycle_status, state_version
       FROM workflow_item_lifecycles
       WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S02' AND task_id = 'T04'
+    `).get(), { lifecycle_status: 'cancelled', state_version: 1 });
+    assert.deepEqual(adapter.prepare(`
+      SELECT lifecycle_status, state_version
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S02' AND task_id = 'T05'
     `).get(), { lifecycle_status: 'cancelled', state_version: 1 });
     assert.doesNotMatch(readFileSync(slicePlanPath, 'utf-8'), /T04/, 'omitted T04 should be removed from plan');
 
@@ -1042,7 +1049,7 @@ test('handlePlanSlice rejects omitted completed tasks without changing slice or 
   }
 });
 
-test('handlePlanSlice replay repair removes a stale combined PLAN when only cancelled tasks remain', async () => {
+test('handlePlanSlice preserves an unowned combined PLAN when only cancelled tasks remain', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
 
@@ -1064,7 +1071,7 @@ test('handlePlanSlice replay repair removes a stale combined PLAN when only canc
       planPath: '',
       taskPlanPaths: [],
     });
-    assert.equal(existsSync(planPath), false, 'stale combined PLAN must be removed when no active tasks remain');
+    assert.equal(existsSync(planPath), true, 'manual PLAN must not be removed without writer provenance');
     assert.equal(getTask('M001', 'S02', 'T99')?.status, 'skipped', 'projection cleanup must retain task authority');
   } finally {
     cleanup(base);

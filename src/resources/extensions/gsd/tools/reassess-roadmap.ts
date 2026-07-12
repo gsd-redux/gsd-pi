@@ -1,4 +1,4 @@
-import { existsSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   gsdProjectionRoot,
@@ -16,7 +16,6 @@ import { isNonEmptyString } from "../validation.js";
 import {
   adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
-  deleteArtifactByPath,
   getMilestone,
   getMilestoneSlices,
   getAssessment,
@@ -46,6 +45,7 @@ import {
   planningOperationPayload,
 } from "../planning-domain-operation.js";
 import type { PlanningInvocation } from "../planning-invocation.js";
+import { removeOwnedPlanProjection } from "../projection-cleanup.js";
 
 export interface SliceChangeInput {
   sliceId: string;
@@ -92,7 +92,6 @@ function assessmentDbPathForRenderedFile(basePath: string, absPath: string): str
 }
 
 function removeSlicePlanProjections(basePath: string, milestoneId: string, sliceIds: string[]): void {
-  const projectionRoot = gsdProjectionRoot(basePath);
   for (const sliceId of sliceIds) {
     const planPaths = [resolveSliceFile(basePath, milestoneId, sliceId, "PLAN")];
     for (const task of getSliceTasks(milestoneId, sliceId)) {
@@ -101,8 +100,7 @@ function removeSlicePlanProjections(basePath: string, milestoneId: string, slice
     for (const planPath of planPaths) {
       if (!planPath) continue;
       try {
-        rmSync(planPath, { force: true });
-        deleteArtifactByPath(deriveCompatProjectionKey(planPath, [projectionRoot, gsdRoot(basePath)]));
+        removeOwnedPlanProjection(basePath, planPath);
       } catch (err) {
         logWarning("tool", `removed slice plan cleanup warning: ${(err as Error).message}`);
       }
@@ -300,27 +298,27 @@ export async function handleReassessRoadmap(
             throw new PlanningGuardError(`cannot remove missing slice ${removedId}`);
           }
           const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(existing.status);
+          const observedLifecycleStatus = legacyLifecycleStatus ?? "ready";
           const lifecycle = adoptLifecycleIfMissing(context, {
             itemKind: "slice",
             milestoneId: params.milestoneId,
             sliceId: removedId,
-            lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
-              ? legacyLifecycleStatus
-              : "cancelled",
+            lifecycleStatus: observedLifecycleStatus === "completed" ? "completed" : "cancelled",
+            adoptedFromStatus: observedLifecycleStatus,
           });
           if (lifecycle.lifecycleStatus === "completed") {
             throw new PlanningGuardError(`cannot remove completed slice ${removedId}`);
           }
           for (const task of getSliceTasks(params.milestoneId, removedId)) {
             const legacyTaskLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
+            const observedTaskLifecycleStatus = legacyTaskLifecycleStatus ?? "ready";
             const taskLifecycle = adoptLifecycleIfMissing(context, {
               itemKind: "task",
               milestoneId: params.milestoneId,
               sliceId: removedId,
               taskId: task.id,
-              lifecycleStatus: legacyTaskLifecycleStatus === "completed" || legacyTaskLifecycleStatus === "cancelled"
-                ? legacyTaskLifecycleStatus
-                : "cancelled",
+              lifecycleStatus: observedTaskLifecycleStatus === "completed" ? "completed" : "cancelled",
+              adoptedFromStatus: observedTaskLifecycleStatus,
             });
             if (
               legacyTaskLifecycleStatus === "completed" ||
@@ -413,9 +411,7 @@ export async function handleReassessRoadmap(
               milestoneId: params.milestoneId,
               sliceId: removedId,
               taskId: task.id,
-              lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
-                ? legacyLifecycleStatus
-                : "cancelled",
+              lifecycleStatus: legacyLifecycleStatus ?? "ready",
             });
             if (lifecycle.lifecycleStatus === "completed") continue;
             if (task.status !== "skipped") {
@@ -436,7 +432,7 @@ export async function handleReassessRoadmap(
             itemKind: "slice",
             milestoneId: params.milestoneId,
             sliceId: removedId,
-            lifecycleStatus: "cancelled",
+            lifecycleStatus: normalizeLegacyLifecycleStatus(existingSliceById.get(removedId)?.status ?? null) ?? "ready",
           });
           if (lifecycle.lifecycleStatus !== "cancelled") {
             adoptOrTransitionLifecycle(context, {

@@ -334,6 +334,37 @@ test("fresh milestone planning keeps its public response and atomically adopts r
   assertNoInventedExecutionHistory();
 });
 
+test("milestone replanning rejects omitted pending slices without changing authority", async () => {
+  const { base } = makeFixture();
+  assertSuccess(await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+    handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+    milestoneParams(),
+    base,
+    invocation("plan-milestone/before-omission"),
+  ));
+  const before = {
+    hierarchy: rows("SELECT id, title, status FROM slices ORDER BY sequence, id"),
+    lifecycles: lifecycleSnapshot(),
+    operations: count("workflow_operations"),
+  };
+
+  const result = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+    handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+    { ...milestoneParams(), slices: milestoneParams().slices.filter((slice) => slice.sliceId !== "S02") },
+    base,
+    invocation("plan-milestone/omit-pending"),
+  );
+
+  assert.deepEqual(result, {
+    error: "cannot re-plan milestone M001: pending slice S02 would be dropped. Use gsd_reassess_roadmap to remove it.",
+  });
+  assert.deepEqual({
+    hierarchy: rows("SELECT id, title, status FROM slices ORDER BY sequence, id"),
+    lifecycles: lifecycleSnapshot(),
+    operations: count("workflow_operations"),
+  }, before);
+});
+
 for (const itemKind of ["milestone", "slice"] as const) {
   test(`milestone planning rejects canonically completed ${itemKind} despite open legacy drift`, async () => {
     const { base } = makeFixture();
@@ -891,6 +922,29 @@ test("task replanning preserves lifecycle provenance while recording ordered his
   }, afterCommit, "changed semantics under the same invocation key must leave no residue");
 });
 
+test("task replanning adopts legacy lifecycle statuses through the shared normalizer", async () => {
+  const { base } = makeFixture();
+  insertMilestone({ id: "M001", title: "Existing milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Active slice", status: "active" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Active task", status: "active" });
+
+  const result = await invoke<ReplanTaskParams, ReplanTaskResult>(
+    handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+    { ...taskParams(), title: "Replanned active task" },
+    base,
+    invocation("replan-task/adopt-active"),
+  );
+  assertSuccess(result);
+  assert.deepEqual(rows(`
+    SELECT item_kind, lifecycle_status, state_version
+    FROM workflow_item_lifecycles
+    ORDER BY item_kind
+  `), [
+    { item_kind: "slice", lifecycle_status: "in_progress", state_version: 0 },
+    { item_kind: "task", lifecycle_status: "in_progress", state_version: 0 },
+  ]);
+});
+
 for (const terminalStatus of ["completed", "cancelled"] as const) {
   test(`task replanning rejects canonical ${terminalStatus} despite pending legacy drift without residue`, async () => {
     const { base } = makeFixture();
@@ -1002,6 +1056,7 @@ test("slice replanning cancels removed pending work durably instead of deleting 
     invocation("plan-slice/before-replan"),
   );
   assertSuccess(planned);
+  insertTask({ id: "T04", sliceId: "S01", milestoneId: "M001", title: "Legacy-only work to remove", status: "pending" });
   updateTaskStatus("M001", "S01", "T01", "complete", "2026-07-12T00:00:00.000Z");
 
   const params: ReplanSliceParams = {
@@ -1011,7 +1066,7 @@ test("slice replanning cancels removed pending work durably instead of deleting 
     blockerDescription: "The first approach cannot satisfy the contract.",
     whatChanged: "Cancel T02 and replace it with T03.",
     updatedTasks: [{ ...taskParams("T03", "Replacement task") }],
-    removedTaskIds: ["T02"],
+    removedTaskIds: ["T02", "T04"],
   };
   const result = await invoke<ReplanSliceParams, ReplanSliceResult>(
     handleReplanSlice as PlanningHandler<ReplanSliceParams, ReplanSliceResult>,
@@ -1027,6 +1082,11 @@ test("slice replanning cancels removed pending work durably instead of deleting 
     SELECT lifecycle_status, state_version
     FROM workflow_item_lifecycles
     WHERE item_kind = 'task' AND task_id = 'T02'
+  `), { lifecycle_status: "cancelled", state_version: 1 });
+  assert.deepEqual(row(`
+    SELECT lifecycle_status, state_version
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND task_id = 'T04'
   `), { lifecycle_status: "cancelled", state_version: 1 });
   assert.deepEqual(row(`
     SELECT lifecycle_status, state_version
