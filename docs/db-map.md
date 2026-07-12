@@ -21,6 +21,8 @@ tools/workflow-tool-executors.ts  ← business logic
 gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        │
        ├── db/engine.ts     ← connection/handle, schema/migrations, transaction primitives
+       ├── db/domain-operation.ts
+       │                    ← revision-checked authoritative transaction boundary
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
@@ -679,10 +681,11 @@ Non-correctness-critical state: UI cursors, dashboard caches, resume pointers. S
 
 ### 3e. Additive Canonical Foundation (V31)
 
-V31 creates these tables on fresh databases and transactionally upgrades V30
-databases. It is schema-only in this release: existing runtime read/write paths
-are not routed through these tables yet, and no import, projection worker,
-lifecycle API, or legacy deletion ships with this migration.
+V31 created these tables on fresh databases and transactionally upgraded V30
+databases. The current v35 codebase also exposes an additive Domain Operation
+transaction over them, but existing production handlers and runtime authority
+are not routed through that boundary yet. No import application, projection
+worker, lifecycle API, or legacy deletion ships with it.
 
 #### `project_authority`
 ```
@@ -762,6 +765,10 @@ last_error       TEXT DEFAULT NULL
 FOREIGN KEY event_id → workflow_domain_events(event_id)
 ```
 - `(event_id, destination)` is unique.
+- Inserts whose generated identity exceeds JavaScript's maximum safe integer
+  abort with `outbox identity exceeds safe integer range`.
+- Delete attempts abort with `outbox rows are durable history`; delivery fields
+  remain operationally mutable.
 - Index: `idx_workflow_outbox_pending` (delivered_at, available_at, outbox_id)
 
 These four tables are deliberately distinct from existing narrower concepts:
@@ -769,6 +776,33 @@ These four tables are deliberately distinct from existing narrower concepts:
 `milestone_commit_attributions` remains Git-specific attribution, and
 `command_queue`/`runtime_kv` remain coordination/cache surfaces rather than
 operation provenance, domain history, or an outbox.
+
+#### Domain Operation boundary
+
+`executeDomainOperation(request, mutate)` is exported through `gsd-db.ts`. A
+fresh request must provide an operation type, project-scoped idempotency key,
+expected revision and Authority Epoch, actor and transport provenance, and a
+JSON-compatible semantic payload. The callback receives a frozen context and
+must return at least one ordered event with an outbox destination plus at least
+one normalized Projection Work target. It may compose deterministic typed
+database writers, but filesystem, network, routing, retry, and swallowed-error
+behavior are outside the transaction boundary.
+
+One `BEGIN IMMEDIATE` transaction records the operation, mutation rows, ordered
+events, outbox destinations, per-key Projection Work successor rows, and the
+authority compare-and-swap. Exact retries return the original `replayed`
+receipt without invoking `mutate`; a changed request under the same key raises
+`GSD_IDEMPOTENCY_CONFLICT`. Stale revision, stale epoch, authority-CAS failure,
+or writer contention raises `GSD_REVISION_CONFLICT`. The receipt contains the
+operation/project identity, resulting revision and epoch, canonical `sha256:`
+request hash, and ordered event, outbox, and projection-work identities.
+
+The boundary requires safe non-negative revision/epoch integers, canonical
+finite JSON numbers, unique destinations per event, backward-only event causal
+links, lowercase normalized projection keys/kinds, unique projection keys, and
+at most 10,000 projection targets. It must own the outer transaction. Production
+command adapters, projection delivery, import, closeout, lifecycle policy, and
+runtime authority cutover remain deferred.
 
 ---
 
@@ -1433,11 +1467,12 @@ guarantee that every Failure Observation has a Recovery Action or that every
 Technical Verdict has its Evidence: SQLite immediate insert constraints cannot
 safely enforce those circular bundle-completeness rules.
 
-S06 Domain Operations must atomically commit each failure/action bundle, each
-verdict/evidence bundle, and any applicable remediation links. Kernel queries
-must require bundle completeness before dispatch or closeout. Runtime
-readers/writers, UAT, recovery policy, legacy projections, and lifecycle
-completion do not cut over in V34.
+Later command-specific writers must use the S06 Domain Operation boundary to
+atomically commit each failure/action bundle, each verdict/evidence bundle, and
+any applicable remediation links. Kernel queries must require bundle
+completeness before dispatch or closeout. Runtime readers/writers, UAT,
+recovery policy, legacy projections, and lifecycle completion do not cut over
+in V34.
 
 ### 3i. Additive Projection, Import, Kernel, And Closeout Foundation (V35)
 
@@ -1528,8 +1563,9 @@ resulting_authority_epoch     INTEGER NOT NULL
   preview hash.
 - Application requires `unresolved_count = 0` and records independently
   verified backup metadata with `quick_check = ok`; the schema requires that
-  metadata's schema/revision/epoch to match the base snapshot. S06 owns opening
-  and hashing the referenced backup before insertion.
+  metadata's schema/revision/epoch to match the base snapshot. The deferred
+  import application writer owns opening and hashing the referenced backup
+  before insertion.
 - The receipt must bind to an `import.apply` V31 operation whose expected tuple
   matches the base, whose request hash matches the preview hash, and whose exact
   resulting tuple matches the receipt; its resulting revision is exactly the
@@ -1583,7 +1619,8 @@ authority_epoch             INTEGER NOT NULL
 - Supersession preserves project/lifecycle and may retain the Attempt or name a
   later Attempt in the same lifecycle. There is no mutable plan status.
 - Tested-source and readiness-basis hashes must use lowercase `sha256:` format;
-  S06 owns canonical input construction and hash verification.
+  the deferred closeout writer owns canonical input construction and hash
+  verification.
 - Index: `idx_workflow_closeout_plan_head`.
 
 #### `workflow_closeout_effects`
@@ -1635,14 +1672,15 @@ authority_epoch       INTEGER NOT NULL
   plan. Current plan plus complete receipt coverage is the settlement state;
   V35 adds no settlement aggregate.
 - Receipt proofs must be nonempty JSON objects and their hashes must use
-  lowercase `sha256:` format. S06 owns canonical proof construction and
-  verification before insertion.
+  lowercase `sha256:` format. The deferred settlement writer owns canonical
+  proof construction and verification before insertion.
 - Index: `idx_workflow_settlement_receipt_scope`.
 
 V35 enforces local shape, provenance, lineage, immutability, delivery fencing,
-and settlement ordering. S06 owns atomic Domain Operation bundles, adapters,
-queries, stage and readiness prerequisites, runtime cutover, recovery fault
-tests, and final lifecycle completion.
+and settlement ordering. The S06 Domain Operation boundary now owns the base
+atomic provenance/event/outbox/Projection Work bundle and authority CAS. Later
+milestones own command-specific adapters and sibling facts, queries, stage and
+readiness prerequisites, runtime cutover, and final lifecycle completion.
 
 ---
 
@@ -1842,9 +1880,9 @@ until a later runtime-routing slice.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-projection-import-kernel-closeout-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/domain-operation.ts` for revision-checked authoritative transactions; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-projection-import-kernel-closeout-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
-2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
+2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant callers normally increment the shared depth counter with no nested `BEGIN`; `executeDomainOperation()` is the exception and rejects an existing outer transaction so it owns the reserved-writer boundary. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
 3. **Cascade semantics**: hierarchy status cascades are named **Domain Write Operations** in `db/writers/cascades.ts`, each owning its own `transaction()` so the milestone/slice/task subtree transitions atomically (callers keep only projection/file-cleanup/event logic):
    - `gsd_slice_complete` (`completeSliceCascade`) cascades `pending` tasks → `skipped`

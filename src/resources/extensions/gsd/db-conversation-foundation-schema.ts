@@ -7,8 +7,9 @@ import type { DbAdapter } from "./db-adapter.js";
  * The v33 tables are canonical conversation facts, but no runtime flow reads
  * them yet. Existing prompts, files, and caches retain their current behavior
  * until the later cutover migration. V33 validates individual facts and
- * transitions; S06 Domain Operations will atomically commit the related
- * question bundle and answer/decision/impact/checkpoint bundle.
+ * transitions; later command writers must use the S06 Domain Operation
+ * boundary to commit each question or answer/decision/impact/checkpoint bundle
+ * atomically.
  */
 export function createConversationFoundationSchemaV33(db: DbAdapter): void {
   db.exec(`

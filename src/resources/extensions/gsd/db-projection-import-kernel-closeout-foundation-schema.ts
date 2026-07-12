@@ -6,8 +6,9 @@ import type { DbAdapter } from "./db-adapter.js";
 /**
  * V35 records desired projection work and immutable import/kernel/closeout
  * facts. Projection delivery is operational and intentionally does not create
- * workflow operations. S06 owns atomic sibling facts, prerequisite checks,
- * effect execution, lifecycle completion, and runtime cutover.
+ * workflow operations. The S06 boundary owns the base atomic operation bundle;
+ * later command writers own sibling facts, prerequisites, effects, lifecycle
+ * completion, and runtime cutover.
  */
 export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAdapter): void {
   db.exec(`
