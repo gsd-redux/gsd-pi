@@ -1199,7 +1199,9 @@ authority_epoch         INTEGER NOT NULL
   classifier can persist a new normalized kind without a schema migration.
 - An `execute` observation requires the matching V32 Attempt and its immutable
   `failed` or `interrupted` Attempt Result. Result provenance must be causally
-  older than the observation. Updates and deletes fail.
+  older than the observation. Any Result attached at another boundary stage is
+  subject to the same failed/interrupted and causal-scope checks. Updates and
+  deletes fail.
 - Recovery owner is an explicit `agent | user | external` classification and
   is not inferred from the extensible failure kind. Agent-owned failures cannot
   carry a Blocker. User/external failures must own the exact open V32 Blocker
@@ -1224,6 +1226,10 @@ authority_epoch     INTEGER NOT NULL
 ```
 - A budget is an immutable count allocation for one lifecycle, normalized
   failure kind/fingerprint, policy class, and policy version.
+- Only one allocation may exist for a project/lifecycle, failure
+  kind/fingerprint, and policy class, regardless of policy version. A restart
+  or policy-version change therefore cannot create a fresh allowance for the
+  same failure scope.
 - `max_uses` counts Recovery Actions after the initial Attempt. It is capped at
   one for deterministic repair and two for transient execution, schema
   correction, remediation, and objective UAT.
@@ -1259,6 +1265,10 @@ authority_epoch        INTEGER NOT NULL
   lifecycle without a budget. Clarify and pause require the existing open V32
   human-only Blocker owned by the Failure Observation. Abort has no budget,
   target, or blocker.
+- Budget policy classes constrain the selected Action: retry accepts
+  `transient-execution | schema-correction | objective-uat`, repair accepts
+  `deterministic-repair | schema-correction`, and remediate accepts only
+  `remediation`.
 - The Action must causally follow its Failure Observation. Updates and deletes
   fail.
 - Index: `idx_workflow_recovery_actions_budget`
@@ -1350,6 +1360,10 @@ authority_epoch          INTEGER NOT NULL
   verdicts, so an all-passed bundle cannot authorize FAIL or INCONCLUSIVE.
 - The observed project revision must be at or after Attempt settlement and
   before the verdict operation. Updates and deletes fail.
+- Timestamps must be valid and ordered, `content_hash` must be a lowercase
+  `sha256:` value with 64 hexadecimal digits, and `environment_json` must be a
+  non-empty JSON object. Command/tool, working directory, source revision, and
+  durable output reference must all be non-empty.
 - Index: `idx_workflow_evidence_verdict` (verdict_id, evidence_id)
 
 #### `workflow_human_acceptances`
@@ -1374,7 +1388,8 @@ authority_epoch                INTEGER NOT NULL
 - Human Acceptance is separate from Technical Verdict. It requires the current
   `subjective_uat` criterion and the current accepted V33 Answer from an
   answered Question and a `subjective-uat` Interaction. Generic consent cannot
-  satisfy this relation.
+  satisfy this relation. The Answer and Human Acceptance share one user-authored
+  Domain Operation, and `actor_id` must match that operation's user actor.
 - Corrections append a new current head for the same criterion. Updates and
   deletes fail.
 
@@ -1395,7 +1410,9 @@ project_revision        INTEGER NOT NULL
 authority_epoch         INTEGER NOT NULL
 ```
 - Exactly one source is required: a `fail | inconclusive` Technical Verdict or
-  the current rejected Human Acceptance.
+  the current rejected Human Acceptance. A technical source must already own at
+  least one Verification Evidence row; S06 still owns aggregate evidence
+  completeness and observation-specific validation.
 - Route kind is `rework | remediation`. Rework targets the source lifecycle;
   remediation targets distinct, actionable Task work. Fingerprints are
   normalized and duplicate source/target/fingerprint routes are rejected.
