@@ -22,6 +22,7 @@ import {
   type DomainOperationResult,
 } from "../db/domain-operation.ts";
 import {
+  adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
   appendKernelCheckpoint,
   type CanonicalLifecycleStatus,
@@ -242,6 +243,113 @@ test("same-status adoption is a lifecycle no-op while the outer operation still 
            last_project_revision, last_authority_epoch
     FROM workflow_item_lifecycles
   `), original);
+});
+
+test("adoptLifecycleIfMissing adopts a missing lifecycle at the requested status", (t) => {
+  openFixture(t);
+  const adopted = executeAtFence("lifecycle.adopt-if-missing", "adopt-if-missing/new", (context) =>
+    adoptLifecycleIfMissing(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+    }));
+
+  assert.deepEqual(adopted.value, {
+    lifecycleId: adopted.value.lifecycleId,
+    lifecycleStatus: "ready",
+    stateVersion: 0,
+    adopted: true,
+  });
+  assert.deepEqual(row(`
+    SELECT lifecycle_id, lifecycle_status, state_version, last_operation_id,
+           last_project_revision, last_authority_epoch
+    FROM workflow_item_lifecycles
+  `), {
+    lifecycle_id: adopted.value.lifecycleId,
+    lifecycle_status: "ready",
+    state_version: 0,
+    last_operation_id: adopted.receipt.operationId,
+    last_project_revision: adopted.receipt.resultingRevision,
+    last_authority_epoch: adopted.receipt.resultingAuthorityEpoch,
+  });
+});
+
+for (const existingStatus of ["ready", "in_progress", "completed", "cancelled"] as const) {
+  test(`adoptLifecycleIfMissing preserves an existing ${existingStatus} lifecycle and its provenance`, (t) => {
+    openFixture(t);
+    const transition = (status: CanonicalLifecycleStatus, key: string) => executeAtFence(
+      `lifecycle.${status}`,
+      key,
+      (context) => adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: status,
+      }),
+    );
+
+    const adopted = transition(existingStatus === "cancelled" ? "cancelled" : "pending", `${existingStatus}/adopt`);
+    if (existingStatus === "ready" || existingStatus === "in_progress" || existingStatus === "completed") {
+      transition("ready", `${existingStatus}/ready`);
+    }
+    if (existingStatus === "in_progress" || existingStatus === "completed") {
+      transition("in_progress", `${existingStatus}/in-progress`);
+    }
+    if (existingStatus === "completed") {
+      transition("completed", `${existingStatus}/completed`);
+    }
+
+    const before = row(`
+      SELECT lifecycle_id, lifecycle_status, state_version, last_operation_id,
+             last_project_revision, last_authority_epoch, created_at, updated_at
+      FROM workflow_item_lifecycles
+    `);
+    const observed = executeAtFence(
+      "lifecycle.adopt-if-missing",
+      `adopt-if-missing/existing-${existingStatus}`,
+      (context) => adoptLifecycleIfMissing(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: existingStatus === "ready" ? "pending" : "ready",
+      }),
+    );
+
+    assert.deepEqual(observed.value, {
+      lifecycleId: before["lifecycle_id"],
+      lifecycleStatus: existingStatus,
+      stateVersion: before["state_version"],
+      adopted: false,
+    });
+    assert.deepEqual(row(`
+      SELECT lifecycle_id, lifecycle_status, state_version, last_operation_id,
+             last_project_revision, last_authority_epoch, created_at, updated_at
+      FROM workflow_item_lifecycles
+    `), before);
+    assert.notEqual(observed.receipt.operationId, adopted.receipt.operationId);
+  });
+}
+
+test("adoptLifecycleIfMissing rolls back the outer operation when its hierarchy identity is invalid", (t) => {
+  openFixture(t);
+  const before = snapshot();
+
+  assert.throws(() => executeAtFence(
+    "lifecycle.adopt-if-missing",
+    "adopt-if-missing/missing-hierarchy",
+    (context) => adoptLifecycleIfMissing(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T99",
+      lifecycleStatus: "ready",
+    }),
+  ), /hierarchy row is missing/i);
+  assert.deepEqual(snapshot(), before);
 });
 
 test("terminal lifecycles reopen only through ready and reject a direct in-progress jump", (t) => {

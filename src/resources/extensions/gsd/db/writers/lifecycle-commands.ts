@@ -102,7 +102,7 @@ export interface AppendKernelCheckpointResult {
 
 interface LifecycleRow {
   lifecycle_id: string;
-  lifecycle_status: string;
+  lifecycle_status: CanonicalLifecycleStatus;
   state_version: number;
   updated_at: string;
 }
@@ -222,6 +222,15 @@ function findLifecycle(context: Readonly<DomainOperationContext>, input: Lifecyc
   }) as unknown as LifecycleRow | undefined;
 }
 
+function existingLifecycleResult(existing: LifecycleRow): LifecycleCommandResult {
+  return {
+    lifecycleId: existing.lifecycle_id,
+    lifecycleStatus: existing.lifecycle_status,
+    stateVersion: existing.state_version,
+    adopted: false,
+  };
+}
+
 export function readDomainOperationFence(idempotencyKey?: string): DomainOperationFence {
   if (idempotencyKey !== undefined) requireNonBlank(idempotencyKey, "idempotency key");
   const db = getDb();
@@ -298,12 +307,7 @@ export function adoptOrTransitionLifecycle(
   }
 
   if (existing.lifecycle_status === input.lifecycleStatus) {
-    return {
-      lifecycleId: existing.lifecycle_id,
-      lifecycleStatus: existing.lifecycle_status,
-      stateVersion: existing.state_version,
-      adopted: false,
-    };
+    return existingLifecycleResult(existing);
   }
 
   const previousTimestamp = Date.parse(existing.updated_at);
@@ -340,6 +344,21 @@ export function adoptOrTransitionLifecycle(
     stateVersion: existing.state_version + 1,
     adopted: false,
   };
+}
+
+export function adoptLifecycleIfMissing(
+  context: Readonly<DomainOperationContext>,
+  input: LifecycleCommandInput,
+): LifecycleCommandResult {
+  requireActiveContext(context);
+  validateLifecycleIdentity(input);
+  requireHierarchyRow(input);
+  if (input.occurredAt !== undefined) requireTimestamp(input.occurredAt, "occurredAt");
+
+  const existing = findLifecycle(context, input);
+  return existing
+    ? existingLifecycleResult(existing)
+    : adoptOrTransitionLifecycle(context, input);
 }
 
 function loadKernelHead(projectId: string, lifecycleId: string): KernelHeadRow | undefined {
