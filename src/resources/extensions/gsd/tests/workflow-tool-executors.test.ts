@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, existsSync, symlinkSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -813,6 +813,45 @@ test("executePlanSlice writes task planning state and rendered plan artifacts", 
     assert.match(readFileSync(planPath, "utf-8"), /Persist slice plan over MCP/);
   } finally {
     closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executePlanSlice replay preserves public paths across project path aliases", async () => {
+  const base = makeTmpBase();
+  const alias = `${base}-alias`;
+  try {
+    symlinkSync(base, alias, process.platform === "win32" ? "junction" : "dir");
+    openTestDb(base);
+    await inProjectDir(alias, () => executePlanMilestone(validMilestonePlan(), alias));
+
+    const params = {
+      milestoneId: "M001",
+      sliceId: "S01",
+      goal: "Preserve exact replay responses.",
+      tasks: [
+        {
+          taskId: "T01",
+          title: "Keep replay paths stable",
+          description: "Return the same public paths for an exact retry.",
+          estimate: "15m",
+          files: ["src/resources/extensions/gsd/tools/plan-slice.ts"],
+          verify: "node --test",
+          inputs: [],
+          expectedOutput: ["src/replay-path-status.md"],
+        },
+      ],
+    };
+    const invocation = directPlanningInvocation();
+    const first = await inProjectDir(alias, () =>
+      executePlanSliceWithInvocation(params, alias, invocation));
+    const replay = await inProjectDir(base, () =>
+      executePlanSliceWithInvocation(params, base, invocation));
+
+    assert.deepEqual(replay, first, "an exact replay must preserve its public response");
+  } finally {
+    closeDatabase();
+    try { unlinkSync(alias); } catch { /* swallow */ }
     cleanup(base);
   }
 });

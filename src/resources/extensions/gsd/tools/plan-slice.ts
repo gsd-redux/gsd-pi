@@ -30,7 +30,7 @@ import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../pl
 import { runTaskPathChecks } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
-import { gsdProjectionRoot, resolveSliceFile, resolveTaskFile } from "../paths.js";
+import { gsdProjectionRoot, normalizeRealPath, resolveSliceFile, resolveTaskFile } from "../paths.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets, type RepositoryRegistry } from "../repository-registry.js";
 import {
@@ -634,8 +634,8 @@ export async function handlePlanSlice(
     return {
       milestoneId: params.milestoneId,
       sliceId: params.sliceId,
-      planPath: renderResult.planPath,
-      taskPlanPaths: renderResult.taskPlanPaths,
+      planPath: renderResult.planPath ? normalizeRealPath(renderResult.planPath) : "",
+      taskPlanPaths: renderResult.taskPlanPaths.map(normalizeRealPath),
     };
   } catch (renderErr) {
     logWarning("tool", `plan_slice — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
