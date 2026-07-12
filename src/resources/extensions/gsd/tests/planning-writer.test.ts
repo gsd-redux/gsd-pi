@@ -2,13 +2,15 @@
 // File Purpose: Tests for the DB → .planning/ projection writer.
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, updateTaskStatus } from "../gsd-db.ts";
+import { applyPlanningProjectionWrites } from "../compat/planning-compat.ts";
+import { readCompatMarker } from "../compat/compat-marker.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, updateSliceStatus, updateTaskStatus } from "../gsd-db.ts";
 
 const tmpDirs: string[] = [];
 function makeTmp(): string {
@@ -119,6 +121,47 @@ test("writePlanningDirectory does not emit an ingestible PLAN.md for a task-less
   // The slice remains discoverable via ROADMAP.md.
   const roadmap = readFileSync(join(base, ".planning", "ROADMAP.md"), "utf-8");
   assert.match(roadmap, /Sketch slice/);
+});
+
+test("writePlanningDirectory removes cancelled modeled plans while preserving passthrough files", async () => {
+  const base = makeTmp();
+  insertSlice({
+    milestoneId: "M001", id: "S02", title: "Second slice", status: "pending",
+    risk: "low", depends: [], demo: "second demo", sequence: 2,
+  });
+  insertTask({
+    milestoneId: "M001", sliceId: "S02", id: "T02", title: "Second task",
+    status: "pending", sequence: 1,
+  });
+  await writePlanningDirectory(base, "flat-phases");
+
+  const phasesRoot = join(base, ".planning", "phases");
+  const phaseDirs = readdirSync(phasesRoot).sort();
+  const stalePlanPaths = phaseDirs.map((phaseDir) =>
+    join(phasesRoot, phaseDir, readdirSync(join(phasesRoot, phaseDir)).find((name) => name.endsWith("-PLAN.md"))!),
+  );
+  const passthroughPath = join(phasesRoot, phaseDirs[0]!, "01-RESEARCH.md");
+  writeFileSync(passthroughPath, "# Preserve this research\n", "utf8");
+  applyPlanningProjectionWrites(base, [{
+    relPath: `phases/${phaseDirs[0]}/01-RESEARCH.md`,
+    entities: [],
+    passthrough: true,
+  }]);
+
+  updateSliceStatus("M001", "S01", "skipped");
+  updateTaskStatus("M001", "S02", "T02", "skipped");
+  await writePlanningDirectory(base, "flat-phases");
+
+  for (const stalePlanPath of stalePlanPaths) {
+    assert.equal(existsSync(stalePlanPath), false, `obsolete modeled plan remains: ${stalePlanPath}`);
+  }
+  assert.equal(existsSync(passthroughPath), true, "passthrough research must survive projection cleanup");
+  const marker = readCompatMarker(base);
+  for (const stalePlanPath of stalePlanPaths) {
+    const relPath = stalePlanPath.slice(join(base, ".planning").length + 1).replace(/\\/g, "/");
+    assert.equal(marker.planning?.projections[relPath], undefined);
+  }
+  assert.ok(marker.planning?.passthrough[`phases/${phaseDirs[0]}/01-RESEARCH.md`]);
 });
 
 test("writePlanningDirectory throws for unsupported layouts", async () => {

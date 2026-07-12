@@ -127,6 +127,43 @@ test("slice replan exact retry replays once and changed reuse conflicts without 
   }
 });
 
+test("slice replan retry preserves a newer durable replan projection", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    const originalInvocation = invocation("replan-slice/stale-retry");
+    const first = await handleReplanSlice(replanParams(), base, originalInvocation);
+    assert.ok(!("error" in first));
+
+    const newerParams: ReplanSliceParams = {
+      ...replanParams(),
+      blockerDescription: "A newer blocker description.",
+      whatChanged: "Keep T03 with a newer implementation plan.",
+      updatedTasks: [{
+        ...replanParams().updatedTasks[0]!,
+        description: "Implement the newer replacement approach.",
+      }],
+      removedTaskIds: [],
+    };
+    const newer = await handleReplanSlice(newerParams, base, invocation("replan-slice/newer"));
+    assert.ok(!("error" in newer));
+    const newerContent = readFileSync(newer.replanPath, "utf8");
+
+    const replay = await handleReplanSlice(replanParams(), base, originalInvocation);
+    assert.deepEqual(replay, first);
+    assert.equal(
+      readFileSync(newer.replanPath, "utf8"),
+      newerContent,
+      "an older exact retry must render the latest durable replan without changing its creation time",
+    );
+    assert.match(newerContent, /A newer blocker description/);
+    assert.match(newerContent, /Keep T03 with a newer implementation plan/);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("slice replan requires explicit reopen before reusing cancelled task identity", async () => {
   const base = makeBase();
   try {

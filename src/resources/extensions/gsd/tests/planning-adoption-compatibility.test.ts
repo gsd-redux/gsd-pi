@@ -190,6 +190,40 @@ function advanceTaskLifecycle(): void {
   });
 }
 
+function advanceSliceLifecycle(): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "planning.compatibility.advance-slice",
+    idempotencyKey: "planning/compatibility/advance/M001/S01",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "agent",
+    sourceTransport: "test",
+    payload: { sliceId: "S01", lifecycleStatus: "in_progress" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S01",
+      lifecycleStatus: "in_progress",
+    });
+    return {
+      events: [{
+        eventType: "planning.compatibility.slice-advanced",
+        entityType: "slice",
+        entityId: "M001/S01",
+        payload: { lifecycleStatus: "in_progress" },
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: "planning/m001/s01",
+        projectionKind: "markdown",
+        rendererVersion: "v1",
+      }],
+    };
+  });
+}
+
 function hierarchyIdentitySnapshot(): Record<string, unknown> {
   return {
     milestone: db().prepare("SELECT rowid AS row_id, id, title FROM milestones WHERE id = 'M001'").get(),
@@ -214,6 +248,14 @@ function taskExecutionSnapshot(): Record<string, unknown> | undefined {
            escalation_override_applied_at
     FROM tasks
     WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).get();
+}
+
+function sliceExecutionSnapshot(): Record<string, unknown> | undefined {
+  return db().prepare(`
+    SELECT status, completed_at, full_summary_md, full_uat_md
+    FROM slices
+    WHERE milestone_id = 'M001' AND id = 'S01'
   `).get();
 }
 
@@ -295,9 +337,14 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   closeDatabase();
   assert.equal(copyWorktreeDb(mainDb, worktreeDb), true);
   assert.equal(openDatabase(mainDb), true);
+  advanceSliceLifecycle();
   advanceTaskLifecycle();
   updateTaskStatus("M001", "S01", "T01", "active");
   db().exec(`
+    UPDATE slices SET
+      full_summary_md = '# Main slice summary',
+      full_uat_md = '# Main slice UAT'
+    WHERE milestone_id = 'M001' AND id = 'S01';
     UPDATE tasks SET
       one_liner = 'Main execution result',
       narrative = 'Main execution narrative',
@@ -317,12 +364,18 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
     WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01';
   `);
   const before = hierarchyIdentitySnapshot();
+  const beforeSliceExecution = sliceExecutionSnapshot();
   const beforeExecution = taskExecutionSnapshot();
   closeDatabase();
 
   assert.equal(openDatabase(worktreeDb), true);
   db().exec(`
     UPDATE milestones SET title = 'Legacy edit from stale worktree' WHERE id = 'M001';
+    UPDATE slices SET
+      title = 'Worktree slice planning title',
+      full_summary_md = '',
+      full_uat_md = ''
+    WHERE milestone_id = 'M001' AND id = 'S01';
     UPDATE tasks SET
       title = 'Worktree planning title',
       description = 'Worktree planning description',
@@ -344,8 +397,10 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   assert.deepEqual(hierarchyIdentitySnapshot(), {
     ...before,
     milestone: { ...(before["milestone"] as object), title: "Legacy edit from stale worktree" },
+    slice: { ...(before["slice"] as object), title: "Worktree slice planning title" },
     task: { ...(before["task"] as object), title: "Worktree planning title" },
   });
+  assert.deepEqual(sliceExecutionSnapshot(), beforeSliceExecution);
   assert.deepEqual(taskExecutionSnapshot(), {
     ...beforeExecution,
     title: "Worktree planning title",

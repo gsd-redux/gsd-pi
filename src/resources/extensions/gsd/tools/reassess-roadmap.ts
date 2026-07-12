@@ -19,6 +19,7 @@ import {
   deleteArtifactByPath,
   getMilestone,
   getMilestoneSlices,
+  getAssessment,
   getSlice,
   getSliceTasks,
   insertSlice,
@@ -455,10 +456,15 @@ export async function handleReassessRoadmap(
     if ("skipped" in roadmapResult) {
       return { error: `roadmap render skipped: milestone ${params.milestoneId} has no planned slices` };
     }
+    const durableAssessment = getAssessment(
+      assessmentDbPathForRenderedFile(basePath, assessmentPath),
+    );
+    if (!durableAssessment) throw new Error("durable roadmap assessment not found");
     const assessmentResult = await renderAssessmentFromDb(basePath, params.milestoneId, params.completedSliceId, {
-      verdict: params.verdict,
-      assessment: params.assessment,
+      verdict: String(durableAssessment["status"]),
+      assessment: String(durableAssessment["full_content"]),
       completedSliceId: params.completedSliceId,
+      createdAt: String(durableAssessment["created_at"]),
     });
 
     // ── Remove stale VALIDATION file from disk (#2957) ────────────

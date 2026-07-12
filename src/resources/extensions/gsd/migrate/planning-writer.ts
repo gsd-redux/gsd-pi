@@ -6,7 +6,7 @@
 // v1 supports flat-phases; multi-milestone and legacy-milestone-dir are stubbed
 // with a clear error until fixtures exist to validate them.
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { getAllMilestones, getMilestoneSlices, getSliceTasks } from "../gsd-db.js";
@@ -17,6 +17,7 @@ import {
   applyPlanningProjectionWrites,
   type PlanningProjectionWrite,
 } from "../compat/planning-compat.js";
+import { readCompatMarker, writeCompatMarker } from "../compat/compat-marker.js";
 
 export interface PlanningWrittenFiles {
   paths: string[];
@@ -25,6 +26,24 @@ export interface PlanningWrittenFiles {
 
 function planningRoot(basePath: string): string {
   return join(basePath, ".planning");
+}
+
+function removeObsoletePlanningProjections(
+  basePath: string,
+  desiredRelPaths: Set<string>,
+): void {
+  const marker = readCompatMarker(basePath);
+  if (!marker.planning) return;
+
+  let changed = false;
+  for (const relPath of Object.keys(marker.planning.projections)) {
+    if (desiredRelPaths.has(relPath)) continue;
+    const absPath = join(planningRoot(basePath), relPath);
+    if (existsSync(absPath)) unlinkSync(absPath);
+    delete marker.planning.projections[relPath];
+    changed = true;
+  }
+  if (changed) writeCompatMarker(basePath, marker);
 }
 
 function slugify(title: string, fallback: string): string {
@@ -252,6 +271,10 @@ export async function writePlanningDirectory(
   paths.push(projectPath);
   projectionWrites.push({ relPath: toPlanningRel(projectPath), entities: [milestones[0]!.id] });
 
+  removeObsoletePlanningProjections(
+    basePath,
+    new Set(projectionWrites.map((write) => write.relPath)),
+  );
   applyPlanningProjectionWrites(basePath, projectionWrites);
   return { paths, layout };
 }

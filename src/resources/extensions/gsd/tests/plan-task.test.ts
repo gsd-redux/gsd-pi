@@ -131,6 +131,29 @@ test('handlePlanTask rejects invalid payloads', async () => {
   }
 });
 
+test('handlePlanTask requires explicit reopen before planning a legacy deferred task', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    insertTask({
+      id: 'T02',
+      milestoneId: 'M001',
+      sliceId: 'S02',
+      title: 'Deferred task',
+      status: 'deferred',
+    });
+
+    const result = await handlePlanTask(validParams(), base);
+    assert.ok('error' in result);
+    assert.match(result.error, /cancelled task T02.*reopen/i);
+    assert.equal(getTask('M001', 'S02', 'T02')?.title, 'Deferred task');
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanTask explains string IO fields must be arrays', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

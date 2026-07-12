@@ -1186,12 +1186,14 @@ export interface ReplanData {
   blockerTaskId: string;
   blockerDescription: string;
   whatChanged: string;
+  createdAt?: string;
 }
 
 export interface AssessmentData {
   verdict: string;
   assessment: string;
   completedSliceId?: string;
+  createdAt?: string;
 }
 
 function existingLegacySliceAssessmentPath(
@@ -1246,7 +1248,7 @@ export async function renderReplanFromDb(
   lines.push(`**Milestone:** ${milestoneId}`);
   lines.push(`**Slice:** ${sliceId}`);
   lines.push(`**Blocker Task:** ${replanData.blockerTaskId}`);
-  lines.push(`**Created:** ${new Date().toISOString()}`);
+  lines.push(`**Created:** ${replanData.createdAt ?? new Date().toISOString()}`);
   lines.push("");
   lines.push("## Blocker Description");
   lines.push("");
@@ -1287,7 +1289,7 @@ export async function renderAssessmentFromDb(
     lines.push(`**Completed Slice:** ${assessmentData.completedSliceId}`);
   }
   lines.push(`**Verdict:** ${assessmentData.verdict}`);
-  lines.push(`**Created:** ${new Date().toISOString()}`);
+  lines.push(`**Created:** ${assessmentData.createdAt ?? new Date().toISOString()}`);
   lines.push("");
   lines.push("## Assessment");
   lines.push("");

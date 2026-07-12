@@ -8,6 +8,7 @@ import {
   getSlice,
   getSliceTasks,
   getTask,
+  getLatestWorkflowDomainEvent,
   insertTask,
   upsertTaskPlanning,
   insertReplanHistory,
@@ -130,6 +131,8 @@ export async function handleReplanSlice(
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
           blockerTaskId: params.blockerTaskId,
+          blockerDescription: params.blockerDescription,
+          whatChanged: params.whatChanged,
           removedTaskIds: params.removedTaskIds,
           updatedTaskIds: params.updatedTasks.map((task) => task.taskId),
         },
@@ -337,10 +340,27 @@ export async function handleReplanSlice(
       deleteArtifactByPath(relative(projectionRoot, taskPlanPath).replace(/\\/g, "/"));
     }
     const renderResult = await renderPlanFromDb(basePath, params.milestoneId, params.sliceId);
+    const durableReplan = getLatestWorkflowDomainEvent(
+      "workflow.slice.replanned",
+      "slice",
+      `${params.milestoneId}/${params.sliceId}`,
+    );
+    if (!durableReplan) throw new Error("durable replan event not found");
+    const blockerTaskId = durableReplan.payload["blockerTaskId"];
+    const blockerDescription = durableReplan.payload["blockerDescription"];
+    const whatChanged = durableReplan.payload["whatChanged"];
+    if (
+      typeof blockerTaskId !== "string" ||
+      typeof blockerDescription !== "string" ||
+      typeof whatChanged !== "string"
+    ) {
+      throw new Error("durable replan event is missing projection data");
+    }
     const replanResult = await renderReplanFromDb(basePath, params.milestoneId, params.sliceId, {
-      blockerTaskId: params.blockerTaskId,
-      blockerDescription: params.blockerDescription,
-      whatChanged: params.whatChanged,
+      blockerTaskId,
+      blockerDescription,
+      whatChanged,
+      createdAt: durableReplan.createdAt,
     });
 
     // ── Invalidate caches ─────────────────────────────────────────

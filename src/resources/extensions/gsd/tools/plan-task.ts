@@ -9,6 +9,7 @@ import {
   getTask,
   insertGateRow,
   insertTask,
+  normalizeLegacyLifecycleStatus,
   setSliceSketchFlag,
   upsertTaskPlanning,
 } from "../gsd-db.js";
@@ -211,11 +212,16 @@ export async function handlePlanTask(
         if (isClosedStatus(parentSlice.status)) {
           throw new PlanningGuardError(`cannot plan task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})`);
         }
+        const legacyParentLifecycle = normalizeLegacyLifecycleStatus(parentSlice.status);
+        let parentLifecycleStatus: "ready" | "completed" | "cancelled" = "ready";
+        if (legacyParentLifecycle === "completed" || legacyParentLifecycle === "cancelled") {
+          parentLifecycleStatus = legacyParentLifecycle;
+        }
         const parentLifecycle = adoptLifecycleIfMissing(context, {
           itemKind: "slice",
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
-          lifecycleStatus: "ready",
+          lifecycleStatus: parentLifecycleStatus,
         });
         if (parentLifecycle.lifecycleStatus === "completed" || parentLifecycle.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(
@@ -227,15 +233,21 @@ export async function handlePlanTask(
         if (existingTask && isClosedStatus(existingTask.status)) {
           throw new PlanningGuardError(`cannot re-plan task ${params.taskId}: it is already complete — use gsd_task_reopen first`);
         }
-        const existingLifecycle = existingTask
-          ? adoptLifecycleIfMissing(context, {
-              itemKind: "task",
-              milestoneId: params.milestoneId,
-              sliceId: params.sliceId,
-              taskId: params.taskId,
-              lifecycleStatus: "ready",
-            })
-          : null;
+        let existingLifecycle: ReturnType<typeof adoptLifecycleIfMissing> | null = null;
+        if (existingTask) {
+          const legacyTaskLifecycle = normalizeLegacyLifecycleStatus(existingTask.status);
+          let taskLifecycleStatus: "ready" | "completed" | "cancelled" = "ready";
+          if (legacyTaskLifecycle === "completed" || legacyTaskLifecycle === "cancelled") {
+            taskLifecycleStatus = legacyTaskLifecycle;
+          }
+          existingLifecycle = adoptLifecycleIfMissing(context, {
+            itemKind: "task",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId: params.taskId,
+            lifecycleStatus: taskLifecycleStatus,
+          });
+        }
         if (existingLifecycle?.lifecycleStatus === "completed" || existingLifecycle?.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(
             `cannot re-plan ${existingLifecycle.lifecycleStatus} task ${params.taskId} — use gsd_task_reopen first`,

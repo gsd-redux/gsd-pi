@@ -865,7 +865,7 @@ test('handlePlanSlice surfaces render failures without changing parse-visible ta
   }
 });
 
-test('handlePlanSlice reactivates a deferred parent slice to pending', async (t) => {
+test('handlePlanSlice requires explicit reopen before planning a legacy deferred slice', async (t) => {
   const base = makeTmpBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, '.gsd', 'gsd.db'));
@@ -874,12 +874,13 @@ test('handlePlanSlice reactivates a deferred parent slice to pending', async (t)
   insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Planning slice', status: 'deferred', demo: 'Rendered plans exist.' });
 
   const result = await handlePlanSlice(validParams(), base);
-  assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+  assert.ok('error' in result);
+  assert.match(result.error, /cancelled slice S02.*reopen/i);
 
   const slice = getSlice('M001', 'S02');
   assert.ok(slice);
-  assert.equal(slice?.status, 'pending', 'deferred slice must be reactivated to pending so auto-mode can dispatch it');
-  assert.equal(slice?.goal, 'Persist slice planning through the DB.');
+  assert.equal(slice?.status, 'deferred');
+  assert.equal(slice?.goal, '');
 });
 
 test('handlePlanSlice reruns idempotently and refreshes parse-visible state', async () => {

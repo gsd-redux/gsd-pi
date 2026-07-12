@@ -576,6 +576,41 @@ export function getReplanHistory(milestoneId: string, sliceId?: string): Array<R
   ).all({ ":mid": milestoneId });
 }
 
+export interface WorkflowDomainEventRecord {
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export function getLatestWorkflowDomainEvent(
+  eventType: string,
+  entityType: string,
+  entityId: string,
+): WorkflowDomainEventRecord | null {
+  if (!getDbOrNull()) return null;
+  const row = getDbOrNull()!.prepare(`
+    SELECT payload_json, created_at
+    FROM workflow_domain_events
+    WHERE event_type = :event_type
+      AND entity_type = :entity_type
+      AND entity_id = :entity_id
+    ORDER BY project_revision DESC, event_index DESC
+    LIMIT 1
+  `).get({
+    ":event_type": eventType,
+    ":entity_type": entityType,
+    ":entity_id": entityId,
+  });
+  if (!row) return null;
+  const payload = JSON.parse(String(row["payload_json"] ?? "{}")) as unknown;
+  if (!payload || Array.isArray(payload) || typeof payload !== "object") {
+    throw new Error(`invalid payload for workflow event ${eventType}`);
+  }
+  return {
+    payload: payload as Record<string, unknown>,
+    createdAt: String(row["created_at"] ?? ""),
+  };
+}
+
 export function getAssessment(path: string): Record<string, unknown> | null {
   if (!getDbOrNull()!) return null;
   const row = getDbOrNull()!.prepare(

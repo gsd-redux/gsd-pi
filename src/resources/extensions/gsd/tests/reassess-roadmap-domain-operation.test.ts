@@ -261,6 +261,36 @@ test("exact reassessment replay repairs projections without another mutation or 
   }, before);
 });
 
+test("reassessment retry preserves a newer durable assessment projection", async () => {
+  const { base } = fixture();
+  const originalParams = {
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: [] },
+  };
+  const originalInvocation = invocation("reassess/stale-retry");
+  const first = await reassess(originalParams, base, originalInvocation);
+  assert.ok(!("error" in first));
+
+  const newerParams = {
+    ...originalParams,
+    verdict: "adjusted",
+    assessment: "A newer reassessment supersedes the original projection.",
+  };
+  const newer = await reassess(newerParams, base, invocation("reassess/newer"));
+  assert.ok(!("error" in newer));
+  const newerContent = readFileSync(newer.assessmentPath, "utf8");
+
+  const replay = await reassess(originalParams, base, originalInvocation);
+  assert.deepEqual(replay, first);
+  assert.equal(
+    readFileSync(newer.assessmentPath, "utf8"),
+    newerContent,
+    "an older exact retry must render the latest durable assessment without changing its creation time",
+  );
+  assert.match(newerContent, /\*\*Verdict:\*\* adjusted/);
+  assert.match(newerContent, /newer reassessment supersedes/);
+});
+
 test("same reassessment invocation rejects changed semantics with no residue", async () => {
   const { base } = fixture();
   const envelope = invocation("reassess/conflict");

@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { clearParseCache } from "../files.js";
-import { isClosedStatus, isDeferredStatus } from "../status-guards.js";
+import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
 import {
@@ -17,7 +17,6 @@ import {
   upsertTaskPlanning,
   insertGateRow,
   updateTaskStatus,
-  updateSliceStatus,
   setSliceSketchFlag,
 } from "../gsd-db.js";
 import type { GateEvaluationConfig, GateId } from "../types.js";
@@ -421,11 +420,18 @@ export async function handlePlanSlice(
         if (isClosedStatus(parentSlice.status)) {
           throw new PlanningGuardError(`cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first`);
         }
+        const legacySliceLifecycle = normalizeLegacyLifecycleStatus(parentSlice.status);
+        let sliceLifecycleStatus: "pending" | "ready" | "completed" | "cancelled" = hasTaskPayload
+          ? "ready"
+          : "pending";
+        if (legacySliceLifecycle === "completed" || legacySliceLifecycle === "cancelled") {
+          sliceLifecycleStatus = legacySliceLifecycle;
+        }
         const sliceLifecycle = adoptLifecycleIfMissing(context, {
           itemKind: "slice",
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
-          lifecycleStatus: hasTaskPayload ? "ready" : "pending",
+          lifecycleStatus: sliceLifecycleStatus,
         });
         if (sliceLifecycle.lifecycleStatus === "completed" || sliceLifecycle.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(
@@ -478,9 +484,6 @@ export async function handlePlanSlice(
           throw new PlanningGuardError(`cannot remove completed task ${completedOmission.id}`);
         }
 
-        if (isDeferredStatus(parentSlice.status)) {
-          updateSliceStatus(params.milestoneId, params.sliceId, "pending");
-        }
         upsertSlicePlanning(params.milestoneId, params.sliceId, {
           goal: params.goal,
           successCriteria: params.successCriteria,

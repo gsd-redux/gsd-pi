@@ -492,7 +492,9 @@ export function reconcileWorktreeDb(
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.completed_at ELSE w.completed_at
                    END,
-                   w.full_summary_md, w.full_uat_md, w.goal, w.success_criteria, w.proof_level,
+                   CASE WHEN ${newerSliceLifecycle} THEN m.full_summary_md ELSE w.full_summary_md END,
+                   CASE WHEN ${newerSliceLifecycle} THEN m.full_uat_md ELSE w.full_uat_md END,
+                   w.goal, w.success_criteria, w.proof_level,
                    w.integration_closure, w.observability_impact,
                    ${sliceTargetRepositoriesSql},
                    w.sequence, w.replan_triggered_at,
