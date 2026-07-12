@@ -85,7 +85,7 @@ function cleanup(base: string): void {
 }
 
 function openTestDb(base: string): void {
-  openDatabase(join(base, ".gsd", "gsd.db"));
+  openDatabase(join(normalizeRealPath(base), ".gsd", "gsd.db"));
 }
 
 async function inProjectDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
