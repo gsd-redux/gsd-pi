@@ -567,6 +567,67 @@ describe("resolveHookArtifactPath", () => {
     }
   });
 
+  test("resolves canonical flat-phase scoped artifact names", () => {
+    const originalGsdHome = process.env.GSD_HOME;
+    const projectRoot = mkdtempSync(join(tmpdir(), "gsd-hook-flat-scope-"));
+    const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-hook-home-"));
+    try {
+      process.env.GSD_HOME = tempGsdHome;
+      const phaseDir = join(realpathSync(projectRoot), ".gsd", "phases", "50-some-phase");
+      mkdirSync(phaseDir, { recursive: true });
+      const milestoneArtifactPath = join(phaseDir, "50-PLAN-REVIEW.md");
+      const sliceArtifactPath = join(phaseDir, "50-02-PLAN-REVIEW.md");
+      const taskArtifactPath = join(phaseDir, "S02-T01-REVIEW.md");
+      writeFileSync(milestoneArtifactPath, "---\nverdict: pass\n---\n", "utf-8");
+      writeFileSync(sliceArtifactPath, "---\nverdict: needs-attention\n---\n", "utf-8");
+      writeFileSync(taskArtifactPath, "---\nverdict: advisory\n---\n", "utf-8");
+
+      assert.equal(
+        resolveHookArtifactPath(projectRoot, "M050", "PLAN-REVIEW.md"),
+        milestoneArtifactPath,
+        "resolves the canonical milestone-prefixed flat artifact",
+      );
+      assert.equal(
+        resolveHookArtifactPath(projectRoot, "M050/S02", "PLAN-REVIEW.md"),
+        sliceArtifactPath,
+        "resolves the canonical slice-prefixed flat artifact",
+      );
+      assert.equal(
+        resolveHookArtifactPath(projectRoot, "M050/S02/T01", "REVIEW.md"),
+        taskArtifactPath,
+        "resolves the canonical slice/task-prefixed flat artifact",
+      );
+    } finally {
+      if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = originalGsdHome;
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(tempGsdHome, { recursive: true, force: true });
+    }
+  });
+
+  test("flat-phase missing slice artifact fallback points at the canonical slice path", () => {
+    const originalGsdHome = process.env.GSD_HOME;
+    const projectRoot = mkdtempSync(join(tmpdir(), "gsd-hook-flat-slice-miss-"));
+    const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-hook-home-"));
+    try {
+      process.env.GSD_HOME = tempGsdHome;
+      const phaseDir = join(realpathSync(projectRoot), ".gsd", "phases", "50-some-phase");
+      mkdirSync(phaseDir, { recursive: true });
+
+      const resolved = resolveHookArtifactPath(projectRoot, "M050/S02", "PLAN-REVIEW.md");
+      assert.equal(
+        resolved,
+        join(phaseDir, "50-02-PLAN-REVIEW.md"),
+        "diagnostic fallback uses the collision-free slice-prefixed path",
+      );
+    } finally {
+      if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = originalGsdHome;
+      rmSync(projectRoot, { recursive: true, force: true });
+      rmSync(tempGsdHome, { recursive: true, force: true });
+    }
+  });
+
   test("falls back to the legacy milestones/slices/tasks layout", () => {
     const originalGsdHome = process.env.GSD_HOME;
     const projectRoot = mkdtempSync(join(tmpdir(), "gsd-hook-legacy-"));

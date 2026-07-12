@@ -24,15 +24,27 @@ import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseUnitId } from "./unit-id.js";
-import { resolveMilestonePath } from "./paths.js";
+import {
+  buildFlatTaskFileName,
+  resolveMilestonePath,
+  targetMilestoneFile,
+  targetSliceFile,
+} from "./paths.js";
 import { queryJournal, type JournalEntry } from "./journal.js";
 import { readUnitRuntimeRecord, type UnitRuntimePhase } from "./unit-runtime.js";
 import { extractFrontmatterVerdict } from "./verdict-parser.js";
 
 // ─── Artifact Path Resolution ──────────────────────────────────────────────
 
+function artifactNameToSuffix(artifactName: string): string | null {
+  if (artifactName.includes("/") || artifactName.includes("\\")) return null;
+  const match = artifactName.match(/^(.*)\.md$/i);
+  return match?.[1] ? match[1] : null;
+}
+
 export function resolveHookArtifactPath(basePath: string, unitId: string, artifactName: string): string {
   const { milestone, slice, task } = parseUnitId(unitId);
+  const artifactSuffix = artifactNameToSuffix(artifactName);
 
   // Prefer the active phase directory (flat-phase layout: .gsd/phases/<NN>-.../).
   // Configured gate artifacts are canonical phase-level files (e.g.
@@ -44,8 +56,18 @@ export function resolveHookArtifactPath(basePath: string, unitId: string, artifa
     && !(dirname(phaseDir).endsWith("/milestones") || dirname(phaseDir).endsWith("\\milestones"));
   if (isFlatPhaseDir) {
     candidates.push(join(phaseDir, artifactName));
+    if (artifactSuffix !== null) {
+      if (slice !== undefined) {
+        candidates.push(targetSliceFile(basePath, milestone, slice, artifactSuffix));
+      } else {
+        candidates.push(targetMilestoneFile(basePath, milestone, artifactSuffix));
+      }
+    }
     if (task !== undefined) {
       candidates.push(join(phaseDir, `${task}-${artifactName}`));
+      if (slice !== undefined && artifactSuffix !== null) {
+        candidates.push(join(phaseDir, buildFlatTaskFileName(slice, task, artifactSuffix)));
+      }
     }
   }
 
@@ -71,7 +93,19 @@ export function resolveHookArtifactPath(basePath: string, unitId: string, artifa
   // Nothing on disk yet: prefer the active phase path when the phase dir is
   // known, otherwise fall back to the legacy default (preserves pre-flat-phase
   // behavior for missing-artifact diagnostics).
-  return isFlatPhaseDir ? join(phaseDir!, artifactName) : legacyDefault;
+  if (isFlatPhaseDir) {
+    if (artifactSuffix !== null) {
+      if (task !== undefined && slice !== undefined) {
+        return join(phaseDir!, buildFlatTaskFileName(slice, task, artifactSuffix));
+      }
+      if (slice !== undefined) {
+        return targetSliceFile(basePath, milestone, slice, artifactSuffix);
+      }
+      return targetMilestoneFile(basePath, milestone, artifactSuffix);
+    }
+    return join(phaseDir!, artifactName);
+  }
+  return legacyDefault;
 }
 
 // ─── Dispatch Rule Conversion ──────────────────────────────────────────────
