@@ -502,6 +502,7 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
     const milestoneResult = await client.callTool(
       {
         name: "gsd_plan_milestone",
+        _meta: { "io.opengsd/idempotency-key": "workflow-mcp-transport-milestone" },
         arguments: {
           projectDir: projectRoot,
           milestoneId: "M001",
@@ -535,6 +536,7 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
     const sliceResult = await client.callTool(
       {
         name: "gsd_plan_slice",
+        _meta: { "io.opengsd/idempotency-key": "workflow-mcp-transport-slice" },
         arguments: {
           projectDir: projectRoot,
           milestoneId: "M001",
