@@ -328,7 +328,10 @@ the pre-commit failure rolls back the slice transition, post-commit failures
 preserve it, and a stale projection is surfaced without undoing committed intent.
 Each scenario then closes the original connection and reads authority in a fresh
 process. Contradictory roadmap and state projections cannot fabricate dependency
-unlock or change the next database-derived slice.
+unlock or change the next database-derived slice. For the
+`after-independent-reopen` boundary, production completion first succeeds, a
+fresh child opens the database and faults immediately afterward, and a second
+fresh process retries successfully from the committed database state.
 
 Baseline failure evidence was captured on 2026-07-11 with:
 
