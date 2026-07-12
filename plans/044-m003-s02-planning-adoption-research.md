@@ -71,7 +71,9 @@ does not run on an exact replay.
   accepted semantic exact delta.
 - A sketch/placeholder slice remains `pending`.
 - Historical adoption maps the observed legacy status through the shared
-  normalizer and creates state version zero without execution history.
+  normalizer and normally creates state version zero without execution history.
+  If first adoption also cancels active legacy work, it records that legal
+  observed-to-cancelled transition at state version one.
 - A replan that only changes planning metadata preserves lifecycle ID, status,
   state version, and last-operation provenance.
 - No adoption fabricates an Attempt, Result, Kernel checkpoint, Blocker,

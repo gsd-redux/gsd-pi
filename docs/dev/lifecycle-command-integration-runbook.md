@@ -42,7 +42,9 @@ commands, or orchestration modules.
   original artifact instead of the retry payload or clock.
 - Removed pending tasks and slices retain their hierarchy identity as legacy
   `skipped` and canonical `cancelled`. Active plan projections omit them, and
-  their IDs cannot be reused until the matching reopen command succeeds.
+  their IDs cannot be reused until the matching reopen command succeeds. Stale
+  PLAN cleanup removes only content still owned by the compatibility marker or
+  PLAN artifact; a user-modified file is preserved.
 - Restore, hierarchy replacement, milestone discard, and worktree teardown fail
   closed when they would erase or strand adopted canonical history.
 

@@ -807,7 +807,7 @@ at most 10,000 projection targets. It must own the outer transaction. Production
 command adapters, projection delivery, import, closeout, lifecycle policy, and
 runtime authority cutover remain deferred.
 
-#### Dormant lifecycle command primitives
+#### Lifecycle command primitives
 
 `db/writers/lifecycle-commands.ts`, exported through `gsd-db.ts`, composes with
 `executeDomainOperation()` but does not start a transaction or emit events and
@@ -824,8 +824,12 @@ optional dispatch fencing, retry order, provenance, and checkpoint lineage.
 `db/lifecycle-shadow-comparison.ts` separately provides pure legacy/canonical
 status normalization and classifies exact matches, accepted semantic deltas,
 missing or extra shadow rows, and mismatches while preserving both raw values.
-Production callers remain blocked until lease-loss recovery, Kernel stage
-policy, and terminal-reopen convergence are proven.
+Planning handlers now use replay fences and lifecycle adoption/transition.
+First-time adoption normally starts at state version zero; when the same
+operation observes active legacy work and cancels it, the row records the legal
+observed-to-cancelled transition at state version one. Attempt, Result, and
+general Kernel-stage production callers remain blocked until lease-loss
+recovery and Kernel stage policy are proven.
 
 ---
 
@@ -833,10 +837,10 @@ policy, and terminal-reopen convergence are proven.
 
 V32 creates these tables on fresh databases and transactionally upgrades V31
 databases. The migration itself remains additive, and the existing hierarchy
-statuses and coordination ledgers retain their runtime meaning. Dormant typed
-writers now exercise lifecycle, Attempt, Result, and Kernel facts inside Domain
-Operations, but no production dual-write, backfill, Markdown inference, or
-runtime cutover ships with them.
+statuses and coordination ledgers retain their runtime meaning. Planning now
+dual-writes lifecycle heads inside Domain Operations, but no general lifecycle
+read-authority cutover, Attempt/Result integration, backfill, or Markdown
+inference ships with it.
 
 #### `workflow_item_lifecycles`
 ```

@@ -432,16 +432,16 @@ LLM sees: "load these skill files and follow their rules for this unit"
 
 | Tool | Persists To |
 |------|------------|
-| `gsd_plan_milestone` | milestones table, slices table |
-| `gsd_plan_slice` | slices table; tasks table only when a non-empty `tasks` payload performs full replacement/update |
-| `gsd_plan_task` | one task planning row; embedded task planning in the slice plan projection |
+| `gsd_plan_milestone` | atomic Domain Operation receipt/event/outbox/Projection Work, milestone and slice planning rows, canonical lifecycle heads; existing slices cannot be removed here |
+| `gsd_plan_slice` | atomic Domain Operation records, slice planning and lifecycle head; tasks only when a non-empty `tasks` payload performs full replacement/update, with removed pending tasks retained as `skipped` / `cancelled` |
+| `gsd_plan_task` | atomic Domain Operation records, one task planning row and lifecycle head; embedded task planning in the slice plan projection |
 | `gsd_task_complete` | tasks table, S##-T##-SUMMARY.md (legacy T##-SUMMARY.md readable) |
 | `gsd_slice_complete` | slices table, S##-SUMMARY.md |
 | `gsd_complete_milestone` | milestones table, M##-SUMMARY.md |
 | `gsd_validate_milestone` | milestones table (validation verdict) |
-| `gsd_reassess_roadmap` | slices table (reorder, add, remove) |
-| `gsd_replan_slice` | tasks table (replace incomplete tasks) |
-| `gsd_replan_task` | one pending task planning row; replan_history row |
+| `gsd_reassess_roadmap` | atomic Domain Operation records, assessment and slice planning/lifecycle rows; removed pending slices are retained as `skipped` / `cancelled` |
+| `gsd_replan_slice` | atomic Domain Operation records, replan history and task planning/lifecycle rows; removed pending tasks are retained as `skipped` / `cancelled` |
+| `gsd_replan_task` | atomic Domain Operation records, one non-terminal task planning/lifecycle row and replan history row |
 | `gsd_rework_brief_save` | rework_briefs and rework_brief_findings tables |
 | `gsd_skip_slice` | slices table (status = skipped) |
 | `gsd_requirement_save` | requirements table |
