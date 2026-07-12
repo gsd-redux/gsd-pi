@@ -75,7 +75,7 @@ function seedHierarchy(db: RawDb): void {
   `);
 }
 
-function insertOperation(db: RawDb, id: string, revision: number): void {
+function insertOperation(db: RawDb, id: string, revision: number, authorityEpoch = 0): void {
   const project = projectId(db);
   db.prepare(`
     INSERT INTO workflow_operations (
@@ -83,13 +83,15 @@ function insertOperation(db: RawDb, id: string, revision: number): void {
       expected_revision, resulting_revision,
       expected_authority_epoch, resulting_authority_epoch,
       actor_type, actor_id, source_transport, request_hash, created_at
-    ) VALUES (?, ?, 'test', ?, ?, ?, 0, 0, 'agent', 'test', 'test', ?, ?)
+    ) VALUES (?, ?, 'test', ?, ?, ?, ?, ?, 'agent', 'test', 'test', ?, ?)
   `).run(
     id,
     project,
     `key-${id}`,
     revision - 1,
     revision,
+    authorityEpoch,
+    authorityEpoch,
     `hash-${id}`,
     `2026-07-12T00:00:${String(revision).padStart(2, "0")}.000Z`,
   );
@@ -108,13 +110,14 @@ function insertTaskLifecycle(
   operationId: string,
   revision: number,
   status = "in_progress",
+  authorityEpoch = 0,
 ): void {
   db.prepare(`
     INSERT INTO workflow_item_lifecycles (
       lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id,
       lifecycle_status, state_version, created_at, updated_at,
       last_operation_id, last_project_revision, last_authority_epoch
-    ) VALUES (?, ?, 'task', ?, 'S01', 'T01', ?, 0, ?, ?, ?, ?, 0)
+    ) VALUES (?, ?, 'task', ?, 'S01', 'T01', ?, 0, ?, ?, ?, ?, ?)
   `).run(
     lifecycleId,
     projectId(db),
@@ -124,6 +127,7 @@ function insertTaskLifecycle(
     "2026-07-12T00:01:00.000Z",
     operationId,
     revision,
+    authorityEpoch,
   );
 }
 
@@ -135,13 +139,14 @@ function insertAttempt(
   operationId: string,
   revision: number,
   retryOfAttemptId: string | null = null,
+  authorityEpoch = 0,
 ): void {
   db.prepare(`
     INSERT INTO workflow_execution_attempts (
       attempt_id, project_id, lifecycle_id, attempt_number, retry_of_attempt_id,
       attempt_state, claimed_at,
       claim_operation_id, claim_project_revision, claim_authority_epoch
-    ) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, 0)
+    ) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?)
   `).run(
     attemptId,
     projectId(db),
@@ -151,6 +156,7 @@ function insertAttempt(
     `2026-07-12T00:02:${String(attemptNumber).padStart(2, "0")}.000Z`,
     operationId,
     revision,
+    authorityEpoch,
   );
 }
 
@@ -293,7 +299,7 @@ test("lifecycle transitions preserve identity, provenance, and durable history",
     );
     assert.throws(
       () => db.exec("UPDATE workflow_item_lifecycles SET lifecycle_status = 'ready' WHERE lifecycle_id = 'life-a'"),
-      /invalid workflow lifecycle transition/,
+      /causal provenance/,
     );
     assert.throws(
       () => db.exec("DELETE FROM workflow_item_lifecycles WHERE lifecycle_id = 'life-a'"),
@@ -304,11 +310,103 @@ test("lifecycle transitions preserve identity, provenance, and durable history",
   }
 });
 
+test("lifecycle histories reject backward revisions and Authority Epochs", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperation(db, "op-1", 1, 0);
+    insertOperation(db, "op-2", 2, 1);
+    insertOperation(db, "op-3", 3, 0);
+    insertTaskLifecycle(db, "life-a", "M-A", "op-2", 2, "in_progress", 1);
+    insertAttempt(db, "attempt-a1", "life-a", 1, "op-2", 2, null, 1);
+    db.prepare(`
+      INSERT INTO workflow_blockers (
+        blocker_id, project_id, lifecycle_id, blocker_kind, resolution_owner,
+        blocker_status, description, opened_at,
+        opened_operation_id, opened_project_revision, opened_authority_epoch
+      ) VALUES ('blocker-a', ?, 'life-a', 'ambiguous_intent', 'user',
+        'open', 'Needs a decision', '', 'op-2', 2, 1)
+    `).run(projectId(db));
+    db.prepare(`
+      INSERT INTO workflow_waivers (
+        waiver_id, project_id, lifecycle_id, requirement_id, waiver_status,
+        scope, rationale, granted_by_actor_type, granted_by_actor_id, granted_at,
+        operation_id, project_revision, authority_epoch
+      ) VALUES ('waiver-a', ?, 'life-a', 'R-A', 'active',
+        'requirement:R-A', 'Exception', 'user', 'maintainer', '', 'op-2', 2, 1)
+    `).run(projectId(db));
+    db.prepare(`
+      INSERT INTO workflow_requirement_dispositions (
+        disposition_id, project_id, requirement_id, disposition,
+        rationale, created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('disp-a', ?, 'R-A', 'unsatisfied',
+        'Not yet met', '', 'op-2', 2, 1)
+    `).run(projectId(db));
+
+    assert.throws(
+      () => db.exec(`
+        UPDATE workflow_item_lifecycles
+        SET lifecycle_status = 'completed', state_version = 1,
+            updated_at = '2026-07-12T00:04:00.000Z',
+            last_operation_id = 'op-3', last_project_revision = 3,
+            last_authority_epoch = 0
+        WHERE lifecycle_id = 'life-a'
+      `),
+      /causal provenance/,
+    );
+    for (const [operationId, revision] of [["op-1", 1], ["op-3", 3]] as const) {
+      assert.throws(
+        () => db.prepare(`
+          UPDATE workflow_execution_attempts
+          SET attempt_state = 'settled', ended_at = '',
+              settle_operation_id = ?, settle_project_revision = ?,
+              settle_authority_epoch = 0
+          WHERE attempt_id = 'attempt-a1'
+        `).run(operationId, revision),
+        /causal provenance/,
+      );
+      assert.throws(
+        () => db.prepare(`
+          UPDATE workflow_blockers
+          SET blocker_status = 'resolved', resolution = 'answered', resolved_at = '',
+              resolved_operation_id = ?, resolved_project_revision = ?,
+              resolved_authority_epoch = 0
+          WHERE blocker_id = 'blocker-a'
+        `).run(operationId, revision),
+        /causal provenance/,
+      );
+      assert.throws(
+        () => db.prepare(`
+          UPDATE workflow_waivers
+          SET waiver_status = 'revoked', ended_at = '',
+              ended_operation_id = ?, ended_project_revision = ?,
+              ended_authority_epoch = 0
+          WHERE waiver_id = 'waiver-a'
+        `).run(operationId, revision),
+        /causal provenance/,
+      );
+      assert.throws(
+        () => db.prepare(`
+          INSERT INTO workflow_requirement_dispositions (
+            disposition_id, project_id, requirement_id, disposition,
+            supersedes_disposition_id, rationale, created_at,
+            operation_id, project_revision, authority_epoch
+          ) VALUES (?, ?, 'R-A', 'satisfied', 'disp-a',
+            'Now met', '', ?, ?, 0)
+        `).run(`disp-${revision}`, projectId(db), operationId, revision),
+        /causal provenance/,
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
 test("Attempt attribution rejects stale fencing and cross-scope dispatches", () => {
   const { db } = openFreshFixture();
   try {
     insertOperation(db, "op-1", 1);
     insertOperation(db, "op-2", 2);
+    insertOperation(db, "op-3", 3);
     insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
     db.prepare(`
       INSERT INTO workflow_item_lifecycles (
@@ -406,14 +504,79 @@ test("Attempt attribution rejects stale fencing and cross-scope dispatches", () 
       `),
       /identity is immutable/,
     );
-    assert.doesNotThrow(() => db.prepare(`
+    db.prepare(`
       INSERT INTO workflow_execution_attempts (
         attempt_id, project_id, lifecycle_id, attempt_number,
-        attempt_state, worker_id, milestone_lease_token, claimed_at,
+        attempt_state, coordination_dispatch_id,
+        worker_id, milestone_lease_token, claimed_at,
         claim_operation_id, claim_project_revision, claim_authority_epoch
       ) VALUES ('attempt-valid', ?, 'life-a', 1,
-        'claimed', 'worker-a', 7, '', 'op-2', 2, 0)
-    `).run(projectId(db)));
+        'claimed', ?, 'worker-a', 7, '', 'op-2', 2, 0)
+    `).run(projectId(db), childDispatchId);
+    db.exec("UPDATE milestone_leases SET expires_at = '2000-01-01T00:00:00.000Z' WHERE milestone_id = 'M-A'");
+    assert.throws(
+      () => db.exec(`
+        UPDATE workflow_execution_attempts
+        SET attempt_state = 'running', started_at = '2026-07-12T00:03:00.000Z'
+        WHERE attempt_id = 'attempt-valid'
+      `),
+      /current held lease/,
+    );
+    db.exec("UPDATE milestone_leases SET expires_at = '2099-01-01T00:00:00.000Z' WHERE milestone_id = 'M-A'");
+    db.exec(`
+      UPDATE workflow_execution_attempts
+      SET attempt_state = 'running', started_at = '2026-07-12T00:03:00.000Z'
+      WHERE attempt_id = 'attempt-valid'
+    `);
+    db.prepare("UPDATE unit_dispatches SET status = 'completed' WHERE id = ?").run(childDispatchId);
+    assert.throws(
+      () => settleAttempt(db, "attempt-valid", "op-3", 3),
+      /does not match workflow attempt scope/,
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("Attempt transitions preserve claim and start timestamps", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 4);
+    insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
+    insertTaskLifecycle(db, "life-b", "M-B", "op-1", 1);
+    insertAttempt(db, "attempt-a1", "life-a", 1, "op-2", 2);
+    db.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number,
+        attempt_state, claimed_at, started_at,
+        claim_operation_id, claim_project_revision, claim_authority_epoch
+      ) VALUES ('attempt-b1', ?, 'life-b', 1,
+        'claimed', '2026-07-12T00:02:00.000Z', '2026-07-12T00:03:00.000Z',
+        'op-2', 2, 0)
+    `).run(projectId(db));
+
+    assert.throws(
+      () => db.exec(`
+        UPDATE workflow_execution_attempts
+        SET attempt_state = 'settled', claimed_at = 'rewritten',
+            ended_at = '2026-07-12T00:03:00.000Z',
+            settle_operation_id = 'op-3', settle_project_revision = 3,
+            settle_authority_epoch = 0
+        WHERE attempt_id = 'attempt-a1'
+      `),
+      /identity is immutable/,
+    );
+    assert.throws(
+      () => db.exec(`
+        UPDATE workflow_execution_attempts
+        SET attempt_state = 'settled', started_at = 'rewritten',
+            ended_at = '2026-07-12T00:04:00.000Z',
+            settle_operation_id = 'op-4', settle_project_revision = 4,
+            settle_authority_epoch = 0
+        WHERE attempt_id = 'attempt-b1'
+      `),
+      /identity is immutable/,
+    );
   } finally {
     db.close();
   }
@@ -659,17 +822,6 @@ test("Requirement Dispositions require Waivers and remain independent from Block
       /opening is immutable/,
     );
     assert.throws(
-      () => db.exec(`
-        UPDATE workflow_waivers
-        SET rationale = 'rewritten', waiver_status = 'revoked',
-            ended_at = '2026-07-12T00:05:00.000Z',
-            ended_operation_id = 'op-5', ended_project_revision = 5,
-            ended_authority_epoch = 0
-        WHERE waiver_id = 'waiver-a'
-      `),
-      /grant is immutable/,
-    );
-    assert.throws(
       () => db.prepare(`
         INSERT INTO workflow_requirement_dispositions (
           disposition_id, project_id, requirement_id, disposition,
@@ -688,6 +840,16 @@ test("Requirement Dispositions require Waivers and remain independent from Block
         'disp-a', 'new evidence', '', 'op-5', 5, 0)
     `).run(projectId(db));
     assert.throws(
+      () => db.exec(`
+        UPDATE workflow_waivers
+        SET rationale = 'rewritten', waiver_status = 'revoked', ended_at = '',
+            ended_operation_id = 'op-6', ended_project_revision = 6,
+            ended_authority_epoch = 0
+        WHERE waiver_id = 'waiver-a'
+      `),
+      /grant is immutable/,
+    );
+    assert.throws(
       () => db.prepare(`
         INSERT INTO workflow_requirement_dispositions (
           disposition_id, project_id, requirement_id, disposition,
@@ -698,6 +860,90 @@ test("Requirement Dispositions require Waivers and remain independent from Block
       `).run(projectId(db)),
       /current head/,
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("only current active Waivers authorize waived dispositions", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 10);
+    insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
+    const insertWaiver = db.prepare(`
+      INSERT INTO workflow_waivers (
+        waiver_id, project_id, lifecycle_id, requirement_id, waiver_status,
+        scope, rationale, granted_by_actor_type, granted_by_actor_id, granted_at,
+        expires_at, ended_at, operation_id, project_revision, authority_epoch,
+        ended_operation_id, ended_project_revision, ended_authority_epoch
+      ) VALUES (?, ?, 'life-a', 'R-A', ?, 'requirement:R-A', 'Exception',
+        'user', 'maintainer', '', ?, ?, ?, ?, 0, ?, ?, ?)
+    `);
+    insertWaiver.run(
+      "waiver-revoked", projectId(db), "revoked", null, "", "op-2", 2, "op-3", 3, 0,
+    );
+    insertWaiver.run(
+      "waiver-expired", projectId(db), "expired", null, "", "op-4", 4, "op-5", 5, 0,
+    );
+    insertWaiver.run(
+      "waiver-time-expired", projectId(db), "active", "2000-01-01T00:00:00.000Z",
+      null, "op-6", 6, null, null, null,
+    );
+    insertWaiver.run(
+      "waiver-live", projectId(db), "active", "2099-01-01T00:00:00.000Z",
+      null, "op-7", 7, null, null, null,
+    );
+    insertWaiver.run(
+      "waiver-future", projectId(db), "active", "2099-01-01T00:00:00.000Z",
+      null, "op-10", 10, null, null, null,
+    );
+
+    for (const waiverId of [
+      "waiver-revoked", "waiver-expired", "waiver-time-expired", "waiver-future",
+    ]) {
+      assert.throws(
+        () => db.prepare(`
+          INSERT INTO workflow_requirement_dispositions (
+            disposition_id, project_id, requirement_id, disposition, waiver_id,
+            rationale, created_at, operation_id, project_revision, authority_epoch
+          ) VALUES (?, ?, 'R-A', 'waived', ?,
+            'Invalid exception', '', 'op-8', 8, 0)
+        `).run(`disp-${waiverId}`, projectId(db), waiverId),
+        /active unexpired waiver/,
+      );
+    }
+    db.prepare(`
+      INSERT INTO workflow_requirement_dispositions (
+        disposition_id, project_id, requirement_id, disposition, waiver_id,
+        rationale, created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('disp-live', ?, 'R-A', 'waived', 'waiver-live',
+        'Authorized exception', '', 'op-8', 8, 0)
+    `).run(projectId(db));
+    assert.throws(
+      () => db.exec(`
+        UPDATE workflow_waivers
+        SET waiver_status = 'revoked', ended_at = '',
+            ended_operation_id = 'op-9', ended_project_revision = 9,
+            ended_authority_epoch = 0
+        WHERE waiver_id = 'waiver-live'
+      `),
+      /supersede its current waived disposition/,
+    );
+    db.prepare(`
+      INSERT INTO workflow_requirement_dispositions (
+        disposition_id, project_id, requirement_id, disposition,
+        supersedes_disposition_id, rationale, created_at,
+        operation_id, project_revision, authority_epoch
+      ) VALUES ('disp-satisfied', ?, 'R-A', 'satisfied',
+        'disp-live', 'Requirement met', '', 'op-9', 9, 0)
+    `).run(projectId(db));
+    assert.doesNotThrow(() => db.exec(`
+      UPDATE workflow_waivers
+      SET waiver_status = 'revoked', ended_at = '',
+          ended_operation_id = 'op-10', ended_project_revision = 10,
+          ended_authority_epoch = 0
+      WHERE waiver_id = 'waiver-live'
+    `));
   } finally {
     db.close();
   }

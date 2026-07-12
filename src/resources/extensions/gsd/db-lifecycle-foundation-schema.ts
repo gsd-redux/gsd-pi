@@ -91,6 +91,18 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     END
   `);
   db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_lifecycle_causal_provenance
+    BEFORE UPDATE ON workflow_item_lifecycles
+    WHEN NEW.lifecycle_status != OLD.lifecycle_status
+      AND (
+        NEW.last_project_revision <= OLD.last_project_revision
+        OR NEW.last_authority_epoch < OLD.last_authority_epoch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow lifecycle causal provenance must advance');
+    END
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_workflow_lifecycle_delete
     BEFORE DELETE ON workflow_item_lifecycles
     BEGIN
@@ -201,6 +213,46 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     END
   `);
   db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_attempt_transition_fencing
+    BEFORE UPDATE ON workflow_execution_attempts
+    WHEN NEW.attempt_state != OLD.attempt_state
+      AND NEW.worker_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM workflow_item_lifecycles lifecycle
+        JOIN milestone_leases lease ON lease.milestone_id = lifecycle.milestone_id
+        WHERE lifecycle.lifecycle_id = NEW.lifecycle_id
+          AND lease.worker_id = NEW.worker_id
+          AND lease.fencing_token = NEW.milestone_lease_token
+          AND lease.status = 'held'
+          AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow attempt requires the current held lease');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_attempt_transition_dispatch_scope
+    BEFORE UPDATE ON workflow_execution_attempts
+    WHEN NEW.attempt_state != OLD.attempt_state
+      AND NEW.coordination_dispatch_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM workflow_item_lifecycles lifecycle
+        JOIN unit_dispatches dispatch ON dispatch.id = NEW.coordination_dispatch_id
+        WHERE lifecycle.lifecycle_id = NEW.lifecycle_id
+          AND dispatch.milestone_id = lifecycle.milestone_id
+          AND dispatch.slice_id IS lifecycle.slice_id
+          AND dispatch.task_id IS lifecycle.task_id
+          AND dispatch.worker_id = NEW.worker_id
+          AND dispatch.milestone_lease_token = NEW.milestone_lease_token
+          AND dispatch.status IN ('claimed', 'running')
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'coordination dispatch does not match workflow attempt scope');
+    END
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_workflow_attempt_number_sequence
     BEFORE INSERT ON workflow_execution_attempts
     WHEN NEW.attempt_number != COALESCE(
@@ -238,6 +290,8 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
       OR NEW.coordination_dispatch_id IS NOT OLD.coordination_dispatch_id
       OR NEW.worker_id IS NOT OLD.worker_id
       OR NEW.milestone_lease_token IS NOT OLD.milestone_lease_token
+      OR NEW.claimed_at != OLD.claimed_at
+      OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
       OR NEW.claim_operation_id != OLD.claim_operation_id
       OR NEW.claim_project_revision != OLD.claim_project_revision
       OR NEW.claim_authority_epoch != OLD.claim_authority_epoch
@@ -262,6 +316,18 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     )
     BEGIN
       SELECT RAISE(ABORT, 'invalid workflow attempt transition');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_attempt_causal_provenance
+    BEFORE UPDATE ON workflow_execution_attempts
+    WHEN NEW.attempt_state = 'settled'
+      AND (
+        NEW.settle_project_revision <= OLD.claim_project_revision
+        OR NEW.settle_authority_epoch < OLD.claim_authority_epoch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow attempt causal provenance must advance');
     END
   `);
   db.exec(`
@@ -408,6 +474,18 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     END
   `);
   db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_blocker_causal_provenance
+    BEFORE UPDATE ON workflow_blockers
+    WHEN NEW.blocker_status IN ('resolved', 'dismissed')
+      AND (
+        NEW.resolved_project_revision <= OLD.opened_project_revision
+        OR NEW.resolved_authority_epoch < OLD.opened_authority_epoch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow blocker causal provenance must advance');
+    END
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_workflow_blocker_delete
     BEFORE DELETE ON workflow_blockers
     BEGIN
@@ -506,6 +584,18 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     END
   `);
   db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_waiver_causal_provenance
+    BEFORE UPDATE ON workflow_waivers
+    WHEN NEW.waiver_status IN ('revoked', 'expired')
+      AND (
+        NEW.ended_project_revision <= OLD.project_revision
+        OR NEW.ended_authority_epoch < OLD.authority_epoch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow waiver causal provenance must advance');
+    END
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_workflow_waiver_delete
     BEFORE DELETE ON workflow_waivers
     BEGIN
@@ -546,6 +636,42 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_workflow_requirement_disposition_history
     ON workflow_requirement_dispositions(requirement_id, project_revision, disposition_id)
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_requirement_disposition_waiver_authority
+    BEFORE INSERT ON workflow_requirement_dispositions
+    WHEN NEW.disposition = 'waived'
+      AND NEW.waiver_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM workflow_waivers waiver
+        WHERE waiver.waiver_id = NEW.waiver_id
+          AND waiver.requirement_id = NEW.requirement_id
+          AND waiver.project_id = NEW.project_id
+          AND waiver.waiver_status = 'active'
+          AND (waiver.expires_at IS NULL OR waiver.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          AND waiver.project_revision < NEW.project_revision
+          AND waiver.authority_epoch <= NEW.authority_epoch
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'waived disposition requires an active unexpired waiver');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_requirement_disposition_causal_provenance
+    BEFORE INSERT ON workflow_requirement_dispositions
+    WHEN NEW.supersedes_disposition_id IS NOT NULL AND EXISTS (
+      SELECT 1
+      FROM workflow_requirement_dispositions prior
+      WHERE prior.disposition_id = NEW.supersedes_disposition_id
+        AND (
+          NEW.project_revision <= prior.project_revision
+          OR NEW.authority_epoch < prior.authority_epoch
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow disposition causal provenance must advance');
+    END
   `);
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_workflow_requirement_disposition_head
@@ -592,6 +718,26 @@ export function createLifecycleFoundationSchemaV32(db: DbAdapter): void {
     BEFORE DELETE ON workflow_requirement_dispositions
     BEGIN
       SELECT RAISE(ABORT, 'workflow requirement dispositions are immutable');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_waiver_dependent_disposition
+    BEFORE UPDATE ON workflow_waivers
+    WHEN OLD.waiver_status = 'active'
+      AND NEW.waiver_status IN ('revoked', 'expired')
+      AND EXISTS (
+        SELECT 1
+        FROM workflow_requirement_dispositions disposition
+        WHERE disposition.waiver_id = OLD.waiver_id
+          AND disposition.disposition = 'waived'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM workflow_requirement_dispositions successor
+            WHERE successor.supersedes_disposition_id = disposition.disposition_id
+          )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'waiver termination must supersede its current waived disposition');
     END
   `);
 }
