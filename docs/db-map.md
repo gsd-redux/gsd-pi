@@ -1478,7 +1478,8 @@ updated_at                  TEXT NOT NULL
   revision without decreasing the Authority Epoch.
 - Delivery state is `pending | claimed | rendered | dead_letter`. Claims and
   renewals are fenced and versioned; completed attempts increment the durable
-  cumulative count. Superseded rows cannot be claimed or rendered.
+  cumulative count. A retry records a nonempty diagnostic and future backoff;
+  the next claim preserves both. Superseded rows cannot be claimed or rendered.
 - Enqueue provenance binds to the exact V31 Domain Operation. Delivery updates
   are operational mutations and intentionally do not create Domain Operations
   or advance the project revision. Currentness is per logical projection key,
@@ -1522,11 +1523,15 @@ resulting_authority_epoch     INTEGER NOT NULL
 - Preview generation is non-authoritative. One immutable receipt seals the
   versioned preview envelope, ordered source/change fingerprints, raw legacy
   diagnoses, explicit resolutions, and aggregate counts used by application.
+  Envelope metadata, hashes, and counts must exactly match their receipt
+  columns, and the `import.apply` operation request hash must equal the sealed
+  preview hash.
 - Application requires `unresolved_count = 0`, a verified independently
   openable backup with `quick_check = ok`, and backup schema/revision/epoch
   matching the base snapshot.
 - The receipt must bind to an `import.apply` V31 operation whose expected tuple
-  matches the base and whose exact resulting tuple matches the receipt.
+  matches the base, whose request hash matches the preview hash, and whose exact
+  resulting tuple matches the receipt. A receipt makes that operation immutable.
   Updates, deletes, duplicate preview identities, and duplicate preview hashes
   fail.
 

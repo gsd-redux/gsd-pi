@@ -130,7 +130,8 @@ immutable. A successor must name the causally older current head for the same
 project/key and advance source revision without decreasing epoch. Supersession
 is derived from that successor; it is not a mutable state. Only delivery fields
 transition. A failed attempt returns `claimed → pending` while incrementing
-attempt/backoff/error; exhausted work becomes `dead_letter`.
+attempt/backoff/error; the next claim preserves that diagnostic and backoff.
+Exhausted work becomes `dead_letter`.
 
 Currentness is per logical projection key: its lineage head is current when it
 is rendered and its rendered source revision/hash match that desired row. An
@@ -170,9 +171,12 @@ indivisible. A non-authoritative sidecar may retain a preview across restart;
 application re-fingerprints and re-parses every source before the transaction.
 The receipt trigger requires an import-application operation whose expected
 revision/epoch equal the stored base, whose resulting tuple equals the receipt,
-and whose backup schema/revision/epoch equal the base snapshot. `preview_hash`
-covers the complete canonical envelope—scalar metadata plus ordered sources,
-changes, raw values, diagnostics, and resolutions—not only the JSON field.
+whose request hash equals `preview_hash`, and whose backup schema/revision/epoch
+equal the base snapshot. Once receipted, that operation is immutable. The
+canonical JSON repeats the schema-visible envelope metadata, hashes, and counts
+so raw mismatches fail locally. `preview_hash`
+covers that complete canonical envelope—scalar metadata plus ordered sources,
+changes, raw values, diagnostics, and resolutions—not only the nested lists.
 Unparsed material must be explicitly preserved with raw content/reference and
 an accepted disposition or remain unresolved; it may never disappear behind a
 zero aggregate count.

@@ -29,6 +29,10 @@ function sha256(character: string): string {
   return `sha256:${character.repeat(64)}`;
 }
 
+function previewHash(revision: number): string {
+  return sha256(String(revision));
+}
+
 interface RawDb {
   readonly isOpen: boolean;
   exec(sql: string): void;
@@ -97,6 +101,7 @@ function insertOperation(
   revision: number,
   operationType = "test",
   epoch = 0,
+  requestHash = operationType === "import.apply" ? previewHash(revision) : `hash-op-${revision}`,
 ): void {
   const operationId = `op-${revision}`;
   db.prepare(`
@@ -115,7 +120,7 @@ function insertOperation(
     revision,
     epoch,
     epoch,
-    `hash-${operationId}`,
+    requestHash,
     `2026-07-12T00:00:${String(revision).padStart(2, "0")}.000Z`,
   );
 }
@@ -341,6 +346,31 @@ function insertImportApplication(
   },
 ): void {
   const baseRevision = input.revision - 1;
+  const sourceSetHash = sha256("b");
+  const changeSetHash = sha256("c");
+  const previewJson = input.previewJson ?? JSON.stringify({
+    preview_schema_version: 1,
+    preview_id: input.previewId,
+    import_kind: "markdown",
+    importer_version: "v1",
+    base_project_revision: baseRevision,
+    base_authority_epoch: 0,
+    base_database_schema_version: 35,
+    source_set_hash: sourceSetHash,
+    change_set_hash: changeSetHash,
+    counts: {
+      create: 1,
+      update: 0,
+      delete: 0,
+      preserve: 0,
+      unparsed: 0,
+      unresolved: 0,
+    },
+    sources: [],
+    changes: [],
+    diagnoses: [],
+    resolutions: [],
+  });
   db.prepare(`
     INSERT INTO workflow_import_applications (
       operation_id, project_id, import_kind, importer_version, preview_schema_version,
@@ -359,11 +389,11 @@ function insertImportApplication(
     `op-${input.revision}`,
     projectId(db),
     input.previewId,
-    input.previewHash ?? sha256(String(input.revision)),
+    input.previewHash ?? previewHash(input.revision),
     baseRevision,
-    sha256("b"),
-    sha256("c"),
-    input.previewJson ?? '{"sources":[],"changes":[]}',
+    sourceSetHash,
+    changeSetHash,
+    previewJson,
     sha256("d"),
     baseRevision,
     input.revision,
@@ -549,6 +579,81 @@ test("projection lineage and fenced delivery survive reopen without changing pro
   ).get()?.revision, revisionBefore);
 });
 
+test("projection state rejects nullable claim and render fields", (t) => {
+  const { db } = openFreshFixture(t);
+  insertOperation(db, 1);
+  insertProjection(db, { id: "projection-null-state", revision: 1 });
+
+  assert.throws(() => db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'claimed', claim_fencing_token = 1,
+        claimed_at = '2026-07-12T00:01:00.000Z',
+        claim_expires_at = '2026-07-12T00:02:00.000Z',
+        state_version = 1, updated_at = '2026-07-12T00:01:00.000Z'
+    WHERE projection_work_id = 'projection-null-state'
+  `));
+
+  db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'claimed', claim_owner = 'worker-1', claim_fencing_token = 1,
+        claimed_at = '2026-07-12T00:01:00.000Z',
+        claim_expires_at = '2026-07-12T00:02:00.000Z',
+        state_version = 1, updated_at = '2026-07-12T00:01:00.000Z'
+    WHERE projection_work_id = 'projection-null-state'
+  `);
+  assert.throws(() => db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'rendered', claim_owner = NULL,
+        claimed_at = NULL, claim_expires_at = NULL,
+        state_version = 2, attempt_count = 1,
+        rendered_at = '2026-07-12T00:02:00.000Z',
+        updated_at = '2026-07-12T00:02:00.000Z'
+    WHERE projection_work_id = 'projection-null-state'
+  `));
+});
+
+test("projection retry requires diagnostic backoff and preserves it on claim", (t) => {
+  const { db } = openFreshFixture(t);
+  insertOperation(db, 1);
+  insertProjection(db, { id: "projection-retry", revision: 1 });
+  db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'claimed', claim_owner = 'worker-1', claim_fencing_token = 1,
+        claimed_at = '2026-07-12T00:01:00.000Z',
+        claim_expires_at = '2026-07-12T00:02:00.000Z',
+        state_version = 1, updated_at = '2026-07-12T00:01:00.000Z'
+    WHERE projection_work_id = 'projection-retry'
+  `);
+
+  assert.throws(() => db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'pending', claim_owner = NULL,
+        claimed_at = NULL, claim_expires_at = NULL,
+        state_version = 2, attempt_count = 1,
+        updated_at = '2026-07-12T00:02:00.000Z'
+    WHERE projection_work_id = 'projection-retry'
+  `));
+
+  db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'pending', claim_owner = NULL,
+        claimed_at = NULL, claim_expires_at = NULL,
+        state_version = 2, attempt_count = 1,
+        next_attempt_at = '2026-07-12T00:03:00.000Z', last_error = 'disk full',
+        updated_at = '2026-07-12T00:02:00.000Z'
+    WHERE projection_work_id = 'projection-retry'
+  `);
+  assert.throws(() => db.exec(`
+    UPDATE workflow_projection_work
+    SET delivery_state = 'claimed', claim_owner = 'worker-2', claim_fencing_token = 2,
+        claimed_at = '2026-07-12T00:03:00.000Z',
+        claim_expires_at = '2026-07-12T00:04:00.000Z',
+        state_version = 3, next_attempt_at = '', last_error = '',
+        updated_at = '2026-07-12T00:03:00.000Z'
+    WHERE projection_work_id = 'projection-retry'
+  `));
+});
+
 test("import application receipt binds asserted operation and backup metadata and is immutable", (t) => {
   const { db } = openFreshFixture(t);
   insertOperation(db, 1, "import.apply");
@@ -558,6 +663,9 @@ test("import application receipt binds asserted operation and backup metadata an
   ));
   assert.throws(() => db.exec(
     "DELETE FROM workflow_import_applications WHERE operation_id = 'op-1'",
+  ));
+  assert.throws(() => db.exec(
+    "UPDATE workflow_operations SET request_hash = 'changed' WHERE operation_id = 'op-1'",
   ));
 
   insertOperation(db, 2, "test");
@@ -570,6 +678,40 @@ test("import application receipt binds asserted operation and backup metadata an
   insertOperation(db, 4, "import.apply");
   assert.throws(() => insertImportApplication(db, {
     revision: 4, previewId: "preview-bad-json", previewJson: "[]",
+  }));
+
+  insertOperation(db, 5, "import.apply");
+  assert.throws(() => insertImportApplication(db, {
+    revision: 5,
+    previewId: "preview-mismatched-envelope",
+    previewJson: JSON.stringify({
+      preview_schema_version: 1,
+      preview_id: "preview-mismatched-envelope",
+      import_kind: "markdown",
+      importer_version: "v1",
+      base_project_revision: 4,
+      base_authority_epoch: 0,
+      base_database_schema_version: 35,
+      source_set_hash: sha256("f"),
+      change_set_hash: sha256("c"),
+      counts: {
+        create: 99,
+        update: 0,
+        delete: 0,
+        preserve: 0,
+        unparsed: 0,
+        unresolved: 0,
+      },
+      sources: [],
+      changes: [],
+      diagnoses: [],
+      resolutions: [],
+    }),
+  }));
+
+  insertOperation(db, 6, "import.apply", 0, sha256("f"));
+  assert.throws(() => insertImportApplication(db, {
+    revision: 6, previewId: "preview-unsealed", previewHash: previewHash(6),
   }));
 });
 

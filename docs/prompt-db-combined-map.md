@@ -421,8 +421,11 @@ and do not advance project revision.
 
 An import preview remains non-authoritative until one immutable application
 receipt seals its exact source/change envelope and independently verified
-backup. Absence of a kernel checkpoint means Advance; the first persisted
-checkpoint is Execute and shares the selected Attempt's claim operation.
+backup. The receipt requires its envelope metadata, hashes, and counts to match
+the canonical preview JSON and uses the `import.apply` operation request hash
+as the trusted preview seal; the operation becomes immutable once receipted.
+Absence of a kernel checkpoint means Advance; the first persisted checkpoint
+is Execute and shares the selected Attempt's claim operation.
 Closeout state is derived from the current immutable plan, its ordered
 idempotent effects, and complete success-only receipts. Missing receipt means
 pending, while failures route through V34 recovery facts rather than failed

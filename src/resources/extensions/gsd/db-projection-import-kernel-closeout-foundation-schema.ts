@@ -45,15 +45,30 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
       CHECK (
         (delivery_state = 'pending'
           AND claim_owner IS NULL AND claimed_at IS NULL AND claim_expires_at IS NULL
-          AND rendered_content_hash IS NULL AND rendered_at IS NULL) OR
+          AND rendered_content_hash IS NULL AND rendered_at IS NULL
+          AND (
+            (attempt_count = 0 AND next_attempt_at = '' AND last_error = '') OR
+            (attempt_count > 0
+              AND length(trim(last_error)) > 0
+              AND julianday(updated_at) IS NOT NULL
+              AND julianday(next_attempt_at) IS NOT NULL
+              AND julianday(next_attempt_at) > julianday(updated_at))
+          )) OR
         (delivery_state = 'claimed'
-          AND length(trim(claim_owner)) > 0 AND claim_fencing_token > 0
+          AND claim_owner IS NOT NULL AND length(trim(claim_owner)) > 0
+          AND claim_fencing_token > 0
           AND julianday(claimed_at) IS NOT NULL AND julianday(claim_expires_at) IS NOT NULL
           AND julianday(claim_expires_at) > julianday(claimed_at)
-          AND rendered_content_hash IS NULL AND rendered_at IS NULL) OR
+          AND rendered_content_hash IS NULL AND rendered_at IS NULL
+          AND (
+            (attempt_count = 0 AND next_attempt_at = '' AND last_error = '') OR
+            (attempt_count > 0
+              AND length(trim(last_error)) > 0
+              AND julianday(next_attempt_at) IS NOT NULL)
+          )) OR
         (delivery_state = 'rendered'
           AND claim_owner IS NULL AND claimed_at IS NULL AND claim_expires_at IS NULL
-          AND length(rendered_content_hash) = 71
+          AND rendered_content_hash IS NOT NULL AND length(rendered_content_hash) = 71
           AND substr(rendered_content_hash, 1, 7) = 'sha256:'
           AND rendered_content_hash = lower(rendered_content_hash)
           AND substr(rendered_content_hash, 8) NOT GLOB '*[^0-9a-f]*'
@@ -151,6 +166,8 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
       OR NOT (
         (OLD.delivery_state = 'pending' AND NEW.delivery_state = 'claimed'
           AND NEW.claim_fencing_token = OLD.claim_fencing_token + 1
+          AND NEW.next_attempt_at = OLD.next_attempt_at
+          AND NEW.last_error = OLD.last_error
           AND NEW.attempt_count = OLD.attempt_count) OR
         (OLD.delivery_state = 'claimed' AND NEW.delivery_state = 'claimed'
           AND NEW.claim_owner = OLD.claim_owner
@@ -208,7 +225,26 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
       unresolved_count INTEGER NOT NULL CHECK (unresolved_count = 0),
       preview_json TEXT NOT NULL CHECK (
         json_valid(preview_json) AND json_type(preview_json) = 'object' AND
-        json(preview_json) != '{}'
+        json_extract(preview_json, '$.preview_schema_version') IS preview_schema_version AND
+        json_extract(preview_json, '$.preview_id') IS preview_id AND
+        json_extract(preview_json, '$.import_kind') IS import_kind AND
+        json_extract(preview_json, '$.importer_version') IS importer_version AND
+        json_extract(preview_json, '$.base_project_revision') IS base_project_revision AND
+        json_extract(preview_json, '$.base_authority_epoch') IS base_authority_epoch AND
+        json_extract(preview_json, '$.base_database_schema_version')
+          IS base_database_schema_version AND
+        json_extract(preview_json, '$.source_set_hash') IS source_set_hash AND
+        json_extract(preview_json, '$.change_set_hash') IS change_set_hash AND
+        json_extract(preview_json, '$.counts.create') IS create_count AND
+        json_extract(preview_json, '$.counts.update') IS update_count AND
+        json_extract(preview_json, '$.counts.delete') IS delete_count AND
+        json_extract(preview_json, '$.counts.preserve') IS preserve_count AND
+        json_extract(preview_json, '$.counts.unparsed') IS unparsed_count AND
+        json_extract(preview_json, '$.counts.unresolved') IS unresolved_count AND
+        json_type(preview_json, '$.sources') IS 'array' AND
+        json_type(preview_json, '$.changes') IS 'array' AND
+        json_type(preview_json, '$.diagnoses') IS 'array' AND
+        json_type(preview_json, '$.resolutions') IS 'array'
       ),
       backup_ref TEXT NOT NULL CHECK (length(trim(backup_ref)) > 0),
       backup_sha256 TEXT NOT NULL CHECK (
@@ -248,9 +284,20 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
           AND operation.resulting_revision = NEW.resulting_project_revision
           AND operation.expected_authority_epoch = NEW.base_authority_epoch
           AND operation.resulting_authority_epoch = NEW.resulting_authority_epoch
+          AND operation.request_hash = NEW.preview_hash
       )
     BEGIN
       SELECT RAISE(ABORT, 'import application must match its operation and verified base backup');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_import_operation_update
+    BEFORE UPDATE ON workflow_operations
+    WHEN EXISTS (
+      SELECT 1 FROM workflow_import_applications application
+      WHERE application.operation_id = OLD.operation_id
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'import application operations are immutable');
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_workflow_import_application_update
