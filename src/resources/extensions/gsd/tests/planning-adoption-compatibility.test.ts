@@ -2,7 +2,7 @@
 // File Purpose: RED compatibility contracts for durable lifecycle adoption.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test, type TestContext } from "node:test";
@@ -34,11 +34,18 @@ import {
   openDatabase,
   reconcileWorktreeDb,
   restoreManifest,
+  updateSliceStatus,
+  updateTaskStatus,
 } from "../gsd-db.ts";
+import { discardMilestone } from "../milestone-actions.ts";
 import type { StateManifest } from "../workflow-manifest.ts";
 import { reconcileWorktreeDbBeforeManualMerge } from "../worktree-command.ts";
 import { worktreePath } from "../worktree-manager.ts";
 import { createWorkspace } from "../workspace.ts";
+import {
+  renderPlanProjection,
+  renderRoadmapProjection,
+} from "../workflow-projections.ts";
 
 const tempDirs = new Set<string>();
 
@@ -464,4 +471,44 @@ test("failed first planning capture leaves compatibility inactive", async () => 
   const marker = readCompatMarker(base);
   assert.equal(marker.planning?.active, false);
   assert.equal(marker.planning?.layout, null);
+});
+
+test("legacy projection renderers exclude cancelled slices and tasks", (t) => {
+  const database = openFixture(t);
+  const base = tempDir("gsd-active-projection-filter-");
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  closeDatabase();
+  assert.equal(openDatabase(database), true);
+
+  insertSlice({ milestoneId: "M001", id: "S02", title: "Cancelled slice", status: "pending" });
+  insertTask({ milestoneId: "M001", sliceId: "S02", id: "T02", title: "Cancelled slice task", status: "pending" });
+  updateSliceStatus("M001", "S02", "skipped");
+  updateTaskStatus("M001", "S01", "T01", "skipped");
+
+  renderRoadmapProjection(base, "M001");
+  const roadmap = readFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "utf8");
+  assert.doesNotMatch(roadmap, /S02|Cancelled slice/);
+
+  const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+  writeFileSync(planPath, "# stale cancelled task projection\n", "utf8");
+  renderPlanProjection(base, "M001", "S01");
+  assert.equal(existsSync(planPath), false);
+});
+
+test("discard milestone fails before deleting projections when canonical lifecycle history exists", () => {
+  const base = tempDir("gsd-discard-adopted-");
+  const milestoneDir = join(base, ".gsd", "milestones", "M001");
+  mkdirSync(milestoneDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), "# Durable roadmap\n", "utf8");
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  seedLegacyHierarchy();
+  adoptHierarchy();
+
+  assert.throws(
+    () => discardMilestone(base, "M001"),
+    /adopted canonical lifecycle|canonical lifecycle history/i,
+  );
+  assert.equal(existsSync(milestoneDir), true);
+  assert.equal(getAllMilestones().some((milestone) => milestone.id === "M001"), true);
 });

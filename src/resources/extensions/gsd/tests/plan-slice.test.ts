@@ -350,6 +350,44 @@ test('handlePlanSlice rejects relative traversal outside declared target reposit
   }
 });
 
+test('handlePlanSlice exact invocation replay preserves its public result and changed reuse conflicts', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+  try {
+    seedParentSlice();
+    const invocation = {
+      idempotencyKey: 'plan-slice/convergence-replay',
+      sourceTransport: 'pi-extension' as const,
+      actorType: 'agent',
+      traceId: 'plan-slice/convergence-replay',
+    };
+    const first = await handlePlanSliceWithInvocation(validParams(), base, invocation);
+    assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
+    assert.deepEqual(Object.keys(first).sort(), ['milestoneId', 'planPath', 'sliceId', 'taskPlanPaths']);
+
+    const replay = await handlePlanSliceWithInvocation(validParams(), base, invocation);
+    assert.deepEqual(replay, first);
+    const adapter = _getAdapter();
+    assert.ok(adapter);
+    assert.equal(adapter.prepare(
+      "SELECT COUNT(*) AS count FROM workflow_operations WHERE idempotency_key = ?",
+    ).get(invocation.idempotencyKey)?.count, 1);
+
+    const conflict = await handlePlanSliceWithInvocation(
+      { ...validParams(), goal: 'Changed semantics under the same key.' },
+      base,
+      invocation,
+    );
+    assert.ok('error' in conflict);
+    assert.match(conflict.error, /idempotency conflict/i);
+    assert.equal(adapter.prepare(
+      "SELECT COUNT(*) AS count FROM workflow_operations WHERE idempotency_key = ?",
+    ).get(invocation.idempotencyKey)?.count, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice renders plan artifacts under worktree-local .gsd while using project DB', async () => {
   const base = makeTmpBase();
   const worktree = join(base, '.gsd', 'worktrees', 'M001');

@@ -21,7 +21,13 @@ import {
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
-import { deleteMilestone, getMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import {
+  assertNoAdoptedLifecycleHistory,
+  deleteMilestone,
+  getMilestone,
+  isDbAvailable,
+  updateMilestoneStatus,
+} from "./gsd-db.js";
 import { removeWorktree } from "./worktree-manager.js";
 import { logWarning } from "./workflow-logger.js";
 import { isAutoActive } from "./auto.js";
@@ -139,6 +145,9 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   const hasMilestoneDir = !!mDir && existsSync(mDir);
   const hasDbMilestone = isDbAvailable() && getMilestone(milestoneId) !== null;
   if (!hasMilestoneDir && !hasDbMilestone) return false;
+  if (hasDbMilestone) {
+    assertNoAdoptedLifecycleHistory("discardMilestone", [milestoneId]);
+  }
 
   try {
     removeWorktree(basePath, milestoneId, {

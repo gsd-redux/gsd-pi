@@ -511,6 +511,8 @@ test("two processes racing the same invocation fence commit once and return one 
     runPlanningChild(base, dbPath, params, envelope),
     runPlanningChild(base, dbPath, params, envelope),
   ]);
+  assert.ok(!(left && typeof left === "object" && "error" in left), `left racer failed: ${JSON.stringify(left)}`);
+  assert.ok(!(right && typeof right === "object" && "error" in right), `right racer failed: ${JSON.stringify(right)}`);
   assert.deepEqual(left, right);
 
   assert.equal(openDatabase(dbPath), true);

@@ -1227,6 +1227,7 @@ export function deleteSlice(milestoneId: string, sliceId: string): void {
 export function deleteMilestone(milestoneId: string): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   transaction(() => {
+    assertNoAdoptedLifecycleHistory("deleteMilestone", [milestoneId]);
     getDbOrNull()!!.prepare(
       `DELETE FROM verification_evidence WHERE milestone_id = :mid`,
     ).run({ ":mid": milestoneId });
