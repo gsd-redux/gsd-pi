@@ -40,6 +40,7 @@ const VALID_THINKING_LEVELS = new Set<GSDThinkingLevel>([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]);
 const KNOWN_MODEL_PHASE_KEYS = new Set<string>(GSD_MODEL_PHASE_KEYS);
 const VALID_UOK_TURN_ACTIONS = new Set<"commit" | "snapshot" | "status-only">([
@@ -93,7 +94,7 @@ function sanitizeModelField(
       } else {
         warnings?.push(
           `${label} thinking "${String(obj.thinking)}" is not a valid thinking level ` +
-          `(off, minimal, low, medium, high, xhigh) — ignored`,
+          `(off, minimal, low, medium, high, xhigh, max) — ignored`,
         );
       }
     }
@@ -486,7 +487,7 @@ export function validatePreferences(preferences: GSDPreferences): {
           if (level !== undefined && !VALID_THINKING_LEVELS.has(level as GSDThinkingLevel)) {
             warnings.push(
               `models.${phase}.thinking "${String(level)}" is not a valid thinking level ` +
-              `(off, minimal, low, medium, high, xhigh) — ignored`,
+              `(off, minimal, low, medium, high, xhigh, max) — ignored`,
             );
             const { thinking: _ignored, ...rest } = entry as Record<string, unknown>;
             // If stripping the bad thinking leaves no usable model, drop the
@@ -521,7 +522,7 @@ export function validatePreferences(preferences: GSDPreferences): {
         if (!VALID_THINKING_LEVELS.has(level as GSDThinkingLevel)) {
           warnings.push(
             `thinking.${phase} "${String(level)}" is not a valid thinking level ` +
-            `(off, minimal, low, medium, high, xhigh) — ignored`,
+            `(off, minimal, low, medium, high, xhigh, max) — ignored`,
           );
           continue;
         }

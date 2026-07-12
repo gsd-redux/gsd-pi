@@ -91,7 +91,7 @@ describe("openai-responses provider defaults", () => {
 		});
 	});
 
-	it.each(["gpt-5.1", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.6"] as const)(
+	it.each(["gpt-5.1", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const)(
 		"sends none reasoning effort for OpenAI %s when no reasoning is requested",
 		async (modelId) => {
 			const model = getModel("openai", modelId);
@@ -248,8 +248,8 @@ describe("openai-responses provider defaults", () => {
 		["gpt-5.4", "priority", 2],
 		["gpt-5.5", "priority", 2.5],
 		["gpt-5.5", "flex", 0.5],
-		["gpt-5.6", "priority", 2.5],
-		["gpt-5.6", "flex", 0.5],
+		["gpt-5.6-sol", "priority", 2.5],
+		["gpt-5.6-sol", "flex", 0.5],
 	] as const)("applies %s %s service-tier cost multiplier", async (modelId, serviceTier, multiplier) => {
 		const model = getModel("openai", modelId);
 		const sse = `${[

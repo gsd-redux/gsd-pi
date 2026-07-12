@@ -56,6 +56,7 @@ export function setupAutocomplete(host: InteractiveModeDelegateHost): void {
 				{ value: "medium", label: "medium", description: "Medium thinking budget" },
 				{ value: "high", label: "high", description: "High thinking budget" },
 				{ value: "xhigh", label: "xhigh", description: "Maximum thinking budget" },
+				{ value: "max", label: "max", description: "Maximum model-specific reasoning" },
 			];
 			const filtered = levels.filter((l) => l.value.startsWith(prefix.trim().toLowerCase()));
 			return filtered.length > 0 ? filtered : null;

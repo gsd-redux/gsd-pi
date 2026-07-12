@@ -3,7 +3,7 @@
 
 export const RPC_CONTRACT_VERSION = 1 as const;
 
-export const RPC_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export const RPC_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export const RPC_COMMAND_TYPES = [
 	"prompt",

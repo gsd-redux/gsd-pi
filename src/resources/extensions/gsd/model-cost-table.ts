@@ -12,6 +12,12 @@ export interface ModelCostEntry {
   inputPer1k: number;
   /** Approximate cost per 1K output tokens in USD */
   outputPer1k: number;
+  /** Input-token-based long-context pricing tiers, when published */
+  tiers?: Array<{
+    inputTokensAbove: number;
+    inputPer1k: number;
+    outputPer1k: number;
+  }>;
   /** Last updated date */
   updatedAt: string;
 }
@@ -62,8 +68,9 @@ export const BUNDLED_COST_TABLE: ModelCostEntry[] = [
   // GPT-5.5 API list price, also used for live Codex OAuth routing.
   // Source: https://openai.com/api/pricing/
   { id: "gpt-5.5", inputPer1k: 0.005, outputPer1k: 0.03, updatedAt: "2026-04-23" },
-  // Mirrors gpt-5.5 list pricing until OpenAI publishes official gpt-5.6 pricing.
-  { id: "gpt-5.6", inputPer1k: 0.005, outputPer1k: 0.03, updatedAt: "2026-07-08" },
+  { id: "gpt-5.6-sol", inputPer1k: 0.005, outputPer1k: 0.03, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.01, outputPer1k: 0.045 }], updatedAt: "2026-07-11" },
+  { id: "gpt-5.6-terra", inputPer1k: 0.0025, outputPer1k: 0.015, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.005, outputPer1k: 0.0225 }], updatedAt: "2026-07-11" },
+  { id: "gpt-5.6-luna", inputPer1k: 0.001, outputPer1k: 0.006, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.002, outputPer1k: 0.009 }], updatedAt: "2026-07-11" },
 
   // Google
   { id: "gemini-2.0-flash", inputPer1k: 0.0001, outputPer1k: 0.0004, updatedAt: "2025-03-15" },
@@ -80,7 +87,11 @@ export const BUNDLED_COST_TABLE: ModelCostEntry[] = [
 export function lookupModelCost(modelId: string): ModelCostEntry | undefined {
   const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
   return BUNDLED_COST_TABLE.find(e => e.id === bareId)
-    ?? BUNDLED_COST_TABLE.find(e => bareId.includes(e.id) || e.id.includes(bareId));
+    ?? BUNDLED_COST_TABLE.find(e =>
+      bareId.startsWith(`${e.id}-`) ||
+      bareId.startsWith(`${e.id}:`) ||
+      bareId.startsWith(`${e.id}@`)
+    );
 }
 
 /**

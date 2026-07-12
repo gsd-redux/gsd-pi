@@ -735,7 +735,7 @@ async function runSingleAgentInCmuxSplit(
 	}
 }
 
-const ThinkingLevelSchema = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, {
+const ThinkingLevelSchema = StringEnum(["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const, {
 	description:
 		"Reasoning effort override for the subagent (forwarded as --thinking). " +
 		"Independent of model choice; unsupported levels are clamped to the model at dispatch.",

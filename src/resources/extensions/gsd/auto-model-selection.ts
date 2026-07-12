@@ -390,6 +390,7 @@ const THINKING_LEVEL_ORDER: readonly EffectiveThinkingLevel[] = [
   "medium",
   "high",
   "xhigh",
+  "max",
 ] as EffectiveThinkingLevel[];
 
 /**

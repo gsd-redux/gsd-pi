@@ -21,6 +21,7 @@ export const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
 	xhigh: "Maximum reasoning (~32k tokens)",
+	max: "Maximum model-specific reasoning",
 };
 
 export interface SettingsConfig {

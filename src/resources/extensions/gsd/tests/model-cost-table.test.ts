@@ -74,7 +74,8 @@ test("#2885: cost table includes openai-codex provider models", () => {
   const ids = BUNDLED_COST_TABLE.map(e => e.id);
   const codexModels = [
     "gpt-5.1", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
-    "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6",
+    "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
   ];
   for (const model of codexModels) {
     assert.ok(ids.includes(model), `cost table should include openai-codex model "${model}"`);
@@ -110,10 +111,24 @@ test("gpt-5.5 uses official OpenAI list pricing", () => {
   assert.equal(entry.updatedAt, "2026-04-23");
 });
 
-test("gpt-5.6 mirrors gpt-5.5 pricing until official pricing is published", () => {
-  const entry = lookupModelCost("gpt-5.6");
-  assert.ok(entry, "lookupModelCost should find gpt-5.6");
-  assert.equal(entry.inputPer1k, 0.005);
-  assert.equal(entry.outputPer1k, 0.03);
-  assert.equal(entry.updatedAt, "2026-07-08");
+test("gpt-5.6 bare alias is not treated as a real cost-table model", () => {
+  assert.equal(lookupModelCost("gpt-5.6"), undefined);
+});
+
+test("gpt-5.6 variants use published pricing", () => {
+  const sol = lookupModelCost("openai-codex/gpt-5.6-sol");
+  assert.ok(sol, "lookupModelCost should find gpt-5.6-sol");
+  assert.equal(sol.inputPer1k, 0.005);
+  assert.equal(sol.outputPer1k, 0.03);
+  assert.deepEqual(sol.tiers?.[0], { inputTokensAbove: 272000, inputPer1k: 0.01, outputPer1k: 0.045 });
+
+  const terra = lookupModelCost("gpt-5.6-terra");
+  assert.ok(terra, "lookupModelCost should find gpt-5.6-terra");
+  assert.equal(terra.inputPer1k, 0.0025);
+  assert.equal(terra.outputPer1k, 0.015);
+
+  const luna = lookupModelCost("gpt-5.6-luna");
+  assert.ok(luna, "lookupModelCost should find gpt-5.6-luna");
+  assert.equal(luna.inputPer1k, 0.001);
+  assert.equal(luna.outputPer1k, 0.006);
 });

@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+import { calculateCost } from "../src/models.ts";
 import { MODELS } from "../src/models.generated.ts";
 
 describe("models.generated.ts", () => {
@@ -65,23 +66,50 @@ describe("models.generated.ts", () => {
 		}
 	});
 
-	test("includes GPT-5.6 for OpenAI and OpenAI Codex providers", () => {
-		const openai = MODELS.openai["gpt-5.6"];
-		expect(openai).toBeDefined();
-		expect(openai.api).toBe("openai-responses");
-		expect(openai.name).toBe("GPT-5.6");
-		expect(openai.contextWindow).toBe(272_000);
-		expect(openai.maxTokens).toBe(128_000);
-		expect(openai.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh" });
+	test("includes GPT-5.6 variants for OpenAI and OpenAI Codex providers", () => {
+		expect("gpt-5.6" in MODELS.openai).toBe(false);
+		expect("gpt-5.6" in MODELS["openai-codex"]).toBe(false);
 
-		const codex = MODELS["openai-codex"]["gpt-5.6"];
-		expect(codex).toBeDefined();
-		expect(codex.api).toBe("openai-codex-responses");
-		expect(codex.name).toBe("GPT-5.6");
-		expect(codex.baseUrl).toBe("https://chatgpt.com/backend-api");
-		expect(codex.contextWindow).toBe(272_000);
-		expect(codex.maxTokens).toBe(128_000);
-		expect(codex.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", minimal: "low" });
+		const variants = [
+			["gpt-5.6-sol", "GPT-5.6 Sol", 5, 30],
+			["gpt-5.6-terra", "GPT-5.6 Terra", 2.5, 15],
+			["gpt-5.6-luna", "GPT-5.6 Luna", 1, 6],
+		] as const;
+
+		for (const [id, name, input, output] of variants) {
+			const openai = MODELS.openai[id];
+			expect(openai).toBeDefined();
+			expect(openai.api).toBe("openai-responses");
+			expect(openai.name).toBe(name);
+			expect(openai.contextWindow).toBe(272_000);
+			expect(openai.maxTokens).toBe(128_000);
+			expect(openai.thinkingLevelMap).toMatchObject({ off: "none", xhigh: "xhigh", max: "max" });
+			expect(openai.cost.input).toBe(input);
+			expect(openai.cost.output).toBe(output);
+
+			const codex = MODELS["openai-codex"][id];
+			expect(codex).toBeDefined();
+			expect(codex.api).toBe("openai-codex-responses");
+			expect(codex.name).toBe(name);
+			expect(codex.baseUrl).toBe("https://chatgpt.com/backend-api");
+			expect(codex.contextWindow).toBe(372_000);
+			expect(codex.maxTokens).toBe(128_000);
+			expect(codex.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max", minimal: "low" });
+			expect(codex.cost.input).toBe(input);
+			expect(codex.cost.output).toBe(output);
+		}
+
+		const sol = MODELS["openai-codex"]["gpt-5.6-sol"];
+		expect(sol.cost.tiers?.[0]).toMatchObject({ inputTokensAbove: 272_000, input: 10, output: 45 });
+		const usage = {
+			input: 272_001,
+			output: 1_000,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 273_001,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		};
+		expect(calculateCost(sol, usage).input).toBeCloseTo((10 / 1_000_000) * 272_001);
 	});
 
 	test("includes Anthropic Vertex models from the generated catalog", () => {

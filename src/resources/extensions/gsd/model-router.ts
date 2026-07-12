@@ -111,7 +111,9 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-5.3-codex": "heavy",
   "gpt-5.4": "heavy",
   "gpt-5.5": "heavy",
-  "gpt-5.6": "heavy",
+  "gpt-5.6-sol": "heavy",
+  "gpt-5.6-terra": "heavy",
+  "gpt-5.6-luna": "heavy",
   "o1": "heavy",
   "o3": "heavy",
   "o4-mini": "heavy",
@@ -151,7 +153,9 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "gpt-5.3-codex-spark": 0.0003,
   "gpt-5.4": 0.005,
   "gpt-5.5": 0.005,
-  "gpt-5.6": 0.005,
+  "gpt-5.6-sol": 0.005,
+  "gpt-5.6-terra": 0.0025,
+  "gpt-5.6-luna": 0.001,
   "o4-mini": 0.005,
   "o4-mini-deep-research": 0.005,
   "gemini-2.0-flash": 0.0001,
@@ -202,9 +206,10 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   // OpenAI's 2026-04-23 published eval deltas across coding, tool use, and long context.
   // Source: https://openai.com/index/introducing-gpt-5-5/
   "gpt-5.5":                      { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 42, longContext: 90, instruction: 93 },
-  // GPT-5.6 profile is provisional: a small uniform step over gpt-5.5, to be
-  // recalibrated once OpenAI publishes official eval results.
-  "gpt-5.6":                      { coding: 97, debugging: 94, research: 90, reasoning: 96, speed: 42, longContext: 91, instruction: 94 },
+  // GPT-5.6 profiles are provisional until official eval results are available.
+  "gpt-5.6-sol":                  { coding: 97, debugging: 94, research: 90, reasoning: 96, speed: 42, longContext: 91, instruction: 94 },
+  "gpt-5.6-terra":                { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 48, longContext: 91, instruction: 93 },
+  "gpt-5.6-luna":                 { coding: 92, debugging: 88, research: 84, reasoning: 91, speed: 72, longContext: 91, instruction: 90 },
 
   // ── OpenAI o-series (reasoning-first) ──────────────────────────────────────
   "o1":                           { coding: 78, debugging: 82, research: 78, reasoning: 90, speed: 20, longContext: 65, instruction: 82 },

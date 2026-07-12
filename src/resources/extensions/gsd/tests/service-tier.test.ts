@@ -35,8 +35,8 @@ describe("supportsServiceTier", () => {
     assert.equal(supportsServiceTier("gpt-5.5"), false);
   });
 
-  test("returns false for gpt-5.6 until service_tier payload support is verified", () => {
-    assert.equal(supportsServiceTier("gpt-5.6"), false);
+  test("returns false for gpt-5.6 variants until service_tier payload support is verified", () => {
+    assert.equal(supportsServiceTier("gpt-5.6-sol"), false);
   });
 
   test("returns false for provider-only identifier without gpt-5.4 model suffix", () => {

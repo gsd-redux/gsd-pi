@@ -141,7 +141,9 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.4-mini",
 	"gpt-5.4-nano",
 	"gpt-5.5",
-	"gpt-5.6",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
 ]);
 
 function mergeThinkingLevelMap(model: Model<any>, map: NonNullable<Model<any>["thinkingLevelMap"]>): void {
@@ -175,6 +177,10 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 		modelId.includes("gpt-5.5") ||
 		modelId.includes("gpt-5.6")
 	);
+}
+
+function isGpt56Variant(modelId: string): boolean {
+	return modelId === "gpt-5.6-sol" || modelId === "gpt-5.6-terra" || modelId === "gpt-5.6-luna";
 }
 
 function isGoogleThinkingApi(model: Model<any>): boolean {
@@ -237,6 +243,9 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	}
 	if (supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
+	}
+	if (isGpt56Variant(model.id)) {
+		mergeThinkingLevelMap(model, { max: "max" });
 	}
 	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
 		mergeThinkingLevelMap(model, { xhigh: "max" });
@@ -1258,7 +1267,7 @@ async function generateModels() {
 		}
 		if (
 			candidate.provider === "openai" &&
-			(candidate.id === "gpt-5.4" || candidate.id === "gpt-5.5" || candidate.id === "gpt-5.6")
+			(candidate.id === "gpt-5.4" || candidate.id === "gpt-5.5" || isGpt56Variant(candidate.id))
 		) {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
@@ -1653,21 +1662,26 @@ async function generateModels() {
 		});
 	}
 
-	// Add missing GPT-5.6 until models.dev includes it.
-	// Pricing mirrors GPT-5.5 until OpenAI publishes official list pricing.
-	if (!allModels.some((m) => m.provider === "openai" && m.id === "gpt-5.6")) {
+	// Add missing GPT-5.6 variants until models.dev includes them.
+	const gpt56Variants = [
+		{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol", input: 5, output: 30, cacheRead: 0.5 },
+		{ id: "gpt-5.6-terra", name: "GPT-5.6 Terra", input: 2.5, output: 15, cacheRead: 0.25 },
+		{ id: "gpt-5.6-luna", name: "GPT-5.6 Luna", input: 1, output: 6, cacheRead: 0.1 },
+	] as const;
+	for (const variant of gpt56Variants) {
+		if (allModels.some((m) => m.provider === "openai" && m.id === variant.id)) continue;
 		allModels.push({
-			id: "gpt-5.6",
-			name: "GPT-5.6",
+			id: variant.id,
+			name: variant.name,
 			api: "openai-responses",
 			baseUrl: "https://api.openai.com/v1",
 			provider: "openai",
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 5,
-				output: 30,
-				cacheRead: 0.5,
+				input: variant.input,
+				output: variant.output,
+				cacheRead: variant.cacheRead,
 				cacheWrite: 0,
 			},
 			contextWindow: 272000,
@@ -1847,15 +1861,57 @@ async function generateModels() {
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
-			id: "gpt-5.6",
-			name: "GPT-5.6",
+			id: "gpt-5.6-sol",
+			name: "GPT-5.6 Sol",
 			api: "openai-codex-responses",
 			provider: "openai-codex",
 			baseUrl: CODEX_BASE_URL,
 			reasoning: true,
 			input: ["text", "image"],
-			cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+				tiers: [{ inputTokensAbove: 272000, input: 10, output: 45, cacheRead: 1, cacheWrite: 0 }],
+			},
+			contextWindow: 372000,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.6-terra",
+			name: "GPT-5.6 Terra",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 2.5,
+				output: 15,
+				cacheRead: 0.25,
+				cacheWrite: 0,
+				tiers: [{ inputTokensAbove: 272000, input: 5, output: 22.5, cacheRead: 0.5, cacheWrite: 0 }],
+			},
+			contextWindow: 372000,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.6-luna",
+			name: "GPT-5.6 Luna",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 1,
+				output: 6,
+				cacheRead: 0.1,
+				cacheWrite: 0,
+				tiers: [{ inputTokensAbove: 272000, input: 2, output: 9, cacheRead: 0.2, cacheWrite: 0 }],
+			},
+			contextWindow: 372000,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 	];
@@ -2131,7 +2187,7 @@ async function generateModels() {
 	allModels.push(...vertexModels);
 
 	const azureOpenAiModels: Model<Api>[] = allModels
-		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
+		.filter((model) => model.provider === "openai" && model.api === "openai-responses" && !isGpt56Variant(model.id))
 		.map((model) => ({
 			...model,
 			api: "azure-openai-responses",
@@ -2200,6 +2256,17 @@ export const MODELS = {
 			output += `\t\t\t\toutput: ${formatCost(model.cost.output)},\n`;
 			output += `\t\t\t\tcacheRead: ${formatCost(model.cost.cacheRead)},\n`;
 			output += `\t\t\t\tcacheWrite: ${formatCost(model.cost.cacheWrite)},\n`;
+			if (model.cost.tiers?.length) {
+				const tiers = model.cost.tiers.map((tier) => {
+					let serialized = `{inputTokensAbove:${tier.inputTokensAbove}`;
+					if (tier.input !== undefined) serialized += `,input:${formatCost(tier.input)}`;
+					if (tier.output !== undefined) serialized += `,output:${formatCost(tier.output)}`;
+					if (tier.cacheRead !== undefined) serialized += `,cacheRead:${formatCost(tier.cacheRead)}`;
+					if (tier.cacheWrite !== undefined) serialized += `,cacheWrite:${formatCost(tier.cacheWrite)}`;
+					return `${serialized}}`;
+				}).join(",");
+				output += `\t\t\t\ttiers: [${tiers}],\n`;
+			}
 			output += `\t\t\t},\n`;
 			output += `\t\t\tcontextWindow: ${model.contextWindow},\n`;
 			output += `\t\t\tmaxTokens: ${model.maxTokens},\n`;

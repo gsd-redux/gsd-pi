@@ -252,10 +252,10 @@ export interface GSDSkillRule {
 /**
  * Reasoning effort levels. Mirrors `ThinkingLevel` in `@gsd/pi-agent-core`;
  * declared locally so preference parsing/validation does not import the agent
- * core package. `xhigh` is only honored by models whose `thinkingLevelMap`
+ * core package. `xhigh` and `max` are only honored by models whose `thinkingLevelMap`
  * advertises it — unsupported levels are clamped at dispatch (ADR-026).
  */
-export type GSDThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type GSDThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /** The nine model-routing phase buckets. */
 export const GSD_MODEL_PHASE_KEYS = [

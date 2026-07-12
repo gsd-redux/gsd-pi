@@ -27,7 +27,7 @@ test("rpc command constants cover the public v2 handshake and core commands", ()
 });
 
 test("rpc constants include provider-agnostic thinking and event values", () => {
-	assert.deepEqual([...RPC_THINKING_LEVELS], ["off", "minimal", "low", "medium", "high", "xhigh"]);
+	assert.deepEqual([...RPC_THINKING_LEVELS], ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 	assert.deepEqual([...RPC_V2_EVENT_TYPES], ["execution_complete", "cost_update"]);
 });
 

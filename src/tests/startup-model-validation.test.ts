@@ -26,7 +26,7 @@ function createMockRegistry(allModels: MockModel[], availableModels?: MockModel[
 function createMockSettings(defaults: { provider?: string; model?: string; thinking?: "off" | "high" }) {
 	let currentProvider = defaults.provider;
 	let currentModel = defaults.model;
-	let currentThinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" = defaults.thinking ?? "off";
+	let currentThinking: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" = defaults.thinking ?? "off";
 
 	return {
 		getDefaultProvider: () => currentProvider,
@@ -36,7 +36,7 @@ function createMockSettings(defaults: { provider?: string; model?: string; think
 			currentProvider = provider;
 			currentModel = modelId;
 		},
-		setDefaultThinkingLevel: (level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh") => {
+		setDefaultThinkingLevel: (level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => {
 			currentThinking = level;
 		},
 		// Expose for assertions
