@@ -1,0 +1,207 @@
+// Project/App: gsd-pi
+// File Purpose: Replay, conflict, and cancelled-identity contracts for slice replanning.
+
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  _getAdapter,
+  adoptOrTransitionLifecycle,
+  closeDatabase,
+  executeDomainOperation,
+  getTask,
+  insertMilestone,
+  insertSlice,
+  openDatabase,
+  readDomainOperationFence,
+  updateTaskStatus,
+} from "../gsd-db.ts";
+import type { PlanningInvocation } from "../planning-invocation.ts";
+import { handlePlanSlice } from "../tools/plan-slice.ts";
+import { handleReplanSlice, type ReplanSliceParams } from "../tools/replan-slice.ts";
+
+function invocation(idempotencyKey: string): PlanningInvocation {
+  return {
+    idempotencyKey,
+    sourceTransport: "pi-extension",
+    actorType: "agent",
+    traceId: idempotencyKey,
+  };
+}
+
+function makeBase(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-replan-slice-domain-"));
+  mkdirSync(join(base, ".gsd", "phases", "01-test"), { recursive: true });
+  mkdirSync(join(base, "src"), { recursive: true });
+  writeFileSync(join(base, "src", "input.ts"), "export const input = true;\n");
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  return base;
+}
+
+function rows(sql: string): Array<Record<string, unknown>> {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  return adapter.prepare(sql).all();
+}
+
+async function seedPlannedSlice(base: string): Promise<void> {
+  insertMilestone({ id: "M001", title: "Replan", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  const task = (taskId: string, title: string) => ({
+    taskId,
+    title,
+    description: `${title} description`,
+    estimate: "30m",
+    files: ["src/input.ts"],
+    verify: "node --test",
+    inputs: ["src/input.ts"],
+    expectedOutput: ["src/input.ts"],
+  });
+  const planned = await handlePlanSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    goal: "Seed canonical planning state.",
+    tasks: [task("T01", "Completed blocker"), task("T02", "Cancelled work")],
+  }, base, invocation("seed-plan-slice"));
+  assert.ok(!("error" in planned), "slice planning fixture must succeed");
+  updateTaskStatus("M001", "S01", "T01", "complete", "2026-07-12T00:00:00.000Z");
+}
+
+function replanParams(): ReplanSliceParams {
+  return {
+    milestoneId: "M001",
+    sliceId: "S01",
+    blockerTaskId: "T01",
+    blockerDescription: "The original approach is blocked.",
+    whatChanged: "Cancel T02 and replace it with T03.",
+    updatedTasks: [{
+      taskId: "T03",
+      title: "Replacement",
+      description: "Implement the replacement approach.",
+      estimate: "45m",
+      files: ["src/input.ts"],
+      verify: "node --test",
+      inputs: ["src/input.ts"],
+      expectedOutput: ["src/input.ts"],
+    }],
+    removedTaskIds: ["T02"],
+  };
+}
+
+test("slice replan exact retry replays once and changed reuse conflicts without residue", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    const envelope = invocation("replan-slice/retry-1");
+    const first = await handleReplanSlice(replanParams(), base, envelope);
+    assert.ok(!("error" in first), `unexpected error: ${"error" in first ? first.error : ""}`);
+
+    const snapshot = () => ({
+      tasks: rows("SELECT id, status, title FROM tasks ORDER BY id"),
+      history: rows("SELECT task_id, summary FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_type, idempotency_key, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: rows("SELECT item_kind, task_id, lifecycle_status, state_version, last_operation_id FROM workflow_item_lifecycles ORDER BY item_kind, task_id"),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+    });
+    const afterCommit = snapshot();
+
+    const replay = await handleReplanSlice(replanParams(), base, envelope);
+    assert.deepEqual(replay, first, "lost-response retry must preserve the public response exactly");
+    assert.deepEqual(snapshot(), afterCommit, "exact retry must not duplicate durable or compatibility state");
+
+    const conflict = await handleReplanSlice(
+      { ...replanParams(), whatChanged: "Conflicting semantic payload" },
+      base,
+      envelope,
+    );
+    assert.ok("error" in conflict);
+    assert.match(conflict.error, /idempotency conflict/i);
+    assert.deepEqual(snapshot(), afterCommit, "conflicting reuse must leave no residue");
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("slice replan requires explicit reopen before reusing cancelled task identity", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    const first = await handleReplanSlice(replanParams(), base, invocation("replan-slice/cancel"));
+    assert.ok(!("error" in first));
+    const before = rows("SELECT id, status, title FROM tasks ORDER BY id");
+
+    const cancelled = getTask("M001", "S01", "T02");
+    assert.equal(cancelled?.status, "skipped");
+    const reuse = await handleReplanSlice({
+      ...replanParams(),
+      updatedTasks: [{ ...replanParams().updatedTasks[0]!, taskId: "T02" }],
+      removedTaskIds: [],
+    }, base, invocation("replan-slice/reuse-cancelled"));
+    assert.ok("error" in reuse);
+    assert.match(reuse.error, /explicitly reopen/i);
+    assert.deepEqual(rows("SELECT id, status, title FROM tasks ORDER BY id"), before);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("slice replan rejects canonically cancelled blocker despite legacy complete drift without residue", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: "test.cancel-blocker",
+      idempotencyKey: "test:cancel-blocker",
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { taskId: "T01" },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: "cancelled",
+      });
+      return {
+        events: [{
+          eventType: "test.blocker.cancelled",
+          entityType: "task",
+          entityId: "M001/S01/T01",
+          payload: { taskId: "T01" },
+          destinations: ["test"],
+        }],
+        projections: [{ projectionKey: "test:blocker", projectionKind: "test", rendererVersion: "1" }],
+      };
+    });
+
+    const snapshot = () => ({
+      tasks: rows("SELECT id, status, title FROM tasks ORDER BY id"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: rows("SELECT task_id, lifecycle_status, state_version, last_operation_id FROM workflow_item_lifecycles ORDER BY task_id"),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+    });
+    const before = snapshot();
+
+    const result = await handleReplanSlice(
+      { ...replanParams(), blockerDescription: "Legacy says complete, canonical says cancelled." },
+      base,
+      invocation("replan-slice/cancelled-blocker"),
+    );
+    assert.ok("error" in result);
+    assert.match(result.error, /canonically cancelled.*explicitly reopen/i);
+    assert.deepEqual(snapshot(), before, "cancelled blocker rejection must leave no residue");
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});

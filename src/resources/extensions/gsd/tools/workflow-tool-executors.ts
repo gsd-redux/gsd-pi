@@ -1142,7 +1142,8 @@ export async function executeValidateMilestone(
 
 export async function executeReassessRoadmap(
   params: ReassessRoadmapExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -1153,7 +1154,7 @@ export async function executeReassessRoadmap(
       };
   }
   try {
-    const result = await handleReassessRoadmap(params, basePath);
+    const result = await handleReassessRoadmap(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error reassessing roadmap: ${result.error}` }],
@@ -1502,7 +1503,8 @@ export async function executePlanSlice(
 
 export async function executeReplanTask(
   params: ReplanTaskExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -1513,7 +1515,7 @@ export async function executeReplanTask(
     };
   }
   try {
-    const result = await handleReplanTask(params, basePath);
+    const result = await handleReplanTask(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error replanning task: ${result.error}` }],
@@ -1587,7 +1589,8 @@ export async function executeReworkBriefSave(
 
 export async function executeReplanSlice(
   params: ReplanSliceExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -1598,7 +1601,7 @@ export async function executeReplanSlice(
       };
   }
   try {
-    const result = await handleReplanSlice(params, basePath);
+    const result = await handleReplanSlice(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error replanning slice: ${result.error}` }],

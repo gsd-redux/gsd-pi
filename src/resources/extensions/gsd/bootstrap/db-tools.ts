@@ -1151,9 +1151,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_replan_slice (gsd_slice_replan alias) ─────────────────────────
 
-  const replanSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const replanSliceExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeReplanSlice } = await loadWorkflowExecutors();
-    return executeReplanSlice(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeReplanSlice(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piPlanningInvocation(toolCallId),
+    );
   };
 
   const replanSliceTool = {
@@ -1201,9 +1205,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_replan_task ───────────────────────────────────────────────────
 
-  const replanTaskExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const replanTaskExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeReplanTask } = await loadWorkflowExecutors();
-    return executeReplanTask(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeReplanTask(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piPlanningInvocation(toolCallId),
+    );
   };
 
   const replanTaskTool = {
@@ -1279,9 +1287,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_reassess_roadmap (gsd_roadmap_reassess alias) ─────────────────
 
-  const reassessRoadmapExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const reassessRoadmapExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeReassessRoadmap } = await loadWorkflowExecutors();
-    return executeReassessRoadmap(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeReassessRoadmap(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piPlanningInvocation(toolCallId),
+    );
   };
 
   const reassessRoadmapTool = {

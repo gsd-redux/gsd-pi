@@ -563,7 +563,7 @@ export async function renderRoadmapFromDb(
     throw new Error(`milestone ${milestoneId} not found`);
   }
 
-  const slices = getMilestoneSlices(milestoneId);
+  const slices = getMilestoneSlices(milestoneId).filter((slice) => slice.status !== "skipped");
 
   // Refuse to render a stub ROADMAP for an unplanned milestone (#852).
   // A milestone row created by gsd_milestone_generate_id / ensureMilestoneDbRow
@@ -1209,6 +1209,21 @@ function existingLegacySliceAssessmentPath(
   return join(slicesDir, sliceDirName, `${sliceId}-ASSESSMENT.md`);
 }
 
+export function resolveAssessmentProjectionPath(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+): string {
+  return existingLegacySliceAssessmentPath(basePath, milestoneId, sliceId)
+    ?? targetSliceFile(
+      basePath,
+      milestoneId,
+      sliceId,
+      "ASSESSMENT",
+      getMilestone(milestoneId)?.title,
+    );
+}
+
 export async function renderReplanFromDb(
   basePath: string,
   milestoneId: string,
@@ -1259,14 +1274,7 @@ export async function renderAssessmentFromDb(
   sliceId: string,
   assessmentData: AssessmentData,
 ): Promise<{ assessmentPath: string; content: string }> {
-  const absPath = existingLegacySliceAssessmentPath(basePath, milestoneId, sliceId)
-    ?? targetSliceFile(
-      basePath,
-      milestoneId,
-      sliceId,
-      "ASSESSMENT",
-      getMilestone(milestoneId)?.title,
-    );
+  const absPath = resolveAssessmentProjectionPath(basePath, milestoneId, sliceId);
   mkdirSync(dirname(absPath), { recursive: true });
   const artifactPath = toArtifactPath(absPath, basePath);
 

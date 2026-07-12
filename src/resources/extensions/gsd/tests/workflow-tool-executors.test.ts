@@ -28,8 +28,8 @@ import {
   executeCompleteMilestone,
   executePlanMilestone as executePlanMilestoneWithInvocation,
   executePlanSlice as executePlanSliceWithInvocation,
-  executeReplanSlice,
-  executeReassessRoadmap,
+  executeReplanSlice as executeReplanSliceWithInvocation,
+  executeReassessRoadmap as executeReassessRoadmapWithInvocation,
   executeSaveGateResult,
   executeSummarySave,
   executeTaskComplete,
@@ -58,6 +58,20 @@ function executePlanSlice(
   basePath: string,
 ) {
   return executePlanSliceWithInvocation(params, basePath, directPlanningInvocation());
+}
+
+function executeReplanSlice(
+  params: Parameters<typeof executeReplanSliceWithInvocation>[0],
+  basePath: string,
+) {
+  return executeReplanSliceWithInvocation(params, basePath, directPlanningInvocation());
+}
+
+function executeReassessRoadmap(
+  params: Parameters<typeof executeReassessRoadmapWithInvocation>[0],
+  basePath: string,
+) {
+  return executeReassessRoadmapWithInvocation(params, basePath, directPlanningInvocation());
 }
 
 function makeTmpBase(): string {

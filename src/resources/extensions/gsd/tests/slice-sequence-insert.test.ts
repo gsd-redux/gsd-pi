@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from "../tools/plan-milestone.ts";
 import { directPlanningInvocation } from "../planning-invocation.ts";
-import { handleReassessRoadmap } from "../tools/reassess-roadmap.ts";
+import { handleReassessRoadmap as handleReassessRoadmapWithInvocation } from "../tools/reassess-roadmap.ts";
 import { migrateHierarchyToDb } from "../md-importer.ts";
 import {
   closeDatabase,
@@ -27,6 +27,13 @@ function handlePlanMilestone(
   basePath: string,
 ) {
   return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+}
+
+function handleReassessRoadmap(
+  params: Parameters<typeof handleReassessRoadmapWithInvocation>[0],
+  basePath: string,
+) {
+  return handleReassessRoadmapWithInvocation(params, basePath, directPlanningInvocation());
 }
 
 afterEach(() => {

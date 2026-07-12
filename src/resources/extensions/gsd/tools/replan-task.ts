@@ -3,7 +3,6 @@ import {
   getSlice,
   getTask,
   insertReplanHistory,
-  transaction,
   upsertTaskPlanning,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
@@ -15,6 +14,17 @@ import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
+import {
+  adoptLifecycleIfMissing,
+  normalizeLegacyLifecycleStatus,
+  type CanonicalLifecycleStatus,
+} from "../db/writers/lifecycle-commands.js";
+import {
+  executePlanningDomainOperation,
+  PlanningGuardError,
+  planningOperationPayload,
+} from "../planning-domain-operation.js";
+import type { PlanningInvocation } from "../planning-invocation.js";
 
 export interface ReplanTaskParams {
   milestoneId: string;
@@ -63,9 +73,16 @@ function replanSummary(params: ReplanTaskParams): string {
     : `Task ${params.taskId} replanned`;
 }
 
+function lifecycleStatusForAdoption(legacyStatus: string): CanonicalLifecycleStatus {
+  if (legacyStatus === "pending") return "pending";
+  if (legacyStatus === "active" || legacyStatus === "queued" || legacyStatus === "planned") return "ready";
+  return normalizeLegacyLifecycleStatus(legacyStatus) ?? "ready";
+}
+
 export async function handleReplanTask(
   rawParams: ReplanTaskParams,
   basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<ReplanTaskResult | { error: string }> {
   let params: ReplanTaskParams;
   try {
@@ -74,52 +91,91 @@ export async function handleReplanTask(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  let guardError: string | null = null;
+  let operationStatus: "committed" | "replayed";
   try {
-    transaction(() => {
-      const parentSlice = getSlice(params.milestoneId, params.sliceId);
-      if (!parentSlice) {
-        guardError = `missing parent slice: ${params.milestoneId}/${params.sliceId}`;
-        return;
-      }
-      if (isClosedStatus(parentSlice.status)) {
-        guardError = `cannot replan a task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})`;
-        return;
-      }
+    const receipt = executePlanningDomainOperation({
+      operationType: "workflow.task.replan",
+      invocation,
+      actorId: params.actorName,
+      payload: planningOperationPayload(params),
+      event: {
+        eventType: "workflow.task.replanned",
+        entityType: "task",
+        entityId: `${params.milestoneId}/${params.sliceId}/${params.taskId}`,
+        payload: {
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskId: params.taskId,
+        },
+        destinations: ["projection"],
+      },
+      projection: {
+        projectionKey: `planning/${params.milestoneId}/${params.sliceId}/${params.taskId}`.toLowerCase(),
+        projectionKind: "markdown",
+        rendererVersion: "v1",
+      },
+      mutate(context) {
+        const parentSlice = getSlice(params.milestoneId, params.sliceId);
+        if (!parentSlice) {
+          throw new PlanningGuardError(`missing parent slice: ${params.milestoneId}/${params.sliceId}`);
+        }
+        if (isClosedStatus(parentSlice.status)) {
+          throw new PlanningGuardError(`cannot replan a task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})`);
+        }
+        const parentLifecycle = adoptLifecycleIfMissing(context, {
+          itemKind: "slice",
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          lifecycleStatus: lifecycleStatusForAdoption(parentSlice.status),
+        });
+        if (parentLifecycle.lifecycleStatus === "completed" || parentLifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(
+            `cannot replan a task in ${parentLifecycle.lifecycleStatus} slice ${params.sliceId} — use gsd_slice_reopen first`,
+          );
+        }
 
-      const task = getTask(params.milestoneId, params.sliceId, params.taskId);
-      if (!task) {
-        guardError = `task not found: ${params.milestoneId}/${params.sliceId}/${params.taskId}`;
-        return;
-      }
-      if (isClosedStatus(task.status)) {
-        guardError = `cannot replan completed task ${params.taskId} — use gsd_task_reopen first`;
-        return;
-      }
+        const task = getTask(params.milestoneId, params.sliceId, params.taskId);
+        if (!task) {
+          throw new PlanningGuardError(`task not found: ${params.milestoneId}/${params.sliceId}/${params.taskId}`);
+        }
+        if (isClosedStatus(task.status)) {
+          throw new PlanningGuardError(`cannot replan completed task ${params.taskId} — use gsd_task_reopen first`);
+        }
+        const lifecycle = adoptLifecycleIfMissing(context, {
+          itemKind: "task",
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskId: params.taskId,
+          lifecycleStatus: lifecycleStatusForAdoption(task.status),
+        });
+        if (lifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(`cannot replan cancelled task ${params.taskId} — use gsd_task_reopen first`);
+        }
 
-      upsertTaskPlanning(params.milestoneId, params.sliceId, params.taskId, {
-        title: params.title,
-        description: params.description,
-        estimate: params.estimate,
-        files: params.files,
-        verify: params.verify,
-        inputs: params.inputs,
-        expectedOutput: params.expectedOutput,
-        fullPlanMd: params.fullPlanMd,
-      });
-      insertReplanHistory({
-        milestoneId: params.milestoneId,
-        sliceId: params.sliceId,
-        taskId: params.taskId,
-        summary: replanSummary(params),
-        previousArtifactPath: params.reworkBriefRef ?? null,
-      });
+        upsertTaskPlanning(params.milestoneId, params.sliceId, params.taskId, {
+          title: params.title,
+          description: params.description,
+          estimate: params.estimate,
+          files: params.files,
+          verify: params.verify,
+          inputs: params.inputs,
+          expectedOutput: params.expectedOutput,
+          fullPlanMd: params.fullPlanMd,
+        });
+        insertReplanHistory({
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskId: params.taskId,
+          summary: replanSummary(params),
+          previousArtifactPath: params.reworkBriefRef ?? null,
+        });
+      },
     });
+    operationStatus = receipt.status;
   } catch (err) {
+    if (err instanceof PlanningGuardError) return { error: err.message };
     return { error: `db write failed: ${(err as Error).message}` };
   }
-
-  if (guardError) return { error: guardError };
 
   try {
     const milestonePath = resolveMilestonePath(basePath, params.milestoneId);
@@ -136,14 +192,16 @@ export async function handleReplanTask(
     try {
       await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
       writeManifest(basePath);
-      appendEvent(basePath, {
-        cmd: "replan-task",
-        params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
-        ts: new Date().toISOString(),
-        actor: "agent",
-        actor_name: params.actorName,
-        trigger_reason: params.triggerReason,
-      });
+      if (operationStatus === "committed") {
+        appendEvent(basePath, {
+          cmd: "replan-task",
+          params: { milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
+          ts: new Date().toISOString(),
+          actor: "agent",
+          actor_name: params.actorName,
+          trigger_reason: params.triggerReason,
+        });
+      }
     } catch (hookErr) {
       logWarning("tool", `replan-task post-mutation hook warning: ${(hookErr as Error).message}`);
     }

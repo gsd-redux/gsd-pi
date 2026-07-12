@@ -2256,9 +2256,9 @@ export const executeTaskComplete = async (params, projectDir) => {
         "updated plan should exist on disk",
       );
       const removedTask = _getAdapter()!.prepare(
-        "SELECT id FROM tasks WHERE milestone_id = ? AND slice_id = ? AND id = ?",
+        "SELECT id, status FROM tasks WHERE milestone_id = ? AND slice_id = ? AND id = ?",
       ).get("M099", "S09", "T11");
-      assert.equal(removedTask, undefined, "alias should remove the replanned task");
+      assert.deepEqual(removedTask, { id: "T11", status: "skipped" }, "alias should durably cancel the replanned task");
     } finally {
       cleanup(base);
     }

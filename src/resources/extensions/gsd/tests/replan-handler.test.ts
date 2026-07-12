@@ -16,8 +16,16 @@ import {
   getReplanHistory,
   _getAdapter,
 } from '../gsd-db.ts';
-import { handleReplanSlice } from '../tools/replan-slice.ts';
+import { handleReplanSlice as handleReplanSliceWithInvocation } from '../tools/replan-slice.ts';
+import { directPlanningInvocation } from '../planning-invocation.ts';
 import { parsePlan } from '../parsers-legacy.ts';
+
+function handleReplanSlice(
+  params: Parameters<typeof handleReplanSliceWithInvocation>[0],
+  basePath: string,
+) {
+  return handleReplanSliceWithInvocation(params, basePath, directPlanningInvocation());
+}
 
 function makeTmpBase(): string {
   const base = mkdtempSync(join(tmpdir(), 'gsd-replan-'));
@@ -214,9 +222,9 @@ test('handleReplanSlice succeeds when modifying only incomplete tasks', async ()
     assert.equal(t02?.title, 'Updated Task Two');
     assert.equal(t02?.description, 'Revised description for T02.');
 
-    // Verify T03 was deleted
+    // Removed work retains its durable identity and is excluded from projections.
     const t03 = getTask('M001', 'S01', 'T03');
-    assert.equal(t03, null, 'T03 should have been deleted');
+    assert.equal(t03?.status, 'skipped', 'T03 should be durably cancelled');
 
     // Verify T04 was inserted
     const t04 = getTask('M001', 'S01', 'T04');
@@ -404,6 +412,51 @@ test('handleReplanSlice returns structured error payloads with actionable messag
     }, base);
     assert.ok('error' in removeResult);
     assert.ok(removeResult.error.includes('T02'), 'error should name the specific task ID T02');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handleReplanSlice rejects ambiguous task mutations without residue', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedSliceWithTasks({ t01Status: 'complete', t02Status: 'pending', t03Status: 'pending' });
+    const adapter = _getAdapter();
+    assert.ok(adapter);
+    const snapshot = () => ({
+      tasks: adapter.prepare('SELECT id, status, title FROM tasks ORDER BY id').all(),
+      history: adapter.prepare('SELECT * FROM replan_history ORDER BY id').all(),
+      operations: adapter.prepare('SELECT operation_id FROM workflow_operations ORDER BY resulting_revision').all(),
+    });
+    const before = snapshot();
+    const updated = validReplanParams().updatedTasks[0]!;
+    const cases = [
+      {
+        params: { ...validReplanParams(), updatedTasks: [updated, updated] },
+        message: /updatedTasks contains duplicate task IDs/,
+      },
+      {
+        params: { ...validReplanParams(), removedTaskIds: ['T03', 'T03'] },
+        message: /removedTaskIds contains duplicate task IDs/,
+      },
+      {
+        params: { ...validReplanParams(), updatedTasks: [updated], removedTaskIds: [updated.taskId] },
+        message: /cannot be both updated and removed/,
+      },
+      {
+        params: { ...validReplanParams(), removedTaskIds: ['T99'] },
+        message: /removed task not found/,
+      },
+    ];
+
+    for (const contract of cases) {
+      const result = await handleReplanSlice(contract.params, base);
+      assert.ok('error' in result);
+      assert.match(result.error, contract.message);
+      assert.deepEqual(snapshot(), before, 'rejected structural input must leave no database residue');
+    }
   } finally {
     cleanup(base);
   }

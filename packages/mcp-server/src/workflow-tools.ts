@@ -143,7 +143,8 @@ type WorkflowToolExecutors = {
       }>;
       removedTaskIds: string[];
     },
-    basePath?: string,
+    basePath: string,
+    invocation: PlanningInvocation,
   ) => Promise<unknown>;
   executeReplanTask: (
     params: {
@@ -162,7 +163,8 @@ type WorkflowToolExecutors = {
       replanReason?: string;
       fullPlanMd?: string;
     },
-    basePath?: string,
+    basePath: string,
+    invocation: PlanningInvocation,
   ) => Promise<unknown>;
   executeReworkBriefSave: (
     params: {
@@ -265,7 +267,8 @@ type WorkflowToolExecutors = {
         removed: string[];
       };
     },
-    basePath?: string,
+    basePath: string,
+    invocation: PlanningInvocation,
   ) => Promise<unknown>;
   executeSaveGateResult: (
     params: {
@@ -1155,24 +1158,26 @@ async function handleSliceComplete(
 async function handleReplanSlice(
   projectDir: string,
   args: z.infer<typeof replanSliceSchema>,
+  invocation: PlanningInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_replan_slice", projectDir, args.milestoneId);
   const { executeReplanSlice } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir)),
+    await runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir, invocation)),
   );
 }
 
 async function handleReplanTask(
   projectDir: string,
   args: z.infer<typeof replanTaskSchema>,
+  invocation: PlanningInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_replan_task", projectDir, args.milestoneId);
   const { executeReplanTask } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeReplanTask(params, projectDir)),
+    await runSerializedWorkflowOperation(() => executeReplanTask(params, projectDir, invocation)),
   );
 }
 
@@ -1215,12 +1220,13 @@ async function handleValidateMilestone(
 async function handleReassessRoadmap(
   projectDir: string,
   args: z.infer<typeof reassessRoadmapSchema>,
+  invocation: PlanningInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_reassess_roadmap", projectDir, args.milestoneId);
   const { executeReassessRoadmap } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir)),
+    await runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir, invocation)),
   );
 }
 
@@ -2462,9 +2468,13 @@ export function registerWorkflowTools(
     "gsd_replan_slice",
     "Replan a slice after a blocker is discovered, preserving completed tasks and re-rendering PLAN.md + REPLAN.md.",
     replanSliceParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(replanSliceSchema, args);
-      return handleReplanSlice(parsed.projectDir, parsed);
+      return handleReplanSlice(
+        parsed.projectDir,
+        parsed,
+        mcpPlanningInvocation("gsd_replan_slice", extra),
+      );
     },
   );
 
@@ -2472,10 +2482,14 @@ export function registerWorkflowTools(
     "gsd_slice_replan",
     "Alias for gsd_replan_slice. Replan a slice after a blocker is discovered.",
     replanSliceParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_slice_replan", "gsd_replan_slice");
       const parsed = parseWorkflowArgs(replanSliceSchema, args);
-      return handleReplanSlice(parsed.projectDir, parsed);
+      return handleReplanSlice(
+        parsed.projectDir,
+        parsed,
+        mcpPlanningInvocation("gsd_replan_slice", extra),
+      );
     },
   );
 
@@ -2483,9 +2497,13 @@ export function registerWorkflowTools(
     "gsd_replan_task",
     "Update one pending task's planning contract after rework without touching sibling tasks.",
     replanTaskParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(replanTaskSchema, args);
-      return handleReplanTask(parsed.projectDir, parsed);
+      return handleReplanTask(
+        parsed.projectDir,
+        parsed,
+        mcpPlanningInvocation("gsd_replan_task", extra),
+      );
     },
   );
 
@@ -2590,9 +2608,13 @@ export function registerWorkflowTools(
     "gsd_reassess_roadmap",
     "Reassess a milestone roadmap after a slice completes, writing ASSESSMENT.md and re-rendering ROADMAP.md.",
     reassessRoadmapParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(reassessRoadmapSchema, args);
-      return handleReassessRoadmap(parsed.projectDir, parsed);
+      return handleReassessRoadmap(
+        parsed.projectDir,
+        parsed,
+        mcpPlanningInvocation("gsd_reassess_roadmap", extra),
+      );
     },
   );
 
@@ -2600,10 +2622,14 @@ export function registerWorkflowTools(
     "gsd_roadmap_reassess",
     "Alias for gsd_reassess_roadmap. Reassess a roadmap after slice completion.",
     reassessRoadmapParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_roadmap_reassess", "gsd_reassess_roadmap");
       const parsed = parseWorkflowArgs(reassessRoadmapSchema, args);
-      return handleReassessRoadmap(parsed.projectDir, parsed);
+      return handleReassessRoadmap(
+        parsed.projectDir,
+        parsed,
+        mcpPlanningInvocation("gsd_reassess_roadmap", extra),
+      );
     },
   );
 

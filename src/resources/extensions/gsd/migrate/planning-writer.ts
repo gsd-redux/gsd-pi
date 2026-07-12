@@ -168,7 +168,7 @@ export async function writePlanningDirectory(
   const roadmapEntries: Array<{ number: number; title: string; done: boolean }> = [];
 
   for (const milestone of milestones) {
-    const slices = getMilestoneSlices(milestone.id);
+    const slices = getMilestoneSlices(milestone.id).filter((slice) => slice.status !== "skipped");
     for (const slice of slices) {
       phaseNum++;
       const phaseSlug = slugify(slice.title || slice.id, slice.id.toLowerCase());
@@ -176,7 +176,7 @@ export async function writePlanningDirectory(
       const phaseDir = join(root, "phases", phaseDirName);
       mkdirSync(phaseDir, { recursive: true });
 
-      const tasks = getSliceTasks(milestone.id, slice.id);
+      const tasks = getSliceTasks(milestone.id, slice.id).filter((task) => task.status !== "skipped");
       const isDone =
         tasks.length > 0 && tasks.every((t) => isClosedStatus(t.status));
       roadmapEntries.push({

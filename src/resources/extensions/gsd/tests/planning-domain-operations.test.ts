@@ -555,7 +555,31 @@ test("task replanning preserves lifecycle provenance while recording ordered his
     taskId: "T01",
     taskPlanPath: planned.taskPlanPath,
   });
-  assert.deepEqual(lifecycleSnapshot(), lifecycleBefore);
+  const lifecycleAfter = lifecycleSnapshot();
+  assert.deepEqual(
+    lifecycleAfter.find((entry) => entry["item_kind"] === "task"),
+    lifecycleBefore.find((entry) => entry["item_kind"] === "task"),
+    "task lifecycle provenance must remain unchanged",
+  );
+  const adoptedParent = lifecycleAfter.find((entry) => entry["item_kind"] === "slice");
+  assert.deepEqual({
+    item_kind: adoptedParent?.["item_kind"],
+    milestone_id: adoptedParent?.["milestone_id"],
+    slice_id: adoptedParent?.["slice_id"],
+    task_id: adoptedParent?.["task_id"],
+    lifecycle_status: adoptedParent?.["lifecycle_status"],
+    state_version: adoptedParent?.["state_version"],
+    last_project_revision: adoptedParent?.["last_project_revision"],
+  }, {
+    item_kind: "slice",
+    milestone_id: "M001",
+    slice_id: "S01",
+    task_id: null,
+    lifecycle_status: "pending",
+    state_version: 0,
+    last_project_revision: 2,
+  }, "missing parent lifecycle must be adopted without changing task provenance");
+  assert.equal(typeof adoptedParent?.["last_operation_id"], "string");
   assert.deepEqual(rows(`SELECT task_id, summary, previous_artifact_path FROM replan_history ORDER BY id`), [{
     task_id: "T01",
     summary: "Task T01 replanned from rework brief RB-001",
@@ -563,7 +587,191 @@ test("task replanning preserves lifecycle provenance while recording ordered his
   }]);
   assert.equal(count("workflow_operations"), 2);
   assertNoInventedExecutionHistory();
+
+  const afterCommit = {
+    task: getTask("M001", "S01", "T01"),
+    history: rows(`SELECT * FROM replan_history ORDER BY id`),
+    operations: rows(`SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision`),
+    lifecycles: lifecycleSnapshot(),
+    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+  };
+  const replay = await invoke<ReplanTaskParams, ReplanTaskResult>(
+    handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+    params,
+    base,
+    invocation("replan-task/call-1"),
+  );
+  assert.deepEqual(replay, result, "a lost-response retry must return the exact legacy response");
+  assert.deepEqual({
+    task: getTask("M001", "S01", "T01"),
+    history: rows(`SELECT * FROM replan_history ORDER BY id`),
+    operations: rows(`SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision`),
+    lifecycles: lifecycleSnapshot(),
+    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+  }, afterCommit, "an exact retry must not duplicate task, history, operation, lifecycle, or JSONL state");
+
+  const conflict = await invoke<ReplanTaskParams, ReplanTaskResult>(
+    handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+    { ...params, title: "Conflicting reuse" },
+    base,
+    invocation("replan-task/call-1"),
+  );
+  assert.ok("error" in conflict);
+  assert.match(conflict.error, /idempotency (?:key )?conflict/i);
+  assert.deepEqual({
+    task: getTask("M001", "S01", "T01"),
+    history: rows(`SELECT * FROM replan_history ORDER BY id`),
+    operations: rows(`SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision`),
+    lifecycles: lifecycleSnapshot(),
+    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+  }, afterCommit, "changed semantics under the same invocation key must leave no residue");
 });
+
+test("task replanning rejects canonical cancellation despite pending legacy drift without residue", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+    handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+    taskParams(),
+    base,
+    invocation("plan-task/before-cancelled-replan"),
+  ));
+
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.cancel",
+    idempotencyKey: "test/task/cancel",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "agent",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "cancelled",
+    });
+    return {
+      events: [{
+        eventType: "test.task.cancelled",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: { taskId: "T01" },
+        destinations: ["projection"],
+      }],
+      projections: [{ projectionKey: "test/m001/s01/t01", projectionKind: "markdown", rendererVersion: "v1" }],
+    };
+  });
+  updateTaskStatus("M001", "S01", "T01", "pending");
+  assert.deepEqual(row(`
+    SELECT lifecycle_status, state_version FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'
+  `), { lifecycle_status: "cancelled", state_version: 1 });
+
+  const before = {
+    authority: row("SELECT revision, authority_epoch FROM project_authority"),
+    task: getTask("M001", "S01", "T01"),
+    history: rows("SELECT * FROM replan_history ORDER BY id"),
+    operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+    lifecycles: lifecycleSnapshot(),
+    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+  };
+  const rejected = await invoke<ReplanTaskParams, ReplanTaskResult>(
+    handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+    {
+      ...taskParams(),
+      title: "Must not replace cancelled authority",
+      description: "Legacy drift cannot reopen canonical cancellation.",
+    },
+    base,
+    invocation("replan-task/reject-cancelled"),
+  );
+  assert.ok("error" in rejected);
+  assert.match(rejected.error, /cancelled task T01.*gsd_task_reopen/i);
+  assert.deepEqual({
+    authority: row("SELECT revision, authority_epoch FROM project_authority"),
+    task: getTask("M001", "S01", "T01"),
+    history: rows("SELECT * FROM replan_history ORDER BY id"),
+    operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+    lifecycles: lifecycleSnapshot(),
+    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+  }, before);
+});
+
+for (const terminalStatus of ["completed", "cancelled"] as const) {
+  test(`task replanning rejects canonical ${terminalStatus} parent despite open legacy drift without residue`, async () => {
+    const { base } = makeFixture();
+    seedPlanningParents();
+    assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+      handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+      taskParams(),
+      base,
+      invocation(`plan-task/before-${terminalStatus}-parent-replan`),
+    ));
+    updateSliceStatus("M001", "S01", "active");
+
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: `test.slice.${terminalStatus}`,
+      idempotencyKey: `test/slice/${terminalStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "agent",
+      sourceTransport: "test",
+      payload: { sliceId: "S01", terminalStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S01",
+        lifecycleStatus: terminalStatus,
+      });
+      return {
+        events: [{
+          eventType: `test.slice.${terminalStatus}`,
+          entityType: "slice",
+          entityId: "M001/S01",
+          payload: { sliceId: "S01", terminalStatus },
+          destinations: ["projection"],
+        }],
+        projections: [{ projectionKey: "test/m001/s01", projectionKind: "markdown", rendererVersion: "v1" }],
+      };
+    });
+    assert.equal(row(`SELECT status FROM slices WHERE milestone_id = 'M001' AND id = 'S01'`)["status"], "active");
+
+    const before = {
+      authority: row("SELECT revision, authority_epoch FROM project_authority"),
+      task: getTask("M001", "S01", "T01"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: lifecycleSnapshot(),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+    };
+    const rejected = await invoke<ReplanTaskParams, ReplanTaskResult>(
+      handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+      {
+        ...taskParams(),
+        title: "Must not bypass terminal parent authority",
+        description: "Open legacy status cannot override a terminal canonical parent.",
+      },
+      base,
+      invocation(`replan-task/reject-${terminalStatus}-parent`),
+    );
+    assert.ok("error" in rejected);
+    assert.match(rejected.error, new RegExp(`${terminalStatus} slice S01.*gsd_slice_reopen`, "i"));
+    assert.deepEqual({
+      authority: row("SELECT revision, authority_epoch FROM project_authority"),
+      task: getTask("M001", "S01", "T01"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: lifecycleSnapshot(),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+    }, before);
+  });
+}
 
 test("slice replanning cancels removed pending work durably instead of deleting its identity", async () => {
   const { base } = makeFixture();

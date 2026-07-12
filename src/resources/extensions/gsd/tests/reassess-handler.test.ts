@@ -15,7 +15,15 @@ import {
   getAssessment,
   _getAdapter,
 } from '../gsd-db.ts';
-import { handleReassessRoadmap } from '../tools/reassess-roadmap.ts';
+import { handleReassessRoadmap as handleReassessRoadmapWithInvocation } from '../tools/reassess-roadmap.ts';
+import { directPlanningInvocation } from '../planning-invocation.ts';
+
+function handleReassessRoadmap(
+  params: Parameters<typeof handleReassessRoadmapWithInvocation>[0],
+  basePath: string,
+) {
+  return handleReassessRoadmapWithInvocation(params, basePath, directPlanningInvocation());
+}
 
 function makeTmpBase(): string {
   const base = mkdtempSync(join(tmpdir(), 'gsd-reassess-'));
@@ -177,9 +185,9 @@ test('handleReassessRoadmap succeeds when modifying only pending slices', async 
     assert.equal(s02?.risk, 'high');
     assert.equal(s02?.demo, 'Updated demo two.');
 
-    // Verify S03 was deleted
+    // Removed slices retain durable identity/history but leave the active roadmap.
     const s03 = getSlice('M001', 'S03');
-    assert.equal(s03, null, 'S03 should have been deleted');
+    assert.equal(s03?.status, 'skipped', 'S03 should be durably cancelled');
 
     // Verify S04 was inserted
     const s04 = getSlice('M001', 'S04');
@@ -281,8 +289,9 @@ test('handleReassessRoadmap cache invalidation: getMilestoneSlices reflects muta
     // S02 should remain (modified, not removed)
     assert.ok(sliceIds.includes('S02'), 'S02 should still exist after reassess');
 
-    // S03 should be gone (removed)
-    assert.ok(!sliceIds.includes('S03'), 'S03 should be gone after removal');
+    // S03 remains queryable as cancelled history.
+    assert.ok(sliceIds.includes('S03'), 'S03 identity should remain after removal');
+    assert.equal(slices.find((slice) => slice.id === 'S03')?.status, 'skipped');
 
     // S04 should exist (added)
     assert.ok(sliceIds.includes('S04'), 'S04 should exist after addition');
@@ -291,7 +300,7 @@ test('handleReassessRoadmap cache invalidation: getMilestoneSlices reflects muta
   }
 });
 
-test('handleReassessRoadmap is idempotent: calling twice with same params succeeds', async () => {
+test('handleReassessRoadmap rejects a duplicate structural mutation under a fresh invocation', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
 
@@ -303,14 +312,12 @@ test('handleReassessRoadmap is idempotent: calling twice with same params succee
     const first = await handleReassessRoadmap(params, base);
     assert.ok(!('error' in first), `first call error: ${'error' in first ? first.error : ''}`);
 
-    // Second call — S03 already deleted, S04 already exists (INSERT OR IGNORE), S02 already updated
-    // This should still succeed because:
-    // - assessments uses INSERT OR REPLACE (path PK)
-    // - S04 insert uses INSERT OR IGNORE
-    // - S02 update is idempotent
-    // - S03 delete on nonexistent is a no-op
+    // A distinct invocation is a new command, not a transport retry. Silently
+    // upserting the existing S04 identity would hide stale planning input.
     const second = await handleReassessRoadmap(params, base);
-    assert.ok(!('error' in second), `second call error: ${'error' in second ? second.error : ''}`);
+    assert.ok('error' in second);
+    assert.match(second.error, /existing slice S04|duplicate|reopen/i);
+    assert.equal(getMilestoneSlices('M001').filter((slice) => slice.id === 'S04').length, 1);
   } finally {
     cleanup(base);
   }
