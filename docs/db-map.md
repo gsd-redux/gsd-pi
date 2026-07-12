@@ -1358,8 +1358,9 @@ authority_epoch          INTEGER NOT NULL
   retain passed companions alongside inconclusive evidence. S06 bundle queries
   must require at least one failed or inconclusive observation for those
   verdicts, so an all-passed bundle cannot authorize FAIL or INCONCLUSIVE.
-- The observed project revision must be at or after Attempt settlement and
-  before the verdict operation. Updates and deletes fail.
+- The observed project revision must be at or after both Attempt settlement and
+  creation of the current criterion version, and before the verdict operation.
+  Updates and deletes fail.
 - Timestamps must be valid and ordered, `content_hash` must be a lowercase
   `sha256:` value with 64 hexadecimal digits, and `environment_json` must be a
   non-empty JSON object. Command/tool, working directory, source revision, and

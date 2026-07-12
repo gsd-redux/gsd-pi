@@ -293,7 +293,9 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 ### Evidence, verdict, and acceptance contract
 
 12. Technical criteria reject `human`; subjective-UAT criteria reject objective evidence classes.
-13. Evidence rejects a mismatched Attempt/lifecycle/project, stale source revision, missing hash/output/environment, and mutation/deletion.
+13. Evidence rejects a mismatched Attempt/lifecycle/project, an observation
+    older than Attempt settlement or the current criterion version, stale
+    source revision, missing hash/output/environment, and mutation/deletion.
 14. PASS accepts only passed evidence. FAIL and INCONCLUSIVE may retain passed
     companion checks, but S06 bundle-completeness queries must require at least
     one failed or inconclusive observation respectively and reject an absent,

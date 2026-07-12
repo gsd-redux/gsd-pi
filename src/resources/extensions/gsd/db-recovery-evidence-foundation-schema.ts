@@ -535,6 +535,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         AND verdict.authority_epoch = NEW.authority_epoch
         AND criterion.evidence_class = NEW.evidence_class
         AND NEW.observed_project_revision >= COALESCE(attempt.settle_project_revision, attempt.claim_project_revision)
+        AND NEW.observed_project_revision >= criterion.project_revision
         AND NEW.observed_project_revision < NEW.project_revision
         AND (
           (verdict.verdict = 'pass' AND NEW.observation = 'passed') OR

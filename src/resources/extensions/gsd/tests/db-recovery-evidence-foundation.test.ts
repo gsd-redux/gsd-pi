@@ -275,6 +275,7 @@ function insertEvidence(
     environmentJson?: string;
     startedAt?: string;
     endedAt?: string;
+    observedProjectRevision?: number;
   },
 ): void {
   db.prepare(`
@@ -298,7 +299,7 @@ function insertEvidence(
     input.exitCode ?? 0,
     input.observation ?? "passed",
     input.sourceRevision ?? "commit-current",
-    input.revision - 1,
+    input.observedProjectRevision ?? input.revision - 1,
     input.contentHash ?? "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     input.environmentJson ?? '{"node":"26","platform":"test"}',
     `op-${input.revision}`,
@@ -858,6 +859,11 @@ test("technical PASS is criterion, Attempt, and source-revision scoped to fresh 
       attemptId: "attempt-pass",
       revision: 9,
     } as const;
+    assert.throws(() => insertEvidence(db, {
+      ...evidenceScope,
+      id: "evidence-before-criterion",
+      observedProjectRevision: 7,
+    }), /criterion|observed revision|verdict scope/);
     assert.throws(() => insertEvidence(db, {
       ...evidenceScope,
       id: "evidence-nonhex",
