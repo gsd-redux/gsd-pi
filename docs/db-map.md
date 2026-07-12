@@ -684,11 +684,11 @@ Non-correctness-critical state: UI cursors, dashboard caches, resume pointers. S
 ### 3e. Additive Canonical Foundation (V31)
 
 V31 created these tables on fresh databases and transactionally upgraded V30
-databases. The current v35 codebase also exposes an additive Domain Operation
-transaction over them plus dormant lifecycle command primitives, but existing
-production handlers and runtime authority are not routed through that boundary
-yet. No import application, projection worker, production lifecycle adapter, or
-legacy deletion ships with it.
+databases. The current v35 codebase routes milestone/slice/task planning,
+task/slice replanning, and roadmap reassessment through the Domain Operation
+transaction and lifecycle adoption primitives. Other production lifecycle,
+Attempt, completion, UAT, import-application, and projection-worker paths remain
+outside that cutover.
 
 #### `project_authority`
 ```
@@ -1814,7 +1814,7 @@ workflow_operations ──► all V35 import/kernel/closeout records
 
 ## 4b. Recovery And Worktree Merge Surfaces
 
-`.gsd/state-manifest.json` snapshots DB-backed correctness state: requirements,
+`.gsd/state-manifest.json` snapshots legacy DB-backed correctness state: requirements,
 artifacts, milestones, slices, tasks, decisions, replan history, assessments,
 quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
@@ -1822,18 +1822,22 @@ optional rows when reading older manifests that predate the extended arrays.
 The additive V31 canonical-foundation, V32 lifecycle-foundation, V33
 guided-conversation, V34 recovery/evidence, and V35 projection/import/kernel/
 closeout tables are
-not yet part of this legacy manifest surface because runtime reads/writes have
-not cut over to them.
+not part of this legacy manifest surface. Restore and hierarchy-replacement
+paths now refuse to run when adopted lifecycle rows exist, preventing the
+legacy snapshot from deleting canonical history.
 
-`reconcileWorktreeDb` merges hidden-worktree correctness rows back into the main
+`reconcileWorktreeDb` merges hidden-worktree legacy correctness rows back into the main
 DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
 remain outside manifest restore. The V31 canonical-foundation, V32
 lifecycle-foundation, V33 guided-conversation, V34 recovery/evidence, and V35
-projection/import/kernel/closeout tables likewise remain outside worktree reconciliation
-until a later runtime-routing slice.
+projection/import/kernel/closeout tables remain outside worktree reconciliation.
+Before merging legacy rows, reconciliation detects worktree operations or
+lifecycle heads that are missing from, newer than, or inconsistent with main
+and fails closed. Hierarchy merging uses identity-preserving UPSERTs and does
+not overwrite a status protected by a newer canonical lifecycle head.
 
 ---
 
@@ -1846,17 +1850,17 @@ until a later runtime-routing slice.
 | `gsd_requirement_update` | requirements | requirements | REQUIREMENTS.md |
 | `gsd_summary_save` | milestones, slices, tasks | artifacts | M##/S##/T## artifact files |
 | `gsd_milestone_generate_id` | milestones | milestones (INSERT OR IGNORE, queued) | — |
-| `gsd_plan_milestone` | milestones, slices | milestones, slices | ROADMAP.md |
-| `gsd_plan_slice` | milestones, slices, tasks | slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update | NN-MM-PLAN.md with embedded task planning when tasks exist |
-| `gsd_plan_task` | slices, tasks | one task planning row, task gate seeds | re-renders NN-MM-PLAN.md; task PLAN paths resolve to the slice plan |
+| `gsd_plan_milestone` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones, slices | ROADMAP.md |
+| `gsd_plan_slice` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, quality_gates, slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update; removed pending tasks become `skipped`/`cancelled` | NN-MM-PLAN.md with active task planning when tasks exist |
+| `gsd_plan_task` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, quality_gates, one task planning row | re-renders NN-MM-PLAN.md; task PLAN paths resolve to the slice plan |
 | `gsd_task_complete` | tasks, slices, rework_briefs, rework_brief_findings | tasks, verification_evidence, rework_brief_findings | S##-T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md; reads legacy T##-SUMMARY.md |
 | `gsd_slice_complete` | tasks, slices | slices, tasks (cascade skipped) | S##-SUMMARY.md, S##-UAT.md; toggles checkpoint in ROADMAP.md |
 | `gsd_uat_result_save` | slices, artifacts | artifacts, assessments, quality_gates, gate_runs | S##-ASSESSMENT.md; UAT attempt JSON |
 | `gsd_complete_milestone` | milestones, slices, tasks | milestones | M##-SUMMARY.md |
 | `gsd_validate_milestone` | milestones, slices, tasks | assessments, quality_gates, gate_runs | VALIDATION.md |
-| `gsd_reassess_roadmap` | milestones, slices | milestones, slices, assessments | ROADMAP.md, ASSESSMENT.md |
-| `gsd_replan_slice` | slices, tasks | slices, tasks, replan_history, quality_gates | NN-MM-PLAN.md, NN-MM-REPLAN.md |
-| `gsd_replan_task` | slices, tasks | one pending task planning row, replan_history | re-renders the task/slice PLAN projection |
+| `gsd_reassess_roadmap` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones, slices, assessments; removed pending slices become `skipped`/`cancelled` | ROADMAP.md, ASSESSMENT.md |
+| `gsd_replan_slice` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, slices, tasks, replan_history, quality_gates; removed pending tasks become `skipped`/`cancelled` | NN-MM-PLAN.md, NN-MM-REPLAN.md |
+| `gsd_replan_task` | project_authority, workflow_operations, workflow_item_lifecycles, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, one pending task planning row, replan_history | re-renders the task/slice PLAN projection |
 | `gsd_rework_brief_save` | rework_briefs, rework_brief_findings | rework_briefs, rework_brief_findings | — |
 | `gsd_skip_slice` | slices, tasks | slices, tasks | STATE.md (via rebuildState) |
 | `gsd_task_reopen` | tasks, slices, milestones | tasks | deletes S##-T##-SUMMARY.md and legacy T##-SUMMARY.md |
@@ -1866,7 +1870,15 @@ until a later runtime-routing slice.
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
 | `memory_query` | memories, memories_fts, memory_embeddings | memories (hit_count++) | — |
 
-`gsd_replan_task` updates exactly one existing pending task after rework. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, and `expectedOutput`; `reworkBriefRef` is optional and records the structured brief that triggered the replan. The handler rejects missing tasks and closed/completed tasks; completed tasks must be reopened with `gsd_task_reopen` before replanning.
+The six planning mutations above commit legacy hierarchy changes, lifecycle
+adoption or transition, one domain event/outbox destination, Projection Work,
+and the project revision in one Domain Operation. Replays return the original
+receipt and retry projection without rerunning the mutation. Removed pending
+work retains its hierarchy and lifecycle identity as legacy `skipped` and
+canonical `cancelled`; active projections omit it, and explicit reopen is
+required before reuse.
+
+`gsd_replan_task` updates exactly one existing pending task after rework. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, and `expectedOutput`; `reworkBriefRef` is optional and records the structured brief that triggered the replan. The handler rejects missing, closed/completed, and canonically cancelled tasks; those tasks must be reopened with `gsd_task_reopen` before replanning.
 
 `gsd_rework_brief_save` persists structured findings for a task. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, and non-empty `findings`. Each finding requires `findingId`, `severity` (`blocking` or `advisory`), `description`, `requiredFix`, and `verificationCommands`; optional fields are `status`, `evidence`, and `decisionRef`.
 

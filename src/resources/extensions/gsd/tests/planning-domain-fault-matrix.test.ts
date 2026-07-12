@@ -137,7 +137,7 @@ test("plan-task after-commit fault converges on exact retry without duplicate au
     gates: 3,
     history: 0,
     operations: 1,
-    lifecycles: 1,
+    lifecycles: 2,
     events: 1,
     outbox: 1,
     projections: 1,

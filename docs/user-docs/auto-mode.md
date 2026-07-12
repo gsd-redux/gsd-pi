@@ -290,7 +290,7 @@ See [Cost Management](./cost-management.md).
 
 ### Adaptive Replanning
 
-After each slice completes, the roadmap is reassessed. If the work revealed new information that changes the plan, slices are reordered, added, or removed before continuing. This can be skipped with the `balanced` or `budget` token profiles.
+After each slice completes, the roadmap is reassessed. If the work revealed new information that changes the plan, slices are reordered, added, or removed before continuing. Removed pending slices and tasks remain in database history as cancelled, disappear from the active roadmap or plan projection, and must be explicitly reopened before their IDs can be reused. This can be skipped with the `balanced` or `budget` token profiles.
 
 ### Verification Enforcement
 

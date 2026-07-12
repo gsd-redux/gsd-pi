@@ -64,7 +64,7 @@ gsd-core is unaware of gsd-pi. It sees `.gsd/*.md` as ordinary markdown and edit
 
 If your project uses gsd-core's `.planning/` layout (flat `phases/NN-name/` directories, root `ROADMAP.md` / `STATE.md`), gsd-pi projects DB state back to `.planning/` automatically — you don't need to run `/gsd migrate`.
 
-- The first time gsd-pi sees a `.planning/` project, it records the layout in `.gsd/.compat.json` under `planning.layout`.
+- The first time gsd-pi sees a `.planning/` project, it imports the hierarchy into the database and records the layout in `.gsd/.compat.json` under `planning.layout` only after that import succeeds. A failed import leaves compatibility inactive so later projection cannot overwrite the unimported `.planning/` content.
 - On every projection, gsd-pi writes back to `.planning/` using that recorded layout.
 - `/gsd sync` imports gsd-core's `.planning/` edits; `/gsd doctor` reports `.planning/` drift separately from `.gsd/` drift.
 

@@ -507,7 +507,10 @@
 | gsd/state/derive/db-open.ts | State Machine | Workflow DB opening and DB-unavailable state construction |
 | gsd/db/domain-operation.ts | Database, State Machine | Revision-checked Domain Operation transaction and durable replay receipt boundary |
 | gsd/db/lifecycle-shadow-comparison.ts | Database, State Machine | Pure legacy-to-canonical lifecycle normalization and semantic shadow comparison |
-| gsd/db/writers/lifecycle-commands.ts | Database, State Machine | Dormant transaction-bound lifecycle, Attempt, Result, replay-fence, and Kernel checkpoint writers |
+| gsd/db/writers/lifecycle-commands.ts | Database, State Machine | Transaction-bound lifecycle adoption/transition, Attempt, Result, replay-fence, and Kernel checkpoint writers; planning handlers use the lifecycle and fence subset |
+| gsd/planning-domain-operation.ts | Database, GSD Workflow | Shared atomic planning-operation adapter that combines legacy hierarchy writes, canonical lifecycle comparison, events, and Projection Work |
+| gsd/planning-invocation.ts | GSD Workflow, Tool System | Private invocation identity helpers for direct calls and transport-stable Pi-extension planning calls; workflow MCP mirrors the envelope at its package boundary |
+| gsd/milestone-planning-persistence.ts | Database, GSD Workflow | Atomic milestone planning persistence followed by replay-safe roadmap projection and compatibility hooks |
 | gsd/history.ts | State Machine | State history and versioning |
 | gsd/json-persistence.ts | State Machine | JSON-based persistence layer |
 | gsd/memory-store.ts | State Machine | In-memory state storage |

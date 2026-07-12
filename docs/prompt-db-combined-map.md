@@ -58,22 +58,23 @@ See also:
 
 `QUEUE-ORDER.json` is the exception to the usual generated-artifact projection rule. `/gsd rethink` and related phase-management flows write it as the durable milestone reorder contract, and state derivation mirrors it into `milestones.sequence` before dispatch so stale DB sequence can be repaired without importing arbitrary markdown projections.
 
-`db/domain-operation.ts` now provides the additive future authoritative write
-seam: a project-scoped, revision- and Authority-Epoch-checked `BEGIN IMMEDIATE`
+`db/domain-operation.ts` provides the authoritative planning write seam: a
+project-scoped, revision- and Authority-Epoch-checked `BEGIN IMMEDIATE`
 transaction that atomically stores provenance, ordered events, outbox
 destinations, Projection Work, and the authority CAS. Exact retries return a
-durable receipt without rerunning mutation. The prompt/tool flow above is not
-routed through this seam yet, and file-derived readiness, completion, UAT, and
-reconciliation behavior remains unchanged.
+durable receipt without rerunning mutation. Milestone/slice/task planning,
+task/slice replanning, and roadmap reassessment route through this seam while
+preserving their legacy response shapes. File-derived completion and UAT remain
+outside the cutover.
 
-Dormant command primitives under `db/writers/lifecycle-commands.ts` can compose
+Command primitives under `db/writers/lifecycle-commands.ts` compose
 canonical lifecycle, Attempt, Result, and Kernel checkpoint facts inside that
 transaction. `readDomainOperationFence()` recovers either the current fence or
 an existing idempotency key's original expected fence, while
 `db/lifecycle-shadow-comparison.ts` compares normalized legacy and canonical
-statuses without discarding exact values. No production prompt or tool handler
-calls these primitives yet; Attempt integration remains blocked on proven
-lease-loss recovery.
+statuses without discarding exact values. Planning handlers use lifecycle
+adoption/transition and replay fences; Attempt integration remains blocked on
+proven lease-loss recovery.
 
 ---
 
@@ -363,11 +364,11 @@ unit completes
 | Source File | Tables |
 |------------|--------|
 | `db-base-schema.ts` | schema_version, decisions, requirements, artifacts, memories, memory_processed_units, memory_sources, memory_embeddings, memory_relations, milestones, slices, tasks, verification_evidence, replan_history, assessments, quality_gates, slice_dependencies, gate_runs, turn_git_transactions, milestone_commit_attributions, audit_events, audit_turn_index + all indexes + active_decisions/active_requirements/active_memories views |
-| `db-canonical-foundation-schema.ts` | project_authority, workflow_operations, workflow_domain_events, workflow_outbox + domain-event immutability, durable-outbox deletion, safe-integer identity triggers, and canonical-foundation indexes (V31; production handlers are not runtime-routed yet) |
-| `db-lifecycle-foundation-schema.ts` | workflow_item_lifecycles, workflow_execution_attempts, workflow_attempt_results, workflow_blockers, workflow_waivers, workflow_requirement_dispositions + lifecycle, fencing, provenance, history, and vocabulary constraints (V32, additive and not runtime-routed yet) |
+| `db-canonical-foundation-schema.ts` | project_authority, workflow_operations, workflow_domain_events, workflow_outbox + domain-event immutability, durable-outbox deletion, safe-integer identity triggers, and canonical-foundation indexes (V31; planning handlers are runtime-routed) |
+| `db-lifecycle-foundation-schema.ts` | workflow_item_lifecycles, workflow_execution_attempts, workflow_attempt_results, workflow_blockers, workflow_waivers, workflow_requirement_dispositions + lifecycle, fencing, provenance, history, and vocabulary constraints (V32; planning adopts lifecycle heads, while Attempt and terminal lifecycle integration remain later work) |
 | `db-conversation-foundation-schema.ts` | workflow_milestone_contexts, workflow_open_questions, workflow_question_dependencies, workflow_interactions, workflow_interaction_options, workflow_answers, workflow_conversation_decisions, workflow_decision_impacts, workflow_work_checkpoints + recommendation-first, causal provenance, targeted revalidation, immutability, and single-head history constraints (V33, additive and not runtime-routed yet) |
 | `db-recovery-evidence-foundation-schema.ts` | workflow_failure_observations, workflow_recovery_budgets, workflow_recovery_actions, workflow_acceptance_criteria, workflow_technical_verdicts, workflow_verification_evidence, workflow_human_acceptances, workflow_remediation_links + explicit agent/user/external recovery ownership, immutable count budgets derived from linked Actions, requirement-scoped criterion lineage, verdict-owned objective evidence, separate subjective acceptance, and immutable rework/remediation routing (V34, additive and not runtime-routed yet) |
-| `db-projection-import-kernel-closeout-foundation-schema.ts` | workflow_projection_work, workflow_import_applications, workflow_kernel_checkpoints, workflow_closeout_plans, workflow_closeout_effects, workflow_settlement_receipts + per-key fenced projection delivery, import receipts carrying preview and verified-backup metadata, immutable kernel-stage lineage, versioned closeout plans, ordered idempotency-keyed effects, and success-only settlement receipts (V35, additive and not runtime-routed yet) |
+| `db-projection-import-kernel-closeout-foundation-schema.ts` | workflow_projection_work, workflow_import_applications, workflow_kernel_checkpoints, workflow_closeout_plans, workflow_closeout_effects, workflow_settlement_receipts + per-key fenced projection delivery, import receipts carrying preview and verified-backup metadata, immutable kernel-stage lineage, versioned closeout plans, ordered idempotency-keyed effects, and success-only settlement receipts (V35; planning enqueues Projection Work, while the remaining families are not runtime-routed yet) |
 | `db-coordination-schema.ts` | workers, milestone_leases, unit_dispatches, cancellation_requests, command_queue |
 | `db-memory-fts-schema.ts` | memories_fts (FTS5 virtual table), memories_ai/ad/au triggers |
 | `db-runtime-kv-schema.ts` | runtime_kv |
