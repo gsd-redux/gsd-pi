@@ -323,7 +323,7 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 - Wire fresh-install creation, `SCHEMA_VERSION = 34`, migration/backup/rollback tests, and the explicit single-writer allowlist. Older-version rewind fixtures must remove every later-version table and index before stamping the earlier version.
 - Use the existing v31 exact provenance tuple and v32/v33 immutable/head-chain trigger style.
 - This slice should expose schema only. Do not add runtime writers, readers, UAT cutover, backfill, or compatibility deletion.
-- The later Domain Operation layer must atomically create failure/action and verdict/evidence/remediation bundles. V34 standalone triggers enforce local facts and reject invalid combinations; they should not simulate the future kernel.
+- The later Domain Operation layer must atomically create failure/action and verdict/evidence bundles, plus any applicable remediation links. V34 standalone triggers enforce local facts and reject invalid combinations; they should not simulate the future kernel.
 
 ## Decision summary
 

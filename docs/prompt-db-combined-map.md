@@ -397,13 +397,16 @@ consumption is derived by counting linked immutable Recovery Actions. The cap is
 one use for deterministic repair or two for every other policy class. A
 human-routed Failure Observation owns the exact V32 Blocker used by
 clarify/pause, so an unrelated blocker cannot justify a pause. Criterion changes
-append a same-key supersession head, and failed/inconclusive verdicts or current
-rejected Human Acceptance route through immutable `rework | remediation` links.
+append a same-key supersession head, corrected Technical Verdicts supersede the
+current head for the same criterion, Attempt, and tested source revision, and
+failed/inconclusive verdicts or current rejected Human Acceptance route through
+immutable `rework | remediation` links.
 
 Legacy `verification_evidence`, assessments, quality gates, gate runs, UAT
 files, rework briefs, dispatch retry fields, runtime JSON/KV, and process-local
 counters are not repurposed or backfilled by V34. V34 also does not cut runtime
 recovery, verification, UAT, lifecycle completion, projections, manifest
 restore, or worktree reconciliation over to the new tables. S06 Domain
-Operations must atomically commit failure/action and verdict/evidence/remediation
-bundles and require bundle completeness before dispatch or closeout.
+Operations must atomically commit failure/action and verdict/evidence bundles,
+plus any applicable remediation links, and require bundle completeness before
+dispatch or closeout.

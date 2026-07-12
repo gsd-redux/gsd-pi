@@ -1235,7 +1235,7 @@ authority_epoch     INTEGER NOT NULL
   correction, remediation, and objective UAT.
 - There is no mutable `consumed` counter. Consumption is the authoritative
   `COUNT(*)` of immutable `workflow_recovery_actions` referencing the budget.
-  The retry trigger rejects the next Action when that count reaches
+  The budget trigger rejects the next budgeted Action when that count reaches
   `max_uses`, so restart cannot reset or double-spend the allowance.
 - V34 intentionally does not add cost or elapsed-time budget ledgers. Those
   require canonical Attempt metrics and later policy work.
@@ -1431,11 +1431,11 @@ guarantee that every Failure Observation has a Recovery Action or that every
 Technical Verdict has its Evidence: SQLite immediate insert constraints cannot
 safely enforce those circular bundle-completeness rules.
 
-S06 Domain Operations must atomically commit each failure/action bundle and
-each verdict/evidence/remediation bundle, and kernel queries must require bundle
-completeness before dispatch or closeout. Runtime readers/writers, UAT,
-recovery policy, legacy projections, and lifecycle completion do not cut over
-in V34.
+S06 Domain Operations must atomically commit each failure/action bundle, each
+verdict/evidence bundle, and any applicable remediation links. Kernel queries
+must require bundle completeness before dispatch or closeout. Runtime
+readers/writers, UAT, recovery policy, legacy projections, and lifecycle
+completion do not cut over in V34.
 
 ---
 
