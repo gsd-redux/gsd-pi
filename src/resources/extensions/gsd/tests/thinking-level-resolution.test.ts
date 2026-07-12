@@ -150,7 +150,7 @@ test("validation warns on an unknown phase key in the block", () => {
 
 test("validation warns on AND strips an illegal inline models thinking level", () => {
   const result = validatePreferences({
-    models: { planning: { model: "m", thinking: "max" } },
+    models: { planning: { model: "m", thinking: "ultra" } },
   } as never);
   assert.ok(result.warnings.some((w) => w.includes("models.planning.thinking") && w.includes("not a valid thinking level")));
   // The bad thinking field must be stripped so it can't reach the resolver,
