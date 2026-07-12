@@ -20,7 +20,7 @@ interface MinimalModelRegistry {
   getAvailable(): MinimalModel[]
 }
 
-type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 interface MinimalSettingsManager {
   getDefaultProvider(): string | undefined

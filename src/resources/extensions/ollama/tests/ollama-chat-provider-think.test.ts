@@ -55,6 +55,10 @@ describe("buildThinkParam — ThinkingLevel mapping", () => {
 	it("collapses 'xhigh' to 'high' (ollama caps at high)", () => {
 		assert.equal(buildThinkParam(m, { reasoning: "xhigh" }), "high");
 	});
+
+	it("collapses 'max' to 'high' (ollama caps at high)", () => {
+		assert.equal(buildThinkParam(m, { reasoning: "max" }), "high");
+	});
 });
 
 describe("buildRequest — wire-level think field", () => {

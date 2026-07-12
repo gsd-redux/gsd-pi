@@ -207,7 +207,7 @@ export function streamOllamaChat(
  * - `"low" | "medium" | "high"` are passed through as strings; gpt-oss honors
  *   them as strength levels, other thinking models treat any present value
  *   as "thinking enabled".
- * - `"xhigh"` is collapsed to `"high"` (ollama caps strength at high).
+ * - `"xhigh"` and `"max"` are collapsed to `"high"` (ollama caps strength at high).
  */
 export function buildThinkParam(
 	model: Model<Api>,
@@ -217,7 +217,7 @@ export function buildThinkParam(
 	const level: ThinkingLevel | undefined = options?.reasoning;
 	if (level === undefined) return undefined;
 	if (level === "minimal") return false;
-	if (level === "xhigh") return "high";
+	if (level === "xhigh" || level === "max") return "high";
 	return level;
 }
 
