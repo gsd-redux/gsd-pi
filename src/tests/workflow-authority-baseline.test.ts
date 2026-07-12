@@ -22,25 +22,43 @@ test("workflow authority baseline reports four fixed invariants in stable order"
 
   assert.equal(report.schemaVersion, 1);
   assert.equal(report.verdict, "pass");
+  const expected = [
+    ["db-authority-fixture", "workflow-authority-fixture.test.ts"],
+    ["projection-conflict", "workflow-authority-projection-conflict.test.ts"],
+    ["fault-harness-contract", "workflow-fault-harness.test.ts"],
+    ["fault-boundary-matrix", "workflow-authority-faults.test.ts"],
+  ].map(([id, filename]) => {
+    const file = `src/resources/extensions/gsd/tests/${filename}`;
+    const reportedArgs = [
+      "--import",
+      "./src/resources/extensions/gsd/tests/resolve-ts.mjs",
+      "--experimental-strip-types",
+      "--test",
+      file,
+    ];
+    return {
+      id,
+      executable: process.execPath,
+      args: [
+        "--import",
+        join(baseline.REPO_ROOT, "src/resources/extensions/gsd/tests/resolve-ts.mjs"),
+        "--experimental-strip-types",
+        "--test",
+        join(baseline.REPO_ROOT, file),
+      ],
+      command: ["node", ...reportedArgs].map((part) => JSON.stringify(part)).join(" "),
+    };
+  });
+
   assert.deepEqual(
-    report.invariants.map((entry: { id: string }) => entry.id),
-    ["db-authority-fixture", "projection-conflict", "fault-harness-contract", "fault-boundary-matrix"],
-  );
-  assert.equal(calls.length, 4, "each accepted invariant must execute in its own process");
-  assert.equal(calls[0].executable, process.execPath);
-  assert.deepEqual(calls[0].args, [
-    "--import",
-    join(baseline.REPO_ROOT, "src/resources/extensions/gsd/tests/resolve-ts.mjs"),
-    "--experimental-strip-types",
-    "--test",
-    join(
-      baseline.REPO_ROOT,
-      "src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts",
-    ),
-  ]);
-  assert.equal(
-    report.invariants[0].command,
-    '"node" "--import" "./src/resources/extensions/gsd/tests/resolve-ts.mjs" "--experimental-strip-types" "--test" "src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts"',
+    report.invariants.map((entry: { id: string; command: string }, index: number) => ({
+      id: entry.id,
+      executable: calls[index].executable,
+      args: calls[index].args,
+      command: entry.command,
+    })),
+    expected,
+    "each accepted invariant must retain its exact ID, execution path, and reported command",
   );
   assert.equal(baseline.exitCodeForReport(report), 0);
 });
