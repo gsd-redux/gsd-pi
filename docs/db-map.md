@@ -24,8 +24,9 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
-       ├── db-canonical-foundation-schema.ts, db-memory-fts-schema.ts,
-       │   db-schema-metadata.ts, db-verification-evidence-schema.ts
+       ├── db-canonical-foundation-schema.ts, db-lifecycle-foundation-schema.ts,
+       │   db-memory-fts-schema.ts, db-schema-metadata.ts,
+       │   db-verification-evidence-schema.ts
        │                    ← allowlisted schema/migration helpers
        ├── memory-backfill.ts
        │                    ← allowlisted ADR migration/backfill helper
@@ -65,7 +66,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V31**
+Current version: **V32**
 
 | Version | What Changed |
 |---------|-------------|
@@ -100,6 +101,7 @@ Current version: **V31**
 | V29 | slices.target_repositories and tasks.target_repositories for multi-repository planning |
 | V30 | rework_briefs and rework_brief_findings for structured task rework gates |
 | V31 | **Additive canonical foundation**: singleton project authority with revision and Authority Epoch, workflow operation provenance/idempotency receipts, immutable revision-linked domain events, and a durable event outbox |
+| V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, human-only Blockers, authorized Waivers, and immutable Requirement Disposition history |
 
 ---
 
@@ -766,6 +768,186 @@ operation provenance, domain history, or an outbox.
 
 ---
 
+### 3f. Additive Lifecycle Foundation (V32)
+
+V32 creates these tables on fresh databases and transactionally upgrades V31
+databases. Like V31, it is schema-only: the existing hierarchy statuses and
+coordination ledgers retain their runtime meaning, and no backfill, dual-write,
+Markdown inference, lifecycle API, or runtime cutover ships with this migration.
+
+#### `workflow_item_lifecycles`
+```
+lifecycle_id          TEXT PRIMARY KEY
+project_id            TEXT NOT NULL
+item_kind             TEXT NOT NULL    ← 'milestone' | 'slice' | 'task'
+milestone_id          TEXT NOT NULL
+slice_id              TEXT DEFAULT NULL
+task_id               TEXT DEFAULT NULL
+lifecycle_status      TEXT NOT NULL    ← 'pending' | 'ready' | 'in_progress' |
+                                         'paused' | 'completed' | 'cancelled'
+state_version         INTEGER NOT NULL DEFAULT 0
+created_at            TEXT NOT NULL
+updated_at            TEXT NOT NULL
+last_operation_id     TEXT NOT NULL
+last_project_revision INTEGER NOT NULL
+last_authority_epoch  INTEGER NOT NULL
+```
+- Partial unique indexes enforce one lifecycle per fully scoped milestone,
+  slice, or task identity. Kind-specific checks require exactly the applicable
+  identity columns.
+- Updates preserve identity, increment `state_version` by one, and permit only
+  `pending → ready|cancelled`, `ready → in_progress|paused|cancelled`,
+  `in_progress → paused|completed|cancelled`, `paused → ready|in_progress|cancelled`,
+  or `completed|cancelled → ready`. Operation/revision/Authority Epoch
+  provenance must advance; deletes are rejected as durable-history loss.
+- Indexes: `idx_workflow_lifecycle_milestone`,
+  `idx_workflow_lifecycle_slice`, and `idx_workflow_lifecycle_task`.
+
+#### `workflow_execution_attempts`
+```
+attempt_id                TEXT PRIMARY KEY
+project_id                TEXT NOT NULL
+lifecycle_id              TEXT NOT NULL
+attempt_number            INTEGER NOT NULL
+retry_of_attempt_id       TEXT DEFAULT NULL
+attempt_state             TEXT NOT NULL    ← 'claimed' | 'running' | 'settled'
+coordination_dispatch_id  INTEGER DEFAULT NULL UNIQUE
+worker_id                 TEXT DEFAULT NULL
+milestone_lease_token     INTEGER DEFAULT NULL
+claimed_at                TEXT NOT NULL
+started_at                TEXT DEFAULT NULL
+ended_at                  TEXT DEFAULT NULL
+claim_operation_id        TEXT NOT NULL
+claim_project_revision    INTEGER NOT NULL
+claim_authority_epoch     INTEGER NOT NULL
+settle_operation_id       TEXT DEFAULT NULL
+settle_project_revision   INTEGER DEFAULT NULL
+settle_authority_epoch    INTEGER DEFAULT NULL
+```
+- `(lifecycle_id, attempt_number)` is unique, attempt numbers are contiguous,
+  and every retry points to the immediately preceding Attempt for that
+  lifecycle. A partial unique index permits only one `claimed` or `running`
+  Attempt per lifecycle.
+- Worker-bound inserts and transitions require the current unexpired held
+  milestone lease. Dispatch attribution must match the lifecycle's complete
+  milestone/slice/task scope, worker, fencing token, and active dispatch state.
+- Only `claimed → running|settled` and `running → settled` are valid.
+  Claim identity and timestamps are preserved, settlement provenance must
+  advance causally, and settled Attempts and all deletes are immutable.
+- Index: `idx_workflow_attempt_active` (lifecycle_id), limited to `claimed` and
+  `running` rows.
+
+#### `workflow_attempt_results`
+```
+result_id         TEXT PRIMARY KEY
+project_id        TEXT NOT NULL
+lifecycle_id      TEXT NOT NULL
+attempt_id        TEXT NOT NULL UNIQUE
+outcome           TEXT NOT NULL    ← 'succeeded' | 'failed' | 'interrupted'
+failure_class     TEXT NOT NULL DEFAULT 'none'
+summary           TEXT NOT NULL DEFAULT ''
+output_json       TEXT NOT NULL DEFAULT '{}'
+created_at        TEXT NOT NULL
+operation_id      TEXT NOT NULL
+project_revision  INTEGER NOT NULL
+authority_epoch   INTEGER NOT NULL
+```
+- Exactly one Result may exist per Attempt, and only after that Attempt is
+  settled. Its operation, revision, and Authority Epoch must exactly match the
+  Attempt's settlement provenance.
+- Updates and deletes are rejected. Result outcome does not mutate lifecycle
+  status or requirement disposition.
+
+#### `workflow_blockers`
+```
+blocker_id               TEXT PRIMARY KEY
+project_id               TEXT NOT NULL
+lifecycle_id             TEXT NOT NULL
+blocker_kind             TEXT NOT NULL    ← 'missing_authority' | 'missing_access' |
+                                              'external_dependency' | 'consent' |
+                                              'ambiguous_intent' | 'subjective_uat' |
+                                              'user_limit'
+resolution_owner         TEXT NOT NULL    ← 'user' | 'external'
+blocker_status           TEXT NOT NULL    ← 'open' | 'resolved' | 'dismissed'
+description              TEXT NOT NULL
+requested_action         TEXT NOT NULL DEFAULT ''
+resolution               TEXT NOT NULL DEFAULT ''
+opened_at                TEXT NOT NULL
+resolved_at              TEXT DEFAULT NULL
+opened_operation_id      TEXT NOT NULL
+opened_project_revision  INTEGER NOT NULL
+opened_authority_epoch   INTEGER NOT NULL
+resolved_operation_id    TEXT DEFAULT NULL
+resolved_project_revision INTEGER DEFAULT NULL
+resolved_authority_epoch INTEGER DEFAULT NULL
+```
+- Blockers represent only user- or external-owned impediments and remain
+  separate from lifecycle and execution outcomes.
+- Opening facts are immutable. An open Blocker may become `resolved` or
+  `dismissed` with causally newer operation provenance; terminal records and
+  deletes are immutable.
+
+#### `workflow_waivers`
+```
+waiver_id              TEXT PRIMARY KEY
+project_id             TEXT NOT NULL
+lifecycle_id           TEXT NOT NULL
+requirement_id         TEXT DEFAULT NULL
+blocker_id             TEXT DEFAULT NULL
+waiver_status          TEXT NOT NULL    ← 'active' | 'revoked' | 'expired'
+scope                  TEXT NOT NULL
+rationale              TEXT NOT NULL
+granted_by_actor_type  TEXT NOT NULL    ← 'user' | 'policy'
+granted_by_actor_id    TEXT DEFAULT NULL
+granted_at             TEXT NOT NULL
+expires_at             TEXT DEFAULT NULL
+ended_at               TEXT DEFAULT NULL
+operation_id           TEXT NOT NULL
+project_revision       INTEGER NOT NULL
+authority_epoch        INTEGER NOT NULL
+ended_operation_id     TEXT DEFAULT NULL
+ended_project_revision INTEGER DEFAULT NULL
+ended_authority_epoch  INTEGER DEFAULT NULL
+```
+- User grants require an actor ID. At most one active Waiver may reference a
+  Blocker, and requirement/blocker references must resolve to canonical rows.
+- Grant facts are immutable. An active Waiver may become `revoked` or
+  `expired` with causally newer provenance; terminal records and deletes are
+  immutable. A Waiver cannot terminate while it still authorizes the current
+  waived disposition.
+- Index: `idx_workflow_waiver_active_blocker` (blocker_id), limited to active
+  rows with a Blocker.
+
+#### `workflow_requirement_dispositions`
+```
+disposition_id             TEXT PRIMARY KEY
+project_id                 TEXT NOT NULL
+requirement_id             TEXT NOT NULL
+disposition                TEXT NOT NULL    ← 'unsatisfied' | 'satisfied' | 'waived'
+waiver_id                  TEXT DEFAULT NULL
+supersedes_disposition_id  TEXT DEFAULT NULL UNIQUE
+rationale                  TEXT NOT NULL
+created_at                 TEXT NOT NULL
+operation_id               TEXT NOT NULL
+project_revision           INTEGER NOT NULL
+authority_epoch            INTEGER NOT NULL
+```
+- Rows form an immutable, single-head history per requirement. Every successor
+  must supersede the current head with causally newer revision/Authority Epoch
+  provenance.
+- Only `waived` rows carry a Waiver. That Waiver must belong to the same
+  project and requirement, be active and unexpired, and precede the disposition
+  revision. Updates and deletes are rejected.
+- Index: `idx_workflow_requirement_disposition_history`
+  (requirement_id, project_revision, disposition_id)
+
+Every V32 table is linked to the V31 authority root and exact
+`workflow_operations` provenance. The separation of lifecycle, execution
+history, Results, Blockers, Waivers, and requirement truth prevents one concept
+from silently fabricating another.
+
+---
+
 ## 4. Entity Relationship Diagram
 
 ```
@@ -814,6 +996,19 @@ workflow_operations ──► workflow_domain_events
   (operation_id + project_id + resulting revision + resulting Authority Epoch)
 workflow_domain_events ──► workflow_domain_events (caused_by_event_id)
 workflow_domain_events ──► workflow_outbox (event_id)
+
+milestones/slices/tasks ──► workflow_item_lifecycles
+workflow_item_lifecycles ──► workflow_execution_attempts
+workflow_execution_attempts ──► workflow_attempt_results
+workflow_item_lifecycles ──► workflow_blockers
+workflow_item_lifecycles ──► workflow_waivers
+requirements ──► workflow_waivers
+requirements ──► workflow_requirement_dispositions
+workflow_waivers ──► workflow_requirement_dispositions
+workflow_blockers ──► workflow_waivers
+
+workflow_operations ──► all V32 lifecycle records
+  (operation + project + revision + Authority Epoch provenance)
 ```
 
 ---
@@ -825,16 +1020,18 @@ artifacts, milestones, slices, tasks, decisions, replan history, assessments,
 quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
 optional rows when reading older manifests that predate the extended arrays.
-The additive V31 canonical-foundation tables are not yet part of this legacy
-manifest surface because runtime reads/writes have not cut over to them.
+The additive V31 canonical-foundation and V32 lifecycle-foundation tables are
+not yet part of this legacy manifest surface because runtime reads/writes have
+not cut over to them.
 
 `reconcileWorktreeDb` merges hidden-worktree correctness rows back into the main
 DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
-remain outside manifest restore. The V31 canonical-foundation tables likewise
-remain outside worktree reconciliation until a later runtime-routing slice.
+remain outside manifest restore. The V31 canonical-foundation and V32
+lifecycle-foundation tables likewise remain outside worktree reconciliation
+until a later runtime-routing slice.
 
 ---
 
@@ -906,7 +1103,7 @@ remain outside worktree reconciliation until a later runtime-routing slice.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
