@@ -8,8 +8,16 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, getSlice, updateSliceStatus, deleteSlice, insertMilestone } from '../gsd-db.ts';
-import { handlePlanMilestone } from '../tools/plan-milestone.ts';
+import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
+import { directPlanningInvocation } from '../planning-invocation.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
+
+function handlePlanMilestone(
+  params: Parameters<typeof handlePlanMilestoneWithInvocation>[0],
+  basePath: string,
+) {
+  return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+}
 
 function makeTmpBase(): string {
   const base = mkdtempSync(join(tmpdir(), 'gsd-plan-milestone-'));

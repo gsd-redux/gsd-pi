@@ -6,6 +6,7 @@
  */
 
 import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -95,7 +96,8 @@ type WorkflowToolExecutors = {
       requirementCoverage?: string;
       boundaryMapMarkdown?: string;
     },
-    basePath?: string,
+    basePath: string,
+    invocation: PlanningInvocation,
   ) => Promise<unknown>;
   executePlanSlice: (
     params: {
@@ -118,7 +120,8 @@ type WorkflowToolExecutors = {
       integrationClosure?: string;
       observabilityImpact?: string;
     },
-    basePath?: string,
+    basePath: string,
+    invocation: PlanningInvocation,
   ) => Promise<unknown>;
   executeReplanSlice: (
     params: {
@@ -878,13 +881,58 @@ async function getWorkflowWriteGateModule(): Promise<WorkflowWriteGateModule> {
   return workflowWriteGatePromise;
 }
 
+interface PlanningInvocation {
+  idempotencyKey: string;
+  sourceTransport: "direct" | "pi-extension" | "workflow-mcp";
+  actorType: string;
+  actorId?: string;
+  traceId?: string;
+  turnId?: string;
+}
+
+interface WorkflowMcpRequestExtra {
+  signal?: AbortSignal;
+  requestId?: string | number;
+  sessionId?: string;
+  _meta?: Record<string, unknown>;
+}
+
 interface McpToolServer {
   tool(
     name: string,
     description: string,
     params: Record<string, unknown>,
-    handler: (args: Record<string, unknown>, extra?: { signal?: AbortSignal }) => Promise<unknown>,
+    handler: (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => Promise<unknown>,
   ): unknown;
+}
+
+const MCP_IDEMPOTENCY_META_KEY = "io.opengsd/idempotency-key";
+const workflowMcpInstanceId = randomUUID();
+
+function mcpPlanningInvocation(
+  canonicalToolName: string,
+  extra?: WorkflowMcpRequestExtra,
+): PlanningInvocation {
+  const explicitKey = extra?._meta?.[MCP_IDEMPOTENCY_META_KEY];
+  const stableExplicitKey = typeof explicitKey === "string" && explicitKey.trim()
+    ? explicitKey.trim()
+    : undefined;
+  const requestIdentity = stableExplicitKey
+    ? stableExplicitKey
+    : [
+        workflowMcpInstanceId,
+        extra?.sessionId ?? "stdio",
+        String(extra?.requestId ?? randomUUID()),
+      ].join(":");
+  const traceId = stableExplicitKey ?? (
+    extra?.requestId === undefined ? undefined : String(extra.requestId)
+  );
+  return {
+    idempotencyKey: `mcp:${canonicalToolName}:${requestIdentity}`,
+    sourceTransport: "workflow-mcp",
+    actorType: "agent",
+    ...(traceId ? { traceId } : {}),
+  };
 }
 
 export const WORKFLOW_TOOL_NAMES = CONTRACT_WORKFLOW_TOOL_NAMES;
@@ -2285,13 +2333,17 @@ export function registerWorkflowTools(
     "gsd_plan_milestone",
     "Write milestone planning state to the GSD database and render ROADMAP.md from DB.",
     planMilestoneParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(planMilestoneSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_milestone", projectDir, params.milestoneId);
       const { executePlanMilestone } = await getWorkflowToolExecutors();
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir)),
+        await runSerializedWorkflowOperation(() => executePlanMilestone(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_milestone", extra),
+        )),
       );
     },
   );
@@ -2300,14 +2352,18 @@ export function registerWorkflowTools(
     "gsd_milestone_plan",
     "Alias for gsd_plan_milestone. Write milestone planning state to the GSD database and render ROADMAP.md from DB.",
     planMilestoneParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_milestone_plan", "gsd_plan_milestone");
       const parsed = parseWorkflowArgs(planMilestoneSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_milestone", projectDir, params.milestoneId);
       const { executePlanMilestone } = await getWorkflowToolExecutors();
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir)),
+        await runSerializedWorkflowOperation(() => executePlanMilestone(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_milestone", extra),
+        )),
       );
     },
   );
@@ -2316,13 +2372,17 @@ export function registerWorkflowTools(
     "gsd_plan_slice",
     "Write slice/task planning state to the GSD database and render plan artifacts from DB.",
     planSliceParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(planSliceSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
       const { executePlanSlice } = await getWorkflowToolExecutors();
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir)),
+        await runSerializedWorkflowOperation(() => executePlanSlice(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_slice", extra),
+        )),
       );
     },
   );
@@ -2331,14 +2391,18 @@ export function registerWorkflowTools(
     "gsd_slice_plan",
     "Alias for gsd_plan_slice. Write slice/task planning state to the GSD database and render plan artifacts from DB.",
     planSliceParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_slice_plan", "gsd_plan_slice");
       const parsed = parseWorkflowArgs(planSliceSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
       const { executePlanSlice } = await getWorkflowToolExecutors();
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir)),
+        await runSerializedWorkflowOperation(() => executePlanSlice(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_slice", extra),
+        )),
       );
     },
   );
@@ -2347,13 +2411,17 @@ export function registerWorkflowTools(
     "gsd_plan_task",
     "Write task planning state to the GSD database and render the slice PLAN from DB.",
     planTaskParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(planTaskSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_task", projectDir, params.milestoneId);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
         const { handlePlanTask } = await importLocalModule<any>("../../../src/resources/extensions/gsd/tools/plan-task.js");
-        return handlePlanTask(params, projectDir);
+        return handlePlanTask(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_task", extra),
+        );
       });
       if ("error" in result) {
         throw new Error(result.error);
@@ -2368,14 +2436,18 @@ export function registerWorkflowTools(
     "gsd_task_plan",
     "Alias for gsd_plan_task. Write task planning state to the GSD database and render the slice PLAN from DB.",
     planTaskParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_task_plan", "gsd_plan_task");
       const parsed = parseWorkflowArgs(planTaskSchema, args);
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_task", projectDir, params.milestoneId);
       const result = await runSerializedWorkflowDbOperation(projectDir, async () => {
         const { handlePlanTask } = await importLocalModule<any>("../../../src/resources/extensions/gsd/tools/plan-task.js");
-        return handlePlanTask(params, projectDir);
+        return handlePlanTask(
+          params,
+          projectDir,
+          mcpPlanningInvocation("gsd_plan_task", extra),
+        );
       });
       if ("error" in result) {
         throw new Error(result.error);

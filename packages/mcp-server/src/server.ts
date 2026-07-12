@@ -339,6 +339,8 @@ interface ElicitRequestFormParams {
 export interface McpToolExtra {
   signal?: AbortSignal;
   requestId?: string | number;
+  sessionId?: string;
+  _meta?: Record<string, unknown>;
   sendNotification?: (notification: unknown) => void | Promise<void>;
 }
 

@@ -1,11 +1,13 @@
-import { existsSync, rmSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { rmSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus, isDeferredStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
 import {
-  transaction,
+  adoptLifecycleIfMissing,
+  adoptOrTransitionLifecycle,
+  deleteArtifactByPath,
   getMilestone,
   getSlice,
   getSliceTasks,
@@ -13,14 +15,14 @@ import {
   upsertSlicePlanning,
   upsertTaskPlanning,
   insertGateRow,
+  updateTaskStatus,
   updateSliceStatus,
   setSliceSketchFlag,
-  deleteTask,
-  deleteArtifactByPath,
 } from "../gsd-db.js";
 import type { GateEvaluationConfig, GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
 import { renderPlanCheckboxes, renderPlanFromDb } from "../markdown-renderer.js";
+import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
@@ -28,9 +30,17 @@ import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../pl
 import { runTaskPathChecks } from "../pre-execution-checks.js";
 import type { TaskRow } from "../db-task-slice-rows.js";
 import { resolveWorktreeProjectRoot } from "../worktree-root.js";
-import { buildTaskFileName, gsdProjectionRoot } from "../paths.js";
+import { gsdProjectionRoot, resolveSliceFile, resolveTaskFile } from "../paths.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets, type RepositoryRegistry } from "../repository-registry.js";
+import {
+  executePlanningDomainOperation,
+  PlanningGuardError,
+  planningOperationPayload,
+} from "../planning-domain-operation.js";
+import {
+  type PlanningInvocation,
+} from "../planning-invocation.js";
 
 
 export interface PlanSliceTaskInput {
@@ -292,6 +302,7 @@ function validateTaskPathsBeforePersist(
 export async function handlePlanSlice(
   rawParams: PlanSliceParams,
   basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<PlanSliceResult | { error: string }> {
   let params: PlanSliceParams;
   try {
@@ -348,127 +359,193 @@ export async function handlePlanSlice(
     return { error: `pre-execution validation failed:\n${pathError}` };
   }
 
-  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
-  // Guards must be inside the transaction so the state they check cannot
-  // change between the read and the write (#2723).
-  let guardError: string | null = null;
-  let omittedTaskIds: string[] = [];
-
+  let operationStatus: "committed" | "replayed";
   try {
-    transaction(() => {
-      const parentMilestone = getMilestone(params.milestoneId);
-      if (!parentMilestone) {
-        guardError = `milestone not found: ${params.milestoneId}`;
-        return;
-      }
-      if (isClosedStatus(parentMilestone.status)) {
-        guardError = `cannot plan slice in a closed milestone: ${params.milestoneId} (status: ${parentMilestone.status})`;
-        return;
-      }
-
-      const parentSlice = getSlice(params.milestoneId, params.sliceId);
-      if (!parentSlice) {
-        guardError = `missing parent slice: ${params.milestoneId}/${params.sliceId}`;
-        return;
-      }
-      if (isClosedStatus(parentSlice.status)) {
-        guardError = `cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first`;
-        return;
-      }
-
-      const newTaskIds = new Set(taskPayload.map((task) => task.taskId));
-      const existingTasks = getSliceTasks(params.milestoneId, params.sliceId);
-      if (hasTaskPayload) {
-        omittedTaskIds = existingTasks
-          .filter((task) => !newTaskIds.has(task.id))
-          .map((task) => task.id);
-
-        for (const task of existingTasks) {
-          if (!newTaskIds.has(task.id) && isClosedStatus(task.status)) {
-            guardError = `cannot remove completed task ${task.id}`;
-            return;
-          }
+    const receipt = executePlanningDomainOperation({
+      operationType: "workflow.slice.plan",
+      invocation,
+      actorId: params.actorName,
+      payload: planningOperationPayload(params),
+      event: {
+        eventType: "workflow.slice.planned",
+        entityType: "slice",
+        entityId: `${params.milestoneId}/${params.sliceId}`,
+        payload: {
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskIds: taskPayload.map((task) => task.taskId),
+        },
+        destinations: ["projection"],
+      },
+      projection: {
+        projectionKey: `planning/${params.milestoneId}/${params.sliceId}`.toLowerCase(),
+        projectionKind: "markdown",
+        rendererVersion: "v1",
+      },
+      mutate(context) {
+        const parentMilestone = getMilestone(params.milestoneId);
+        if (!parentMilestone) {
+          throw new PlanningGuardError(`milestone not found: ${params.milestoneId}`);
         }
-      }
-
-      if (isDeferredStatus(parentSlice.status)) {
-        updateSliceStatus(params.milestoneId, params.sliceId, "pending");
-      }
-
-      upsertSlicePlanning(params.milestoneId, params.sliceId, {
-        goal: params.goal,
-        successCriteria: params.successCriteria,
-        proofLevel: params.proofLevel,
-        integrationClosure: params.integrationClosure,
-        observabilityImpact: params.observabilityImpact,
-        targetRepositories: params.targetRepositories ?? defaultTargets,
-      });
-
-      if (hasTaskPayload) {
-        for (const taskId of omittedTaskIds) {
-          deleteTask(params.milestoneId, params.sliceId, taskId);
+        if (isClosedStatus(parentMilestone.status)) {
+          throw new PlanningGuardError(`cannot plan slice in a closed milestone: ${params.milestoneId} (status: ${parentMilestone.status})`);
         }
 
-        const existingTaskById = new Map(existingTasks.map((task) => [task.id, task]));
-        for (const task of taskPayload) {
-          const planning = {
-            title: task.title,
-            description: task.description,
-            estimate: task.estimate,
-            files: task.files,
-            verify: task.verify,
-            inputs: task.inputs,
-            expectedOutput: task.expectedOutput,
-            observabilityImpact: task.observabilityImpact ?? "",
-            fullPlanMd: task.fullPlanMd,
-            targetRepositories: task.targetRepositories ?? params.targetRepositories ?? defaultTargets,
-          };
-          const existingTask = existingTaskById.get(task.taskId);
-          if (!existingTask || !isClosedStatus(existingTask.status)) {
-            insertTask({
-              id: task.taskId,
-              sliceId: params.sliceId,
+        const parentSlice = getSlice(params.milestoneId, params.sliceId);
+        if (!parentSlice) {
+          throw new PlanningGuardError(`missing parent slice: ${params.milestoneId}/${params.sliceId}`);
+        }
+        if (isClosedStatus(parentSlice.status)) {
+          throw new PlanningGuardError(`cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first`);
+        }
+
+        const newTaskIds = new Set(taskPayload.map((task) => task.taskId));
+        const existingTasks = getSliceTasks(params.milestoneId, params.sliceId);
+        const cancelledIncomingTask = existingTasks.find((task) => (
+          newTaskIds.has(task.id) && task.status === "skipped"
+        ));
+        if (cancelledIncomingTask) {
+          throw new PlanningGuardError(`cannot re-plan cancelled task ${cancelledIncomingTask.id} — use gsd_task_reopen first`);
+        }
+        const omittedTasks = hasTaskPayload
+          ? existingTasks.filter((task) => !newTaskIds.has(task.id))
+          : [];
+        const completedOmission = omittedTasks.find((task) => isClosedStatus(task.status) && task.status !== "skipped");
+        if (completedOmission) {
+          throw new PlanningGuardError(`cannot remove completed task ${completedOmission.id}`);
+        }
+
+        if (isDeferredStatus(parentSlice.status)) {
+          updateSliceStatus(params.milestoneId, params.sliceId, "pending");
+        }
+        upsertSlicePlanning(params.milestoneId, params.sliceId, {
+          goal: params.goal,
+          successCriteria: params.successCriteria,
+          proofLevel: params.proofLevel,
+          integrationClosure: params.integrationClosure,
+          observabilityImpact: params.observabilityImpact,
+          targetRepositories: params.targetRepositories ?? defaultTargets,
+        });
+
+        if (hasTaskPayload) {
+          for (const task of omittedTasks) {
+            updateTaskStatus(params.milestoneId, params.sliceId, task.id, "skipped");
+            const lifecycle = adoptLifecycleIfMissing(context, {
+              itemKind: "task",
               milestoneId: params.milestoneId,
-              title: task.title,
-              status: "pending",
+              sliceId: params.sliceId,
+              taskId: task.id,
+              lifecycleStatus: "ready",
             });
+            if (lifecycle.lifecycleStatus !== "cancelled") {
+              adoptOrTransitionLifecycle(context, {
+                itemKind: "task",
+                milestoneId: params.milestoneId,
+                sliceId: params.sliceId,
+                taskId: task.id,
+                lifecycleStatus: "cancelled",
+              });
+            }
           }
-          upsertTaskPlanning(params.milestoneId, params.sliceId, task.taskId, planning);
-        }
-      }
 
-      // Seed quality gate rows inside the transaction — all-or-nothing with
-      // the plan data so a crash can't leave orphaned gates without tasks.
-      const sliceGates = resolveGateEvaluateSliceGates(gateEvaluation);
-      for (const gid of sliceGates) {
-        insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "slice" });
-      }
-      const taskGates = resolveTaskGates(gateEvaluation);
-      for (const task of taskPayload) {
-        for (const gid of taskGates) {
-          insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
+          const existingTaskById = new Map(existingTasks.map((task) => [task.id, task]));
+          for (const task of taskPayload) {
+            if (!existingTaskById.has(task.taskId)) {
+              insertTask({
+                id: task.taskId,
+                sliceId: params.sliceId,
+                milestoneId: params.milestoneId,
+                title: task.title,
+                status: "pending",
+              });
+            }
+            upsertTaskPlanning(params.milestoneId, params.sliceId, task.taskId, {
+              title: task.title,
+              description: task.description,
+              estimate: task.estimate,
+              files: task.files,
+              verify: task.verify,
+              inputs: task.inputs,
+              expectedOutput: task.expectedOutput,
+              observabilityImpact: task.observabilityImpact ?? "",
+              fullPlanMd: task.fullPlanMd,
+              targetRepositories: task.targetRepositories ?? params.targetRepositories ?? defaultTargets,
+            });
+            const lifecycle = adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: params.sliceId,
+              taskId: task.taskId,
+              lifecycleStatus: "ready",
+            });
+            if (lifecycle.lifecycleStatus === "cancelled") {
+              throw new PlanningGuardError(`cannot re-plan cancelled task ${task.taskId} — use gsd_task_reopen first`);
+            }
+            if (lifecycle.lifecycleStatus === "pending") {
+              adoptOrTransitionLifecycle(context, {
+                itemKind: "task",
+                milestoneId: params.milestoneId,
+                sliceId: params.sliceId,
+                taskId: task.taskId,
+                lifecycleStatus: "ready",
+              });
+            }
+          }
         }
-      }
-      insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
+
+        const sliceLifecycle = adoptLifecycleIfMissing(context, {
+          itemKind: "slice",
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          lifecycleStatus: hasTaskPayload ? "ready" : "pending",
+        });
+        if (sliceLifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(`cannot re-plan cancelled slice ${params.sliceId} — use gsd_slice_reopen first`);
+        }
+        if (hasTaskPayload && sliceLifecycle.lifecycleStatus === "pending") {
+          adoptOrTransitionLifecycle(context, {
+            itemKind: "slice",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            lifecycleStatus: "ready",
+          });
+        }
+        if (hasTaskPayload) setSliceSketchFlag(params.milestoneId, params.sliceId, false);
+
+        for (const gid of resolveGateEvaluateSliceGates(gateEvaluation)) {
+          insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "slice" });
+        }
+        for (const task of taskPayload) {
+          for (const gid of resolveTaskGates(gateEvaluation)) {
+            insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
+          }
+        }
+        insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
+      },
     });
+    operationStatus = receipt.status;
   } catch (err) {
+    if (err instanceof PlanningGuardError) return { error: err.message };
     return { error: `db write failed: ${(err as Error).message}` };
   }
 
-  if (guardError) {
-    return { error: guardError };
-  }
-
   try {
-    const tasksDir = join(gsdProjectionRoot(basePath), "milestones", params.milestoneId, "slices", params.sliceId, "tasks");
-    for (const taskId of omittedTaskIds) {
-      const taskPlanPath = join(tasksDir, buildTaskFileName(taskId, "PLAN"));
-      if (existsSync(taskPlanPath)) rmSync(taskPlanPath, { force: true });
-      const artifactPath = relative(gsdProjectionRoot(basePath), taskPlanPath).replace(/\\/g, "/");
-      deleteArtifactByPath(artifactPath);
+    const allSliceTasks = getSliceTasks(params.milestoneId, params.sliceId);
+    const sliceTasks = allSliceTasks.filter((task) => task.status !== "skipped");
+    const projectionRoot = gsdProjectionRoot(basePath);
+    for (const task of allSliceTasks.filter((candidate) => candidate.status === "skipped")) {
+      const taskPlanPath = resolveTaskFile(basePath, params.milestoneId, params.sliceId, task.id, "PLAN");
+      if (!taskPlanPath) continue;
+      rmSync(taskPlanPath, { force: true });
+      deleteArtifactByPath(relative(projectionRoot, taskPlanPath).replace(/\\/g, "/"));
     }
-
-    const sliceTasks = getSliceTasks(params.milestoneId, params.sliceId);
+    if (sliceTasks.length === 0) {
+      const slicePlanPath = resolveSliceFile(basePath, params.milestoneId, params.sliceId, "PLAN");
+      if (slicePlanPath) {
+        rmSync(slicePlanPath, { force: true });
+        deleteArtifactByPath(relative(projectionRoot, slicePlanPath).replace(/\\/g, "/"));
+      }
+    }
     const hasClosedTasks = sliceTasks.some((task) => isClosedStatus(task.status));
     const renderResult = sliceTasks.length === 0
       ? { planPath: "", taskPlanPaths: [] as string[] }
@@ -476,23 +553,23 @@ export async function handlePlanSlice(
     if (sliceTasks.length > 0 && hasClosedTasks) {
       await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
     }
-    if (sliceTasks.length > 0) {
-      setSliceSketchFlag(params.milestoneId, params.sliceId, false);
-    }
     invalidateStateCache();
     clearParseCache();
 
     // ── Post-mutation hook: manifest, event log ─────────────────────────
     try {
+      await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
       writeManifest(basePath);
-      appendEvent(basePath, {
-        cmd: "plan-slice",
-        params: { milestoneId: params.milestoneId, sliceId: params.sliceId },
-        ts: new Date().toISOString(),
-        actor: "agent",
-        actor_name: params.actorName,
-        trigger_reason: params.triggerReason,
-      });
+      if (operationStatus === "committed") {
+        appendEvent(basePath, {
+          cmd: "plan-slice",
+          params: { milestoneId: params.milestoneId, sliceId: params.sliceId },
+          ts: new Date().toISOString(),
+          actor: "agent",
+          actor_name: params.actorName,
+          trigger_reason: params.triggerReason,
+        });
+      }
     } catch (hookErr) {
       logWarning("tool", `plan-slice post-mutation hook warning: ${(hookErr as Error).message}`);
     }

@@ -3,6 +3,7 @@
 
 import { isNonEmptyString, validateStringArray, validateTitle } from "../validation.js";
 import { persistMilestonePlan } from "../milestone-planning-persistence.js";
+import type { PlanningInvocation } from "../planning-invocation.js";
 
 export interface PlanMilestoneSliceInput {
   sliceId: string;
@@ -217,6 +218,7 @@ function validateParams(params: PlanMilestoneParams): PlanMilestoneParams {
 export async function handlePlanMilestone(
   rawParams: PlanMilestoneParams,
   basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<PlanMilestoneResult | { error: string }> {
   let params: PlanMilestoneParams;
   try {
@@ -225,5 +227,5 @@ export async function handlePlanMilestone(
     return { error: `validation failed: ${(err as Error).message}` };
   }
 
-  return persistMilestonePlan(params, basePath);
+  return persistMilestonePlan(params, basePath, invocation);
 }

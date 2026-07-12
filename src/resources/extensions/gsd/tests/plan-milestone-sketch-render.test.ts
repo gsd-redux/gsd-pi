@@ -12,7 +12,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { openDatabase, closeDatabase } from "../gsd-db.ts";
-import { handlePlanMilestone, type PlanMilestoneParams } from "../tools/plan-milestone.ts";
+import { handlePlanMilestone as handlePlanMilestoneWithInvocation, type PlanMilestoneParams } from "../tools/plan-milestone.ts";
+import { directPlanningInvocation } from "../planning-invocation.ts";
+
+function handlePlanMilestone(params: PlanMilestoneParams, basePath: string) {
+  return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+}
 
 function makeTmpBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-plan-sketch-render-"));

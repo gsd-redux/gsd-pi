@@ -26,8 +26,8 @@ import { recordUnitHarnessAbort } from "../unit-runtime.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
-  executePlanMilestone,
-  executePlanSlice,
+  executePlanMilestone as executePlanMilestoneWithInvocation,
+  executePlanSlice as executePlanSliceWithInvocation,
   executeReplanSlice,
   executeReassessRoadmap,
   executeSaveGateResult,
@@ -39,11 +39,26 @@ import {
   executeValidateMilestone,
   executeUatResultSave,
 } from "../tools/workflow-tool-executors.ts";
+import { directPlanningInvocation } from "../planning-invocation.ts";
 import {
   initNotificationStore,
   readNotifications,
   _resetNotificationStore,
 } from "../notification-store.ts";
+
+function executePlanMilestone(
+  params: Parameters<typeof executePlanMilestoneWithInvocation>[0],
+  basePath: string,
+) {
+  return executePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+}
+
+function executePlanSlice(
+  params: Parameters<typeof executePlanSliceWithInvocation>[0],
+  basePath: string,
+) {
+  return executePlanSliceWithInvocation(params, basePath, directPlanningInvocation());
+}
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-workflow-executors-${randomUUID()}`);

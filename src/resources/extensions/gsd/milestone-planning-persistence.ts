@@ -4,7 +4,7 @@
 import { clearParseCache } from "./files.js";
 import { isClosedStatus } from "./status-guards.js";
 import {
-  transaction,
+  adoptLifecycleIfMissing,
   getMilestone,
   getMilestoneSlices,
   getSlice,
@@ -13,6 +13,12 @@ import {
   upsertMilestonePlanning,
   upsertSlicePlanning,
 } from "./gsd-db.js";
+import type { PlanningInvocation } from "./planning-invocation.js";
+import {
+  executePlanningDomainOperation,
+  PlanningGuardError,
+  planningOperationPayload,
+} from "./planning-domain-operation.js";
 import { invalidateStateCache } from "./state.js";
 import { renderRoadmapFromDb } from "./markdown-renderer.js";
 import { flushWorkflowProjections } from "./projection-flush.js";
@@ -155,6 +161,58 @@ function writePlanRows(params: PersistMilestonePlanParams): void {
   }
 }
 
+function adoptPlanLifecycles(
+  context: Parameters<typeof adoptLifecycleIfMissing>[0],
+  params: PersistMilestonePlanParams,
+): void {
+  adoptLifecycleIfMissing(context, {
+    itemKind: "milestone",
+    milestoneId: params.milestoneId,
+    lifecycleStatus: "ready",
+  });
+  for (const slice of params.slices) {
+    adoptLifecycleIfMissing(context, {
+      itemKind: "slice",
+      milestoneId: params.milestoneId,
+      sliceId: slice.sliceId,
+      lifecycleStatus: slice.isSketch === true ? "pending" : "ready",
+    });
+  }
+}
+
+function persistPlanOperation(
+  params: PersistMilestonePlanParams,
+  invocation: PlanningInvocation,
+): ReturnType<typeof executePlanningDomainOperation> {
+  return executePlanningDomainOperation({
+    operationType: "workflow.milestone.plan",
+    invocation,
+    actorId: params.actorName,
+    payload: planningOperationPayload(params),
+    event: {
+      eventType: "workflow.milestone.planned",
+      entityType: "milestone",
+      entityId: params.milestoneId,
+      payload: {
+        milestoneId: params.milestoneId,
+        sliceIds: params.slices.map((slice) => slice.sliceId),
+      },
+      destinations: ["projection"],
+    },
+    projection: {
+      projectionKey: `planning/${params.milestoneId.toLowerCase()}`,
+      projectionKind: "markdown",
+      rendererVersion: "v1",
+    },
+    mutate(context) {
+      const guardError = validatePlanPromotion(params);
+      if (guardError) throw new PlanningGuardError(guardError);
+      writePlanRows(params);
+      adoptPlanLifecycles(context, params);
+    },
+  });
+}
+
 async function renderPlanArtifacts(
   basePath: string,
   params: PersistMilestonePlanParams,
@@ -177,18 +235,24 @@ async function renderPlanArtifacts(
   }
 }
 
-async function runPostPlanHooks(basePath: string, params: PersistMilestonePlanParams): Promise<void> {
+async function runPostPlanHooks(
+  basePath: string,
+  params: PersistMilestonePlanParams,
+  operationStatus: "committed" | "replayed",
+): Promise<void> {
   try {
     await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
     writeManifest(basePath);
-    appendEvent(basePath, {
-      cmd: "plan-milestone",
-      params: { milestoneId: params.milestoneId },
-      ts: new Date().toISOString(),
-      actor: "agent",
-      actor_name: params.actorName,
-      trigger_reason: params.triggerReason,
-    });
+    if (operationStatus === "committed") {
+      appendEvent(basePath, {
+        cmd: "plan-milestone",
+        params: { milestoneId: params.milestoneId },
+        ts: new Date().toISOString(),
+        actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
+      });
+    }
   } catch (hookErr) {
     logWarning("tool", `plan-milestone post-mutation hook warning: ${(hookErr as Error).message}`);
   }
@@ -197,24 +261,14 @@ async function runPostPlanHooks(basePath: string, params: PersistMilestonePlanPa
 export async function persistMilestonePlan(
   params: PersistMilestonePlanParams,
   basePath: string,
+  invocation: PlanningInvocation,
 ): Promise<PersistMilestonePlanResult | { error: string }> {
-  // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
-  // Guards must be inside the transaction so the state they check cannot
-  // change between the read and the write (#2723).
-  let guardError: string | null = null;
-
+  let operationStatus: "committed" | "replayed";
   try {
-    transaction(() => {
-      guardError = validatePlanPromotion(params);
-      if (guardError) return;
-      writePlanRows(params);
-    });
+    operationStatus = persistPlanOperation(params, invocation).status;
   } catch (err) {
+    if (err instanceof PlanningGuardError) return { error: err.message };
     return { error: `db write failed: ${(err as Error).message}` };
-  }
-
-  if (guardError) {
-    return { error: guardError };
   }
 
   const roadmapPath = await renderPlanArtifacts(basePath, params);
@@ -223,7 +277,7 @@ export async function persistMilestonePlan(
   invalidateStateCache();
   clearParseCache();
 
-  await runPostPlanHooks(basePath, params);
+  await runPostPlanHooks(basePath, params, operationStatus);
 
   return {
     milestoneId: params.milestoneId,

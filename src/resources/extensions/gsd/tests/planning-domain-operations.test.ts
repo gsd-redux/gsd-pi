@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -16,8 +16,15 @@ import {
   insertMilestone,
   insertSlice,
   openDatabase,
+  updateSliceStatus,
   updateTaskStatus,
 } from "../gsd-db.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+  type CanonicalLifecycleStatus,
+} from "../db/writers/lifecycle-commands.ts";
 import {
   handlePlanMilestone,
   type PlanMilestoneParams,
@@ -330,6 +337,99 @@ test("slice and task planning preserve response shapes while promoting complete 
   assertNoInventedExecutionHistory();
 });
 
+test("slice planning promotes only pending lifecycle state and rejects cancelled identity without residue", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  const metadataOnly: PlanSliceParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    goal: "Capture slice metadata before task decomposition.",
+  };
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    metadataOnly,
+    base,
+    invocation("plan-slice/metadata"),
+  ));
+  assert.deepEqual(row(`
+    SELECT lifecycle_status, state_version FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S01'
+  `), { lifecycle_status: "pending", state_version: 0 });
+
+  const fullPlan = { ...metadataOnly, tasks: [taskParams("T01")] };
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    fullPlan,
+    base,
+    invocation("plan-slice/promote-ready"),
+  ));
+  assert.deepEqual(row(`
+    SELECT lifecycle_status, state_version FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S01'
+  `), { lifecycle_status: "ready", state_version: 1 });
+
+  const transition = (status: CanonicalLifecycleStatus, key: string) => {
+    const fence = readDomainOperationFence();
+    return executeDomainOperation({
+      operationType: `test.slice.${status}`,
+      idempotencyKey: key,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "agent",
+      sourceTransport: "test",
+      payload: { status },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S01",
+        lifecycleStatus: status,
+      });
+      return {
+        events: [{
+          eventType: `test.slice.${status}`,
+          entityType: "slice",
+          entityId: "M001/S01",
+          payload: { status },
+          destinations: ["projection"],
+        }],
+        projections: [{ projectionKey: "test/m001/s01", projectionKind: "markdown", rendererVersion: "v1" }],
+      };
+    });
+  };
+  transition("in_progress", "test/slice/in-progress");
+  const activeBefore = lifecycleSnapshot();
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    { ...fullPlan, goal: "Replan metadata without rewinding active work." },
+    base,
+    invocation("plan-slice/preserve-active"),
+  ));
+  assert.deepEqual(lifecycleSnapshot().find((entry) => entry["item_kind"] === "slice"),
+    activeBefore.find((entry) => entry["item_kind"] === "slice"));
+
+  transition("cancelled", "test/slice/cancelled");
+  updateSliceStatus("M001", "S01", "pending");
+  const beforeRejectedReuse = {
+    authority: row("SELECT revision, authority_epoch FROM project_authority"),
+    operations: count("workflow_operations"),
+    lifecycles: lifecycleSnapshot(),
+  };
+  const rejected = await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    metadataOnly,
+    base,
+    invocation("plan-slice/reuse-cancelled"),
+  );
+  assert.ok("error" in rejected);
+  assert.match(rejected.error, /cancelled slice S01.*gsd_slice_reopen/i);
+  assert.deepEqual({
+    authority: row("SELECT revision, authority_epoch FROM project_authority"),
+    operations: count("workflow_operations"),
+    lifecycles: lifecycleSnapshot(),
+  }, beforeRejectedReuse);
+});
+
 test("an exact lost-response retry replays after restart and an unrelated revision advance", async () => {
   const { base, dbPath } = makeFixture();
   seedPlanningParents();
@@ -371,6 +471,10 @@ test("an exact lost-response retry replays after restart and an unrelated revisi
     projections: count("workflow_projection_work"),
     lifecycles: lifecycleSnapshot(),
   }, beforeReplay);
+  const legacyEvents = readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8")
+    .split("\n")
+    .filter(Boolean);
+  assert.equal(legacyEvents.length, 2, "an exact replay must not append a duplicate legacy JSONL event");
 });
 
 test("the same invocation key rejects changed planning semantics without residue", async () => {

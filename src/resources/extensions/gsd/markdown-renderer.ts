@@ -452,6 +452,10 @@ function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[], gates: GateR
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+function getActivePlanTasks(milestoneId: string, sliceId: string): TaskRow[] {
+  return getSliceTasks(milestoneId, sliceId).filter((task) => task.status !== "skipped");
+}
+
 export async function renderPlanFromDb(
   basePath: string,
   milestoneId: string,
@@ -463,7 +467,7 @@ export async function renderPlanFromDb(
     throw new Error(`slice ${milestoneId}/${sliceId} not found`);
   }
 
-  const tasks = getSliceTasks(milestoneId, sliceId);
+  const tasks = getActivePlanTasks(milestoneId, sliceId);
   if (tasks.length === 0) {
     throw new Error(`no tasks found for ${milestoneId}/${sliceId}`);
   }
@@ -717,7 +721,7 @@ export async function renderPlanCheckboxes(
   sliceId: string,
   outputPath?: string,
 ): Promise<boolean> {
-  const tasks = getSliceTasks(milestoneId, sliceId);
+  const tasks = getActivePlanTasks(milestoneId, sliceId);
   if (tasks.length === 0) {
     if (!isDbAvailable()) {
       throw new Error(`database unavailable while rendering plan checkboxes for ${milestoneId}/${sliceId}`);
@@ -1057,7 +1061,7 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
 
     // ── Check plan checkbox state and summaries for each slice ────────
     for (const slice of slices) {
-      const tasks = getSliceTasks(milestone.id, slice.id);
+      const tasks = getActivePlanTasks(milestone.id, slice.id);
 
       if (!isFlatPhase) {
         // Check plan checkboxes
