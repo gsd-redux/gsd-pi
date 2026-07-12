@@ -177,6 +177,10 @@ canonical JSON repeats the schema-visible envelope metadata, hashes, and counts
 so raw mismatches fail locally. `preview_hash`
 covers that complete canonical envelope—scalar metadata plus ordered sources,
 changes, raw values, diagnostics, and resolutions—not only the nested lists.
+SQLite validates digest formats and equality of repeated fields but does not
+recompute SHA-256 or open the referenced backup. The S06 application writer
+must canonicalize and hash the preview, re-fingerprint its sources and changes,
+and independently open, check, and hash the backup before inserting the receipt.
 Unparsed material must be explicitly preserved with raw content/reference and
 an accepted disposition or remain unresolved; it may never disappear behind a
 zero aggregate count.
@@ -241,7 +245,9 @@ unique within a plan and may repeat across superseding plans so adapters can
 recognize prior host results. A plan may have zero host effects. Only effects
 whose success is required before closeout belong here,
 typically source commit, worktree integration, merge, or publish. Projection
-and advisory follow-on work are excluded.
+and advisory follow-on work are excluded. V35 validates nonempty JSON and
+lowercase `sha256:` shape; S06 owns canonical spec hashing and idempotent host
+execution.
 
 ### 6. `workflow_settlement_receipts`
 
@@ -265,13 +271,14 @@ replay the same idempotency key, recognize the existing host result, and write
 `recognized`. Old receipts remain valid history after later plan supersession;
 S06 completion queries consider only the current plan. Do not add a settlement
 aggregate: current plan plus receipt coverage plus lifecycle status already
-answer settlement state.
+answer settlement state. V35 validates nonempty proof JSON and lowercase
+`sha256:` shape; S06 owns canonical proof hashing and verification.
 
 ## Local S05 Invariants
 
 1. Every new authoritative fact binds to the exact v31 project/revision/epoch operation tuple.
 2. Projection desired identity/lineage is immutable; delivery transitions are fenced, versioned, and restart-safe without advancing domain revision.
-3. Import application is immutable, unresolved-free, backup-verified, and unique per preview hash.
+3. Import application is immutable, unresolved-free, carries matching verified-backup metadata, and is unique per preview hash; S06 performs external backup and digest verification.
 4. Kernel checkpoints form one immutable, gap-free, no-fork head per lifecycle.
 5. Kernel Attempt changes are restricted to a valid retry/reopen Execute checkpoint.
 6. Closeout plan supersession preserves project/lifecycle, uses the same or a later descendant Attempt, and advances provenance.

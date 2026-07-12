@@ -1526,14 +1526,19 @@ resulting_authority_epoch     INTEGER NOT NULL
   Envelope metadata, hashes, and counts must exactly match their receipt
   columns, and the `import.apply` operation request hash must equal the sealed
   preview hash.
-- Application requires `unresolved_count = 0`, a verified independently
-  openable backup with `quick_check = ok`, and backup schema/revision/epoch
-  matching the base snapshot.
+- Application requires `unresolved_count = 0` and records independently
+  verified backup metadata with `quick_check = ok`; the schema requires that
+  metadata's schema/revision/epoch to match the base snapshot. S06 owns opening
+  and hashing the referenced backup before insertion.
 - The receipt must bind to an `import.apply` V31 operation whose expected tuple
   matches the base, whose request hash matches the preview hash, and whose exact
-  resulting tuple matches the receipt. A receipt makes that operation immutable.
-  Updates, deletes, duplicate preview identities, and duplicate preview hashes
-  fail.
+  resulting tuple matches the receipt; its resulting revision is exactly the
+  base revision plus one. A receipt makes that operation immutable. Updates,
+  deletes, duplicate preview identities, and duplicate preview hashes fail.
+- V35 validates lowercase `sha256:` shape and equality between repeated receipt,
+  preview-envelope, and operation fields. SQLite does not recompute SHA-256;
+  S06 must canonicalize the preview and verify its source/change hashes before
+  the receipt transaction.
 
 #### `workflow_kernel_checkpoints`
 ```
@@ -1577,6 +1582,8 @@ authority_epoch             INTEGER NOT NULL
   lineage exists per lifecycle; its head is current.
 - Supersession preserves project/lifecycle and may retain the Attempt or name a
   later Attempt in the same lifecycle. There is no mutable plan status.
+- Tested-source and readiness-basis hashes must use lowercase `sha256:` format;
+  S06 owns canonical input construction and hash verification.
 - Index: `idx_workflow_closeout_plan_head`.
 
 #### `workflow_closeout_effects`
@@ -1601,6 +1608,9 @@ authority_epoch    INTEGER NOT NULL
 - Every effect is born with the exact preparation operation/revision/epoch
   tuple of its plan. Effects cannot be added after the plan is superseded or
   after receipt settlement begins. A plan may have zero host effects.
+- Effect specs must be nonempty JSON objects and their hashes must use lowercase
+  `sha256:` format. S06 and the host adapter own canonicalization, hash
+  verification, and idempotent execution.
 
 #### `workflow_settlement_receipts`
 ```
@@ -1624,6 +1634,9 @@ authority_epoch       INTEGER NOT NULL
   order, causally follow plan creation, and cannot be added to a superseded
   plan. Current plan plus complete receipt coverage is the settlement state;
   V35 adds no settlement aggregate.
+- Receipt proofs must be nonempty JSON objects and their hashes must use
+  lowercase `sha256:` format. S06 owns canonical proof construction and
+  verification before insertion.
 - Index: `idx_workflow_settlement_receipt_scope`.
 
 V35 enforces local shape, provenance, lineage, immutability, delivery fencing,

@@ -350,7 +350,7 @@ unit completes
 | `db-lifecycle-foundation-schema.ts` | workflow_item_lifecycles, workflow_execution_attempts, workflow_attempt_results, workflow_blockers, workflow_waivers, workflow_requirement_dispositions + lifecycle, fencing, provenance, history, and vocabulary constraints (V32, additive and not runtime-routed yet) |
 | `db-conversation-foundation-schema.ts` | workflow_milestone_contexts, workflow_open_questions, workflow_question_dependencies, workflow_interactions, workflow_interaction_options, workflow_answers, workflow_conversation_decisions, workflow_decision_impacts, workflow_work_checkpoints + recommendation-first, causal provenance, targeted revalidation, immutability, and single-head history constraints (V33, additive and not runtime-routed yet) |
 | `db-recovery-evidence-foundation-schema.ts` | workflow_failure_observations, workflow_recovery_budgets, workflow_recovery_actions, workflow_acceptance_criteria, workflow_technical_verdicts, workflow_verification_evidence, workflow_human_acceptances, workflow_remediation_links + explicit agent/user/external recovery ownership, immutable count budgets derived from linked Actions, requirement-scoped criterion lineage, verdict-owned objective evidence, separate subjective acceptance, and immutable rework/remediation routing (V34, additive and not runtime-routed yet) |
-| `db-projection-import-kernel-closeout-foundation-schema.ts` | workflow_projection_work, workflow_import_applications, workflow_kernel_checkpoints, workflow_closeout_plans, workflow_closeout_effects, workflow_settlement_receipts + per-key fenced projection delivery, sealed import and backup proof, immutable kernel-stage lineage, versioned closeout plans, ordered idempotent effects, and success-only settlement receipts (V35, additive and not runtime-routed yet) |
+| `db-projection-import-kernel-closeout-foundation-schema.ts` | workflow_projection_work, workflow_import_applications, workflow_kernel_checkpoints, workflow_closeout_plans, workflow_closeout_effects, workflow_settlement_receipts + per-key fenced projection delivery, import receipts carrying preview and verified-backup metadata, immutable kernel-stage lineage, versioned closeout plans, ordered idempotency-keyed effects, and success-only settlement receipts (V35, additive and not runtime-routed yet) |
 | `db-coordination-schema.ts` | workers, milestone_leases, unit_dispatches, cancellation_requests, command_queue |
 | `db-memory-fts-schema.ts` | memories_fts (FTS5 virtual table), memories_ai/ad/au triggers |
 | `db-runtime-kv-schema.ts` | runtime_kv |
@@ -420,17 +420,20 @@ bind to a Domain Operation, while fenced delivery transitions are operational
 and do not advance project revision.
 
 An import preview remains non-authoritative until one immutable application
-receipt seals its exact source/change envelope and independently verified
-backup. The receipt requires its envelope metadata, hashes, and counts to match
-the canonical preview JSON and uses the `import.apply` operation request hash
-as the trusted preview seal; the operation becomes immutable once receipted.
+receipt records its exact source/change envelope and independently verified
+backup metadata. The schema requires repeated envelope metadata, hashes, and
+counts to match the preview JSON, binds the `import.apply` operation request
+hash to `preview_hash`, and makes the operation immutable once receipted. It
+validates lowercase `sha256:` formats but cannot recompute SHA-256; S06 owns
+canonical preview hashing, source/change verification, and opening and hashing
+the referenced backup before insertion.
 Absence of a kernel checkpoint means Advance; the first persisted checkpoint
 is Execute and shares the selected Attempt's claim operation.
 Closeout state is derived from the current immutable plan, its ordered
-idempotent effects, and complete success-only receipts. Missing receipt means
+idempotency-keyed effects, and complete success-only receipts. Missing receipt means
 pending, while failures route through V34 recovery facts rather than failed
 receipts. V35 adds no kernel-run or settlement aggregate.
 
 V35 is still an additive foundation. S06 owns atomic sibling bundles, adapters,
-queries, stage/readiness checks, runtime routing, fault recovery, and final
-lifecycle completion.
+queries, stage/readiness checks, canonical effect/proof hashing, idempotent host
+execution, runtime routing, fault recovery, and final lifecycle completion.
