@@ -793,7 +793,13 @@ test("rejects malformed timestamps and prevents lifecycle audit time from moving
   });
 });
 
-function runConcurrentWriter(path: string, id: string, startAt: number): Promise<Record<string, unknown>> {
+interface ConcurrentWriter {
+  ready: Promise<void>;
+  result: Promise<Record<string, unknown>>;
+  start: () => void;
+}
+
+function runConcurrentWriter(path: string, id: string): ConcurrentWriter {
   const dbHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/gsd-db.ts")).href;
   const domainHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/db/domain-operation.ts")).href;
   const writerHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/db/writers/lifecycle-commands.ts")).href;
@@ -801,10 +807,11 @@ function runConcurrentWriter(path: string, id: string, startAt: number): Promise
     import { openDatabase, closeDatabase } from ${JSON.stringify(dbHref)};
     import { executeDomainOperation } from ${JSON.stringify(domainHref)};
     import { adoptOrTransitionLifecycle, readDomainOperationFence } from ${JSON.stringify(writerHref)};
-    const [path, id, startAt] = process.argv.slice(1);
+    const [path, id] = process.argv.slice(1);
     if (!openDatabase(path)) throw new Error('open failed');
     const fence = readDomainOperationFence();
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, Number(startAt) - Date.now()));
+    console.log('READY');
+    await new Promise((resolve) => process.stdin.once('data', resolve));
     try {
       const receipt = executeDomainOperation({
         operationType: 'lifecycle.ready', idempotencyKey: 'race/' + id,
@@ -826,34 +833,44 @@ function runConcurrentWriter(path: string, id: string, startAt: number): Promise
   `;
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [
-      "--import", "./src/resources/extensions/gsd/tests/resolve-ts.mjs",
-      "--experimental-strip-types", "--input-type=module", "-e", script,
-      path, id, String(startAt),
-    ], { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  let readyResolve!: () => void;
+  const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
+  const child = spawn(process.execPath, [
+    "--import", "./src/resources/extensions/gsd/tests/resolve-ts.mjs",
+    "--experimental-strip-types", "--input-type=module", "-e", script,
+    path, id,
+  ], { cwd: process.cwd(), env, stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk) => {
+    stdout += chunk;
+    if (stdout.includes("READY\n")) readyResolve();
+  });
+  child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+  const result = new Promise<Record<string, unknown>>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code) => {
       if (code !== 0) return reject(new Error(stderr || stdout || `child exited ${code}`));
-      try { resolve(JSON.parse(stdout.trim()) as Record<string, unknown>); }
+      const payload = stdout.split("\n").find((line) => line.startsWith("{"));
+      try { resolve(JSON.parse(payload ?? "") as Record<string, unknown>); }
       catch { reject(new Error(`invalid child output: ${stdout}\n${stderr}`)); }
     });
   });
+  return {
+    ready,
+    result,
+    start: () => child.stdin?.end("go\n"),
+  };
 }
 
 test("two processes cannot advance one lifecycle from the same fence", async (t) => {
   const path = openFixture(t);
   adoptTask();
   closeDatabase();
-  const startAt = Date.now() + 1_000;
-  const outcomes = await Promise.all([
-    runConcurrentWriter(path, "a", startAt),
-    runConcurrentWriter(path, "b", startAt),
-  ]);
+  const writers = [runConcurrentWriter(path, "a"), runConcurrentWriter(path, "b")];
+  await Promise.all(writers.map((writer) => writer.ready));
+  for (const writer of writers) writer.start();
+  const outcomes = await Promise.all(writers.map((writer) => writer.result));
   assert.equal(outcomes.filter((outcome) => outcome.kind === "committed").length, 1, JSON.stringify(outcomes));
   const rejected = outcomes.filter((outcome) => outcome.kind === "error");
   assert.equal(rejected.length, 1, JSON.stringify(outcomes));
