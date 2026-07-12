@@ -25,9 +25,9 @@ export function isMigrationBackupError(err: unknown): err is MigrationBackupErro
 /**
  * Creates a same-version backup before file-backed schema migrations.
  *
- * Existing same-version backups are reused. New backups fail closed: WAL
- * checkpoint failures, incomplete checkpoints, and copy failures are logged
- * and then rethrown before migration DDL runs.
+ * Same-version backups are replaced so they always represent the database
+ * being migrated. WAL checkpoint failures, incomplete checkpoints, and copy
+ * failures are logged and then rethrown before migration DDL runs.
  */
 export function backupDatabaseBeforeMigration(
   db: DbAdapter,
@@ -39,14 +39,33 @@ export function backupDatabaseBeforeMigration(
 
   try {
     const backupPath = `${dbPath}.backup-v${currentVersion}`;
-    if (deps.existsSync(backupPath)) return;
-
     checkpointWal(db);
     deps.copyFileSync(dbPath, backupPath);
+    verifyBackup(db, backupPath, currentVersion);
   } catch (backupErr) {
     const error = toMigrationBackupError(backupErr);
     deps.logWarning("db", `Pre-migration backup failed: ${error.message}`);
     throw error;
+  }
+}
+
+function verifyBackup(db: DbAdapter, backupPath: string, currentVersion: number): void {
+  let attached = false;
+  try {
+    db.prepare("ATTACH DATABASE ? AS migration_backup").run(backupPath);
+    attached = true;
+    const check = db.prepare("PRAGMA migration_backup.quick_check").get()?.["quick_check"];
+    if (check !== "ok") {
+      throw new MigrationBackupError(`backup failed quick_check: ${String(check)}`);
+    }
+    const version = Number(
+      db.prepare("SELECT MAX(version) AS version FROM migration_backup.schema_version").get()?.["version"],
+    );
+    if (version !== currentVersion) {
+      throw new MigrationBackupError(`backup schema is v${version}, expected v${currentVersion}`);
+    }
+  } finally {
+    if (attached) db.exec("DETACH DATABASE migration_backup");
   }
 }
 

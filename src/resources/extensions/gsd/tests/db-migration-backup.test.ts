@@ -31,6 +31,8 @@ class FakeAdapter implements DbAdapter {
   readonly prepareCalls: string[] = [];
   failCheckpoint = false;
   checkpointRow: Record<string, unknown> = { busy: 0, log: 0, checkpointed: 0 };
+  backupCheck = "ok";
+  backupVersion = 12;
 
   exec(sql: string): void {
     this.execCalls.push(sql);
@@ -40,6 +42,12 @@ class FakeAdapter implements DbAdapter {
   prepare(sql: string): DbStatement {
     this.prepareCalls.push(sql);
     if (this.failCheckpoint) throw new Error("checkpoint failed");
+    if (sql === "PRAGMA migration_backup.quick_check") {
+      return new FakeStatement({ quick_check: this.backupCheck });
+    }
+    if (sql.includes("migration_backup.schema_version")) {
+      return new FakeStatement({ version: this.backupVersion });
+    }
     return new FakeStatement(this.checkpointRow);
   }
 
@@ -47,8 +55,9 @@ class FakeAdapter implements DbAdapter {
 }
 
 describe("db-migration-backup", () => {
-  test("skips missing, memory, and already-backed-up databases", () => {
+  test("skips missing and memory databases but replaces existing backups", () => {
     const db = new FakeAdapter();
+    db.backupVersion = 7;
     const copies: Array<[string, string]> = [];
     const warnings: string[] = [];
 
@@ -63,14 +72,19 @@ describe("db-migration-backup", () => {
       logWarning: (_scope, message) => warnings.push(message),
     });
     backupDatabaseBeforeMigration(db, "/tmp/gsd.db", 7, {
-      existsSync: (path) => path.endsWith(".backup-v7"),
+      existsSync: () => true,
       copyFileSync: (src, dest) => copies.push([src, dest]),
       logWarning: (_scope, message) => warnings.push(message),
     });
 
-    assert.deepEqual(copies, []);
+    assert.deepEqual(copies, [["/tmp/gsd.db", "/tmp/gsd.db.backup-v7"]]);
     assert.deepEqual(warnings, []);
-    assert.deepEqual(db.execCalls, []);
+    assert.deepEqual(db.prepareCalls, [
+      "PRAGMA wal_checkpoint(TRUNCATE)",
+      "ATTACH DATABASE ? AS migration_backup",
+      "PRAGMA migration_backup.quick_check",
+      "SELECT MAX(version) AS version FROM migration_backup.schema_version",
+    ]);
   });
 
   test("checkpoints before copying a file-backed database", () => {
@@ -83,7 +97,12 @@ describe("db-migration-backup", () => {
       logWarning: () => assert.fail("should not warn"),
     });
 
-    assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
+    assert.deepEqual(db.prepareCalls, [
+      "PRAGMA wal_checkpoint(TRUNCATE)",
+      "ATTACH DATABASE ? AS migration_backup",
+      "PRAGMA migration_backup.quick_check",
+      "SELECT MAX(version) AS version FROM migration_backup.schema_version",
+    ]);
     assert.deepEqual(copies, [["/tmp/gsd.db", "/tmp/gsd.db.backup-v12"]]);
   });
 
@@ -150,5 +169,24 @@ describe("db-migration-backup", () => {
     assert.deepEqual(db.prepareCalls, ["PRAGMA wal_checkpoint(TRUNCATE)"]);
     assert.equal(warnings.length, 1);
     assert.match(warnings[0], /Pre-migration backup failed: read only/);
+  });
+
+  test("throws when the copied backup fails integrity validation", () => {
+    const db = new FakeAdapter();
+    db.backupCheck = "database disk image is malformed";
+    const warnings: string[] = [];
+
+    assert.throws(
+      () =>
+        backupDatabaseBeforeMigration(db, "/tmp/gsd.db", 12, {
+          existsSync: () => true,
+          copyFileSync: () => {},
+          logWarning: (_scope, message) => warnings.push(message),
+        }),
+      /failed quick_check/,
+    );
+
+    assert.deepEqual(db.execCalls, ["DETACH DATABASE migration_backup"]);
+    assert.match(warnings[0], /Pre-migration backup failed/);
   });
 });

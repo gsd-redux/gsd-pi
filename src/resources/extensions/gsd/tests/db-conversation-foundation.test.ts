@@ -214,6 +214,30 @@ function insertPresentedChoice(db: RawDb, input: InteractionInput): void {
   }
 }
 
+function insertPresentedRecap(db: RawDb, input: InteractionInput): void {
+  db.prepare(`
+    INSERT INTO workflow_interactions (
+      interaction_id, project_id, question_id, sequence, interaction_kind,
+      presentation_state, focused_prompt, requires_answer, option_count,
+      recommendation_text, recommendation_rationale,
+      recommendation_evidence, recommendation_confidence,
+      recommendation_uncertainty, revisit_condition, presented_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (?, ?, ?, ?, 'recap', 'prepared', ?, 0, 0, '', '', '', NULL, '', '', '', ?, ?, 0)
+  `).run(
+    input.interactionId,
+    projectId(db),
+    input.questionId,
+    input.sequence,
+    "Here is what I understand so far.",
+    input.operationId,
+    input.revision,
+  );
+  db.prepare(
+    "UPDATE workflow_interactions SET presentation_state = 'presented' WHERE interaction_id = ?",
+  ).run(input.interactionId);
+}
+
 function insertAcceptedAnswer(db: RawDb, input: {
   answerId: string;
   interactionId: string;
@@ -332,6 +356,13 @@ test("fresh v33 databases expose exact Milestone and Interaction Kind vocabulari
     ]) {
       assert.equal(tableExists(db, table), true, `${table} should exist`);
     }
+    assert.equal(
+      db.prepare(`
+        SELECT 1 AS present FROM sqlite_master
+        WHERE type = 'index' AND name = 'idx_workflow_interactions_question'
+      `).get(),
+      undefined,
+    );
     insertOperations(db, 3);
     insertMilestoneLifecycle(db, "life-disc", "M-DISC", "op-1", 1);
 
@@ -610,6 +641,53 @@ test("verbatim pushback stays distinct from interpretation and closes only throu
   }
 });
 
+test("presented recaps accept corrections without becoming answer gates", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 5);
+    insertMilestoneLifecycle(db, "life-disc", "M-DISC", "op-1", 1);
+    insertQuestion(db, "question-route", "life-disc", "op-2", 2);
+    insertPresentedChoice(db, {
+      interactionId: "interaction-choice", questionId: "question-route", sequence: 1,
+      operationId: "op-3", revision: 3,
+    });
+    insertAcceptedAnswer(db, {
+      answerId: "answer-choice", interactionId: "interaction-choice", questionId: "question-route",
+      operationId: "op-4", revision: 4,
+    });
+    insertDecision(db, {
+      decisionId: "decision-choice", questionId: "question-route", answerId: "answer-choice",
+      operationId: "op-4", revision: 4,
+    });
+    insertPresentedRecap(db, {
+      interactionId: "interaction-recap", questionId: "question-route", sequence: 2,
+      operationId: "op-4", revision: 4,
+    });
+    insertAcceptedAnswer(db, {
+      answerId: "answer-correction", interactionId: "interaction-recap", questionId: "question-route",
+      responseKind: "correction", verbatim: "That recap is wrong; use files first.",
+      normalized: "select_files_first", selectedOptionId: null,
+      operationId: "op-5", revision: 5,
+    });
+    insertDecision(db, {
+      decisionId: "decision-correction", questionId: "question-route", answerId: "answer-correction",
+      supersedesDecisionId: "decision-choice", text: "Use files first.",
+      operationId: "op-5", revision: 5,
+    });
+
+    assert.equal(
+      db.prepare("SELECT requires_answer FROM workflow_interactions WHERE interaction_id = 'interaction-recap'").get()?.requires_answer,
+      0,
+    );
+    assert.equal(
+      db.prepare("SELECT supersedes_decision_id FROM workflow_conversation_decisions WHERE decision_id = 'decision-correction'").get()?.supersedes_decision_id,
+      "decision-choice",
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test("corrections supersede Decisions and target only dependency-reachable work for revalidation", () => {
   const { db } = openFreshFixture();
   try {
@@ -678,6 +756,15 @@ test("corrections supersede Decisions and target only dependency-reachable work 
         INSERT INTO workflow_decision_impacts (
           decision_id, lifecycle_id, project_id, effect,
           operation_id, project_revision, authority_epoch
+        ) VALUES ('decision-2', 'life-disc', ?, 'invalidate', 'op-7', 7, 0)
+      `).run(projectId(db)),
+      /UNIQUE constraint failed/,
+    );
+    assert.throws(
+      () => db.prepare(`
+        INSERT INTO workflow_decision_impacts (
+          decision_id, lifecycle_id, project_id, effect,
+          operation_id, project_revision, authority_epoch
         ) VALUES ('decision-2', 'life-other', ?, 'revalidate', 'op-7', 7, 0)
       `).run(projectId(db)),
       /dependency-reachable/,
@@ -725,6 +812,52 @@ test("corrections supersede Decisions and target only dependency-reachable work 
       () => db.exec("UPDATE workflow_conversation_decisions SET decision_text = 'rewritten' WHERE decision_id = 'decision-1'"),
       /immutable/,
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("decision impacts cannot invalidate inform-only dependencies", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 5);
+    insertMilestoneLifecycle(db, "life-disc", "M-DISC", "op-1", 1);
+    insertMilestoneLifecycle(db, "life-other", "M-OTHER", "op-2", 2);
+    insertQuestion(db, "question-route", "life-disc", "op-3", 3);
+    db.prepare(`
+      INSERT INTO workflow_question_dependencies (
+        question_id, lifecycle_id, project_id, dependency_kind,
+        created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('question-route', 'life-other', ?, 'inform', '', 'op-3', 3, 0)
+    `).run(projectId(db));
+    insertPresentedChoice(db, {
+      interactionId: "interaction-route", questionId: "question-route", sequence: 1,
+      operationId: "op-4", revision: 4,
+    });
+    insertAcceptedAnswer(db, {
+      answerId: "answer-route", interactionId: "interaction-route", questionId: "question-route",
+      operationId: "op-5", revision: 5,
+    });
+    insertDecision(db, {
+      decisionId: "decision-route", questionId: "question-route", answerId: "answer-route",
+      operationId: "op-5", revision: 5,
+    });
+
+    assert.throws(
+      () => db.prepare(`
+        INSERT INTO workflow_decision_impacts (
+          decision_id, lifecycle_id, project_id, effect,
+          operation_id, project_revision, authority_epoch
+        ) VALUES ('decision-route', 'life-other', ?, 'invalidate', 'op-5', 5, 0)
+      `).run(projectId(db)),
+      /dependency-reachable/,
+    );
+    db.prepare(`
+      INSERT INTO workflow_decision_impacts (
+        decision_id, lifecycle_id, project_id, effect,
+        operation_id, project_revision, authority_epoch
+      ) VALUES ('decision-route', 'life-other', ?, 'inform', 'op-5', 5, 0)
+    `).run(projectId(db));
   } finally {
     db.close();
   }
@@ -841,6 +974,30 @@ test("v32 upgrade is additive, backed up, and does not reinterpret legacy rows",
     assert.equal(restored.prepare("SELECT COUNT(*) AS count FROM workflow_open_questions").get()?.count, 0);
   } finally {
     restored.close();
+  }
+});
+
+test("v32 upgrade replaces a stale same-version backup", () => {
+  const dbPath = createDatabasePath();
+  rewindToV32(dbPath);
+  copyFileSync(dbPath, `${dbPath}.backup-v32`);
+  const current = openRawDatabase(dbPath);
+  try {
+    current.prepare("UPDATE decisions SET decision = 'Current state' WHERE id = 'D-LEGACY'").run();
+  } finally {
+    current.close();
+  }
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+
+  const backup = openRawDatabase(`${dbPath}.backup-v32`);
+  try {
+    assert.equal(maxSchemaVersion(backup), 32);
+    assert.equal(backup.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Current state");
+    assert.equal(backup.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
+  } finally {
+    backup.close();
   }
 });
 

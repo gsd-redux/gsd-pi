@@ -361,7 +361,10 @@ export function createConversationFoundationSchemaV33(db: DbAdapter): void {
         AND interaction.question_id = NEW.question_id
         AND interaction.project_id = NEW.project_id
         AND interaction.presentation_state = 'presented'
-        AND interaction.requires_answer = 1
+        AND (
+          interaction.requires_answer = 1 OR
+          (interaction.interaction_kind = 'recap' AND NEW.response_kind = 'correction')
+        )
         AND interaction.project_revision = NEW.observed_project_revision
         AND interaction.authority_epoch <= NEW.authority_epoch
     )
@@ -509,7 +512,7 @@ export function createConversationFoundationSchemaV33(db: DbAdapter): void {
       operation_id TEXT NOT NULL,
       project_revision INTEGER NOT NULL CHECK (project_revision > 0),
       authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
-      PRIMARY KEY (decision_id, lifecycle_id, effect),
+      PRIMARY KEY (decision_id, lifecycle_id),
       FOREIGN KEY (decision_id, project_id, operation_id, project_revision, authority_epoch)
         REFERENCES workflow_conversation_decisions(
           decision_id, project_id, operation_id, project_revision, authority_epoch
@@ -529,7 +532,10 @@ export function createConversationFoundationSchemaV33(db: DbAdapter): void {
        AND dependency.lifecycle_id = NEW.lifecycle_id
       WHERE decision.decision_id = NEW.decision_id
         AND decision.project_id = NEW.project_id
-        AND (NEW.effect != 'revalidate' OR dependency.dependency_kind = 'revalidate')
+        AND (
+          NEW.effect = 'inform' OR
+          dependency.dependency_kind = 'revalidate'
+        )
     )
     BEGIN
       SELECT RAISE(ABORT, 'decision impact must target dependency-reachable work');
@@ -611,8 +617,6 @@ export function createConversationFoundationSchemaV33(db: DbAdapter): void {
 
     CREATE INDEX IF NOT EXISTS idx_workflow_questions_open
       ON workflow_open_questions(project_id, lifecycle_id, question_status);
-    CREATE INDEX IF NOT EXISTS idx_workflow_interactions_question
-      ON workflow_interactions(question_id, sequence);
     CREATE INDEX IF NOT EXISTS idx_workflow_decision_impacts_lifecycle
       ON workflow_decision_impacts(lifecycle_id, effect);
     CREATE INDEX IF NOT EXISTS idx_workflow_checkpoints_scope
