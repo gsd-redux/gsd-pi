@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { isCustomProvider } from "../preferences-models.ts";
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -303,3 +304,44 @@ describe("custom provider session model overrides PREFERENCES.md (#4122)", () =>
   });
 });
 
+describe("custom provider detection (#801)", () => {
+  let originalGsdHome: string | undefined;
+  let tmpGsdHome: string;
+
+  beforeEach(() => {
+    originalGsdHome = process.env.GSD_HOME;
+    tmpGsdHome = makeTmpDir("gsd-home");
+    process.env.GSD_HOME = tmpGsdHome;
+  });
+
+  afterEach(() => {
+    if (originalGsdHome === undefined) {
+      delete process.env.GSD_HOME;
+    } else {
+      process.env.GSD_HOME = originalGsdHome;
+    }
+    try { rmSync(tmpGsdHome, { recursive: true, force: true }); } catch {}
+  });
+
+  it("detects extension-registered providers that are not declared in models.json", () => {
+    const registry = {
+      getAllWithDiscovered: () => [
+        { provider: "pi-llama-cpp" },
+      ],
+    };
+
+    assert.equal(isCustomProvider("pi-llama-cpp", registry), true,
+      "runtime providers outside the built-in catalog should count as custom");
+  });
+
+  it("does not treat built-in providers as custom just because they are in the registry", () => {
+    const registry = {
+      getAll: () => [
+        { provider: "claude-code" },
+      ],
+    };
+
+    assert.equal(isCustomProvider("claude-code", registry), false,
+      "built-in providers must still defer to PREFERENCES.md");
+  });
+});

@@ -1085,7 +1085,7 @@ export async function bootstrapAutoSession(
   // provider the user is not logged into and surface as "Not logged in · Please
   // run /login" before pausing and resetting to claude-code/claude-sonnet-4-6.
   const manualSessionOverride = getSessionModelOverride(ctx.sessionManager.getSessionId());
-  const sessionProviderIsCustom = isCustomProvider(ctx.model?.provider);
+  const sessionProviderIsCustom = isCustomProvider(ctx.model?.provider, ctx.modelRegistry);
   const profileModelIds = modelIdsForProfileResolution(
     ctx.modelRegistry,
     resolveProfileAnchorProvider(ctx.model?.provider),
