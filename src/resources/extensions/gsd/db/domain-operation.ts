@@ -124,7 +124,7 @@ function requireNonNegativeSafeInteger(value: number, field: string): void {
   }
 }
 
-function canonicalJson(value: DomainJsonValue): string {
+export function canonicalDomainJson(value: DomainJsonValue): string {
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     return JSON.stringify(value);
   }
@@ -133,7 +133,7 @@ function canonicalJson(value: DomainJsonValue): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+    return `[${value.map((entry) => canonicalDomainJson(entry)).join(",")}]`;
   }
   if (typeof value !== "object") throw new Error("domain operation payload must be JSON-compatible");
 
@@ -144,7 +144,7 @@ function canonicalJson(value: DomainJsonValue): string {
   const entries = Object.entries(value).sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0,
   );
-  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`).join(",")}}`;
+  return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalDomainJson(entry)}`).join(",")}}`;
 }
 
 function validateRequestScalars(request: DomainOperationRequest): void {
@@ -169,7 +169,7 @@ function validateRequestScalars(request: DomainOperationRequest): void {
 }
 
 function requestHash(request: DomainOperationRequest): string {
-  const canonical = canonicalJson({
+  const canonical = canonicalDomainJson({
     operationType: request.operationType,
     expectedRevision: request.expectedRevision,
     expectedAuthorityEpoch: request.expectedAuthorityEpoch,
@@ -197,7 +197,7 @@ function validateMutation(mutation: DomainOperationMutation): string[] {
     requireNonBlank(event.eventType, `events[${eventIndex}].eventType`);
     requireNonBlank(event.entityType, `events[${eventIndex}].entityType`);
     requireNonBlank(event.entityId, `events[${eventIndex}].entityId`);
-    const payload = canonicalJson(event.payload);
+    const payload = canonicalDomainJson(event.payload);
     if (event.destinations.length === 0) {
       throw new Error(`events[${eventIndex}] requires at least one outbox destination`);
     }
