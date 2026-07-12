@@ -333,7 +333,8 @@ interface ElicitRequestFormParams {
 /**
  * Handler extra — the second argument passed by McpServer.tool handlers.
  * Contains an AbortSignal scoped to the JSON-RPC request (cancelled when
- * the client cancels the `tools/call`) plus other per-request metadata.
+ * the client cancels the `tools/call`), request/session identity, and private
+ * protocol metadata such as planning idempotency keys.
  * Tools that can actually be stopped mid-flight should honour `signal`.
  */
 export interface McpToolExtra {

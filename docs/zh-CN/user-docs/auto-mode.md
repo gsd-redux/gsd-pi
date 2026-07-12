@@ -154,7 +154,7 @@ auto_supervisor:
 
 ### 自适应重规划
 
-每完成一个 slice，roadmap 都会重新评估。如果最新工作暴露出会改变计划的新信息，后续 slices 就会在继续前被重新排序、添加或删除。`balanced` 和 `budget` token profile 可以跳过这一阶段。
+每完成一个 slice，roadmap 都会重新评估。如果最新工作暴露出会改变计划的新信息，后续 slices 就会在继续前被重新排序、添加或删除。被移除的待处理 slice 和 task 会以已取消状态保留在数据库历史中，并从当前 roadmap 或 plan 投影中消失；要重新使用其 ID，必须先显式 reopen。`balanced` 和 `budget` token profile 可以跳过这一阶段。
 
 ### 验证强制执行
 

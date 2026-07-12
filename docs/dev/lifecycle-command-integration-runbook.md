@@ -36,7 +36,10 @@ commands, or orchestration modules.
 - A planning mutation, lifecycle adoption or transition, shadow comparison,
   event/outbox rows, Projection Work, and authority revision commit atomically.
   Projection rendering follows commit; replay retries rendering without
-  rerunning the mutation or duplicating compatibility events.
+  rerunning the mutation or duplicating compatibility events. Replan and
+  reassessment projections read their content and creation time from the
+  committed domain event or assessment row, so a replay reproduces the
+  original artifact instead of the retry payload or clock.
 - Removed pending tasks and slices retain their hierarchy identity as legacy
   `skipped` and canonical `cancelled`. Active plan projections omit them, and
   their IDs cannot be reused until the matching reopen command succeeds.

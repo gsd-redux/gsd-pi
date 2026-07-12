@@ -104,7 +104,7 @@ Auto mode creates and manages worktrees automatically:
 4. On milestone completion, the worktree is squash-merged to the integration branch
 5. The worktree and branch are removed
 
-Before merge or teardown, GSD reconciles legacy worktree rows without replacing hierarchy identities. If the worktree contains canonical operations or lifecycle state that is missing from or ahead of the project database, GSD blocks the merge/cleanup and preserves the worktree for recovery instead of discarding canonical history.
+Before merge or teardown, GSD reconciles legacy worktree rows without replacing hierarchy identities. If the worktree contains canonical operations or lifecycle state that is missing from or ahead of the project database, GSD blocks the merge/cleanup and preserves the worktree for recovery instead of discarding canonical history. If the project database already has a newer lifecycle head, worktree planning metadata can still merge, but it cannot replace the newer status, completion summaries, verification results, or blocker/escalation evidence.
 
 ### Manual
 

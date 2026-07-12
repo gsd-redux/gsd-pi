@@ -98,10 +98,13 @@ GSD-Task: M001/S01/T02
 自动模式会自动创建并管理 worktrees：
 
 1. milestone 启动时，在 `.gsd-worktrees/<MID>/` 创建 worktree，并切到 `milestone/<MID>` 分支
-2. 将 `.gsd/milestones/` 下的规划产物复制到该 worktree
+2. 项目根目录中的 SQLite 数据库保持为规范运行时状态；执行期间，产物和投影文件会写入当前 worktree 的 `.gsd/`
+   SQLite WAL 协调仅支持单机；不要让多台机器共享该运行时。协调限制参见 `src/resources/extensions/gsd/docs/COORDINATION.md`。
 3. 所有执行都发生在 worktree 内部
 4. milestone 完成后，把该 worktree squash merge 回集成分支
 5. 删除 worktree 和对应分支
+
+合并或清理前，GSD 会在不替换层级身份的前提下协调旧 worktree 数据行。如果 worktree 包含项目数据库中缺失或更晚的规范操作或生命周期状态，GSD 会阻止合并或清理并保留 worktree 以供恢复，避免丢弃规范历史。如果项目数据库已经有更新的生命周期头，worktree 的规划元数据仍可合并，但不能覆盖更新的状态、完成摘要、验证结果或 blocker/escalation 证据。
 
 ### 手动
 

@@ -4,7 +4,7 @@ Both `@opengsd/gsd-core` and `@opengsd/gsd-pi` read and write the same `.gsd/` d
 
 ## The shared contract
 
-`.gsd/*.md` files are the contract between the two tools. gsd-core treats them as the source of truth. gsd-pi uses a SQLite DB internally (faster queries, transactional state) but projects to the same `.md` files and imports external edits on startup. For status checkboxes, gsd-pi treats only the drifted file's recorded milestone entities as markdown-authoritative; unrelated stale projections keep the DB status.
+`.gsd/*.md` files are the interchange contract between the two tools. gsd-core treats them as the source of truth. gsd-pi imports eligible external edits into SQLite during bootstrap, then treats the database as runtime authority and projects back to the same `.md` files. Once planning has adopted a milestone's canonical lifecycle, bulk Markdown hierarchy replacement is refused; use gsd-pi's planning or reopen tools for further structural and lifecycle changes. For pre-adoption status checkboxes, gsd-pi scopes Markdown authority to the drifted file's recorded milestone entities, so unrelated stale projections keep the DB status.
 
 ## Recommended workflow: commit before switching
 
@@ -22,7 +22,7 @@ Then open the other tool. If anything goes wrong, `git reset --hard` restores th
 When you open a project in gsd-pi, it runs a reconciliation pass that:
 
 1. Compares every `.gsd/*.md` file against its recorded baseline in `.gsd/.compat.json`.
-2. Imports any file that changed since the last gsd-pi session (e.g., gsd-core edits), with status changes scoped to the milestone entities recorded for that drifted file.
+2. Imports eligible files that changed since the last gsd-pi session (e.g., gsd-core edits), with status changes scoped to the milestone entities recorded for that drifted file. It refuses a hierarchy replacement that would erase adopted canonical lifecycle history.
 3. Re-projects all markdown from the DB.
 4. Updates `.gsd/.compat.json` with the new baseline.
 
@@ -36,7 +36,7 @@ If you switch tools while gsd-pi is running (e.g., a teammate edits `.gsd/plan.m
 /gsd sync
 ```
 
-This re-runs the reconciliation pipeline, imports the external edits, and re-projects. Use `--dry-run` to preview what would change:
+This re-runs the reconciliation pipeline, imports eligible external edits, and re-projects. Use `--dry-run` to preview what would change:
 
 ```
 /gsd sync --dry-run
@@ -65,7 +65,7 @@ gsd-core is unaware of gsd-pi. It sees `.gsd/*.md` as ordinary markdown and edit
 If your project uses gsd-core's `.planning/` layout (flat `phases/NN-name/` directories, root `ROADMAP.md` / `STATE.md`), gsd-pi projects DB state back to `.planning/` automatically — you don't need to run `/gsd migrate`.
 
 - The first time gsd-pi sees a `.planning/` project, it imports the hierarchy into the database and records the layout in `.gsd/.compat.json` under `planning.layout` only after that import succeeds. A failed import leaves compatibility inactive so later projection cannot overwrite the unimported `.planning/` content.
-- On every projection, gsd-pi writes back to `.planning/` using that recorded layout.
+- On every projection, gsd-pi writes back to `.planning/` using that recorded layout. Cancelled slices and tasks are omitted, and obsolete tracked phase plan files are removed.
 - `/gsd sync` imports gsd-core's `.planning/` edits; `/gsd doctor` reports `.planning/` drift separately from `.gsd/` drift.
 
 **Un-modeled docs** (phase `DISCUSSION-LOG.md`, `PATTERNS.md`, `REVIEWS.md`, `codebase/`, `research/`) are pass-through: gsd-pi detects edits to them but never overwrites them. They are gsd-core-owned.
@@ -74,7 +74,7 @@ If your project uses gsd-core's `.planning/` layout (flat `phases/NN-name/` dire
 
 ## Conflicts: same entity edited in both
 
-If both tools edit the *same* entity (e.g., both change the status of slice `S01`) between syncs, the last writer wins after the next reconcile, and gsd-pi surfaces the resolution in the `/gsd sync` output. If a different projection is stale but did not drift, its checkbox status is not allowed to reopen or close unrelated DB rows during the import. Git review remains the final safety net — that's why the "commit before switching" workflow matters.
+Before canonical lifecycle adoption, if both tools edit the *same* entity (e.g., both change the status of slice `S01`) between syncs, the last imported writer wins and gsd-pi surfaces the resolution in `/gsd sync`. After adoption, the database lifecycle wins: sync refuses a Markdown hierarchy replacement rather than reopening, cancelling, or deleting adopted work. Use the matching gsd-pi planning or reopen tool, then re-project before switching back. A stale projection that did not drift is never allowed to reopen or close unrelated DB rows. Git review remains the final safety net — that's why the "commit before switching" workflow matters.
 
 ## Troubleshooting
 

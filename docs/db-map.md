@@ -1837,7 +1837,10 @@ projection/import/kernel/closeout tables remain outside worktree reconciliation.
 Before merging legacy rows, reconciliation detects worktree operations or
 lifecycle heads that are missing from, newer than, or inconsistent with main
 and fails closed. Hierarchy merging uses identity-preserving UPSERTs and does
-not overwrite a status protected by a newer canonical lifecycle head.
+not overwrite a status protected by a newer canonical lifecycle head. When the
+main lifecycle is newer, worktree planning fields may still merge, but main-side
+completion summaries, verification results, blocker/escalation facts, and other
+execution evidence remain authoritative.
 
 ---
 
@@ -1873,10 +1876,11 @@ not overwrite a status protected by a newer canonical lifecycle head.
 The six planning mutations above commit legacy hierarchy changes, lifecycle
 adoption or transition, one domain event/outbox destination, Projection Work,
 and the project revision in one Domain Operation. Replays return the original
-receipt and retry projection without rerunning the mutation. Removed pending
-work retains its hierarchy and lifecycle identity as legacy `skipped` and
-canonical `cancelled`; active projections omit it, and explicit reopen is
-required before reuse.
+receipt and retry projection without rerunning the mutation. Replan and roadmap
+assessment artifacts are rebuilt from the committed domain event or assessment
+row, including its original creation time. Removed pending work retains its
+hierarchy and lifecycle identity as legacy `skipped` and canonical `cancelled`;
+active projections omit it, and explicit reopen is required before reuse.
 
 `gsd_replan_task` updates exactly one existing pending task after rework. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, and `expectedOutput`; `reworkBriefRef` is optional and records the structured brief that triggered the replan. The handler rejects missing, closed/completed, and canonically cancelled tasks; those tasks must be reopened with `gsd_task_reopen` before replanning.
 
