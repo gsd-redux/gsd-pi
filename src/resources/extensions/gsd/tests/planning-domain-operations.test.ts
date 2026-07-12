@@ -365,6 +365,49 @@ test("milestone replanning rejects omitted pending slices without changing autho
   }, before);
 });
 
+test("milestone replanning omits durably cancelled slices without deleting their history", async () => {
+  const { base } = makeFixture();
+  assertSuccess(await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+    handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+    milestoneParams(),
+    base,
+    invocation("plan-milestone/before-cancelled-omission"),
+  ));
+  transitionTestLifecycle(
+    { itemKind: "slice", milestoneId: "M001", sliceId: "S02" },
+    "cancelled",
+    "test/slice/cancelled-before-milestone-replan",
+  );
+  updateSliceStatus("M001", "S02", "skipped");
+
+  const result = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+    handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+    { ...milestoneParams(), slices: milestoneParams().slices.filter((slice) => slice.sliceId !== "S02") },
+    base,
+    invocation("plan-milestone/omit-cancelled"),
+  );
+
+  assertSuccess(result);
+  assert.deepEqual(row("SELECT id, status FROM slices WHERE milestone_id = 'M001' AND id = 'S02'"), {
+    id: "S02",
+    status: "skipped",
+  });
+  assert.deepEqual(
+    row("SELECT lifecycle_status, state_version FROM workflow_item_lifecycles WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S02'"),
+    { lifecycle_status: "cancelled", state_version: 1 },
+  );
+  assert.doesNotMatch(readFileSync(result.roadmapPath, "utf8"), /S02|Sketch slice/);
+
+  const rejectedReuse = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+    handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+    milestoneParams(),
+    base,
+    invocation("plan-milestone/reuse-cancelled"),
+  );
+  assert.ok("error" in rejectedReuse);
+  assert.match(rejectedReuse.error, /cancelled slice S02.*gsd_slice_reopen/i);
+});
+
 for (const itemKind of ["milestone", "slice"] as const) {
   test(`milestone planning rejects canonically completed ${itemKind} despite open legacy drift`, async () => {
     const { base } = makeFixture();

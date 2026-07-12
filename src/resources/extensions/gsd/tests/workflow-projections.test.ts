@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { regenerateIfMissing, renderPlanContent, renderStateProjection, renderSummaryProjection } from '../workflow-projections.ts';
+import { regenerateIfMissing, renderPlanContent, renderPlanProjection, renderStateProjection, renderSummaryProjection } from '../workflow-projections.ts';
 import type { SliceRow, TaskRow } from '../gsd-db.ts';
 import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from '../gsd-db.ts';
 import { clearPathCache, _clearGsdRootCache, normalizeRealPath, resolveMilestoneFile, resolveTaskFile } from '../paths.ts';
@@ -184,6 +184,26 @@ test('workflow-projections: multiple tasks rendered in order', () => {
   const idxT1 = content.indexOf('**T01:');
   const idxT2 = content.indexOf('**T02:');
   assert.ok(idxT1 < idxT2, 'T01 should appear before T02');
+});
+
+test('workflow-projections: renderPlanProjection preserves an unowned obsolete plan', () => {
+  const base = mkdtempSync(join(tmpdir(), 'gsd-projections-'));
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  const planPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01', 'S01-PLAN.md');
+  mkdirSync(join(base, '.gsd', 'milestones', 'M001', 'slices', 'S01'), { recursive: true });
+  openDatabase(dbPath);
+
+  try {
+    const manualContent = '# Manual plan\n\nThis file is not a database projection.\n';
+    writeFileSync(planPath, manualContent, 'utf8');
+
+    renderPlanProjection(base, 'M001', 'S01');
+
+    assert.equal(readFileSync(planPath, 'utf8'), manualContent);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 // Regression for #6146: a deleted slice PLAN must be regenerated from the DB

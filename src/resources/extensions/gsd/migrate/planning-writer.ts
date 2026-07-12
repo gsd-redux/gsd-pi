@@ -6,18 +6,22 @@
 // v1 supports flat-phases; multi-milestone and legacy-milestone-dir are stubbed
 // with a clear error until fixtures exist to validate them.
 
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { getAllMilestones, getMilestoneSlices, getSliceTasks } from "../gsd-db.js";
 import { saveFile } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
-import type { PlanningLayout } from "../compat/compat-marker.js";
+import {
+  computeProjectionSha,
+  readCompatMarker,
+  type PlanningLayout,
+  writeCompatMarker,
+} from "../compat/compat-marker.js";
 import {
   applyPlanningProjectionWrites,
   type PlanningProjectionWrite,
 } from "../compat/planning-compat.js";
-import { readCompatMarker, writeCompatMarker } from "../compat/compat-marker.js";
 
 export interface PlanningWrittenFiles {
   paths: string[];
@@ -38,8 +42,13 @@ function removeObsoletePlanningProjections(
   let changed = false;
   for (const relPath of Object.keys(marker.planning.projections)) {
     if (desiredRelPaths.has(relPath) || !/-PLAN\.md$/i.test(relPath)) continue;
+    const projection = marker.planning.projections[relPath]!;
     const absPath = join(planningRoot(basePath), relPath);
-    if (existsSync(absPath)) unlinkSync(absPath);
+    if (existsSync(absPath)) {
+      const currentSha = computeProjectionSha(readFileSync(absPath, "utf8"));
+      if (currentSha !== projection.sha) continue;
+      unlinkSync(absPath);
+    }
     delete marker.planning.projections[relPath];
     changed = true;
   }

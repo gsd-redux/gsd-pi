@@ -1,8 +1,8 @@
 // Project/App: gsd-pi
 // File Purpose: Persist planned milestone roadmaps and their DB-backed projections.
 
+import type { CanonicalLifecycleStatus } from "./db/writers/lifecycle-commands.js";
 import { clearParseCache } from "./files.js";
-import { isClosedStatus } from "./status-guards.js";
 import {
   adoptLifecycleIfMissing,
   getMilestone,
@@ -26,6 +26,7 @@ import { flushWorkflowProjections } from "./projection-flush.js";
 import { writeManifest } from "./workflow-manifest.js";
 import { appendEvent } from "./workflow-events.js";
 import { logWarning } from "./workflow-logger.js";
+import { isClosedStatus } from "./status-guards.js";
 
 export interface PersistMilestonePlanSlice {
   sliceId: string;
@@ -97,9 +98,8 @@ function validatePlanPromotion(
   // the new plan omits a completed slice, which could shadow completed work.
   const existingSlices = getMilestoneSlices(params.milestoneId);
   const incomingSliceById = new Map(params.slices.map((slice) => [slice.sliceId, slice]));
-  const incomingSliceIds = new Set(incomingSliceById.keys());
+  const existingSliceLifecycleById = new Map<string, CanonicalLifecycleStatus>();
   for (const slice of existingSlices) {
-    if (!incomingSliceIds.has(slice.id)) continue;
     const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(slice.status);
     const plannedLifecycleStatus = incomingSliceById.get(slice.id)?.isSketch === true
       ? "pending"
@@ -112,18 +112,19 @@ function validatePlanPromotion(
         ? legacyLifecycleStatus
         : plannedLifecycleStatus,
     });
-    if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+    existingSliceLifecycleById.set(slice.id, lifecycle.lifecycleStatus);
+    if (incomingSliceById.has(slice.id) && (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled")) {
       return `cannot re-plan ${lifecycle.lifecycleStatus} slice ${slice.id} — use gsd_slice_reopen first`;
     }
   }
-  const completedSlices = existingSlices.filter(s => isClosedStatus(s.status));
-  if (completedSlices.length > 0) {
-    const droppedCompleted = completedSlices.filter(s => !incomingSliceIds.has(s.id));
-    if (droppedCompleted.length > 0) {
-      return `cannot re-plan milestone ${params.milestoneId}: ${droppedCompleted.length} completed slice(s) would be dropped (${droppedCompleted.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
-    }
+  const completedSlices = existingSlices.filter((slice) => existingSliceLifecycleById.get(slice.id) === "completed");
+  const droppedCompleted = completedSlices.filter((slice) => !incomingSliceById.has(slice.id));
+  if (droppedCompleted.length > 0) {
+    return `cannot re-plan milestone ${params.milestoneId}: ${droppedCompleted.length} completed slice(s) would be dropped (${droppedCompleted.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
   }
-  const droppedPending = existingSlices.find((slice) => !incomingSliceIds.has(slice.id));
+  const droppedPending = existingSlices.find((slice) => (
+    !incomingSliceById.has(slice.id) && existingSliceLifecycleById.get(slice.id) !== "cancelled"
+  ));
   if (droppedPending) {
     return `cannot re-plan milestone ${params.milestoneId}: pending slice ${droppedPending.id} would be dropped. Use gsd_reassess_roadmap to remove it.`;
   }

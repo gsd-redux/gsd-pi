@@ -178,6 +178,28 @@ test("writePlanningDirectory removes cancelled modeled plans while preserving pa
   assert.ok(marker.planning?.passthrough[`phases/${phaseDirs[0]}/01-RESEARCH.md`]);
 });
 
+test("writePlanningDirectory preserves an externally edited obsolete plan", async () => {
+  const base = makeTmp();
+  await writePlanningDirectory(base, "flat-phases");
+
+  const phasesRoot = join(base, ".planning", "phases");
+  const phaseDir = readdirSync(phasesRoot)[0]!;
+  const planName = readdirSync(join(phasesRoot, phaseDir)).find((name) => name.endsWith("-PLAN.md"))!;
+  const planPath = join(phasesRoot, phaseDir, planName);
+  const planRelPath = `phases/${phaseDir}/${planName}`;
+  const editedContent = "# User-owned plan\n\nKeep this external edit.\n";
+  writeFileSync(planPath, editedContent, "utf8");
+
+  updateSliceStatus("M001", "S01", "skipped");
+  await writePlanningDirectory(base, "flat-phases");
+
+  assert.equal(readFileSync(planPath, "utf8"), editedContent);
+  assert.ok(
+    readCompatMarker(base).planning?.projections[planRelPath],
+    "the stale ownership marker must remain so reconciliation can observe the edit",
+  );
+});
+
 test("writePlanningDirectory throws for unsupported layouts", async () => {
   const base = makeTmp();
   await assert.rejects(() => writePlanningDirectory(base, "multi-milestone"), /not yet supported/);

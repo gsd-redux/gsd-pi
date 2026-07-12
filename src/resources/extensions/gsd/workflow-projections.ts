@@ -18,7 +18,7 @@ import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { VerificationEvidenceRow } from "./db-verification-evidence-rows.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { dirname, join } from "node:path";
-import { mkdirSync, existsSync, unlinkSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
@@ -27,6 +27,7 @@ import type { GSDState } from "./types.js";
 import { renderPlanFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
 import { readManifest } from "./workflow-manifest.js";
 import { gsdRoot, resolveMilestoneFile, resolveSliceFile, resolveTaskFile, targetTaskFile } from "./paths.js";
+import { removeOwnedPlanProjection } from "./projection-cleanup.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ export function renderPlanProjection(basePath: string, milestoneId: string, slic
   const planPath = join(basePath, ".gsd", "milestones", milestoneId, "slices", sliceId, `${sliceId}-PLAN.md`);
   const taskRows = getSliceTasks(milestoneId, sliceId).filter((task) => task.status !== "skipped");
   if (!sliceRow || sliceRow.status === "skipped" || taskRows.length === 0) {
-    if (existsSync(planPath)) unlinkSync(planPath);
+    removeOwnedPlanProjection(basePath, planPath);
     return;
   }
 
