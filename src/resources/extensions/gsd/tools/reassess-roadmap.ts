@@ -1,13 +1,15 @@
-import { existsSync, realpathSync, rmSync, unlinkSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, rmSync, unlinkSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   gsdProjectionRoot,
+  gsdRoot,
   resolveMilestoneFile,
   resolveMilestonePath,
   resolveSliceFile,
   resolveTaskFile,
   targetMilestoneFile,
 } from "../paths.js";
+import { deriveCompatProjectionKey } from "../compat/compat-marker.js";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
@@ -76,11 +78,16 @@ export interface ReassessRoadmapResult {
 }
 
 function assessmentDbPathForRenderedFile(basePath: string, absPath: string): string {
-  const path = relative(realpathSync(basePath), absPath).replace(/\\/g, "/");
-  if (!path.startsWith(".gsd/")) {
+  // Derive the .gsd-relative key with the shared helper, which realpath-normalizes
+  // both the roots and the target (falling back to resolve() for not-yet-written
+  // files). A prior implementation realpath-normalized only basePath and left
+  // absPath raw, so on Windows the two sides used divergent drive/short-name/junction
+  // forms and the .gsd/ prefix check spuriously failed (#windows-portability).
+  const key = deriveCompatProjectionKey(absPath, [gsdProjectionRoot(basePath), gsdRoot(basePath)]);
+  if (key === ".." || key.startsWith("../") || isAbsolute(key)) {
     throw new Error(`assessment projection must be inside .gsd: ${absPath}`);
   }
-  return path;
+  return `.gsd/${key}`;
 }
 
 function removeSlicePlanProjections(basePath: string, milestoneId: string, sliceIds: string[]): void {
@@ -94,7 +101,7 @@ function removeSlicePlanProjections(basePath: string, milestoneId: string, slice
       if (!planPath) continue;
       try {
         rmSync(planPath, { force: true });
-        deleteArtifactByPath(relative(projectionRoot, planPath).replace(/\\/g, "/"));
+        deleteArtifactByPath(deriveCompatProjectionKey(planPath, [projectionRoot, gsdRoot(basePath)]));
       } catch (err) {
         logWarning("tool", `removed slice plan cleanup warning: ${(err as Error).message}`);
       }
