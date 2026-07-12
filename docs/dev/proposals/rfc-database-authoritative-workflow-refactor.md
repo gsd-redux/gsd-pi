@@ -293,10 +293,10 @@ The detailed task contract is recorded in [Decompose the approved contracts into
 
 | Milestone | Duration | Outcome | Primary gate |
 | --- | --- | --- | --- |
-| 0. Architecture and deletion safety | 1–2 weeks | Approved RFC/ADR, database-seeded fixture, fault harness, workflow-authority baseline | `pnpm run verify:fast`; targeted baseline |
+| 0. Architecture and deletion safety | 1–2 weeks | Approved RFC/ADR, database-seeded fixture, fault harness, workflow-authority baseline | `pnpm run verify:fast`; `pnpm run baseline:workflow-authority` |
 | 1. Additive canonical database foundation | 2–4 weeks | Authority, lifecycle, conversation, recovery, projection, import, kernel, and closeout schema plus Domain Operations | Migration, invariant, single-writer tests; typecheck |
 | 2. Explicit import, backfill, and rollback | 2–3 weeks | Corpus, preview, verified backup, transactional application, Authority Epoch, rollback/Forward Repair | Import, backup, restore, fault, restart corpus |
-| 3. Canonical queries and durable projection | 2–4 weeks | Canonical Query Module and durable Projection Worker exercised in shadow replacement paths without changing runtime authority | Workflow-authority baseline; projection benchmark |
+| 3. Canonical queries and durable projection | 2–4 weeks | Canonical Query Module and durable Projection Worker exercised in shadow replacement paths without changing runtime authority | `pnpm run baseline:workflow-authority`; projection benchmark |
 | 4. Resumable discovery and natural conversation | 3–4 weeks | Multi-week discovery Milestones, revision-linked interactions, restart-identical correction/resume | Conversation and checkpoint contract tests |
 | 5. Autonomous recovery, verification, and UAT | 3–4 weeks | Persisted classifier/budgets, evidence verdicts, remediation, automated UAT, narrow escalation | Fault, evidence freshness, sabotage, UAT tests |
 | 6. Lifecycle Kernel vertical slice | 3–5 weeks | Persisted five-stage kernel and two-part closeout running one low-risk unit | Restart-at-stage and semantic shadow tests |
@@ -351,21 +351,18 @@ exited 0 with one passing test. An earlier RED also proved the memory-backed
 decision seam: a provisional legacy-table seed produced `actual []` instead of
 the expected `["D001"]`.
 
-The complete baseline runs the fixture, projection-conflict, harness, and fault
-matrix tests:
+The canonical complete baseline runs the fixture, projection-conflict, harness,
+and fault matrix as four separate child invariants:
 
 ```sh
-node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
-  --experimental-strip-types --test \
-  src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts \
-  src/resources/extensions/gsd/tests/workflow-authority-projection-conflict.test.ts \
-  src/resources/extensions/gsd/tests/workflow-fault-harness.test.ts \
-  src/resources/extensions/gsd/tests/workflow-authority-faults.test.ts
+pnpm run baseline:workflow-authority
 ```
 
 That command passed with ten tests and zero failures after the sabotage was
 removed: two authority baseline tests, three harness contract tests, and five
-fault-boundary scenarios.
+fault-boundary scenarios. See the
+[refactor baseline runbook](../refactor-baseline-runbook.md#workflow-authority-gate)
+for JSON capture, stable comparison, and remediation instructions.
 
 ### Dependency and parallel-work rules
 

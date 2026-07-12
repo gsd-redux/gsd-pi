@@ -110,9 +110,11 @@ Run the database-authority and fault-safety corpus in human-readable mode:
 pnpm run baseline:workflow-authority
 ```
 
-The four fixed invariants cover the real SQLite fixture, contradictory
-projections, the one-shot fault controller, and the production fault-boundary
-matrix. Each row reports its verdict, duration, and exact rerunnable command.
+The four fixed invariants run in this stable order: `db-authority-fixture`,
+`projection-conflict`, `fault-harness-contract`, and `fault-boundary-matrix`.
+Together they cover the real SQLite fixture, contradictory projections, the
+one-shot fault controller, and the production fault-boundary matrix. Each row
+reports its verdict, duration, and exact rerunnable command.
 
 Capture the machine-readable report outside the repository:
 
@@ -138,6 +140,10 @@ diff -u \
   /tmp/gsd-workflow-authority-before.stable.json \
   /tmp/gsd-workflow-authority-after.stable.json
 ```
+
+The v1 JSON object contains `schemaVersion`, `verdict`, `durationMs`, and
+`invariants`. Each invariant contains `id`, `name`, `command`, `verdict`,
+`exitCode`, `durationMs`, `signal`, and `error`, in that order.
 
 The runner executes every invariant and exits with the first failing child's
 nonzero status. Its contract test also creates a temporary failing test to
