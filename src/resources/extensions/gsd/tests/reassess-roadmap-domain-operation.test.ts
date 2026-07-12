@@ -2,7 +2,7 @@
 // File Purpose: Domain Operation contracts for roadmap reassessment.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -15,6 +15,7 @@ import {
   executeDomainOperation,
   getAssessment,
   getSlice,
+  getTask,
   insertMilestone,
   insertSlice,
   openDatabase,
@@ -22,6 +23,7 @@ import {
 } from "../gsd-db.ts";
 import type { PlanningInvocation } from "../planning-invocation.ts";
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
+import { handlePlanSlice } from "../tools/plan-slice.ts";
 import {
   handleReassessRoadmap,
   type ReassessRoadmapParams,
@@ -148,6 +150,32 @@ function adoptDriftedTerminalLifecycle(
       projections: [{ projectionKey: `test/terminal-drift/${item}`, projectionKind: "markdown", rendererVersion: "v1" }],
     };
   });
+}
+
+function completeSliceLifecycle(sliceId: string, key: string): void {
+  for (const lifecycleStatus of ["ready", "in_progress", "completed"] as const) {
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: `test.slice.${lifecycleStatus}`,
+      idempotencyKey: `${key}/${lifecycleStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { sliceId, lifecycleStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId,
+        lifecycleStatus,
+      });
+      return {
+        events: [{ eventType: `test.slice.${lifecycleStatus}`, entityType: "slice", entityId: sliceId, payload: {}, destinations: ["test"] }],
+        projections: [{ projectionKey: `${key}/${lifecycleStatus}`, projectionKind: "test", rendererVersion: "1" }],
+      };
+    });
+  }
 }
 
 function lifecycle(sliceId: string): Record<string, unknown> {
@@ -308,6 +336,44 @@ test("removed slices are cancelled durably, excluded from the roadmap, and requi
   }, before);
 });
 
+test("removing a slice cancels runnable descendants and deletes obsolete plan projections", async () => {
+  const { base } = fixture();
+  const planned = await handlePlanSlice({
+    milestoneId: "M001",
+    sliceId: "S02",
+    goal: "Create descendant planning state before removal.",
+    tasks: [{
+      taskId: "T01",
+      title: "Obsolete task",
+      description: "This task becomes unrunnable when its slice is removed.",
+      estimate: "15m",
+      files: [],
+      verify: "node --test",
+      inputs: [],
+      expectedOutput: [],
+    }],
+  }, base, invocation("plan-slice/before-removal"));
+  assert.ok(!("error" in planned));
+  assert.ok(existsSync(planned.planPath));
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: ["S02"] },
+  }, base, invocation("reassess/remove-descendants"));
+  assert.ok(!("error" in result));
+
+  assert.equal(getTask("M001", "S02", "T01")?.status, "skipped");
+  assert.deepEqual(db().prepare(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles
+    WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S02' AND task_id = 'T01'
+  `).get(), { lifecycle_status: "cancelled" });
+  assert.equal(existsSync(planned.planPath), false);
+  assert.equal(
+    Number(db().prepare("SELECT COUNT(*) AS count FROM artifacts WHERE milestone_id = 'M001' AND slice_id = 'S02'").get()?.["count"] ?? 0),
+    0,
+  );
+});
+
 test("removal fails before mutation when an unchanged slice would retain a dangling dependency", async () => {
   const { base } = fixture();
   insertSlice({ id: "S05", milestoneId: "M001", title: "Still depends on S02", status: "pending", depends: ["S02"], sequence: 3 });
@@ -412,6 +478,23 @@ test("canonical cancellation vetoes modification even when the legacy slice drif
     slice: getSlice("M001", "S02"),
   }, before);
 });
+
+for (const change of ["modify", "remove"] as const) {
+  test(`canonical completion vetoes ${change} despite pending legacy drift`, async () => {
+    const { base } = fixture();
+    completeSliceLifecycle("S02", `test/complete-s02/${change}`);
+    const input: ReassessRoadmapParams = {
+      ...params(),
+      sliceChanges: change === "modify"
+        ? { modified: [{ sliceId: "S02", title: "Must not modify" }], added: [], removed: [] }
+        : { modified: [], added: [], removed: ["S02"] },
+    };
+
+    const rejected = await reassess(input, base, invocation(`reassess/completed-${change}`));
+    assert.ok("error" in rejected);
+    assert.match(rejected.error, /completed slice S02/i);
+  });
+}
 
 test("canonical cancellation vetoes a legacy-complete completedSliceId with no residue", async () => {
   const { base } = fixture();

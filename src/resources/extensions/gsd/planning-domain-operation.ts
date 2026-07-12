@@ -9,7 +9,11 @@ import {
   type DomainOperationProjectionInput,
   type DomainOperationResult,
 } from "./db/domain-operation.js";
-import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
+import {
+  readDomainOperationFence,
+  readLifecycleShadowComparison,
+  type LifecycleIdentity,
+} from "./db/writers/lifecycle-commands.js";
 import type { PlanningInvocation } from "./planning-invocation.js";
 
 export class PlanningGuardError extends Error {}
@@ -21,6 +25,7 @@ export interface PlanningDomainOperationInput {
   payload: DomainJsonValue;
   event: DomainOperationEventInput;
   projection: DomainOperationProjectionInput;
+  lifecycleItems(): LifecycleIdentity[];
   mutate(context: Readonly<DomainOperationContext>): void;
 }
 
@@ -48,8 +53,20 @@ export function executePlanningDomainOperation(
     payload: input.payload,
   }, (context) => {
     input.mutate(context);
+    const eventPayload = input.event.payload;
+    if (eventPayload === null || Array.isArray(eventPayload) || typeof eventPayload !== "object") {
+      throw new Error("planning event payload must be a JSON object");
+    }
+    const lifecycleShadowComparisons = input.lifecycleItems().map((identity) =>
+      readLifecycleShadowComparison(context, identity));
     return {
-      events: [input.event],
+      events: [{
+        ...input.event,
+        payload: {
+          ...eventPayload,
+          lifecycleShadowComparisons: planningOperationPayload(lifecycleShadowComparisons),
+        },
+      }],
       projections: [input.projection],
     };
   });

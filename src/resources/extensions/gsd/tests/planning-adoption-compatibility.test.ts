@@ -194,7 +194,7 @@ function hierarchyIdentitySnapshot(): Record<string, unknown> {
   return {
     milestone: db().prepare("SELECT rowid AS row_id, id, title FROM milestones WHERE id = 'M001'").get(),
     slice: db().prepare("SELECT rowid AS row_id, milestone_id, id, title FROM slices WHERE milestone_id = 'M001' AND id = 'S01'").get(),
-    task: db().prepare("SELECT rowid AS row_id, milestone_id, slice_id, id, title FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'").get(),
+    task: db().prepare("SELECT rowid AS row_id, milestone_id, slice_id, id, title, status FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'").get(),
     lifecycles: db().prepare(`
       SELECT lifecycle_id, item_kind, milestone_id, slice_id, task_id,
              lifecycle_status, state_version, last_operation_id,
@@ -284,6 +284,7 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   assert.equal(copyWorktreeDb(mainDb, worktreeDb), true);
   assert.equal(openDatabase(mainDb), true);
   advanceTaskLifecycle();
+  updateTaskStatus("M001", "S01", "T01", "active");
   const before = hierarchyIdentitySnapshot();
   closeDatabase();
 

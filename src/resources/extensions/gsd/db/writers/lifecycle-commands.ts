@@ -11,6 +11,8 @@ import {
 import { getDb, isInTransaction } from "../engine.js";
 import {
   type CanonicalLifecycleStatus,
+  compareLifecycleShadow,
+  type LifecycleShadowComparison,
   normalizeCanonicalLifecycleStatus,
 } from "../lifecycle-shadow-comparison.js";
 export {
@@ -33,14 +35,19 @@ export interface DomainOperationFence {
   replay: boolean;
 }
 
-export interface LifecycleCommandInput {
+export interface LifecycleIdentity {
   itemKind: "milestone" | "slice" | "task";
   milestoneId: string;
   sliceId?: string;
   taskId?: string;
+}
+
+export interface LifecycleCommandInput extends LifecycleIdentity {
   lifecycleStatus: CanonicalLifecycleStatus;
   occurredAt?: string;
 }
+
+export interface LifecycleShadowRecord extends LifecycleIdentity, LifecycleShadowComparison {}
 
 export interface LifecycleCommandResult {
   lifecycleId: string;
@@ -359,6 +366,44 @@ export function adoptLifecycleIfMissing(
   return existing
     ? existingLifecycleResult(existing)
     : adoptOrTransitionLifecycle(context, input);
+}
+
+export function readLifecycleShadowComparison(
+  context: Readonly<DomainOperationContext>,
+  identity: LifecycleIdentity,
+): LifecycleShadowRecord {
+  requireActiveContext(context);
+  const input: LifecycleCommandInput = { ...identity, lifecycleStatus: "pending" };
+  validateLifecycleIdentity(input);
+  requireHierarchyRow(input);
+  const db = getDb();
+  let hierarchy: Record<string, unknown> | undefined;
+  if (identity.itemKind === "milestone") {
+    hierarchy = db.prepare("SELECT status FROM milestones WHERE id = :milestone_id").get({
+      ":milestone_id": identity.milestoneId,
+    });
+  } else if (identity.itemKind === "slice") {
+    hierarchy = db.prepare(`
+      SELECT status FROM slices WHERE milestone_id = :milestone_id AND id = :slice_id
+    `).get({ ":milestone_id": identity.milestoneId, ":slice_id": identity.sliceId });
+  } else {
+    hierarchy = db.prepare(`
+      SELECT status FROM tasks
+      WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :task_id
+    `).get({
+      ":milestone_id": identity.milestoneId,
+      ":slice_id": identity.sliceId,
+      ":task_id": identity.taskId,
+    });
+  }
+  const lifecycle = findLifecycle(context, input);
+  return {
+    ...identity,
+    ...compareLifecycleShadow(
+      hierarchy ? String(hierarchy["status"]) : null,
+      lifecycle?.lifecycle_status ?? null,
+    ),
+  };
 }
 
 function loadKernelHead(projectId: string, lifecycleId: string): KernelHeadRow | undefined {

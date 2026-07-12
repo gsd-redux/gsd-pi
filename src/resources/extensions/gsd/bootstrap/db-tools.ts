@@ -613,7 +613,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     return executePlanMilestone(
       params,
       resolveWorkflowToolBasePath(_ctx, params),
-      piPlanningInvocation(toolCallId),
+      piPlanningInvocation("gsd_plan_milestone", toolCallId),
     );
   };
 
@@ -688,7 +688,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     return executePlanSlice(
       params,
       resolveWorkflowToolBasePath(_ctx, params),
-      piPlanningInvocation(toolCallId),
+      piPlanningInvocation("gsd_plan_slice", toolCallId),
     );
   };
 
@@ -750,7 +750,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     }
     try {
       const { handlePlanTask } = await import("../tools/plan-task.js");
-      const result = await handlePlanTask(params, basePath, piPlanningInvocation(toolCallId));
+      const result = await handlePlanTask(params, basePath, piPlanningInvocation("gsd_plan_task", toolCallId));
       if ("error" in result) {
         return {
           content: [{ type: "text" as const, text: `Error planning task: ${result.error}` }],
@@ -1156,7 +1156,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     return executeReplanSlice(
       params,
       resolveWorkflowToolBasePath(_ctx, params),
-      piPlanningInvocation(toolCallId),
+      piPlanningInvocation("gsd_replan_slice", toolCallId),
     );
   };
 
@@ -1210,7 +1210,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     return executeReplanTask(
       params,
       resolveWorkflowToolBasePath(_ctx, params),
-      piPlanningInvocation(toolCallId),
+      piPlanningInvocation("gsd_replan_task", toolCallId),
     );
   };
 
@@ -1292,7 +1292,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     return executeReassessRoadmap(
       params,
       resolveWorkflowToolBasePath(_ctx, params),
-      piPlanningInvocation(toolCallId),
+      piPlanningInvocation("gsd_reassess_roadmap", toolCallId),
     );
   };
 

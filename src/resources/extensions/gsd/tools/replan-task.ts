@@ -114,6 +114,10 @@ export async function handleReplanTask(
         projectionKind: "markdown",
         rendererVersion: "v1",
       },
+      lifecycleItems: () => [
+        { itemKind: "slice", milestoneId: params.milestoneId, sliceId: params.sliceId },
+        { itemKind: "task", milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
+      ],
       mutate(context) {
         const parentSlice = getSlice(params.milestoneId, params.sliceId);
         if (!parentSlice) {

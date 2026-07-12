@@ -256,6 +256,42 @@ export function reconcileWorktreeDb(
       const hasWtVerificationEvidence = wtTableInfo("verification_evidence").length > 0;
       const hasWtGateRuns = wtTableInfo("gate_runs").length > 0;
       const hasWtMilestoneCommitAttributions = wtTableInfo("milestone_commit_attributions").length > 0;
+      const hasWtLifecycles = wtTableInfo("workflow_item_lifecycles").length > 0;
+
+      function mainLifecycleIsNewer(itemKind: "milestone" | "slice" | "task"): string {
+        const identity = [
+          "main_lifecycle.project_id = worktree_lifecycle.project_id",
+          "main_lifecycle.item_kind = worktree_lifecycle.item_kind",
+          "main_lifecycle.milestone_id = worktree_lifecycle.milestone_id",
+          "main_lifecycle.slice_id IS worktree_lifecycle.slice_id",
+          "main_lifecycle.task_id IS worktree_lifecycle.task_id",
+        ].join(" AND ");
+        let hierarchyIdentity: string;
+        if (itemKind === "milestone") {
+          hierarchyIdentity = "main_lifecycle.milestone_id = w.id AND main_lifecycle.slice_id IS NULL AND main_lifecycle.task_id IS NULL";
+        } else if (itemKind === "slice") {
+          hierarchyIdentity = "main_lifecycle.milestone_id = w.milestone_id AND main_lifecycle.slice_id = w.id AND main_lifecycle.task_id IS NULL";
+        } else {
+          hierarchyIdentity = "main_lifecycle.milestone_id = w.milestone_id AND main_lifecycle.slice_id = w.slice_id AND main_lifecycle.task_id = w.id";
+        }
+        const newerThanWorktree = hasWtLifecycles
+          ? `AND NOT EXISTS (
+               SELECT 1 FROM wt.workflow_item_lifecycles worktree_lifecycle
+               WHERE ${identity}
+                 AND worktree_lifecycle.state_version >= main_lifecycle.state_version
+             )`
+          : "";
+        return `EXISTS (
+          SELECT 1 FROM main.workflow_item_lifecycles main_lifecycle
+          WHERE main_lifecycle.item_kind = '${itemKind}'
+            AND ${hierarchyIdentity}
+            ${newerThanWorktree}
+        )`;
+      }
+
+      const newerMilestoneLifecycle = mainLifecycleIsNewer("milestone");
+      const newerSliceLifecycle = mainLifecycleIsNewer("slice");
+      const newerTaskLifecycle = mainLifecycleIsNewer("task");
 
       if (hasWtDecisions) {
         const decConf = adapter.prepare(
@@ -389,15 +425,18 @@ export function reconcileWorktreeDb(
             )
             SELECT w.id, w.title,
                    CASE
+                     WHEN ${newerMilestoneLifecycle} THEN m.status
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.status ELSE w.status
                    END,
                    w.depends_on,
                    CASE
+                     WHEN ${newerMilestoneLifecycle} THEN m.created_at
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.created_at ELSE w.created_at
                    END,
                    CASE
+                     WHEN ${newerMilestoneLifecycle} THEN m.completed_at
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.completed_at ELSE w.completed_at
                    END,
@@ -443,11 +482,13 @@ export function reconcileWorktreeDb(
             )
             SELECT w.milestone_id, w.id, w.title,
                    CASE
+                     WHEN ${newerSliceLifecycle} THEN m.status
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.status ELSE w.status
                    END,
                    w.risk, w.depends, w.demo, w.created_at,
                    CASE
+                     WHEN ${newerSliceLifecycle} THEN m.completed_at
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.completed_at ELSE w.completed_at
                    END,
@@ -499,12 +540,14 @@ export function reconcileWorktreeDb(
             )
             SELECT w.milestone_id, w.slice_id, w.id, w.title,
                    CASE
+                     WHEN ${newerTaskLifecycle} THEN m.status
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.status ELSE w.status
                    END,
                    w.one_liner, w.narrative,
                    w.verification_result, w.duration,
                    CASE
+                     WHEN ${newerTaskLifecycle} THEN m.completed_at
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.completed_at ELSE w.completed_at
                    END,

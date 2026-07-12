@@ -15,6 +15,7 @@ import {
   getTask,
   insertMilestone,
   insertSlice,
+  insertTask,
   openDatabase,
   updateSliceStatus,
   updateTaskStatus,
@@ -208,6 +209,48 @@ function assertNoInventedExecutionHistory(): void {
   }
 }
 
+type TestLifecycleIdentity = {
+  itemKind: "milestone" | "slice" | "task";
+  milestoneId: string;
+  sliceId?: string;
+  taskId?: string;
+};
+
+function transitionTestLifecycle(
+  identity: TestLifecycleIdentity,
+  lifecycleStatus: CanonicalLifecycleStatus,
+  key: string,
+): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: `test.lifecycle.${lifecycleStatus}`,
+    idempotencyKey: key,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { ...identity, lifecycleStatus },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, { ...identity, lifecycleStatus });
+    return {
+      events: [{
+        eventType: `test.lifecycle.${lifecycleStatus}`,
+        entityType: identity.itemKind,
+        entityId: key,
+        payload: { lifecycleStatus },
+        destinations: ["test"],
+      }],
+      projections: [{ projectionKey: key.toLowerCase(), projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+}
+
+function completeTestLifecycle(identity: TestLifecycleIdentity, key: string): void {
+  transitionTestLifecycle(identity, "ready", `${key}/ready`);
+  transitionTestLifecycle(identity, "in_progress", `${key}/in-progress`);
+  transitionTestLifecycle(identity, "completed", `${key}/completed`);
+}
+
 function runPlanningChild(base: string, dbPath: string, params: PlanTaskParams, envelope: PlanningInvocation): Promise<unknown> {
   const dbModule = pathToFileURL(join(import.meta.dirname, "..", "gsd-db.ts")).href;
   const handlerModule = pathToFileURL(join(import.meta.dirname, "..", "tools", "plan-task.ts")).href;
@@ -291,6 +334,47 @@ test("fresh milestone planning keeps its public response and atomically adopts r
   assertNoInventedExecutionHistory();
 });
 
+for (const itemKind of ["milestone", "slice"] as const) {
+  test(`milestone planning rejects canonically completed ${itemKind} despite open legacy drift`, async () => {
+    const { base } = makeFixture();
+    assertSuccess(await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+      handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+      milestoneParams(),
+      base,
+      invocation(`plan-milestone/seed-completed-${itemKind}`),
+    ));
+    completeTestLifecycle({
+      itemKind,
+      milestoneId: "M001",
+      ...(itemKind === "slice" ? { sliceId: "S01" } : {}),
+    }, `test/${itemKind}`);
+    db().prepare(
+      itemKind === "milestone"
+        ? "UPDATE milestones SET status = 'active' WHERE id = 'M001'"
+        : "UPDATE slices SET status = 'pending' WHERE milestone_id = 'M001' AND id = 'S01'",
+    ).run();
+    const before = {
+      hierarchy: rows("SELECT id, title, status FROM milestones UNION ALL SELECT id, title, status FROM slices ORDER BY id"),
+      lifecycles: lifecycleSnapshot(),
+      operations: count("workflow_operations"),
+    };
+
+    const result = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+      handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+      { ...milestoneParams(), title: "Must not overwrite terminal authority" },
+      base,
+      invocation(`plan-milestone/reject-completed-${itemKind}`),
+    );
+    assert.ok("error" in result);
+    assert.match(result.error, new RegExp(`completed ${itemKind}.*reopen|cannot re-plan ${itemKind}`, "i"));
+    assert.deepEqual({
+      hierarchy: rows("SELECT id, title, status FROM milestones UNION ALL SELECT id, title, status FROM slices ORDER BY id"),
+      lifecycles: lifecycleSnapshot(),
+      operations: count("workflow_operations"),
+    }, before);
+  });
+}
+
 test("slice and task planning preserve response shapes while promoting complete plans to ready", async () => {
   const { base } = makeFixture();
   seedPlanningParents();
@@ -335,6 +419,126 @@ test("slice and task planning preserve response shapes while promoting complete 
   ]);
   assert.equal(count("workflow_operations"), 2);
   assertNoInventedExecutionHistory();
+});
+
+test("incremental task planning promotes pending task and parent lifecycles", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    { milestoneId: "M001", sliceId: "S01", goal: "Plan incrementally." },
+    base,
+    invocation("plan-slice/incremental-metadata"),
+  ));
+  insertTask({
+    milestoneId: "M001",
+    sliceId: "S01",
+    id: "T01",
+    title: "Reserved task",
+    status: "pending",
+  });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.reserve",
+    idempotencyKey: "test/task/reserve",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "pending",
+    });
+    return {
+      events: [{ eventType: "test.task.reserved", entityType: "task", entityId: "M001/S01/T01", payload: {}, destinations: ["test"] }],
+      projections: [{ projectionKey: "test/m001/s01/t01", projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+
+  assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+    handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+    taskParams(),
+    base,
+    invocation("plan-task/promote-incremental"),
+  ));
+
+  assert.deepEqual(rows(`
+    SELECT item_kind, lifecycle_status, state_version
+    FROM workflow_item_lifecycles
+    WHERE item_kind IN ('slice', 'task')
+    ORDER BY item_kind
+  `), [
+    { item_kind: "slice", lifecycle_status: "ready", state_version: 1 },
+    { item_kind: "task", lifecycle_status: "ready", state_version: 1 },
+  ]);
+});
+
+for (const terminalStatus of ["completed", "cancelled"] as const) {
+  test(`task planning rejects canonical ${terminalStatus} task and parent drift`, async () => {
+    const { base } = makeFixture();
+    seedPlanningParents();
+    assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+      handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+      taskParams(),
+      base,
+      invocation(`plan-task/seed-${terminalStatus}`),
+    ));
+    const taskIdentity = { itemKind: "task" as const, milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+    const sliceIdentity = { itemKind: "slice" as const, milestoneId: "M001", sliceId: "S01" };
+    if (terminalStatus === "completed") completeTestLifecycle(taskIdentity, "test/task");
+    else transitionTestLifecycle(taskIdentity, terminalStatus, `test/task/${terminalStatus}`);
+    updateTaskStatus("M001", "S01", "T01", "pending");
+    const taskResult = await invoke<PlanTaskParams, PlanTaskResult>(
+      handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+      { ...taskParams(), title: "Must not overwrite terminal task" },
+      base,
+      invocation(`plan-task/reject-${terminalStatus}-task`),
+    );
+    assert.ok("error" in taskResult);
+    assert.match(taskResult.error, new RegExp(`${terminalStatus} task T01.*reopen`, "i"));
+
+    if (terminalStatus === "completed") completeTestLifecycle(sliceIdentity, "test/slice");
+    else transitionTestLifecycle(sliceIdentity, terminalStatus, `test/slice/${terminalStatus}`);
+    updateSliceStatus("M001", "S01", "active");
+    const parentResult = await invoke<PlanTaskParams, PlanTaskResult>(
+      handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+      taskParams("T02"),
+      base,
+      invocation(`plan-task/reject-${terminalStatus}-parent`),
+    );
+    assert.ok("error" in parentResult);
+    assert.match(parentResult.error, new RegExp(`${terminalStatus} slice S01.*reopen`, "i"));
+  });
+}
+
+test("planning events durably record lifecycle shadow comparisons", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+    handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+    taskParams(),
+    base,
+    invocation("plan-task/shadow-comparison"),
+  ));
+
+  const event = row("SELECT payload_json FROM workflow_domain_events WHERE event_type = 'workflow.task.planned'");
+  const payload = JSON.parse(String(event["payload_json"])) as {
+    lifecycleShadowComparisons: Array<Record<string, unknown>>;
+  };
+  assert.deepEqual(payload.lifecycleShadowComparisons.map((comparison) => ({
+    itemKind: comparison["itemKind"],
+    legacyStatus: comparison["legacyStatus"],
+    canonicalStatus: comparison["canonicalStatus"],
+    kind: comparison["kind"],
+  })), [
+    { itemKind: "slice", legacyStatus: "pending", canonicalStatus: "ready", kind: "semantic_match_exact_delta" },
+    { itemKind: "task", legacyStatus: "pending", canonicalStatus: "ready", kind: "semantic_match_exact_delta" },
+  ]);
 });
 
 test("slice planning promotes only pending lifecycle state and rejects cancelled identity without residue", async () => {
@@ -428,6 +632,64 @@ test("slice planning promotes only pending lifecycle state and rejects cancelled
     operations: count("workflow_operations"),
     lifecycles: lifecycleSnapshot(),
   }, beforeRejectedReuse);
+});
+
+test("slice planning rejects canonically completed slice despite pending legacy drift", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  const metadata: PlanSliceParams = { milestoneId: "M001", sliceId: "S01", goal: "Seed planning." };
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    metadata,
+    base,
+    invocation("plan-slice/seed-completed"),
+  ));
+  completeTestLifecycle({ itemKind: "slice", milestoneId: "M001", sliceId: "S01" }, "test/slice/plan");
+  updateSliceStatus("M001", "S01", "pending");
+
+  const result = await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    { ...metadata, goal: "Must not overwrite completion." },
+    base,
+    invocation("plan-slice/reject-completed"),
+  );
+  assert.ok("error" in result);
+  assert.match(result.error, /completed slice S01.*reopen/i);
+});
+
+test("slice planning rejects canonically completed tasks before updating or omitting them", async () => {
+  const { base } = makeFixture();
+  seedPlanningParents();
+  const plan: PlanSliceParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    goal: "Seed task planning.",
+    tasks: [taskParams()],
+  };
+  assertSuccess(await invoke<PlanSliceParams, PlanSliceResult>(
+    handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+    plan,
+    base,
+    invocation("plan-slice/seed-completed-task"),
+  ));
+  completeTestLifecycle({
+    itemKind: "task",
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }, "test/task/slice-plan");
+  updateTaskStatus("M001", "S01", "T01", "pending");
+
+  for (const tasks of [[taskParams("T01", "Must not update")], [taskParams("T02", "Must not omit T01")]]) {
+    const result = await invoke<PlanSliceParams, PlanSliceResult>(
+      handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
+      { ...plan, tasks },
+      base,
+      invocation(`plan-slice/reject-completed-task-${tasks[0]!.taskId}`),
+    );
+    assert.ok("error" in result);
+    assert.match(result.error, /completed task T01/i);
+  }
 });
 
 test("an exact lost-response retry replays after restart and an unrelated revision advance", async () => {
@@ -577,10 +839,10 @@ test("task replanning preserves lifecycle provenance while recording ordered his
     milestone_id: "M001",
     slice_id: "S01",
     task_id: null,
-    lifecycle_status: "pending",
+    lifecycle_status: "ready",
     state_version: 0,
-    last_project_revision: 2,
-  }, "missing parent lifecycle must be adopted without changing task provenance");
+    last_project_revision: 1,
+  }, "task planning must promote its parent without changing task replan provenance");
   assert.equal(typeof adoptedParent?.["last_operation_id"], "string");
   assert.deepEqual(rows(`SELECT task_id, summary, previous_artifact_path FROM replan_history ORDER BY id`), [{
     task_id: "T01",
@@ -715,33 +977,9 @@ for (const terminalStatus of ["completed", "cancelled"] as const) {
     ));
     updateSliceStatus("M001", "S01", "active");
 
-    const fence = readDomainOperationFence();
-    executeDomainOperation({
-      operationType: `test.slice.${terminalStatus}`,
-      idempotencyKey: `test/slice/${terminalStatus}`,
-      expectedRevision: fence.revision,
-      expectedAuthorityEpoch: fence.authorityEpoch,
-      actorType: "agent",
-      sourceTransport: "test",
-      payload: { sliceId: "S01", terminalStatus },
-    }, (context) => {
-      adoptOrTransitionLifecycle(context, {
-        itemKind: "slice",
-        milestoneId: "M001",
-        sliceId: "S01",
-        lifecycleStatus: terminalStatus,
-      });
-      return {
-        events: [{
-          eventType: `test.slice.${terminalStatus}`,
-          entityType: "slice",
-          entityId: "M001/S01",
-          payload: { sliceId: "S01", terminalStatus },
-          destinations: ["projection"],
-        }],
-        projections: [{ projectionKey: "test/m001/s01", projectionKind: "markdown", rendererVersion: "v1" }],
-      };
-    });
+    const sliceIdentity = { itemKind: "slice" as const, milestoneId: "M001", sliceId: "S01" };
+    if (terminalStatus === "completed") completeTestLifecycle(sliceIdentity, "test/replan-parent/slice");
+    else transitionTestLifecycle(sliceIdentity, terminalStatus, `test/replan-parent/slice/${terminalStatus}`);
     assert.equal(row(`SELECT status FROM slices WHERE milestone_id = 'M001' AND id = 'S01'`)["status"], "active");
 
     const before = {

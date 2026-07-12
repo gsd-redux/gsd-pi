@@ -20,9 +20,9 @@ export function directPlanningInvocation(): PlanningInvocation {
   };
 }
 
-export function piPlanningInvocation(toolCallId: string): PlanningInvocation {
+export function piPlanningInvocation(canonicalToolName: string, toolCallId: string): PlanningInvocation {
   return {
-    idempotencyKey: `pi:${toolCallId}`,
+    idempotencyKey: `pi:${canonicalToolName}:${toolCallId}`,
     sourceTransport: "pi-extension",
     actorType: "agent",
     traceId: toolCallId,

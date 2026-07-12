@@ -446,7 +446,7 @@ test('handlePlanSlice does not regenerate unrelated completed-task summaries dur
   }
 });
 
-test('handlePlanSlice preserves completed task closeout state when replanning the same task', async () => {
+test('handlePlanSlice requires explicit reopen before replanning a completed task', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));
 
@@ -470,15 +470,12 @@ test('handlePlanSlice preserves completed task closeout state when replanning th
     assert.equal(before?.full_summary_md, '# T01 Summary\n\nAlready finished.\n');
 
     const result = await handlePlanSlice(validParams(), base);
-    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+    assert.ok('error' in result);
+    assert.match(result.error, /completed task T01.*reopen/i);
 
     const after = getTask('M001', 'S02', 'T01');
-    assert.equal(after?.status, 'complete', 'replanning must not reset completed task status to pending');
-    assert.equal(after?.completed_at, before?.completed_at, 'replanning must not clear completed_at');
-    assert.equal(after?.full_summary_md, before?.full_summary_md, 'replanning must not clear task summary content');
-    assert.equal(after?.verification_result, 'passed', 'replanning must not clear closeout verification');
-    assert.equal(after?.description, 'Implement the slice planning handler.', 'planning fields should still refresh');
-    assert.equal(getTask('M001', 'S02', 'T02')?.status, 'pending', 'new tasks are still inserted as pending');
+    assert.deepEqual(after, before, 'rejected replanning must preserve completed task closeout state');
+    assert.equal(getTask('M001', 'S02', 'T02'), null, 'rejected replanning must leave no partial task inserts');
   } finally {
     cleanup(base);
   }

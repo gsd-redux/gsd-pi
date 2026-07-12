@@ -82,11 +82,16 @@ function params(title = "Private planning identity", includeSketch = false) {
   };
 }
 
-function registeredPlanMilestone(): RegisteredTool {
+function registeredTools(): RegisteredTool[] {
   const tools: RegisteredTool[] = [];
   registerDbTools({
     registerTool(tool: RegisteredTool) { tools.push(tool); },
   } as unknown as Parameters<typeof registerDbTools>[0]);
+  return tools;
+}
+
+function registeredPlanMilestone(): RegisteredTool {
+  const tools = registeredTools();
   const tool = tools.find((candidate) => candidate.name === "gsd_plan_milestone");
   assert.ok(tool, "gsd_plan_milestone must be registered");
   return tool;
@@ -127,7 +132,7 @@ test("Pi planning retries replay one private tool-call operation without changin
     assert.deepEqual(Object.keys(first).sort(), ["content", "details"]);
     assert.deepEqual(workflowOperations(), [{
       operation_type: "workflow.milestone.plan",
-      idempotency_key: "pi:pi-call-42",
+      idempotency_key: "pi:gsd_plan_milestone:pi-call-42",
       expected_revision: 0,
       resulting_revision: 1,
     }]);
@@ -164,6 +169,36 @@ test("Pi planning rejects changed payload under the same private tool-call ident
     assert.match(JSON.stringify(conflict), /idempotency conflict/i);
     assert.equal(getMilestone("M001")?.title, "Private planning identity");
     assert.equal(workflowOperations().length, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("Pi tool-call identities are scoped by canonical planning tool", async () => {
+  const base = makeBase();
+  try {
+    const tools = registeredTools();
+    const milestone = tools.find((candidate) => candidate.name === "gsd_plan_milestone");
+    const slice = tools.find((candidate) => candidate.name === "gsd_plan_slice");
+    assert.ok(milestone);
+    assert.ok(slice);
+
+    const milestoneResult = await milestone.execute("shared-call-id", params(), undefined, undefined, { cwd: base });
+    assert.equal(milestoneResult["isError"], undefined);
+    const sliceResult = await slice.execute("shared-call-id", {
+      milestoneId: "M001",
+      sliceId: "S01",
+      goal: "Refine the existing slice without colliding with milestone planning.",
+    }, undefined, undefined, { cwd: base });
+    assert.equal(sliceResult["isError"], undefined);
+
+    assert.deepEqual(
+      workflowOperations().map((operation) => operation["idempotency_key"]),
+      [
+        "pi:gsd_plan_milestone:shared-call-id",
+        "pi:gsd_plan_slice:shared-call-id",
+      ],
+    );
   } finally {
     cleanup(base);
   }

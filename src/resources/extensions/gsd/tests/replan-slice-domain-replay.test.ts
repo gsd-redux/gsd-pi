@@ -15,6 +15,7 @@ import {
   getTask,
   insertMilestone,
   insertSlice,
+  insertTask,
   openDatabase,
   readDomainOperationFence,
   updateTaskStatus,
@@ -144,6 +145,47 @@ test("slice replan requires explicit reopen before reusing cancelled task identi
     assert.ok("error" in reuse);
     assert.match(reuse.error, /explicitly reopen/i);
     assert.deepEqual(rows("SELECT id, status, title FROM tasks ORDER BY id"), before);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("slice replan preserves pending lifecycle provenance for existing tasks", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    insertTask({ id: "T03", milestoneId: "M001", sliceId: "S01", title: "Reserved replacement", status: "pending" });
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: "test.reserve-task",
+      idempotencyKey: "test:reserve-task",
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { taskId: "T03" },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T03",
+        lifecycleStatus: "pending",
+      });
+      return {
+        events: [{ eventType: "test.task.reserved", entityType: "task", entityId: "M001/S01/T03", payload: {}, destinations: ["test"] }],
+        projections: [{ projectionKey: "test:t03", projectionKind: "test", rendererVersion: "1" }],
+      };
+    });
+    const before = rows("SELECT lifecycle_status, state_version, last_operation_id FROM workflow_item_lifecycles WHERE task_id = 'T03'");
+
+    const result = await handleReplanSlice(replanParams(), base, invocation("replan-slice/preserve-pending"));
+    assert.ok(!("error" in result));
+    assert.deepEqual(
+      rows("SELECT lifecycle_status, state_version, last_operation_id FROM workflow_item_lifecycles WHERE task_id = 'T03'"),
+      before,
+    );
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

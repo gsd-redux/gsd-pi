@@ -10,6 +10,7 @@ import {
   getSlice,
   insertMilestone,
   insertSlice,
+  normalizeLegacyLifecycleStatus,
   upsertMilestonePlanning,
   upsertSlicePlanning,
 } from "./gsd-db.js";
@@ -67,10 +68,23 @@ export interface PersistMilestonePlanResult {
   roadmapPath: string;
 }
 
-function validatePlanPromotion(params: PersistMilestonePlanParams): string | null {
+function validatePlanPromotion(
+  context: Parameters<typeof adoptLifecycleIfMissing>[0],
+  params: PersistMilestonePlanParams,
+): string | null {
   const existingMilestone = getMilestone(params.milestoneId);
   if (existingMilestone && isClosedStatus(existingMilestone.status)) {
     return `cannot re-plan milestone ${params.milestoneId}: it is already complete`;
+  }
+  if (existingMilestone) {
+    const lifecycle = adoptLifecycleIfMissing(context, {
+      itemKind: "milestone",
+      milestoneId: params.milestoneId,
+      lifecycleStatus: "ready",
+    });
+    if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+      return `cannot re-plan ${lifecycle.lifecycleStatus} milestone ${params.milestoneId} — use gsd_milestone_reopen first`;
+    }
   }
 
   // Guard: refuse to re-plan a milestone that would drop completed slices (#2960).
@@ -78,9 +92,28 @@ function validatePlanPromotion(params: PersistMilestonePlanParams): string | nul
   // incoming plan — their status is preserved below (#2558). Block only when
   // the new plan omits a completed slice, which could shadow completed work.
   const existingSlices = getMilestoneSlices(params.milestoneId);
+  const incomingSliceById = new Map(params.slices.map((slice) => [slice.sliceId, slice]));
+  const incomingSliceIds = new Set(incomingSliceById.keys());
+  for (const slice of existingSlices) {
+    if (!incomingSliceIds.has(slice.id)) continue;
+    const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(slice.status);
+    const plannedLifecycleStatus = incomingSliceById.get(slice.id)?.isSketch === true
+      ? "pending"
+      : "ready";
+    const lifecycle = adoptLifecycleIfMissing(context, {
+      itemKind: "slice",
+      milestoneId: params.milestoneId,
+      sliceId: slice.id,
+      lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
+        ? legacyLifecycleStatus
+        : plannedLifecycleStatus,
+    });
+    if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+      return `cannot re-plan ${lifecycle.lifecycleStatus} slice ${slice.id} — use gsd_slice_reopen first`;
+    }
+  }
   const completedSlices = existingSlices.filter(s => isClosedStatus(s.status));
   if (completedSlices.length > 0) {
-    const incomingSliceIds = new Set(params.slices.map(s => s.sliceId));
     const droppedCompleted = completedSlices.filter(s => !incomingSliceIds.has(s.id));
     if (droppedCompleted.length > 0) {
       return `cannot re-plan milestone ${params.milestoneId}: ${droppedCompleted.length} completed slice(s) would be dropped (${droppedCompleted.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
@@ -204,8 +237,16 @@ function persistPlanOperation(
       projectionKind: "markdown",
       rendererVersion: "v1",
     },
+    lifecycleItems: () => [
+      { itemKind: "milestone", milestoneId: params.milestoneId },
+      ...params.slices.map((slice) => ({
+        itemKind: "slice" as const,
+        milestoneId: params.milestoneId,
+        sliceId: slice.sliceId,
+      })),
+    ],
     mutate(context) {
-      const guardError = validatePlanPromotion(params);
+      const guardError = validatePlanPromotion(context, params);
       if (guardError) throw new PlanningGuardError(guardError);
       writePlanRows(params);
       adoptPlanLifecycles(context, params);

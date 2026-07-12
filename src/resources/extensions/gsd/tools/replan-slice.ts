@@ -140,6 +140,15 @@ export async function handleReplanSlice(
         projectionKind: "markdown",
         rendererVersion: "v1",
       },
+      lifecycleItems: () => [
+        { itemKind: "slice", milestoneId: params.milestoneId, sliceId: params.sliceId },
+        ...getSliceTasks(params.milestoneId, params.sliceId).map((task) => ({
+          itemKind: "task" as const,
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          taskId: task.id,
+        })),
+      ],
       mutate(context) {
         // Verify parent slice exists and has not been canonically cancelled.
         const parentSlice = getSlice(params.milestoneId, params.sliceId);
@@ -202,6 +211,20 @@ export async function handleReplanSlice(
               `cannot reuse cancelled task ${updatedTask.taskId} — explicitly reopen it before replanning`,
             );
           }
+          if (existingTask) {
+            const lifecycle = adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: params.sliceId,
+              taskId: updatedTask.taskId,
+              lifecycleStatus: normalizeLegacyLifecycleStatus(existingTask.status) ?? "ready",
+            });
+            if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+              throw new PlanningGuardError(
+                `cannot reuse ${lifecycle.lifecycleStatus} task ${updatedTask.taskId} — explicitly reopen it before replanning`,
+              );
+            }
+          }
         }
 
         const removedTasks = params.removedTaskIds.map((taskId) => {
@@ -210,6 +233,19 @@ export async function handleReplanSlice(
             throw new PlanningGuardError(`removed task not found: ${params.milestoneId}/${params.sliceId}/${taskId}`);
           }
           if (completedTaskIds.has(taskId)) {
+            throw new PlanningGuardError(`cannot remove completed task ${taskId}`);
+          }
+          const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
+          const lifecycle = adoptLifecycleIfMissing(context, {
+            itemKind: "task",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId,
+            lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
+              ? legacyLifecycleStatus
+              : "cancelled",
+          });
+          if (lifecycle.lifecycleStatus === "completed") {
             throw new PlanningGuardError(`cannot remove completed task ${taskId}`);
           }
           return task;
@@ -234,27 +270,6 @@ export async function handleReplanSlice(
               expectedOutput: updatedTask.expectedOutput || [],
               fullPlanMd: updatedTask.fullPlanMd,
             });
-            const lifecycle = adoptLifecycleIfMissing(context, {
-              itemKind: "task",
-              milestoneId: params.milestoneId,
-              sliceId: params.sliceId,
-              taskId: updatedTask.taskId,
-              lifecycleStatus: "ready",
-            });
-            if (lifecycle.lifecycleStatus === "cancelled") {
-              throw new PlanningGuardError(
-                `cannot reuse cancelled task ${updatedTask.taskId} — explicitly reopen it before replanning`,
-              );
-            }
-            if (lifecycle.lifecycleStatus === "pending") {
-              adoptOrTransitionLifecycle(context, {
-                itemKind: "task",
-                milestoneId: params.milestoneId,
-                sliceId: params.sliceId,
-                taskId: updatedTask.taskId,
-                lifecycleStatus: "ready",
-              });
-            }
           } else {
             insertTask({
               id: updatedTask.taskId,

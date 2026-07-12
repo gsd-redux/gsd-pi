@@ -4,6 +4,7 @@ import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
 import {
   adoptLifecycleIfMissing,
+  adoptOrTransitionLifecycle,
   getSlice,
   getTask,
   insertGateRow,
@@ -198,6 +199,10 @@ export async function handlePlanTask(
         projectionKind: "markdown",
         rendererVersion: "v1",
       },
+      lifecycleItems: () => [
+        { itemKind: "slice", milestoneId: params.milestoneId, sliceId: params.sliceId },
+        { itemKind: "task", milestoneId: params.milestoneId, sliceId: params.sliceId, taskId: params.taskId },
+      ],
       mutate(context) {
         const parentSlice = getSlice(params.milestoneId, params.sliceId);
         if (!parentSlice) {
@@ -206,10 +211,35 @@ export async function handlePlanTask(
         if (isClosedStatus(parentSlice.status)) {
           throw new PlanningGuardError(`cannot plan task in a closed slice: ${params.sliceId} (status: ${parentSlice.status})`);
         }
+        const parentLifecycle = adoptLifecycleIfMissing(context, {
+          itemKind: "slice",
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          lifecycleStatus: "ready",
+        });
+        if (parentLifecycle.lifecycleStatus === "completed" || parentLifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(
+            `cannot plan task in ${parentLifecycle.lifecycleStatus} slice ${params.sliceId} — use gsd_slice_reopen first`,
+          );
+        }
 
         const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
         if (existingTask && isClosedStatus(existingTask.status)) {
           throw new PlanningGuardError(`cannot re-plan task ${params.taskId}: it is already complete — use gsd_task_reopen first`);
+        }
+        const existingLifecycle = existingTask
+          ? adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: params.sliceId,
+              taskId: params.taskId,
+              lifecycleStatus: "ready",
+            })
+          : null;
+        if (existingLifecycle?.lifecycleStatus === "completed" || existingLifecycle?.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(
+            `cannot re-plan ${existingLifecycle.lifecycleStatus} task ${params.taskId} — use gsd_task_reopen first`,
+          );
         }
 
         let effectiveTargetRepositories = resolveEffectiveTargetRepositories(
@@ -270,13 +300,30 @@ export async function handlePlanTask(
           insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: params.taskId });
         }
         setSliceSketchFlag(params.milestoneId, params.sliceId, false);
-        adoptLifecycleIfMissing(context, {
-          itemKind: "task",
-          milestoneId: params.milestoneId,
-          sliceId: params.sliceId,
-          taskId: params.taskId,
-          lifecycleStatus: "ready",
-        });
+        const taskLifecycle = existingLifecycle ?? adoptLifecycleIfMissing(context, {
+            itemKind: "task",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId: params.taskId,
+            lifecycleStatus: "ready",
+          });
+        if (taskLifecycle.lifecycleStatus === "pending") {
+          adoptOrTransitionLifecycle(context, {
+            itemKind: "task",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId: params.taskId,
+            lifecycleStatus: "ready",
+          });
+        }
+        if (parentLifecycle.lifecycleStatus === "pending") {
+          adoptOrTransitionLifecycle(context, {
+            itemKind: "slice",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            lifecycleStatus: "ready",
+          });
+        }
       },
     });
     operationStatus = receipt.status;

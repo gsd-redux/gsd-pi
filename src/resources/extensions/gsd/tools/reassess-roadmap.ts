@@ -1,8 +1,11 @@
-import { existsSync, realpathSync, unlinkSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
+  gsdProjectionRoot,
   resolveMilestoneFile,
   resolveMilestonePath,
+  resolveSliceFile,
+  resolveTaskFile,
   targetMilestoneFile,
 } from "../paths.js";
 import { clearParseCache } from "../files.js";
@@ -11,15 +14,18 @@ import { isNonEmptyString } from "../validation.js";
 import {
   adoptLifecycleIfMissing,
   adoptOrTransitionLifecycle,
+  deleteArtifactByPath,
   getMilestone,
   getMilestoneSlices,
   getSlice,
+  getSliceTasks,
   insertSlice,
   normalizeLegacyLifecycleStatus,
   updateSliceFields,
   insertAssessment,
   deleteAssessmentByScope,
   updateSliceStatus,
+  updateTaskStatus,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import {
@@ -75,6 +81,25 @@ function assessmentDbPathForRenderedFile(basePath: string, absPath: string): str
     throw new Error(`assessment projection must be inside .gsd: ${absPath}`);
   }
   return path;
+}
+
+function removeSlicePlanProjections(basePath: string, milestoneId: string, sliceIds: string[]): void {
+  const projectionRoot = gsdProjectionRoot(basePath);
+  for (const sliceId of sliceIds) {
+    const planPaths = [resolveSliceFile(basePath, milestoneId, sliceId, "PLAN")];
+    for (const task of getSliceTasks(milestoneId, sliceId)) {
+      planPaths.push(resolveTaskFile(basePath, milestoneId, sliceId, task.id, "PLAN"));
+    }
+    for (const planPath of planPaths) {
+      if (!planPath) continue;
+      try {
+        rmSync(planPath, { force: true });
+        deleteArtifactByPath(relative(projectionRoot, planPath).replace(/\\/g, "/"));
+      } catch (err) {
+        logWarning("tool", `removed slice plan cleanup warning: ${(err as Error).message}`);
+      }
+    }
+  }
 }
 
 function validateParams(params: ReassessRoadmapParams): ReassessRoadmapParams {
@@ -174,6 +199,26 @@ export async function handleReassessRoadmap(
         projectionKind: "markdown",
         rendererVersion: "v1",
       },
+      lifecycleItems: () => {
+        const sliceIds = new Set([
+          params.completedSliceId,
+          ...params.sliceChanges.modified.map((slice) => slice.sliceId),
+          ...params.sliceChanges.added.map((slice) => slice.sliceId),
+          ...params.sliceChanges.removed,
+        ]);
+        return [
+          { itemKind: "milestone", milestoneId: params.milestoneId },
+          ...Array.from(sliceIds).flatMap((sliceId) => [
+            { itemKind: "slice" as const, milestoneId: params.milestoneId, sliceId },
+            ...getSliceTasks(params.milestoneId, sliceId).map((task) => ({
+              itemKind: "task" as const,
+              milestoneId: params.milestoneId,
+              sliceId,
+              taskId: task.id,
+            })),
+          ]),
+        ];
+      },
       mutate(context) {
         const milestone = getMilestone(params.milestoneId);
         if (!milestone) {
@@ -232,12 +277,30 @@ export async function handleReassessRoadmap(
             sliceId: modifiedSlice.sliceId,
             lifecycleStatus: normalizeLegacyLifecycleStatus(existing.status) ?? "ready",
           });
-          if (lifecycle.lifecycleStatus === "cancelled") {
-            throw new PlanningGuardError(`cannot modify cancelled slice ${modifiedSlice.sliceId} — use gsd_slice_reopen first`);
+          if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+            throw new PlanningGuardError(
+              `cannot modify ${lifecycle.lifecycleStatus} slice ${modifiedSlice.sliceId} — use gsd_slice_reopen first`,
+            );
           }
         }
         for (const removedId of params.sliceChanges.removed) {
           if (completedSliceIds.has(removedId)) {
+            throw new PlanningGuardError(`cannot remove completed slice ${removedId}`);
+          }
+          const existing = existingSliceById.get(removedId);
+          if (!existing) {
+            throw new PlanningGuardError(`cannot remove missing slice ${removedId}`);
+          }
+          const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(existing.status);
+          const lifecycle = adoptLifecycleIfMissing(context, {
+            itemKind: "slice",
+            milestoneId: params.milestoneId,
+            sliceId: removedId,
+            lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
+              ? legacyLifecycleStatus
+              : "cancelled",
+          });
+          if (lifecycle.lifecycleStatus === "completed") {
             throw new PlanningGuardError(`cannot remove completed slice ${removedId}`);
           }
         }
@@ -315,6 +378,31 @@ export async function handleReassessRoadmap(
         }
 
         for (const removedId of params.sliceChanges.removed) {
+          for (const task of getSliceTasks(params.milestoneId, removedId)) {
+            const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
+            const lifecycle = adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: removedId,
+              taskId: task.id,
+              lifecycleStatus: legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
+                ? legacyLifecycleStatus
+                : "cancelled",
+            });
+            if (lifecycle.lifecycleStatus === "completed") continue;
+            if (task.status !== "skipped") {
+              updateTaskStatus(params.milestoneId, removedId, task.id, "skipped");
+            }
+            if (lifecycle.lifecycleStatus !== "cancelled") {
+              adoptOrTransitionLifecycle(context, {
+                itemKind: "task",
+                milestoneId: params.milestoneId,
+                sliceId: removedId,
+                taskId: task.id,
+                lifecycleStatus: "cancelled",
+              });
+            }
+          }
           updateSliceStatus(params.milestoneId, removedId, "skipped");
           const lifecycle = adoptLifecycleIfMissing(context, {
             itemKind: "slice",
@@ -351,6 +439,8 @@ export async function handleReassessRoadmap(
     if (err instanceof PlanningGuardError) return { error: err.message };
     return { error: `db write failed: ${(err as Error).message}` };
   }
+
+  removeSlicePlanProjections(basePath, params.milestoneId, params.sliceChanges.removed);
 
   // ── Render artifacts ──────────────────────────────────────────────
   try {
