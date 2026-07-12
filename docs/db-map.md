@@ -1182,6 +1182,7 @@ lifecycle_id            TEXT NOT NULL
 attempt_id              TEXT DEFAULT NULL
 result_id               TEXT DEFAULT NULL
 blocker_id              TEXT DEFAULT NULL
+recovery_owner          TEXT NOT NULL
 boundary_stage          TEXT NOT NULL
 failure_kind            TEXT NOT NULL
 failure_fingerprint     TEXT NOT NULL
@@ -1199,8 +1200,10 @@ authority_epoch         INTEGER NOT NULL
 - An `execute` observation requires the matching V32 Attempt and its immutable
   `failed` or `interrupted` Attempt Result. Result provenance must be causally
   older than the observation. Updates and deletes fail.
-- A human-boundary observation may own one scoped V32 Blocker. Clarify and
-  pause must route through that exact blocker rather than another open blocker.
+- Recovery owner is an explicit `agent | user | external` classification and
+  is not inferred from the extensible failure kind. Agent-owned failures cannot
+  carry a Blocker. User/external failures must own the exact open V32 Blocker
+  with the matching resolution owner; clarify and pause route only through it.
 - Index: `idx_workflow_failure_fingerprint`
   (lifecycle_id, failure_fingerprint, project_revision)
 
@@ -1267,6 +1270,7 @@ criterion_id             TEXT PRIMARY KEY
 criterion_key            TEXT NOT NULL
 project_id               TEXT NOT NULL
 lifecycle_id             TEXT NOT NULL
+requirement_id           TEXT DEFAULT NULL
 criterion_kind           TEXT NOT NULL
 evidence_class           TEXT NOT NULL
 required                 INTEGER NOT NULL
@@ -1280,10 +1284,11 @@ authority_epoch          INTEGER NOT NULL
 - Criterion kind is `technical | subjective_uat`. Evidence class is `command |
   runtime | browser | artifact | human`; technical criteria cannot use `human`
   and subjective UAT must use it.
-- `criterion_key` identifies a lineage within one project/lifecycle. A changed
-  criterion is appended and must supersede the causally older current head of
-  the same key and kind. Old proof remains historical and cannot authorize a
-  verdict for the new head. Updates and deletes fail.
+- `criterion_key` identifies a lineage within one project/lifecycle and
+  optional Requirement. A null Requirement means lifecycle-level scope, not a
+  wildcard. A changed criterion must supersede the causally older current head
+  of the same key, kind, and Requirement scope. Old proof remains historical
+  and cannot authorize a verdict for the new head. Updates and deletes fail.
 
 #### `workflow_technical_verdicts`
 ```
@@ -1337,9 +1342,12 @@ authority_epoch          INTEGER NOT NULL
   Observation is `passed | failed | inconclusive`.
 - Evidence is owned directly by one Technical Verdict; there is no separate
   membership table. Its criterion, lifecycle, Attempt, source revision,
-  operation, project revision, Authority Epoch, evidence class, and observation
-  must exactly match the owning verdict bundle. PASS owns passed evidence,
-  FAIL owns failed evidence, and INCONCLUSIVE owns inconclusive evidence.
+  operation, project revision, Authority Epoch, and evidence class must match
+  the owning verdict bundle. PASS accepts only passed evidence. FAIL may retain
+  passed companion checks alongside failed evidence, and INCONCLUSIVE may
+  retain passed companions alongside inconclusive evidence. S06 bundle queries
+  must require at least one failed or inconclusive observation for those
+  verdicts, so an all-passed bundle cannot authorize FAIL or INCONCLUSIVE.
 - The observed project revision must be at or after Attempt settlement and
   before the verdict operation. Updates and deletes fail.
 - Index: `idx_workflow_evidence_verdict` (verdict_id, evidence_id)

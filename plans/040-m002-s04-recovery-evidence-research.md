@@ -90,6 +90,8 @@ Core columns:
 
 - identity/scope: `failure_observation_id`, `project_id`, `lifecycle_id`;
 - causal execution: nullable `attempt_id`, nullable `result_id`;
+- explicit `recovery_owner`: `agent | user | external`, plus the exact nullable
+  v32 Blocker for user/external ownership;
 - `boundary_stage`: `advance | execute | verify | route | closeout`;
 - `failure_kind`, normalized `failure_fingerprint`, `summary`, `evidence_json`;
 - `observed_at`, `operation_id`, `project_revision`, `authority_epoch`.
@@ -237,7 +239,13 @@ routing, dispatch, and closeout.
 4. Supersession always names the current head, advances project revision, and never decreases Authority Epoch.
 5. Objective proof and subjective acceptance never substitute for one another.
 6. S06 queries must not infer a technical PASS from aggregate assessment text, projection presence, legacy gate rows, or a different criterion's evidence.
-7. V34 requires clarify/pause to link the exact open approved v32 Blocker owned by the Failure Observation. S06 policy must keep failed tests, projection failures, ordinary defects, worktree repair, stale workers, missing harnesses, browser startup, and Git conflicts machine-owned by default.
+7. V34 persists `agent | user | external` recovery ownership independently of
+   the extensible failure kind. Agent-owned failures cannot carry a Blocker;
+   user/external failures and clarify/pause must link the exact open approved
+   v32 Blocker with the matching resolution owner. S06 classification keeps
+   failed tests, projection failures, ordinary defects, worktree repair, stale
+   workers, missing harnesses, browser startup, and Git conflicts agent-owned
+   by default; routing itself remains deterministic.
 8. Budget use is the count of linked immutable Recovery Actions. The future Domain Operation must make action selection idempotent so replay cannot add a second Action or exceed `max_uses`.
 9. S06 lifecycle queries must prevent failure, inconclusive evidence, recovery exhaustion, or missing projections from authorizing completion.
 
@@ -275,7 +283,10 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 6. One observation accepts exactly one action; a second route is rejected. An observation without a joined action is never dispatchable.
 7. Close/reopen between repeated identical fingerprints preserves the derived budget-use count and returns the same eligible route; a new trace/session cannot reset the cap.
 8. Idempotent action replay counts once; concurrent actions cannot exceed an exhausted budget.
-9. Clarify/pause rejects a missing, mismatched, or closed narrow Blocker. S06 policy must keep machine-owned kinds on automated routes and must not synthesize skipped/completed work on exhaustion.
+9. Clarify/pause rejects an agent-owned failure or a missing, mismatched, or
+   closed narrow Blocker. Novel failure kinds remain valid because ownership is
+   an explicit fact rather than a hardcoded kind mapping. S06 must not
+   synthesize skipped/completed work on exhaustion.
 10. S06 lifecycle queries must prevent projection, closeout-effect, worktree, timeout, and interrupted failures from settling the affected Lifecycle complete.
 11. Delete/corrupt `.gsd/runtime`, `metrics.json`, reopen JSON, doctor JSONL, assessment/UAT files, and clear process maps; reopened recovery eligibility and selected action remain byte-identical.
 
@@ -283,7 +294,10 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 
 12. Technical criteria reject `human`; subjective-UAT criteria reject objective evidence classes.
 13. Evidence rejects a mismatched Attempt/lifecycle/project, stale source revision, missing hash/output/environment, and mutation/deletion.
-14. Evidence cannot disagree with its owning PASS, FAIL, or INCONCLUSIVE verdict. S06 bundle-completeness queries must also reject a verdict with absent or incomplete required evidence.
+14. PASS accepts only passed evidence. FAIL and INCONCLUSIVE may retain passed
+    companion checks, but S06 bundle-completeness queries must require at least
+    one failed or inconclusive observation respectively and reject an absent,
+    incomplete, or all-passed bundle.
 15. A new criterion version makes the prior PASS historical and cannot fork from a non-head version.
 16. Multiple objective-UAT Attempts persist in v32 Attempt rows, retain immutable evidence across restart, and never derive numbering from files.
 17. S06 closeout queries must reject Technical PASS plus a required subjective criterion with no Human Acceptance; accepted authorizes that criterion and rejected blocks it.
@@ -293,7 +307,10 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 
 ### Sabotage proofs
 
-21. Sabotage an evidence observation from failed/inconclusive to passed, alter its tested source revision, or swap its criterion; the mutation must fail, and S06 closeout must remain unauthorized.
+21. Sabotage a PASS observation to failed/inconclusive, remove the only
+    failed/inconclusive observation from those verdict bundles, alter tested
+    source revision, or swap criterion. Local invalid rows must fail, and S06
+    aggregate closeout must remain unauthorized for incomplete bundles.
 22. Write a legacy PASS assessment, PASS quality gate, gate run, UAT Markdown, attempt JSON, and contradictory projection with no canonical evidence. S06 Technical Verdict/closeout queries must remain unchanged.
 23. Reset every legacy/process retry counter while preserving the canonical unchanged fingerprint and exhausted Action count. Retry remains exhausted after independent reopen.
 24. Insert a machine failure plus a user-facing placeholder file/blocker string. The S06 router must neither open a human Blocker nor pause without an authorized blocker/action transaction.
@@ -301,7 +318,7 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 ## Implementation notes for S04
 
 - Add one `db-recovery-evidence-foundation-schema.ts` helper and one v34 migration step; keep schema PR ownership serialized.
-- Wire fresh-install creation, `SCHEMA_VERSION = 34`, migration/backup/rollback tests, and the explicit single-writer allowlist.
+- Wire fresh-install creation, `SCHEMA_VERSION = 34`, migration/backup/rollback tests, and the explicit single-writer allowlist. Older-version rewind fixtures must remove every later-version table and index before stamping the earlier version.
 - Use the existing v31 exact provenance tuple and v32/v33 immutable/head-chain trigger style.
 - This slice should expose schema only. Do not add runtime writers, readers, UAT cutover, backfill, or compatibility deletion.
 - The later Domain Operation layer must atomically create failure/action and verdict/evidence/remediation bundles. V34 standalone triggers enforce local facts and reject invalid combinations; they should not simulate the future kernel.

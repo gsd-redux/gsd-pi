@@ -25,6 +25,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       attempt_id TEXT DEFAULT NULL,
       result_id TEXT DEFAULT NULL,
       blocker_id TEXT DEFAULT NULL,
+      recovery_owner TEXT NOT NULL CHECK (recovery_owner IN ('agent', 'user', 'external')),
       boundary_stage TEXT NOT NULL CHECK (
         boundary_stage IN ('advance', 'execute', 'verify', 'route', 'closeout')
       ),
@@ -43,6 +44,10 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
       UNIQUE (failure_observation_id, project_id, lifecycle_id),
       CHECK (result_id IS NULL OR attempt_id IS NOT NULL),
+      CHECK (
+        (recovery_owner = 'agent' AND blocker_id IS NULL) OR
+        (recovery_owner IN ('user', 'external') AND blocker_id IS NOT NULL)
+      ),
       CHECK (
         (boundary_stage = 'execute' AND attempt_id IS NOT NULL AND result_id IS NOT NULL) OR
         boundary_stage != 'execute'
@@ -79,6 +84,26 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
     )
     BEGIN
       SELECT RAISE(ABORT, 'failure observation requires a matching failed or interrupted result');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_failure_recovery_owner
+    BEFORE INSERT ON workflow_failure_observations
+    WHEN NEW.recovery_owner IN ('user', 'external') AND NOT EXISTS (
+      SELECT 1 FROM workflow_blockers blocker
+      WHERE blocker.blocker_id = NEW.blocker_id
+        AND blocker.project_id = NEW.project_id
+        AND blocker.lifecycle_id = NEW.lifecycle_id
+        AND blocker.resolution_owner = NEW.recovery_owner
+        AND blocker.blocker_status = 'open'
+        AND blocker.opened_project_revision <= NEW.project_revision
+        AND blocker.opened_authority_epoch <= NEW.authority_epoch
+        AND blocker.blocker_kind IN (
+          'missing_authority', 'missing_access', 'external_dependency', 'consent',
+          'ambiguous_intent', 'subjective_uat', 'user_limit'
+        )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'human recovery owner requires its matching open blocker');
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_workflow_failure_immutable_update
@@ -266,6 +291,8 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         AND failure.project_id = blocker.project_id
         AND failure.lifecycle_id = blocker.lifecycle_id
         AND failure.blocker_id = blocker.blocker_id
+        AND failure.recovery_owner = blocker.resolution_owner
+        AND failure.recovery_owner IN ('user', 'external')
       WHERE blocker.blocker_id = NEW.blocker_id
         AND blocker.project_id = NEW.project_id
         AND blocker.lifecycle_id = NEW.lifecycle_id
@@ -299,6 +326,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       ),
       project_id TEXT NOT NULL,
       lifecycle_id TEXT NOT NULL,
+      requirement_id TEXT DEFAULT NULL,
       criterion_kind TEXT NOT NULL CHECK (criterion_kind IN ('technical', 'subjective_uat')),
       evidence_class TEXT NOT NULL CHECK (
         evidence_class IN ('command', 'runtime', 'browser', 'artifact', 'human')
@@ -318,6 +346,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       FOREIGN KEY (project_id) REFERENCES project_authority(project_id),
       FOREIGN KEY (lifecycle_id, project_id)
         REFERENCES workflow_item_lifecycles(lifecycle_id, project_id),
+      FOREIGN KEY (requirement_id) REFERENCES requirements(id),
       FOREIGN KEY (supersedes_criterion_id)
         REFERENCES workflow_acceptance_criteria(criterion_id),
       FOREIGN KEY (operation_id, project_id, project_revision, authority_epoch)
@@ -333,12 +362,14 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       WHERE existing.project_id = NEW.project_id
         AND existing.lifecycle_id = NEW.lifecycle_id
         AND existing.criterion_key = NEW.criterion_key
+        AND existing.requirement_id IS NEW.requirement_id
     )) OR (NEW.supersedes_criterion_id IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM workflow_acceptance_criteria previous
       WHERE previous.criterion_id = NEW.supersedes_criterion_id
         AND previous.project_id = NEW.project_id
         AND previous.lifecycle_id = NEW.lifecycle_id
         AND previous.criterion_key = NEW.criterion_key
+        AND previous.requirement_id IS NEW.requirement_id
         AND previous.criterion_kind = NEW.criterion_kind
         AND previous.project_revision < NEW.project_revision
         AND previous.authority_epoch <= NEW.authority_epoch
@@ -506,8 +537,8 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         AND NEW.observed_project_revision < NEW.project_revision
         AND (
           (verdict.verdict = 'pass' AND NEW.observation = 'passed') OR
-          (verdict.verdict = 'fail' AND NEW.observation = 'failed') OR
-          (verdict.verdict = 'inconclusive' AND NEW.observation = 'inconclusive')
+          (verdict.verdict = 'fail') OR
+          (verdict.verdict = 'inconclusive' AND NEW.observation IN ('passed', 'inconclusive'))
         )
     )
     BEGIN
