@@ -34,6 +34,7 @@ const V34_PARENT_INDEXES = [
 ] as const;
 
 interface RawDb {
+  readonly isOpen: boolean;
   exec(sql: string): void;
   prepare(sql: string): {
     run(...args: unknown[]): unknown;
@@ -339,10 +340,13 @@ afterEach(() => {
   tempDirs.clear();
 });
 
-test("fresh v34 databases expose exactly the recovery and evidence tables and vocabularies", () => {
+test("fresh v34 databases expose exactly the recovery and evidence tables and vocabularies", (t) => {
   assert.equal(SCHEMA_VERSION, 34);
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     for (const table of V34_TABLES) assert.equal(tableExists(db, table), true, `${table} should exist`);
     for (const removedTable of [
       "workflow_technical_verdict_evidence",
@@ -403,6 +407,15 @@ test("fresh v34 databases expose exactly the recovery and evidence tables and vo
       resultId, revision: 4,
     });
     insertBudget(db, "life-recovery", 5);
+    assert.throws(() => db.prepare(`
+      INSERT INTO workflow_recovery_actions (
+        recovery_action_id, project_id, lifecycle_id, failure_observation_id,
+        action, recovery_budget_id, rationale, policy_version, selected_at,
+        operation_id, project_revision, authority_epoch
+      ) VALUES ('retry-without-target', ?, 'life-recovery', 'failure-route',
+        'retry', 'budget-retry', 'Retry requires an explicit target',
+        'recovery-v1', '', 'op-6', 6, 0)
+    `).run(projectId(db)), /CHECK constraint failed/);
     db.prepare(`
       INSERT INTO workflow_blockers (
         blocker_id, project_id, lifecycle_id, blocker_kind, resolution_owner,
@@ -513,14 +526,15 @@ test("fresh v34 databases expose exactly the recovery and evidence tables and vo
         WHERE failure_observation_id = 'failure-route'`).run(),
       /immutable|CHECK constraint failed/,
     );
-  } finally {
-    db.close();
   }
 });
 
-test("Failure Observations require matching failed Results and immutable normalized fingerprints", () => {
+test("Failure Observations require matching failed Results and immutable normalized fingerprints", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 9);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     insertLifecycle(db, "life-other", "M-OTHER", 2);
@@ -552,15 +566,16 @@ test("Failure Observations require matching failed Results and immutable normali
       () => db.prepare("DELETE FROM workflow_failure_observations WHERE failure_observation_id = 'failure-valid'").run(),
       /immutable|durable/,
     );
-  } finally {
-    db.close();
   }
 });
 
-test("immutable recovery budgets survive restart and derive bounded use from Recovery Actions", () => {
+test("immutable recovery budgets survive restart and derive bounded use from Recovery Actions", (t) => {
   const { dbPath, db } = openFreshFixture();
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
   const pid = projectId(db);
-  try {
+  {
     insertOperations(db, 8);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     const resultId = insertSettledAttempt(db, {
@@ -572,14 +587,16 @@ test("immutable recovery budgets survive restart and derive bounded use from Rec
       resultId, revision: 4,
     });
     insertBudget(db, "life-recovery", 5);
-  } finally {
-    db.close();
   }
+  db.close();
 
   assert.equal(openDatabase(dbPath), true);
   closeDatabase();
   const reopened = openRawDatabase(dbPath);
-  try {
+  t.after(() => {
+    if (reopened.isOpen) reopened.close();
+  });
+  {
     assert.equal(reopened.prepare(
       "SELECT max_uses FROM workflow_recovery_budgets WHERE recovery_budget_id = 'budget-retry'",
     ).get()?.max_uses, 2);
@@ -630,14 +647,15 @@ test("immutable recovery budgets survive restart and derive bounded use from Rec
       ) VALUES ('action-duplicate', ?, 'life-recovery', 'failure-1', 'retry',
         'budget-retry', 'life-recovery', 'Second route', 'recovery-v1', '', 'op-8', 8, 0)
     `).run(pid), /UNIQUE constraint failed|one recovery action/);
-  } finally {
-    reopened.close();
   }
 });
 
-test("recovery budget allocations cannot exceed their policy-class action caps", () => {
+test("recovery budget allocations cannot exceed their policy-class action caps", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 2);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     const policyCaps = [
@@ -663,14 +681,15 @@ test("recovery budget allocations cannot exceed their policy-class action caps",
         cap + 1,
       ), /max_uses|CHECK constraint failed/);
     }
-  } finally {
-    db.close();
   }
 });
 
-test("clarify and pause require a genuine open human Blocker", () => {
+test("clarify and pause require a genuine open human Blocker", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 8);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     const resultId = insertSettledAttempt(db, {
@@ -723,14 +742,15 @@ test("clarify and pause require a genuine open human Blocker", () => {
       ) VALUES ('action-clarify', ?, 'life-recovery', 'failure-access', 'clarify',
         'blocker-access', 'Only the user can supply access', 'recovery-v1', '', 'op-7', 7, 0)
     `).run(projectId(db));
-  } finally {
-    db.close();
   }
 });
 
-test("acceptance criterion lineages preserve optional requirement scope", () => {
+test("acceptance criterion lineages preserve optional requirement scope", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 6);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     db.exec(`
@@ -770,14 +790,15 @@ test("acceptance criterion lineages preserve optional requirement scope", () => 
       id: "criterion-missing-requirement", lifecycleId: "life-recovery",
       requirementId: "R404", revision: 5,
     }), /FOREIGN KEY constraint failed/);
-  } finally {
-    db.close();
   }
 });
 
-test("technical PASS is criterion, Attempt, and source-revision scoped to fresh immutable evidence", () => {
+test("technical PASS is criterion, Attempt, and source-revision scoped to fresh immutable evidence", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 10);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     insertLifecycle(db, "life-other", "M-OTHER", 2);
@@ -870,14 +891,15 @@ test("technical PASS is criterion, Attempt, and source-revision scoped to fresh 
         'commit-current', 'inconclusive', 'technical-verification', 'v1', 'Duplicate bundle',
         '', 'op-10', 10, 0)
     `).run(projectId(db)), /UNIQUE constraint failed|one technical verdict/);
-  } finally {
-    db.close();
   }
 });
 
-test("subjective UAT acceptance requires the current accepted v33 subjective-UAT Answer", () => {
+test("subjective UAT acceptance requires the current accepted v33 subjective-UAT Answer", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 9);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     insertCriterion(db, {
@@ -1009,14 +1031,15 @@ test("subjective UAT acceptance requires the current accepted v33 subjective-UAT
         'missing', 'question-uat', 'interaction-uat', 'accepted', 'developer', 'Fake answer', '',
         'op-9', 9, 0)
     `).run(projectId(db)), /answer|FOREIGN KEY constraint failed/);
-  } finally {
-    db.close();
   }
 });
 
-test("Remediation Links immutably route one failed verdict or rejected Human Acceptance", () => {
+test("Remediation Links immutably route one failed verdict or rejected Human Acceptance", (t) => {
   const { db } = openFreshFixture();
-  try {
+  t.after(() => {
+    if (db.isOpen) db.close();
+  });
+  {
     insertOperations(db, 9);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     insertLifecycle(db, "life-other", "M-OTHER", 2);
@@ -1097,19 +1120,20 @@ test("Remediation Links immutably route one failed verdict or rejected Human Acc
       () => db.prepare("DELETE FROM workflow_remediation_links WHERE remediation_link_id = 'remediation-1'").run(),
       /immutable|durable/,
     );
-  } finally {
-    db.close();
   }
 });
 
-test("v33 upgrade is additive, backed up, and leaves v34 tables empty", () => {
+test("v33 upgrade is additive, backed up, and leaves v34 tables empty", (t) => {
   const dbPath = createDatabasePath();
   rewindToV33(dbPath);
   assert.equal(openDatabase(dbPath), true);
   closeDatabase();
 
   const upgraded = openRawDatabase(dbPath);
-  try {
+  t.after(() => {
+    if (upgraded.isOpen) upgraded.close();
+  });
+  {
     assert.equal(maxSchemaVersion(upgraded), 34);
     assert.equal(upgraded.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Preserve legacy meaning");
     for (const table of V34_TABLES) {
@@ -1117,37 +1141,39 @@ test("v33 upgrade is additive, backed up, and leaves v34 tables empty", () => {
     }
     for (const index of V34_PARENT_INDEXES) assert.equal(indexExists(upgraded, index), true);
     assert.equal(upgraded.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
-  } finally {
-    upgraded.close();
   }
+  upgraded.close();
 
   const backup = openRawDatabase(`${dbPath}.backup-v33`);
-  try {
+  t.after(() => {
+    if (backup.isOpen) backup.close();
+  });
+  {
     assert.equal(maxSchemaVersion(backup), 33);
     for (const table of V34_TABLES) assert.equal(tableExists(backup, table), false);
     for (const index of V34_PARENT_INDEXES) assert.equal(indexExists(backup, index), false);
     assert.equal(backup.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Preserve legacy meaning");
     assert.equal(backup.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
-  } finally {
-    backup.close();
   }
+  backup.close();
 
   const restoredPath = join(dirname(dbPath), "restored.db");
   copyFileSync(`${dbPath}.backup-v33`, restoredPath);
   assert.equal(openDatabase(restoredPath), true);
   closeDatabase();
   const restored = openRawDatabase(restoredPath);
-  try {
+  t.after(() => {
+    if (restored.isOpen) restored.close();
+  });
+  {
     assert.equal(maxSchemaVersion(restored), 34);
     for (const table of V34_TABLES) {
       assert.equal(restored.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count, 0);
     }
-  } finally {
-    restored.close();
   }
 });
 
-test("faulted v33 migration rolls back every v34 table and retries cleanly", () => {
+test("faulted v33 migration rolls back every v34 table and retries cleanly", (t) => {
   const dbPath = createDatabasePath();
   rewindToV33(dbPath);
   _setMigrationFaultForTest(true);
@@ -1155,30 +1181,35 @@ test("faulted v33 migration rolls back every v34 table and retries cleanly", () 
   _setMigrationFaultForTest(false);
 
   const rolledBack = openRawDatabase(dbPath);
-  try {
+  t.after(() => {
+    if (rolledBack.isOpen) rolledBack.close();
+  });
+  {
     assert.equal(maxSchemaVersion(rolledBack), 33);
     for (const table of V34_TABLES) assert.equal(tableExists(rolledBack, table), false, `${table} should roll back`);
     for (const index of V34_PARENT_INDEXES) assert.equal(indexExists(rolledBack, index), false);
     assert.equal(rolledBack.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Preserve legacy meaning");
-  } finally {
-    rolledBack.close();
   }
+  rolledBack.close();
   const backup = openRawDatabase(`${dbPath}.backup-v33`);
-  try {
+  t.after(() => {
+    if (backup.isOpen) backup.close();
+  });
+  {
     assert.equal(maxSchemaVersion(backup), 33);
     assert.equal(backup.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
-  } finally {
-    backup.close();
   }
+  backup.close();
 
   assert.equal(openDatabase(dbPath), true);
   closeDatabase();
   const retried = openRawDatabase(dbPath);
-  try {
+  t.after(() => {
+    if (retried.isOpen) retried.close();
+  });
+  {
     assert.equal(maxSchemaVersion(retried), 34);
     for (const table of V34_TABLES) assert.equal(tableExists(retried, table), true);
     for (const index of V34_PARENT_INDEXES) assert.equal(indexExists(retried, index), true);
-  } finally {
-    retried.close();
   }
 });

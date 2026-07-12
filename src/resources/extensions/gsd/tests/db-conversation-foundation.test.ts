@@ -29,6 +29,7 @@ const V34_INDEXES = [
 ] as const;
 
 interface RawDb {
+  readonly isOpen: boolean;
   exec(sql: string): void;
   prepare(sql: string): {
     run(...args: unknown[]): unknown;
@@ -966,10 +967,13 @@ test("Work Checkpoints preserve a single restart-safe head without erasing histo
   );
 });
 
-test("v32 upgrade is additive, backed up, and does not reinterpret legacy rows", () => {
+test("v32 upgrade is additive, backed up, and does not reinterpret legacy rows", (t) => {
   const dbPath = createDatabasePath();
   rewindToV32(dbPath);
   const beforeUpgrade = openRawDatabase(dbPath);
+  t.after(() => {
+    if (beforeUpgrade.isOpen) beforeUpgrade.close();
+  });
   assertV34Absent(beforeUpgrade);
   beforeUpgrade.close();
   assert.equal(openDatabase(dbPath), true);

@@ -187,6 +187,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
       CHECK (
         (action = 'retry' AND recovery_budget_id IS NOT NULL
+          AND target_lifecycle_id IS NOT NULL
           AND target_lifecycle_id = lifecycle_id AND blocker_id IS NULL) OR
         (action IN ('repair', 'remediate') AND recovery_budget_id IS NOT NULL
           AND target_lifecycle_id IS NOT NULL AND blocker_id IS NULL) OR
