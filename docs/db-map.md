@@ -24,7 +24,8 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
-       ├── db-memory-fts-schema.ts, db-schema-metadata.ts, db-verification-evidence-schema.ts
+       ├── db-canonical-foundation-schema.ts, db-memory-fts-schema.ts,
+       │   db-schema-metadata.ts, db-verification-evidence-schema.ts
        │                    ← allowlisted schema/migration helpers
        ├── memory-backfill.ts
        │                    ← allowlisted ADR migration/backfill helper
@@ -64,7 +65,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V30**
+Current version: **V31**
 
 | Version | What Changed |
 |---------|-------------|
@@ -98,6 +99,7 @@ Current version: **V30**
 | V28 | memories.last_hit_at; incrementMemoryHitCount sets it; queryMemoriesRanked applies time-decay (1.0 → 0.7 floor over 90 days) |
 | V29 | slices.target_repositories and tasks.target_repositories for multi-repository planning |
 | V30 | rework_briefs and rework_brief_findings for structured task rework gates |
+| V31 | **Additive canonical foundation**: singleton project authority with revision and Authority Epoch, workflow operation provenance/idempotency receipts, immutable revision-linked domain events, and a durable event outbox |
 
 ---
 
@@ -669,6 +671,101 @@ Non-correctness-critical state: UI cursors, dashboard caches, resume pointers. S
 
 ---
 
+### 3e. Additive Canonical Foundation (V31)
+
+V31 creates these tables on fresh databases and transactionally upgrades V30
+databases. It is schema-only in this release: existing runtime read/write paths
+are not routed through these tables yet, and no import, projection worker,
+lifecycle API, or legacy deletion ships with this migration.
+
+#### `project_authority`
+```
+singleton            INTEGER PRIMARY KEY CHECK (singleton = 1)
+project_id           TEXT NOT NULL UNIQUE
+project_root_realpath TEXT NOT NULL DEFAULT ''
+revision             INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+authority_epoch      INTEGER NOT NULL DEFAULT 0 CHECK (authority_epoch >= 0)
+created_at           TEXT NOT NULL DEFAULT ''
+updated_at           TEXT NOT NULL DEFAULT ''
+```
+- Exactly one row is seeded with a generated 32-character lowercase hex
+  `project_id`; fresh and upgraded databases begin at revision/epoch `0`.
+- `schema_version` remains the DDL compatibility version and is not this domain
+  revision.
+
+#### `workflow_operations`
+```
+operation_id             TEXT PRIMARY KEY
+project_id               TEXT NOT NULL
+operation_type           TEXT NOT NULL
+idempotency_key          TEXT NOT NULL
+expected_revision        INTEGER NOT NULL CHECK (expected_revision >= 0)
+resulting_revision       INTEGER NOT NULL CHECK (resulting_revision = expected_revision + 1)
+expected_authority_epoch INTEGER NOT NULL CHECK (expected_authority_epoch >= 0)
+resulting_authority_epoch INTEGER NOT NULL
+actor_type               TEXT NOT NULL
+actor_id                 TEXT DEFAULT NULL
+source_transport         TEXT NOT NULL
+trace_id                 TEXT DEFAULT NULL
+turn_id                  TEXT DEFAULT NULL
+request_hash             TEXT NOT NULL
+created_at               TEXT NOT NULL
+FOREIGN KEY project_id → project_authority(project_id)
+```
+- `resulting_authority_epoch` must equal the expected epoch or advance it by
+  exactly one.
+- `(project_id, idempotency_key)` and `(project_id, resulting_revision)` are
+  unique. The composite operation/project/result revision/result epoch key binds
+  emitted events to the exact recorded operation result.
+- Index: `idx_workflow_operations_created` (project_id, created_at, operation_id)
+
+#### `workflow_domain_events`
+```
+event_id          TEXT PRIMARY KEY
+operation_id      TEXT NOT NULL
+event_index       INTEGER NOT NULL DEFAULT 0 CHECK (event_index >= 0)
+project_id        TEXT NOT NULL
+project_revision  INTEGER NOT NULL CHECK (project_revision > 0)
+authority_epoch   INTEGER NOT NULL CHECK (authority_epoch >= 0)
+event_type        TEXT NOT NULL
+entity_type       TEXT NOT NULL
+entity_id         TEXT NOT NULL
+caused_by_event_id TEXT DEFAULT NULL
+payload_json      TEXT NOT NULL DEFAULT '{}'
+created_at        TEXT NOT NULL
+```
+- `(operation_id, event_index)` is unique.
+- The composite foreign key to `workflow_operations` requires every event's
+  project revision and Authority Epoch to match its operation result exactly;
+  `caused_by_event_id` may link to another domain event.
+- Update and delete triggers abort with `workflow domain events are immutable`.
+- Index: `idx_workflow_domain_events_entity`
+  (project_id, entity_type, entity_id, project_revision, event_index)
+
+#### `workflow_outbox`
+```
+outbox_id        INTEGER PRIMARY KEY AUTOINCREMENT
+event_id         TEXT NOT NULL
+destination      TEXT NOT NULL
+available_at     TEXT NOT NULL DEFAULT ''
+attempt_count    INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)
+claimed_by       TEXT DEFAULT NULL
+claim_expires_at TEXT DEFAULT NULL
+delivered_at     TEXT DEFAULT NULL
+last_error       TEXT DEFAULT NULL
+FOREIGN KEY event_id → workflow_domain_events(event_id)
+```
+- `(event_id, destination)` is unique.
+- Index: `idx_workflow_outbox_pending` (delivered_at, available_at, outbox_id)
+
+These four tables are deliberately distinct from existing narrower concepts:
+`audit_events` remains optional operational telemetry,
+`milestone_commit_attributions` remains Git-specific attribution, and
+`command_queue`/`runtime_kv` remain coordination/cache surfaces rather than
+operation provenance, domain history, or an outbox.
+
+---
+
 ## 4. Entity Relationship Diagram
 
 ```
@@ -711,6 +808,12 @@ turn_git_transactions  (audit, keyed by trace_id + turn_id + stage)
 audit_events  (append-only audit log)
 audit_turn_index  (turn-level index into audit_events)
 runtime_kv  (soft state KV)
+
+project_authority ──► workflow_operations (project_id)
+workflow_operations ──► workflow_domain_events
+  (operation_id + project_id + resulting revision + resulting Authority Epoch)
+workflow_domain_events ──► workflow_domain_events (caused_by_event_id)
+workflow_domain_events ──► workflow_outbox (event_id)
 ```
 
 ---
@@ -722,13 +825,16 @@ artifacts, milestones, slices, tasks, decisions, replan history, assessments,
 quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
 optional rows when reading older manifests that predate the extended arrays.
+The additive V31 canonical-foundation tables are not yet part of this legacy
+manifest surface because runtime reads/writes have not cut over to them.
 
 `reconcileWorktreeDb` merges hidden-worktree correctness rows back into the main
 DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
-remain outside manifest restore.
+remain outside manifest restore. The V31 canonical-foundation tables likewise
+remain outside worktree reconciliation until a later runtime-routing slice.
 
 ---
 
@@ -800,7 +906,7 @@ remain outside manifest restore.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
