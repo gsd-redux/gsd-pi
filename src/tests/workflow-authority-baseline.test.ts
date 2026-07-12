@@ -10,12 +10,12 @@ const baselinePath = join(process.cwd(), "scripts/workflow-authority-baseline.mj
 const baseline = await import(pathToFileURL(baselinePath).href);
 
 test("workflow authority baseline reports four fixed invariants in stable order", () => {
-  const calls: string[][] = [];
+  const calls: Array<{ executable: string; args: string[] }> = [];
   let now = 0;
   const report = baseline.runWorkflowAuthorityBaseline({
     now: () => now += 5,
-    spawnSyncImpl: (_executable: string, args: string[]) => {
-      calls.push(args);
+    spawnSyncImpl: (executable: string, args: string[]) => {
+      calls.push({ executable, args });
       return { status: 0, signal: null, stdout: "", stderr: "" };
     },
   });
@@ -27,6 +27,21 @@ test("workflow authority baseline reports four fixed invariants in stable order"
     ["db-authority-fixture", "projection-conflict", "fault-harness-contract", "fault-boundary-matrix"],
   );
   assert.equal(calls.length, 4, "each accepted invariant must execute in its own process");
+  assert.equal(calls[0].executable, process.execPath);
+  assert.deepEqual(calls[0].args, [
+    "--import",
+    join(baseline.REPO_ROOT, "src/resources/extensions/gsd/tests/resolve-ts.mjs"),
+    "--experimental-strip-types",
+    "--test",
+    join(
+      baseline.REPO_ROOT,
+      "src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts",
+    ),
+  ]);
+  assert.equal(
+    report.invariants[0].command,
+    '"node" "--import" "./src/resources/extensions/gsd/tests/resolve-ts.mjs" "--experimental-strip-types" "--test" "src/resources/extensions/gsd/tests/workflow-authority-fixture.test.ts"',
+  );
   assert.equal(baseline.exitCodeForReport(report), 0);
 });
 

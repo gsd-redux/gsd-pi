@@ -42,7 +42,8 @@ function commandText(executable, args) {
 }
 
 function commandForInvariant(invariant) {
-  const resolver = join(REPO_ROOT, "src/resources/extensions/gsd/tests/resolve-ts.mjs");
+  const resolverFile = "src/resources/extensions/gsd/tests/resolve-ts.mjs";
+  const resolver = join(REPO_ROOT, resolverFile);
   const testFile = isAbsolute(invariant.file)
     ? invariant.file
     : join(REPO_ROOT, invariant.file);
@@ -56,7 +57,13 @@ function commandForInvariant(invariant) {
   return {
     executable: process.execPath,
     args,
-    text: commandText(process.execPath, args),
+    text: commandText("node", [
+      "--import",
+      `./${resolverFile}`,
+      "--experimental-strip-types",
+      "--test",
+      invariant.file,
+    ]),
   };
 }
 
