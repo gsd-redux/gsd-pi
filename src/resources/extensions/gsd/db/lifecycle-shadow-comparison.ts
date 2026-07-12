@@ -28,7 +28,6 @@ const LEGACY_STATUS_MAP: Readonly<Record<string, CanonicalLifecycleStatus>> = {
   pending: "pending",
   queued: "pending",
   planned: "pending",
-  ready: "ready",
   active: "in_progress",
   in_progress: "in_progress",
   "in-progress": "in_progress",

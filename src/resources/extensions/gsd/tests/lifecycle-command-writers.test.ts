@@ -721,7 +721,7 @@ test("restart preserves the fence, lifecycle head, and Attempt sequence", (t) =>
 test("semantic comparison reports normalized parity without hiding exact legacy values", () => {
   const cases = [
     ["pending", "pending", "match", "pending", "pending"],
-    ["ready", "ready", "match", "ready", "ready"],
+    ["ready", "ready", "status_mismatch", null, "ready"],
     ["in_progress", "in_progress", "match", "in_progress", "in_progress"],
     ["complete", "completed", "semantic_match_exact_delta", "completed", "completed"],
     ["done", "completed", "semantic_match_exact_delta", "completed", "completed"],
@@ -799,10 +799,15 @@ interface ConcurrentWriter {
   start: () => void;
 }
 
-function runConcurrentWriter(path: string, id: string): ConcurrentWriter {
+function runConcurrentWriter(
+  path: string,
+  id: string,
+  writerHref = pathToFileURL(
+    join(process.cwd(), "src/resources/extensions/gsd/db/writers/lifecycle-commands.ts"),
+  ).href,
+): ConcurrentWriter {
   const dbHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/gsd-db.ts")).href;
   const domainHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/db/domain-operation.ts")).href;
-  const writerHref = pathToFileURL(join(process.cwd(), "src/resources/extensions/gsd/db/writers/lifecycle-commands.ts")).href;
   const script = `
     import { openDatabase, closeDatabase } from ${JSON.stringify(dbHref)};
     import { executeDomainOperation } from ${JSON.stringify(domainHref)};
@@ -834,7 +839,12 @@ function runConcurrentWriter(path: string, id: string): ConcurrentWriter {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   let readyResolve!: () => void;
-  const ready = new Promise<void>((resolve) => { readyResolve = resolve; });
+  let readyReject!: (error: Error) => void;
+  let isReady = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
   const child = spawn(process.execPath, [
     "--import", "./src/resources/extensions/gsd/tests/resolve-ts.mjs",
     "--experimental-strip-types", "--input-type=module", "-e", script,
@@ -844,13 +854,21 @@ function runConcurrentWriter(path: string, id: string): ConcurrentWriter {
   let stderr = "";
   child.stdout.setEncoding("utf8").on("data", (chunk) => {
     stdout += chunk;
-    if (stdout.includes("READY\n")) readyResolve();
+    if (stdout.includes("READY\n")) {
+      isReady = true;
+      readyResolve();
+    }
   });
   child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
   const result = new Promise<Record<string, unknown>>((resolve, reject) => {
-    child.once("error", reject);
+    child.once("error", (error) => {
+      readyReject(error);
+      reject(error);
+    });
     child.once("close", (code) => {
-      if (code !== 0) return reject(new Error(stderr || stdout || `child exited ${code}`));
+      const error = new Error(stderr || stdout || `child exited ${code}`);
+      if (!isReady) readyReject(error);
+      if (code !== 0) return reject(error);
       const payload = stdout.split("\n").find((line) => line.startsWith("{"));
       try { resolve(JSON.parse(payload ?? "") as Record<string, unknown>); }
       catch { reject(new Error(`invalid child output: ${stdout}\n${stderr}`)); }
@@ -862,6 +880,16 @@ function runConcurrentWriter(path: string, id: string): ConcurrentWriter {
     start: () => child.stdin?.end("go\n"),
   };
 }
+
+test("concurrent writer readiness rejects when the child exits during startup", { timeout: 5_000 }, async () => {
+  const missingWriterHref = pathToFileURL(join(process.cwd(), "missing-lifecycle-writer.ts")).href;
+  const writer = runConcurrentWriter(databasePath(), "startup-failure", missingWriterHref);
+
+  await Promise.all([
+    assert.rejects(writer.ready, /cannot find|module not found|ERR_MODULE_NOT_FOUND/i),
+    assert.rejects(writer.result, /cannot find|module not found|ERR_MODULE_NOT_FOUND/i),
+  ]);
+});
 
 test("two processes cannot advance one lifecycle from the same fence", async (t) => {
   const path = openFixture(t);

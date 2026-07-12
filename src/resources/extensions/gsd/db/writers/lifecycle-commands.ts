@@ -9,7 +9,10 @@ import {
   type DomainOperationContext,
 } from "../domain-operation.js";
 import { getDb, isInTransaction } from "../engine.js";
-import type { CanonicalLifecycleStatus } from "../lifecycle-shadow-comparison.js";
+import {
+  type CanonicalLifecycleStatus,
+  normalizeCanonicalLifecycleStatus,
+} from "../lifecycle-shadow-comparison.js";
 export {
   type CanonicalLifecycleStatus,
   compareLifecycleShadow,
@@ -20,14 +23,6 @@ export {
 } from "../lifecycle-shadow-comparison.js";
 
 const ITEM_KINDS = new Set(["milestone", "slice", "task"]);
-const LIFECYCLE_STATUSES = new Set([
-  "pending",
-  "ready",
-  "in_progress",
-  "paused",
-  "completed",
-  "cancelled",
-]);
 const ATTEMPT_OUTCOMES = new Set(["succeeded", "failed", "interrupted"]);
 const KERNEL_STAGES = new Set(["execute", "verify", "route", "closeout", "settled"]);
 
@@ -168,7 +163,7 @@ function requireActiveContext(context: Readonly<DomainOperationContext>): void {
 function validateLifecycleIdentity(input: LifecycleCommandInput): void {
   if (!ITEM_KINDS.has(input.itemKind)) throw new Error("invalid lifecycle item kind");
   requireNonBlank(input.milestoneId, "milestoneId");
-  if (!LIFECYCLE_STATUSES.has(input.lifecycleStatus)) {
+  if (normalizeCanonicalLifecycleStatus(input.lifecycleStatus) === null) {
     throw new Error(`invalid lifecycle status ${input.lifecycleStatus}`);
   }
   const hasSlice = typeof input.sliceId === "string" && input.sliceId.trim().length > 0;
