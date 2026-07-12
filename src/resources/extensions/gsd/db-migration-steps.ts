@@ -5,6 +5,7 @@ import type { DbAdapter } from "./db-adapter.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
+import { createProjectionImportKernelCloseoutFoundationSchemaV35 } from "./db-projection-import-kernel-closeout-foundation-schema.js";
 import { createRecoveryEvidenceFoundationSchemaV34 } from "./db-recovery-evidence-foundation-schema.js";
 import { ensureColumn } from "./db-schema-metadata.js";
 
@@ -513,4 +514,8 @@ export function applyMigrationV33ConversationFoundation(db: DbAdapter): void {
 
 export function applyMigrationV34RecoveryEvidenceFoundation(db: DbAdapter): void {
   createRecoveryEvidenceFoundationSchemaV34(db);
+}
+
+export function applyMigrationV35ProjectionImportKernelCloseoutFoundation(db: DbAdapter): void {
+  createProjectionImportKernelCloseoutFoundationSchemaV35(db);
 }

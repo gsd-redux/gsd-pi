@@ -26,6 +26,7 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        │                    ← typed coordination/runtime writers
        ├── db-canonical-foundation-schema.ts, db-lifecycle-foundation-schema.ts,
        │   db-conversation-foundation-schema.ts, db-recovery-evidence-foundation-schema.ts,
+       │   db-projection-import-kernel-closeout-foundation-schema.ts,
        │   db-memory-fts-schema.ts, db-schema-metadata.ts, db-verification-evidence-schema.ts
        │                    ← allowlisted schema/migration helpers
        ├── memory-backfill.ts
@@ -66,7 +67,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V34**
+Current version: **V35**
 
 | Version | What Changed |
 |---------|-------------|
@@ -104,6 +105,7 @@ Current version: **V34**
 | V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, human-only Blockers, authorized Waivers, and immutable Requirement Disposition history |
 | V33 | **Additive guided-conversation foundation**: milestone context and advisory horizons, focused recommendation-first interactions, immutable verbatim Answers and correction-safe Decisions, dependency-targeted impacts, and restart-safe Work Checkpoints |
 | V34 | **Additive recovery and evidence foundation**: immutable Failure Observations and Recovery Actions, immutable count budgets whose use is derived from linked Actions, versioned acceptance criteria, verdict-owned objective evidence, separate subjective Human Acceptance, and immutable remediation routing |
+| V35 | **Additive projection, import, kernel, and closeout foundation**: durable per-target projection delivery, immutable import application receipts, restart-safe kernel checkpoint chains, versioned closeout plans with ordered effects, and success-only settlement receipts |
 
 ---
 
@@ -1437,6 +1439,193 @@ must require bundle completeness before dispatch or closeout. Runtime
 readers/writers, UAT, recovery policy, legacy projections, and lifecycle
 completion do not cut over in V34.
 
+### 3i. Additive Projection, Import, Kernel, And Closeout Foundation (V35)
+
+V35 adds six tables for durable projection delivery, sealed imports,
+restart-safe kernel position, and closeout settlement. It reuses V31–V34
+authority, Lifecycle, Attempt, recovery, and evidence records instead of
+creating parallel project, work-item, execution, or recovery models. The
+migration is additive: it performs no legacy backfill and does not cut runtime
+readers, writers, adapters, or lifecycle completion over to these tables.
+
+#### `workflow_projection_work`
+```
+projection_work_id          TEXT PRIMARY KEY
+project_id                  TEXT NOT NULL
+projection_key              TEXT NOT NULL
+projection_kind             TEXT NOT NULL
+supersedes_projection_work_id TEXT DEFAULT NULL UNIQUE
+source_project_revision     INTEGER NOT NULL
+source_authority_epoch      INTEGER NOT NULL
+renderer_version            TEXT NOT NULL
+delivery_state              TEXT NOT NULL DEFAULT 'pending'
+state_version               INTEGER NOT NULL DEFAULT 0
+claim_owner                 TEXT DEFAULT NULL
+claim_fencing_token         INTEGER NOT NULL DEFAULT 0
+claimed_at                  TEXT DEFAULT NULL
+claim_expires_at            TEXT DEFAULT NULL
+attempt_count               INTEGER NOT NULL DEFAULT 0
+next_attempt_at             TEXT NOT NULL DEFAULT ''
+last_error                  TEXT NOT NULL DEFAULT ''
+rendered_content_hash       TEXT DEFAULT NULL
+rendered_at                 TEXT DEFAULT NULL
+enqueue_operation_id        TEXT NOT NULL
+created_at                  TEXT NOT NULL
+updated_at                  TEXT NOT NULL
+```
+- Each normalized projection key has one immutable desired-work lineage.
+  Successors name the causally older current head and advance the source
+  revision without decreasing the Authority Epoch.
+- Delivery state is `pending | claimed | rendered | dead_letter`. Claims and
+  renewals are fenced and versioned; completed attempts increment the durable
+  cumulative count. Superseded rows cannot be claimed or rendered.
+- Enqueue provenance binds to the exact V31 Domain Operation. Delivery updates
+  are operational mutations and intentionally do not create Domain Operations
+  or advance the project revision. Currentness is per logical projection key,
+  so an unrelated project operation does not stale a rendered projection.
+- Delivery scans use `idx_workflow_projection_delivery`; current-head scans
+  reuse the unique `(project_id, projection_key, source_project_revision)` index.
+
+#### `workflow_import_applications`
+```
+operation_id                  TEXT PRIMARY KEY
+project_id                    TEXT NOT NULL
+import_kind                   TEXT NOT NULL
+importer_version              TEXT NOT NULL
+preview_schema_version        INTEGER NOT NULL
+preview_id                    TEXT NOT NULL UNIQUE
+preview_hash                  TEXT NOT NULL UNIQUE
+base_project_revision         INTEGER NOT NULL
+base_authority_epoch          INTEGER NOT NULL
+base_database_schema_version  INTEGER NOT NULL
+source_set_hash               TEXT NOT NULL
+change_set_hash               TEXT NOT NULL
+create_count                  INTEGER NOT NULL
+update_count                  INTEGER NOT NULL
+delete_count                  INTEGER NOT NULL
+preserve_count                INTEGER NOT NULL
+unparsed_count                INTEGER NOT NULL
+unresolved_count              INTEGER NOT NULL
+preview_json                  TEXT NOT NULL
+backup_ref                    TEXT NOT NULL
+backup_sha256                 TEXT NOT NULL
+backup_byte_size              INTEGER NOT NULL
+backup_schema_version         INTEGER NOT NULL
+backup_project_revision       INTEGER NOT NULL
+backup_authority_epoch        INTEGER NOT NULL
+backup_quick_check            TEXT NOT NULL
+backup_verified_at            TEXT NOT NULL
+applied_at                    TEXT NOT NULL
+resulting_project_revision    INTEGER NOT NULL
+resulting_authority_epoch     INTEGER NOT NULL
+```
+- Preview generation is non-authoritative. One immutable receipt seals the
+  versioned preview envelope, ordered source/change fingerprints, raw legacy
+  diagnoses, explicit resolutions, and aggregate counts used by application.
+- Application requires `unresolved_count = 0`, a verified independently
+  openable backup with `quick_check = ok`, and backup schema/revision/epoch
+  matching the base snapshot.
+- The receipt must bind to an `import.apply` V31 operation whose expected tuple
+  matches the base and whose exact resulting tuple matches the receipt.
+  Updates, deletes, duplicate preview identities, and duplicate preview hashes
+  fail.
+
+#### `workflow_kernel_checkpoints`
+```
+kernel_checkpoint_id          TEXT PRIMARY KEY
+project_id                    TEXT NOT NULL
+lifecycle_id                  TEXT NOT NULL
+attempt_id                    TEXT NOT NULL
+next_stage                    TEXT NOT NULL
+sequence                      INTEGER NOT NULL
+previous_kernel_checkpoint_id TEXT DEFAULT NULL UNIQUE
+created_at                    TEXT NOT NULL
+operation_id                  TEXT NOT NULL
+project_revision              INTEGER NOT NULL
+authority_epoch               INTEGER NOT NULL
+```
+- Absence of a checkpoint means Advance. The first row is sequence one,
+  records Execute, and shares the exact operation/revision/epoch tuple that
+  claimed its V32 Attempt.
+- Checkpoints form one immutable, gap-free, no-fork current-head chain per
+  lifecycle. Stages are `execute | verify | route | closeout | settled`.
+- Ordinary successors retain the Attempt. An Attempt change requires Execute
+  and a descendant retry/reopen Attempt linked to the previous Attempt. S06
+  owns legal stage prerequisites and atomic sibling facts.
+- Current-head scans reuse the unique `(project_id, lifecycle_id, sequence)` index.
+
+#### `workflow_closeout_plans`
+```
+closeout_plan_id            TEXT PRIMARY KEY
+project_id                  TEXT NOT NULL
+lifecycle_id                TEXT NOT NULL
+attempt_id                  TEXT NOT NULL
+tested_source_set_hash      TEXT NOT NULL
+readiness_basis_hash        TEXT NOT NULL
+supersedes_closeout_plan_id TEXT DEFAULT NULL UNIQUE
+prepared_at                 TEXT NOT NULL
+operation_id                TEXT NOT NULL
+project_revision            INTEGER NOT NULL
+authority_epoch             INTEGER NOT NULL
+```
+- A plan requires a causally prior succeeded, settled Attempt. One immutable
+  lineage exists per lifecycle; its head is current.
+- Supersession preserves project/lifecycle and may retain the Attempt or name a
+  later Attempt in the same lifecycle. There is no mutable plan status.
+- Index: `idx_workflow_closeout_plan_head`.
+
+#### `workflow_closeout_effects`
+```
+closeout_effect_id TEXT PRIMARY KEY
+closeout_plan_id   TEXT NOT NULL
+project_id         TEXT NOT NULL
+lifecycle_id       TEXT NOT NULL
+ordinal            INTEGER NOT NULL
+effect_kind        TEXT NOT NULL
+idempotency_key    TEXT NOT NULL
+effect_spec_json   TEXT NOT NULL
+effect_spec_hash   TEXT NOT NULL
+created_at         TEXT NOT NULL
+operation_id       TEXT NOT NULL
+project_revision   INTEGER NOT NULL
+authority_epoch    INTEGER NOT NULL
+```
+- Settlement-critical host effects are immutable and inserted in contiguous
+  ordinal order. Idempotency keys are unique within a plan and may recur on a
+  superseding plan so an adapter can recognize an earlier host result.
+- Every effect is born with the exact preparation operation/revision/epoch
+  tuple of its plan. Effects cannot be added after the plan is superseded or
+  after receipt settlement begins. A plan may have zero host effects.
+
+#### `workflow_settlement_receipts`
+```
+settlement_receipt_id TEXT PRIMARY KEY
+closeout_effect_id    TEXT NOT NULL UNIQUE
+project_id            TEXT NOT NULL
+lifecycle_id          TEXT NOT NULL
+outcome               TEXT NOT NULL
+external_ref          TEXT NOT NULL
+proof_json            TEXT NOT NULL
+proof_hash            TEXT NOT NULL
+settled_at            TEXT NOT NULL
+operation_id          TEXT NOT NULL
+project_revision      INTEGER NOT NULL
+authority_epoch       INTEGER NOT NULL
+```
+- Receipts are immutable success-only facts with outcome `performed |
+  recognized`. Missing receipt means pending; failures remain V34 Failure
+  Observations and Recovery Actions rather than failed receipts.
+- Each effect has at most one receipt. Receipts advance in effect-ordinal
+  order, causally follow plan creation, and cannot be added to a superseded
+  plan. Current plan plus complete receipt coverage is the settlement state;
+  V35 adds no settlement aggregate.
+- Index: `idx_workflow_settlement_receipt_scope`.
+
+V35 enforces local shape, provenance, lineage, immutability, delivery fencing,
+and settlement ordering. S06 owns atomic Domain Operation bundles, adapters,
+queries, stage and readiness prerequisites, runtime cutover, recovery fault
+tests, and final lifecycle completion.
+
 ---
 
 ## 4. Entity Relationship Diagram
@@ -1519,12 +1708,25 @@ workflow_technical_verdicts ──┐
                               ├──► workflow_remediation_links ──► workflow_item_lifecycles
 workflow_human_acceptances ───┘
 
+workflow_operations ──► workflow_projection_work (enqueue provenance)
+workflow_operations ──► workflow_import_applications
+workflow_item_lifecycles ──► workflow_kernel_checkpoints
+workflow_execution_attempts ──► workflow_kernel_checkpoints
+workflow_kernel_checkpoints ──► workflow_kernel_checkpoints (current-head chain)
+workflow_item_lifecycles ──► workflow_closeout_plans
+workflow_execution_attempts ──► workflow_closeout_plans
+workflow_closeout_plans ──► workflow_closeout_plans (supersession lineage)
+workflow_closeout_plans ──► workflow_closeout_effects ──► workflow_settlement_receipts
+
 workflow_operations ──► all V32 lifecycle records
   (operation + project + revision + Authority Epoch provenance)
 workflow_operations ──► all V33 guided-conversation records
   (operation + project + revision + Authority Epoch provenance)
 workflow_operations ──► all V34 recovery/evidence records
   (operation + project + revision + Authority Epoch provenance)
+workflow_operations ──► all V35 import/kernel/closeout records
+  (operation + project + revision + Authority Epoch provenance;
+   projection delivery transitions are operational and do not advance revision)
 ```
 
 ---
@@ -1537,7 +1739,8 @@ quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
 optional rows when reading older manifests that predate the extended arrays.
 The additive V31 canonical-foundation, V32 lifecycle-foundation, V33
-guided-conversation, and V34 recovery/evidence tables are
+guided-conversation, V34 recovery/evidence, and V35 projection/import/kernel/
+closeout tables are
 not yet part of this legacy manifest surface because runtime reads/writes have
 not cut over to them.
 
@@ -1547,7 +1750,8 @@ assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
 remain outside manifest restore. The V31 canonical-foundation, V32
-lifecycle-foundation, V33 guided-conversation, and V34 recovery/evidence tables likewise remain outside worktree reconciliation
+lifecycle-foundation, V33 guided-conversation, V34 recovery/evidence, and V35
+projection/import/kernel/closeout tables likewise remain outside worktree reconciliation
 until a later runtime-routing slice.
 
 ---
@@ -1620,7 +1824,7 @@ until a later runtime-routing slice.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-projection-import-kernel-closeout-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 

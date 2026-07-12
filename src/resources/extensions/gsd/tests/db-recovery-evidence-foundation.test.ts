@@ -27,6 +27,14 @@ const V34_TABLES = [
   "workflow_human_acceptances",
   "workflow_remediation_links",
 ] as const;
+const V35_TABLES = [
+  "workflow_projection_work",
+  "workflow_import_applications",
+  "workflow_kernel_checkpoints",
+  "workflow_closeout_plans",
+  "workflow_closeout_effects",
+  "workflow_settlement_receipts",
+] as const;
 const V34_PARENT_INDEXES = [
   "idx_workflow_attempt_scope_v34",
   "idx_workflow_result_scope_v34",
@@ -322,6 +330,7 @@ function rewindToV33(dbPath: string): void {
   const db = openRawDatabase(dbPath);
   try {
     seedLegacyRows(db);
+    for (const table of [...V35_TABLES].reverse()) db.exec(`DROP TABLE IF EXISTS ${table}`);
     for (const table of [...V34_TABLES].reverse()) db.exec(`DROP TABLE IF EXISTS ${table}`);
     for (const index of V34_PARENT_INDEXES) db.exec(`DROP INDEX IF EXISTS ${index}`);
     db.exec(`
@@ -342,7 +351,7 @@ afterEach(() => {
 });
 
 test("fresh v34 databases expose exactly the recovery and evidence tables and vocabularies", (t) => {
-  assert.equal(SCHEMA_VERSION, 34);
+  assert.ok(SCHEMA_VERSION >= 34);
   const { db } = openFreshFixture();
   t.after(() => {
     if (db.isOpen) db.close();
@@ -1164,7 +1173,7 @@ test("v33 upgrade is additive, backed up, and leaves v34 tables empty", (t) => {
     if (upgraded.isOpen) upgraded.close();
   });
   {
-    assert.equal(maxSchemaVersion(upgraded), 34);
+    assert.equal(maxSchemaVersion(upgraded), SCHEMA_VERSION);
     assert.equal(upgraded.prepare("SELECT decision FROM decisions WHERE id = 'D-LEGACY'").get()?.decision, "Preserve legacy meaning");
     for (const table of V34_TABLES) {
       assert.equal(upgraded.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count, 0);
@@ -1196,7 +1205,7 @@ test("v33 upgrade is additive, backed up, and leaves v34 tables empty", (t) => {
     if (restored.isOpen) restored.close();
   });
   {
-    assert.equal(maxSchemaVersion(restored), 34);
+    assert.equal(maxSchemaVersion(restored), SCHEMA_VERSION);
     for (const table of V34_TABLES) {
       assert.equal(restored.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count, 0);
     }
@@ -1238,7 +1247,7 @@ test("faulted v33 migration rolls back every v34 table and retries cleanly", (t)
     if (retried.isOpen) retried.close();
   });
   {
-    assert.equal(maxSchemaVersion(retried), 34);
+    assert.equal(maxSchemaVersion(retried), SCHEMA_VERSION);
     for (const table of V34_TABLES) assert.equal(tableExists(retried, table), true);
     for (const index of V34_PARENT_INDEXES) assert.equal(indexExists(retried, index), true);
   }

@@ -350,6 +350,7 @@ unit completes
 | `db-lifecycle-foundation-schema.ts` | workflow_item_lifecycles, workflow_execution_attempts, workflow_attempt_results, workflow_blockers, workflow_waivers, workflow_requirement_dispositions + lifecycle, fencing, provenance, history, and vocabulary constraints (V32, additive and not runtime-routed yet) |
 | `db-conversation-foundation-schema.ts` | workflow_milestone_contexts, workflow_open_questions, workflow_question_dependencies, workflow_interactions, workflow_interaction_options, workflow_answers, workflow_conversation_decisions, workflow_decision_impacts, workflow_work_checkpoints + recommendation-first, causal provenance, targeted revalidation, immutability, and single-head history constraints (V33, additive and not runtime-routed yet) |
 | `db-recovery-evidence-foundation-schema.ts` | workflow_failure_observations, workflow_recovery_budgets, workflow_recovery_actions, workflow_acceptance_criteria, workflow_technical_verdicts, workflow_verification_evidence, workflow_human_acceptances, workflow_remediation_links + explicit agent/user/external recovery ownership, immutable count budgets derived from linked Actions, requirement-scoped criterion lineage, verdict-owned objective evidence, separate subjective acceptance, and immutable rework/remediation routing (V34, additive and not runtime-routed yet) |
+| `db-projection-import-kernel-closeout-foundation-schema.ts` | workflow_projection_work, workflow_import_applications, workflow_kernel_checkpoints, workflow_closeout_plans, workflow_closeout_effects, workflow_settlement_receipts + per-key fenced projection delivery, sealed import and backup proof, immutable kernel-stage lineage, versioned closeout plans, ordered idempotent effects, and success-only settlement receipts (V35, additive and not runtime-routed yet) |
 | `db-coordination-schema.ts` | workers, milestone_leases, unit_dispatches, cancellation_requests, command_queue |
 | `db-memory-fts-schema.ts` | memories_fts (FTS5 virtual table), memories_ai/ad/au triggers |
 | `db-runtime-kv-schema.ts` | runtime_kv |
@@ -375,7 +376,7 @@ unit completes
 
 | Invariant | Where Enforced |
 |-----------|---------------|
-| Single-writer: all write SQL in the explicit single-writer allowlist (`db/engine.ts`, `db/writers/**`, `gsd-db.ts`, typed coordination/runtime writers `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, `db/command-queue.ts`, schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, `db-verification-evidence-schema.ts`, and ADR migration/backfill helper `memory-backfill.ts`); this is not permission for arbitrary writes under `db/`; `unit-ownership.ts` owns separate `.gsd/unit-claims.db`; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (explicit allowlist) |
+| Single-writer: all write SQL in the explicit single-writer allowlist (`db/engine.ts`, `db/writers/**`, `gsd-db.ts`, typed coordination/runtime writers `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, `db/command-queue.ts`, schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-projection-import-kernel-closeout-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, `db-verification-evidence-schema.ts`, and ADR migration/backfill helper `memory-backfill.ts`); this is not permission for arbitrary writes under `db/`; `unit-ownership.ts` owns separate `.gsd/unit-claims.db`; `db/queries.ts` is read-only | structural test `single-writer-invariant.test.ts` (explicit allowlist) |
 | Cascade on slice complete: pending tasks → skipped | `gsd_slice_complete` transaction |
 | Cascade on milestone reopen: all slices → in_progress, tasks → pending | `gsd_milestone_reopen` transaction |
 | No nested write transactions: `transaction()` and `immediateTransaction()` share one depth counter; read-then-write claims use `immediateTransaction()` and gate verdict + ledger writes commit atomically | `db-transaction.test.ts`, `command-queue.test.ts`, `gate-storage.test.ts` |
@@ -410,3 +411,23 @@ restore, or worktree reconciliation over to the new tables. S06 Domain
 Operations must atomically commit failure/action and verdict/evidence bundles,
 plus any applicable remediation links, and require bundle completeness before
 dispatch or closeout.
+
+V35 makes projection delivery, import application, kernel position, and
+closeout settlement restart-safe without creating parallel work or execution
+identities. Markdown remains projection output and never becomes runtime
+authority. Projection currentness is tracked per logical target; enqueue facts
+bind to a Domain Operation, while fenced delivery transitions are operational
+and do not advance project revision.
+
+An import preview remains non-authoritative until one immutable application
+receipt seals its exact source/change envelope and independently verified
+backup. Absence of a kernel checkpoint means Advance; the first persisted
+checkpoint is Execute and shares the selected Attempt's claim operation.
+Closeout state is derived from the current immutable plan, its ordered
+idempotent effects, and complete success-only receipts. Missing receipt means
+pending, while failures route through V34 recovery facts rather than failed
+receipts. V35 adds no kernel-run or settlement aggregate.
+
+V35 is still an additive foundation. S06 owns atomic sibling bundles, adapters,
+queries, stage/readiness checks, runtime routing, fault recovery, and final
+lifecycle completion.
