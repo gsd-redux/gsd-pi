@@ -30,9 +30,9 @@ commands, or orchestration modules.
 ## S02 planning boundary
 
 - Planning handlers carry a private `PlanningInvocation`; Pi keys use the
-  canonical tool name and tool-call ID, while workflow MCP accepts
-  `io.opengsd/idempotency-key` in request metadata and otherwise scopes request
-  identity to the server instance and session.
+  canonical tool name and tool-call ID, while workflow MCP requires a nonblank
+  `io.opengsd/idempotency-key` in private request metadata. Missing identity
+  fails before mutation because request/session IDs are not replay-stable.
 - A planning mutation, lifecycle adoption or transition, shadow comparison,
   event/outbox rows, Projection Work, and authority revision commit atomically.
   Projection rendering follows commit; replay retries rendering without

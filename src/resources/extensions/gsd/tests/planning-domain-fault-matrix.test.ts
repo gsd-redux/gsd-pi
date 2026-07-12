@@ -80,7 +80,7 @@ function params(): PlanTaskParams {
 function invocation(idempotencyKey = "fault-matrix/plan-task"): PlanningInvocation {
   return {
     idempotencyKey,
-    sourceTransport: "direct",
+    sourceTransport: "internal",
     actorType: "agent",
     actorId: "fault-matrix",
     traceId: "trace-fault-matrix",

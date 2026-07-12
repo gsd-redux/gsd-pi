@@ -6,7 +6,6 @@
  */
 
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -886,7 +885,7 @@ async function getWorkflowWriteGateModule(): Promise<WorkflowWriteGateModule> {
 
 interface PlanningInvocation {
   idempotencyKey: string;
-  sourceTransport: "direct" | "pi-extension" | "workflow-mcp";
+  sourceTransport: "internal" | "pi-tool" | "workflow-mcp";
   actorType: string;
   actorId?: string;
   traceId?: string;
@@ -910,7 +909,6 @@ interface McpToolServer {
 }
 
 const MCP_IDEMPOTENCY_META_KEY = "io.opengsd/idempotency-key";
-const workflowMcpInstanceId = randomUUID();
 
 function mcpPlanningInvocation(
   canonicalToolName: string,
@@ -920,21 +918,17 @@ function mcpPlanningInvocation(
   const stableExplicitKey = typeof explicitKey === "string" && explicitKey.trim()
     ? explicitKey.trim()
     : undefined;
-  const requestIdentity = stableExplicitKey
-    ? stableExplicitKey
-    : [
-        workflowMcpInstanceId,
-        extra?.sessionId ?? "stdio",
-        String(extra?.requestId ?? randomUUID()),
-      ].join(":");
-  const traceId = stableExplicitKey ?? (
-    extra?.requestId === undefined ? undefined : String(extra.requestId)
-  );
+  if (!stableExplicitKey) {
+    throw new Error(
+      `Planning mutation ${canonicalToolName} requires replay-stable private request metadata ` +
+      `_meta["${MCP_IDEMPOTENCY_META_KEY}"]. Retry with the same nonblank value.`,
+    );
+  }
   return {
-    idempotencyKey: `mcp:${canonicalToolName}:${requestIdentity}`,
+    idempotencyKey: `mcp:${canonicalToolName}:${stableExplicitKey}`,
     sourceTransport: "workflow-mcp",
     actorType: "agent",
-    ...(traceId ? { traceId } : {}),
+    traceId: stableExplicitKey,
   };
 }
 

@@ -77,10 +77,14 @@ function validatePlanPromotion(
     return `cannot re-plan milestone ${params.milestoneId}: it is already complete`;
   }
   if (existingMilestone) {
+    const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(existingMilestone.status);
+    const lifecycleStatus = legacyLifecycleStatus === "completed" || legacyLifecycleStatus === "cancelled"
+      ? legacyLifecycleStatus
+      : "ready";
     const lifecycle = adoptLifecycleIfMissing(context, {
       itemKind: "milestone",
       milestoneId: params.milestoneId,
-      lifecycleStatus: "ready",
+      lifecycleStatus,
     });
     if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
       return `cannot re-plan ${lifecycle.lifecycleStatus} milestone ${params.milestoneId} — use gsd_milestone_reopen first`;

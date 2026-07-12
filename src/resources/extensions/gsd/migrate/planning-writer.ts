@@ -37,7 +37,7 @@ function removeObsoletePlanningProjections(
 
   let changed = false;
   for (const relPath of Object.keys(marker.planning.projections)) {
-    if (desiredRelPaths.has(relPath)) continue;
+    if (desiredRelPaths.has(relPath) || !/-PLAN\.md$/i.test(relPath)) continue;
     const absPath = join(planningRoot(basePath), relPath);
     if (existsSync(absPath)) unlinkSync(absPath);
     delete marker.planning.projections[relPath];

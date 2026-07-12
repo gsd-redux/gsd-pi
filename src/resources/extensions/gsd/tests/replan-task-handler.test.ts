@@ -15,13 +15,13 @@ import {
   getReplanHistory,
 } from '../gsd-db.ts';
 import { handleReplanTask as handleReplanTaskWithInvocation } from '../tools/replan-task.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 
 function handleReplanTask(
   params: Parameters<typeof handleReplanTaskWithInvocation>[0],
   basePath: string,
 ) {
-  return handleReplanTaskWithInvocation(params, basePath, directPlanningInvocation());
+  return handleReplanTaskWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {

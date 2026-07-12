@@ -140,6 +140,14 @@ test("writePlanningDirectory removes cancelled modeled plans while preserving pa
   const stalePlanPaths = phaseDirs.map((phaseDir) =>
     join(phasesRoot, phaseDir, readdirSync(join(phasesRoot, phaseDir)).find((name) => name.endsWith("-PLAN.md"))!),
   );
+  const modeledSummaryPath = join(phasesRoot, phaseDirs[0]!, "01-01-SUMMARY.md");
+  const modeledSummaryContent = "# Completed work\n\nThis completion evidence must survive plan cleanup.\n";
+  writeFileSync(modeledSummaryPath, modeledSummaryContent, "utf8");
+  const modeledSummaryRelPath = `phases/${phaseDirs[0]}/01-01-SUMMARY.md`;
+  applyPlanningProjectionWrites(base, [{
+    relPath: modeledSummaryRelPath,
+    entities: ["M001/S01/T01"],
+  }]);
   const passthroughPath = join(phasesRoot, phaseDirs[0]!, "01-RESEARCH.md");
   writeFileSync(passthroughPath, "# Preserve this research\n", "utf8");
   applyPlanningProjectionWrites(base, [{
@@ -155,12 +163,18 @@ test("writePlanningDirectory removes cancelled modeled plans while preserving pa
   for (const stalePlanPath of stalePlanPaths) {
     assert.equal(existsSync(stalePlanPath), false, `obsolete modeled plan remains: ${stalePlanPath}`);
   }
+  assert.equal(
+    readFileSync(modeledSummaryPath, "utf8"),
+    modeledSummaryContent,
+    "modeled completion summary must survive obsolete plan cleanup",
+  );
   assert.equal(existsSync(passthroughPath), true, "passthrough research must survive projection cleanup");
   const marker = readCompatMarker(base);
   for (const stalePlanPath of stalePlanPaths) {
     const relPath = stalePlanPath.slice(join(base, ".planning").length + 1).replace(/\\/g, "/");
     assert.equal(marker.planning?.projections[relPath], undefined);
   }
+  assert.ok(marker.planning?.projections[modeledSummaryRelPath]);
   assert.ok(marker.planning?.passthrough[`phases/${phaseDirs[0]}/01-RESEARCH.md`]);
 });
 

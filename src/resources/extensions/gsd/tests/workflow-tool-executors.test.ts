@@ -39,7 +39,7 @@ import {
   executeValidateMilestone,
   executeUatResultSave,
 } from "../tools/workflow-tool-executors.ts";
-import { directPlanningInvocation } from "../planning-invocation.ts";
+import { internalPlanningInvocation } from "../planning-invocation.ts";
 import {
   initNotificationStore,
   readNotifications,
@@ -50,28 +50,28 @@ function executePlanMilestone(
   params: Parameters<typeof executePlanMilestoneWithInvocation>[0],
   basePath: string,
 ) {
-  return executePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+  return executePlanMilestoneWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function executePlanSlice(
   params: Parameters<typeof executePlanSliceWithInvocation>[0],
   basePath: string,
 ) {
-  return executePlanSliceWithInvocation(params, basePath, directPlanningInvocation());
+  return executePlanSliceWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function executeReplanSlice(
   params: Parameters<typeof executeReplanSliceWithInvocation>[0],
   basePath: string,
 ) {
-  return executeReplanSliceWithInvocation(params, basePath, directPlanningInvocation());
+  return executeReplanSliceWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function executeReassessRoadmap(
   params: Parameters<typeof executeReassessRoadmapWithInvocation>[0],
   basePath: string,
 ) {
-  return executeReassessRoadmapWithInvocation(params, basePath, directPlanningInvocation());
+  return executeReassessRoadmapWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {
@@ -842,7 +842,7 @@ test("executePlanSlice replay preserves public paths across project path aliases
         },
       ],
     };
-    const invocation = directPlanningInvocation();
+    const invocation = internalPlanningInvocation();
     const first = await inProjectDir(alias, () =>
       executePlanSliceWithInvocation(params, alias, invocation));
     const replay = await inProjectDir(base, () =>

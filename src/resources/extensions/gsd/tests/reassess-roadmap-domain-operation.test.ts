@@ -20,6 +20,7 @@ import {
   insertSlice,
   openDatabase,
   readDomainOperationFence,
+  updateTaskStatus,
 } from "../gsd-db.ts";
 import type { PlanningInvocation } from "../planning-invocation.ts";
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
@@ -65,7 +66,7 @@ function count(table: string): number {
 function invocation(key: string): PlanningInvocation {
   return {
     idempotencyKey: key,
-    sourceTransport: "direct",
+    sourceTransport: "internal",
     actorType: "agent",
     actorId: "reassess-test",
   };
@@ -172,6 +173,33 @@ function completeSliceLifecycle(sliceId: string, key: string): void {
       });
       return {
         events: [{ eventType: `test.slice.${lifecycleStatus}`, entityType: "slice", entityId: sliceId, payload: {}, destinations: ["test"] }],
+        projections: [{ projectionKey: `${key}/${lifecycleStatus}`, projectionKind: "test", rendererVersion: "1" }],
+      };
+    });
+  }
+}
+
+function completeTaskLifecycle(sliceId: string, taskId: string, key: string): void {
+  for (const lifecycleStatus of ["in_progress", "completed"] as const) {
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: `test.task.${lifecycleStatus}`,
+      idempotencyKey: `${key}/${lifecycleStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { sliceId, taskId, lifecycleStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId,
+        taskId,
+        lifecycleStatus,
+      });
+      return {
+        events: [{ eventType: `test.task.${lifecycleStatus}`, entityType: "task", entityId: taskId, payload: {}, destinations: ["test"] }],
         projections: [{ projectionKey: `${key}/${lifecycleStatus}`, projectionKind: "test", rendererVersion: "1" }],
       };
     });
@@ -402,6 +430,63 @@ test("removing a slice cancels runnable descendants and deletes obsolete plan pr
     Number(db().prepare("SELECT COUNT(*) AS count FROM artifacts WHERE milestone_id = 'M001' AND slice_id = 'S02'").get()?.["count"] ?? 0),
     0,
   );
+});
+
+test("removing a slice rejects completed descendants without residue", async () => {
+  const { base } = fixture();
+  const planned = await handlePlanSlice({
+    milestoneId: "M001",
+    sliceId: "S02",
+    goal: "Preserve completed descendant history.",
+    tasks: [{
+      taskId: "T01",
+      title: "Completed task",
+      description: "This completed work must prevent parent cancellation.",
+      estimate: "15m",
+      files: [],
+      verify: "node --test",
+      inputs: [],
+      expectedOutput: [],
+    }],
+  }, base, invocation("plan-slice/completed-descendant"));
+  assert.ok(!("error" in planned));
+  completeTaskLifecycle("S02", "T01", "test/complete-descendant");
+  updateTaskStatus("M001", "S02", "T01", "complete");
+
+  const before = {
+    operations: count("workflow_operations"),
+    assessments: count("assessments"),
+    slice: getSlice("M001", "S02"),
+    task: getTask("M001", "S02", "T01"),
+    lifecycles: db().prepare(`
+      SELECT item_kind, lifecycle_status, state_version
+      FROM workflow_item_lifecycles
+      WHERE milestone_id = 'M001' AND slice_id = 'S02'
+      ORDER BY item_kind, task_id
+    `).all(),
+    plan: readFileSync(planned.planPath, "utf8"),
+  };
+
+  const result = await reassess({
+    ...params(),
+    sliceChanges: { modified: [], added: [], removed: ["S02"] },
+  }, base, invocation("reassess/reject-completed-descendant"));
+
+  assert.ok("error" in result);
+  assert.match(result.error, /cannot remove.*completed.*task T01|cannot remove completed task T01/i);
+  assert.deepEqual({
+    operations: count("workflow_operations"),
+    assessments: count("assessments"),
+    slice: getSlice("M001", "S02"),
+    task: getTask("M001", "S02", "T01"),
+    lifecycles: db().prepare(`
+      SELECT item_kind, lifecycle_status, state_version
+      FROM workflow_item_lifecycles
+      WHERE milestone_id = 'M001' AND slice_id = 'S02'
+      ORDER BY item_kind, task_id
+    `).all(),
+    plan: readFileSync(planned.planPath, "utf8"),
+  }, before);
 });
 
 test("removal fails before mutation when an unchanged slice would retain a dangling dependency", async () => {

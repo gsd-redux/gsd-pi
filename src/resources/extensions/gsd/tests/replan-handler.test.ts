@@ -17,14 +17,14 @@ import {
   _getAdapter,
 } from '../gsd-db.ts';
 import { handleReplanSlice as handleReplanSliceWithInvocation } from '../tools/replan-slice.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 import { parsePlan } from '../parsers-legacy.ts';
 
 function handleReplanSlice(
   params: Parameters<typeof handleReplanSliceWithInvocation>[0],
   basePath: string,
 ) {
-  return handleReplanSliceWithInvocation(params, basePath, directPlanningInvocation());
+  return handleReplanSliceWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {
@@ -167,6 +167,37 @@ test('handleReplanSlice rejects structural violation: removing a completed task'
     assert.ok('error' in result);
     assert.match(result.error, /completed task/);
     assert.match(result.error, /T01/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handleReplanSlice requires explicit reopen before replanning a legacy deferred slice', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Deferred Slice', status: 'deferred', demo: 'Demo.' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task One', status: 'complete' });
+    insertTask({ id: 'T02', sliceId: 'S01', milestoneId: 'M001', title: 'Original Task Two', status: 'pending' });
+    upsertTaskPlanning('M001', 'S01', 'T02', {
+      description: 'Original description.',
+      estimate: '45m',
+      files: ['src/b.ts'],
+      verify: 'node --test b.test.ts',
+      inputs: ['src/b.ts'],
+      expectedOutput: ['src/b.ts'],
+    });
+    insertTask({ id: 'T03', sliceId: 'S01', milestoneId: 'M001', title: 'Task Three', status: 'pending' });
+
+    const result = await handleReplanSlice(validReplanParams(), base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /cancelled slice S01.*reopen/i);
+    assert.equal(getTask('M001', 'S01', 'T02')?.title, 'Original Task Two');
+    assert.equal(getTask('M001', 'S01', 'T03')?.status, 'pending');
+    assert.deepEqual(getReplanHistory('M001', 'S01'), []);
   } finally {
     cleanup(base);
   }

@@ -44,10 +44,10 @@ interface PlanningInvocation {
 ```
 
 - Pi tools use the canonical tool name plus the existing tool-call ID.
-- MCP uses the canonical tool name plus an explicit private
-  `io.opengsd/idempotency-key` request-metadata value when supplied. Otherwise
-  it scopes SDK session/request identity with a server-instance UUID so JSON-RPC
-  IDs reused after restart cannot collide.
+- MCP uses the canonical tool name plus a required nonblank private
+  `io.opengsd/idempotency-key` request-metadata value. It fails before mutation
+  when that replay-stable identity is absent; SDK session/request identity and
+  server-generated UUIDs cannot converge a lost-response retry.
 - Aliases normalize to the canonical operation type.
 - Internal callers provide an explicit key.
 - Payload hashing is forbidden: a legitimate A -> B -> A edit would collide.

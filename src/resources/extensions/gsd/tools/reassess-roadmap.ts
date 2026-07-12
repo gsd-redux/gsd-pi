@@ -311,6 +311,26 @@ export async function handleReassessRoadmap(
           if (lifecycle.lifecycleStatus === "completed") {
             throw new PlanningGuardError(`cannot remove completed slice ${removedId}`);
           }
+          for (const task of getSliceTasks(params.milestoneId, removedId)) {
+            const legacyTaskLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
+            const taskLifecycle = adoptLifecycleIfMissing(context, {
+              itemKind: "task",
+              milestoneId: params.milestoneId,
+              sliceId: removedId,
+              taskId: task.id,
+              lifecycleStatus: legacyTaskLifecycleStatus === "completed" || legacyTaskLifecycleStatus === "cancelled"
+                ? legacyTaskLifecycleStatus
+                : "cancelled",
+            });
+            if (
+              legacyTaskLifecycleStatus === "completed" ||
+              taskLifecycle.lifecycleStatus === "completed"
+            ) {
+              throw new PlanningGuardError(
+                `cannot remove slice ${removedId}: completed descendant task ${task.id}`,
+              );
+            }
+          }
         }
 
         const removedIds = new Set<string>(params.sliceChanges.removed);

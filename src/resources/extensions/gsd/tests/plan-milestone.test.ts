@@ -9,14 +9,14 @@ import { tmpdir } from 'node:os';
 
 import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, getSlice, updateSliceStatus, deleteSlice, insertMilestone } from '../gsd-db.ts';
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
 
 function handlePlanMilestone(
   params: Parameters<typeof handlePlanMilestoneWithInvocation>[0],
   basePath: string,
 ) {
-  return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+  return handlePlanMilestoneWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {
@@ -262,6 +262,25 @@ test('handlePlanMilestone preserves completed slice status on re-plan (#2558)', 
 
     const s02After = getSlice('M001', 'S02');
     assert.equal(s02After?.status, 'pending', 'S02 should remain pending');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanMilestone requires explicit reopen before planning a legacy deferred milestone', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Deferred milestone', status: 'deferred' });
+
+    const result = await handlePlanMilestone(validParams(), base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /cancelled milestone M001.*reopen/i);
+    assert.equal(getMilestone('M001')?.title, 'Deferred milestone');
+    assert.equal(getMilestone('M001')?.status, 'deferred');
+    assert.deepEqual(getMilestoneSlices('M001'), []);
   } finally {
     cleanup(base);
   }

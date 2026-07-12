@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getSlice, getSliceTasks, getTask, getGateResults, updateTaskStatus } from '../gsd-db.ts';
 import { handlePlanSlice as handlePlanSliceWithInvocation } from '../tools/plan-slice.ts';
 import { handlePlanTask as handlePlanTaskWithInvocation } from '../tools/plan-task.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 import { parsePlan } from '../parsers-legacy.ts';
 import { deriveState, invalidateStateCache } from '../state.ts';
 
@@ -17,14 +17,14 @@ function handlePlanSlice(
   params: Parameters<typeof handlePlanSliceWithInvocation>[0],
   basePath: string,
 ) {
-  return handlePlanSliceWithInvocation(params, basePath, directPlanningInvocation());
+  return handlePlanSliceWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function handlePlanTask(
   params: Parameters<typeof handlePlanTaskWithInvocation>[0],
   basePath: string,
 ) {
-  return handlePlanTaskWithInvocation(params, basePath, directPlanningInvocation());
+  return handlePlanTaskWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {
@@ -357,7 +357,7 @@ test('handlePlanSlice exact invocation replay preserves its public result and ch
     seedParentSlice();
     const invocation = {
       idempotencyKey: 'plan-slice/convergence-replay',
-      sourceTransport: 'pi-extension' as const,
+      sourceTransport: 'pi-tool' as const,
       actorType: 'agent',
       traceId: 'plan-slice/convergence-replay',
     };
@@ -476,6 +476,25 @@ test('handlePlanSlice requires explicit reopen before replanning a completed tas
     const after = getTask('M001', 'S02', 'T01');
     assert.deepEqual(after, before, 'rejected replanning must preserve completed task closeout state');
     assert.equal(getTask('M001', 'S02', 'T02'), null, 'rejected replanning must leave no partial task inserts');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanSlice requires explicit reopen before planning in a legacy deferred milestone', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    insertMilestone({ id: 'M001', title: 'Deferred milestone', status: 'deferred' });
+    insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Planning slice', status: 'pending', demo: 'Rendered plans exist.' });
+
+    const result = await handlePlanSlice(validParams(), base);
+
+    assert.ok('error' in result);
+    assert.match(result.error, /cancelled milestone M001.*reopen/i);
+    assert.equal(getSlice('M001', 'S02')?.goal, '');
+    assert.deepEqual(getSliceTasks('M001', 'S02'), []);
   } finally {
     cleanup(base);
   }

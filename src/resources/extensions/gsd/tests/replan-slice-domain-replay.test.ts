@@ -27,7 +27,7 @@ import { handleReplanSlice, type ReplanSliceParams } from "../tools/replan-slice
 function invocation(idempotencyKey: string): PlanningInvocation {
   return {
     idempotencyKey,
-    sourceTransport: "pi-extension",
+    sourceTransport: "pi-tool",
     actorType: "agent",
     traceId: idempotencyKey,
   };

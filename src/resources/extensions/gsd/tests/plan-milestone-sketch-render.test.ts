@@ -13,10 +13,10 @@ import { tmpdir } from "node:os";
 
 import { openDatabase, closeDatabase } from "../gsd-db.ts";
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation, type PlanMilestoneParams } from "../tools/plan-milestone.ts";
-import { directPlanningInvocation } from "../planning-invocation.ts";
+import { internalPlanningInvocation } from "../planning-invocation.ts";
 
 function handlePlanMilestone(params: PlanMilestoneParams, basePath: string) {
-  return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+  return handlePlanMilestoneWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {

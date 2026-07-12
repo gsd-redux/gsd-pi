@@ -101,7 +101,7 @@ function workflowOperations(): Array<Record<string, unknown>> {
   const db = _getAdapter();
   assert.ok(db, "database must be open");
   return db.prepare(`
-    SELECT operation_type, idempotency_key, expected_revision, resulting_revision
+    SELECT operation_type, idempotency_key, source_transport, expected_revision, resulting_revision
     FROM workflow_operations ORDER BY resulting_revision
   `).all();
 }
@@ -133,6 +133,7 @@ test("Pi planning retries replay one private tool-call operation without changin
     assert.deepEqual(workflowOperations(), [{
       operation_type: "workflow.milestone.plan",
       idempotency_key: "pi:gsd_plan_milestone:pi-call-42",
+      source_transport: "pi-tool",
       expected_revision: 0,
       resulting_revision: 1,
     }]);

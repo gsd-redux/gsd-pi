@@ -14,7 +14,7 @@ function handlePlanTask(params: PlanTaskParams, basePath: string) {
   invocationSequence += 1;
   return handlePlanTaskWithInvocation(params, basePath, {
     idempotencyKey: `plan-task-test:${invocationSequence}`,
-    sourceTransport: 'direct',
+    sourceTransport: 'internal',
     actorType: 'agent',
   });
 }

@@ -6,13 +6,13 @@ import { tmpdir } from 'node:os';
 
 import { openDatabase, closeDatabase } from '../gsd-db.ts';
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 
 function handlePlanMilestone(
   params: Parameters<typeof handlePlanMilestoneWithInvocation>[0],
   basePath: string,
 ) {
-  return handlePlanMilestoneWithInvocation(params, basePath, directPlanningInvocation());
+  return handlePlanMilestoneWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 const boundaryMap = [

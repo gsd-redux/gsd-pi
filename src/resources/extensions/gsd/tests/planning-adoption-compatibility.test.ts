@@ -448,7 +448,7 @@ test("manual merge preflight propagates canonical divergence instead of continui
   );
 });
 
-test("auto-worktree teardown preserves the worktree on canonical divergence", (t) => {
+test("auto-worktree teardown preserves canonical divergence when the database starts closed", (t) => {
   const originalCwd = process.cwd();
   const base = tempDir("gsd-teardown-divergence-");
   const mainDb = join(base, ".gsd", "gsd.db");
@@ -466,6 +466,7 @@ test("auto-worktree teardown preserves the worktree on canonical divergence", (t
   advanceTaskLifecycle();
   closeDatabase();
   assert.equal(openDatabase(mainDb), true);
+  closeDatabase();
 
   try {
     const workspace = createWorkspace(worktreeRoot);

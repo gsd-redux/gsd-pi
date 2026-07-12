@@ -402,10 +402,14 @@ export async function handlePlanSlice(
         if (isClosedStatus(parentMilestone.status)) {
           throw new PlanningGuardError(`cannot plan slice in a closed milestone: ${params.milestoneId} (status: ${parentMilestone.status})`);
         }
+        const legacyMilestoneLifecycle = normalizeLegacyLifecycleStatus(parentMilestone.status);
+        const milestoneLifecycleStatus = legacyMilestoneLifecycle === "completed" || legacyMilestoneLifecycle === "cancelled"
+          ? legacyMilestoneLifecycle
+          : "ready";
         const milestoneLifecycle = adoptLifecycleIfMissing(context, {
           itemKind: "milestone",
           milestoneId: params.milestoneId,
-          lifecycleStatus: "ready",
+          lifecycleStatus: milestoneLifecycleStatus,
         });
         if (milestoneLifecycle.lifecycleStatus === "completed" || milestoneLifecycle.lifecycleStatus === "cancelled") {
           throw new PlanningGuardError(

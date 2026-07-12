@@ -5,17 +5,17 @@ import { randomUUID } from "node:crypto";
 
 export interface PlanningInvocation {
   idempotencyKey: string;
-  sourceTransport: "direct" | "pi-extension" | "workflow-mcp";
+  sourceTransport: "internal" | "pi-tool" | "workflow-mcp";
   actorType: string;
   actorId?: string;
   traceId?: string;
   turnId?: string;
 }
 
-export function directPlanningInvocation(): PlanningInvocation {
+export function internalPlanningInvocation(): PlanningInvocation {
   return {
-    idempotencyKey: `direct:${randomUUID()}`,
-    sourceTransport: "direct",
+    idempotencyKey: `internal:${randomUUID()}`,
+    sourceTransport: "internal",
     actorType: "agent",
   };
 }
@@ -23,7 +23,7 @@ export function directPlanningInvocation(): PlanningInvocation {
 export function piPlanningInvocation(canonicalToolName: string, toolCallId: string): PlanningInvocation {
   return {
     idempotencyKey: `pi:${canonicalToolName}:${toolCallId}`,
-    sourceTransport: "pi-extension",
+    sourceTransport: "pi-tool",
     actorType: "agent",
     traceId: toolCallId,
   };

@@ -16,13 +16,13 @@ import {
   _getAdapter,
 } from '../gsd-db.ts';
 import { handleReassessRoadmap as handleReassessRoadmapWithInvocation } from '../tools/reassess-roadmap.ts';
-import { directPlanningInvocation } from '../planning-invocation.ts';
+import { internalPlanningInvocation } from '../planning-invocation.ts';
 
 function handleReassessRoadmap(
   params: Parameters<typeof handleReassessRoadmapWithInvocation>[0],
   basePath: string,
 ) {
-  return handleReassessRoadmapWithInvocation(params, basePath, directPlanningInvocation());
+  return handleReassessRoadmapWithInvocation(params, basePath, internalPlanningInvocation());
 }
 
 function makeTmpBase(): string {

@@ -162,7 +162,7 @@ export async function handleReplanSlice(
           itemKind: "slice",
           milestoneId: params.milestoneId,
           sliceId: params.sliceId,
-          lifecycleStatus: "ready",
+          lifecycleStatus: normalizeLegacyLifecycleStatus(parentSlice.status) ?? "ready",
         });
         if (sliceLifecycle.lifecycleStatus === "cancelled" || parentSlice.status === "skipped") {
           throw new PlanningGuardError(`cannot replan cancelled slice ${params.sliceId} — use gsd_slice_reopen first`);
