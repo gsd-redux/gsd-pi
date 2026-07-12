@@ -44,6 +44,21 @@ import {
 
 export { getActiveWorktreeName, getWorktreeOriginalCwd } from "./worktree-session-state.js";
 
+export async function reconcileWorktreeDbBeforeManualMerge(
+  mainDbPath: string,
+  worktreeDbPath: string,
+): Promise<void> {
+  const {
+    CanonicalWorktreeDivergenceError,
+    reconcileWorktreeDb,
+  } = await import("./gsd-db.js");
+  try {
+    reconcileWorktreeDb(mainDbPath, worktreeDbPath);
+  } catch (error) {
+    if (error instanceof CanonicalWorktreeDivergenceError) throw error;
+  }
+}
+
 /**
  * Tracks the original project root so we can switch back.
  * Set when we first chdir into a worktree, cleared on return.
@@ -650,15 +665,13 @@ async function handleMerge(
     const commitType = inferCommitType(name);
     const commitMessage = `${commitType}: merge worktree ${name}\n\nGSD-Worktree: ${name}`;
 
-    // Reconcile worktree DB into main DB before squash merge
+    // Reconcile worktree DB into main DB before squash merge. Ordinary legacy
+    // failures remain best-effort; canonical divergence blocks the merge.
     const contract = resolveGsdPathContract(worktreePath(basePath, name), basePath);
     const wtDbPath = join(contract.worktreeGsd ?? join(contract.workRoot, ".gsd"), "gsd.db");
     const mainDbPath = contract.projectDb;
     if (existsSync(wtDbPath) && existsSync(mainDbPath)) {
-      try {
-        const { reconcileWorktreeDb } = await import("./gsd-db.js");
-        reconcileWorktreeDb(mainDbPath, wtDbPath);
-      } catch { /* non-fatal */ }
+      await reconcileWorktreeDbBeforeManualMerge(mainDbPath, wtDbPath);
     }
 
     try {

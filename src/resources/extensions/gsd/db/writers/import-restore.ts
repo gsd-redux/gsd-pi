@@ -2,18 +2,41 @@
 // File Purpose: Bulk import/restore writers for the single-writer layer.
 // restoreManifest rebuilds the engine DB from a StateManifest;
 // bulkInsertLegacyHierarchy replaces the milestone/slice/task hierarchy from
-// markdown-parsed payloads. Both own their own transaction() and contain only
+// markdown-parsed payloads. Both own an immediate transaction and contain only
 // write SQL, read through the shared engine handle.
 import { createHash } from "node:crypto";
-import { getDbOrNull, transaction } from "../engine.js";
+import { getDbOrNull, immediateTransaction } from "../engine.js";
 import { GSDError, GSD_STALE_STATE } from "../../errors.js";
 import type { StateManifest } from "../../workflow-manifest.js";
+
+export function assertNoAdoptedLifecycleHistory(
+  operation: string,
+  milestoneIds?: readonly string[],
+): void {
+  const db = getDbOrNull();
+  if (!db) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  if (milestoneIds?.length === 0) return;
+
+  const scope = milestoneIds
+    ? ` WHERE milestone_id IN (${milestoneIds.map(() => "?").join(",")})`
+    : "";
+  const adopted = db.prepare(
+    `SELECT 1 AS adopted FROM workflow_item_lifecycles${scope} LIMIT 1`,
+  ).get(...(milestoneIds ?? []));
+  if (adopted !== undefined) {
+    throw new GSDError(
+      GSD_STALE_STATE,
+      `${operation}: cannot replace hierarchy with adopted canonical lifecycle history`,
+    );
+  }
+}
 
 export function restoreManifest(manifest: StateManifest): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   const db = getDbOrNull()!;
 
-  transaction(() => {
+  immediateTransaction(() => {
+    assertNoAdoptedLifecycleHistory("restoreManifest");
     const restoredMilestoneIds = new Set(manifest.milestones.map((m) => m.id));
     const restoredSliceKeys = new Set(manifest.slices.map((s) => JSON.stringify([s.milestone_id, s.id])));
     const preservedReplanHistory = manifest.replan_history === undefined
@@ -280,7 +303,8 @@ export function bulkInsertLegacyHierarchy(payload: {
   if (clearMilestoneIds.length === 0) return;
   const placeholders = clearMilestoneIds.map(() => "?").join(",");
 
-  transaction(() => {
+  immediateTransaction(() => {
+    assertNoAdoptedLifecycleHistory("bulkInsertLegacyHierarchy", clearMilestoneIds);
     db.prepare(`DELETE FROM tasks WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);
     db.prepare(`DELETE FROM slices WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);
     db.prepare(`DELETE FROM milestone_leases WHERE milestone_id IN (${placeholders})`).run(...clearMilestoneIds);

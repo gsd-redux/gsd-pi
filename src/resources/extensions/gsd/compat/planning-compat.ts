@@ -153,6 +153,7 @@ export async function capturePlanningCompatIfNeeded(
       "reconcile",
       `planning DB import failed on initial capture — reconcile may overwrite gsd-core content: ${(e as Error).message}`,
     );
+    return;
   }
 
   // Activate the marker. Leave projections/passthrough empty: the next
