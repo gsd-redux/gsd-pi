@@ -52,6 +52,7 @@ const TYPED_DB_WRITER_FILES = new Set([
 
 const SCHEMA_DB_WRITER_FILES = new Set([
   "db-canonical-foundation-schema.ts",
+  "db-conversation-foundation-schema.ts",
   "db-lifecycle-foundation-schema.ts",
   "db-memory-fts-schema.ts",
   "db-schema-metadata.ts",

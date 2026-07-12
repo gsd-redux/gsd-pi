@@ -208,7 +208,7 @@ afterEach(() => {
 });
 
 test("fresh databases expose distinct v32 lifecycle concepts with exact vocabularies", () => {
-  assert.equal(SCHEMA_VERSION, 32);
+  assert.ok(SCHEMA_VERSION >= 32);
   const { db } = openFreshFixture();
   try {
     for (const table of [
@@ -958,7 +958,7 @@ test("v31 upgrade is additive, backed up, and preserves legacy values", () => {
 
   const upgraded = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(upgraded), 32);
+    assert.equal(maxSchemaVersion(upgraded), SCHEMA_VERSION);
     assert.equal(tableExists(upgraded, "workflow_execution_attempts"), true);
     assert.equal(upgraded.prepare("SELECT status FROM tasks WHERE milestone_id = 'M-A' AND id = 'T01'").get()?.status, "in_progress");
     assert.equal(upgraded.prepare("SELECT status FROM requirements WHERE id = 'R-A'").get()?.status, "active");
@@ -984,7 +984,7 @@ test("v31 upgrade is additive, backed up, and preserves legacy values", () => {
   closeDatabase();
   const restored = openRawDatabase(restoredPath);
   try {
-    assert.equal(maxSchemaVersion(restored), 32);
+    assert.equal(maxSchemaVersion(restored), SCHEMA_VERSION);
     assert.equal(restored.prepare("SELECT status FROM tasks WHERE milestone_id = 'M-A' AND id = 'T01'").get()?.status, "in_progress");
   } finally {
     restored.close();
@@ -1016,7 +1016,7 @@ test("faulted v31 migration rolls back all v32 state and retries cleanly", () =>
   closeDatabase();
   const retried = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(retried), 32);
+    assert.equal(maxSchemaVersion(retried), SCHEMA_VERSION);
     assert.equal(tableExists(retried, "workflow_execution_attempts"), true);
     assert.equal(retried.prepare("SELECT COUNT(*) AS count FROM tasks WHERE milestone_id = 'M-A'").get()?.count, 1);
   } finally {

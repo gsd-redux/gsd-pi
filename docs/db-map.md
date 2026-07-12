@@ -948,6 +948,35 @@ from silently fabricating another.
 
 ---
 
+### 3g. Additive Guided-Conversation Foundation (V33)
+
+V33 transactionally adds durable conversation facts without backfilling or
+changing runtime routing. Prompts, Markdown, process caches, and legacy
+decision rows retain their current behavior until the later cutover slice.
+
+| Table | Durable responsibility |
+|---|---|
+| `workflow_milestone_contexts` | Append-only Milestone Kind and advisory planning-horizon history. Kinds are `discovery`, `research`, `requirements`, `roadmap`, `delivery`, or `remediation`; reforecasts supersede the current head without changing readiness or lifecycle state. |
+| `workflow_open_questions` | Focused question identity and its explicit `open` → `answered|withdrawn` lifecycle. Answered transitions require the accepted Answer from the same operation. |
+| `workflow_question_dependencies` | The exact lifecycle scope a question may inform or cause to be revalidated. |
+| `workflow_interactions` | Presented conversational turns. Interaction Kinds are `open`, `choice`, `clarification`, `recap`, `consent`, and `subjective-uat`; every answer-requiring turn carries recommendation text and rationale. |
+| `workflow_interaction_options` | Two or three ordered choice options. Presentation is rejected unless the declared recommendation belongs to the Interaction and is ordinal one. |
+| `workflow_answers` | Immutable verbatim user language stored separately from normalized interpretation. Only one Answer per Interaction may be accepted; conflicting revisions remain append-only facts. |
+| `workflow_conversation_decisions` | Immutable Decisions derived from accepted Answers. Corrections form a causally advancing, single-head supersession chain. |
+| `workflow_decision_impacts` | Immutable, dependency-reachable lifecycle effects such as targeted revalidation; unrelated work is rejected. |
+| `workflow_work_checkpoints` | Restart-safe, append-only conversation/work summaries with one ordered head per scope, including explicit answer, pause, correction, recap, and handoff boundaries. Narrative fields are resumability aids; canonical Answer and Decision heads remain the machine truth. |
+
+All nine tables bind to the exact V31 Domain Operation, project revision, and
+Authority Epoch that created the fact. Identity and historical content are
+immutable; only the Open Question close and Interaction presentation
+transitions update existing rows. Planning dates remain advisory data and have
+no triggers into Blockers, Attempts, readiness, or lifecycle status.
+V33 validates each relational fact but does not yet promise an atomic
+multi-table conversation bundle; S06 Domain Operations add that commit boundary
+before runtime cutover.
+
+---
+
 ## 4. Entity Relationship Diagram
 
 ```
@@ -1007,7 +1036,17 @@ requirements ──► workflow_requirement_dispositions
 workflow_waivers ──► workflow_requirement_dispositions
 workflow_blockers ──► workflow_waivers
 
+workflow_item_lifecycles ──► workflow_milestone_contexts
+workflow_item_lifecycles ──► workflow_open_questions
+workflow_open_questions ──► workflow_question_dependencies ──► workflow_item_lifecycles
+workflow_open_questions ──► workflow_interactions ──► workflow_interaction_options
+workflow_interactions ──► workflow_answers ──► workflow_conversation_decisions
+workflow_conversation_decisions ──► workflow_decision_impacts ──► workflow_item_lifecycles
+workflow_item_lifecycles ──► workflow_work_checkpoints
+
 workflow_operations ──► all V32 lifecycle records
+  (operation + project + revision + Authority Epoch provenance)
+workflow_operations ──► all V33 guided-conversation records
   (operation + project + revision + Authority Epoch provenance)
 ```
 
@@ -1020,7 +1059,8 @@ artifacts, milestones, slices, tasks, decisions, replan history, assessments,
 quality gates, verification evidence, and milestone commit attributions. Restore
 rebuilds decision mirror memories from the restored decisions and preserves
 optional rows when reading older manifests that predate the extended arrays.
-The additive V31 canonical-foundation and V32 lifecycle-foundation tables are
+The additive V31 canonical-foundation, V32 lifecycle-foundation, and V33
+guided-conversation tables are
 not yet part of this legacy manifest surface because runtime reads/writes have
 not cut over to them.
 
@@ -1029,8 +1069,8 @@ DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
 runs, and milestone commit attributions. Runtime-only/audit substrates such as
 `runtime_kv`, `turn_git_transactions`, `audit_events`, and `audit_turn_index`
-remain outside manifest restore. The V31 canonical-foundation and V32
-lifecycle-foundation tables likewise remain outside worktree reconciliation
+remain outside manifest restore. The V31 canonical-foundation, V32
+lifecycle-foundation, and V33 guided-conversation tables likewise remain outside worktree reconciliation
 until a later runtime-routing slice.
 
 ---

@@ -3,6 +3,7 @@
 
 import type { DbAdapter } from "./db-adapter.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
+import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
 import { ensureColumn } from "./db-schema-metadata.js";
 
@@ -503,4 +504,8 @@ export function applyMigrationV31CanonicalFoundation(db: DbAdapter): void {
 
 export function applyMigrationV32LifecycleFoundation(db: DbAdapter): void {
   createLifecycleFoundationSchemaV32(db);
+}
+
+export function applyMigrationV33ConversationFoundation(db: DbAdapter): void {
+  createConversationFoundationSchemaV33(db);
 }
