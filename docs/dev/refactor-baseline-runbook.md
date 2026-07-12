@@ -146,11 +146,13 @@ The v1 JSON object contains `schemaVersion`, `verdict`, `durationMs`, and
 `exitCode`, `durationMs`, `signal`, and `error`, in that order.
 
 The runner executes every invariant and exits with the first failing child's
-nonzero status. Its contract test also sabotages one fixed child through the
-package-script path to prove that controlled sabotage cannot produce a passing
-baseline. Do not weaken or edit an authority assertion to clear this gate;
-rerun the exact command printed for the failed invariant and repair the
-underlying behavior.
+nonzero status. Each child has a fixed 60-second timeout; a timeout, signal, or
+spawn error produces a failing row and exits 1 when no nonzero child status is
+available. `--json` is the only CLI option. The contract test also sabotages one
+fixed child through the package-script path to prove that controlled sabotage
+cannot produce a passing baseline. Do not weaken or edit an authority assertion
+to clear this gate; rerun the exact command printed for the failed invariant and
+repair the underlying behavior.
 
 A baseline regression is ordinary agent-remediated work. Escalate only when
 repair requires missing authority or access, irreversible/public consent, or a
