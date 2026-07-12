@@ -56,6 +56,7 @@ import { immediateTransaction, transaction, getDb, getDbOrNull } from "./db/engi
 export * from "./db/writers/memory.js";
 export * from "./db/writers/reconcile.js";
 export * from "./db/writers/import-restore.js";
+export * from "./db/domain-operation.js";
 // Query Module (read-only seam) — extracted from the single-writer file.
 export * from "./db/queries.js";
 // Domain Write Operations (Hierarchy Status Cascades).

@@ -8,6 +8,7 @@
 // Allowlist:
 // - gsd-db.ts itself — compatibility barrel and remaining mid-migration wrappers
 // - db/engine.ts — schema, migrations, lifecycle, and transaction primitives
+// - db/domain-operation.ts — revision-checked authoritative transaction seam
 // - db/writers/** — domain writers
 // - typed coordination/runtime writer modules listed in TYPED_DB_WRITER_FILES
 // - schema/migration helper modules listed in SCHEMA_DB_WRITER_FILES
@@ -33,6 +34,7 @@ const gsdDir = join(process.cwd(), "src/resources/extensions/gsd");
 // filename. Write SQL may live only in:
 //   - db/engine.ts — connection lifecycle, schema/migrations (DDL), and the
 //     BEGIN/COMMIT transaction primitives. The shared handle every writer reads.
+//   - db/domain-operation.ts — revision-checked Domain Operations.
 //   - db/writers/**.ts — the Single Writer Layer: one cohesive write subsystem
 //     per file.
 //   - gsd-db.ts — the barrel that re-exports the layer (still holds wrappers
@@ -45,6 +47,7 @@ const gsdDir = join(process.cwd(), "src/resources/extensions/gsd");
 const TYPED_DB_WRITER_FILES = new Set([
   "db/auto-workers.ts",
   "db/command-queue.ts",
+  "db/domain-operation.ts",
   "db/milestone-leases.ts",
   "db/runtime-kv.ts",
   "db/unit-dispatches.ts",
@@ -343,6 +346,7 @@ test("gsd-db.ts exports the expected single-writer wrappers", async () => {
     "markMemoryUnitProcessed",
     "decayMemoriesBefore",
     "supersedeLowestRankedMemories",
+    "executeDomainOperation",
   ];
 
   for (const name of expected) {
