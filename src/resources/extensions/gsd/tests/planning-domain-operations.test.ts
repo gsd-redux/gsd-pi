@@ -334,6 +334,28 @@ test("fresh milestone planning keeps its public response and atomically adopts r
   assertNoInventedExecutionHistory();
 });
 
+for (const status of ["complete", "skipped"]) {
+  test(`fresh milestone planning rejects terminal legacy status ${status} without creating authority`, async () => {
+    const { base } = makeFixture();
+
+    const result = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
+      handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
+      { ...milestoneParams(), status },
+      base,
+      invocation(`plan-milestone/terminal-status/${status}`),
+    );
+
+    assert.deepEqual(result, {
+      error: `cannot plan milestone M001 with terminal status ${status}`,
+    });
+    assert.equal(count("milestones"), 0);
+    assert.equal(count("slices"), 0);
+    assert.equal(count("workflow_item_lifecycles"), 0);
+    assert.equal(count("workflow_operations"), 0);
+    assert.equal(count("workflow_domain_events"), 0);
+  });
+}
+
 test("milestone replanning rejects omitted pending slices without changing authority", async () => {
   const { base } = makeFixture();
   assertSuccess(await invoke<PlanMilestoneParams, PlanMilestoneResult>(

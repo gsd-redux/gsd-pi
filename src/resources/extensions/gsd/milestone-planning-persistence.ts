@@ -10,6 +10,7 @@ import {
   getSlice,
   insertMilestone,
   insertSlice,
+  normalizeCanonicalLifecycleStatus,
   normalizeLegacyLifecycleStatus,
   upsertMilestonePlanning,
   upsertSlicePlanning,
@@ -73,6 +74,13 @@ function validatePlanPromotion(
   context: Parameters<typeof adoptLifecycleIfMissing>[0],
   params: PersistMilestonePlanParams,
 ): string | null {
+  const requestedLifecycleStatus = params.status
+    ? normalizeLegacyLifecycleStatus(params.status) ?? normalizeCanonicalLifecycleStatus(params.status)
+    : null;
+  if (requestedLifecycleStatus === "completed" || requestedLifecycleStatus === "cancelled") {
+    return `cannot plan milestone ${params.milestoneId} with terminal status ${params.status}`;
+  }
+
   const existingMilestone = getMilestone(params.milestoneId);
   if (existingMilestone && isClosedStatus(existingMilestone.status)) {
     return `cannot re-plan milestone ${params.milestoneId}: it is already complete`;

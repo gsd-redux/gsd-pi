@@ -124,21 +124,21 @@ test("MCP canonical and alias planning calls replay one explicit private request
   }
 });
 
-test("MCP request IDs are scoped so separate sessions do not collide", async () => {
+test("MCP planning without explicit private request identity fails before mutation", async () => {
   const base = makeBase();
   try {
     const server = makeServer();
     registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0], { advertiseAliases: false });
     const canonical = tool(server, "gsd_plan_milestone");
 
-    await canonical.handler(params(base), { requestId: 7, sessionId: "session-a" });
-    await canonical.handler(params(base), { requestId: 7, sessionId: "session-b" });
+    const result = await canonical.handler(params(base), {
+      requestId: 7,
+      sessionId: "session-a",
+    });
 
-    const rows = operations();
-    assert.equal(rows.length, 2);
-    assert.notEqual(rows[0]?.["idempotency_key"], rows[1]?.["idempotency_key"]);
-    assert.match(String(rows[0]?.["idempotency_key"]), /session-a/);
-    assert.match(String(rows[1]?.["idempotency_key"]), /session-b/);
+    assert.equal(result["isError"], true);
+    assert.match(JSON.stringify(result), /requires replay-stable private request metadata/i);
+    assert.deepEqual(operations(), []);
   } finally {
     cleanup(base);
   }
