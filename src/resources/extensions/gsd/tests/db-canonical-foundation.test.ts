@@ -155,12 +155,13 @@ test("fresh database creates the v31 authority root and linked operation journal
   db.exec(`
     INSERT INTO workflow_operations (
       operation_id, project_id, operation_type, idempotency_key,
-      expected_revision, resulting_revision, expected_authority_epoch,
+      expected_revision, resulting_revision,
+      expected_authority_epoch, resulting_authority_epoch,
       actor_type, actor_id, source_transport, request_hash, created_at
     )
     SELECT
       'op-1', project_id, 'test.operation', 'idem-1',
-      0, 1, 0, 'agent', 'test-agent', 'test', 'request-1', '2026-07-12T00:00:01.000Z'
+      0, 1, 0, 0, 'agent', 'test-agent', 'test', 'request-1', '2026-07-12T00:00:01.000Z'
     FROM project_authority WHERE singleton = 1;
 
     INSERT INTO workflow_domain_events (
@@ -212,10 +213,11 @@ test("fresh database creates the v31 authority root and linked operation journal
     () => db.exec(`
       INSERT INTO workflow_operations (
         operation_id, project_id, operation_type, idempotency_key,
-        expected_revision, resulting_revision, expected_authority_epoch,
+        expected_revision, resulting_revision,
+        expected_authority_epoch, resulting_authority_epoch,
         actor_type, source_transport, request_hash, created_at
       )
-      SELECT 'op-duplicate', project_id, 'test.operation', 'idem-1', 1, 2, 0,
+      SELECT 'op-duplicate', project_id, 'test.operation', 'idem-1', 1, 2, 0, 0,
              'agent', 'test', 'request-2', '2026-07-12T00:00:05.000Z'
       FROM project_authority WHERE singleton = 1
     `),
@@ -225,10 +227,11 @@ test("fresh database creates the v31 authority root and linked operation journal
     () => db.exec(`
       INSERT INTO workflow_operations (
         operation_id, project_id, operation_type, idempotency_key,
-        expected_revision, resulting_revision, expected_authority_epoch,
+        expected_revision, resulting_revision,
+        expected_authority_epoch, resulting_authority_epoch,
         actor_type, source_transport, request_hash, created_at
       )
-      SELECT 'op-same-revision', project_id, 'test.operation', 'idem-2', 0, 1, 0,
+      SELECT 'op-same-revision', project_id, 'test.operation', 'idem-2', 0, 1, 0, 0,
              'agent', 'test', 'request-2', '2026-07-12T00:00:05.000Z'
       FROM project_authority WHERE singleton = 1
     `),
@@ -271,6 +274,106 @@ test("fresh database creates the v31 authority root and linked operation journal
       VALUES ('event-2', 'projection', '2026-07-12T00:00:08.000Z')
     `),
     /UNIQUE constraint failed/i,
+  );
+});
+
+test("operations record the resulting authority epoch used by their events", () => {
+  const dbPath = createDatabasePath();
+  assert.equal(openDatabase(dbPath), true);
+  const db = _getAdapter();
+  assert.ok(db);
+
+  db.exec(`
+    INSERT INTO workflow_operations (
+      operation_id, project_id, operation_type, idempotency_key,
+      expected_revision, resulting_revision,
+      expected_authority_epoch, resulting_authority_epoch,
+      actor_type, source_transport, request_hash, created_at
+    )
+    SELECT 'op-cutover', project_id, 'authority.cutover', 'idem-cutover',
+           0, 1, 0, 1, 'agent', 'test', 'request-cutover', '2026-07-12T00:00:01.000Z'
+    FROM project_authority WHERE singleton = 1;
+
+    INSERT INTO workflow_domain_events (
+      event_id, operation_id, event_index, project_id, project_revision,
+      authority_epoch, event_type, entity_type, entity_id, payload_json, created_at
+    )
+    SELECT 'event-cutover', 'op-cutover', 0, project_id, 1, 1,
+           'authority.cutover', 'project', project_id, '{}', '2026-07-12T00:00:02.000Z'
+    FROM project_authority WHERE singleton = 1;
+
+    INSERT INTO workflow_operations (
+      operation_id, project_id, operation_type, idempotency_key,
+      expected_revision, resulting_revision,
+      expected_authority_epoch, resulting_authority_epoch,
+      actor_type, source_transport, request_hash, created_at
+    )
+    SELECT 'op-unchanged-epoch', project_id, 'test.operation', 'idem-unchanged-epoch',
+           1, 2, 1, 1, 'agent', 'test', 'request-unchanged', '2026-07-12T00:00:03.000Z'
+    FROM project_authority WHERE singleton = 1;
+  `);
+
+  assert.throws(
+    () => db.exec(`
+      INSERT INTO workflow_domain_events (
+        event_id, operation_id, event_index, project_id, project_revision,
+        authority_epoch, event_type, entity_type, entity_id, payload_json, created_at
+      )
+      SELECT 'event-stale-epoch', 'op-cutover', 1, project_id, 1, 0,
+             'authority.stale', 'project', project_id, '{}', '2026-07-12T00:00:04.000Z'
+      FROM project_authority WHERE singleton = 1
+    `),
+    /FOREIGN KEY constraint failed/i,
+  );
+  assert.throws(
+    () => db.exec(`
+      INSERT INTO workflow_operations (
+        operation_id, project_id, operation_type, idempotency_key,
+        expected_revision, resulting_revision,
+        expected_authority_epoch, resulting_authority_epoch,
+        actor_type, source_transport, request_hash, created_at
+      )
+      SELECT 'op-epoch-jump', project_id, 'authority.cutover', 'idem-epoch-jump',
+             2, 3, 1, 3, 'agent', 'test', 'request-jump', '2026-07-12T00:00:05.000Z'
+      FROM project_authority WHERE singleton = 1
+    `),
+    /CHECK constraint failed/i,
+  );
+});
+
+test("domain events reject updates and deletes", () => {
+  const dbPath = createDatabasePath();
+  assert.equal(openDatabase(dbPath), true);
+  const db = _getAdapter();
+  assert.ok(db);
+
+  db.exec(`
+    INSERT INTO workflow_operations (
+      operation_id, project_id, operation_type, idempotency_key,
+      expected_revision, resulting_revision,
+      expected_authority_epoch, resulting_authority_epoch,
+      actor_type, source_transport, request_hash, created_at
+    )
+    SELECT 'op-immutable', project_id, 'test.operation', 'idem-immutable',
+           0, 1, 0, 0, 'agent', 'test', 'request-immutable', '2026-07-12T00:00:01.000Z'
+    FROM project_authority WHERE singleton = 1;
+
+    INSERT INTO workflow_domain_events (
+      event_id, operation_id, event_index, project_id, project_revision,
+      authority_epoch, event_type, entity_type, entity_id, payload_json, created_at
+    )
+    SELECT 'event-immutable', 'op-immutable', 0, project_id, 1, 0,
+           'test.recorded', 'project', project_id, '{"original":true}', '2026-07-12T00:00:02.000Z'
+    FROM project_authority WHERE singleton = 1;
+  `);
+
+  assert.throws(
+    () => db.exec(`UPDATE workflow_domain_events SET payload_json = '{}' WHERE event_id = 'event-immutable'`),
+    /workflow domain events are immutable/i,
+  );
+  assert.throws(
+    () => db.exec(`DELETE FROM workflow_domain_events WHERE event_id = 'event-immutable'`),
+    /workflow domain events are immutable/i,
   );
 });
 

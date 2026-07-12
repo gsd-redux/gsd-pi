@@ -32,6 +32,10 @@ export function createCanonicalFoundationSchemaV31(db: DbAdapter): void {
       expected_revision INTEGER NOT NULL CHECK (expected_revision >= 0),
       resulting_revision INTEGER NOT NULL CHECK (resulting_revision = expected_revision + 1),
       expected_authority_epoch INTEGER NOT NULL CHECK (expected_authority_epoch >= 0),
+      resulting_authority_epoch INTEGER NOT NULL CHECK (
+        resulting_authority_epoch = expected_authority_epoch OR
+        resulting_authority_epoch = expected_authority_epoch + 1
+      ),
       actor_type TEXT NOT NULL,
       actor_id TEXT DEFAULT NULL,
       source_transport TEXT NOT NULL,
@@ -41,7 +45,7 @@ export function createCanonicalFoundationSchemaV31(db: DbAdapter): void {
       created_at TEXT NOT NULL,
       UNIQUE (project_id, idempotency_key),
       UNIQUE (project_id, resulting_revision),
-      UNIQUE (operation_id, project_id, resulting_revision, expected_authority_epoch),
+      UNIQUE (operation_id, project_id, resulting_revision, resulting_authority_epoch),
       FOREIGN KEY (project_id) REFERENCES project_authority(project_id)
     )
   `);
@@ -63,10 +67,25 @@ export function createCanonicalFoundationSchemaV31(db: DbAdapter): void {
       UNIQUE (operation_id, event_index),
       FOREIGN KEY (operation_id, project_id, project_revision, authority_epoch)
         REFERENCES workflow_operations(
-          operation_id, project_id, resulting_revision, expected_authority_epoch
+          operation_id, project_id, resulting_revision, resulting_authority_epoch
         ),
       FOREIGN KEY (caused_by_event_id) REFERENCES workflow_domain_events(event_id)
     )
+  `);
+
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_domain_events_immutable_update
+    BEFORE UPDATE ON workflow_domain_events
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow domain events are immutable');
+    END
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_domain_events_immutable_delete
+    BEFORE DELETE ON workflow_domain_events
+    BEGIN
+      SELECT RAISE(ABORT, 'workflow domain events are immutable');
+    END
   `);
 
   db.exec(`
