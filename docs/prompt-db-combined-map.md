@@ -66,6 +66,15 @@ durable receipt without rerunning mutation. The prompt/tool flow above is not
 routed through this seam yet, and file-derived readiness, completion, UAT, and
 reconciliation behavior remains unchanged.
 
+Dormant command primitives under `db/writers/lifecycle-commands.ts` can compose
+canonical lifecycle, Attempt, Result, and Kernel checkpoint facts inside that
+transaction. `readDomainOperationFence()` recovers either the current fence or
+an existing idempotency key's original expected fence, while
+`db/lifecycle-shadow-comparison.ts` compares normalized legacy and canonical
+statuses without discarding exact values. No production prompt or tool handler
+calls these primitives yet; Attempt integration remains blocked on proven
+lease-loss recovery.
+
 ---
 
 ## 2. Prompt → DB Read/Write Reference

@@ -23,6 +23,8 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/engine.ts     ← connection/handle, schema/migrations, transaction primitives
        ├── db/domain-operation.ts
        │                    ← revision-checked authoritative transaction boundary
+       ├── db/lifecycle-shadow-comparison.ts
+       │                    ← pure legacy/canonical lifecycle comparison
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
@@ -683,9 +685,10 @@ Non-correctness-critical state: UI cursors, dashboard caches, resume pointers. S
 
 V31 created these tables on fresh databases and transactionally upgraded V30
 databases. The current v35 codebase also exposes an additive Domain Operation
-transaction over them, but existing production handlers and runtime authority
-are not routed through that boundary yet. No import application, projection
-worker, lifecycle API, or legacy deletion ships with it.
+transaction over them plus dormant lifecycle command primitives, but existing
+production handlers and runtime authority are not routed through that boundary
+yet. No import application, projection worker, production lifecycle adapter, or
+legacy deletion ships with it.
 
 #### `project_authority`
 ```
@@ -804,14 +807,36 @@ at most 10,000 projection targets. It must own the outer transaction. Production
 command adapters, projection delivery, import, closeout, lifecycle policy, and
 runtime authority cutover remain deferred.
 
+#### Dormant lifecycle command primitives
+
+`db/writers/lifecycle-commands.ts`, exported through `gsd-db.ts`, composes with
+`executeDomainOperation()` but does not start a transaction or emit events and
+Projection Work itself. `readDomainOperationFence()` returns the current fence,
+or the original expected fence for an existing idempotency key. Inside the
+active callback, `adoptOrTransitionLifecycle()` creates or advances one
+canonical lifecycle head, `claimRunningAttempt()` creates a running Attempt and
+its first `execute` checkpoint, `settleAttemptWithResult()` settles that Attempt
+with one immutable Result, and `appendKernelCheckpoint()` extends the current
+checkpoint head.
+
+The schema triggers continue to enforce transition legality, live lease and
+optional dispatch fencing, retry order, provenance, and checkpoint lineage.
+`db/lifecycle-shadow-comparison.ts` separately provides pure legacy/canonical
+status normalization and classifies exact matches, accepted semantic deltas,
+missing or extra shadow rows, and mismatches while preserving both raw values.
+Production callers remain blocked until lease-loss recovery, Kernel stage
+policy, and terminal-reopen convergence are proven.
+
 ---
 
 ### 3f. Additive Lifecycle Foundation (V32)
 
 V32 creates these tables on fresh databases and transactionally upgrades V31
-databases. Like V31, it is schema-only: the existing hierarchy statuses and
-coordination ledgers retain their runtime meaning, and no backfill, dual-write,
-Markdown inference, lifecycle API, or runtime cutover ships with this migration.
+databases. The migration itself remains additive, and the existing hierarchy
+statuses and coordination ledgers retain their runtime meaning. Dormant typed
+writers now exercise lifecycle, Attempt, Result, and Kernel facts inside Domain
+Operations, but no production dual-write, backfill, Markdown inference, or
+runtime cutover ships with them.
 
 #### `workflow_item_lifecycles`
 ```

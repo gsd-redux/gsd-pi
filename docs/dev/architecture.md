@@ -33,7 +33,7 @@ GSD stores runtime workflow state in the project-root SQLite database. Auto mode
 
 Milestone queue position has one explicit file contract: `.gsd/QUEUE-ORDER.json`. `/gsd rethink` and `/gsd phase` use it as a durable reorder record, and state derivation mirrors that order into `milestones.sequence` before selecting the active milestone. Other generated `.gsd` artifacts remain projections unless an explicit import or recovery command reads them.
 
-The additive `db/domain-operation.ts` boundary is the future authoritative write seam. `executeDomainOperation()` owns a `BEGIN IMMEDIATE` transaction that revision- and Authority-Epoch-checks a request, reserves a project-scoped idempotency key, records provenance and ordered events, enqueues their outbox destinations and Projection Work, then advances authority with a compare-and-swap. Exact retries return the durable receipt without rerunning the mutation. Production handlers and file-derived readiness, completion, UAT, and reconciliation paths are not routed through this boundary yet; schema remains v35 and Markdown remains projection output rather than workflow authority.
+The additive `db/domain-operation.ts` boundary is the future authoritative write seam. `executeDomainOperation()` owns a `BEGIN IMMEDIATE` transaction that revision- and Authority-Epoch-checks a request, reserves a project-scoped idempotency key, records provenance and ordered events, enqueues their outbox destinations and Projection Work, then advances authority with a compare-and-swap. Exact retries return the durable receipt without rerunning the mutation. Transaction-bound lifecycle writers can now adopt or transition canonical lifecycle heads, claim and settle Attempts with immutable Results, and append Kernel checkpoints. A pure shadow comparator normalizes legacy statuses without hiding exact deltas. These primitives remain dormant: production handlers and file-derived readiness, completion, UAT, and reconciliation paths are not routed through them yet; schema remains v35 and Markdown remains projection output rather than workflow authority.
 
 ### Two-File Loader Pattern
 
@@ -181,6 +181,8 @@ Model routing (complexity classification, budget pressure, routing history, capa
 | `memory-store.ts` | Persistent memory store for cross-session knowledge |
 | `queue-order.ts` | Durable milestone queue ordering contract and DB sequence mirroring |
 | `db/domain-operation.ts` | Additive revision-checked Domain Operation transaction and durable replay receipt boundary |
+| `db/lifecycle-shadow-comparison.ts` | Pure legacy-to-canonical lifecycle status normalization and semantic shadow comparison |
+| `db/writers/lifecycle-commands.ts` | Transaction-bound lifecycle, Attempt, Result, replay-fence, and Kernel checkpoint primitives |
 | `context-masker.ts` | Context masking for model routing optimization |
 | `phase-anchor.ts` | Phase anchoring for dispatch pipeline |
 | `slice-parallel-orchestrator.ts` | Slice-level parallelism with dependency-aware dispatch |

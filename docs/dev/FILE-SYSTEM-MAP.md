@@ -505,6 +505,9 @@
 | gsd/state/derive/from-db.ts | State Machine | DB-to-GSDState projection and active unit selection |
 | gsd/state/derive/cache.ts | State Machine | Derive-state cache and telemetry |
 | gsd/state/derive/db-open.ts | State Machine | Workflow DB opening and DB-unavailable state construction |
+| gsd/db/domain-operation.ts | Database, State Machine | Revision-checked Domain Operation transaction and durable replay receipt boundary |
+| gsd/db/lifecycle-shadow-comparison.ts | Database, State Machine | Pure legacy-to-canonical lifecycle normalization and semantic shadow comparison |
+| gsd/db/writers/lifecycle-commands.ts | Database, State Machine | Dormant transaction-bound lifecycle, Attempt, Result, replay-fence, and Kernel checkpoint writers |
 | gsd/history.ts | State Machine | State history and versioning |
 | gsd/json-persistence.ts | State Machine | JSON-based persistence layer |
 | gsd/memory-store.ts | State Machine | In-memory state storage |
