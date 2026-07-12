@@ -118,7 +118,7 @@ afterEach(() => {
 });
 
 test("fresh database creates the v31 authority root and linked operation journal", () => {
-  assert.equal(SCHEMA_VERSION, 31);
+  assert.ok(SCHEMA_VERSION >= 31);
   const dbPath = createDatabasePath();
   assert.equal(openDatabase(dbPath), true);
   const db = _getAdapter();
@@ -387,7 +387,7 @@ test("v30 upgrade preserves legacy rows and creates an independently healthy bac
   let projectId = "";
   const upgraded = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(upgraded), 31);
+    assert.equal(maxSchemaVersion(upgraded), SCHEMA_VERSION);
     assert.equal(tableExists(upgraded, "project_authority"), true);
     assert.equal(upgraded.prepare("SELECT title FROM milestones WHERE id = 'M-LEGACY'").get()?.title, "Preserved legacy milestone");
     assert.equal(upgraded.prepare("SELECT payload_json FROM audit_events WHERE event_id = 'audit-legacy'").get()?.payload_json, '{"kept":true}');
@@ -409,7 +409,7 @@ test("v30 upgrade preserves legacy rows and creates an independently healthy bac
 
   const reopened = inspectFromFreshProcess(dbPath);
   assert.deepEqual(reopened, {
-    version: 31,
+    version: SCHEMA_VERSION,
     authority: { project_id: projectId, revision: 0, authority_epoch: 0 },
     legacy: { title: "Preserved legacy milestone" },
   });
@@ -417,7 +417,7 @@ test("v30 upgrade preserves legacy rows and creates an independently healthy bac
   const restoredPath = join(dirname(dbPath), "restored.db");
   copyFileSync(`${dbPath}.backup-v30`, restoredPath);
   const restored = inspectFromFreshProcess(restoredPath);
-  assert.equal(restored.version, 31);
+  assert.equal(restored.version, SCHEMA_VERSION);
   assert.deepEqual(restored.legacy, { title: "Preserved legacy milestone" });
   assert.deepEqual(
     Object.fromEntries(
@@ -450,7 +450,7 @@ test("faulted v30 migration leaves no v31 state and retries cleanly", () => {
   closeDatabase();
   const retried = openRawDatabase(dbPath);
   try {
-    assert.equal(maxSchemaVersion(retried), 31);
+    assert.equal(maxSchemaVersion(retried), SCHEMA_VERSION);
     assert.equal(retried.prepare("SELECT COUNT(*) AS count FROM project_authority").get()?.count, 1);
     assert.equal(retried.prepare("SELECT COUNT(*) AS count FROM milestones WHERE id = 'M-LEGACY'").get()?.count, 1);
   } finally {

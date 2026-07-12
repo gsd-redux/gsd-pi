@@ -48,8 +48,10 @@ import {
   applyMigrationV29RepositoryTargets,
   applyMigrationV30ReworkBriefs,
   applyMigrationV31CanonicalFoundation,
+  applyMigrationV32LifecycleFoundation,
 } from "../db-migration-steps.js";
 import { createCanonicalFoundationSchemaV31 } from "../db-canonical-foundation-schema.js";
+import { createLifecycleFoundationSchemaV32 } from "../db-lifecycle-foundation-schema.js";
 import {
   isMemoriesFtsAvailableSchema,
   rebuildMemoriesFtsSchemaOnce,
@@ -99,7 +101,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 32;
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
   const conservativeFilePragmas = fileBacked && _isLikelyWslDrvFsPathForTest(dbPath);
   if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
@@ -138,6 +140,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
         createCoordinationTablesV24(db);
         createRuntimeKvTableV25(db);
         createCanonicalFoundationSchemaV31(db);
+        createLifecycleFoundationSchemaV32(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -394,6 +397,11 @@ function migrateSchema(db: DbAdapter, dbPath: string | null): void {
     if (currentVersion < 31) {
       applyMigrationV31CanonicalFoundation(db);
       recordSchemaVersion(db, 31);
+    }
+
+    if (currentVersion < 32) {
+      applyMigrationV32LifecycleFoundation(db);
+      recordSchemaVersion(db, 32);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");
