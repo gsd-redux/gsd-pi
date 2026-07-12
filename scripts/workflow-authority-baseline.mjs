@@ -97,11 +97,12 @@ export function runInvariant(
 }
 
 export function runWorkflowAuthorityBaseline({
-  invariants = WORKFLOW_AUTHORITY_INVARIANTS,
   now = () => performance.now(),
   spawnSyncImpl = spawnSync,
 } = {}) {
-  const results = invariants.map((invariant) => runInvariant(invariant, { now, spawnSyncImpl }));
+  const results = WORKFLOW_AUTHORITY_INVARIANTS.map(
+    (invariant) => runInvariant(invariant, { now, spawnSyncImpl }),
+  );
   return {
     schemaVersion: 1,
     verdict: results.every((result) => result.verdict === "pass") ? "pass" : "fail",
