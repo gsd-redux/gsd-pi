@@ -17,7 +17,7 @@ export class MigrationBackupError extends Error {
   }
 }
 
-/** Returns true for errors raised while checkpointing or copying a migration backup. */
+/** Returns true for errors raised while checkpointing, copying, or validating a migration backup. */
 export function isMigrationBackupError(err: unknown): err is MigrationBackupError {
   return err instanceof MigrationBackupError;
 }
@@ -26,7 +26,7 @@ export function isMigrationBackupError(err: unknown): err is MigrationBackupErro
  * Creates a same-version backup before file-backed schema migrations.
  *
  * Same-version backups are replaced so they always represent the database
- * being migrated. WAL checkpoint failures, incomplete checkpoints, and copy
+ * being migrated. WAL checkpoint, copy, integrity-check, and schema-version
  * failures are logged and then rethrown before migration DDL runs.
  */
 export function backupDatabaseBeforeMigration(

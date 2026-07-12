@@ -25,7 +25,7 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
        ├── db-canonical-foundation-schema.ts, db-lifecycle-foundation-schema.ts,
-       │   db-memory-fts-schema.ts, db-schema-metadata.ts,
+       │   db-conversation-foundation-schema.ts, db-memory-fts-schema.ts, db-schema-metadata.ts,
        │   db-verification-evidence-schema.ts
        │                    ← allowlisted schema/migration helpers
        ├── memory-backfill.ts
@@ -53,7 +53,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 - Sibling worktrees share the same `.gsd/gsd.db` via SQLite WAL
 - Only one connection is "active" at a time; others cached for fast re-activation
 - On process exit: checkpoint WAL → vacuum → close
-- Before file-backed schema migrations, `db-migration-backup.ts` checkpoints WAL and copies `.gsd/gsd.db` to `.gsd/gsd.db.backup-vN`; same-version backups are reused, and checkpoint/copy failures warn then fail closed before migration DDL.
+- Before file-backed schema migrations, `db-migration-backup.ts` checkpoints WAL and replaces `.gsd/gsd.db.backup-vN` with a copy of the database being migrated. The copy must report the expected schema version and pass SQLite `quick_check`; checkpoint, copy, or validation failures warn and fail closed before migration DDL.
 
 **Provider fallback chain:**
 1. `node:sqlite` (Node ≥ 22 built-in) — preferred
@@ -66,7 +66,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V32**
+Current version: **V33**
 
 | Version | What Changed |
 |---------|-------------|
@@ -102,6 +102,7 @@ Current version: **V32**
 | V30 | rework_briefs and rework_brief_findings for structured task rework gates |
 | V31 | **Additive canonical foundation**: singleton project authority with revision and Authority Epoch, workflow operation provenance/idempotency receipts, immutable revision-linked domain events, and a durable event outbox |
 | V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, human-only Blockers, authorized Waivers, and immutable Requirement Disposition history |
+| V33 | **Additive guided-conversation foundation**: milestone context and advisory horizons, focused recommendation-first interactions, immutable verbatim Answers and correction-safe Decisions, dependency-targeted impacts, and restart-safe Work Checkpoints |
 
 ---
 
@@ -960,11 +961,196 @@ decision rows retain their current behavior until the later cutover slice.
 | `workflow_open_questions` | Focused question identity and its explicit `open` → `answered|withdrawn` lifecycle. Answered transitions require the accepted Answer from the same operation. |
 | `workflow_question_dependencies` | The exact lifecycle scope a question may inform or cause to be revalidated. |
 | `workflow_interactions` | Presented conversational turns. Interaction Kinds are `open`, `choice`, `clarification`, `recap`, `consent`, and `subjective-uat`; every answer-requiring turn carries recommendation text and rationale. |
-| `workflow_interaction_options` | Two or three ordered choice options. Presentation is rejected unless the declared recommendation belongs to the Interaction and is ordinal one. |
-| `workflow_answers` | Immutable verbatim user language stored separately from normalized interpretation. Only one Answer per Interaction may be accepted; conflicting revisions remain append-only facts. |
+| `workflow_interaction_options` | Up to three ordered options; `choice` Interactions require two or three. Presentation is rejected unless the declared recommendation belongs to the Interaction and is ordinal one. |
+| `workflow_answers` | Immutable verbatim user language stored separately from normalized interpretation. Response Kinds are `answer`, `pushback`, `correction`, `clarification`, and `consent`. Only one Answer per Interaction may be accepted; conflicting revisions remain append-only facts. |
 | `workflow_conversation_decisions` | Immutable Decisions derived from accepted Answers. Corrections form a causally advancing, single-head supersession chain. |
-| `workflow_decision_impacts` | Immutable, dependency-reachable lifecycle effects such as targeted revalidation; unrelated work is rejected. |
-| `workflow_work_checkpoints` | Restart-safe, append-only conversation/work summaries with one ordered head per scope, including explicit answer, pause, correction, recap, and handoff boundaries. Narrative fields are resumability aids; canonical Answer and Decision heads remain the machine truth. |
+| `workflow_decision_impacts` | Immutable, dependency-reachable `inform`, `revalidate`, or `invalidate` effects. Inform-only dependencies reject revalidation and invalidation; unrelated work is always rejected. |
+| `workflow_work_checkpoints` | Restart-safe, append-only conversation/work summaries with one ordered head per scope. Kinds cover `discovery`, `research`, `requirements`, `roadmap`, `delivery`, `answer`, `pause`, `correction`, `recap`, and `handoff`. Narrative fields are resumability aids; canonical Answer and Decision heads remain the machine truth. |
+
+#### `workflow_milestone_contexts`
+```
+context_id             TEXT PRIMARY KEY
+project_id             TEXT NOT NULL
+lifecycle_id           TEXT NOT NULL
+milestone_id           TEXT NOT NULL
+milestone_kind         TEXT NOT NULL
+planned_start_at       TEXT DEFAULT NULL
+planned_end_at         TEXT DEFAULT NULL
+review_at              TEXT DEFAULT NULL
+horizon_note           TEXT NOT NULL DEFAULT ''
+supersedes_context_id  TEXT DEFAULT NULL UNIQUE
+created_at             TEXT NOT NULL
+operation_id           TEXT NOT NULL
+project_revision       INTEGER NOT NULL
+authority_epoch        INTEGER NOT NULL
+```
+- The lifecycle must identify the same milestone. Each later context supersedes
+  the current head with causally newer provenance; updates and deletes fail.
+
+#### `workflow_open_questions`
+```
+question_id                 TEXT PRIMARY KEY
+project_id                  TEXT NOT NULL
+lifecycle_id                TEXT NOT NULL
+question_text               TEXT NOT NULL
+question_status             TEXT NOT NULL    ← 'open' | 'answered' | 'withdrawn'
+state_version               INTEGER NOT NULL DEFAULT 0
+accepted_answer_id          TEXT DEFAULT NULL
+created_at / updated_at     TEXT NOT NULL
+created_operation_id        TEXT NOT NULL
+created_project_revision    INTEGER NOT NULL
+created_authority_epoch     INTEGER NOT NULL
+last_operation_id           TEXT NOT NULL
+last_project_revision       INTEGER NOT NULL
+last_authority_epoch        INTEGER NOT NULL
+```
+- Questions begin open at version zero. The only transition is from `open` to
+  `answered` or `withdrawn`, with a one-step version increment and newer causal
+  provenance. Answering requires an accepted Answer created by that same final
+  operation; withdrawal carries no Answer. Deletes fail.
+
+#### `workflow_question_dependencies`
+```
+question_id       TEXT NOT NULL
+lifecycle_id      TEXT NOT NULL
+project_id        TEXT NOT NULL
+dependency_kind   TEXT NOT NULL DEFAULT 'revalidate' ← 'inform' | 'revalidate'
+created_at        TEXT NOT NULL
+operation_id      TEXT NOT NULL
+project_revision  INTEGER NOT NULL
+authority_epoch   INTEGER NOT NULL
+PRIMARY KEY (question_id, lifecycle_id)
+```
+- Dependencies are immutable and bound to an existing Question, lifecycle,
+  Domain Operation, revision, and Authority Epoch.
+
+#### `workflow_interactions`
+```
+interaction_id              TEXT PRIMARY KEY
+project_id                  TEXT NOT NULL
+question_id                 TEXT NOT NULL
+sequence                    INTEGER NOT NULL
+interaction_kind            TEXT NOT NULL
+presentation_state          TEXT NOT NULL    ← 'prepared' | 'presented'
+focused_prompt              TEXT NOT NULL
+requires_answer             INTEGER NOT NULL
+option_count                INTEGER NOT NULL DEFAULT 0
+recommended_option_id       TEXT DEFAULT NULL
+recommendation_text         TEXT NOT NULL DEFAULT ''
+recommendation_rationale    TEXT NOT NULL DEFAULT ''
+recommendation_evidence     TEXT NOT NULL DEFAULT ''
+recommendation_confidence   REAL DEFAULT NULL
+recommendation_uncertainty  TEXT NOT NULL DEFAULT ''
+revisit_condition           TEXT NOT NULL DEFAULT ''
+presented_at                TEXT NOT NULL DEFAULT ''
+operation_id                TEXT NOT NULL
+project_revision            INTEGER NOT NULL
+authority_epoch             INTEGER NOT NULL
+```
+- Interactions begin `prepared`. The only update presents the immutable turn
+  after validating its exact option count and ordinal-one recommendation.
+  `choice` requires two or three options. Every Kind except `recap` requires an
+  Answer and non-empty recommendation text and rationale.
+
+#### `workflow_interaction_options`
+```
+interaction_id    TEXT NOT NULL
+option_id         TEXT NOT NULL
+project_id        TEXT NOT NULL
+ordinal           INTEGER NOT NULL    ← 1..3
+label             TEXT NOT NULL
+description       TEXT NOT NULL DEFAULT ''
+operation_id      TEXT NOT NULL
+project_revision  INTEGER NOT NULL
+authority_epoch   INTEGER NOT NULL
+PRIMARY KEY (interaction_id, option_id)
+```
+- Options may be added only while the Interaction is prepared. Ordinals are
+  unique within an Interaction; updates and deletes fail.
+
+#### `workflow_answers`
+```
+answer_id                  TEXT PRIMARY KEY
+project_id                 TEXT NOT NULL
+question_id                TEXT NOT NULL
+interaction_id             TEXT NOT NULL
+response_kind              TEXT NOT NULL
+verbatim_response          TEXT NOT NULL
+selected_option_id         TEXT DEFAULT NULL
+normalized_interpretation  TEXT NOT NULL
+interpretation_confidence  REAL NOT NULL    ← 0..1
+answer_disposition         TEXT NOT NULL    ← 'accepted' | 'revision-conflict'
+observed_project_revision  INTEGER NOT NULL
+created_at                 TEXT NOT NULL
+operation_id               TEXT NOT NULL
+project_revision           INTEGER NOT NULL
+authority_epoch            INTEGER NOT NULL
+```
+- An accepted Answer must target a presented Interaction at the observed
+  revision; recaps accept only corrections. The resulting revision must advance
+  beyond the observed revision. The optional selected option must belong to the
+  Interaction. Updates and deletes fail.
+- Unique partial index: `idx_workflow_answer_accepted` permits one accepted
+  Answer per Interaction.
+
+#### `workflow_conversation_decisions`
+```
+decision_id             TEXT PRIMARY KEY
+project_id              TEXT NOT NULL
+question_id             TEXT NOT NULL
+answer_id               TEXT NOT NULL
+decision_text           TEXT NOT NULL
+supersedes_decision_id  TEXT DEFAULT NULL UNIQUE
+created_at              TEXT NOT NULL
+operation_id            TEXT NOT NULL
+project_revision        INTEGER NOT NULL
+authority_epoch         INTEGER NOT NULL
+```
+- A Decision requires an accepted Answer from the same operation. A successor
+  must derive from a correction Answer and supersede the causally older current
+  head for that Question. Updates and deletes fail.
+
+#### `workflow_decision_impacts`
+```
+decision_id       TEXT NOT NULL
+lifecycle_id      TEXT NOT NULL
+project_id        TEXT NOT NULL
+effect            TEXT NOT NULL    ← 'revalidate' | 'invalidate' | 'inform'
+operation_id      TEXT NOT NULL
+project_revision  INTEGER NOT NULL
+authority_epoch   INTEGER NOT NULL
+PRIMARY KEY (decision_id, lifecycle_id)
+```
+- The target lifecycle must be a declared dependency of the Decision's
+  Question. `inform` works with either dependency Kind; `revalidate` and
+  `invalidate` require a `revalidate` dependency. Updates and deletes fail.
+- Index: `idx_workflow_decision_impacts_lifecycle` (lifecycle_id, effect)
+
+#### `workflow_work_checkpoints`
+```
+checkpoint_id          TEXT PRIMARY KEY
+project_id             TEXT NOT NULL
+scope_key              TEXT NOT NULL
+lifecycle_id           TEXT NOT NULL
+checkpoint_kind        TEXT NOT NULL
+sequence               INTEGER NOT NULL
+previous_checkpoint_id TEXT DEFAULT NULL UNIQUE
+confirmed_context      TEXT NOT NULL DEFAULT ''
+unresolved_summary     TEXT NOT NULL DEFAULT ''
+evidence_summary       TEXT NOT NULL DEFAULT ''
+suggested_next_action  TEXT NOT NULL DEFAULT ''
+created_at             TEXT NOT NULL
+operation_id           TEXT NOT NULL
+project_revision       INTEGER NOT NULL
+authority_epoch        INTEGER NOT NULL
+```
+- A scope begins at sequence one. Each later checkpoint extends the current
+  head for the same project, scope, and lifecycle with the next sequence and
+  causally newer provenance. Updates and deletes fail.
+- Index: `idx_workflow_checkpoints_scope` (project_id, scope_key, sequence)
+
+Index `idx_workflow_questions_open` supports open-Question lookup by project,
+lifecycle, and status.
 
 All nine tables bind to the exact V31 Domain Operation, project revision, and
 Authority Epoch that created the fact. Identity and historical content are
@@ -1143,7 +1329,7 @@ until a later runtime-routing slice.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant: nested calls increment the shared depth counter; no nested `BEGIN`. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
@@ -1159,4 +1345,4 @@ until a later runtime-routing slice.
 
 6. **Workspace isolation**: same `.gsd/gsd.db` for all worktrees of one project; separate `.gsd/gsd.db` per project root. Coordination tables assume single-host shared WAL. Multi-host needs external coordinator.
 
-7. **Pre-migration backup**: file-backed migrations checkpoint WAL before copying the base DB to `.gsd/gsd.db.backup-vN`. If the same-version backup already exists, backup is skipped and migrations continue; if checkpointing or copying fails, GSD warns and the error propagates before any migration DDL runs.
+7. **Pre-migration backup**: file-backed migrations checkpoint WAL before replacing `.gsd/gsd.db.backup-vN` with the database being migrated. GSD attaches the copy, requires the expected schema version and a successful SQLite `quick_check`, then detaches it. Checkpoint, copy, or validation failures warn and propagate before any migration DDL runs.
