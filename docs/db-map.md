@@ -1181,6 +1181,7 @@ project_id              TEXT NOT NULL
 lifecycle_id            TEXT NOT NULL
 attempt_id              TEXT DEFAULT NULL
 result_id               TEXT DEFAULT NULL
+blocker_id              TEXT DEFAULT NULL
 boundary_stage          TEXT NOT NULL
 failure_kind            TEXT NOT NULL
 failure_fingerprint     TEXT NOT NULL
@@ -1198,6 +1199,8 @@ authority_epoch         INTEGER NOT NULL
 - An `execute` observation requires the matching V32 Attempt and its immutable
   `failed` or `interrupted` Attempt Result. Result provenance must be causally
   older than the observation. Updates and deletes fail.
+- A human-boundary observation may own one scoped V32 Blocker. Clarify and
+  pause must route through that exact blocker rather than another open blocker.
 - Index: `idx_workflow_failure_fingerprint`
   (lifecycle_id, failure_fingerprint, project_revision)
 
@@ -1218,6 +1221,9 @@ authority_epoch     INTEGER NOT NULL
 ```
 - A budget is an immutable count allocation for one lifecycle, normalized
   failure kind/fingerprint, policy class, and policy version.
+- `max_uses` counts Recovery Actions after the initial Attempt. It is capped at
+  one for deterministic repair and two for transient execution, schema
+  correction, remediation, and objective UAT.
 - There is no mutable `consumed` counter. Consumption is the authoritative
   `COUNT(*)` of immutable `workflow_recovery_actions` referencing the budget.
   The retry trigger rejects the next Action when that count reaches
@@ -1246,8 +1252,8 @@ authority_epoch        INTEGER NOT NULL
   abort`; one Failure Observation can have only one selected Action.
 - Retry requires a matching unexhausted budget and the same lifecycle target.
   Repair, replan, and remediate require a target lifecycle. Clarify and pause
-  require an existing open V32 human-only Blocker. Abort has no budget, target,
-  or blocker.
+  require the existing open V32 human-only Blocker owned by the Failure
+  Observation. Abort has no budget, target, or blocker.
 - The Action must causally follow its Failure Observation. Updates and deletes
   fail.
 - Index: `idx_workflow_recovery_actions_budget`

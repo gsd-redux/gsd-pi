@@ -27,8 +27,11 @@ two relational layers that duplicated facts already present elsewhere:
 
 Recovery budgets are immutable count allocations. Their use is derived by
 counting immutable Recovery Actions, avoiding a mutable consumption counter or
-charge ledger. The final eight tables are `workflow_failure_observations`,
-`workflow_recovery_budgets`, `workflow_recovery_actions`,
+charge ledger. `max_uses` therefore counts recovery actions after the initial
+Attempt: deterministic repair is capped at one, while every other accepted
+policy class is capped at two. A human-routed Failure Observation owns the exact
+V32 Blocker used by clarify/pause. The final eight tables are
+`workflow_failure_observations`, `workflow_recovery_budgets`, `workflow_recovery_actions`,
 `workflow_acceptance_criteria`, `workflow_technical_verdicts`,
 `workflow_verification_evidence`, `workflow_human_acceptances`, and
 `workflow_remediation_links`.

@@ -181,14 +181,22 @@ function insertSettledAttempt(
 
 function insertFailure(
   db: RawDb,
-  input: { id: string; lifecycleId: string; attemptId: string; resultId: string; revision: number; kind?: string },
+  input: {
+    id: string;
+    lifecycleId: string;
+    attemptId: string;
+    resultId: string;
+    revision: number;
+    kind?: string;
+    blockerId?: string;
+  },
 ): void {
   db.prepare(`
     INSERT INTO workflow_failure_observations (
       failure_observation_id, project_id, lifecycle_id, attempt_id, result_id,
-      boundary_stage, failure_kind, failure_fingerprint, summary, evidence_json,
-      observed_at, operation_id, project_revision, authority_epoch
-    ) VALUES (?, ?, ?, ?, ?, 'execute', ?, 'provider-network:timeout',
+      blocker_id, boundary_stage, failure_kind, failure_fingerprint, summary,
+      evidence_json, observed_at, operation_id, project_revision, authority_epoch
+    ) VALUES (?, ?, ?, ?, ?, ?, 'execute', ?, 'provider-network:timeout',
       'Provider request timed out', '{}', '', ?, ?, 0)
   `).run(
     input.id,
@@ -196,6 +204,7 @@ function insertFailure(
     input.lifecycleId,
     input.attemptId,
     input.resultId,
+    input.blockerId ?? null,
     input.kind ?? "provider-network",
     `op-${input.revision}`,
     input.revision,
@@ -256,6 +265,10 @@ function insertEvidence(
     sourceRevision?: string;
     observation?: string;
     exitCode?: number;
+    contentHash?: string;
+    environmentJson?: string;
+    startedAt?: string;
+    endedAt?: string;
   },
 ): void {
   db.prepare(`
@@ -265,10 +278,8 @@ function insertEvidence(
       observation, source_revision, observed_project_revision, content_hash,
       durable_output_ref, environment_json, created_at,
       operation_id, project_revision, authority_epoch
-    ) VALUES (?, ?, ?, ?, ?, ?, 'command', 'pnpm test', '/workspace',
-      '2026-07-12T00:01:00.000Z', '2026-07-12T00:02:00.000Z', ?,
-      ?, ?, ?, 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      'artifact://test-output', '{"node":"26","platform":"test"}', '', ?, ?, 0)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'command', 'pnpm test', '/workspace', ?, ?, ?,
+      ?, ?, ?, ?, 'artifact://test-output', ?, '', ?, ?, 0)
   `).run(
     input.id,
     projectId(db),
@@ -276,10 +287,14 @@ function insertEvidence(
     input.criterionId,
     input.lifecycleId,
     input.attemptId,
+    input.startedAt ?? "2026-07-12T00:01:00.000Z",
+    input.endedAt ?? "2026-07-12T00:02:00.000Z",
     input.exitCode ?? 0,
     input.observation ?? "passed",
     input.sourceRevision ?? "commit-current",
     input.revision - 1,
+    input.contentHash ?? "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    input.environmentJson ?? '{"node":"26","platform":"test"}',
     `op-${input.revision}`,
     input.revision,
   );
@@ -394,15 +409,21 @@ test("fresh v34 databases expose exactly the recovery and evidence tables and vo
     ].entries()) {
       db.exec("SAVEPOINT action_kind");
       const observationId = action === "retry" ? "failure-route" : `failure-action-${index}`;
+      const blockerId = ["clarify", "pause"].includes(action) ? "blocker-vocabulary" : null;
       if (action !== "retry") {
         db.prepare(`
           INSERT INTO workflow_failure_observations (
-            failure_observation_id, project_id, lifecycle_id, boundary_stage,
+            failure_observation_id, project_id, lifecycle_id, blocker_id, boundary_stage,
             failure_kind, failure_fingerprint, summary, evidence_json, observed_at,
             operation_id, project_revision, authority_epoch
-          ) VALUES (?, ?, 'life-recovery', 'route', 'tool-unavailable', ?,
+          ) VALUES (?, ?, 'life-recovery', ?, 'route', 'tool-unavailable', ?,
             'Routing failed', '{}', '', 'op-6', 6, 0)
-        `).run(observationId, projectId(db), `tool-unavailable:action-${index}`);
+        `).run(
+          observationId,
+          projectId(db),
+          blockerId,
+          `tool-unavailable:action-${index}`,
+        );
       }
       let boundedPolicyClass: string | null = null;
       if (action === "repair") boundedPolicyClass = "deterministic-repair";
@@ -438,7 +459,7 @@ test("fresh v34 databases expose exactly the recovery and evidence tables and vo
         `action-${index}`, projectId(db), observationId, action,
         action === "retry" ? "budget-retry" : boundedBudgetId,
         targetLifecycleId,
-        ["clarify", "pause"].includes(action) ? "blocker-vocabulary" : null,
+        blockerId,
       );
       db.exec("ROLLBACK TO action_kind");
       db.exec("RELEASE action_kind");
@@ -578,6 +599,39 @@ test("immutable recovery budgets survive restart and derive bounded use from Rec
   }
 });
 
+test("recovery budget allocations cannot exceed their policy-class action caps", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 2);
+    insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
+    const policyCaps = [
+      ["transient-execution", 2],
+      ["deterministic-repair", 1],
+      ["schema-correction", 2],
+      ["remediation", 2],
+      ["objective-uat", 2],
+    ] as const;
+    for (const [policyClass, cap] of policyCaps) {
+      assert.throws(() => db.prepare(`
+        INSERT INTO workflow_recovery_budgets (
+          recovery_budget_id, project_id, lifecycle_id, failure_kind,
+          failure_fingerprint, policy_class, max_uses, policy_version, created_at,
+          operation_id, project_revision, authority_epoch
+        ) VALUES (?, ?, 'life-recovery', 'verification-failed', ?, ?, ?,
+          'recovery-v1', '', 'op-2', 2, 0)
+      `).run(
+        `budget-${policyClass}`,
+        projectId(db),
+        `verification-failed:${policyClass}`,
+        policyClass,
+        cap + 1,
+      ), /max_uses|CHECK constraint failed/);
+    }
+  } finally {
+    db.close();
+  }
+});
+
 test("clarify and pause require a genuine open human Blocker", () => {
   const { db } = openFreshFixture();
   try {
@@ -607,12 +661,20 @@ test("clarify and pause require a genuine open human Blocker", () => {
       ) VALUES ('blocker-access', ?, 'life-recovery', 'missing_access', 'user',
         'open', 'Credential is unavailable', 'Provide access', '', '', 'op-6', 6, 0)
     `).run(projectId(db));
+    assert.throws(() => db.prepare(`
+      INSERT INTO workflow_recovery_actions (
+        recovery_action_id, project_id, lifecycle_id, failure_observation_id,
+        action, blocker_id, rationale, policy_version, selected_at,
+        operation_id, project_revision, authority_epoch
+      ) VALUES ('action-unrelated-blocker', ?, 'life-recovery', 'failure-machine', 'pause',
+        'blocker-access', 'Pause for unrelated access', 'recovery-v1', '', 'op-7', 7, 0)
+    `).run(projectId(db)), /causal blocker|human blocker/);
     db.prepare(`
       INSERT INTO workflow_failure_observations (
-        failure_observation_id, project_id, lifecycle_id, boundary_stage,
+        failure_observation_id, project_id, lifecycle_id, blocker_id, boundary_stage,
         failure_kind, failure_fingerprint, summary, evidence_json, observed_at,
         operation_id, project_revision, authority_epoch
-      ) VALUES ('failure-access', ?, 'life-recovery', 'route', 'tool-unavailable',
+      ) VALUES ('failure-access', ?, 'life-recovery', 'blocker-access', 'route', 'tool-unavailable',
         'tool-unavailable:credential', 'Access required', '{}', '', 'op-6', 6, 0)
     `).run(projectId(db));
     db.prepare(`
@@ -683,6 +745,29 @@ test("technical PASS is criterion, Attempt, and source-revision scoped to fresh 
       id: "evidence-1", verdictId: "verdict-pass", criterionId: "criterion-1-v2", lifecycleId: "life-recovery",
       attemptId: "attempt-pass", revision: 9,
     });
+    const evidenceScope = {
+      verdictId: "verdict-pass",
+      criterionId: "criterion-1-v2",
+      lifecycleId: "life-recovery",
+      attemptId: "attempt-pass",
+      revision: 9,
+    } as const;
+    assert.throws(() => insertEvidence(db, {
+      ...evidenceScope,
+      id: "evidence-nonhex",
+      contentHash: `sha256:${"z".repeat(64)}`,
+    }), /content_hash|CHECK constraint failed/);
+    assert.throws(() => insertEvidence(db, {
+      ...evidenceScope,
+      id: "evidence-empty-environment",
+      environmentJson: "{ }",
+    }), /environment_json|CHECK constraint failed/);
+    assert.throws(() => insertEvidence(db, {
+      ...evidenceScope,
+      id: "evidence-reversed-instants",
+      startedAt: "2026-07-12T00:30:00-01:00",
+      endedAt: "2026-07-12T01:00:00+01:00",
+    }), /started_at|ended_at|CHECK constraint failed/);
     assert.throws(() => insertEvidence(db, {
       id: "evidence-wrong", verdictId: "verdict-pass", criterionId: "criterion-1-v2", lifecycleId: "life-recovery",
       attemptId: "attempt-other", revision: 9,
@@ -874,11 +959,11 @@ test("Remediation Links immutably route one failed verdict or rejected Human Acc
       lifecycleId: "life-recovery", attemptId: "attempt-1", revision: 6,
       sourceRevision: "commit-bad", observation: "failed", exitCode: 1,
     });
-    insertEvidence(db, {
+    assert.throws(() => insertEvidence(db, {
       id: "evidence-passed-companion", verdictId: "verdict-fail", criterionId: "criterion-1",
       lifecycleId: "life-recovery", attemptId: "attempt-1", revision: 6,
       sourceRevision: "commit-bad", observation: "passed", exitCode: 0,
-    });
+    }), /match its verdict|observation/);
     db.prepare(`
       INSERT INTO workflow_technical_verdicts (
         verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,

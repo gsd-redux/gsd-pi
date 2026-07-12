@@ -24,6 +24,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       lifecycle_id TEXT NOT NULL,
       attempt_id TEXT DEFAULT NULL,
       result_id TEXT DEFAULT NULL,
+      blocker_id TEXT DEFAULT NULL,
       boundary_stage TEXT NOT NULL CHECK (
         boundary_stage IN ('advance', 'execute', 'verify', 'route', 'closeout')
       ),
@@ -53,6 +54,8 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         REFERENCES workflow_execution_attempts(attempt_id, lifecycle_id, project_id),
       FOREIGN KEY (result_id, attempt_id, lifecycle_id, project_id)
         REFERENCES workflow_attempt_results(result_id, attempt_id, lifecycle_id, project_id),
+      FOREIGN KEY (blocker_id, lifecycle_id, project_id)
+        REFERENCES workflow_blockers(blocker_id, lifecycle_id, project_id),
       FOREIGN KEY (operation_id, project_id, project_revision, authority_epoch)
         REFERENCES workflow_operations(
           operation_id, project_id, resulting_revision, resulting_authority_epoch
@@ -104,7 +107,12 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         'transient-execution', 'deterministic-repair', 'schema-correction',
         'remediation', 'objective-uat'
       )),
-      max_uses INTEGER NOT NULL CHECK (max_uses > 0),
+      max_uses INTEGER NOT NULL CHECK (
+        max_uses > 0 AND max_uses <= CASE policy_class
+          WHEN 'deterministic-repair' THEN 1
+          ELSE 2
+        END
+      ),
       policy_version TEXT NOT NULL CHECK (length(trim(policy_version)) > 0),
       created_at TEXT NOT NULL,
       operation_id TEXT NOT NULL,
@@ -251,7 +259,13 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
     CREATE TRIGGER IF NOT EXISTS trg_workflow_recovery_action_blocker
     BEFORE INSERT ON workflow_recovery_actions
     WHEN NEW.action IN ('clarify', 'pause') AND NOT EXISTS (
-      SELECT 1 FROM workflow_blockers blocker
+      SELECT 1
+      FROM workflow_blockers blocker
+      JOIN workflow_failure_observations failure
+        ON failure.failure_observation_id = NEW.failure_observation_id
+        AND failure.project_id = blocker.project_id
+        AND failure.lifecycle_id = blocker.lifecycle_id
+        AND failure.blocker_id = blocker.blocker_id
       WHERE blocker.blocker_id = NEW.blocker_id
         AND blocker.project_id = NEW.project_id
         AND blocker.lifecycle_id = NEW.lifecycle_id
@@ -439,21 +453,22 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       content_hash TEXT NOT NULL CHECK (
         length(content_hash) = 71 AND
         substr(content_hash, 1, 7) = 'sha256:' AND
-        content_hash = lower(content_hash)
+        content_hash = lower(content_hash) AND
+        substr(content_hash, 8) NOT GLOB '*[^0-9a-f]*'
       ),
       durable_output_ref TEXT NOT NULL CHECK (length(trim(durable_output_ref)) > 0),
       environment_json TEXT NOT NULL CHECK (
         length(trim(environment_json)) > 0 AND json_valid(environment_json) AND
-        json_type(environment_json) = 'object' AND environment_json != '{}'
+        json_type(environment_json) = 'object' AND json(environment_json) != '{}'
       ),
       created_at TEXT NOT NULL,
       operation_id TEXT NOT NULL,
       project_revision INTEGER NOT NULL CHECK (project_revision > 0),
       authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
       CHECK (
-        strftime('%s', started_at) IS NOT NULL AND
-        strftime('%s', ended_at) IS NOT NULL AND
-        ended_at >= started_at
+        julianday(started_at) IS NOT NULL AND
+        julianday(ended_at) IS NOT NULL AND
+        julianday(ended_at) >= julianday(started_at)
       ),
       FOREIGN KEY (
         verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
@@ -491,8 +506,8 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         AND NEW.observed_project_revision < NEW.project_revision
         AND (
           (verdict.verdict = 'pass' AND NEW.observation = 'passed') OR
-          (verdict.verdict = 'fail') OR
-          (verdict.verdict = 'inconclusive' AND NEW.observation IN ('passed', 'inconclusive'))
+          (verdict.verdict = 'fail' AND NEW.observation = 'failed') OR
+          (verdict.verdict = 'inconclusive' AND NEW.observation = 'inconclusive')
         )
     )
     BEGIN
