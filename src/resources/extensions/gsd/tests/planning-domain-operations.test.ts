@@ -891,79 +891,52 @@ test("task replanning preserves lifecycle provenance while recording ordered his
   }, afterCommit, "changed semantics under the same invocation key must leave no residue");
 });
 
-test("task replanning rejects canonical cancellation despite pending legacy drift without residue", async () => {
-  const { base } = makeFixture();
-  seedPlanningParents();
-  assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
-    handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
-    taskParams(),
-    base,
-    invocation("plan-task/before-cancelled-replan"),
-  ));
+for (const terminalStatus of ["completed", "cancelled"] as const) {
+  test(`task replanning rejects canonical ${terminalStatus} despite pending legacy drift without residue`, async () => {
+    const { base } = makeFixture();
+    seedPlanningParents();
+    assertSuccess(await invoke<PlanTaskParams, PlanTaskResult>(
+      handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
+      taskParams(),
+      base,
+      invocation(`plan-task/before-${terminalStatus}-replan`),
+    ));
 
-  const fence = readDomainOperationFence();
-  executeDomainOperation({
-    operationType: "test.task.cancel",
-    idempotencyKey: "test/task/cancel",
-    expectedRevision: fence.revision,
-    expectedAuthorityEpoch: fence.authorityEpoch,
-    actorType: "agent",
-    sourceTransport: "test",
-    payload: { taskId: "T01" },
-  }, (context) => {
-    adoptOrTransitionLifecycle(context, {
-      itemKind: "task",
-      milestoneId: "M001",
-      sliceId: "S01",
-      taskId: "T01",
-      lifecycleStatus: "cancelled",
-    });
-    return {
-      events: [{
-        eventType: "test.task.cancelled",
-        entityType: "task",
-        entityId: "M001/S01/T01",
-        payload: { taskId: "T01" },
-        destinations: ["projection"],
-      }],
-      projections: [{ projectionKey: "test/m001/s01/t01", projectionKind: "markdown", rendererVersion: "v1" }],
+    const taskIdentity = { itemKind: "task" as const, milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+    if (terminalStatus === "completed") completeTestLifecycle(taskIdentity, "test/replan-task/completed");
+    else transitionTestLifecycle(taskIdentity, terminalStatus, "test/replan-task/cancelled");
+    updateTaskStatus("M001", "S01", "T01", "pending");
+
+    const before = {
+      authority: row("SELECT revision, authority_epoch FROM project_authority"),
+      task: getTask("M001", "S01", "T01"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: lifecycleSnapshot(),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
     };
+    const rejected = await invoke<ReplanTaskParams, ReplanTaskResult>(
+      handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
+      {
+        ...taskParams(),
+        title: `Must not replace ${terminalStatus} authority`,
+        description: `Legacy drift cannot reopen canonical ${terminalStatus}.`,
+      },
+      base,
+      invocation(`replan-task/reject-${terminalStatus}`),
+    );
+    assert.ok("error" in rejected);
+    assert.match(rejected.error, new RegExp(`${terminalStatus} task T01.*gsd_task_reopen`, "i"));
+    assert.deepEqual({
+      authority: row("SELECT revision, authority_epoch FROM project_authority"),
+      task: getTask("M001", "S01", "T01"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: lifecycleSnapshot(),
+      events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
+    }, before);
   });
-  updateTaskStatus("M001", "S01", "T01", "pending");
-  assert.deepEqual(row(`
-    SELECT lifecycle_status, state_version FROM workflow_item_lifecycles
-    WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'
-  `), { lifecycle_status: "cancelled", state_version: 1 });
-
-  const before = {
-    authority: row("SELECT revision, authority_epoch FROM project_authority"),
-    task: getTask("M001", "S01", "T01"),
-    history: rows("SELECT * FROM replan_history ORDER BY id"),
-    operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
-    lifecycles: lifecycleSnapshot(),
-    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
-  };
-  const rejected = await invoke<ReplanTaskParams, ReplanTaskResult>(
-    handleReplanTask as PlanningHandler<ReplanTaskParams, ReplanTaskResult>,
-    {
-      ...taskParams(),
-      title: "Must not replace cancelled authority",
-      description: "Legacy drift cannot reopen canonical cancellation.",
-    },
-    base,
-    invocation("replan-task/reject-cancelled"),
-  );
-  assert.ok("error" in rejected);
-  assert.match(rejected.error, /cancelled task T01.*gsd_task_reopen/i);
-  assert.deepEqual({
-    authority: row("SELECT revision, authority_epoch FROM project_authority"),
-    task: getTask("M001", "S01", "T01"),
-    history: rows("SELECT * FROM replan_history ORDER BY id"),
-    operations: rows("SELECT operation_id, resulting_revision FROM workflow_operations ORDER BY resulting_revision"),
-    lifecycles: lifecycleSnapshot(),
-    events: readFileSync(join(base, ".gsd", "event-log.jsonl"), "utf8"),
-  }, before);
-});
+}
 
 for (const terminalStatus of ["completed", "cancelled"] as const) {
   test(`task replanning rejects canonical ${terminalStatus} parent despite open legacy drift without residue`, async () => {

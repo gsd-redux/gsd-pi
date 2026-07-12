@@ -205,6 +205,18 @@ function hierarchyIdentitySnapshot(): Record<string, unknown> {
   };
 }
 
+function taskExecutionSnapshot(): Record<string, unknown> | undefined {
+  return db().prepare(`
+    SELECT title, description, status, one_liner, narrative, verification_result,
+           duration, blocker_discovered, deviations, known_issues, key_files,
+           key_decisions, full_summary_md, blocker_source, escalation_pending,
+           escalation_awaiting_review, escalation_artifact_path,
+           escalation_override_applied_at
+    FROM tasks
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).get();
+}
+
 function explicitAdoptionGuardError(action: () => void): Error {
   let thrown: unknown;
   try {
@@ -285,11 +297,45 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   assert.equal(openDatabase(mainDb), true);
   advanceTaskLifecycle();
   updateTaskStatus("M001", "S01", "T01", "active");
+  db().exec(`
+    UPDATE tasks SET
+      one_liner = 'Main execution result',
+      narrative = 'Main execution narrative',
+      verification_result = 'passed on main',
+      duration = '47m',
+      blocker_discovered = 1,
+      deviations = 'Main deviation',
+      known_issues = 'Main known issue',
+      key_files = '["src/main.ts"]',
+      key_decisions = '["D-main"]',
+      full_summary_md = '# Main task summary',
+      blocker_source = 'execution',
+      escalation_pending = 1,
+      escalation_awaiting_review = 1,
+      escalation_artifact_path = '.gsd/escalations/main.md',
+      escalation_override_applied_at = '2026-07-12T12:00:00.000Z'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01';
+  `);
   const before = hierarchyIdentitySnapshot();
+  const beforeExecution = taskExecutionSnapshot();
   closeDatabase();
 
   assert.equal(openDatabase(worktreeDb), true);
-  db().prepare("UPDATE milestones SET title = 'Legacy edit from stale worktree' WHERE id = 'M001'").run();
+  db().exec(`
+    UPDATE milestones SET title = 'Legacy edit from stale worktree' WHERE id = 'M001';
+    UPDATE tasks SET
+      title = 'Worktree planning title',
+      description = 'Worktree planning description',
+      verification_result = 'stale verification',
+      blocker_discovered = 0,
+      full_summary_md = '',
+      blocker_source = '',
+      escalation_pending = 0,
+      escalation_awaiting_review = 0,
+      escalation_artifact_path = NULL,
+      escalation_override_applied_at = NULL
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01';
+  `);
   closeDatabase();
 
   assert.equal(openDatabase(mainDb), true);
@@ -298,7 +344,13 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   assert.deepEqual(hierarchyIdentitySnapshot(), {
     ...before,
     milestone: { ...(before["milestone"] as object), title: "Legacy edit from stale worktree" },
+    task: { ...(before["task"] as object), title: "Worktree planning title" },
   });
+  assert.deepEqual(taskExecutionSnapshot(), {
+    ...beforeExecution,
+    title: "Worktree planning title",
+    description: "Worktree planning description",
+  }, "newer main lifecycle must retain execution results while accepting planning metadata");
 });
 
 test("worktree reconcile rejects extra canonical operations and lifecycle state even with a reset authority fence", (t) => {

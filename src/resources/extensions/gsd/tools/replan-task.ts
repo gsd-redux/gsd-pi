@@ -152,8 +152,10 @@ export async function handleReplanTask(
           taskId: params.taskId,
           lifecycleStatus: lifecycleStatusForAdoption(task.status),
         });
-        if (lifecycle.lifecycleStatus === "cancelled") {
-          throw new PlanningGuardError(`cannot replan cancelled task ${params.taskId} — use gsd_task_reopen first`);
+        if (lifecycle.lifecycleStatus === "completed" || lifecycle.lifecycleStatus === "cancelled") {
+          throw new PlanningGuardError(
+            `cannot replan ${lifecycle.lifecycleStatus} task ${params.taskId} — use gsd_task_reopen first`,
+          );
         }
 
         upsertTaskPlanning(params.milestoneId, params.sliceId, params.taskId, {

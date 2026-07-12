@@ -544,24 +544,30 @@ export function reconcileWorktreeDb(
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.status ELSE w.status
                    END,
-                   w.one_liner, w.narrative,
-                   w.verification_result, w.duration,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.one_liner ELSE w.one_liner END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.narrative ELSE w.narrative END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.verification_result ELSE w.verification_result END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.duration ELSE w.duration END,
                    CASE
                      WHEN ${newerTaskLifecycle} THEN m.completed_at
                      WHEN m.status IN (${TERMINAL_STATUS_SQL}) AND w.status NOT IN (${TERMINAL_STATUS_SQL})
                      THEN m.completed_at ELSE w.completed_at
                    END,
-                   w.blocker_discovered,
-                   w.deviations, w.known_issues, w.key_files, w.key_decisions, w.full_summary_md,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.blocker_discovered ELSE w.blocker_discovered END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.deviations ELSE w.deviations END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.known_issues ELSE w.known_issues END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.key_files ELSE w.key_files END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.key_decisions ELSE w.key_decisions END,
+                   CASE WHEN ${newerTaskLifecycle} THEN m.full_summary_md ELSE w.full_summary_md END,
                    w.description, w.estimate, w.files, w.verify, w.inputs, w.expected_output,
                    w.observability_impact, w.full_plan_md,
                    ${taskTargetRepositoriesSql},
                    w.sequence,
-                   ${hasBlockerSource ? "w.blocker_source" : "COALESCE(m.blocker_source, '')"},
-                   ${hasEscalationPending ? "w.escalation_pending" : "COALESCE(m.escalation_pending, 0)"},
-                   ${hasEscalationAwaiting ? "w.escalation_awaiting_review" : "COALESCE(m.escalation_awaiting_review, 0)"},
-                   ${hasEscalationArtifact ? "w.escalation_artifact_path" : "m.escalation_artifact_path"},
-                   ${hasEscalationOverride ? "w.escalation_override_applied_at" : "m.escalation_override_applied_at"}
+                   ${hasBlockerSource ? `CASE WHEN ${newerTaskLifecycle} THEN m.blocker_source ELSE w.blocker_source END` : "COALESCE(m.blocker_source, '')"},
+                   ${hasEscalationPending ? `CASE WHEN ${newerTaskLifecycle} THEN m.escalation_pending ELSE w.escalation_pending END` : "COALESCE(m.escalation_pending, 0)"},
+                   ${hasEscalationAwaiting ? `CASE WHEN ${newerTaskLifecycle} THEN m.escalation_awaiting_review ELSE w.escalation_awaiting_review END` : "COALESCE(m.escalation_awaiting_review, 0)"},
+                   ${hasEscalationArtifact ? `CASE WHEN ${newerTaskLifecycle} THEN m.escalation_artifact_path ELSE w.escalation_artifact_path END` : "m.escalation_artifact_path"},
+                   ${hasEscalationOverride ? `CASE WHEN ${newerTaskLifecycle} THEN m.escalation_override_applied_at ELSE w.escalation_override_applied_at END` : "m.escalation_override_applied_at"}
             FROM wt.tasks w
             LEFT JOIN tasks m ON m.milestone_id = w.milestone_id AND m.slice_id = w.slice_id AND m.id = w.id
             WHERE true
