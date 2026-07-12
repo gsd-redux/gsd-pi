@@ -102,6 +102,53 @@ For Phase 2 token/context work, the prompt metrics are the primary gate. For Pha
 
 ## Verification
 
+### Workflow authority gate
+
+Run the database-authority and fault-safety corpus in human-readable mode:
+
+```bash
+pnpm run baseline:workflow-authority
+```
+
+The four fixed invariants cover the real SQLite fixture, contradictory
+projections, the one-shot fault controller, and the production fault-boundary
+matrix. Each row reports its verdict, duration, and exact rerunnable command.
+
+Capture the machine-readable report outside the repository:
+
+```bash
+pnpm --silent run baseline:workflow-authority -- --json \
+  > /tmp/gsd-workflow-authority-before.json
+```
+
+Durations are diagnostic and vary by machine. Compare the stable schema,
+verdict, invariant order, commands, exit codes, signals, and errors after
+removing duration fields:
+
+```bash
+jq 'del(.durationMs) | .invariants |= map(del(.durationMs))' \
+  /tmp/gsd-workflow-authority-before.json \
+  > /tmp/gsd-workflow-authority-before.stable.json
+
+pnpm --silent run baseline:workflow-authority -- --json \
+  | jq 'del(.durationMs) | .invariants |= map(del(.durationMs))' \
+  > /tmp/gsd-workflow-authority-after.stable.json
+
+diff -u \
+  /tmp/gsd-workflow-authority-before.stable.json \
+  /tmp/gsd-workflow-authority-after.stable.json
+```
+
+The runner executes every invariant and exits with the first failing child's
+nonzero status. Its contract test also creates a temporary failing test to
+prove that controlled sabotage cannot produce a passing baseline. Do not
+weaken or edit an authority assertion to clear this gate; rerun the exact
+command printed for the failed invariant and repair the underlying behavior.
+
+A baseline regression is ordinary agent-remediated work. Escalate only when
+repair requires missing authority or access, irreversible/public consent, or a
+materially ambiguous product decision. Do not commit captured JSON reports.
+
 Run the focused baseline fixture gate:
 
 ```bash
