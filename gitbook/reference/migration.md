@@ -62,4 +62,4 @@ Use `/gsd inspect` for database diagnostics. If a project has markdown artifacts
 /gsd recover --confirm
 ```
 
-`/gsd recover --confirm` reconstructs the milestone, slice, and task hierarchy from rendered markdown. It is an explicit recovery/import operation; normal runtime does not silently derive state from markdown.
+`/gsd recover --confirm` reconstructs the milestone, slice, and task hierarchy from rendered markdown only when the open database contains no adopted canonical lifecycle history. If adoption exists, it fails before clearing anything because Markdown cannot restore that history; restore the database from a verified backup instead. It is an explicit recovery/import operation; normal runtime does not silently derive state from markdown.

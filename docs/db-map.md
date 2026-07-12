@@ -803,9 +803,10 @@ request hash, and ordered event, outbox, and projection-work identities.
 The boundary requires safe non-negative revision/epoch integers, canonical
 finite JSON numbers, unique destinations per event, backward-only event causal
 links, lowercase normalized projection keys/kinds, unique projection keys, and
-at most 10,000 projection targets. It must own the outer transaction. Production
-command adapters, projection delivery, import, closeout, lifecycle policy, and
-runtime authority cutover remain deferred.
+at most 10,000 projection targets. It must own the outer transaction. Beyond
+the adopted planning handlers, other command adapters, projection delivery,
+import, closeout, lifecycle policy, and runtime authority cutover remain
+deferred.
 
 #### Lifecycle command primitives
 

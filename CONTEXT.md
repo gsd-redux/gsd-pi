@@ -218,7 +218,7 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
   **Verified status (2026-06-09).** A first-pass exploratory catalog flagged several callers as non-atomic; direct inspection corrected most of them:
   - `resetSliceCascade` — **landed**. `undo`'s reset-slice was genuinely non-atomic (a per-task `updateTaskStatus` loop + a separate `updateSliceStatus`, each auto-committing); it now calls the atomic op.
-  - `replan-slice`, `reassess-roadmap`, `milestone-planning-persistence` — **already atomic** (delete+insert and insert-cascade run inside one `transaction()` with guards inside the txn for TOCTOU safety). No fix needed.
+  - `replan-slice`, `reassess-roadmap`, and `milestone-planning-persistence` now run through the authoritative Domain Operation boundary. Their legacy hierarchy writes, durable lifecycle adoption/transitions, event/outbox rows, Projection Work, and authority revision commit atomically; omitted adopted work is cancelled rather than deleted.
   - `state-reconciliation/drift/completion` `repairMissingCompletionTimestamp` — **single write per call** (mutually-exclusive milestone/slice/task branches), not a sequence. No fix needed.
   - `auto-recovery` `writeBlockerPlaceholder` — **deliberately best-effort** (each write independently try/caught during context-exhaustion recovery); must NOT become all-or-nothing.
   - `md-importer` `migrateHierarchyToDb` — genuinely unwrapped, but a one-shot migration whose writes are `INSERT OR IGNORE` / `ON CONFLICT` upserts, so a partial import self-corrects on re-run; a clean wrap is blocked by an interleaved `continue`. Low-priority follow-up.

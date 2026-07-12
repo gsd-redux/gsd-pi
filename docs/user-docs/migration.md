@@ -62,4 +62,4 @@ If an existing project has markdown artifacts but a missing or damaged database,
 /gsd recover --confirm
 ```
 
-`/gsd recover --confirm` clears the persisted hierarchy plus validation-related state, including quality-gate rows and skipped-validation assessments, then reconstructs the milestone, slice, and task hierarchy from the rendered markdown on disk. It is an explicit destructive recovery/import operation; normal runtime does not silently derive state from markdown.
+`/gsd recover --confirm` clears the persisted legacy hierarchy plus validation-related state, including quality-gate rows and skipped-validation assessments, then reconstructs the milestone, slice, and task hierarchy from the rendered markdown on disk. It is an explicit destructive recovery/import operation and refuses to run when the database still contains adopted canonical lifecycle history, because Markdown cannot restore that history. Restore the database from a verified backup instead. Normal runtime does not silently derive state from markdown.

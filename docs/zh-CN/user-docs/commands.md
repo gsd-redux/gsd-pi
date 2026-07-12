@@ -93,7 +93,7 @@
 | `/gsd reset-slice` | 重置某个 slice 及其所有 tasks（DB + markdown） |
 | `/gsd park` | Park 一个 milestone，不删除，只跳过 |
 | `/gsd unpark` | 重新激活一个已 park 的 milestone |
-| Discard milestone | 在 `/gsd` 向导的 “Milestone actions” → “Discard” 中可用 |
+| Discard milestone | 在 `/gsd` 向导的 “Milestone actions” → “Discard” 中可用；已有规范 lifecycle 历史的 milestone 不能 discard，必须改用 park |
 
 ## 额外的 Prompt 驱动 Workflows
 

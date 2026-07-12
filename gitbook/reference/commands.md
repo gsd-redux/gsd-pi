@@ -53,7 +53,7 @@
 | `/gsd skill-health` | Skill lifecycle dashboard |
 | `/gsd hooks` | Show configured hooks |
 | `/gsd migrate` | Migrate v1 `.planning` to DB-backed `.gsd` with backup and audit |
-| `/gsd recover --confirm` | Explicitly reconstruct database hierarchy state from rendered markdown after database loss or corruption |
+| `/gsd recover --confirm` | Reconstruct legacy hierarchy state from rendered markdown; refuses to replace adopted canonical lifecycle history |
 | `/gsd rebuild markdown` | Rebuild markdown projections from the canonical database; stale completion projections are quarantined, not imported |
 | `/gsd rebuild database` | Reserved for DB-native rebuilds; does not import markdown projections |
 | `/gsd codebase [generate\|update\|stats]` | Manage `.gsd/CODEBASE.md`; parent workspaces include declared child repositories under repo-labeled sections |

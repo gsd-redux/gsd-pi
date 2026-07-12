@@ -90,7 +90,7 @@ Plan → Execute (per task) → Complete → Reassess Roadmap → Next Slice
 1. **Plan** — GSD scouts the codebase, researches relevant docs, and decomposes the slice into tasks with clear requirements
 2. **Execute** — Each task runs in a fresh AI session with focused context
 3. **Complete** — GSD writes summaries, generates a UAT script, and commits
-4. **Reassess** — The roadmap is checked against reality — slices may be reordered, added, or removed
+4. **Reassess** — The roadmap is checked against reality — slices may be reordered, added, or removed. Removed pending work stays in database history as cancelled, disappears from active projections, and must be reopened before its ID can be reused
 5. **Next Slice** — The loop continues until all slices are done
 
 After all slices complete, a **milestone validation** gate checks that success criteria were actually met before sealing the milestone.
