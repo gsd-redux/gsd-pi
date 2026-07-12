@@ -2,6 +2,7 @@
 // File Purpose: Schema migration DDL steps for the GSD database facade.
 
 import type { DbAdapter } from "./db-adapter.js";
+import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { ensureColumn } from "./db-schema-metadata.js";
 
 export function applyMigrationV2Artifacts(db: DbAdapter): void {
@@ -493,4 +494,8 @@ export function applyMigrationV30ReworkBriefs(db: DbAdapter): void {
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_rework_briefs_task ON rework_briefs(milestone_id, slice_id, task_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_rework_findings_status ON rework_brief_findings(brief_id, severity, status)");
+}
+
+export function applyMigrationV31CanonicalFoundation(db: DbAdapter): void {
+  createCanonicalFoundationSchemaV31(db);
 }

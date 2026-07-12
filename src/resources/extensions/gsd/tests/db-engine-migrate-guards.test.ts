@@ -101,9 +101,9 @@ describe('db-engine migrate guards', () => {
       assert.ok(openDatabase(dbPath), 'fresh open should succeed');
       closeDatabase();
 
-      // Rewind the DB to v(SCHEMA_VERSION-1): stamp the prior version and drop
-      // the objects the last migration adds, so the re-run has real work to redo.
-      const startVersion = SCHEMA_VERSION - 2;
+      // Rewind to v28 and remove a v29 column so the multi-step migration has
+      // real work to redo even as later schema versions are added.
+      const startVersion = 28;
       const raw = openRawSqliteForTest(dbPath);
       raw.exec('DELETE FROM schema_version');
       raw.exec(`INSERT INTO schema_version (version, applied_at) VALUES (${startVersion}, '2026-01-01T00:00:00Z')`);
