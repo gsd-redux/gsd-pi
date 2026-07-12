@@ -6,8 +6,8 @@ import type { DbAdapter } from "./db-adapter.js";
 /**
  * V34 records durable recovery allocations and immutable proof facts without
  * cutting runtime readers or writers over to them. S06 Domain Operations must
- * atomically commit failure/action bundles and verdict/evidence bundles, and
- * must enforce bundle completeness before dispatch or lifecycle closeout.
+ * atomically commit failure/action and verdict/evidence/remediation bundles,
+ * and must enforce bundle completeness before dispatch or lifecycle closeout.
  */
 export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
   db.exec(`

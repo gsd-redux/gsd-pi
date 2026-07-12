@@ -10,7 +10,7 @@
 The smallest model that preserves the approved contract has two deliberately separate halves:
 
 1. **Recovery facts and routing:** immutable Failure Observations, restart-safe bounded budgets, and exactly one selected Recovery Action.
-2. **Verification and acceptance:** versioned criteria, immutable objective evidence, evidence-derived Technical Verdicts, separate Human Acceptance for explicitly subjective UAT, and immutable finding-to-work links.
+2. **Verification and acceptance:** versioned criteria, immutable objective evidence, evidence-derived Technical Verdicts, separate Human Acceptance for explicitly subjective UAT, and immutable remediation links.
 
 Do not add another Attempt, UAT run, assessment, gate, blocker, or rework system. V32 already supplies execution identity and the narrow human-only blocker taxonomy. V34 should remain shadow canonical data until later Domain Operations and Query Module work can write and read it atomically.
 
@@ -42,7 +42,7 @@ The RFC defines an Attempt Result as `succeeded | failed | interrupted`, a Recov
 
 The kernel sequence is Advance → Execute → Verify → Route → Closeout. Execute persists an Attempt Result or Failure Observation; Verify gathers fresh evidence; Route selects exactly one bounded recovery action ([RFC, lines 213–221](../docs/dev/proposals/rfc-database-authoritative-workflow-refactor.md#lifecycle-kernel-and-ownership-boundaries)).
 
-The evidence contract is stricter than the legacy tables: every Technical Verdict references fresh immutable evidence with criterion, work and Attempt identity, exact command/tool and working directory, timestamps, exit code, source and database revisions, content hashes, durable output reference, and environment metadata. Machine-fixable failures create or reuse linked remediation work, and only the approved human-only taxonomy may pause for a person ([ADR-046, lines 155–190](../docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md#automation-first-verification-and-recovery)).
+The evidence contract is stricter than the legacy tables: every complete Technical Verdict bundle includes fresh immutable evidence with criterion, work and Attempt identity, exact command/tool and working directory, timestamps, exit code, source and database revisions, content hashes, durable output reference, and environment metadata. Machine-fixable failures create or reuse linked remediation work, and only the approved human-only taxonomy may pause for a person ([ADR-046, lines 155–190](../docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md#automation-first-verification-and-recovery)). V34 validates each evidence row against its owning verdict; S06 must make bundle completeness atomic and mandatory.
 
 Recovery budgets must persist across restarts and unchanged failure fingerprints. The accepted caps are initial plus two retries for transient execution, one deterministic repair per unchanged fingerprint, at most two schema-corrected attempts, at most two remediation attempts for the same cause, and at most three objective-UAT Attempts ([RFC, lines 238–252](../docs/dev/proposals/rfc-database-authoritative-workflow-refactor.md#automated-verification-uat-and-recovery)).
 
@@ -225,17 +225,21 @@ Immutable finding-to-work routing:
 
 `rework` targets the producer lifecycle; `remediation` targets distinct corrective work. Resolution is derived from a later fresh proof, not a mutable finding status.
 
-## Cross-table invariants
+## Final eight-table contract
+
+V34 enforces the relational, provenance, immutability, and bounded-count parts
+of this contract. S06 must add atomic bundle writes and completeness queries for
+routing, dispatch, and closeout.
 
 1. Every new row has an exact causal FK to `workflow_operations(operation_id, project_id, resulting_revision, resulting_authority_epoch)`.
 2. Project/lifecycle/Attempt/Result/criterion/evidence/verdict/acceptance scopes must align; cross-project or cross-lifecycle joins abort.
-3. IDs, scopes, creation timestamps, observations, verdicts, findings, memberships, and actions are immutable; deletes are denied.
+3. IDs, scopes, creation timestamps, observations, verdicts, acceptances, remediation links, and actions are immutable; deletes are denied.
 4. Supersession always names the current head, advances project revision, and never decreases Authority Epoch.
 5. Objective proof and subjective acceptance never substitute for one another.
-6. A technical PASS cannot be inferred from aggregate assessment text, projection presence, legacy gate rows, or a different criterion's evidence.
-7. Clarify/pause must link an open approved v32 Blocker. Failed tests, projection failures, ordinary defects, worktree repair, stale workers, missing harnesses, browser startup, and Git conflicts remain machine-owned by default.
-8. A retry budget is consumed once in the same future Domain Operation as the selected action/Attempt; idempotent replay does not consume it twice.
-9. Failure, inconclusive evidence, recovery exhaustion, or missing projections cannot transition a Lifecycle to complete.
+6. S06 queries must not infer a technical PASS from aggregate assessment text, projection presence, legacy gate rows, or a different criterion's evidence.
+7. V34 requires clarify/pause to link the exact open approved v32 Blocker owned by the Failure Observation. S06 policy must keep failed tests, projection failures, ordinary defects, worktree repair, stale workers, missing harnesses, browser startup, and Git conflicts machine-owned by default.
+8. Budget use is the count of linked immutable Recovery Actions. The future Domain Operation must make action selection idempotent so replay cannot add a second Action or exceed `max_uses`.
+9. S06 lifecycle queries must prevent failure, inconclusive evidence, recovery exhaustion, or missing projections from authorizing completion.
 
 ## Legacy concepts not to repurpose
 
@@ -260,39 +264,39 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 
 ### Schema and migration
 
-1. Fresh v34 exposes exactly the ten new tables and exact vocabularies while preserving all v31–v33 tables.
+1. Fresh v34 exposes exactly the eight new tables and exact vocabularies while preserving all v31–v33 tables.
 2. V33 → v34 upgrade creates a verified `.backup-v33`, leaves every legacy row byte/semantically unchanged, creates empty v34 tables, and passes `PRAGMA quick_check`.
-3. Inject a migration fault after v34 DDL but before COMMIT: schema version remains 33, all ten tables roll back, backup remains independently openable, and retry reaches 34 cleanly. Mirror the established v33 migration/restore tests ([`db-conversation-foundation.test.ts`, lines 934–1035](../src/resources/extensions/gsd/tests/db-conversation-foundation.test.ts)).
+3. Inject a migration fault after v34 DDL but before COMMIT: schema version remains 33, all eight tables roll back, backup remains independently openable, and retry reaches 34 cleanly. Mirror the established v33 migration/restore tests ([`db-conversation-foundation.test.ts`, lines 934–1035](../src/resources/extensions/gsd/tests/db-conversation-foundation.test.ts)).
 
 ### Recovery contract
 
 4. A failed/interrupted Result accepts a matching Failure Observation; a succeeded Result, mismatched lifecycle/project, blank/non-normalized fingerprint, or wrong causal revision is rejected.
-5. `recordFailureAndSelectRecovery` fault at observation insert, budget update, and action insert leaves no partial observation/action/consumption.
+5. A future `recordFailureAndSelectRecovery` fault at observation or action insert leaves no partial observation/action bundle.
 6. One observation accepts exactly one action; a second route is rejected. An observation without a joined action is never dispatchable.
-7. Close/reopen between repeated identical fingerprints preserves budget consumption and returns the same eligible route; a new trace/session cannot reset the cap.
-8. Idempotent replay consumes a retry once; concurrent retries cannot overspend or exceed an exhausted budget.
-9. Machine-owned kinds cannot select clarify/pause without a valid open narrow Blocker. Exhaustion routes to replan/remediate/abort as policy dictates; it cannot synthesize skipped/completed work.
-10. Projection, closeout-effect, worktree, timeout, and interrupted failures cannot settle the affected Lifecycle complete.
+7. Close/reopen between repeated identical fingerprints preserves the derived budget-use count and returns the same eligible route; a new trace/session cannot reset the cap.
+8. Idempotent action replay counts once; concurrent actions cannot exceed an exhausted budget.
+9. Clarify/pause rejects a missing, mismatched, or closed narrow Blocker. S06 policy must keep machine-owned kinds on automated routes and must not synthesize skipped/completed work on exhaustion.
+10. S06 lifecycle queries must prevent projection, closeout-effect, worktree, timeout, and interrupted failures from settling the affected Lifecycle complete.
 11. Delete/corrupt `.gsd/runtime`, `metrics.json`, reopen JSON, doctor JSONL, assessment/UAT files, and clear process maps; reopened recovery eligibility and selected action remain byte-identical.
 
 ### Evidence, verdict, and acceptance contract
 
 12. Technical criteria reject `human`; subjective-UAT criteria reject objective evidence classes.
 13. Evidence rejects a mismatched Attempt/lifecycle/project, stale source revision, missing hash/output/environment, and mutation/deletion.
-14. PASS cannot finalize with absent, inconclusive, stale, wrong-criterion, wrong-Attempt, or partially fresh required evidence. FAIL and INCONCLUSIVE retain their exact meanings.
+14. Evidence cannot disagree with its owning PASS, FAIL, or INCONCLUSIVE verdict. S06 bundle-completeness queries must also reject a verdict with absent or incomplete required evidence.
 15. A new criterion version makes the prior PASS historical and cannot fork from a non-head version.
 16. Multiple objective-UAT Attempts persist in v32 Attempt rows, retain immutable evidence across restart, and never derive numbering from files.
-17. Technical PASS plus a required subjective criterion with no Human Acceptance does not authorize closeout; accepted does; rejected blocks it.
+17. S06 closeout queries must reject Technical PASS plus a required subjective criterion with no Human Acceptance; accepted authorizes that criterion and rejected blocks it.
 18. Generic consent cannot create Human Acceptance. Only a current accepted v33 Answer on a `subjective-uat` Interaction can.
-19. Aggregate milestone validation cannot stamp unrelated criteria. Each required criterion needs its own current proof.
-20. Finding source XOR, fingerprint deduplication, rework/remediation target rules, and later fresh resolving-proof links are enforced without mutating the finding.
+19. S06 aggregate milestone validation must not stamp unrelated criteria. Each required criterion needs its own current proof.
+20. Remediation source XOR, fingerprint deduplication, and rework/remediation target rules are enforced without mutable finding records.
 
 ### Sabotage proofs
 
-21. Sabotage an evidence observation from failed/inconclusive to passed, alter its tested source revision, or swap its criterion; the mutation must fail and closeout must remain unauthorized.
-22. Write a legacy PASS assessment, PASS quality gate, gate run, UAT Markdown, attempt JSON, and contradictory projection with no canonical evidence. Technical Verdict/closeout queries remain unchanged.
-23. Reset every legacy/process retry counter while preserving the canonical unchanged fingerprint and exhausted budget. Retry remains exhausted after independent reopen.
-24. Insert a machine failure plus a user-facing placeholder file/blocker string. The canonical router neither opens a human Blocker nor pauses without an authorized blocker/action transaction.
+21. Sabotage an evidence observation from failed/inconclusive to passed, alter its tested source revision, or swap its criterion; the mutation must fail, and S06 closeout must remain unauthorized.
+22. Write a legacy PASS assessment, PASS quality gate, gate run, UAT Markdown, attempt JSON, and contradictory projection with no canonical evidence. S06 Technical Verdict/closeout queries must remain unchanged.
+23. Reset every legacy/process retry counter while preserving the canonical unchanged fingerprint and exhausted Action count. Retry remains exhausted after independent reopen.
+24. Insert a machine failure plus a user-facing placeholder file/blocker string. The S06 router must neither open a human Blocker nor pause without an authorized blocker/action transaction.
 
 ## Implementation notes for S04
 
@@ -300,7 +304,7 @@ No v34 backfill should reinterpret any of these rows. The migration creates empt
 - Wire fresh-install creation, `SCHEMA_VERSION = 34`, migration/backup/rollback tests, and the explicit single-writer allowlist.
 - Use the existing v31 exact provenance tuple and v32/v33 immutable/head-chain trigger style.
 - This slice should expose schema only. Do not add runtime writers, readers, UAT cutover, backfill, or compatibility deletion.
-- The later Domain Operation layer must atomically create failure+route+budget consumption and evidence+verdict/finding bundles. V34 standalone triggers enforce local facts and reject invalid combinations; they should not simulate the future kernel.
+- The later Domain Operation layer must atomically create failure/action and verdict/evidence/remediation bundles. V34 standalone triggers enforce local facts and reject invalid combinations; they should not simulate the future kernel.
 
 ## Decision summary
 

@@ -25,8 +25,8 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
        ├── db-canonical-foundation-schema.ts, db-lifecycle-foundation-schema.ts,
-       │   db-conversation-foundation-schema.ts, db-memory-fts-schema.ts, db-schema-metadata.ts,
-       │   db-verification-evidence-schema.ts
+       │   db-conversation-foundation-schema.ts, db-recovery-evidence-foundation-schema.ts,
+       │   db-memory-fts-schema.ts, db-schema-metadata.ts, db-verification-evidence-schema.ts
        │                    ← allowlisted schema/migration helpers
        ├── memory-backfill.ts
        │                    ← allowlisted ADR migration/backfill helper
@@ -1251,9 +1251,11 @@ authority_epoch        INTEGER NOT NULL
 - Action is exactly `retry | repair | replan | remediate | clarify | pause |
   abort`; one Failure Observation can have only one selected Action.
 - Retry requires a matching unexhausted budget and the same lifecycle target.
-  Repair, replan, and remediate require a target lifecycle. Clarify and pause
-  require the existing open V32 human-only Blocker owned by the Failure
-  Observation. Abort has no budget, target, or blocker.
+  Repair and remediate also require matching unexhausted budgets and a target
+  lifecycle; remediation targets actionable Task work. Replan requires a target
+  lifecycle without a budget. Clarify and pause require the existing open V32
+  human-only Blocker owned by the Failure Observation. Abort has no budget,
+  target, or blocker.
 - The Action must causally follow its Failure Observation. Updates and deletes
   fail.
 - Index: `idx_workflow_recovery_actions_budget`
@@ -1387,7 +1389,7 @@ authority_epoch         INTEGER NOT NULL
 - Exactly one source is required: a `fail | inconclusive` Technical Verdict or
   the current rejected Human Acceptance.
 - Route kind is `rework | remediation`. Rework targets the source lifecycle;
-  remediation targets a distinct corrective lifecycle. Fingerprints are
+  remediation targets distinct, actionable Task work. Fingerprints are
   normalized and duplicate source/target/fingerprint routes are rejected.
 - Links are immutable durable history; later fresh verdicts or acceptance
   facts show that the required outcome was achieved rather than mutating the

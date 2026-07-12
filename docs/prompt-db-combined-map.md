@@ -393,12 +393,12 @@ Verification Evidence records the immutable objective observation owned by that
 verdict. A subjective-UAT criterion uses Human Acceptance linked to the current
 accepted V33 `subjective-uat` Answer instead of a Technical Verdict. Immutable
 Recovery Budgets store only `max_uses`; consumption is derived by counting
-linked immutable Recovery Actions, with policy-class caps of one deterministic
-repair or two other recovery actions. A human-routed Failure Observation owns
-the exact V32 Blocker used by clarify/pause, so an unrelated blocker cannot
-justify a pause. Criterion changes append a same-key supersession head, and
-failed/inconclusive verdicts or current rejected Human Acceptance route through
-immutable `rework | remediation` links.
+linked immutable Recovery Actions, with policy-class caps of one
+deterministic-repair use or two uses for each other budget class. A human-routed
+Failure Observation owns the exact V32 Blocker used by clarify/pause, so an
+unrelated blocker cannot justify a pause. Criterion changes append a same-key
+supersession head, and failed/inconclusive verdicts or current rejected Human
+Acceptance route through immutable `rework | remediation` links.
 
 Legacy `verification_evidence`, assessments, quality gates, gate runs, UAT
 files, rework briefs, dispatch retry fields, runtime JSON/KV, and process-local
