@@ -405,11 +405,11 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
       policy_id TEXT NOT NULL CHECK (length(trim(policy_id)) > 0),
       policy_version TEXT NOT NULL CHECK (length(trim(policy_version)) > 0),
       rationale TEXT NOT NULL CHECK (length(trim(rationale)) > 0),
+      supersedes_verdict_id TEXT DEFAULT NULL UNIQUE,
       created_at TEXT NOT NULL,
       operation_id TEXT NOT NULL,
       project_revision INTEGER NOT NULL CHECK (project_revision > 0),
       authority_epoch INTEGER NOT NULL CHECK (authority_epoch >= 0),
-      UNIQUE (criterion_id, attempt_id, tested_source_revision),
       UNIQUE (
         verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
         tested_source_revision, operation_id, project_revision, authority_epoch
@@ -419,6 +419,8 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
         REFERENCES workflow_acceptance_criteria(criterion_id, project_id, lifecycle_id),
       FOREIGN KEY (attempt_id, lifecycle_id, project_id)
         REFERENCES workflow_execution_attempts(attempt_id, lifecycle_id, project_id),
+      FOREIGN KEY (supersedes_verdict_id)
+        REFERENCES workflow_technical_verdicts(verdict_id),
       FOREIGN KEY (operation_id, project_id, project_revision, authority_epoch)
         REFERENCES workflow_operations(
           operation_id, project_id, resulting_revision, resulting_authority_epoch
@@ -451,6 +453,38 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
     )
     BEGIN
       SELECT RAISE(ABORT, 'technical verdict requires the current criterion and matching settled attempt');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_technical_verdict_head
+    BEFORE INSERT ON workflow_technical_verdicts
+    WHEN (
+      NEW.supersedes_verdict_id IS NULL AND EXISTS (
+        SELECT 1 FROM workflow_technical_verdicts existing
+        WHERE existing.project_id = NEW.project_id
+          AND existing.criterion_id = NEW.criterion_id
+          AND existing.lifecycle_id = NEW.lifecycle_id
+          AND existing.attempt_id = NEW.attempt_id
+          AND existing.tested_source_revision = NEW.tested_source_revision
+      )
+    ) OR (
+      NEW.supersedes_verdict_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM workflow_technical_verdicts previous
+        WHERE previous.verdict_id = NEW.supersedes_verdict_id
+          AND previous.project_id = NEW.project_id
+          AND previous.criterion_id = NEW.criterion_id
+          AND previous.lifecycle_id = NEW.lifecycle_id
+          AND previous.attempt_id = NEW.attempt_id
+          AND previous.tested_source_revision = NEW.tested_source_revision
+          AND previous.project_revision < NEW.project_revision
+          AND previous.authority_epoch <= NEW.authority_epoch
+          AND NOT EXISTS (
+            SELECT 1 FROM workflow_technical_verdicts successor
+            WHERE successor.supersedes_verdict_id = previous.verdict_id
+          )
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'technical verdict must supersede the current head in the same scope');
     END;
 
     CREATE TRIGGER IF NOT EXISTS trg_workflow_technical_verdict_immutable_update
@@ -724,7 +758,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
             SELECT 1 FROM workflow_acceptance_criteria successor
             WHERE successor.supersedes_criterion_id = criterion.criterion_id
           )
-          AND verdict.project_revision < NEW.project_revision
+          AND verdict.project_revision <= NEW.project_revision
           AND verdict.authority_epoch <= NEW.authority_epoch
       )
     ) OR (
@@ -744,7 +778,7 @@ export function createRecoveryEvidenceFoundationSchemaV34(db: DbAdapter): void {
             SELECT 1 FROM workflow_acceptance_criteria successor
             WHERE successor.supersedes_criterion_id = criterion.criterion_id
           )
-          AND acceptance.project_revision < NEW.project_revision
+          AND acceptance.project_revision <= NEW.project_revision
           AND acceptance.authority_epoch <= NEW.authority_epoch
       )
     ))

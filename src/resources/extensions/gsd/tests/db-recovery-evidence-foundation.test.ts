@@ -800,7 +800,7 @@ test("technical PASS is criterion, Attempt, and source-revision scoped to fresh 
     if (db.isOpen) db.close();
   });
   {
-    insertOperations(db, 10);
+    insertOperations(db, 11);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
     insertLifecycle(db, "life-other", "M-OTHER", 2);
     insertSettledAttempt(db, {
@@ -888,15 +888,29 @@ test("technical PASS is criterion, Attempt, and source-revision scoped to fresh 
       () => db.prepare("UPDATE workflow_verification_evidence SET observation = 'failed' WHERE evidence_id = 'evidence-1'").run(),
       /immutable/,
     );
+    db.prepare(`
+      INSERT INTO workflow_technical_verdicts (
+        verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
+        tested_source_revision, verdict, policy_id, policy_version, rationale,
+        supersedes_verdict_id, created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('verdict-corrected', ?, 'criterion-1-v2', 'life-recovery', 'attempt-pass',
+        'commit-current', 'inconclusive', 'technical-verification', 'v1', 'Corrected verdict',
+        'verdict-pass', '', 'op-10', 10, 0)
+    `).run(projectId(db));
+    insertEvidence(db, {
+      id: "evidence-corrected", verdictId: "verdict-corrected", criterionId: "criterion-1-v2",
+      lifecycleId: "life-recovery", attemptId: "attempt-pass", revision: 10,
+      observation: "inconclusive",
+    });
     assert.throws(() => db.prepare(`
       INSERT INTO workflow_technical_verdicts (
         verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
         tested_source_revision, verdict, policy_id, policy_version, rationale,
-        created_at, operation_id, project_revision, authority_epoch
-      ) VALUES ('verdict-duplicate', ?, 'criterion-1-v2', 'life-recovery', 'attempt-pass',
-        'commit-current', 'inconclusive', 'technical-verification', 'v1', 'Duplicate bundle',
-        '', 'op-10', 10, 0)
-    `).run(projectId(db)), /UNIQUE constraint failed|one technical verdict/);
+        supersedes_verdict_id, created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('verdict-fork', ?, 'criterion-1-v2', 'life-recovery', 'attempt-pass',
+        'commit-current', 'pass', 'technical-verification', 'v1', 'Fork old head',
+        'verdict-pass', '', 'op-11', 11, 0)
+    `).run(projectId(db)), /current head|UNIQUE constraint failed/);
   }
 });
 
@@ -908,6 +922,7 @@ test("subjective UAT acceptance requires the current accepted v33 subjective-UAT
   {
     insertOperations(db, 9);
     insertLifecycle(db, "life-recovery", "M-RECOVERY", 1);
+    insertTaskLifecycle(db, "life-uat-remediation", 1);
     insertCriterion(db, {
       id: "criterion-subjective", lifecycleId: "life-recovery", revision: 2,
       kind: "subjective_uat", evidenceClass: "human",
@@ -1018,6 +1033,15 @@ test("subjective UAT acceptance requires the current accepted v33 subjective-UAT
         'answer-uat-2', 'question-uat-2', 'interaction-uat-2', 'rejected', 'developer',
         'Later review found a subjective problem', 'acceptance-1', '', 'op-8', 8, 0)
     `).run(projectId(db));
+    db.prepare(`
+      INSERT INTO workflow_remediation_links (
+        remediation_link_id, project_id, source_lifecycle_id, human_acceptance_id,
+        route_kind, remediation_fingerprint, required_outcome, target_lifecycle_id,
+        created_at, operation_id, project_revision, authority_epoch
+      ) VALUES ('remediation-acceptance', ?, 'life-recovery', 'acceptance-2', 'remediation',
+        'criterion-subjective:rejected', 'Resolve the subjective problem',
+        'life-uat-remediation', '', 'op-8', 8, 0)
+    `).run(projectId(db));
     assert.throws(() => db.prepare(`
       INSERT INTO workflow_human_acceptances (
         human_acceptance_id, project_id, criterion_id, lifecycle_id,
@@ -1108,7 +1132,7 @@ test("Remediation Links immutably route one failed verdict or rejected Human Acc
         route_kind, remediation_fingerprint, required_outcome, target_lifecycle_id,
         created_at, operation_id, project_revision, authority_epoch
       ) VALUES ('remediation-1', ?, 'life-recovery', 'verdict-fail', 'remediation',
-        'criterion-1:test-failed', 'Make the test pass', 'life-remediation', '', 'op-7', 7, 0)
+        'criterion-1:test-failed', 'Make the test pass', 'life-remediation', '', 'op-6', 6, 0)
     `).run(projectId(db));
     assert.throws(() => db.prepare(`
       INSERT INTO workflow_remediation_links (

@@ -1312,16 +1312,18 @@ verdict                TEXT NOT NULL
 policy_id              TEXT NOT NULL
 policy_version         TEXT NOT NULL
 rationale              TEXT NOT NULL
+supersedes_verdict_id  TEXT DEFAULT NULL UNIQUE
 created_at             TEXT NOT NULL
 operation_id           TEXT NOT NULL
 project_revision       INTEGER NOT NULL
 authority_epoch        INTEGER NOT NULL
 ```
-- Verdict is `pass | fail | inconclusive` and is unique for a criterion,
-  Attempt, and tested source revision.
+- Verdict is `pass | fail | inconclusive`. Corrections append to an immutable
+  current-head chain for the same criterion, Attempt, and tested source revision.
 - Only the current technical criterion and a matching settled V32 Attempt may
   receive a verdict. PASS additionally requires the Attempt Result to be
-  `succeeded`. Verdicts are immutable.
+  `succeeded`. Supersession must advance the project revision without decreasing
+  the Authority Epoch, and forks from a non-head verdict are rejected.
 
 #### `workflow_verification_evidence`
 ```
