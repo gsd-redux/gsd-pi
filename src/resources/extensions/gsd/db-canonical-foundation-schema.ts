@@ -3,6 +3,23 @@
 
 import type { DbAdapter } from "./db-adapter.js";
 
+export function ensureCanonicalOutboxInvariantsV31(db: DbAdapter): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_outbox_safe_identity
+    AFTER INSERT ON workflow_outbox
+    WHEN NEW.outbox_id > 9007199254740991
+    BEGIN
+      SELECT RAISE(ABORT, 'outbox identity exceeds safe integer range');
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_outbox_delete
+    BEFORE DELETE ON workflow_outbox
+    BEGIN
+      SELECT RAISE(ABORT, 'outbox rows are durable history');
+    END
+  `);
+}
+
 /**
  * v31 mapping:
  * - schema_version remains DDL compatibility, not the domain revision.
@@ -103,6 +120,7 @@ export function createCanonicalFoundationSchemaV31(db: DbAdapter): void {
       FOREIGN KEY (event_id) REFERENCES workflow_domain_events(event_id)
     )
   `);
+  ensureCanonicalOutboxInvariantsV31(db);
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_workflow_operations_created

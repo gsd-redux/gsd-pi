@@ -53,7 +53,10 @@ import {
   applyMigrationV34RecoveryEvidenceFoundation,
   applyMigrationV35ProjectionImportKernelCloseoutFoundation,
 } from "../db-migration-steps.js";
-import { createCanonicalFoundationSchemaV31 } from "../db-canonical-foundation-schema.js";
+import {
+  createCanonicalFoundationSchemaV31,
+  ensureCanonicalOutboxInvariantsV31,
+} from "../db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "../db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "../db-lifecycle-foundation-schema.js";
 import { createProjectionImportKernelCloseoutFoundationSchemaV35 } from "../db-projection-import-kernel-closeout-foundation-schema.js";
@@ -175,6 +178,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
   }
 
   migrateSchema(db, dbPath);
+  ensureCanonicalOutboxInvariantsV31(db);
   rebuildMemoriesFtsSchemaOnce(db, {
     onRebuildFailed: (message) => logWarning("db", message),
   });

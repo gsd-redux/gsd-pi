@@ -245,6 +245,18 @@ function loadReceipt(operation: OperationRow, status: DomainOperationResult["sta
     SELECT event_id FROM workflow_domain_events
     WHERE operation_id = :operation_id ORDER BY event_index
   `).all({ ":operation_id": operation.operation_id }).map((row) => String(row["event_id"]));
+  const unsafeOutbox = db.prepare(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM workflow_outbox outbox
+      JOIN workflow_domain_events event ON event.event_id = outbox.event_id
+      WHERE event.operation_id = :operation_id
+        AND outbox.outbox_id > 9007199254740991
+    ) AS unsafe
+  `).get({ ":operation_id": operation.operation_id });
+  if (unsafeOutbox?.["unsafe"] === 1) {
+    throw new Error("stored outbox identity exceeds safe integer range");
+  }
   const outboxIds = db.prepare(`
     SELECT outbox.outbox_id
     FROM workflow_outbox outbox
@@ -346,6 +358,27 @@ function staleAuthority(request: DomainOperationRequest, authority: AuthorityRow
   );
 }
 
+function isSqliteBusyError(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "");
+  const message = String((error as { message?: unknown })?.message ?? error);
+  return code.includes("SQLITE_BUSY") || /SQLITE_BUSY|database is locked/i.test(message);
+}
+
+function runDomainOperationTransaction(fn: () => DomainOperationResult): DomainOperationResult {
+  try {
+    return immediateTransaction(fn);
+  } catch (error) {
+    if (isSqliteBusyError(error)) {
+      throw new GSDError(
+        GSD_REVISION_CONFLICT,
+        "domain operation writer contention; retry the request",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 export function executeDomainOperation(
   request: DomainOperationRequest,
   /**
@@ -361,7 +394,7 @@ export function executeDomainOperation(
   }
   const hash = requestHash(request);
 
-  const result = immediateTransaction((): DomainOperationResult => {
+  const result = runDomainOperationTransaction((): DomainOperationResult => {
     const db = getDb();
     const authority = db.prepare(`
       SELECT project_id, revision, authority_epoch

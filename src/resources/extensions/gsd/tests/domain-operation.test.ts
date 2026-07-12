@@ -13,6 +13,7 @@ import {
   SCHEMA_VERSION,
   _getAdapter,
   closeDatabase,
+  openIsolatedDatabase,
   openDatabase,
   transaction,
 } from "../gsd-db.ts";
@@ -215,6 +216,12 @@ afterEach(() => {
   tempDirs.clear();
 });
 
+test("the public database barrel does not expose the fault injection hook", async () => {
+  const publicDatabase = await import("../gsd-db.ts");
+
+  assert.equal("_setDomainOperationFaultForTest" in publicDatabase, false);
+});
+
 test("one operation atomically commits provenance, ordered events, outbox, projection, and authority", (t) => {
   openFixture(t);
   let contextSeen: Readonly<DomainOperationContext> | undefined;
@@ -289,6 +296,25 @@ test("exact idempotency replay returns the original receipt without rerunning mu
   });
   assert.deepEqual(reopened, replay);
   assert.deepEqual(durableSnapshot(), before);
+});
+
+test("outbox receipt identities remain durable on an existing v35 database", (t) => {
+  const dbPath = openFixture(t);
+  const original = execute();
+  const db = _getAdapter();
+  assert.ok(db);
+  db.exec("DROP TRIGGER IF EXISTS trg_workflow_outbox_delete");
+  closeDatabase();
+  assert.equal(openDatabase(dbPath), true);
+
+  assert.throws(
+    () => _getAdapter()?.exec("DELETE FROM workflow_outbox WHERE outbox_id = 1"),
+    /outbox.*durable history/i,
+  );
+  const replay = execute(request(), () => {
+    throw new Error("durable receipt replay must not invoke mutation");
+  });
+  assert.deepEqual(replay, { ...original, status: "replayed" });
 });
 
 test("replay rejects damaged duplicated trace provenance", (t) => {
@@ -371,6 +397,21 @@ test("revision and Authority Epoch inputs require safe increment headroom", (t) 
   }
 });
 
+test("outbox identities outside the safe integer range abort the operation", (t) => {
+  openFixture(t);
+  const db = _getAdapter();
+  assert.ok(db);
+  db.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('workflow_outbox', :seq)")
+    .run({ ":seq": Number.MAX_SAFE_INTEGER });
+  const before = durableSnapshot();
+
+  assert.throws(
+    () => execute(request({ idempotencyKey: "unsafe-outbox-id" })),
+    /outbox.*safe integer/i,
+  );
+  assert.deepEqual(durableSnapshot(), before);
+});
+
 test("advanceAuthorityEpoch rejects malformed non-boolean runtime input", (t) => {
   openFixture(t);
   const initial = durableSnapshot();
@@ -393,6 +434,24 @@ test("the Domain Operation owns the outer reserved-writer transaction", (t) => {
     /must own the outer transaction/i,
   );
   assert.deepEqual(durableSnapshot(), before);
+});
+
+test("writer lock exhaustion surfaces as a revision conflict", (t) => {
+  const dbPath = openFixture(t);
+  const blocker = openIsolatedDatabase(dbPath);
+  assert.ok(blocker);
+  blocker.exec("BEGIN IMMEDIATE");
+  t.after(() => {
+    blocker.exec("ROLLBACK");
+    blocker.close();
+  });
+  _getAdapter()?.exec("PRAGMA busy_timeout = 1");
+
+  assertErrorCode(
+    () => execute(request({ idempotencyKey: "writer-contention" })),
+    GSD_REVISION_CONFLICT,
+    /writer contention/i,
+  );
 });
 
 test("every pre-commit fault rolls back the operation, callback mutation, intents, and CAS", (t) => {
