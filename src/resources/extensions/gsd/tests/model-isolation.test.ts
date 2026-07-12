@@ -344,4 +344,17 @@ describe("custom provider detection (#801)", () => {
     assert.equal(isCustomProvider("claude-code", registry), false,
       "built-in providers must still defer to PREFERENCES.md");
   });
+
+  it("does not treat bundled external-CLI providers as custom", () => {
+    // claude-code/cursor-agent/google-gemini-cli/google-antigravity register at
+    // runtime (so they are absent from the generated @gsd/pi-ai catalog), but
+    // they are first-party built-ins that PREFERENCES.md can route to. They must
+    // never be classified as custom, otherwise auto-mode silently ignores
+    // PREFERENCES.md for the default provider.
+    for (const provider of ["cursor-agent", "google-gemini-cli", "google-antigravity"]) {
+      const registry = { getAll: () => [{ provider }] };
+      assert.equal(isCustomProvider(provider, registry), false,
+        `${provider} is a built-in CLI provider and must defer to PREFERENCES.md`);
+    }
+  });
 });

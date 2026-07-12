@@ -39,6 +39,27 @@ type ProviderModelRegistry = {
 };
 
 /**
+ * First-party providers shipped as bundled extensions that delegate to a
+ * vendor CLI (`authMode: "externalCli"`). They are registered into the live
+ * model registry at runtime, so they are absent from the generated `@gsd/pi-ai`
+ * catalog (`getProviders()`), but they are NOT custom: `PREFERENCES.md` can
+ * route to them, so they must defer to `PREFERENCES.md` like any other built-in
+ * provider. Without this exclusion the registry check below would classify the
+ * default `claude-code` provider (and the other CLI providers) as custom and
+ * silently skip `PREFERENCES.md` in auto-mode (#801, extends #4122).
+ *
+ * Kept in sync with the `registerProvider(...)` calls in the bundled CLI
+ * extensions (claude-code-cli, cursor-cli, google-cli). Names are lowercase for
+ * direct comparison against normalized provider ids.
+ */
+const BUILTIN_EXTENSION_PROVIDERS: ReadonlySet<string> = new Set([
+  "claude-code",
+  "cursor-agent",
+  "google-gemini-cli",
+  "google-antigravity",
+]);
+
+/**
  * Resolve which model ID to use for a given auto-mode unit type.
  * Returns undefined if no model preference is set for this unit type.
  */
@@ -340,9 +361,12 @@ export function resolveDefaultSessionModel(
  *
  * Reads models.json directly with a lightweight JSON parse, then checks the
  * live model registry for extension-registered providers that are not in the
- * generated built-in provider catalog.  Falls back to `~/.pi/agent/models.json`
- * for parity with `resolveModelsJsonPath()`. Any read, parse, or registry error
- * yields `false` (treat as not-custom) so bootstrap stays non-fatal.
+ * generated built-in provider catalog (`getProviders()`) and not one of the
+ * bundled external-CLI providers (`BUILTIN_EXTENSION_PROVIDERS`, e.g.
+ * `claude-code`), which register at runtime but are still built-in.  Falls back
+ * to `~/.pi/agent/models.json` for parity with `resolveModelsJsonPath()`. Any
+ * read, parse, or registry error yields `false` (treat as not-custom) so
+ * bootstrap stays non-fatal.
  */
 export function isCustomProvider(provider: string | undefined, registry?: ProviderModelRegistry): boolean {
   if (!provider) return false;
@@ -365,6 +389,7 @@ export function isCustomProvider(provider: string | undefined, registry?: Provid
   try {
     const normalizedProvider = provider.trim().toLowerCase();
     if (!normalizedProvider) return false;
+    if (BUILTIN_EXTENSION_PROVIDERS.has(normalizedProvider)) return false;
     const builtInProviders = new Set(getProviders().map((p) => p.toLowerCase()));
     if (builtInProviders.has(normalizedProvider)) return false;
     const registryModels =
