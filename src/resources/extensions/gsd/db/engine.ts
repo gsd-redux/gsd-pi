@@ -435,6 +435,10 @@ function migrateSchema(db: DbAdapter, dbPath: string | null): void {
     }
 
     if (currentVersion < 36) {
+      // V36 triggers read the v24 coordination tables. Re-run their
+      // idempotent creator first so upgrades remain safe when older schema
+      // metadata exists but those prerequisite tables are missing.
+      createCoordinationTablesV24(db);
       applyMigrationV36AttemptRecovery(db);
       recordSchemaVersion(db, 36);
     }

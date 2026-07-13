@@ -1,20 +1,23 @@
 // Project/App: gsd-pi
 // File Purpose: Immutable canonical host-verification verdict and evidence Domain Operation.
 
-import { createHash, randomUUID } from "node:crypto";
-
 import {
-  canonicalDomainJson,
   executeDomainOperation,
   type DomainJsonValue,
-  type DomainOperationContext,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
 import {
   appendKernelCheckpoint,
   readDomainOperationFence,
 } from "./db/writers/lifecycle-commands.js";
+import {
+  currentHostTechnicalCriterionId,
+  ensureHostTechnicalCriterion,
+  insertHostTechnicalVerdict,
+} from "./db/writers/task-verification.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+
+export { ensureHostTechnicalCriterion };
 
 export interface RecordTaskTechnicalVerdictInput {
   invocation: ExecutionInvocation;
@@ -71,8 +74,6 @@ interface StoredVerdict {
   verdict: RecordTaskTechnicalVerdictInput["verdict"];
 }
 
-const CRITERION_KEY = "host-technical-verification";
-
 function requireAttemptScope(attemptId: string): AttemptScope {
   const attempt = getDb().prepare(`
     SELECT attempt.project_id, attempt.lifecycle_id, lifecycle.milestone_id,
@@ -99,56 +100,6 @@ function requireAttemptScope(attemptId: string): AttemptScope {
   `).get({ ":attempt_id": attemptId }) as unknown as AttemptScope | undefined;
   if (!attempt) throw new Error("Host verification requires a settled succeeded Attempt at the verify stage");
   return attempt;
-}
-
-function currentCriterionId(projectId: string, lifecycleId: string): string | undefined {
-  const criterion = getDb().prepare(`
-    SELECT criterion.criterion_id
-    FROM workflow_acceptance_criteria criterion
-    WHERE criterion.project_id = :project_id
-      AND criterion.lifecycle_id = :lifecycle_id
-      AND criterion.criterion_key = :criterion_key
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_acceptance_criteria successor
-        WHERE successor.supersedes_criterion_id = criterion.criterion_id
-      )
-  `).get({
-    ":project_id": projectId,
-    ":lifecycle_id": lifecycleId,
-    ":criterion_key": CRITERION_KEY,
-  });
-  return criterion ? String(criterion["criterion_id"]) : undefined;
-}
-
-export function ensureHostTechnicalCriterion(
-  context: Readonly<DomainOperationContext>,
-  input: { projectId: string; lifecycleId: string },
-): void {
-  if (currentCriterionId(input.projectId, input.lifecycleId)) return;
-  const criterionId = randomUUID();
-  const now = new Date().toISOString();
-  getDb().prepare(`
-    INSERT INTO workflow_acceptance_criteria (
-      criterion_id, criterion_key, project_id, lifecycle_id,
-      criterion_kind, evidence_class, required, description, created_at,
-      operation_id, project_revision, authority_epoch
-    ) VALUES (
-      :criterion_id, :criterion_key, :project_id, :lifecycle_id,
-      'technical', :evidence_class, 1, :description, :created_at,
-      :operation_id, :project_revision, :authority_epoch
-    )
-  `).run({
-    ":criterion_id": criterionId,
-    ":criterion_key": CRITERION_KEY,
-    ":project_id": input.projectId,
-    ":lifecycle_id": input.lifecycleId,
-    ":evidence_class": "command",
-    ":description": "Host-owned technical verification must pass before Task completion publication.",
-    ":created_at": now,
-    ":operation_id": context.operationId,
-    ":project_revision": context.resultingRevision,
-    ":authority_epoch": context.resultingAuthorityEpoch,
-  });
 }
 
 function loadStoredVerdict(operationId: string): StoredVerdict {
@@ -229,74 +180,23 @@ export function recordTaskTechnicalVerdict(
       throw new Error("Task Attempt already has an authoritative host Technical Verdict");
     }
     const now = new Date().toISOString();
-    const criterionId = currentCriterionId(scope.project_id, scope.lifecycle_id);
+    const criterionId = currentHostTechnicalCriterionId(scope.project_id, scope.lifecycle_id);
     if (!criterionId) throw new Error("Host verification criterion is missing from the Task claim");
-    const verdictId = randomUUID();
-    const evidenceId = randomUUID();
-    getDb().prepare(`
-      INSERT INTO workflow_technical_verdicts (
-        verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
-        tested_source_revision, verdict, policy_id, policy_version, rationale,
-        created_at, operation_id, project_revision, authority_epoch
-      ) VALUES (
-        :verdict_id, :project_id, :criterion_id, :lifecycle_id, :attempt_id,
-        :source_revision, :verdict, 'gsd-host-verification', '1', :rationale,
-        :created_at, :operation_id, :project_revision, :authority_epoch
-      )
-    `).run({
-      ":verdict_id": verdictId,
-      ":project_id": scope.project_id,
-      ":criterion_id": criterionId,
-      ":lifecycle_id": scope.lifecycle_id,
-      ":attempt_id": input.attemptId,
-      ":source_revision": input.testedSourceRevision,
-      ":verdict": input.verdict,
-      ":rationale": input.rationale,
-      ":created_at": now,
-      ":operation_id": context.operationId,
-      ":project_revision": context.resultingRevision,
-      ":authority_epoch": context.resultingAuthorityEpoch,
+    const inserted = insertHostTechnicalVerdict(context, {
+      scope: {
+        projectId: scope.project_id,
+        lifecycleId: scope.lifecycle_id,
+        attemptId: input.attemptId,
+        settleProjectRevision: scope.settle_project_revision,
+      },
+      criterionId,
+      testedSourceRevision: input.testedSourceRevision,
+      verdict: input.verdict,
+      rationale: input.rationale,
+      evidence: input.evidence,
+      createdAt: now,
     });
-    const environmentJson = canonicalDomainJson(input.evidence.environment);
-    const contentHash = `sha256:${createHash("sha256").update(canonicalDomainJson(input.evidence)).digest("hex")}`;
-    getDb().prepare(`
-      INSERT INTO workflow_verification_evidence (
-        evidence_id, project_id, verdict_id, criterion_id, lifecycle_id, attempt_id,
-        evidence_class, command_or_tool, working_directory, started_at, ended_at,
-        exit_code, observation, source_revision, observed_project_revision,
-        content_hash, durable_output_ref, environment_json, created_at,
-        operation_id, project_revision, authority_epoch
-      ) VALUES (
-        :evidence_id, :project_id, :verdict_id, :criterion_id, :lifecycle_id, :attempt_id,
-        :evidence_class, :command_or_tool, :working_directory, :started_at, :ended_at,
-        :exit_code, :observation, :source_revision, :observed_project_revision,
-        :content_hash, :durable_output_ref, :environment_json, :created_at,
-        :operation_id, :project_revision, :authority_epoch
-      )
-    `).run({
-      ":evidence_id": evidenceId,
-      ":project_id": scope.project_id,
-      ":verdict_id": verdictId,
-      ":criterion_id": criterionId,
-      ":lifecycle_id": scope.lifecycle_id,
-      ":attempt_id": input.attemptId,
-      ":evidence_class": input.evidence.evidenceClass,
-      ":command_or_tool": input.evidence.commandOrTool,
-      ":working_directory": input.evidence.workingDirectory,
-      ":started_at": input.evidence.startedAt,
-      ":ended_at": input.evidence.endedAt,
-      ":exit_code": input.evidence.exitCode ?? null,
-      ":observation": input.evidence.observation,
-      ":source_revision": input.testedSourceRevision,
-      ":observed_project_revision": scope.settle_project_revision,
-      ":content_hash": contentHash,
-      ":durable_output_ref": input.evidence.durableOutputRef,
-      ":environment_json": environmentJson,
-      ":created_at": now,
-      ":operation_id": context.operationId,
-      ":project_revision": context.resultingRevision,
-      ":authority_epoch": context.resultingAuthorityEpoch,
-    });
+    const { verdictId, evidenceId } = inserted;
     if (input.verdict !== "pass") {
       appendKernelCheckpoint(context, {
         lifecycleId: scope.lifecycle_id,

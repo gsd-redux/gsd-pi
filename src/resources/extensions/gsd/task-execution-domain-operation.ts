@@ -17,6 +17,10 @@ import {
   settleAttemptWithResult,
   type ClaimRunningAttemptResult,
 } from "./db/writers/lifecycle-commands.js";
+import {
+  activateTaskExecutionDispatch,
+  terminalizeTaskExecutionDispatch,
+} from "./db/writers/task-execution.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
 
@@ -133,54 +137,19 @@ function operationPayload(input: ClaimTaskAttemptInput): DomainJsonValue {
   };
 }
 
-function activateDispatch(input: ClaimTaskAttemptInput): void {
-  const entityId = taskIdentity(input);
-  const parameters = {
-    ":dispatch_id": input.coordinationDispatchId,
-    ":worker_id": input.workerId,
-    ":lease_token": input.milestoneLeaseToken,
-    ":milestone_id": input.task.milestoneId,
-    ":slice_id": input.task.sliceId,
-    ":task_id": input.task.taskId,
-    ":unit_id": entityId,
-  };
-  const activated = getDb().prepare(`
-    UPDATE unit_dispatches
-    SET status = 'running'
-    WHERE id = :dispatch_id
-      AND worker_id = :worker_id
-      AND milestone_lease_token = :lease_token
-      AND milestone_id = :milestone_id
-      AND slice_id = :slice_id
-      AND task_id = :task_id
-      AND unit_type = 'execute-task'
-      AND unit_id = :unit_id
-      AND status = 'claimed'
-  `).run(parameters);
-  if (Number((activated as { changes?: number }).changes ?? 0) === 1) return;
-
-  const alreadyRunning = getDb().prepare(`
-    SELECT 1 AS present FROM unit_dispatches
-    WHERE id = :dispatch_id
-      AND worker_id = :worker_id
-      AND milestone_lease_token = :lease_token
-      AND milestone_id = :milestone_id
-      AND slice_id = :slice_id
-      AND task_id = :task_id
-      AND unit_type = 'execute-task'
-      AND unit_id = :unit_id
-      AND status = 'running'
-  `).get(parameters);
-  if (!alreadyRunning) {
-    throw new Error("Task Attempt claim must activate exactly one matching coordination dispatch");
-  }
-}
-
 function claimAttempt(
   context: Readonly<DomainOperationContext>,
   input: ClaimTaskAttemptInput,
 ): ClaimRunningAttemptResult {
-  activateDispatch(input);
+  activateTaskExecutionDispatch(context, {
+    dispatchId: input.coordinationDispatchId,
+    workerId: input.workerId,
+    milestoneLeaseToken: input.milestoneLeaseToken,
+    milestoneId: input.task.milestoneId,
+    sliceId: input.task.sliceId,
+    taskId: input.task.taskId,
+    unitId: taskIdentity(input),
+  });
   const lifecycle = adoptOrTransitionLifecycle(context, {
     itemKind: "task",
     milestoneId: input.task.milestoneId,
@@ -329,43 +298,6 @@ export function readLatestTaskAttempt(
   return snapshot(row);
 }
 
-function terminalizeDispatch(
-  attempt: AttemptExecutionRow,
-  outcome: SettleTaskAttemptInput["outcome"],
-): void {
-  const result = getDb().prepare(`
-    UPDATE unit_dispatches
-    SET status = :status, ended_at = :ended_at
-    WHERE id = :dispatch_id
-      AND worker_id = :worker_id
-      AND milestone_lease_token = :lease_token
-      AND status IN ('claimed', 'running')
-  `).run({
-    ":status": outcome === "succeeded" ? "completed" : "failed",
-    ":ended_at": new Date().toISOString(),
-    ":dispatch_id": attempt.coordination_dispatch_id,
-    ":worker_id": attempt.worker_id,
-    ":lease_token": attempt.milestone_lease_token,
-  });
-  if (Number((result as { changes?: number }).changes ?? 0) !== 1) {
-    if (outcome === "interrupted") {
-      const canceled = getDb().prepare(`
-        SELECT 1 AS present FROM unit_dispatches
-        WHERE id = :dispatch_id
-          AND worker_id = :worker_id
-          AND milestone_lease_token = :lease_token
-          AND status = 'canceled'
-      `).get({
-        ":dispatch_id": attempt.coordination_dispatch_id,
-        ":worker_id": attempt.worker_id,
-        ":lease_token": attempt.milestone_lease_token,
-      });
-      if (canceled) return;
-    }
-    throw new Error("Task execution settlement did not terminalize exactly one coordination dispatch");
-  }
-}
-
 export function claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt {
   const fence = readDomainOperationFence(input.invocation.idempotencyKey);
   let claimed: ClaimRunningAttemptResult | undefined;
@@ -435,7 +367,13 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
   }, (context) => {
     const attempt = loadAttemptExecution(input.attemptId);
     const settled = settleAttemptWithResult(context, input);
-    terminalizeDispatch(attempt, input.outcome);
+    terminalizeTaskExecutionDispatch(context, {
+      dispatchId: attempt.coordination_dispatch_id,
+      workerId: attempt.worker_id,
+      milestoneLeaseToken: attempt.milestone_lease_token,
+      outcome: input.outcome,
+      endedAt: new Date().toISOString(),
+    });
     settledResultId = settled.resultId;
     const stage = nextStage(input.outcome);
     appendKernelCheckpoint(context, {

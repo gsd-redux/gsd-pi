@@ -154,7 +154,7 @@ function changes(result: unknown): number {
   return typeof value === "number" ? value : 0;
 }
 
-function requireActiveContext(context: Readonly<DomainOperationContext>): string {
+export function requireActiveDomainOperationContext(context: Readonly<DomainOperationContext>): string {
   if (!isInTransaction()) {
     throw new Error("lifecycle writer requires an active Domain Operation context");
   }
@@ -304,7 +304,7 @@ export function adoptOrTransitionLifecycle(
   context: Readonly<DomainOperationContext>,
   input: LifecycleCommandInput,
 ): LifecycleCommandResult {
-  requireActiveContext(context);
+  requireActiveDomainOperationContext(context);
   validateLifecycleIdentity(input);
   requireHierarchyRow(input);
   const now = requireTimestamp(input.occurredAt ?? new Date().toISOString(), "occurredAt");
@@ -389,7 +389,7 @@ export function adoptLifecycleIfMissing(
   context: Readonly<DomainOperationContext>,
   input: LifecycleCommandInput,
 ): LifecycleCommandResult {
-  requireActiveContext(context);
+  requireActiveDomainOperationContext(context);
   validateLifecycleIdentity(input);
   requireHierarchyRow(input);
   if (input.occurredAt !== undefined) requireTimestamp(input.occurredAt, "occurredAt");
@@ -405,7 +405,7 @@ export function completeLegacyTaskForVerifiedAttempt(
   identity: { milestoneId: string; sliceId: string; taskId: string },
   completedAt = new Date().toISOString(),
 ): void {
-  requireActiveContext(context);
+  requireActiveDomainOperationContext(context);
   requireNonBlank(identity.milestoneId, "milestoneId");
   requireNonBlank(identity.sliceId, "sliceId");
   requireNonBlank(identity.taskId, "taskId");
@@ -429,7 +429,7 @@ export function readLifecycleShadowComparison(
   context: Readonly<DomainOperationContext>,
   identity: LifecycleIdentity,
 ): LifecycleShadowRecord {
-  requireActiveContext(context);
+  requireActiveDomainOperationContext(context);
   const input: LifecycleCommandInput = { ...identity, lifecycleStatus: "pending" };
   validateLifecycleIdentity(input);
   requireHierarchyRow(input);
@@ -479,7 +479,7 @@ export function appendKernelCheckpoint(
   context: Readonly<DomainOperationContext>,
   input: AppendKernelCheckpointInput,
 ): AppendKernelCheckpointResult {
-  requireActiveContext(context);
+  requireActiveDomainOperationContext(context);
   requireNonBlank(input.lifecycleId, "lifecycleId");
   requireNonBlank(input.attemptId, "attemptId");
   const now = requireTimestamp(input.createdAt ?? new Date().toISOString(), "createdAt");
@@ -555,7 +555,7 @@ export function claimRunningAttempt(
   context: Readonly<DomainOperationContext>,
   input: ClaimRunningAttemptInput,
 ): ClaimRunningAttemptResult {
-  if (requireActiveContext(context) !== "attempt.claim") {
+  if (requireActiveDomainOperationContext(context) !== "attempt.claim") {
     throw new Error("Attempt claim requires an attempt.claim Domain Operation");
   }
   requireNonBlank(input.lifecycleId, "lifecycleId");
@@ -658,7 +658,7 @@ export function settleAttemptWithResult(
   context: Readonly<DomainOperationContext>,
   input: SettleAttemptInput,
 ): SettleAttemptResult {
-  const operationType = requireActiveContext(context);
+  const operationType = requireActiveDomainOperationContext(context);
   requireNonBlank(input.attemptId, "attemptId");
   if (!ATTEMPT_OUTCOMES.has(input.outcome)) throw new Error(`invalid Attempt outcome ${input.outcome}`);
   if (input.recovery) {
