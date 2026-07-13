@@ -33,7 +33,7 @@ import {
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
-import { buildTaskRecoveryReplanPrompt } from "../auto-prompts.ts";
+import { buildExecuteTaskPrompt, buildTaskRecoveryReplanPrompt } from "../auto-prompts.ts";
 import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-iteration.ts";
 import { handleReplanTask } from "../tools/replan-task.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
@@ -653,7 +653,7 @@ afterEach(() => {
   tempDirs.clear();
 });
 
-test("durable budget use survives retries and exhausts to agent abort", () => {
+test("durable budget use survives retries and exhausts to agent abort", async () => {
   const firstFailure = seedFailedAttempt();
   const summaries = [
     "Request 481 failed at /private/tmp/run-1: provider reported tool surface unavailable",
@@ -688,6 +688,11 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
   assert.equal(second.recoveryBudgetId, first.recoveryBudgetId);
   assert.equal(third.action, "abort");
   assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, false);
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), null, "an unresumed abort must not become executable prompt context");
   assert.equal(third.recoveryBudgetId, undefined);
   assert.equal(count("workflow_recovery_budgets"), 1);
   assert.equal(count("workflow_recovery_actions"), 3);
@@ -736,6 +741,73 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
     route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
     true,
   );
+  assert.deepEqual(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), {
+    action: "resume",
+    recoveryActionId: third.recoveryActionId,
+    attemptId: thirdFailure.attemptId,
+    resultId: thirdFailure.resultId,
+    failureKind: "tool-unavailable",
+    summary: summaries[2],
+    evidence: { diagnostic: summaries[2], source: "executor" },
+    rationale: "apply the durable recovery policy",
+    replanCompleted: false,
+    checkpoint: {
+      checkpointId: resumed.workCheckpointId,
+      confirmedContext: "The missing tool surface was restored in the executor runtime.",
+      unresolvedSummary: "",
+      evidenceSummary: '{"fix":"open-gsd/gsd-pi#1457","verification":"focused recovery tests passed"}',
+      suggestedNextAction: "Claim one new Task Attempt using the recorded repair evidence.",
+    },
+  });
+
+  const milestoneDir = join(firstFailure.basePath, ".gsd", "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  const taskDir = join(sliceDir, "tasks");
+  mkdirSync(taskDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# Recovery context\n");
+  writeFileSync(join(milestoneDir, "M001-RESEARCH.md"), "# Recovery research\n");
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), "# Recovery\n\n- [ ] **S01: Recovery operation**\n");
+  writeFileSync(join(sliceDir, "S01-CONTEXT.md"), "# Slice context\n");
+  writeFileSync(join(sliceDir, "S01-RESEARCH.md"), "# Slice research\n");
+  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n- [ ] **T01: Recover atomically**\n");
+  writeFileSync(join(taskDir, "T01-PLAN.md"), "# T01: Recover atomically\n");
+  const builtInPrompt = await buildExecuteTaskPrompt(
+    "M001", "S01", "Recovery operation", "T01", "Recover atomically", firstFailure.basePath,
+  );
+  const customPrompt = (await buildCustomEngineIterationData({
+    step: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "Repeat the stale engine plan.",
+    },
+    basePath: firstFailure.basePath,
+    canonicalProjectRoot: firstFailure.basePath,
+    currentMilestoneId: "M001",
+    deriveState: async () => ({
+      activeMilestone: { id: "M001", title: "Recovery" },
+      activeSlice: { id: "S01", title: "Recovery operation" },
+      activeTask: { id: "T01", title: "Recover atomically" },
+      phase: "executing",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [],
+    }),
+    logPostDerive: () => {},
+  })).prompt;
+  for (const prompt of [builtInPrompt, customPrompt]) {
+    assert.match(prompt, /Required action:\*\* resume/);
+    assert.match(prompt, new RegExp(summaries[2]));
+    assert.match(prompt, /The missing tool surface was restored in the executor runtime/);
+    assert.match(prompt, /open-gsd\/gsd-pi#1457/);
+    assert.match(prompt, /focused recovery tests passed/);
+    assert.match(prompt, /apply and verify the explicitly authorized repair evidence/i);
+  }
+  assert.match(customPrompt, /Non-authoritative Custom Engine Context/);
   assert.deepEqual(row(`
     SELECT event_type, payload_json
     FROM workflow_domain_events
@@ -766,6 +838,11 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
     route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
     false,
   );
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), null, "the successor claim must consume resumed-abort prompt authority");
   assert.throws(() => resumeTaskRecovery({
     invocation: invocation("recovery/resume/stale"),
     recoveryActionId: third.recoveryActionId,

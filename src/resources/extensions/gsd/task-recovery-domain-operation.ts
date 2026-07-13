@@ -113,7 +113,7 @@ export interface TaskRecoveryResumeReceipt {
 }
 
 export interface PendingTaskRecoveryContext {
-  action: Extract<RecoveryDecision["action"], "retry" | "repair" | "remediate" | "replan">;
+  action: Extract<RecoveryDecision["action"], "retry" | "repair" | "remediate" | "replan"> | "resume";
   recoveryActionId: string;
   attemptId: string;
   resultId: string;
@@ -337,7 +337,7 @@ export function readPendingTaskRecoveryContext(
       AND lifecycle.milestone_id = :milestone_id
       AND lifecycle.slice_id = :slice_id
       AND lifecycle.task_id = :task_id
-      AND action.action IN ('retry', 'repair', 'remediate', 'replan')
+      AND action.action IN ('retry', 'repair', 'remediate', 'replan', 'abort')
       AND attempt.attempt_number = (
         SELECT MAX(latest.attempt_number)
         FROM workflow_execution_attempts latest
@@ -350,10 +350,40 @@ export function readPendingTaskRecoveryContext(
     ":task_id": task.taskId,
   }) as Record<string, unknown> | undefined;
   if (!stored) return null;
+  const attemptId = String(stored["attempt_id"]);
+  const storedAction = String(stored["action"]);
+  let checkpoint = stored;
+  if (storedAction === "abort") {
+    if (!isTaskRecoveryResumeAuthorized(attemptId)) return null;
+    const resumed = getDb().prepare(`
+      SELECT checkpoint.checkpoint_id, checkpoint.confirmed_context,
+             checkpoint.unresolved_summary, checkpoint.evidence_summary,
+             checkpoint.suggested_next_action
+      FROM workflow_domain_events event
+      JOIN workflow_work_checkpoints checkpoint
+        ON checkpoint.project_id = event.project_id
+       AND checkpoint.operation_id = event.operation_id
+       AND checkpoint.checkpoint_id = json_extract(event.payload_json, '$.workCheckpointId')
+      WHERE event.event_type = 'task.recovery.resumed'
+        AND json_extract(event.payload_json, '$.recoveryActionId') = :recovery_action_id
+        AND json_extract(event.payload_json, '$.attemptId') = :attempt_id
+        AND json_extract(event.payload_json, '$.resultId') = :result_id
+      ORDER BY event.project_revision DESC
+      LIMIT 1
+    `).get({
+      ":recovery_action_id": String(stored["recovery_action_id"]),
+      ":attempt_id": attemptId,
+      ":result_id": String(stored["result_id"]),
+    }) as Record<string, unknown> | undefined;
+    if (!resumed) throw new Error("Authorized Task recovery resume is missing its Work Checkpoint");
+    checkpoint = resumed;
+  }
   return {
-    action: String(stored["action"]) as PendingTaskRecoveryContext["action"],
+    action: storedAction === "abort"
+      ? "resume"
+      : storedAction as PendingTaskRecoveryContext["action"],
     recoveryActionId: String(stored["recovery_action_id"]),
-    attemptId: String(stored["attempt_id"]),
+    attemptId,
     resultId: String(stored["result_id"]),
     failureKind: String(stored["failure_kind"]),
     summary: String(stored["summary"]),
@@ -361,11 +391,11 @@ export function readPendingTaskRecoveryContext(
     rationale: String(stored["rationale"]),
     replanCompleted: Number(stored["replan_completed"]) === 1,
     checkpoint: {
-      checkpointId: String(stored["checkpoint_id"]),
-      confirmedContext: String(stored["confirmed_context"]),
-      unresolvedSummary: String(stored["unresolved_summary"]),
-      evidenceSummary: String(stored["evidence_summary"]),
-      suggestedNextAction: String(stored["suggested_next_action"]),
+      checkpointId: String(checkpoint["checkpoint_id"]),
+      confirmedContext: String(checkpoint["confirmed_context"]),
+      unresolvedSummary: String(checkpoint["unresolved_summary"]),
+      evidenceSummary: String(checkpoint["evidence_summary"]),
+      suggestedNextAction: String(checkpoint["suggested_next_action"]),
     },
   };
 }

@@ -173,6 +173,7 @@ function renderBlockingReworkFindingsBlock(mid: string, sid: string, tid: string
 export function renderTaskRecoveryDispatchContext(
   recovery: PendingTaskRecoveryContext,
 ): string {
+  const isResume = recovery.action === "resume";
   let executionContract: string;
   switch (recovery.action) {
     case "retry":
@@ -189,6 +190,9 @@ export function renderTaskRecoveryDispatchContext(
         ? "The replacement Task plan is durable. Execute that replacement plan; do not repeat the invalid plan."
         : "The current Task plan is superseded. This planning unit must call `gsd_replan_task`, then stop before implementation.";
       break;
+    case "resume":
+      executionContract = "Apply and verify the explicitly authorized repair evidence before continuing the Task.";
+      break;
   }
   return [
     "## Durable Task Recovery",
@@ -200,7 +204,9 @@ export function renderTaskRecoveryDispatchContext(
     `**Failure:** ${recovery.summary}`,
     `**Rationale:** ${recovery.rationale}`,
     `**Work checkpoint:** ${recovery.checkpoint.checkpointId}`,
-    `**Confirmed context:** ${recovery.checkpoint.confirmedContext}`,
+    isResume
+      ? `**Repair summary:** ${recovery.checkpoint.confirmedContext}`
+      : `**Confirmed context:** ${recovery.checkpoint.confirmedContext}`,
     `**Unresolved:** ${recovery.checkpoint.unresolvedSummary}`,
     `**Suggested next action:** ${recovery.checkpoint.suggestedNextAction}`,
     "",
@@ -209,6 +215,16 @@ export function renderTaskRecoveryDispatchContext(
     "```json",
     JSON.stringify(recovery.evidence, null, 2),
     "```",
+    ...(isResume
+      ? [
+          "",
+          "### Authorized Resume Evidence",
+          "",
+          "```json",
+          recovery.checkpoint.evidenceSummary,
+          "```",
+        ]
+      : []),
     "",
     executionContract,
   ].join("\n");
