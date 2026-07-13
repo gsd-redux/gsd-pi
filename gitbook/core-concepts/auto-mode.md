@@ -50,6 +50,8 @@ Execute-task units use durable Attempt records. Before the worker starts, auto m
 
 Host-owned verification runs after the executor Result. GSD records a durable Technical Verdict and command evidence for the Attempt, including source-revision snapshots before and after verification. Only a passing verdict for the current source revision publishes the task completion: the canonical lifecycle becomes `completed`, the compatibility task row becomes `complete`, and the summary and plan projections are refreshed. Failed or inconclusive verification stays authoritative and routes to retry or pause; it is not treated as non-blocking just because the executor called `gsd_task_complete`.
 
+Task recovery keeps three intents separate. Reopen returns a terminal task to canonical `ready` plus legacy `pending` without starting work or deleting history; retry creates a lineage-linked Attempt after a failed or interrupted Attempt without resetting task status; cancel moves actionable work to canonical `cancelled` plus legacy `skipped`, interrupting any running Attempt first. Projection and summary rendering failures are retryable delivery work after the database transaction commits. They return a visible error and leave the authoritative lifecycle state intact instead of rolling a committed completion back to pending.
+
 In worktree mode, the project-root database and project-root `.gsd/` state remain authoritative. Worktree markdown projections are diagnostics, not state to sync back. Runtime state derivation does not silently rebuild from markdown when the database is unavailable. The legacy markdown fallback is only enabled with `GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK=1` for tests and explicit recovery work.
 
 ## Deep Planning Mode
@@ -253,7 +255,7 @@ GSD uses sliding-window analysis to detect stuck loops — not just "same unit d
 
 ## Artifact Verification Retries
 
-After each unit, GSD verifies the expected artifact and retries missing artifacts with explicit failure context. `reactive-execute` batches use a terminal recovery after the retry cap: if dispatched tasks are still missing task summaries, GSD checks canonical flat-phase `S##-T##-SUMMARY.md` artifacts and accepts legacy `T##-SUMMARY.md` artifacts as a fallback, then writes `S##-REACTIVE-BLOCKER.md`, marks summary-present tasks complete, marks missing-summary tasks skipped, and advances. Review skipped tasks before relying on downstream artifacts.
+After each unit, GSD verifies the expected artifact and retries missing artifacts with explicit failure context. `reactive-execute` batches use a diagnostic blocker after the retry cap: if dispatched tasks are still missing task summaries, GSD writes `S##-REACTIVE-BLOCKER.md` with the summary-present and summary-missing lists. The blocker prevents another reactive batch for that slice, but it is not lifecycle authority; task statuses stay under canonical database Attempt/recovery control, not summary-file presence.
 
 ## Cost Tracking
 

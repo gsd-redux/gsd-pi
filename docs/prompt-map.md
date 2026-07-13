@@ -196,7 +196,7 @@ guided-resume-task  (if task was interrupted)
 | Prompt | Purpose | Key Tools Called |
 |--------|---------|-----------------|
 | `execute-task.md` | Execute a single task. Inlines full context stack. | `memory_query`, `gsd_task_complete` |
-| `reactive-execute.md` | Dispatch all ready tasks in parallel subagents. When batch summaries remain missing after retries, writes a slice blocker and reconciles summary-present tasks complete while marking missing-summary tasks skipped. | `subagent` × N |
+| `reactive-execute.md` | Dispatch all ready tasks in parallel subagents. When batch summaries remain missing after retries, writes a diagnostic slice blocker; task lifecycle still follows DB Attempt/recovery authority, not summary-file presence. | `subagent` × N |
 | `guided-resume-task.md` | Resume interrupted task. Reads `{{sliceId}}-CONTINUE.md` for continuation context. | `gsd_task_complete` |
 | `quick-task.md` | Lightweight task outside milestone structure. No DB tools. | writes `{{summaryPath}}` directly |
 

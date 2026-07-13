@@ -66,8 +66,8 @@
 | `/gsd new-milestone [--deep]` | Create a new milestone; `--deep` opts the project into deep planning mode |
 | `/gsd skip` | Prevent a unit from auto-mode dispatch |
 | `/gsd undo` | Revert last completed unit |
-| `/gsd undo-task` | Reset a specific task's completion state |
-| `/gsd reset-slice` | Reset a slice and all its tasks |
+| `/gsd undo-task` | Reopen a terminal task through canonical DB recovery authority |
+| `/gsd reset-slice` | Set a slice active and reopen eligible terminal tasks through guarded DB operations |
 | `/gsd park` | Park a milestone (skip without deleting) |
 | `/gsd unpark` | Reactivate a parked milestone |
 

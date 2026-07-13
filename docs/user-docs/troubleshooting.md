@@ -107,11 +107,11 @@ Replace the path with the exact global bin directory from your pnpm error messag
 
 ### Reactive execute writes `S##-REACTIVE-BLOCKER.md`
 
-**Symptoms:** A parallel `reactive-execute` batch finishes with a warning that GSD wrote a reactive blocker and advanced, with summary-present tasks marked complete and missing-summary tasks skipped.
+**Symptoms:** A parallel `reactive-execute` batch finishes with a warning that GSD wrote a reactive blocker and advanced.
 
-**Cause:** The batch exhausted artifact verification retries while one or more dispatched tasks were still missing task summaries. In flat-phase projects, GSD expects `S##-T##-SUMMARY.md` and still accepts legacy `T##-SUMMARY.md` as a fallback. Instead of pausing or re-dispatching the same parallel batch forever, GSD writes `S##-REACTIVE-BLOCKER.md`, reconciles any tasks that did write summaries as complete, marks missing-summary tasks skipped, and continues.
+**Cause:** The batch exhausted artifact verification retries while one or more dispatched tasks were still missing task summaries. Instead of re-dispatching the same parallel batch forever, GSD writes `S##-REACTIVE-BLOCKER.md` as a diagnostic that records summary-present and summary-missing tasks. The blocker is not lifecycle authority; follow-up task state comes from the canonical database Attempt/recovery records.
 
-**Fix:** Inspect the blocker file and skipped task list. If skipped work is still required, reopen or re-plan those tasks before depending on later slice or milestone artifacts.
+**Fix:** Inspect the blocker file and `/gsd status`. If work is still required, use the appropriate explicit recovery path such as retrying the failed Attempt, reopening a terminal task, or replanning the task before depending on later slice or milestone artifacts.
 
 ### Auto mode stops with "Loop detected"
 

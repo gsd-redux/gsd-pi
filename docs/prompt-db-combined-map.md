@@ -118,7 +118,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 |--------|----------|-----------|----------------------|
 | `execute-task` | tasks, slices, milestones, memories, quality_gates | tasks (UPDATE status, narrative, summary), verification_evidence (INSERT), memories (hit_count++) | S##-T##-SUMMARY.md; NN-MM-PLAN.md checkbox; legacy T##-SUMMARY.md readable |
 | `guided-resume-task` | tasks, slices | tasks (UPDATE status, summary), verification_evidence (INSERT) | S##-T##-SUMMARY.md; legacy T##-SUMMARY.md readable |
-| `reactive-execute` | tasks | tasks (via N× execute-task subagents; recovery may mark summary-present tasks complete and missing-summary tasks skipped) | S##-T##-SUMMARY.md × N; S##-REACTIVE-BLOCKER.md when batch summaries remain missing after retries |
+| `reactive-execute` | tasks | tasks via N× execute-task subagents; retry-cap exhaustion writes a diagnostic blocker and does not derive completion/skipped state from summaries | S##-T##-SUMMARY.md × N; S##-REACTIVE-BLOCKER.md when batch summaries remain missing after retries |
 | `quick-task` | — | — (no DB; writes summaryPath directly) | {{summaryPath}} |
 
 ### Quality Gate Phase
