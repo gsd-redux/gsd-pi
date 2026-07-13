@@ -502,7 +502,7 @@ test("recovery: DB loss → migrateFromMarkdown restores state, stale render det
 // Undo/reset: handleUndoTask + handleResetSlice (R011)
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => {
+test("undo task reopens canonical task state and re-renders markdown", async (t) => {
   const base = createRealisticFixture();
   const dbPath = join(base, ".gsd", "gsd.db");
 
@@ -517,12 +517,13 @@ test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => 
     await handleCompleteTask(makeCompleteTaskParams("T01"), base);
     await handleCompleteTask(makeCompleteTaskParams("T02"), base);
     invalidateAllCaches();
-    await handleCompleteSlice(makeCompleteSliceParams(), base);
 
-    // Verify completed state
+    // Verify task-complete state while the parent slice is still open. A
+    // closed slice must be reopened as a whole; reopening one child beneath a
+    // closed parent would create an invalid hierarchy.
     assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
     assert.equal(getTask("M001", "S01", "T02")?.status, "complete");
-    assert.equal(getSlice("M001", "S01")?.status, "complete");
+    assert.equal(getSlice("M001", "S01")?.status, "pending");
 
     // ── Undo T01 ─────────────────────────────────────────────────────
     const { notifications: undoNotifs, ctx: undoCtx } = makeCtx();
@@ -558,13 +559,22 @@ test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => 
       undoNotifs.some(n => n.level === "success"),
       "Undo should produce success notification",
     );
+});
 
-    // ── Reset S01 ────────────────────────────────────────────────────
-    // Re-complete T01 first so we can reset the whole slice
+test("reset slice reopens canonical task state and re-renders markdown", async (t) => {
+  const base = createRealisticFixture();
+  const dbPath = join(base, ".gsd", "gsd.db");
+
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+    openDatabase(dbPath);
+    migrateHierarchyToDb(base);
     await handleCompleteTask(makeCompleteTaskParams("T01"), base);
+    await handleCompleteTask(makeCompleteTaskParams("T02"), base);
     invalidateAllCaches();
-
-    // Re-complete slice
     await handleCompleteSlice(makeCompleteSliceParams(), base);
 
     const { notifications: resetNotifs, ctx: resetCtx } = makeCtx();
@@ -574,11 +584,36 @@ test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => 
     assert.equal(getTask("M001", "S01", "T01")?.status, "pending", "T01 should be pending after reset");
     assert.equal(getTask("M001", "S01", "T02")?.status, "pending", "T02 should be pending after reset");
 
+    const adapter = _getAdapter();
+    assert.ok(adapter, "database should remain open after reset");
+    const lifecycleHeads = adapter.prepare(`
+      SELECT task_id, lifecycle_status
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'task'
+        AND milestone_id = 'M001'
+        AND slice_id = 'S01'
+      ORDER BY task_id
+    `).all();
+    assert.deepEqual(lifecycleHeads, [
+      { task_id: "T01", lifecycle_status: "ready" },
+      { task_id: "T02", lifecycle_status: "ready" },
+    ], "reset must reopen canonical Task lifecycle heads with their legacy rows");
+
     // Slice should be active (not complete)
     const sliceAfterReset = getSlice("M001", "S01");
     assert.equal(sliceAfterReset?.status, "active", "S01 should be active after reset");
 
     // Task summaries should be deleted
+    const t1SummaryPath = join(
+      base,
+      ".gsd",
+      "milestones",
+      "M001",
+      "slices",
+      "S01",
+      "tasks",
+      "T01-SUMMARY.md",
+    );
     assert.equal(existsSync(t1SummaryPath), false, "T01 summary should be deleted after reset");
     const t2SummaryPath = join(
       base,
@@ -618,6 +653,7 @@ test("undo/reset: undo task and reset slice revert DB + markdown", async (t) => 
     // renderSlicePlanMarkdown renders tasks as "- [ ] **TID**: title" (colon after
     // the closing **), so we match both the original fixture format (**T01: title**)
     // and the DB-rendered format (**T01**: title) with a flexible regex.
+    const planPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md");
     const planAfterReset = readFileSync(planPath, "utf-8");
     assert.ok(/\[ \]\s+\*\*T01(\*\*)?:/.test(planAfterReset), "T01 should be unchecked after reset");
     assert.ok(/\[ \]\s+\*\*T02(\*\*)?:/.test(planAfterReset), "T02 should be unchecked after reset");

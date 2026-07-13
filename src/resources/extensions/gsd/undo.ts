@@ -14,7 +14,7 @@ import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, resolveSliceFile, resolveTaskFile, buildTaskFileName, buildSliceFileName } from "./paths.js";
 import { sendDesktopNotification } from "./notifications.js";
-import { getDb, getTask, getSlice, getSliceTasks, resetSliceCascade } from "./gsd-db.js";
+import { getDb, getTask, getSlice, getSliceTasks, updateSliceStatus } from "./gsd-db.js";
 import { renderPlanCheckboxes, renderRoadmapCheckboxes } from "./markdown-renderer.js";
 import { UNIT_REGISTRY } from "./unit-registry.js";
 import { reopenTask } from "./task-lifecycle-domain-operation.js";
@@ -22,6 +22,7 @@ import { internalExecutionInvocation } from "./execution-invocation.js";
 import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
 
 const UNDO_TASK_REOPEN_REASON = "Task reopened by an explicit undo command";
+const RESET_TASK_REOPEN_REASON = "Task reopened by an explicit slice reset command";
 
 interface UndoTaskState {
   legacyStatus: string;
@@ -62,17 +63,24 @@ function readUndoTaskState(mid: string, sid: string, tid: string): UndoTaskState
   };
 }
 
-function undoTaskIdempotencyKey(
+function taskStateDigest(
   mid: string,
   sid: string,
   tid: string,
   state: UndoTaskState,
 ): string {
   const completionIdentity = state.lifecycleOperationId ?? state.completedAt ?? `legacy:${state.legacyStatus}`;
-  const digest = createHash("sha256")
+  return createHash("sha256")
     .update(`${mid}/${sid}/${tid}\n${completionIdentity}`)
     .digest("hex");
-  return `internal:undo:task.reopen:${digest}`;
+}
+
+function undoTaskIdempotencyKey(mid: string, sid: string, tid: string, state: UndoTaskState): string {
+  return `internal:undo:task.reopen:${taskStateDigest(mid, sid, tid, state)}`;
+}
+
+function resetTaskIdempotencyKey(mid: string, sid: string, tid: string, state: UndoTaskState): string {
+  return `internal:undo:slice-reset.task.reopen:${taskStateDigest(mid, sid, tid, state)}`;
 }
 
 function reopenTaskForUndo(mid: string, sid: string, tid: string): void {
@@ -87,6 +95,22 @@ function reopenTaskForUndo(mid: string, sid: string, tid: string): void {
     task: { milestoneId: mid, sliceId: sid, taskId: tid },
     reason: UNDO_TASK_REOPEN_REASON,
   });
+}
+
+function resetTaskForSlice(mid: string, sid: string, tid: string): void {
+  const state = readUndoTaskState(mid, sid, tid);
+  const legacyStatus = normalizeLegacyLifecycleStatus(state.legacyStatus);
+  if (legacyStatus === "pending" && !state.lifecycleStatus) return;
+  if (legacyStatus === "pending" && state.lifecycleStatus === "ready") return;
+  if (legacyStatus === "completed" || legacyStatus === "cancelled") {
+    reopenTask({
+      invocation: internalExecutionInvocation(resetTaskIdempotencyKey(mid, sid, tid, state)),
+      task: { milestoneId: mid, sliceId: sid, taskId: tid },
+      reason: RESET_TASK_REOPEN_REASON,
+    });
+    return;
+  }
+  throw new Error(`Task ${mid}/${sid}/${tid} cannot be reset safely from ${state.legacyStatus}`);
 }
 
 /**
@@ -423,11 +447,11 @@ export async function handleResetSlice(
     return;
   }
 
-  // Reset all task statuses to "pending" and the slice to "active" in one
-  // atomic commit (DB is source of truth). Previously a per-task updateTaskStatus
-  // loop + a separate updateSliceStatus, which could leave a partial reset if
-  // interrupted mid-loop.
-  resetSliceCascade(mid, sid);
+  // Open the parent first, then reset each Task through its durable lifecycle
+  // operation. Each Task transition is replay-safe, so rerunning an interrupted
+  // reset continues from the first Task that has not reached ready/pending.
+  updateSliceStatus(mid, sid, "active");
+  for (const task of tasks) resetTaskForSlice(mid, sid, task.id);
 
   // Delete task summary files — projection cleanup, separate from the DB reset.
   const tasksReset = tasks.length;
