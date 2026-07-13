@@ -20,6 +20,7 @@ test("buildMinimalGsdToolSet preserves non-GSD tools and replaces broad GSD surf
     "gsd_plan_milestone",
     "gsd_plan_slice",
     "gsd_task_complete",
+    "gsd_task_recovery_resume",
     "gsd_exec",
     "gsd_exec_search",
     "gsd_resume",
@@ -101,6 +102,7 @@ test("buildMinimalAutoGsdToolSet keeps unit-specific completion tools without al
   assert.ok(!result.includes("lsp"));
   assert.ok(!result.includes("browser_click"));
   assert.ok(!result.includes("gsd_complete_task"));
+  assert.ok(!result.includes("gsd_task_recovery_resume"));
   assert.ok(!result.includes("gsd_slice_complete"));
   assert.ok(!result.includes("gsd_complete_slice"));
 });

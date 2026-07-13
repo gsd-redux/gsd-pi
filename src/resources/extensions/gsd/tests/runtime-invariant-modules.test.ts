@@ -184,6 +184,17 @@ test("auto Unit tool scope blocks complete-slice from saving UAT Assessment", ()
   assert.match(result.reason ?? "", /Run UAT owns persisted UAT Assessment/);
 });
 
+test("auto Unit tool scope hard-blocks repaired-abort authorization from dispatched workers", () => {
+  for (const toolName of [
+    "gsd_task_recovery_resume",
+    "mcp__gsd-workflow__gsd_task_recovery_resume",
+  ]) {
+    const result = shouldBlockAutoUnitToolCall("execute-task", toolName);
+    assert.equal(result.block, true, `${toolName} must remain control-plane only`);
+    assert.match(result.reason ?? "", /Tool Contract failure/);
+  }
+});
+
 test("auto Unit tool scope allows plan-slice to reassess invalid roadmap assumptions", () => {
   const result = shouldBlockAutoUnitToolCall("plan-slice", "gsd_reassess_roadmap");
 

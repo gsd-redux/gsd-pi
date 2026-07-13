@@ -25,7 +25,10 @@ import {
   type GrantRecoveryWaiverInput,
   type RecordRequirementDispositionInput,
 } from "./db/writers/task-recovery.js";
-import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
+import {
+  readDomainOperationFence,
+  isTaskRecoveryResumeAuthorized,
+} from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 
 export {
@@ -95,6 +98,18 @@ export interface TaskRecoveryReceipt {
   recoveryBudgetId?: string;
   blockerId?: string;
   workCheckpointId?: string;
+  resumeAuthorized?: boolean;
+}
+
+export interface TaskRecoveryResumeReceipt {
+  status: ReceiptStatus;
+  operationId: string;
+  resultingRevision: number;
+  lifecycleId: string;
+  attemptId: string;
+  resultId: string;
+  recoveryActionId: string;
+  workCheckpointId: string;
 }
 
 export interface PendingTaskRecoveryContext {
@@ -235,6 +250,25 @@ function taskEntity(scope: Pick<FailedAttemptScope, "milestoneId" | "sliceId" | 
 
 function checkpointScope(scope: Pick<FailedAttemptScope, "milestoneId" | "sliceId" | "taskId">): string {
   return `task:${taskEntity(scope)}`.toLowerCase();
+}
+
+function requireNonBlank(value: string, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must not be blank`);
+  }
+  return value.trim();
+}
+
+function requireRepairEvidence(evidence: DomainJsonValue): DomainJsonValue {
+  if (
+    evidence === null ||
+    Array.isArray(evidence) ||
+    typeof evidence !== "object" ||
+    Object.keys(evidence).length === 0
+  ) {
+    throw new Error("evidence must be a non-empty object");
+  }
+  return evidence;
 }
 
 function suggestedAgentRecoveryAction(
@@ -507,7 +541,115 @@ function loadTaskRecoveryReceipt(
     ...(stored["checkpoint_id"]
       ? { workCheckpointId: String(stored["checkpoint_id"]) }
       : {}),
+    resumeAuthorized: isTaskRecoveryResumeAuthorized(String(stored["attempt_id"])),
   };
+}
+
+function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScope {
+  const stored = getDb().prepare(`
+    SELECT observation.attempt_id, observation.result_id
+    FROM workflow_recovery_actions action
+    JOIN workflow_failure_observations observation
+      ON observation.project_id = action.project_id
+     AND observation.lifecycle_id = action.lifecycle_id
+     AND observation.failure_observation_id = action.failure_observation_id
+    JOIN workflow_execution_attempts attempt
+      ON attempt.project_id = observation.project_id
+     AND attempt.lifecycle_id = observation.lifecycle_id
+     AND attempt.attempt_id = observation.attempt_id
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = attempt.project_id
+     AND lifecycle.lifecycle_id = attempt.lifecycle_id
+    WHERE action.recovery_action_id = :recovery_action_id
+      AND action.action = 'abort'
+      AND action.blocker_id IS NULL
+      AND observation.recovery_owner = 'agent'
+      AND lifecycle.lifecycle_status = 'in_progress'
+      AND attempt.attempt_state = 'settled'
+      AND attempt.attempt_number = (
+        SELECT MAX(latest.attempt_number)
+        FROM workflow_execution_attempts latest
+        WHERE latest.project_id = attempt.project_id
+          AND latest.lifecycle_id = attempt.lifecycle_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_blockers blocker
+        WHERE blocker.project_id = action.project_id
+          AND blocker.lifecycle_id = action.lifecycle_id
+          AND blocker.blocker_status = 'open'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_domain_events resumed
+        WHERE resumed.project_id = action.project_id
+          AND resumed.event_type = 'task.recovery.resumed'
+          AND json_extract(resumed.payload_json, '$.recoveryActionId') = action.recovery_action_id
+      )
+  `).get({ ":recovery_action_id": recoveryActionId }) as Record<string, unknown> | undefined;
+  if (!stored) throw new Error("Task recovery resume requires the current agent-owned abort");
+  return loadRoutedFailureScope(String(stored["attempt_id"]), String(stored["result_id"]));
+}
+
+function loadTaskRecoveryResumeReceipt(
+  operation: DomainOperationResult,
+): TaskRecoveryResumeReceipt {
+  const stored = getDb().prepare(`
+    SELECT event.payload_json, checkpoint.checkpoint_id
+    FROM workflow_domain_events event
+    JOIN workflow_work_checkpoints checkpoint
+      ON checkpoint.project_id = event.project_id
+     AND checkpoint.operation_id = event.operation_id
+    WHERE event.operation_id = :operation_id
+      AND event.event_type = 'task.recovery.resumed'
+  `).get({ ":operation_id": operation.operationId }) as Record<string, unknown> | undefined;
+  if (!stored) throw new Error("Task recovery resume receipt is missing its event or Work Checkpoint");
+  const payload = JSON.parse(String(stored["payload_json"])) as Record<string, unknown>;
+  return {
+    status: operation.status,
+    operationId: operation.operationId,
+    resultingRevision: operation.resultingRevision,
+    lifecycleId: String(payload["lifecycleId"]),
+    attemptId: String(payload["attemptId"]),
+    resultId: String(payload["resultId"]),
+    recoveryActionId: String(payload["recoveryActionId"]),
+    workCheckpointId: String(stored["checkpoint_id"]),
+  };
+}
+
+export function resumeTaskRecovery(input: {
+  invocation: ExecutionInvocation;
+  recoveryActionId: string;
+  repairSummary: string;
+  evidence: DomainJsonValue;
+}): TaskRecoveryResumeReceipt {
+  const recoveryActionId = requireNonBlank(input.recoveryActionId, "recoveryActionId");
+  const repairSummary = requireNonBlank(input.repairSummary, "repairSummary");
+  const evidence = requireRepairEvidence(input.evidence);
+  const operation = executeDomainOperation(operationRequest(
+    "task.recovery.resume",
+    input.invocation,
+    { recoveryActionId, repairSummary, evidence },
+  ), (context) => {
+    const scope = requireResumableAbortScope(recoveryActionId);
+    const checkpoint = appendRecoveryWorkCheckpoint(context, {
+      lifecycleId: scope.lifecycleId,
+      scopeKey: checkpointScope(scope),
+      checkpointKind: "correction",
+      confirmedContext: repairSummary,
+      unresolvedSummary: "",
+      evidenceSummary: canonicalDomainJson(evidence),
+      suggestedNextAction: "Claim one new Task Attempt using the recorded repair evidence.",
+    });
+    return mutation("task.recovery.resumed", taskEntity(scope), {
+      lifecycleId: scope.lifecycleId,
+      attemptId: scope.attemptId,
+      resultId: scope.resultId,
+      recoveryActionId,
+      repairSummary,
+      evidence,
+      workCheckpointId: checkpoint.checkpointId,
+    });
+  });
+  return loadTaskRecoveryResumeReceipt(operation);
 }
 
 export function readTaskRecoveryRoute(attemptId: string): TaskRecoveryRouteSnapshot | null {

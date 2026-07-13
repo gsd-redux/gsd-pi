@@ -302,6 +302,62 @@ export function readDomainOperationFence(idempotencyKey?: string): DomainOperati
   };
 }
 
+export function isTaskRecoveryResumeAuthorized(
+  attemptId: string,
+): boolean {
+  requireNonBlank(attemptId, "attemptId");
+  const stored = getDb().prepare(`
+    SELECT 1 AS authorized
+    FROM workflow_domain_events resumed
+    JOIN workflow_recovery_actions action
+      ON action.project_id = resumed.project_id
+     AND action.recovery_action_id = json_extract(resumed.payload_json, '$.recoveryActionId')
+    JOIN workflow_failure_observations observation
+      ON observation.project_id = action.project_id
+     AND observation.lifecycle_id = action.lifecycle_id
+     AND observation.failure_observation_id = action.failure_observation_id
+    JOIN workflow_execution_attempts attempt
+      ON attempt.project_id = observation.project_id
+     AND attempt.lifecycle_id = observation.lifecycle_id
+     AND attempt.attempt_id = observation.attempt_id
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = attempt.project_id
+     AND lifecycle.lifecycle_id = attempt.lifecycle_id
+    JOIN workflow_kernel_checkpoints kernel
+      ON kernel.project_id = attempt.project_id
+     AND kernel.lifecycle_id = attempt.lifecycle_id
+     AND kernel.attempt_id = attempt.attempt_id
+     AND kernel.next_stage = 'route'
+     AND NOT EXISTS (
+       SELECT 1 FROM workflow_kernel_checkpoints successor
+       WHERE successor.previous_kernel_checkpoint_id = kernel.kernel_checkpoint_id
+     )
+    JOIN workflow_work_checkpoints checkpoint
+      ON checkpoint.project_id = resumed.project_id
+     AND checkpoint.operation_id = resumed.operation_id
+     AND checkpoint.checkpoint_id = json_extract(resumed.payload_json, '$.workCheckpointId')
+    WHERE resumed.event_type = 'task.recovery.resumed'
+      AND resumed.entity_type = 'task'
+      AND resumed.entity_id = lifecycle.milestone_id || '/' || lifecycle.slice_id || '/' || lifecycle.task_id
+      AND json_extract(resumed.payload_json, '$.lifecycleId') = action.lifecycle_id
+      AND json_extract(resumed.payload_json, '$.attemptId') = observation.attempt_id
+      AND json_extract(resumed.payload_json, '$.resultId') = observation.result_id
+      AND action.action = 'abort'
+      AND observation.recovery_owner = 'agent'
+      AND attempt.attempt_id = :attempt_id
+      AND attempt.attempt_state = 'settled'
+      AND resumed.project_revision > action.project_revision
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_execution_attempts consumed
+        WHERE consumed.project_id = resumed.project_id
+          AND consumed.lifecycle_id = action.lifecycle_id
+          AND consumed.retry_of_attempt_id = observation.attempt_id
+          AND consumed.claim_project_revision > resumed.project_revision
+      )
+  `).get({ ":attempt_id": attemptId }) as Record<string, unknown> | undefined;
+  return stored?.["authorized"] === 1;
+}
+
 export function adoptOrTransitionLifecycle(
   context: Readonly<DomainOperationContext>,
   input: LifecycleCommandInput,
@@ -617,7 +673,7 @@ export function claimRunningAttempt(
     throw new Error("retry must reference the immediate predecessor Attempt");
   }
   if (prior?.next_stage === "route") {
-    const authorized = getDb().prepare(`
+    const recoveryAction = getDb().prepare(`
       SELECT action.action, action.recovery_action_id, action.project_revision
       FROM workflow_recovery_actions action
       JOIN workflow_failure_observations observation
@@ -635,12 +691,14 @@ export function claimRunningAttempt(
       ":lifecycle_id": input.lifecycleId,
       ":attempt_id": prior.attempt_id,
       ":project_revision": context.resultingRevision,
-    });
-    if (!authorized) {
-      throw new Error("retry claim requires the current route head's retry-capable Recovery Action");
+    }) as Record<string, unknown> | undefined;
+    const resumeAuthorized = isTaskRecoveryResumeAuthorized(prior.attempt_id);
+    if (!recoveryAction && !resumeAuthorized) {
+      throw new Error(
+        "retry claim requires the current route head's retry-capable Recovery Action or exact repair resume",
+      );
     }
-    const recovery = authorized as Record<string, unknown>;
-    if (recovery["action"] === "replan") {
+    if (recoveryAction?.["action"] === "replan") {
       const replanned = getDb().prepare(`
         SELECT 1 AS replanned
         FROM workflow_domain_events event
@@ -655,7 +713,7 @@ export function claimRunningAttempt(
       `).get({
         ":project_id": context.projectId,
         ":lifecycle_id": input.lifecycleId,
-        ":recovery_revision": Number(recovery["project_revision"]),
+        ":recovery_revision": Number(recoveryAction["project_revision"]),
       });
       if (!replanned) {
         throw new Error("replan recovery requires a later durable Task replan before retry claim");

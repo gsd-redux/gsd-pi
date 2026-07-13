@@ -64,6 +64,7 @@ test("workflow tool contracts expose canonical names and aliases", () => {
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_complete_task"));
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_task_reopen"));
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_reopen_task"));
+	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_task_recovery_resume"));
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_plan_milestone"));
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_milestone_plan"));
 	assert.ok(WORKFLOW_TOOL_NAMES.includes("gsd_plan_slice"));
@@ -83,6 +84,15 @@ test("workflow tool contracts expose canonical names and aliases", () => {
 	assert.deepEqual([...taskReopen.aliases], ["gsd_reopen_task"]);
 	assert.equal(taskReopen.writePolicy, "write");
 	assert.equal(taskReopen.schemaId, "workflow.task.reopen");
+
+	const taskRecoveryResume = WORKFLOW_TOOL_CONTRACTS.find(
+		(tool) => tool.canonicalName === "gsd_task_recovery_resume",
+	);
+	assert.ok(taskRecoveryResume);
+	assert.deepEqual([...taskRecoveryResume.aliases], []);
+	assert.equal(taskRecoveryResume.writePolicy, "write");
+	assert.equal(taskRecoveryResume.schemaId, "workflow.task.recovery.resume");
+	assert.equal(taskRecoveryResume.executorId, "executeTaskRecoveryResume");
 
 	const summarySave = WORKFLOW_TOOL_CONTRACTS.find((tool) => tool.canonicalName === "gsd_summary_save");
 	assert.ok(summarySave);

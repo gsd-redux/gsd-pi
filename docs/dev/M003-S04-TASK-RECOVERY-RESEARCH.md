@@ -212,3 +212,25 @@ the happy path is the only path tested:
 Reactive graph advancement and slice/milestone descendant cascades remain S05
 work. Diagnostic blockers may describe those failures, but they do not mutate
 or prove Task lifecycle state.
+
+## Repaired abort convergence
+
+Runtime replay exposed one further fail-closed gap: an agent-owned `abort`
+correctly stopped execution, but the Task remained active and every later run
+selected the same routed Attempt again. Cancellation was rejected as the
+recovery mechanism because legacy `skipped` means intentional omission and can
+advance a slice despite required work remaining.
+
+The supported repair path is an explicit `task.recovery.resume` Domain
+Operation. It binds non-empty repair evidence to the exact current abort,
+settled Attempt, Result, route head, and Task entity. The original failure,
+Recovery Action, and exhausted budget remain immutable. A later claim may use
+that event only for the abort Attempt's immediate lineage successor; the claim
+itself consumes the authorization structurally. A repeated failure therefore
+routes normally and cannot reuse the earlier repair evidence.
+
+Auto-mode never creates this authorization. It continues to stop on ordinary
+abort and proceeds only when a replayed abort receipt exposes an exact,
+unconsumed resume event. The control-plane tool is intentionally excluded from
+dispatched unit tool registries so a failing worker cannot authorize its own
+retry.

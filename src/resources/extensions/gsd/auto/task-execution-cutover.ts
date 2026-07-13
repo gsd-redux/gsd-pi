@@ -305,6 +305,9 @@ function applyRecoveryDecision(
     case "replan":
       return { action: "retry", reason: `task-recovery-${recovery.action}` };
     case "abort":
+      if (recovery.status === "replayed" && recovery.resumeAuthorized) {
+        return { action: "retry", reason: "task-recovery-resumed" };
+      }
       return { action: "break", reason: "task-recovery-abort" };
     case "clarify":
     case "pause":

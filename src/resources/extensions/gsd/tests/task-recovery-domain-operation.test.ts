@@ -25,6 +25,7 @@ import {
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
   reopenTask,
+  resumeTaskRecovery,
   resolveTaskBlocker,
   terminateTaskWaiver,
 } from "../task-recovery-domain-operation.ts";
@@ -698,6 +699,82 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
       evidence_json: JSON.stringify({ diagnostic: summary, source: "executor" }),
     })),
   );
+
+  assert.throws(() => resumeTaskRecovery({
+    invocation: invocation("recovery/resume/missing-evidence"),
+    recoveryActionId: third.recoveryActionId,
+    repairSummary: "Claim the fault was repaired without proof.",
+    evidence: {},
+  }), /evidence must be a non-empty object/i);
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count
+    FROM workflow_domain_events
+    WHERE event_type = 'task.recovery.resumed'
+  `).count), 0);
+
+  const resumed = resumeTaskRecovery({
+    invocation: invocation("recovery/resume/1"),
+    recoveryActionId: third.recoveryActionId,
+    repairSummary: "The missing tool surface was restored in the executor runtime.",
+    evidence: { fix: "open-gsd/gsd-pi#1457", verification: "focused recovery tests passed" },
+  });
+  const replayed = resumeTaskRecovery({
+    invocation: invocation("recovery/resume/1"),
+    recoveryActionId: third.recoveryActionId,
+    repairSummary: "The missing tool surface was restored in the executor runtime.",
+    evidence: { fix: "open-gsd/gsd-pi#1457", verification: "focused recovery tests passed" },
+  });
+
+  assert.equal(resumed.status, "committed");
+  assert.equal(replayed.status, "replayed");
+  assert.equal(replayed.operationId, resumed.operationId);
+  assert.equal(resumed.recoveryActionId, third.recoveryActionId);
+  assert.equal(
+    route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
+    true,
+  );
+  assert.deepEqual(row(`
+    SELECT event_type, payload_json
+    FROM workflow_domain_events
+    WHERE operation_id = :operation_id
+  `, { ":operation_id": resumed.operationId }), {
+    event_type: "task.recovery.resumed",
+    payload_json: JSON.stringify({
+      attemptId: thirdFailure.attemptId,
+      evidence: { fix: "open-gsd/gsd-pi#1457", verification: "focused recovery tests passed" },
+      lifecycleId: resumed.lifecycleId,
+      recoveryActionId: third.recoveryActionId,
+      repairSummary: "The missing tool surface was restored in the executor runtime.",
+      resultId: thirdFailure.resultId,
+      workCheckpointId: resumed.workCheckpointId,
+    }),
+  });
+
+  assert.throws(() => resumeTaskRecovery({
+    invocation: invocation("recovery/resume/duplicate"),
+    recoveryActionId: third.recoveryActionId,
+    repairSummary: "Try to record a second authorization.",
+    evidence: { source: "duplicate" },
+  }), /current agent-owned abort/i);
+
+  const fourthFailure = seedRetryFailure(thirdFailure.attemptId, 4);
+  assert.ok(fourthFailure.attemptId);
+  assert.equal(
+    route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
+    false,
+  );
+  assert.throws(() => resumeTaskRecovery({
+    invocation: invocation("recovery/resume/stale"),
+    recoveryActionId: third.recoveryActionId,
+    repairSummary: "Try to reuse stale authorization.",
+    evidence: { source: "stale" },
+  }), /current agent-owned abort/i);
+  assert.throws(() => resumeTaskRecovery({
+    invocation: invocation("recovery/resume/non-abort"),
+    recoveryActionId: first.recoveryActionId,
+    repairSummary: "Try to resume a retry action.",
+    evidence: { source: "invalid" },
+  }), /current agent-owned abort/i);
 });
 
 test("a pre-commit fault leaves no recovery residue and the same request retries cleanly", () => {

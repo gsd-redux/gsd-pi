@@ -34,6 +34,8 @@ import {
   stageTaskCompletion,
 } from "../task-completion-compatibility-adapter.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
+import type { DomainJsonValue } from "../db/domain-operation.js";
+import { resumeTaskRecovery } from "../task-recovery-domain-operation.js";
 import type { CompleteSliceParams, EscalationOption } from "../types.js";
 import { handleCompleteSlice } from "./complete-slice.js";
 import type { PlanMilestoneParams } from "./plan-milestone.js";
@@ -709,6 +711,11 @@ export type ReplanSliceExecutorParams = ReplanSliceParams;
 export type ReplanTaskExecutorParams = ReplanTaskParams;
 export type ReworkBriefSaveExecutorParams = ReworkBriefSaveParams;
 export type ReopenTaskExecutorParams = ReopenTaskParams;
+export interface TaskRecoveryResumeExecutorParams {
+  recoveryActionId: string;
+  repairSummary: string;
+  evidence: Record<string, DomainJsonValue>;
+}
 export type ReopenSliceExecutorParams = ReopenSliceParams;
 export type ReopenMilestoneExecutorParams = ReopenMilestoneParams;
 export type ValidateMilestoneExecutorParams = ValidateMilestoneParams;
@@ -900,6 +907,39 @@ export async function executeTaskReopen(
     return {
       content: [{ type: "text", text: `Error reopening task: ${msg}` }],
       details: { operation: "reopen_task", error: msg },
+      isError: true,
+    };
+  }
+}
+
+export async function executeTaskRecoveryResume(
+  params: TaskRecoveryResumeExecutorParams,
+  basePath: string = process.cwd(),
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen(basePath);
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot resume task recovery." }],
+      details: { operation: "task_recovery_resume", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  try {
+    const result = resumeTaskRecovery({ invocation, ...params });
+    return {
+      content: [{ type: "text", text: `Authorized one repaired Task retry for ${result.attemptId}.` }],
+      details: { operation: "task_recovery_resume", ...result },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `task recovery resume failed: ${msg}`, {
+      tool: "gsd_task_recovery_resume",
+      error: String(err),
+    });
+    return {
+      content: [{ type: "text", text: `Error resuming task recovery: ${msg}` }],
+      details: { operation: "task_recovery_resume", error: msg },
       isError: true,
     };
   }

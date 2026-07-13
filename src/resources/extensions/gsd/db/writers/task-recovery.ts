@@ -425,6 +425,7 @@ export function appendRecoveryWorkCheckpoint(
     "attempt.route",
     "task.blocker.resolve",
     "task.checkpoint.append",
+    "task.recovery.resume",
     "task.reopen",
     "task.cancel",
   ]);

@@ -408,6 +408,21 @@ describe("workflow MCP tools", () => {
     assert.ok("reason" in taskReopen.params);
   });
 
+  it("registers exact task recovery resume inputs without public identity", () => {
+    const server = makeMockServer();
+    registerWorkflowTools(server as any);
+
+    const tool = server.tools.find((candidate) => candidate.name === "gsd_task_recovery_resume");
+    assert.ok(tool);
+    assert.deepEqual(Object.keys(tool.params).sort(), [
+      "evidence",
+      "projectDir",
+      "recoveryActionId",
+      "repairSummary",
+    ]);
+    assert.ok(!("idempotencyKey" in tool.params));
+  });
+
   it("caps gsd_summary_save content before executor invocation", () => {
     assert.doesNotThrow(() => {
       _parseWorkflowArgsForTest(_summarySaveSchemaForTest, {
@@ -1565,10 +1580,12 @@ describe("workflow MCP tools", () => {
     const base = makeTmpBase();
     const capturePath = join(base, "captured-args.json");
     const reopenCapturePath = join(base, "captured-reopen-args.json");
+    const resumeCapturePath = join(base, "captured-recovery-resume-args.json");
     const mockModulePath = join(base, "mock-executors.mjs");
     const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
     const prevCapture = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
     const prevReopenCapture = process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
+    const prevResumeCapture = process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH;
     try {
       // Mock module: implements the WorkflowToolExecutors shape.
       // executeTaskComplete writes its received args to disk for assertion.
@@ -1606,6 +1623,14 @@ export const executeTaskReopen = async (params, projectDir, invocation) => {
   return { content: [{ type: "text", text: "mock task reopen" }] };
 };
 
+export const executeTaskRecoveryResume = async (params, projectDir, invocation) => {
+  const capturePath = process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH;
+  if (capturePath) {
+    writeFileSync(capturePath, JSON.stringify({ params, projectDir, invocation }, null, 2));
+  }
+  return { content: [{ type: "text", text: "mock task recovery resume" }] };
+};
+
 export const executeTaskComplete = async (params, projectDir, invocation) => {
   const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
   if (capturePath) {
@@ -1621,6 +1646,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       process.env.GSD_WORKFLOW_EXECUTORS_MODULE = mockModulePath;
       process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = capturePath;
       process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH = reopenCapturePath;
+      process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH = resumeCapturePath;
 
       // Fresh import bypasses the cached workflowToolExecutorsPromise so the
       // mock module is actually loaded for this test.
@@ -1633,10 +1659,12 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       const aliasTool = server.tools.find((t) => t.name === "gsd_complete_task");
       const reopenTool = server.tools.find((t) => t.name === "gsd_task_reopen");
       const reopenAlias = server.tools.find((t) => t.name === "gsd_reopen_task");
+      const resumeTool = server.tools.find((t) => t.name === "gsd_task_recovery_resume");
       assert.ok(taskTool, "task tool should be registered");
       assert.ok(aliasTool, "task completion alias should be registered");
       assert.ok(reopenTool, "task reopen tool should be registered");
       assert.ok(reopenAlias, "task reopen alias should be registered");
+      assert.ok(resumeTool, "task recovery resume tool should be registered");
 
       // Mirrors the ADR-011 escalation schema: question + 2-4 options
       // (each with id/label/tradeoffs) + recommendation + rationale +
@@ -1732,6 +1760,29 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
           traceId: "stable-task-reopen",
         });
       }
+
+      const resumeArgs = {
+        projectDir: base,
+        recoveryActionId: "recovery-action-1",
+        repairSummary: "The executor defect was repaired.",
+        evidence: { pullRequest: 1457, check: "focused recovery tests passed" },
+      };
+      const resumeMetadata = { _meta: { "claudecode/toolUseId": "toolu_recovery_resume" } };
+      await resumeTool!.handler(resumeArgs, resumeMetadata);
+      const resumeCapture = JSON.parse(readFileSync(resumeCapturePath, "utf-8"));
+      assert.equal(resumeCapture.projectDir, realpathSync(base));
+      assert.equal(resumeCapture.params.projectDir, undefined);
+      assert.deepEqual(resumeCapture.params, {
+        recoveryActionId: resumeArgs.recoveryActionId,
+        repairSummary: resumeArgs.repairSummary,
+        evidence: resumeArgs.evidence,
+      });
+      assert.deepEqual(resumeCapture.invocation, {
+        idempotencyKey: "mcp:gsd_task_recovery_resume:transport:claude-code:toolu_recovery_resume",
+        sourceTransport: "workflow-mcp",
+        actorType: "agent",
+        traceId: "transport:claude-code:toolu_recovery_resume",
+      });
     } finally {
       if (prevModule === undefined) {
         delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
@@ -1747,6 +1798,11 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         delete process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
       } else {
         process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH = prevReopenCapture;
+      }
+      if (prevResumeCapture === undefined) {
+        delete process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH;
+      } else {
+        process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH = prevResumeCapture;
       }
       cleanup(base);
     }

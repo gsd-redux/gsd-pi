@@ -63,6 +63,23 @@ function validateSchema(tool: any, value: unknown): string[] {
   return validate(value) ? [] : (validate.errors ?? []).map((e: any) => `${e.instancePath || "/"}: ${e.message}`);
 }
 
+test("gsd_task_recovery_resume exposes only the exact repair authorization inputs", () => {
+  const tool = getTool("gsd_task_recovery_resume");
+  assert.ok(tool, "gsd_task_recovery_resume must be registered");
+  assert.deepEqual(getRequiredProps(tool).sort(), ["evidence", "recoveryActionId", "repairSummary"]);
+  assert.deepEqual(getProps(tool).sort(), ["evidence", "recoveryActionId", "repairSummary"]);
+  assert.deepEqual(validateSchema(tool, {
+    recoveryActionId: "recovery-action-1",
+    repairSummary: "The executor defect was repaired.",
+    evidence: { pullRequest: 1457, tests: ["recovery"] },
+  }), []);
+  assert.notDeepEqual(validateSchema(tool, {
+    recoveryActionId: "recovery-action-1",
+    repairSummary: "The executor defect was repaired.",
+    evidence: {},
+  }), []);
+});
+
 // ─── Stream 2: actor identity exposure on 8 mutating workflow tools ─────────
 
 const ACTOR_TOOLS = [

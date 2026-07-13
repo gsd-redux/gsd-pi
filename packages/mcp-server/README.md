@@ -98,6 +98,7 @@ The workflow MCP surface includes:
 - `gsd_summary_save`
 - `gsd_task_complete`
 - `gsd_task_reopen`
+- `gsd_task_recovery_resume`
 - `gsd_slice_reopen`
 - `gsd_milestone_reopen`
 - `gsd_milestone_status`
@@ -114,7 +115,9 @@ By default, the packaged MCP server advertises only the canonical workflow tool 
 
 These tools use the same GSD workflow handlers as the native in-process tool path wherever a shared handler exists.
 
-Durable workflow mutations are atomic and replay-safe where they cross the canonical lifecycle boundary. Planning mutations (`gsd_plan_milestone`, `gsd_plan_slice`, `gsd_plan_task`, `gsd_replan_slice`, `gsd_replan_task`, and `gsd_reassess_roadmap`) and task execution completion (`gsd_task_complete` / `gsd_complete_task`) prefer a nonblank private `_meta["io.opengsd/idempotency-key"]` value. A retry must resend the same value across requests and server processes. Claude Code clients may instead rely on the private `_meta["claudecode/toolUseId"]` value that Claude Code preserves across its MCP session-recovery retry; the server places that value in a reserved transport namespace. An explicit OpenGSD key takes precedence, and a malformed explicit key fails closed instead of falling back. Requests without either replay-stable identity fail before mutation. This metadata is not a tool parameter and does not change the public tool schema or response. Canonical names and compatibility aliases resolve to the same operation identity.
+Durable workflow mutations are atomic and replay-safe where they cross the canonical lifecycle boundary. Planning mutations (`gsd_plan_milestone`, `gsd_plan_slice`, `gsd_plan_task`, `gsd_replan_slice`, `gsd_replan_task`, and `gsd_reassess_roadmap`), task execution completion (`gsd_task_complete` / `gsd_complete_task`), and repaired-abort resumption (`gsd_task_recovery_resume`) prefer a nonblank private `_meta["io.opengsd/idempotency-key"]` value. A retry must resend the same value across requests and server processes. Claude Code clients may instead rely on the private `_meta["claudecode/toolUseId"]` value that Claude Code preserves across its MCP session-recovery retry; the server places that value in a reserved transport namespace. An explicit OpenGSD key takes precedence, and a malformed explicit key fails closed instead of falling back. Requests without either replay-stable identity fail before mutation. This metadata is not a tool parameter and does not change the public tool schema or response. Canonical names and compatibility aliases resolve to the same operation identity.
+
+`gsd_task_recovery_resume` is a control-plane repair command, not an ordinary dispatched-unit tool. It requires the exact current abort `recoveryActionId`, a plain-language `repairSummary`, and non-empty structured `evidence`. It appends an immutable repair checkpoint and authorizes one lineage-linked Task Attempt; it does not delete the abort, reset its budget, mark the Task skipped, or authorize later Attempts.
 
 **Opt-in aliases (kept for backwards compatibility — prefer the canonical name above):** `gsd_save_decision`, `gsd_update_requirement`, `gsd_save_requirement`, `gsd_save_summary`, `gsd_generate_milestone_id`, `gsd_milestone_plan`, `gsd_slice_plan`, `gsd_task_plan`, `gsd_slice_replan`, `gsd_complete_task`, `gsd_complete_slice`, `gsd_milestone_validate`, `gsd_milestone_complete`, `gsd_roadmap_reassess`, `gsd_reopen_task`, `gsd_reopen_slice`, `gsd_reopen_milestone`.
 

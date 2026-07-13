@@ -64,6 +64,31 @@ test("local tool executor forwards cloud blocker resolution", async () => {
   assert.deepEqual(result, { content: [{ type: "text", text: JSON.stringify({ resolved: true }, null, 2) }] });
 });
 
+test("local tool executor forwards task recovery resume to the registered workflow handler", async () => {
+  const executor = new LocalToolExecutor({} as SessionManager, async () => []);
+  let forwarded: Record<string, unknown> | undefined;
+  const handlers = (executor as unknown as {
+    workflowHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>;
+  }).workflowHandlers;
+  handlers.set("gsd_task_recovery_resume", async (args) => {
+    forwarded = args;
+    return { resumed: true };
+  });
+
+  const result = await executor.execute("gsd_task_recovery_resume", {
+    recoveryActionId: "recovery-action-1",
+    repairSummary: "The defect was repaired.",
+    evidence: { check: "passed" },
+  });
+
+  assert.deepEqual(forwarded, {
+    recoveryActionId: "recovery-action-1",
+    repairSummary: "The defect was repaired.",
+    evidence: { check: "passed" },
+  });
+  assert.deepEqual(result, { resumed: true });
+});
+
 test("local tool executor returns status payload with progress counters", async () => {
   const startedAt = Date.now() - 1234;
   const executor = new LocalToolExecutor({

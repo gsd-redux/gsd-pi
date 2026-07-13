@@ -23,7 +23,8 @@ import {
   closeDatabase,
   openDatabase,
 } from "../gsd-db.ts";
-import { claimTaskAttempt } from "../task-execution-domain-operation.ts";
+import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
 import { executeTaskComplete } from "../tools/workflow-tool-executors.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 
@@ -175,24 +176,32 @@ function claimCanonicalAttempt(basePath: string): string {
   return claim.attemptId;
 }
 
-function registeredCompletionTools(): RegisteredTool[] {
+function registeredTools(): RegisteredTool[] {
   const tools: RegisteredTool[] = [];
   registerDbTools({
     registerTool(tool: RegisteredTool) {
       tools.push(tool);
     },
   } as unknown as Parameters<typeof registerDbTools>[0]);
-  return tools.filter((tool) => tool.name === "gsd_task_complete" || tool.name === "gsd_complete_task");
+  return tools;
+}
+
+function registeredCompletionTools(): RegisteredTool[] {
+  return registeredTools().filter(
+    (tool) => tool.name === "gsd_task_complete" || tool.name === "gsd_complete_task",
+  );
 }
 
 function registeredReopenTools(): RegisteredTool[] {
-  const tools: RegisteredTool[] = [];
-  registerDbTools({
-    registerTool(tool: RegisteredTool) {
-      tools.push(tool);
-    },
-  } as unknown as Parameters<typeof registerDbTools>[0]);
-  return tools.filter((tool) => tool.name === "gsd_task_reopen" || tool.name === "gsd_reopen_task");
+  return registeredTools().filter(
+    (tool) => tool.name === "gsd_task_reopen" || tool.name === "gsd_reopen_task",
+  );
+}
+
+function registeredTaskRecoveryResumeTool(): RegisteredTool {
+  const tool = registeredTools().find((candidate) => candidate.name === "gsd_task_recovery_resume");
+  assert.ok(tool);
+  return tool;
 }
 
 function completeCanonicalFixture(): void {
@@ -255,6 +264,57 @@ test("execution invocation constructors keep transport identity private and dete
     traceId: "trace-1",
     turnId: "turn-1",
   });
+});
+
+test("Pi task recovery resume derives replay identity from the private tool call", async () => {
+  const basePath = createBase();
+  adoptCanonicalLifecycle();
+  const attemptId = claimCanonicalAttempt(basePath);
+  const settled = settleTaskAttempt({
+    invocation: invocation("fixture/settle-fatal"),
+    attemptId,
+    outcome: "failed",
+    failureClass: "fatal",
+    summary: "The executor runtime is invalid.",
+    output: {},
+  });
+  const abort = recordFailureAndSelectRecovery({
+    invocation: invocation("fixture/route-fatal"),
+    attemptId,
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "The executor runtime is invalid.",
+    evidence: { source: "executor" },
+    rationale: "Stop until the executor is repaired.",
+  });
+  assert.equal(abort.action, "abort");
+
+  const tool = registeredTaskRecoveryResumeTool();
+  const params = {
+    recoveryActionId: abort.recoveryActionId,
+    repairSummary: "The executor runtime was rebuilt and verified.",
+    evidence: { pullRequest: 1457, check: "recovery test passed" },
+  };
+  const committed = await tool.execute("resume-call-42", params, undefined, undefined, { cwd: basePath });
+  const replayed = await tool.execute("resume-call-42", params, undefined, undefined, { cwd: basePath });
+
+  assert.equal(committed.isError, undefined);
+  assert.equal((committed.details as { status?: string }).status, "committed");
+  assert.equal((replayed.details as { status?: string }).status, "replayed");
+  assert.deepEqual(row(`
+    SELECT idempotency_key, operation_type
+    FROM workflow_operations
+    WHERE operation_type = 'task.recovery.resume'
+  `), {
+    idempotency_key: "pi:gsd_task_recovery_resume:resume-call-42",
+    operation_type: "task.recovery.resume",
+  });
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count
+    FROM workflow_domain_events
+    WHERE event_type = 'task.recovery.resumed'
+  `).count), 1);
 });
 
 test("a running canonical Attempt requires private invocation identity before completion mutation", async () => {

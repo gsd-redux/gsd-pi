@@ -60,6 +60,24 @@ commands, or orchestration modules.
   `completed/cancelled -> ready -> in_progress` cannot be represented as exact
   one-revision parity with legacy complete-to-active/pending cascades.
 
+## Resume after an agent-owned abort
+
+Use `gsd_task_recovery_resume` only after the recorded cause has been repaired:
+
+1. Read the current abort and preserve its exact `recoveryActionId`.
+2. Repair the cause outside the failed dispatched unit and run the smallest
+   meaningful verification.
+3. Call the tool with that action ID, a plain-language repair summary, and
+   non-empty structured evidence. Keep replay identity in private Pi/MCP
+   metadata; never add it to the public arguments.
+4. Resume orchestration. The next claim must name the aborted Attempt as its
+   immediate predecessor and atomically consumes the authorization.
+
+Do not cancel/reopen the Task, delete the abort, reset its budget, or edit the
+database directly. A stale action, duplicate resume, open blocker, running or
+later Attempt, mismatched Result, or missing repair evidence must fail without
+partial checkpoint or event residue.
+
 ## Verification loop
 
 Run the smallest focused gate while editing, then the adjacent contract matrix:

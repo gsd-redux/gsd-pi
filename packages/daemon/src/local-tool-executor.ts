@@ -198,6 +198,7 @@ export class LocalToolExecutor {
       case "gsd_complete_task": return this.invokeRegisteredWorkflowTool("gsd_complete_task", args);
       case "gsd_task_reopen": return this.invokeRegisteredWorkflowTool("gsd_task_reopen", args);
       case "gsd_reopen_task": return this.invokeRegisteredWorkflowTool("gsd_reopen_task", args);
+      case "gsd_task_recovery_resume": return this.invokeRegisteredWorkflowTool("gsd_task_recovery_resume", args);
       case "gsd_slice_reopen": return this.invokeRegisteredWorkflowTool("gsd_slice_reopen", args);
       case "gsd_reopen_slice": return this.invokeRegisteredWorkflowTool("gsd_reopen_slice", args);
       case "gsd_milestone_reopen": return this.invokeRegisteredWorkflowTool("gsd_milestone_reopen", args);

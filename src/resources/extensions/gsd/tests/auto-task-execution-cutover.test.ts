@@ -647,6 +647,44 @@ test("a durable abort overrides an executor retry", async () => {
   assert.equal(domain.routes.length, 1);
 });
 
+test("an explicitly resumed durable abort claims one later Attempt", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "failed",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  let runs = 0;
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    runs += 1;
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    routeTaskFailure(route) {
+      domain.routes.push(route);
+      return {
+        status: "replayed",
+        action: "abort",
+        resumeAuthorized: true,
+      };
+    },
+  });
+
+  assert.equal(result.action, "next");
+  assert.equal(runs, 1);
+  assert.equal(domain.claims.length, 1);
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
 test("execute-task exceptions settle, route, and return the durable recovery action", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();

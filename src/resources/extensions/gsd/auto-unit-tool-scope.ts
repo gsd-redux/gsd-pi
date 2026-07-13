@@ -27,6 +27,7 @@ import {
 
 const EXTRA_SCOPED_GSD_LIFECYCLE_TOOLS = [
   "gsd_skip_slice",
+  "gsd_task_recovery_resume",
   "gsd_slice_reopen",
   "gsd_milestone_reopen",
 ] as const;

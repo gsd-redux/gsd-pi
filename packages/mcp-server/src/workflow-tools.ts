@@ -350,6 +350,15 @@ type WorkflowToolExecutors = {
     basePath: string,
     invocation: ExecutionInvocation,
   ) => Promise<unknown>;
+  executeTaskRecoveryResume: (
+    params: {
+      recoveryActionId: string;
+      repairSummary: string;
+      evidence: Record<string, unknown>;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
+  ) => Promise<unknown>;
   executeSliceReopen: (
     params: {
       sliceId: string;
@@ -640,6 +649,7 @@ function isWorkflowToolExecutors(value: unknown): value is WorkflowToolExecutors
     "executeUatResultSave",
     "executeTaskComplete",
     "executeTaskReopen",
+    "executeTaskRecoveryResume",
     "executeSliceReopen",
     "executeMilestoneReopen",
   ];
@@ -1148,6 +1158,20 @@ async function handleTaskReopen(
   const { executeTaskReopen } = await getWorkflowToolExecutors();
   return adaptExecutorResult(
     await runSerializedWorkflowOperation(() => executeTaskReopen(args, projectDir, invocation)),
+  );
+}
+
+async function handleTaskRecoveryResume(
+  projectDir: string,
+  args: Omit<z.infer<typeof taskRecoveryResumeSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  await enforceWorkflowWriteGate("gsd_task_recovery_resume", projectDir);
+  const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() =>
+      executeTaskRecoveryResume(args, projectDir, invocation)
+    ),
   );
 }
 
@@ -2032,6 +2056,17 @@ const taskReopenParams = {
 };
 const taskReopenSchema = z.object(taskReopenParams);
 
+const taskRecoveryResumeParams = {
+  projectDir: projectDirParam,
+  recoveryActionId: nonEmptyString("recoveryActionId").describe("Exact current abort Recovery Action ID"),
+  repairSummary: nonEmptyString("repairSummary").describe("What was repaired and why retry is now safe"),
+  evidence: unknownRecord.refine(
+    (value) => Object.keys(value).length > 0,
+    "evidence must be a non-empty object",
+  ).describe("Structured evidence proving the repair"),
+};
+const taskRecoveryResumeSchema = z.object(taskRecoveryResumeParams);
+
 const sliceReopenParams = {
   projectDir: projectDirParam,
   sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
@@ -2805,6 +2840,21 @@ export function registerWorkflowTools(
         projectDir,
         taskArgs,
         mcpExecutionInvocation("gsd_task_reopen", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_task_recovery_resume",
+    "Authorize one new Task Attempt after the current durable abort cause has been repaired.",
+    taskRecoveryResumeParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(taskRecoveryResumeSchema, args);
+      const { projectDir, ...resumeArgs } = parsed;
+      return handleTaskRecoveryResume(
+        projectDir,
+        resumeArgs,
+        mcpExecutionInvocation("gsd_task_recovery_resume", extra),
       );
     },
   );
