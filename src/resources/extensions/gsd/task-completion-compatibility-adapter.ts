@@ -279,6 +279,9 @@ export async function stageTaskCompletion(
   }
   const attemptId = replayAttempt ?? runningAttemptId(input.task);
   const blocked = input.completion.blockerDiscovered;
+  if (!legacyClosed) {
+    stageLegacyTask(input);
+  }
   const settlement = settleTaskAttempt({
     invocation: input.invocation,
     attemptId,
@@ -302,9 +305,6 @@ export async function stageTaskCompletion(
     },
   });
 
-  if (!legacyClosed) {
-    stageLegacyTask(input);
-  }
   const summaryPath = await renderTaskSummaryProjection(input.basePath, input.task);
   return {
     status: settlement.status,

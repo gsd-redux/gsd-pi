@@ -61,6 +61,33 @@ test("source revision changes for staged, unstaged, and untracked content", () =
   assert.notEqual(untracked.aggregateRevision, unstaged.aggregateRevision);
 });
 
+test("source revision is stable when the verified working tree is committed unchanged", () => {
+  const cwd = createRepository("commit-stability");
+  writeFileSync(join(cwd, "tracked.txt"), "verified\n");
+  writeFileSync(join(cwd, "new-source.txt"), "new source\n");
+
+  const beforeCommit = capture([{ id: "root", cwd }]);
+  git(cwd, ["add", "tracked.txt", "new-source.txt"]);
+  const staged = capture([{ id: "root", cwd }]);
+  git(cwd, ["commit", "-qm", "verified source"]);
+  const afterCommit = capture([{ id: "root", cwd }]);
+
+  assert.equal(staged.aggregateRevision, beforeCommit.aggregateRevision);
+  assert.equal(afterCommit.aggregateRevision, beforeCommit.aggregateRevision);
+});
+
+test("staged deletion has the same source revision after commit", () => {
+  const cwd = createRepository("delete-stability");
+  rmSync(join(cwd, "tracked.txt"));
+  git(cwd, ["add", "tracked.txt"]);
+
+  const stagedDeletion = capture([{ id: "root", cwd }]);
+  git(cwd, ["commit", "-qm", "remove source"]);
+  const committedDeletion = capture([{ id: "root", cwd }]);
+
+  assert.equal(committedDeletion.aggregateRevision, stagedDeletion.aggregateRevision);
+});
+
 test("multi-target proof is deterministic and keyed by target identity", () => {
   const alpha = createRepository("alpha");
   const beta = createRepository("beta");
@@ -88,6 +115,22 @@ test("capture fails closed when any target cannot produce a Git snapshot", () =>
   if (result.ok) assert.fail("non-repository target unexpectedly produced a source proof");
   assert.equal(result.targetId, "invalid");
   assert.match(result.error, /git|repository|snapshot/i);
+});
+
+test("capture fails closed when a nested submodule has unpublished source changes", () => {
+  const upstream = createRepository("submodule-upstream");
+  const cwd = createRepository("submodule-parent");
+  git(cwd, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream, "vendor/dependency"]);
+  git(cwd, ["commit", "-qam", "add dependency"]);
+  capture([{ id: "root", cwd }]);
+
+  writeFileSync(join(cwd, "vendor/dependency/tracked.txt"), "unpublished\n");
+  const result = captureVerificationSourceSnapshot([{ id: "root", cwd }]);
+
+  assert.equal(result.ok, false);
+  if (result.ok) assert.fail("dirty submodule unexpectedly produced publishable source proof");
+  assert.equal(result.targetId, "root");
+  assert.match(result.error, /dirty|publish|submodule/i);
 });
 
 test("pre/post snapshots detect verification-time source drift", () => {

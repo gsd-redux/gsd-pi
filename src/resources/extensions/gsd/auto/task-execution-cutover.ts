@@ -8,7 +8,10 @@ import type {
   SettleTaskAttemptReceipt,
   TaskExecutionAttemptSnapshot,
 } from "../task-execution-domain-operation.js";
-import { isTaskAttemptAwaitingVerification } from "../task-execution-domain-operation.js";
+import {
+  isTaskAttemptAwaitingVerification,
+  readLatestTaskAttempt,
+} from "../task-execution-domain-operation.js";
 import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
@@ -45,6 +48,17 @@ export interface VerifiedTaskPublicationInput {
   basePath: string;
 }
 
+export interface TaskHostVerificationReadinessDeps {
+  readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): Pick<
+    TaskExecutionAttemptSnapshot,
+    "state" | "outcome" | "nextStage"
+  > | null;
+}
+
+const DEFAULT_READINESS_DEPS: TaskHostVerificationReadinessDeps = {
+  readLatestTaskAttempt,
+};
+
 function parseTaskIdentity(unitId: string): ClaimTaskAttemptInput["task"] {
   const parts = unitId.split("/");
   if (parts.length !== 3 || parts.some((part) => part.trim().length === 0)) {
@@ -55,6 +69,21 @@ function parseTaskIdentity(unitId: string): ClaimTaskAttemptInput["task"] {
     sliceId: parts[1],
     taskId: parts[2],
   };
+}
+
+export function isTaskExecutionReadyForHostVerification(
+  unitType: string,
+  unitId: string,
+  deps: TaskHostVerificationReadinessDeps = DEFAULT_READINESS_DEPS,
+): boolean {
+  if (unitType !== "execute-task") return false;
+  try {
+    return isTaskAttemptAwaitingVerification(
+      deps.readLatestTaskAttempt(parseTaskIdentity(unitId)),
+    );
+  } catch {
+    return false;
+  }
 }
 
 function requireTaskClaimIdentity(input: TaskExecutionCutoverInput): {

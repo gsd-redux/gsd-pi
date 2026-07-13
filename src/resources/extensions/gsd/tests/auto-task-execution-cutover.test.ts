@@ -80,6 +80,11 @@ interface CutoverDeps {
 }
 
 interface CutoverSubject {
+  isTaskExecutionReadyForHostVerification(
+    unitType: string,
+    unitId: string,
+    deps: { readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null },
+  ): boolean;
   runWithTaskExecutionAttempt<T extends UnitPhaseResult>(
     input: CutoverInput,
     run: () => Promise<T>,
@@ -105,6 +110,41 @@ interface CutoverSubject {
     },
   ): Promise<void>;
 }
+
+test("only a canonical succeeded Task Attempt at verify is ready for host verification", async () => {
+  const { isTaskExecutionReadyForHostVerification } = await subject();
+  const attempt: AttemptSnapshot = {
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "verify",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  };
+  const seen: TaskIdentity[] = [];
+  const deps = {
+    readLatestTaskAttempt(task: TaskIdentity) {
+      seen.push(task);
+      return attempt;
+    },
+  };
+
+  assert.equal(isTaskExecutionReadyForHostVerification("execute-task", "M001/S01/T01", deps), true);
+  assert.deepEqual(seen, [{ milestoneId: "M001", sliceId: "S01", taskId: "T01" }]);
+
+  attempt.outcome = "failed";
+  attempt.nextStage = "route";
+  assert.equal(isTaskExecutionReadyForHostVerification("execute-task", "M001/S01/T01", deps), false);
+  assert.equal(isTaskExecutionReadyForHostVerification("plan-slice", "M001/S01", deps), false);
+  assert.equal(isTaskExecutionReadyForHostVerification("execute-task", "invalid", deps), false);
+  assert.equal(isTaskExecutionReadyForHostVerification("execute-task", "M001/S01/T01", {
+    readLatestTaskAttempt() {
+      throw new Error("database unavailable");
+    },
+  }), false);
+});
 
 async function subject(): Promise<CutoverSubject> {
   return import("../auto/task-execution-cutover.js") as Promise<CutoverSubject>;

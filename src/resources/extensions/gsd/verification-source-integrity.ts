@@ -3,7 +3,7 @@
 
 import { createHash, type Hash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { GSDPreferences } from "./preferences-types.js";
@@ -71,13 +71,35 @@ export function resolveVerificationRepositoryTargets(
   return { repositories, explicitTargetsRequested, missingRepositoryIds };
 }
 
-function addHashField(hash: Hash, label: string, value: string | Buffer): void {
-  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+function addHashFieldHeader(hash: Hash, label: string, byteLength: number): void {
   hash.update(label);
   hash.update("\0");
-  hash.update(String(bytes.length));
+  hash.update(String(byteLength));
   hash.update("\0");
+}
+
+function addHashField(hash: Hash, label: string, value: string | Buffer): void {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  addHashFieldHeader(hash, label, bytes.length);
   hash.update(bytes);
+}
+
+function addFileHashField(hash: Hash, label: string, path: string, expectedSize: number): void {
+  addHashFieldHeader(hash, label, expectedSize);
+  const fd = openSync(path, "r");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let total = 0;
+  try {
+    for (;;) {
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  if (total !== expectedSize) throw new Error(`verification source changed while reading: ${path}`);
 }
 
 function gitOutput(cwd: string, args: string[]): Buffer {
@@ -94,35 +116,91 @@ function gitOutput(cwd: string, args: string[]): Buffer {
   return result.stdout;
 }
 
-function untrackedPaths(cwd: string): string[] {
-  return gitOutput(cwd, ["ls-files", "--others", "--exclude-standard", "-z", ...SOURCE_PATHSPEC])
+function sourcePaths(cwd: string): string[] {
+  const paths = gitOutput(cwd, [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    ...SOURCE_PATHSPEC,
+  ])
     .toString("utf8")
     .split("\0")
-    .filter(Boolean)
-    .sort();
+    .filter(Boolean);
+  return [...new Set(paths)].sort();
 }
 
-function addUntrackedFile(hash: Hash, cwd: string, path: string): void {
+function trackedEntry(cwd: string, path: string): { mode: string; objectId: string } | null {
+  const entries = gitOutput(cwd, ["ls-files", "--stage", "-z", "--", path])
+    .toString("utf8")
+    .split("\0")
+    .filter(Boolean);
+  if (entries.length !== 1) return null;
+  const match = entries[0]?.match(/^(\d{6})\s+([0-9a-f]+)\s+0\t/);
+  return match ? { mode: match[1], objectId: match[2] } : null;
+}
+
+function addSubmoduleRevision(hash: Hash, cwd: string, path: string): void {
+  const entry = trackedEntry(cwd, path);
+  if (entry?.mode !== "160000") {
+    throw new Error(`verification source nested repository is not publishable: ${path}`);
+  }
   const absolutePath = join(cwd, path);
-  const stat = lstatSync(absolutePath);
-  addHashField(hash, "untracked-path", path);
-  addHashField(hash, "untracked-mode", String(stat.mode));
+  const head = gitOutput(absolutePath, ["rev-parse", "--verify", "HEAD"])
+    .toString("utf8")
+    .trim();
+  if (head !== entry.objectId) {
+    throw new Error(`verification source submodule commit is not staged in its parent: ${path}`);
+  }
+  const dirty = gitOutput(absolutePath, [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--",
+    ".",
+    ":(exclude).gsd/**",
+  ]).length > 0;
+  if (dirty) throw new Error(`verification source submodule has unpublished changes: ${path}`);
+  addHashField(hash, "source-repository", entry.objectId);
+}
+
+function addSourceEntry(hash: Hash, cwd: string, path: string): void {
+  const absolutePath = join(cwd, path);
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      if (trackedEntry(cwd, path)?.mode === "160000") {
+        throw new Error(`verification source submodule is unavailable: ${path}`);
+      }
+      return;
+    }
+    throw error;
+  }
+  addHashField(hash, "source-path", path);
   if (stat.isSymbolicLink()) {
-    addHashField(hash, "untracked-symlink", readlinkSync(absolutePath));
+    addHashField(hash, "source-mode", "120000");
+    addHashField(hash, "source-symlink", readlinkSync(absolutePath));
     return;
   }
-  if (!stat.isFile()) {
-    throw new Error(`unsupported untracked source entry: ${path}`);
+  if (stat.isFile()) {
+    addHashField(hash, "source-mode", (stat.mode & 0o111) === 0 ? "100644" : "100755");
+    addFileHashField(hash, "source-content", absolutePath, stat.size);
+    return;
   }
-  addHashField(hash, "untracked-content", readFileSync(absolutePath));
+  if (stat.isDirectory()) {
+    addHashField(hash, "source-mode", "160000");
+    addSubmoduleRevision(hash, cwd, path);
+    return;
+  }
+  throw new Error(`unsupported source entry: ${path}`);
 }
 
 function captureTargetRevision(target: VerificationSourceTarget): VerificationTargetRevision {
   const hash = createHash("sha256");
-  addHashField(hash, "head", gitOutput(target.cwd, ["rev-parse", "--verify", "HEAD"]));
-  addHashField(hash, "staged", gitOutput(target.cwd, ["diff", "--no-ext-diff", "--binary", "--cached", "HEAD", ...SOURCE_PATHSPEC]));
-  addHashField(hash, "unstaged", gitOutput(target.cwd, ["diff", "--no-ext-diff", "--binary", ...SOURCE_PATHSPEC]));
-  for (const path of untrackedPaths(target.cwd)) addUntrackedFile(hash, target.cwd, path);
+  for (const path of sourcePaths(target.cwd)) addSourceEntry(hash, target.cwd, path);
   return { targetId: target.id, revision: `sha256:${hash.digest("hex")}` };
 }
 

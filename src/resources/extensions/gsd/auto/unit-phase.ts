@@ -41,6 +41,7 @@ import { setCurrentPhase, clearCurrentPhase } from "../../shared/gsd-phase-state
 import { setAutoActiveStatus } from "../auto-dashboard.js";
 import { runUnit } from "./run-unit.js";
 import { validateSourceWriteWorktreeSafety } from "./worktree-safety-phase.js";
+import { isTaskExecutionReadyForHostVerification } from "./task-execution-cutover.js";
 import {
   isIsolatedWorktreeSession,
   _resolveCurrentUnitStartedAtForTest,
@@ -878,6 +879,7 @@ export async function runUnitPhase(
   const skipArtifactVerification = unitType.startsWith("hook/") || unitType === "custom-step";
   const artifactVerified =
     skipArtifactVerification ||
+    isTaskExecutionReadyForHostVerification(unitType, unitId) ||
     verifyExpectedArtifact(unitType, unitId, s.basePath);
   if (s.currentUnitRouting) {
     deps.recordOutcome(
