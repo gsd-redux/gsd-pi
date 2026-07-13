@@ -7,6 +7,7 @@ import type { RecoveryAction, RecoveryFailureKind } from "./recovery-classificat
 
 export const TASK_RECOVERY_POLICY_VERSION = "task-recovery-v1" as const;
 
+export type RecoveryOwner = "agent" | "user" | "external";
 export type RecoveryPolicyClass =
   | "transient-execution"
   | "deterministic-repair"
