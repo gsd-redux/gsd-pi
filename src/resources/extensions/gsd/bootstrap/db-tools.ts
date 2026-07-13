@@ -3,6 +3,7 @@
 import { Type, StringEnum } from "@gsd/pi-ai";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { piPlanningInvocation } from "../planning-invocation.js";
+import { piExecutionInvocation } from "../execution-invocation.js";
 import { Text } from "@gsd/pi-tui";
 import { SUMMARY_SAVE_CONTENT_MAX_LENGTH } from "@opengsd/contracts";
 
@@ -813,9 +814,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_task_complete (gsd_complete_task alias) ────────────────────────
 
-  const taskCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const taskCompleteExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeTaskComplete } = await loadWorkflowExecutors();
-    return executeTaskComplete(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeTaskComplete(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piExecutionInvocation("gsd_task_complete", toolCallId),
+    );
   };
 
   const taskCompleteTool = {

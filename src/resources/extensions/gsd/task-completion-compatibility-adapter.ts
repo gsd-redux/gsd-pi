@@ -64,6 +64,7 @@ export interface StagedTaskCompletionReceipt {
   attemptId: string;
   resultId: string;
   summaryPath: string;
+  nextStage: "verify" | "route";
 }
 
 export interface PublishedTaskCompletionReceipt {
@@ -77,13 +78,18 @@ interface AttemptRow {
   lifecycle_id: string;
 }
 
+export type TaskCompletionAuthority = "canonical" | "legacy";
+
 function requireTask(input: TaskCompletionIdentity): TaskRow {
   const task = getTask(input.milestoneId, input.sliceId, input.taskId);
   if (!task) throw new Error("Task completion target is missing");
   return task;
 }
 
-function replayAttemptId(idempotencyKey: string): string | undefined {
+function replayAttemptId(
+  idempotencyKey: string,
+  task: TaskCompletionIdentity,
+): string | undefined {
   const row = getDb().prepare(`
     SELECT result.attempt_id
     FROM workflow_operations operation
@@ -92,9 +98,63 @@ function replayAttemptId(idempotencyKey: string): string | undefined {
      AND result.project_id = operation.project_id
      AND result.project_revision = operation.resulting_revision
      AND result.authority_epoch = operation.resulting_authority_epoch
+    JOIN workflow_execution_attempts attempt
+      ON attempt.attempt_id = result.attempt_id
+     AND attempt.lifecycle_id = result.lifecycle_id
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
     WHERE operation.idempotency_key = :idempotency_key
-  `).get({ ":idempotency_key": idempotencyKey }) as Record<string, unknown> | undefined;
+      AND lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+  `).get({
+    ":idempotency_key": idempotencyKey,
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Record<string, unknown> | undefined;
   return row ? String(row["attempt_id"]) : undefined;
+}
+
+export function resolveTaskCompletionAuthority(
+  task: TaskCompletionIdentity,
+  idempotencyKey?: string,
+): TaskCompletionAuthority {
+  if (idempotencyKey && replayAttemptId(idempotencyKey, task)) return "canonical";
+  if (idempotencyKey) {
+    const conflictingOperation = getDb().prepare(`
+      SELECT 1 AS present FROM workflow_operations
+      WHERE idempotency_key = :idempotency_key
+    `).get({ ":idempotency_key": idempotencyKey });
+    if (conflictingOperation) {
+      throw new Error("Task completion idempotency identity belongs to a different canonical operation");
+    }
+  }
+
+  const lifecycle = getDb().prepare(`
+    SELECT lifecycle.lifecycle_id,
+           EXISTS (
+             SELECT 1 FROM workflow_execution_attempts attempt
+             WHERE attempt.lifecycle_id = lifecycle.lifecycle_id
+               AND attempt.project_id = lifecycle.project_id
+               AND attempt.attempt_state = 'running'
+           ) AS has_running_attempt
+    FROM workflow_item_lifecycles lifecycle
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+  `).get({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Record<string, unknown> | undefined;
+
+  if (!lifecycle) return "legacy";
+  if (Number(lifecycle["has_running_attempt"]) === 1) return "canonical";
+  throw new Error("Canonical Task completion requires a running or replay-matched Attempt");
 }
 
 function runningAttemptId(task: TaskCompletionIdentity): string {
@@ -119,7 +179,7 @@ function runningAttemptId(task: TaskCompletionIdentity): string {
 }
 
 function resolveStageAttempt(input: StageTaskCompletionInput): string {
-  return replayAttemptId(input.invocation.idempotencyKey) ?? runningAttemptId(input.task);
+  return replayAttemptId(input.invocation.idempotencyKey, input.task) ?? runningAttemptId(input.task);
 }
 
 function stageLegacyTask(input: StageTaskCompletionInput): void {
@@ -191,11 +251,12 @@ export async function stageTaskCompletion(
   input: StageTaskCompletionInput,
 ): Promise<StagedTaskCompletionReceipt> {
   const attemptId = resolveStageAttempt(input);
+  const blocked = input.completion.blockerDiscovered;
   const settlement = settleTaskAttempt({
     invocation: input.invocation,
     attemptId,
-    outcome: "succeeded",
-    failureClass: "none",
+    outcome: blocked ? "failed" : "succeeded",
+    failureClass: blocked ? "blocker-discovered" : "none",
     summary: input.completion.oneLiner,
     output: {
       narrative: input.completion.narrative,
@@ -224,6 +285,7 @@ export async function stageTaskCompletion(
     attemptId,
     resultId: settlement.resultId,
     summaryPath,
+    nextStage: settlement.nextStage,
   };
 }
 

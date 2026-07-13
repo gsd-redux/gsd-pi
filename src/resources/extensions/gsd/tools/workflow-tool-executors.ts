@@ -29,6 +29,11 @@ import { join } from "node:path";
 import type { CompleteMilestoneParams } from "./complete-milestone.js";
 import { handleCompleteMilestone } from "./complete-milestone.js";
 import { handleCompleteTask } from "./complete-task.js";
+import {
+  resolveTaskCompletionAuthority,
+  stageTaskCompletion,
+} from "../task-completion-compatibility-adapter.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
 import type { CompleteSliceParams, EscalationOption } from "../types.js";
 import { handleCompleteSlice } from "./complete-slice.js";
 import type { PlanMilestoneParams } from "./plan-milestone.js";
@@ -724,6 +729,7 @@ export type { UatResultSaveParams };
 export async function executeTaskComplete(
   params: TaskCompleteParams,
   basePath: string = process.cwd(),
+  invocation?: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -755,6 +761,55 @@ export async function executeTaskComplete(
           isError: true,
         };
       }
+    }
+
+    const task = {
+      milestoneId: params.milestoneId,
+      sliceId: params.sliceId,
+      taskId: params.taskId,
+    };
+    const authority = resolveTaskCompletionAuthority(task, invocation?.idempotencyKey);
+    if (authority === "canonical") {
+      if (!invocation) {
+        throw new Error("Canonical Task completion requires private invocation identity");
+      }
+      if (params.escalation) {
+        throw new Error("Canonical Task completion escalation is not yet supported by the durable completion adapter");
+      }
+      const staged = await stageTaskCompletion({
+        invocation,
+        basePath,
+        task,
+        completion: {
+          oneLiner: params.oneLiner,
+          narrative: params.narrative,
+          verification: String(coerced.verification),
+          deviations: params.deviations ?? "None.",
+          knownIssues: params.knownIssues ?? "None.",
+          keyFiles: params.keyFiles ?? [],
+          keyDecisions: params.keyDecisions ?? [],
+          blockerDiscovered: params.blockerDiscovered ?? false,
+          verificationEvidence,
+        },
+      });
+      return {
+        content: [{
+          type: "text",
+          text: staged.nextStage === "verify"
+            ? `Staged task ${params.taskId}; awaiting host verification before completion.`
+            : `Recorded blocker for task ${params.taskId}; routed for recovery.`,
+        }],
+        details: {
+          operation: "complete_task",
+          taskId: params.taskId,
+          sliceId: params.sliceId,
+          milestoneId: params.milestoneId,
+          attemptId: staged.attemptId,
+          resultId: staged.resultId,
+          summaryPath: staged.summaryPath,
+          nextStage: staged.nextStage,
+        },
+      };
     }
 
     const result = await handleCompleteTask(coerced as any, basePath);

@@ -9,3 +9,27 @@ export interface ExecutionInvocation {
   traceId?: string;
   turnId?: string;
 }
+
+export function piExecutionInvocation(
+  canonicalToolName: string,
+  toolCallId: string,
+): ExecutionInvocation {
+  return {
+    idempotencyKey: `pi:${canonicalToolName}:${toolCallId}`,
+    sourceTransport: "pi-tool",
+    actorType: "agent",
+    traceId: toolCallId,
+  };
+}
+
+export function internalExecutionInvocation(
+  idempotencyKey: string,
+  identity: Pick<ExecutionInvocation, "actorId" | "traceId" | "turnId"> = {},
+): ExecutionInvocation {
+  return {
+    idempotencyKey,
+    sourceTransport: "internal",
+    actorType: "agent",
+    ...identity,
+  };
+}
