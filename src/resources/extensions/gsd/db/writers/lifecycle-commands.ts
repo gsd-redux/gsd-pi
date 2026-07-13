@@ -400,6 +400,31 @@ export function adoptLifecycleIfMissing(
     : adoptOrTransitionLifecycle(context, input);
 }
 
+export function completeLegacyTaskForVerifiedAttempt(
+  context: Readonly<DomainOperationContext>,
+  identity: { milestoneId: string; sliceId: string; taskId: string },
+  completedAt = new Date().toISOString(),
+): void {
+  requireActiveContext(context);
+  requireNonBlank(identity.milestoneId, "milestoneId");
+  requireNonBlank(identity.sliceId, "sliceId");
+  requireNonBlank(identity.taskId, "taskId");
+  const timestamp = requireTimestamp(completedAt, "completedAt");
+  const result = getDb().prepare(`
+    UPDATE tasks
+    SET status = 'complete', completed_at = COALESCE(completed_at, :completed_at)
+    WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :task_id
+  `).run({
+    ":completed_at": timestamp,
+    ":milestone_id": identity.milestoneId,
+    ":slice_id": identity.sliceId,
+    ":task_id": identity.taskId,
+  });
+  if (changes(result) !== 1) {
+    throw new Error("Verified Task publication did not complete exactly one legacy Task");
+  }
+}
+
 export function readLifecycleShadowComparison(
   context: Readonly<DomainOperationContext>,
   identity: LifecycleIdentity,

@@ -9,12 +9,14 @@ import {
   promises as fsPromises,
   readFileSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
+import { _setDomainOperationFaultForTest } from "../db/domain-operation.js";
 import { clearParseCache } from "../files.js";
 import {
   _getAdapter,
@@ -213,6 +215,7 @@ function taskState(): Record<string, unknown> {
 }
 
 afterEach(() => {
+  _setDomainOperationFaultForTest(null);
   closeDatabase();
   clearPathCache();
   clearParseCache();
@@ -299,11 +302,61 @@ test("verified publication alone completes the legacy Task and checks its projec
   assert.match(readFileSync(planPath, "utf8"), /\[x\][^\n]*\*\*T01/);
   assert.equal(count("workflow_attempt_results"), 1);
   assert.equal(row("SELECT outcome FROM workflow_attempt_results").outcome, "succeeded");
+  assert.equal(
+    row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status,
+    "completed",
+  );
+  assert.deepEqual(
+    db().prepare(`
+      SELECT sequence, next_stage
+      FROM workflow_kernel_checkpoints
+      ORDER BY sequence
+    `).all(),
+    [
+      { sequence: 1, next_stage: "execute" },
+      { sequence: 2, next_stage: "verify" },
+      { sequence: 3, next_stage: "route" },
+      { sequence: 4, next_stage: "closeout" },
+      { sequence: 5, next_stage: "settled" },
+    ],
+  );
 });
 
-test("exact stage and publication replay return original identities without duplicate facts", async () => {
+test("a publish fault rolls canonical closeout and legacy completion back together", async () => {
   const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
   const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  _setDomainOperationFaultForTest("after-mutation");
+
+  await assert.rejects(
+    publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+    /domain operation fault/i,
+  );
+
+  assert.equal(taskState().status, "in_progress");
+  assert.equal(taskState().completed_at, null);
+  assert.equal(
+    row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status,
+    "in_progress",
+  );
+  assert.deepEqual(
+    db().prepare("SELECT sequence, next_stage FROM workflow_kernel_checkpoints ORDER BY sequence").all()
+      .map((checkpoint) => ({ ...checkpoint })),
+    [
+      { sequence: 1, next_stage: "execute" },
+      { sequence: 2, next_stage: "verify" },
+    ],
+  );
+
+  _setDomainOperationFaultForTest(null);
+  const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
+  assert.equal(published.status, "committed");
+  assert.equal(taskState().status, "complete");
+});
+
+test("exact stage and publication replay repair projections without duplicate facts", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, planPath, attemptId } = createFixture();
   const staged = await stageTaskCompletion(stageInput(basePath));
   const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
   const beforeReplay = {
@@ -313,7 +366,10 @@ test("exact stage and publication replay return original identities without dupl
     evidence: count("verification_evidence"),
     task: taskState(),
     summary: readFileSync(staged.summaryPath, "utf8"),
+    plan: readFileSync(planPath, "utf8"),
   };
+  unlinkSync(staged.summaryPath);
+  unlinkSync(planPath);
 
   const stagedReplay = await stageTaskCompletion(stageInput(basePath));
   const publishedReplay = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
@@ -327,5 +383,6 @@ test("exact stage and publication replay return original identities without dupl
     evidence: count("verification_evidence"),
     task: taskState(),
     summary: readFileSync(staged.summaryPath, "utf8"),
+    plan: readFileSync(planPath, "utf8"),
   }, beforeReplay);
 });

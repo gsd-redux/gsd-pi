@@ -3,6 +3,56 @@
 
 import type { DbAdapter } from "./db-adapter.js";
 
+export function createKernelCheckpointChainTrigger(db: DbAdapter): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS trg_workflow_kernel_checkpoint_chain
+    BEFORE INSERT ON workflow_kernel_checkpoints
+    WHEN (
+      NEW.previous_kernel_checkpoint_id IS NULL AND (
+        NEW.sequence != 1 OR NEW.next_stage != 'execute' OR EXISTS (
+          SELECT 1 FROM workflow_kernel_checkpoints existing
+          WHERE existing.project_id = NEW.project_id
+            AND existing.lifecycle_id = NEW.lifecycle_id
+        )
+      )
+    ) OR (
+      NEW.previous_kernel_checkpoint_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM workflow_kernel_checkpoints previous
+        WHERE previous.kernel_checkpoint_id = NEW.previous_kernel_checkpoint_id
+          AND previous.project_id = NEW.project_id
+          AND previous.lifecycle_id = NEW.lifecycle_id
+          AND NEW.sequence = previous.sequence + 1
+          AND (
+            previous.project_revision < NEW.project_revision OR (
+              previous.project_revision = NEW.project_revision
+              AND previous.operation_id = NEW.operation_id
+              AND previous.authority_epoch = NEW.authority_epoch
+            )
+          )
+          AND previous.authority_epoch <= NEW.authority_epoch
+          AND NOT EXISTS (
+            SELECT 1 FROM workflow_kernel_checkpoints successor
+            WHERE successor.previous_kernel_checkpoint_id = previous.kernel_checkpoint_id
+          )
+          AND (
+            NEW.attempt_id = previous.attempt_id OR (
+              NEW.next_stage = 'execute' AND EXISTS (
+                SELECT 1 FROM workflow_execution_attempts retry
+                WHERE retry.attempt_id = NEW.attempt_id
+                  AND retry.project_id = NEW.project_id
+                  AND retry.lifecycle_id = NEW.lifecycle_id
+                  AND retry.retry_of_attempt_id = previous.attempt_id
+              )
+            )
+          )
+      )
+    )
+    BEGIN
+      SELECT RAISE(ABORT, 'kernel checkpoint must extend the current lifecycle head');
+    END;
+  `);
+}
+
 /**
  * V35 records desired projection work and immutable import/kernel/closeout
  * facts. Projection delivery is operational and intentionally does not create
@@ -341,46 +391,6 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
         )
     );
 
-    CREATE TRIGGER IF NOT EXISTS trg_workflow_kernel_checkpoint_chain
-    BEFORE INSERT ON workflow_kernel_checkpoints
-    WHEN (
-      NEW.previous_kernel_checkpoint_id IS NULL AND (
-        NEW.sequence != 1 OR NEW.next_stage != 'execute' OR EXISTS (
-          SELECT 1 FROM workflow_kernel_checkpoints existing
-          WHERE existing.project_id = NEW.project_id
-            AND existing.lifecycle_id = NEW.lifecycle_id
-        )
-      )
-    ) OR (
-      NEW.previous_kernel_checkpoint_id IS NOT NULL AND NOT EXISTS (
-        SELECT 1 FROM workflow_kernel_checkpoints previous
-        WHERE previous.kernel_checkpoint_id = NEW.previous_kernel_checkpoint_id
-          AND previous.project_id = NEW.project_id
-          AND previous.lifecycle_id = NEW.lifecycle_id
-          AND NEW.sequence = previous.sequence + 1
-          AND previous.project_revision < NEW.project_revision
-          AND previous.authority_epoch <= NEW.authority_epoch
-          AND NOT EXISTS (
-            SELECT 1 FROM workflow_kernel_checkpoints successor
-            WHERE successor.previous_kernel_checkpoint_id = previous.kernel_checkpoint_id
-          )
-          AND (
-            NEW.attempt_id = previous.attempt_id OR (
-              NEW.next_stage = 'execute' AND EXISTS (
-                SELECT 1 FROM workflow_execution_attempts retry
-                WHERE retry.attempt_id = NEW.attempt_id
-                  AND retry.project_id = NEW.project_id
-                  AND retry.lifecycle_id = NEW.lifecycle_id
-                  AND retry.retry_of_attempt_id = previous.attempt_id
-              )
-            )
-          )
-      )
-    )
-    BEGIN
-      SELECT RAISE(ABORT, 'kernel checkpoint must extend the current lifecycle head');
-    END;
-
     CREATE TRIGGER IF NOT EXISTS trg_workflow_kernel_checkpoint_attempt_claim
     BEFORE INSERT ON workflow_kernel_checkpoints
     WHEN (
@@ -668,4 +678,5 @@ export function createProjectionImportKernelCloseoutFoundationSchemaV35(db: DbAd
     CREATE INDEX IF NOT EXISTS idx_workflow_settlement_receipt_scope
       ON workflow_settlement_receipts(project_id, lifecycle_id, closeout_effect_id);
   `);
+  createKernelCheckpointChainTrigger(db);
 }

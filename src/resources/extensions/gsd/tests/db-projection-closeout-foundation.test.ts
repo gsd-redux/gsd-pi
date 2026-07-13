@@ -225,6 +225,7 @@ function insertKernelCheckpoint(
     revision: number;
     attemptId: string;
     previous?: string | null;
+    operationId?: string;
   },
 ): void {
   db.prepare(`
@@ -241,7 +242,7 @@ function insertKernelCheckpoint(
     input.stage,
     input.sequence,
     input.previous ?? null,
-    `op-${input.revision}`,
+    input.operationId ?? `op-${input.revision}`,
     input.revision,
   );
 }
@@ -776,6 +777,49 @@ test("kernel checkpoint chain has one root and head and admits only v32 retry or
   assert.throws(() => reopened.exec(
     "DELETE FROM workflow_kernel_checkpoints WHERE kernel_checkpoint_id = 'kernel-5'",
   ));
+});
+
+test("one Domain Operation may append ordered Kernel stages without admitting equal-revision foreign operations", (t) => {
+  const { db } = openFreshFixture(t);
+  insertOperations(db, 3);
+  insertLifecycle(db);
+  insertSettledAttempt(db, "attempt-1", 1, 2, 3);
+  insertKernelCheckpoint(db, {
+    id: "kernel-1", sequence: 1, stage: "execute", revision: 2, attemptId: "attempt-1",
+  });
+  insertKernelCheckpoint(db, {
+    id: "kernel-2", sequence: 2, stage: "verify", revision: 3,
+    attemptId: "attempt-1", previous: "kernel-1",
+  });
+
+  assert.throws(() => insertKernelCheckpoint(db, {
+    id: "foreign-operation", sequence: 3, stage: "route", revision: 3,
+    operationId: "different-operation", attemptId: "attempt-1", previous: "kernel-2",
+  }), /kernel checkpoint must extend/i);
+
+  insertKernelCheckpoint(db, {
+    id: "kernel-3", sequence: 3, stage: "route", revision: 3,
+    attemptId: "attempt-1", previous: "kernel-2",
+  });
+  insertKernelCheckpoint(db, {
+    id: "kernel-4", sequence: 4, stage: "closeout", revision: 3,
+    attemptId: "attempt-1", previous: "kernel-3",
+  });
+  insertKernelCheckpoint(db, {
+    id: "kernel-5", sequence: 5, stage: "settled", revision: 3,
+    attemptId: "attempt-1", previous: "kernel-4",
+  });
+
+  assert.deepEqual(db.prepare(`
+    SELECT sequence, next_stage, operation_id, project_revision
+    FROM workflow_kernel_checkpoints ORDER BY sequence
+  `).all().map((checkpoint) => ({ ...checkpoint })), [
+    { sequence: 1, next_stage: "execute", operation_id: "op-2", project_revision: 2 },
+    { sequence: 2, next_stage: "verify", operation_id: "op-3", project_revision: 3 },
+    { sequence: 3, next_stage: "route", operation_id: "op-3", project_revision: 3 },
+    { sequence: 4, next_stage: "closeout", operation_id: "op-3", project_revision: 3 },
+    { sequence: 5, next_stage: "settled", operation_id: "op-3", project_revision: 3 },
+  ]);
 });
 
 test("closeout effects share plan provenance and idempotency is scoped per plan", (t) => {

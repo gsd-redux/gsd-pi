@@ -3,6 +3,7 @@
 
 import type { DbAdapter } from "./db-adapter.js";
 import { kernelStageTransitionSql } from "./db/kernel-stage-policy.js";
+import { createKernelCheckpointChainTrigger } from "./db-projection-import-kernel-closeout-foundation-schema.js";
 import { ensureColumn } from "./db-schema-metadata.js";
 
 export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
@@ -45,6 +46,9 @@ export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
   if (Number(incompleteHistory?.["count"] ?? 0) > 0) {
     throw new Error("v36 migration cannot derive outcomes for all settled workflow Attempts");
   }
+
+  db.exec("DROP TRIGGER IF EXISTS trg_workflow_kernel_checkpoint_chain");
+  createKernelCheckpointChainTrigger(db);
 
   db.exec(`
     CREATE TRIGGER trg_workflow_attempt_terminal_immutable
