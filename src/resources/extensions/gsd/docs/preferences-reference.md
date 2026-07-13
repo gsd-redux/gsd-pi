@@ -311,11 +311,11 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   - Values must match declared repository IDs or the implicit `project`; omitted plan/task `targetRepositories` defaults to `["project"]`.
   - `/gsd codebase` is workspace-aware in parent mode with declared child repositories: generated `.gsd/CODEBASE.md` uses workspace-relative paths, groups files under `## [repo-id]` headings, and refreshes when repository registry metadata changes.
 
-- `verification_commands`: string[] — shell commands to run as verification after task execution (e.g., `["npm test", "npm run lint"]`). Commands run in order; if any fails, the task is marked as needing fixes.
+- `verification_commands`: string[] — shell commands to run as host-owned verification after task execution (e.g., `["npm test", "npm run lint"]`). Commands run in order; if any fails, GSD records a failing Technical Verdict for the task Attempt and routes the task to retry or pause instead of publishing completion.
 
-- `verification_auto_fix`: boolean — when `true`, automatically attempt to fix verification failures instead of just reporting them. Default: `false`.
+- `verification_auto_fix`: boolean — when `true`, automatically attempt to fix verification failures instead of just reporting them. Default: `true`; set to `false` to pause on the first failed or inconclusive host verdict.
 
-- `verification_max_retries`: number — maximum number of fix-and-retry cycles for verification failures. Default: `0` (no retries).
+- `verification_max_retries`: number — maximum number of fix-and-retry cycles for verification failures. Default: `2`.
 
 - `per_unit_cost_cap_usd`: number — per-unit retry cost ceiling in USD for verification retries. Must be a positive finite number when set; invalid values are rejected during preference validation. Default: `5.0`. During auto-verification and artifact-retry flows, auto-mode pauses when the current unit reaches this cap or when current unit cost spikes to at least `3.0x` the rolling average.
 
