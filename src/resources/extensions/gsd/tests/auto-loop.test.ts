@@ -2223,6 +2223,73 @@ test("custom-engine Task verification bypasses legacy retry counters and aborts 
   }
 });
 
+test("custom-engine recovery break and retry terminalize their dispatch", async (t) => {
+  t.mock.method(CustomWorkflowEngine.prototype, "deriveState", async () => ({
+    phase: "executing",
+    isComplete: false,
+    readySteps: [],
+    blockedSteps: [],
+    completedSteps: [],
+  }) as any);
+  t.mock.method(CustomWorkflowEngine.prototype, "resolveDispatch", async () => ({
+    action: "dispatch",
+    step: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: "execute the Task",
+    },
+  }) as any);
+
+  for (const action of ["break", "retry"] as const) {
+    _resetPendingResolve();
+    const basePath = realpathSync(makeLoopTestBase(`gsd-custom-task-recovery-${action}-`));
+    mkdirSync(join(basePath, ".gsd"), { recursive: true });
+    try {
+      openDatabase(join(basePath, ".gsd", "gsd.db"));
+      insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
+      insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task One", status: "pending" });
+      const workerId = registerAutoWorker({ projectRootRealpath: basePath });
+      const lease = claimMilestoneLease(workerId, "M001");
+      assert.equal(lease.ok, true);
+      if (!lease.ok) return;
+
+      const ctx = makeMockCtx();
+      ctx.ui.setStatus = () => {};
+      ctx.ui.setWidget = () => {};
+      const pi = makeMockPi();
+      const s = makeLoopSession({
+        activeEngineId: "custom",
+        activeRunDir: basePath,
+        basePath,
+        originalBasePath: basePath,
+        canonicalProjectRoot: basePath,
+        workerId,
+        milestoneLeaseToken: lease.token,
+      });
+      const deps = makeMockDeps({
+        isDbAvailable: () => true,
+        taskExecutionBoundary: async () => {
+          if (action === "retry") s.active = false;
+          return { action, reason: "task-recovery-abort" };
+        },
+      });
+
+      await rawAutoLoop(ctx, pi, s, deps);
+
+      assert.equal(
+        getLatestForUnit("M001/S01/T01")?.status,
+        "failed",
+        `${action} must not leave an active dispatch that blocks a later resume`,
+      );
+      assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
+    } finally {
+      closeDatabase();
+      rmSync(basePath, { recursive: true, force: true });
+    }
+  }
+});
+
 test("autoLoop publishes a canonical Task only after host verification without legacy dispatch re-settlement", async () => {
   _resetPendingResolve();
 

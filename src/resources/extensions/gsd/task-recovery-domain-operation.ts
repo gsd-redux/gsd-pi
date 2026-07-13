@@ -182,6 +182,7 @@ export interface TaskRecoveryRouteSnapshot {
   recoveryOwner: "agent" | "user" | "external";
   failureKind: string;
   blocker: TaskRecoveryBlockerSnapshot | null;
+  resumeAuthorized: boolean;
 }
 
 function taskRecoveryBlockerSnapshot(
@@ -679,6 +680,7 @@ export function readTaskRecoveryRoute(attemptId: string): TaskRecoveryRouteSnaps
     recoveryOwner: String(stored["recovery_owner"]) as TaskRecoveryRouteSnapshot["recoveryOwner"],
     failureKind: String(stored["failure_kind"]),
     blocker,
+    resumeAuthorized: stored["action"] === "abort" && isTaskRecoveryResumeAuthorized(attemptId),
   };
 }
 

@@ -22,6 +22,7 @@ import {
   cancelTask,
   grantTaskWaiver,
   readPendingTaskRecoveryContext,
+  readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
   reopenTask,
@@ -686,6 +687,7 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
   assert.equal(second.action, "retry");
   assert.equal(second.recoveryBudgetId, first.recoveryBudgetId);
   assert.equal(third.action, "abort");
+  assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, false);
   assert.equal(third.recoveryBudgetId, undefined);
   assert.equal(count("workflow_recovery_budgets"), 1);
   assert.equal(count("workflow_recovery_actions"), 3);
@@ -729,6 +731,7 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
   assert.equal(replayed.status, "replayed");
   assert.equal(replayed.operationId, resumed.operationId);
   assert.equal(resumed.recoveryActionId, third.recoveryActionId);
+  assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, true);
   assert.equal(
     route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
     true,

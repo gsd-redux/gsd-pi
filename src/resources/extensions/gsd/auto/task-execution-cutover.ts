@@ -16,6 +16,7 @@ import {
 import type {
   RouteFailureInput,
   TaskRecoveryReceipt,
+  TaskRecoveryRouteSnapshot,
 } from "../task-recovery-domain-operation.js";
 import { classifyFailure } from "../recovery-classification.js";
 import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
@@ -36,6 +37,10 @@ export interface TaskExecutionCutoverInput {
 export interface TaskExecutionCutoverDeps {
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
+  readTaskRecoveryRoute(attemptId: string): Pick<
+    TaskRecoveryRouteSnapshot,
+    "action" | "recoveryOwner" | "resumeAuthorized"
+  > | null;
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
   routeTaskFailure(input: RouteFailureInput): TaskRecoveryReceipt;
@@ -383,26 +388,33 @@ export async function runWithTaskExecutionAttempt(
     }
     if (predecessor.nextStage === "route") {
       if (predecessor.outcome === "succeeded") {
-        return { action: "next", data: {} };
-      }
-      if (!predecessor.resultId) {
-        throw new Error("Task recovery requires the predecessor Result identity");
-      }
-      const summary = predecessor.resultSummary ?? "Task executor recorded a failed Result";
-      const recovery = routeTaskFailure(
-        input,
-        predecessor.attemptId,
-        predecessor.resultId,
-        summary,
-        predecessor.resultRecovery ?? taskRecoveryClassification(
+        const recovery = deps.readTaskRecoveryRoute(predecessor.attemptId);
+        if (recovery?.recoveryOwner !== "agent") {
+          return { action: "next", data: {} };
+        }
+        if (recovery.action === "abort" && !recovery.resumeAuthorized) {
+          return { action: "break", reason: "task-recovery-abort" };
+        }
+      } else {
+        if (!predecessor.resultId) {
+          throw new Error("Task recovery requires the predecessor Result identity");
+        }
+        const summary = predecessor.resultSummary ?? "Task executor recorded a failed Result";
+        const recovery = routeTaskFailure(
           input,
-          predecessor.resultFailureClass ?? "executor-result-failed",
-          new Error(summary),
-        ),
-        deps,
-      );
-      const decision = applyRecoveryDecision(recovery);
-      if (decision.action === "break" || recovery.status === "committed") return decision;
+          predecessor.attemptId,
+          predecessor.resultId,
+          summary,
+          predecessor.resultRecovery ?? taskRecoveryClassification(
+            input,
+            predecessor.resultFailureClass ?? "executor-result-failed",
+            new Error(summary),
+          ),
+          deps,
+        );
+        const decision = applyRecoveryDecision(recovery);
+        if (decision.action === "break" || recovery.status === "committed") return decision;
+      }
     }
     retryOfAttemptId = predecessor.attemptId;
   }

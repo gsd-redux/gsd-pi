@@ -2,7 +2,8 @@
 // File Purpose: Executable contract for fail-closed canonical Task execution in auto-mode.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -26,7 +27,13 @@ import {
   readTaskAttempt,
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
-import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
+import {
+  readTaskRecoveryRoute,
+  recordFailureAndSelectRecovery,
+} from "../task-recovery-domain-operation.js";
+import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
+import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 
 type UnitPhaseResult =
   | { action: "break"; reason: string }
@@ -48,7 +55,7 @@ interface AttemptSnapshot {
   retryOfAttemptId?: string;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
-  nextStage: "execute" | "verify" | "route" | "settled";
+  nextStage: "execute" | "verify" | "route" | "closeout" | "settled";
   coordinationDispatchId: number;
   workerId: string;
   milestoneLeaseToken: number;
@@ -68,6 +75,11 @@ interface CutoverInput {
 interface CutoverDeps {
   readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
   readTaskAttempt(attemptId: string): AttemptSnapshot | null;
+  readTaskRecoveryRoute(attemptId: string): {
+    recoveryOwner: "agent" | "user" | "external";
+    action: "retry" | "repair" | "remediate" | "replan" | "abort" | "clarify" | "pause";
+    resumeAuthorized?: boolean;
+  } | null;
   claimTaskAttempt(input: {
     invocation: {
       idempotencyKey: string;
@@ -228,6 +240,10 @@ function fakeDomain() {
       calls.push({ name: "read-attempt", value: attemptId });
       return attempts.find((attempt) => attempt.attemptId === attemptId) ?? null;
     },
+    readTaskRecoveryRoute(attemptId) {
+      calls.push({ name: "read-recovery", value: attemptId });
+      return { recoveryOwner: "agent", action: "retry" };
+    },
     claimTaskAttempt(claim) {
       calls.push({ name: "claim", value: claim });
       claims.push(claim);
@@ -299,7 +315,7 @@ function database() {
   return adapter;
 }
 
-function seedCanonicalTask(): number {
+function seedCanonicalTaskFixture(): { basePath: string; dispatchId: number } {
   const dir = mkdtempSync(join(tmpdir(), "gsd-task-phase-recovery-"));
   tempDirs.add(dir);
   assert.equal(openDatabase(join(dir, "gsd.db")), true);
@@ -308,8 +324,11 @@ function seedCanonicalTask(): number {
     VALUES ('M001', 'Task recovery', 'active', '2026-07-12T00:00:00.000Z');
     INSERT INTO slices (milestone_id, id, title, status, created_at)
     VALUES ('M001', 'S01', 'Recovery', 'active', '2026-07-12T00:00:00.000Z');
-    INSERT INTO tasks (milestone_id, slice_id, id, title, status)
-    VALUES ('M001', 'S01', 'T01', 'Classify failure', 'pending');
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, full_summary_md)
+    VALUES (
+      'M001', 'S01', 'T01', 'Classify failure', 'pending',
+      '# T01: Classify failure\n\nThe verification failure was remediated.\n'
+    );
     INSERT INTO workers (
       worker_id, host, pid, started_at, version, last_heartbeat_at, status,
       project_root_realpath
@@ -356,7 +375,11 @@ function seedCanonicalTask(): number {
       }],
     };
   });
-  return insertClaimedDispatch(1);
+  return { basePath: dir, dispatchId: insertClaimedDispatch(1) };
+}
+
+function seedCanonicalTask(): number {
+  return seedCanonicalTaskFixture().dispatchId;
 }
 
 function insertClaimedDispatch(attemptNumber: number): number {
@@ -383,6 +406,7 @@ function canonicalDeps(): CutoverDeps {
   return {
     readLatestTaskAttempt,
     readTaskAttempt,
+    readTaskRecoveryRoute,
     claimTaskAttempt,
     settleTaskAttempt,
     routeTaskFailure(route) {
@@ -392,6 +416,229 @@ function canonicalDeps(): CutoverDeps {
     },
   } as CutoverDeps;
 }
+
+test("agent remediation of a failed Technical Verdict runs in a lineage-linked Attempt", async () => {
+  const { publishVerifiedTaskExecution, runWithTaskExecutionAttempt } = await subject();
+  const { basePath, dispatchId: firstDispatchId } = seedCanonicalTaskFixture();
+  const task = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+  execFileSync("git", ["init", "-q"], { cwd: basePath });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: basePath });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: basePath });
+  writeFileSync(join(basePath, ".gitignore"), "gsd.db*\n.gsd/\n");
+  writeFileSync(join(basePath, "tracked.txt"), "verified\n");
+  execFileSync("git", ["add", ".gitignore", "tracked.txt"], { cwd: basePath });
+  execFileSync("git", ["commit", "-qm", "fixture"], { cwd: basePath });
+  const phaseDir = join(basePath, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  writeFileSync(join(phaseDir, "01-01-PLAN.md"), [
+    "# S01: Recovery",
+    "",
+    "## Tasks",
+    "",
+    "- [ ] **T01: Classify failure** `est:30m`",
+    "  - Do: Remediate failed host verification",
+    "  - Verify: pnpm test",
+    "",
+  ].join("\n"));
+
+  await runWithTaskExecutionAttempt(input({ dispatchId: firstDispatchId }), async () => {
+    const attempt = readLatestTaskAttempt(task);
+    assert.ok(attempt);
+    assert.equal(attempt.state, "running");
+    settleTaskAttempt({
+      invocation: {
+        idempotencyKey: "test:verification-remediation:settle:first",
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      attemptId: attempt.attemptId,
+      outcome: "succeeded",
+      failureClass: "none",
+      summary: "Candidate implementation is ready for host verification.",
+      output: { changedFiles: ["src/task.ts"] },
+    });
+    return { action: "next", data: {} };
+  }, canonicalDeps());
+
+  const firstAttempt = readLatestTaskAttempt(task);
+  assert.ok(firstAttempt);
+  assert.equal(firstAttempt.state, "settled");
+  assert.equal(firstAttempt.outcome, "succeeded");
+  assert.ok(firstAttempt.resultId);
+  const firstResultId = firstAttempt.resultId;
+  const failedVerdict = recordTaskTechnicalVerdict({
+    invocation: {
+      idempotencyKey: "test:verification-remediation:verdict:fail",
+      sourceTransport: "internal",
+      actorType: "agent",
+    },
+    attemptId: firstAttempt.attemptId,
+    testedSourceRevision: "sha256:failed-source",
+    verdict: "fail",
+    rationale: "The host test failed.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "pnpm test",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 1,
+      observation: "failed",
+      durableOutputRef: "db://host-verification/attempt-1",
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+  recordFailureAndSelectRecovery({
+    invocation: {
+      idempotencyKey: "test:verification-remediation:route",
+      sourceTransport: "internal",
+      actorType: "agent",
+    },
+    attemptId: firstAttempt.attemptId,
+    resultId: firstAttempt.resultId,
+    owner: "agent",
+    classification: { failureKind: "verification-failed" },
+    summary: "Host verification failed after successful execution.",
+    evidence: {
+      verdictId: failedVerdict.verdictId,
+      evidenceId: failedVerdict.evidenceId,
+      verdict: "fail",
+    },
+    rationale: "Remediate the failed verification evidence in a new Attempt.",
+  });
+  const immutableHistory = database().prepare(`
+    SELECT result.result_id, result.output_json,
+           verdict.verdict_id, verdict.tested_source_revision,
+           evidence.evidence_id, evidence.durable_output_ref
+    FROM workflow_attempt_results result
+    JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = result.attempt_id
+    JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
+    WHERE result.attempt_id = ?
+  `).get(firstAttempt.attemptId) as Record<string, unknown> | undefined;
+  assert.ok(immutableHistory);
+  assert.deepEqual({
+    resultId: immutableHistory.result_id,
+    verdictId: immutableHistory.verdict_id,
+    evidenceId: immutableHistory.evidence_id,
+  }, {
+    resultId: firstResultId,
+    verdictId: failedVerdict.verdictId,
+    evidenceId: failedVerdict.evidenceId,
+  });
+
+  const secondDispatchId = insertClaimedDispatch(2);
+  let repairRuns = 0;
+  await runWithTaskExecutionAttempt(input({ dispatchId: secondDispatchId }), async () => {
+    repairRuns += 1;
+    const attempt = readLatestTaskAttempt(task);
+    assert.ok(attempt);
+    assert.equal(attempt.state, "running");
+    settleTaskAttempt({
+      invocation: {
+        idempotencyKey: "test:verification-remediation:settle:second",
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      attemptId: attempt.attemptId,
+      outcome: "succeeded",
+      failureClass: "none",
+      summary: "The verification failure was remediated.",
+      output: { changedFiles: ["src/task.ts"] },
+    });
+    return { action: "next", data: {} };
+  }, canonicalDeps());
+
+  assert.equal(repairRuns, 1);
+  const secondAttempt = readLatestTaskAttempt(task);
+  assert.ok(secondAttempt);
+  assert.notEqual(secondAttempt.attemptId, firstAttempt.attemptId);
+  const source = captureVerificationSourceSnapshot([{ id: "project", cwd: basePath }]);
+  assert.equal(source.ok, true, source.ok ? undefined : source.error);
+  recordTaskTechnicalVerdict({
+    invocation: {
+      idempotencyKey: "test:verification-remediation:verdict:pass",
+      sourceTransport: "internal",
+      actorType: "agent",
+    },
+    attemptId: secondAttempt.attemptId,
+    testedSourceRevision: source.snapshot.aggregateRevision,
+    verdict: "pass",
+    rationale: "The remediated Result passed host verification.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "pnpm test",
+      workingDirectory: basePath,
+      startedAt: "2026-07-12T00:04:00.000Z",
+      endedAt: "2026-07-12T00:04:01.000Z",
+      exitCode: 0,
+      observation: "passed",
+      durableOutputRef: "db://host-verification/attempt-2",
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+  await publishVerifiedTaskExecution({
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    workerId: "worker-1",
+    traceId: "trace-publication",
+    turnId: "turn-publication",
+    basePath,
+  }, {
+    readLatestTaskAttempt,
+    publishVerifiedTaskCompletion,
+  });
+
+  assert.deepEqual(database().prepare(`
+    SELECT attempt_number, retry_of_attempt_id, attempt_state
+    FROM workflow_execution_attempts
+    ORDER BY attempt_number
+  `).all(), [
+    { attempt_number: 1, retry_of_attempt_id: null, attempt_state: "settled" },
+    {
+      attempt_number: 2,
+      retry_of_attempt_id: firstAttempt.attemptId,
+      attempt_state: "settled",
+    },
+  ]);
+  const observationCount = database().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_failure_observations
+  `).get() as { count: number };
+  assert.equal(observationCount.count, 1);
+  assert.deepEqual(database().prepare(`
+    SELECT attempt_id, verdict FROM workflow_technical_verdicts ORDER BY project_revision
+  `).all(), [
+    { attempt_id: firstAttempt.attemptId, verdict: "fail" },
+    { attempt_id: secondAttempt.attemptId, verdict: "pass" },
+  ]);
+  assert.deepEqual(database().prepare(`
+    SELECT result.result_id, result.output_json,
+           verdict.verdict_id, verdict.tested_source_revision,
+           evidence.evidence_id, evidence.durable_output_ref
+    FROM workflow_attempt_results result
+    JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = result.attempt_id
+    JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
+    WHERE result.attempt_id = ?
+  `).get(firstAttempt.attemptId), immutableHistory);
+  assert.deepEqual(database().prepare(`
+    SELECT lifecycle.lifecycle_status, task.status, checkpoint.next_stage
+    FROM workflow_item_lifecycles lifecycle
+    JOIN tasks task
+      ON task.milestone_id = lifecycle.milestone_id
+     AND task.slice_id = lifecycle.slice_id
+     AND task.id = lifecycle.task_id
+    JOIN workflow_kernel_checkpoints checkpoint
+      ON checkpoint.lifecycle_id = lifecycle.lifecycle_id
+     AND checkpoint.attempt_id = ?
+    WHERE lifecycle.milestone_id = 'M001'
+      AND lifecycle.slice_id = 'S01'
+      AND lifecycle.task_id = 'T01'
+    ORDER BY checkpoint.sequence DESC LIMIT 1
+  `).get(secondAttempt.attemptId), {
+    lifecycle_status: "completed",
+    status: "complete",
+    next_stage: "settled",
+  });
+});
 
 test("non-task units pass through without reading or mutating Task execution authority", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
@@ -834,6 +1081,106 @@ test("a succeeded predecessor awaiting verification resumes verification without
   assert.equal(ran, false);
   assert.equal(domain.claims.length, 0);
 });
+
+test("an unresumed verification abort stops before a replacement claim", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return { recoveryOwner: "agent", action: "abort" };
+    },
+  });
+
+  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+});
+
+test("an explicitly resumed verification abort claims one lineage-linked Attempt", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let runs = 0;
+
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    runs += 1;
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return { recoveryOwner: "agent", action: "abort", resumeAuthorized: true };
+    },
+  });
+
+  assert.equal(result.action, "next");
+  assert.equal(runs, 1);
+  assert.equal(domain.claims.length, 1);
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
+for (const [label, recovery] of [
+  ["a user-owned verification route", { recoveryOwner: "user" as const, action: "clarify" as const }],
+  ["a missing verification route", null],
+] as const) {
+  test(`${label} resumes verification without executing again`, async () => {
+    const { runWithTaskExecutionAttempt } = await subject();
+    const domain = fakeDomain();
+    domain.attempts.push({
+      attemptId: "attempt-1",
+      resultId: "result-1",
+      attemptNumber: 1,
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "route",
+      coordinationDispatchId: 40,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    });
+    let ran = false;
+
+    const result = await runWithTaskExecutionAttempt(input(), async () => {
+      ran = true;
+      return { action: "next", data: {} };
+    }, {
+      ...domain.deps,
+      readTaskRecoveryRoute() {
+        return recovery;
+      },
+    });
+
+    assert.deepEqual(result, { action: "next", data: {} });
+    assert.equal(ran, false);
+    assert.equal(domain.claims.length, 0);
+  });
+}
 
 test("a retry claim links the immediately preceding settled Attempt", async () => {
   const { runWithTaskExecutionAttempt } = await subject();

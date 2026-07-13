@@ -128,7 +128,10 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
-import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
+import {
+  readTaskRecoveryRoute,
+  recordFailureAndSelectRecovery,
+} from "../task-recovery-domain-operation.js";
 import { verifyExpectedArtifact } from "../artifact-verification.js";
 
 /**
@@ -208,6 +211,7 @@ const TASK_EXECUTION_CUTOVER_DEPS = {
   claimTaskAttempt,
   readLatestTaskAttempt,
   readTaskAttempt,
+  readTaskRecoveryRoute,
   routeTaskFailure: recordFailureAndSelectRecovery,
   settleTaskAttempt,
 };
@@ -878,6 +882,11 @@ export async function autoLoop(
           unitId: iterData.unitId,
         });
         if (unitPhaseResult.action === "break") {
+          customDispatchSettled = settleDispatchIfNeeded(customDispatchSettled, () =>
+            settleDispatchFailed(customDispatchId, "unit-break", {
+              markFailed: markDispatchFailed,
+              logWriteFailure: logDispatchLedgerWriteFailure,
+            }));
           finishIncompleteIteration({
             status: "stopped",
             reason: unitPhaseResult.reason ?? "unit-break",
@@ -889,6 +898,11 @@ export async function autoLoop(
           break;
         }
         if (unitPhaseResult.action === "retry") {
+          customDispatchSettled = settleDispatchIfNeeded(customDispatchSettled, () =>
+            settleDispatchFailed(customDispatchId, unitPhaseResult.reason, {
+              markFailed: markDispatchFailed,
+              logWriteFailure: logDispatchLedgerWriteFailure,
+            }));
           finishIncompleteIteration({
             status: "retry",
             reason: unitPhaseResult.reason,
