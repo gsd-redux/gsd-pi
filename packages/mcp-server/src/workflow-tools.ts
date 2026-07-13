@@ -335,7 +335,8 @@ type WorkflowToolExecutors = {
         decisionRef?: string;
       }>;
     },
-    basePath?: string,
+    basePath: string,
+    invocation: ExecutionInvocation,
   ) => Promise<unknown>;
   executeTaskReopen: (
     params: {
@@ -892,6 +893,8 @@ interface PlanningInvocation {
   turnId?: string;
 }
 
+type ExecutionInvocation = PlanningInvocation;
+
 interface WorkflowMcpRequestExtra {
   signal?: AbortSignal;
   requestId?: string | number;
@@ -910,17 +913,18 @@ interface McpToolServer {
 
 const MCP_IDEMPOTENCY_META_KEY = "io.opengsd/idempotency-key";
 
-function mcpPlanningInvocation(
+function mcpInvocation(
   canonicalToolName: string,
+  mutationKind: "Planning mutation" | "Task execution mutation",
   extra?: WorkflowMcpRequestExtra,
-): PlanningInvocation {
+): ExecutionInvocation {
   const explicitKey = extra?._meta?.[MCP_IDEMPOTENCY_META_KEY];
   const stableExplicitKey = typeof explicitKey === "string" && explicitKey.trim()
     ? explicitKey.trim()
     : undefined;
   if (!stableExplicitKey) {
     throw new Error(
-      `Planning mutation ${canonicalToolName} requires replay-stable private request metadata ` +
+      `${mutationKind} ${canonicalToolName} requires replay-stable private request metadata ` +
       `_meta["${MCP_IDEMPOTENCY_META_KEY}"]. Retry with the same nonblank value.`,
     );
   }
@@ -930,6 +934,20 @@ function mcpPlanningInvocation(
     actorType: "agent",
     traceId: stableExplicitKey,
   };
+}
+
+function mcpPlanningInvocation(
+  canonicalToolName: string,
+  extra?: WorkflowMcpRequestExtra,
+): PlanningInvocation {
+  return mcpInvocation(canonicalToolName, "Planning mutation", extra);
+}
+
+function mcpExecutionInvocation(
+  canonicalToolName: string,
+  extra?: WorkflowMcpRequestExtra,
+): ExecutionInvocation {
+  return mcpInvocation(canonicalToolName, "Task execution mutation", extra);
 }
 
 export const WORKFLOW_TOOL_NAMES = CONTRACT_WORKFLOW_TOOL_NAMES;
@@ -1090,6 +1108,7 @@ async function enforceWorkflowWriteGate(
 async function handleTaskComplete(
   projectDir: string,
   args: Omit<z.infer<typeof taskCompleteSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_task_complete", projectDir, args.milestoneId);
   const { executeTaskComplete } = await getWorkflowToolExecutors();
@@ -1100,7 +1119,7 @@ async function handleTaskComplete(
   // class; matching the spread shape used by sibling handlers (handleSliceComplete,
   // handleReplanSlice) eliminates the recurrence risk by construction.
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeTaskComplete(args, projectDir)),
+    await runSerializedWorkflowOperation(() => executeTaskComplete(args, projectDir, invocation)),
   );
 }
 
@@ -2715,10 +2734,14 @@ export function registerWorkflowTools(
     "gsd_task_complete",
     "Record a completed task to the GSD database and render its SUMMARY.md.",
     taskCompleteParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskCompleteSchema, args);
       const { projectDir, ...taskArgs } = parsed;
-      return handleTaskComplete(projectDir, taskArgs);
+      return handleTaskComplete(
+        projectDir,
+        taskArgs,
+        mcpExecutionInvocation("gsd_task_complete", extra),
+      );
     },
   );
 
@@ -2726,11 +2749,15 @@ export function registerWorkflowTools(
     "gsd_complete_task",
     "Alias for gsd_task_complete. Record a completed task to the GSD database and render its SUMMARY.md.",
     taskCompleteParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_complete_task", "gsd_task_complete");
       const parsed = parseWorkflowArgs(taskCompleteSchema, args);
       const { projectDir, ...taskArgs } = parsed;
-      return handleTaskComplete(projectDir, taskArgs);
+      return handleTaskComplete(
+        projectDir,
+        taskArgs,
+        mcpExecutionInvocation("gsd_task_complete", extra),
+      );
     },
   );
 

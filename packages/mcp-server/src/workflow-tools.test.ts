@@ -1445,6 +1445,33 @@ describe("workflow MCP tools", () => {
     }
   });
 
+  it("gsd_task_complete rejects missing replay-stable private execution metadata", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const taskTool = server.tools.find((tool) => tool.name === "gsd_task_complete");
+      assert.ok(taskTool);
+
+      const result = await taskTool.handler({
+        projectDir: base,
+        taskId: "T01",
+        sliceId: "S01",
+        milestoneId: "M001",
+        oneLiner: "Must not execute",
+        narrative: "Private replay identity is missing.",
+        verification: "npm test",
+      }, { _meta: { "io.opengsd/idempotency-key": "   " } });
+      assertToolError(
+        result,
+        /Task execution mutation gsd_task_complete requires replay-stable.*io\.opengsd\/idempotency-key/i,
+      );
+      assert.equal(existsSync(join(base, ".gsd", "gsd.db")), false);
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("#4477 gsd_task_complete forwards every schema field to the executor (regression for destructure-rebuild bug class)", async () => {
     // Locks in the class-fix from PR #4477 review: handleTaskComplete previously
     // destructured args into a hand-listed set of fields and rebuilt the call
@@ -1486,10 +1513,10 @@ export const executeTaskReopen = noop;
 export const executeSliceReopen = noop;
 export const executeMilestoneReopen = noop;
 
-export const executeTaskComplete = async (params, projectDir) => {
+export const executeTaskComplete = async (params, projectDir, invocation) => {
   const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
   if (capturePath) {
-    writeFileSync(capturePath, JSON.stringify({ params, projectDir }, null, 2));
+    writeFileSync(capturePath, JSON.stringify({ params, projectDir, invocation }, null, 2));
   }
   return {
     content: [{ type: "text", text: "mock task complete" }],
@@ -1509,7 +1536,9 @@ export const executeTaskComplete = async (params, projectDir) => {
       const server = makeMockServer();
       freshRegisterWorkflowTools(server as any);
       const taskTool = server.tools.find((t) => t.name === "gsd_task_complete");
+      const aliasTool = server.tools.find((t) => t.name === "gsd_complete_task");
       assert.ok(taskTool, "task tool should be registered");
+      assert.ok(aliasTool, "task completion alias should be registered");
 
       // Mirrors the ADR-011 escalation schema: question + 2-4 options
       // (each with id/label/tradeoffs) + recommendation + rationale +
@@ -1525,7 +1554,7 @@ export const executeTaskComplete = async (params, projectDir) => {
         continueWithDefault: true,
       };
 
-      await taskTool!.handler({
+      const taskArgs = {
         projectDir: base,
         taskId: "T01",
         sliceId: "S01",
@@ -1537,7 +1566,9 @@ export const executeTaskComplete = async (params, projectDir) => {
         verificationEvidence: [
           { command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 },
         ],
-      });
+      };
+      const metadata = { _meta: { "io.opengsd/idempotency-key": "stable-task-retry" } };
+      await taskTool!.handler(taskArgs, metadata);
 
       assert.ok(existsSync(capturePath), "mock executor should have written captured args to disk");
       const captured = JSON.parse(readFileSync(capturePath, "utf-8"));
@@ -1565,6 +1596,20 @@ export const executeTaskComplete = async (params, projectDir) => {
         captured.params.projectDir,
         undefined,
         "projectDir must NOT appear in params — it's stripped via the spread destructure",
+      );
+      assert.deepEqual(captured.invocation, {
+        idempotencyKey: "mcp:gsd_task_complete:stable-task-retry",
+        sourceTransport: "workflow-mcp",
+        actorType: "agent",
+        traceId: "stable-task-retry",
+      });
+
+      await aliasTool!.handler(taskArgs, metadata);
+      const aliasCapture = JSON.parse(readFileSync(capturePath, "utf-8"));
+      assert.deepEqual(
+        aliasCapture.invocation,
+        captured.invocation,
+        "canonical and alias task completion must share one private execution identity",
       );
     } finally {
       if (prevModule === undefined) {
