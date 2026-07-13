@@ -298,6 +298,10 @@ for (const contract of [
       outcome: contract.outcome,
       operation_id: settled.operationId,
     });
+    assert.equal(
+      row("SELECT status FROM unit_dispatches").status,
+      contract.outcome === "succeeded" ? "completed" : "failed",
+    );
     assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
     assert.deepEqual(rows("SELECT sequence, next_stage FROM workflow_kernel_checkpoints ORDER BY sequence"), [
       { sequence: 1, next_stage: "execute" },
@@ -342,6 +346,20 @@ test("lost-response replay returns the original claim identity after unrelated r
   assert.deepEqual(executionSnapshot(), beforeReplay);
 });
 
+test("lost-response replay returns the original settlement identity without duplicating facts", async () => {
+  const { claimTaskAttempt, settleTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  const input = settleInput(claim.attemptId, "succeeded", "task-attempt/settle/lost-response");
+  const committed = settleTaskAttempt(input);
+  const beforeReplay = executionSnapshot();
+
+  const replayed = settleTaskAttempt(input);
+
+  assert.deepEqual(replayed, { ...committed, status: "replayed" });
+  assert.deepEqual(executionSnapshot(), beforeReplay);
+});
+
 test("a replacement lease can interrupt the fenced Attempt and a lineage-linked retry can claim", async () => {
   const { claimTaskAttempt, settleTaskAttempt } = await subject();
   const { dispatchId } = seedFixture();
@@ -378,6 +396,7 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
     outcome: "interrupted",
     failure_class: "stale-worker",
   });
+  assert.equal(row("SELECT status FROM unit_dispatches").status, "failed");
   db().exec(`
     INSERT INTO unit_dispatches (
       trace_id, turn_id, worker_id, milestone_lease_token,

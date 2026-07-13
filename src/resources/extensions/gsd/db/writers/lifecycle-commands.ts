@@ -530,7 +530,9 @@ export function claimRunningAttempt(
   context: Readonly<DomainOperationContext>,
   input: ClaimRunningAttemptInput,
 ): ClaimRunningAttemptResult {
-  requireActiveContext(context);
+  if (requireActiveContext(context) !== "attempt.claim") {
+    throw new Error("Attempt claim requires an attempt.claim Domain Operation");
+  }
   requireNonBlank(input.lifecycleId, "lifecycleId");
   requireNonBlank(input.workerId, "workerId");
   if (!Number.isSafeInteger(input.milestoneLeaseToken) || input.milestoneLeaseToken <= 0) {

@@ -818,6 +818,14 @@ test("writer failures roll back lifecycle facts and the surrounding Domain Opera
   openFixture(t);
   const adopted = adoptTask();
   const before = snapshot();
+  assert.throws(() => executeAtFence("test", "attempt/wrong-operation", (context) =>
+    claimRunningAttempt(context, {
+      lifecycleId: adopted.value.lifecycleId,
+      coordinationDispatchId: 1,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    })), /attempt\.claim/i);
+  assert.deepEqual(snapshot(), before);
   assert.throws(() => executeAtFence("attempt.claim", "attempt/invalid", (context) =>
     claimRunningAttempt(context, {
       lifecycleId: adopted.value.lifecycleId,
