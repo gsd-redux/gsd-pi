@@ -386,6 +386,14 @@ test("lifecycle histories reject backward revisions and Authority Epochs", () =>
 
     assert.throws(
       () => db.exec(`
+        UPDATE workflow_execution_attempts
+        SET started_at = '2026-07-12T00:03:00.000Z'
+        WHERE attempt_id = 'attempt-a1'
+      `),
+      /invalid workflow attempt transition/,
+    );
+    assert.throws(
+      () => db.exec(`
         UPDATE workflow_item_lifecycles
         SET lifecycle_status = 'completed', state_version = 1,
             updated_at = '2026-07-12T00:04:00.000Z',
@@ -1131,7 +1139,7 @@ test("faulted v35 Attempt recovery migration rolls back its columns and retries 
     `).get()?.settle_outcome, "failed");
     assert.throws(() => retried.prepare(`
       UPDATE workflow_execution_attempts SET ended_at = 'rewritten' WHERE attempt_id = 'attempt-v35'
-    `).run(), /immutable/);
+    `).run(), /immutable|invalid workflow attempt transition/);
     assert.equal(retried.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
   } finally {
     retried.close();
@@ -1157,5 +1165,35 @@ test("settled Attempt inserts require an explicit outcome and attempt.settle pro
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.count, 0);
   } finally {
     db.close();
+  }
+});
+
+test("v36 migration rejects settled history without an immutable Result", () => {
+  const dbPath = createDatabasePath();
+  rewindToV35(dbPath);
+  const legacy = openRawDatabase(dbPath);
+  try {
+    seedHierarchy(legacy);
+    insertOperations(legacy, 2);
+    insertTaskLifecycle(legacy, "life-incomplete", "M-A", "op-1", 1);
+    legacy.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number, attempt_state,
+        claimed_at, ended_at, claim_operation_id, claim_project_revision, claim_authority_epoch,
+        settle_operation_id, settle_project_revision, settle_authority_epoch
+      ) VALUES ('attempt-incomplete', ?, 'life-incomplete', 1, 'settled', '', '', 'op-1', 1, 0, 'op-2', 2, 0)
+    `).run(projectId(legacy));
+  } finally {
+    legacy.close();
+  }
+
+  assert.throws(() => openDatabase(dbPath), /cannot derive outcomes/i);
+  const unchanged = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(unchanged), 35);
+    assert.equal(columnExists(unchanged, "workflow_execution_attempts", "settle_outcome"), false);
+    assert.equal(unchanged.prepare("SELECT attempt_state FROM workflow_execution_attempts").get()?.attempt_state, "settled");
+  } finally {
+    unchanged.close();
   }
 });

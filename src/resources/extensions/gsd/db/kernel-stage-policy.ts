@@ -15,12 +15,12 @@ export function isAllowedKernelStageTransition(currentStage: KernelStage, nextSt
   return (KERNEL_STAGE_TRANSITIONS[currentStage] as readonly KernelStage[]).includes(nextStage);
 }
 
-export function kernelStageTransitionSql(currentExpression: string, nextExpression: string): string {
+export function kernelStageTransitionSql(): string {
   return Object.entries(KERNEL_STAGE_TRANSITIONS)
     .filter(([, nextStages]) => nextStages.length > 0)
     .map(([currentStage, nextStages]) => {
       const allowed = nextStages.map((nextStage) => `'${nextStage}'`).join(", ");
-      return `(${currentExpression} = '${currentStage}' AND ${nextExpression} IN (${allowed}))`;
+      return `(previous.next_stage = '${currentStage}' AND NEW.next_stage IN (${allowed}))`;
     })
     .join(" OR\n            ");
 }

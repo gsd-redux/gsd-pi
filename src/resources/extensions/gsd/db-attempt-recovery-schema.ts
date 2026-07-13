@@ -21,7 +21,7 @@ export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
       CHECK (recovery_milestone_lease_token > 0)
   `);
 
-  const allowedKernelTransition = kernelStageTransitionSql("previous.next_stage", "NEW.next_stage");
+  const allowedKernelTransition = kernelStageTransitionSql();
 
   db.exec(`
     DROP TRIGGER IF EXISTS trg_workflow_attempt_terminal_immutable;
@@ -35,7 +35,18 @@ export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
         AND result.project_id = workflow_execution_attempts.project_id
     )
     WHERE attempt_state = 'settled' AND settle_outcome IS NULL;
+  `);
 
+  const incompleteHistory = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_execution_attempts
+    WHERE attempt_state = 'settled' AND settle_outcome IS NULL
+  `).get() as Record<string, unknown> | undefined;
+  if (Number(incompleteHistory?.["count"] ?? 0) > 0) {
+    throw new Error("v36 migration cannot derive outcomes for all settled workflow Attempts");
+  }
+
+  db.exec(`
     CREATE TRIGGER trg_workflow_attempt_terminal_immutable
     BEFORE UPDATE ON workflow_execution_attempts
     WHEN OLD.attempt_state = 'settled'
@@ -45,7 +56,7 @@ export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
 
     CREATE TRIGGER trg_workflow_attempt_transition
     BEFORE UPDATE ON workflow_execution_attempts
-    WHEN NEW.attempt_state != OLD.attempt_state AND NOT (
+    WHEN NOT (
       (OLD.attempt_state = 'claimed' AND NEW.attempt_state IN ('running', 'settled')) OR
       (OLD.attempt_state = 'running' AND NEW.attempt_state = 'settled')
     )
