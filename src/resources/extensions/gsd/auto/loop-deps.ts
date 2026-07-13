@@ -26,6 +26,13 @@ import type { JournalEntry } from "../journal.js";
 import type { MergeReconcileResult } from "../auto-recovery.js";
 import type { UokTurnObserver } from "../uok/contracts.js";
 import type { PostflightResult, PreflightResult } from "../clean-root-preflight.js";
+import type {
+  TaskExecutionCutoverDeps,
+  TaskExecutionCutoverInput,
+  VerifiedTaskPublicationDeps,
+  VerifiedTaskPublicationInput,
+} from "./task-execution-cutover.js";
+import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
 
 export interface StopAutoOptions {
   preserveWorktree?: boolean;
@@ -67,6 +74,15 @@ type PauseAutoFn = (
  * can access private functions from auto.ts without exporting them.
  */
 export interface LoopDeps {
+  taskExecutionBoundary?: (
+    input: TaskExecutionCutoverInput,
+    run: () => Promise<UnitPhaseResult>,
+    deps: TaskExecutionCutoverDeps,
+  ) => Promise<UnitPhaseResult>;
+  taskPublicationBoundary?: (
+    input: VerifiedTaskPublicationInput,
+    deps: VerifiedTaskPublicationDeps,
+  ) => Promise<void>;
   lockBase: () => string;
   buildSnapshotOpts: (
     unitType: string,

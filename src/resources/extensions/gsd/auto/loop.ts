@@ -110,6 +110,7 @@ import {
   publishVerifiedTaskExecution,
   runWithTaskExecutionAttempt,
 } from "./task-execution-cutover.js";
+import { runCustomEngineHostVerification } from "./custom-task-host-verification.js";
 import {
   claimTaskAttempt,
   readLatestTaskAttempt,
@@ -809,7 +810,7 @@ export async function autoLoop(
         }
         let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
         try {
-          unitPhaseResult = await runWithTaskExecutionAttempt(
+          unitPhaseResult = await (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
             {
               unitType: iterData.unitType,
               unitId: iterData.unitId,
@@ -877,7 +878,13 @@ export async function autoLoop(
 
         // ── Verify first, then reconcile (only mark complete on pass) ──
         debugLog("autoLoop", { phase: "custom-engine-verify", iteration, unitId: iterData.unitId });
-        const verifyResult = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
+        const verifyResult = await runCustomEngineHostVerification({
+          unitType: iterData.unitType,
+          unitId: iterData.unitId,
+          basePath: s.basePath,
+          preferences: prefs,
+          verifyPolicy: () => policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath }),
+        });
         if (verifyResult === "pause") {
           const verifyFlow = await handleCustomEngineVerifyPause({
             unitType: iterData.unitType,
@@ -952,7 +959,7 @@ export async function autoLoop(
         }
 
         if (iterData.unitType === "execute-task") {
-          await publishVerifiedTaskExecution({
+          await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
             unitType: iterData.unitType,
             unitId: iterData.unitId,
             workerId: s.workerId,
@@ -1395,7 +1402,7 @@ export async function autoLoop(
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
       try {
-        unitPhaseResult = await runWithTaskExecutionAttempt(
+        unitPhaseResult = await (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
           {
             unitType: iterData.unitType,
             unitId: iterData.unitId,
@@ -1580,7 +1587,7 @@ export async function autoLoop(
       }
 
       if (iterData.unitType === "execute-task") {
-        await publishVerifiedTaskExecution({
+        await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           workerId: s.workerId,

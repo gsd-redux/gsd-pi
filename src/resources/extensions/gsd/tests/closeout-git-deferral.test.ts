@@ -8,9 +8,71 @@ import { join } from "node:path";
 
 import { postUnitPreVerification, shouldDeferCloseoutGitAction, type PostUnitContext } from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
-import { closeDatabase, insertMilestone, insertSlice, insertTask, insertVerificationEvidence, openDatabase } from "../gsd-db.ts";
+import {
+  _getAdapter,
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  insertVerificationEvidence,
+  openDatabase,
+} from "../gsd-db.ts";
 import { recordToolCall, recordToolResult, resetEvidence } from "../safety/evidence-collector.ts";
+import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
+
+function settleCanonicalTaskForHostVerification(basePath: string): void {
+  const db = _getAdapter();
+  assert.ok(db, "DB should be open before claiming canonical task authority");
+  const now = "2026-07-12T00:00:00.000Z";
+  db.prepare(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES ('evidence-worker', 'test-host', 1, ?, 'test', ?, 'active', ?)
+  `).run(now, now, basePath);
+  db.prepare(`
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES ('M001', 'evidence-worker', 7, ?, '2099-07-12T00:00:00.000Z', 'held')
+  `).run(now);
+  const dispatch = db.prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'evidence-trace', 'evidence-turn', 'evidence-worker', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 1, ?
+    )
+  `).run(now) as { lastInsertRowid: number | bigint };
+  const claim = claimTaskAttempt({
+    invocation: {
+      idempotencyKey: "fixture:evidence-xref:claim",
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "evidence-worker",
+    },
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "evidence-worker",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(dispatch.lastInsertRowid),
+  });
+  settleTaskAttempt({
+    invocation: {
+      idempotencyKey: "fixture:evidence-xref:settle",
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "evidence-worker",
+    },
+    attemptId: claim.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "Executor result is ready for host evidence verification.",
+    output: { verification: "npm test" },
+  });
+}
 
 test("execute-task defers closeout git action until verification passes", () => {
   assert.equal(shouldDeferCloseoutGitAction("execute-task"), true);
@@ -59,6 +121,7 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       verdict: "passed",
       durationMs: 10,
     });
+    settleCanonicalTaskForHostVerification(base);
 
     writeFileSync(join(base, "app.js"), "console.log('ready');\n");
     resetEvidence();

@@ -1,25 +1,30 @@
 // Project/App: gsd-pi
-// File Purpose: Tests for post-execution retry bypass and verification gate failure handling.
+// File Purpose: Tests for automated verification retry and terminal failure handling.
 /**
- * post-exec-retry-bypass.test.ts — Tests for post-execution blocking failure retry bypass.
+ * post-exec-retry-bypass.test.ts — Tests for post-execution verification retry behavior.
  *
  * Verifies that when post-execution checks fail (postExecBlockingFailure is true),
- * the retry system is bypassed and auto-mode pauses immediately. Post-execution
- * failures are cross-task consistency issues — retrying the same task won't fix them.
+ * the retry system gets a chance to repair the task before auto-mode asks for help.
  */
 
 import { describe, test, mock, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { runPostUnitVerification, type VerificationContext } from "../auto-verification.ts";
+import {
+  runPostUnitVerification,
+  type TaskVerificationAuthority,
+  type VerificationContext,
+} from "../auto-verification.ts";
 import { AutoSession } from "../auto/session.ts";
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, _getAdapter } from "../gsd-db.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { _clearGsdRootCache } from "../paths.ts";
 import { initMetrics, resetMetrics } from "../metrics.ts";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
 
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
 
@@ -62,6 +67,30 @@ function makeMockSession(basePath: string, currentUnit?: { type: string; id: str
   return s;
 }
 
+function makeVerificationContext(
+  s: AutoSession,
+  ctx: ReturnType<typeof makeMockCtx>,
+  pi: ReturnType<typeof makeMockPi>,
+): VerificationContext {
+  const taskAuthority: TaskVerificationAuthority = {
+    readLatestTaskAttempt: () => ({
+      attemptId: "attempt-test",
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "verify",
+    }),
+    readTaskTechnicalVerdict: () => null,
+    recordTaskTechnicalVerdict: () => {},
+  };
+  return { s, ctx, pi, taskAuthority };
+}
+
+function currentSourceRevision(): string {
+  const captured = captureVerificationSourceSnapshot([{ id: "project", cwd: tempDir }]);
+  assert.equal(captured.ok, true, captured.ok ? undefined : captured.error);
+  return captured.snapshot.aggregateRevision;
+}
+
 function setupTestEnvironment(): void {
   originalCwd = process.cwd();
   tempDir = join(tmpdir(), `post-exec-retry-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -74,6 +103,12 @@ function setupTestEnvironment(): void {
   mkdirSync(milestonesDir, { recursive: true });
 
   process.chdir(tempDir);
+  execFileSync("git", ["init", "-q"], { cwd: tempDir });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: tempDir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: tempDir });
+  writeFileSync(join(tempDir, ".gitignore"), ".gsd/\n");
+  execFileSync("git", ["add", ".gitignore"], { cwd: tempDir });
+  execFileSync("git", ["commit", "-qm", "test baseline"], { cwd: tempDir });
   invalidateAllCaches();
   _clearGsdRootCache();
 
@@ -125,7 +160,7 @@ function useFlatPhaseLayout(): string {
 /**
  * Create a task in DB that will pass basic verification but allows us to test the flow.
  */
-function createBasicTask(): void {
+function createBasicTask(verify = "echo pass"): void {
   insertMilestone({ id: "M001" });
   insertSlice({
     id: "S01",
@@ -145,7 +180,7 @@ function createBasicTask(): void {
       description: "A basic task for testing",
       estimate: "1h",
       files: [],
-      verify: "echo pass", // Simple verification that always passes
+      verify,
       inputs: [],
       expectedOutput: ["output.ts"],
       observabilityImpact: "",
@@ -333,7 +368,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "plan-slice", id: "M001/S01" });
 
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
     // Non-execute-task units should return "continue" immediately
@@ -355,7 +390,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
     // When verification passes, should return "continue" and not call pauseAuto
@@ -364,6 +399,215 @@ describe("Post-execution blocking failure retry bypass", () => {
     
     // Retry state should be cleared
     assert.equal(s.pendingVerificationRetry, null);
+  });
+
+  test("source drift records an inconclusive verdict and routes to retry", async () => {
+    const driftPath = join(tempDir, "drift-during-verification.txt");
+    createBasicTask(`node -e "require('node:fs').writeFileSync('${driftPath}', 'changed')"`);
+    writePreferences({ enhanced_verification: false, verification_auto_fix: true });
+    const recorded: Parameters<TaskVerificationAuthority["recordTaskTechnicalVerdict"]>[0][] = [];
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      recordTaskTechnicalVerdict: (input) => { recorded.push(input); },
+    };
+
+    const result = await runPostUnitVerification(vctx, mock.fn(async () => {}));
+
+    assert.equal(result, "retry");
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]?.verdict, "inconclusive");
+    assert.equal(recorded[0]?.evidence.observation, "inconclusive");
+    assert.match(recorded[0]?.rationale ?? "", /source.*changed|drift/i);
+  });
+
+  test("Git snapshot failure records inconclusive without running verification commands", async () => {
+    const commandMarker = join(tempDir, "verification-command-ran.txt");
+    createBasicTask(`node -e "require('node:fs').writeFileSync('${commandMarker}', 'ran')"`);
+    writePreferences({ enhanced_verification: false, verification_auto_fix: true });
+    rmSync(join(tempDir, ".git"), { recursive: true, force: true });
+    const recorded: Parameters<TaskVerificationAuthority["recordTaskTechnicalVerdict"]>[0][] = [];
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      recordTaskTechnicalVerdict: (input) => { recorded.push(input); },
+    };
+
+    const result = await runPostUnitVerification(vctx, mock.fn(async () => {}));
+
+    assert.equal(result, "retry");
+    assert.equal(existsSync(commandMarker), false);
+    assert.equal(recorded[0]?.verdict, "inconclusive");
+    assert.doesNotMatch(recorded[0]?.testedSourceRevision ?? "", /^attempt:/);
+  });
+
+  test("lost verdict response replays before rerunning verification commands", async () => {
+    const commandMarker = join(tempDir, "replayed-command-ran.txt");
+    createBasicTask(`node -e "require('node:fs').writeFileSync('${commandMarker}', 'ran')"`);
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    let writes = 0;
+    const testedSourceRevision = currentSourceRevision();
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      readTaskTechnicalVerdict: () => ({
+        attemptId: "attempt-test",
+        verdictId: "verdict-1",
+        evidenceId: "evidence-1",
+        verdict: "pass",
+        testedSourceRevision,
+        nextStage: "verify",
+        operationId: "operation-1",
+        resultingRevision: 3,
+      }),
+      recordTaskTechnicalVerdict: () => { writes++; },
+    };
+
+    const result = await runPostUnitVerification(vctx, mock.fn(async () => {}));
+
+    assert.equal(result, "continue");
+    assert.equal(existsSync(commandMarker), false);
+    assert.equal(writes, 0);
+  });
+
+  test("stored passing verdict routes to retry when the source tree changed", async () => {
+    const commandMarker = join(tempDir, "changed-replay-command-ran.txt");
+    createBasicTask(`node -e "require('node:fs').writeFileSync('${commandMarker}', 'ran')"`);
+    const testedSourceRevision = currentSourceRevision();
+    writeFileSync(join(tempDir, "changed-after-verdict.ts"), "export const changed = true;\n");
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    let writes = 0;
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      readTaskTechnicalVerdict: () => ({
+        attemptId: "attempt-test",
+        verdictId: "verdict-1",
+        evidenceId: "evidence-1",
+        verdict: "pass",
+        testedSourceRevision,
+        nextStage: "verify",
+        operationId: "operation-1",
+        resultingRevision: 3,
+      }),
+      recordTaskTechnicalVerdict: () => { writes++; },
+    };
+
+    const result = await runPostUnitVerification(vctx, mock.fn(async () => {}));
+
+    assert.equal(result, "retry");
+    assert.equal(existsSync(commandMarker), false);
+    assert.equal(writes, 0);
+    assert.equal(s.verificationRetryCount.get("execute-task:M001/S01/T01"), 1);
+  });
+
+  test("replayed inconclusive verdict honors disabled automatic repair", async () => {
+    const commandMarker = join(tempDir, "inconclusive-replay-command-ran.txt");
+    createBasicTask(`node -e "require('node:fs').writeFileSync('${commandMarker}', 'ran')"`);
+    writePreferences({ verification_auto_fix: false, verification_max_retries: 0 });
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      readTaskTechnicalVerdict: () => ({
+        attemptId: "attempt-test",
+        verdictId: "verdict-1",
+        evidenceId: "evidence-1",
+        verdict: "inconclusive",
+        testedSourceRevision: "unavailable",
+        nextStage: "route",
+        operationId: "operation-1",
+        resultingRevision: 3,
+      }),
+    };
+
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(existsSync(commandMarker), false);
+    assert.equal(s.verificationRetryCount.size, 0);
+  });
+
+  test("re-reading one stored failure does not consume another repair attempt", async () => {
+    createBasicTask();
+    writePreferences({ verification_auto_fix: true, verification_max_retries: 1 });
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      readTaskTechnicalVerdict: () => ({
+        attemptId: "attempt-test",
+        verdictId: "verdict-1",
+        evidenceId: "evidence-1",
+        verdict: "fail",
+        testedSourceRevision: currentSourceRevision(),
+        nextStage: "route",
+        operationId: "operation-1",
+        resultingRevision: 3,
+      }),
+    };
+
+    assert.equal(await runPostUnitVerification(vctx, pauseAutoMock), "retry");
+    assert.equal(await runPostUnitVerification(vctx, pauseAutoMock), "retry");
+    assert.equal(s.verificationRetryCount.get("execute-task:M001/S01/T01"), 1);
+    assert.equal(s.pendingVerificationRetry?.attempt, 1);
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+  });
+
+  test("a canonical verdict write failure cannot publish new passing VERIFY evidence", async () => {
+    createBasicTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: false,
+    });
+
+    const evidencePath = join(
+      tempDir,
+      ".gsd",
+      "milestones",
+      "M001",
+      "slices",
+      "S01",
+      "tasks",
+      "T01-VERIFY.json",
+    );
+    const previousProjection = '{"passed":false,"sentinel":"previous"}\n';
+    writeFileSync(evidencePath, previousProjection, "utf-8");
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      recordTaskTechnicalVerdict: () => {
+        throw new Error("simulated canonical verdict write failure");
+      },
+    };
+
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(readFileSync(evidencePath, "utf-8"), previousProjection);
   });
 
   test("verification retry count is cleared on success", async () => {
@@ -383,7 +627,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     // Pre-set some retry state
     s.verificationRetryCount.set("execute-task:M001/S01/T01", 2);
 
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
     // On success, retry count should be cleared
@@ -419,7 +663,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
     assert.equal(result, "retry");
     assert.equal(pauseAutoMock.mock.callCount(), 0);
@@ -427,6 +671,52 @@ describe("Post-execution blocking failure retry bypass", () => {
     const messages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) => String(c.arguments[0]));
     assert.ok(messages.some((m: string) => m.includes("cost spike detected") && m.includes("authoritative blocker")));
     assert.ok(messages.some((m: string) => m.includes("Verification failed") && m.includes("auto-fix attempt 1/2")));
+  });
+
+  test("post-execution checker infrastructure failure records inconclusive and retries", async () => {
+    createPostExecFailureTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: true,
+      verification_auto_fix: true,
+      verification_max_retries: 2,
+    });
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx = makeVerificationContext(s, ctx, pi);
+    let recordedVerdict = "unrecorded";
+    vctx.taskAuthority = {
+      ...vctx.taskAuthority!,
+      recordTaskTechnicalVerdict: (input) => {
+        recordedVerdict = input.verdict;
+      },
+    };
+    vctx.runPostExecutionChecks = () => {
+      throw new Error("simulated checker infrastructure outage");
+    };
+
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "retry");
+    assert.equal(recordedVerdict, "inconclusive");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /checker infrastructure outage/);
+    const evidencePath = join(
+      tempDir,
+      ".gsd",
+      "milestones",
+      "M001",
+      "slices",
+      "S01",
+      "tasks",
+      "T01-VERIFY.json",
+    );
+    const evidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
+    assert.equal(evidence.passed, false, "inconclusive checker failure must not project a pass");
+    assert.equal(evidence.retryAttempt, 1);
   });
 
   test("post-exec failure notification includes failing check details", async () => {
@@ -443,29 +733,20 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
-    assert.equal(result, "pause");
-    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(result, "retry");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /\[import\] src\/broken\.ts:1/);
     const notifyMessages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) =>
       String(c.arguments[0])
     );
     assert.ok(
       notifyMessages.some(
         (m: string) =>
-          m.includes("Post-execution checks failed ([import] src/broken.ts:1") &&
-          m.includes("pausing for human review")
-      )
-    );
-
-    const pauseCalls = pauseAutoMock.mock.calls as Array<{ arguments: unknown[] }>;
-    const pauseCallArgs = pauseCalls[0]?.arguments[2] as
-      | { message?: string }
-      | undefined;
-    assert.ok(
-      pauseCallArgs?.message?.includes(
-        "Post-execution checks failed: [import] src/broken.ts:1"
+          m.includes("Verification failed ([import] src/broken.ts:1") &&
+          m.includes("auto-fix attempt 1/3")
       )
     );
   });
@@ -485,9 +766,9 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
-    assert.equal(result, "pause");
+    assert.equal(result, "retry");
     const evidencePath = join(phaseDir, "S01-T01-VERIFY.json");
     const legacyEvidencePath = join(phaseDir, "tasks", "T01-VERIFY.json");
     assert.ok(existsSync(evidencePath), "flat-phase evidence should be written at phase level");
@@ -498,7 +779,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(Array.isArray(evidence.postExecutionChecks), "post-execution checks should be included in rewritten evidence");
   });
 
-  test("strict post-exec warning pause includes warning details", async () => {
+  test("strict post-exec warning retry includes warning details", async () => {
     createPostExecWarningTask();
     writePreferences({
       enhanced_verification: true,
@@ -513,31 +794,21 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
-    assert.equal(result, "pause");
-    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(result, "retry");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /\[signature\] formatName:/);
     const notifyMessages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) =>
       String(c.arguments[0])
     );
     assert.ok(
       notifyMessages.some(
         (m: string) =>
-          m.includes("Post-execution checks failed ([signature] formatName:") &&
-          m.includes("pausing for human review")
+          m.includes("Verification failed ([signature] formatName:") &&
+          m.includes("auto-fix attempt 1/3")
       )
     );
-
-    const pauseCalls = pauseAutoMock.mock.calls as Array<{ arguments: unknown[] }>;
-    const pauseCallArgs = pauseCalls[0]?.arguments[2] as
-      | { message?: string }
-      | undefined;
-    assert.ok(
-      pauseCallArgs?.message?.includes(
-        "Post-execution checks failed: [signature] formatName:"
-      )
-    );
-    assert.ok(!pauseCallArgs?.message?.includes("unknown post-execution check failure"));
   });
 
   test("uok gate runner persists post-execution gate failures when enabled", async () => {
@@ -557,12 +828,12 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pi = makeMockPi();
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
 
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
-    assert.equal(result, "pause");
-    assert.equal(pauseAutoMock.mock.callCount(), 1);
+    assert.equal(result, "retry");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
 
     const adapter = _getAdapter();
     const row = adapter
@@ -581,7 +852,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(row?.failure_class, "artifact");
   });
 
-  test("execute-task with no host-owned verification pauses fail-closed", async () => {
+  test("execute-task with no host-owned verification retries while auto-fix budget remains", async () => {
     createTaskWithoutVerify();
 
     const ctx = makeMockCtx();
@@ -589,11 +860,11 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
-    assert.equal(result, "pause");
-    assert.equal(pauseAutoMock.mock.callCount(), 1);
-    assert.equal(s.pendingVerificationRetry, null);
+    assert.equal(result, "retry");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+    assert.equal(s.pendingVerificationRetry?.unitId, "M001/S01/T01");
 
     const notifyMessages = ctx.ui.notify.mock.calls.map((c: { arguments: unknown[] }) =>
       String(c.arguments[0])
@@ -601,32 +872,18 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(
       notifyMessages.some(
         (m: string) =>
-          m.includes(".gsd/PREFERENCES.md") &&
-          m.includes("task-plan Verify command") &&
-          m.includes("/gsd next")
+          m.includes("Verification failed") &&
+          m.includes("auto-fix attempt")
       ),
-      "no-host-checks notification should guide the user to add verification and resume",
-    );
-
-    const pauseCalls = pauseAutoMock.mock.calls as Array<{ arguments: unknown[] }>;
-    const pauseCallArgs = pauseCalls[0]?.arguments[2] as
-      | { message?: string }
-      | undefined;
-    assert.ok(
-      pauseCallArgs?.message?.includes(".gsd/PREFERENCES.md"),
-      "pause reason should include the project verification configuration path",
-    );
-    assert.ok(
-      pauseCallArgs?.message?.includes("/gsd next"),
-      "pause reason should tell the user how to resume",
+      "no-host-checks failure should enter the automated repair loop",
     );
 
     const evidencePath = join(tempDir, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-VERIFY.json");
     const evidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
     assert.equal(evidence.passed, false);
     assert.equal(evidence.discoverySource, "none");
-    assert.ok(!("retryAttempt" in evidence), "no-host-checks evidence must not include retryAttempt");
-    assert.ok(!("maxRetries" in evidence), "no-host-checks evidence must not include maxRetries");
+    assert.equal(evidence.retryAttempt, 1);
+    assert.equal(evidence.maxRetries, 2);
   });
 
   test("completed browser-facing execute-task with no host-owned verification continues toward browser UAT", async () => {
@@ -638,7 +895,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
     assert.equal(result, "continue");
     assert.equal(pauseAutoMock.mock.callCount(), 0);
@@ -650,9 +907,9 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.ok(
       notifyMessages.some(
         (m: string) =>
-          m.includes("browser-facing task") &&
+          m.includes("canonical executor Result passed") &&
           m.includes("slice UAT") &&
-          m.includes("browser tools")
+          m.includes("automated")
       ),
       "completed web tasks without task-level commands should explain browser UAT handoff",
     );
@@ -681,7 +938,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
     assert.equal(result, "retry");
     assert.equal(pauseAutoMock.mock.callCount(), 0);
@@ -689,7 +946,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.match(s.pendingVerificationRetry?.failureContext ?? "", /npm run test/);
   });
 
-  test("completed execute-task verification failure continues without retry metadata", async () => {
+  test("completed execute-task verification failure still retries", async () => {
     createFailingVerifyTask("complete");
     writePreferences({
       enhanced_verification: true,
@@ -703,18 +960,18 @@ describe("Post-execution blocking failure retry bypass", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const result = await runPostUnitVerification({ s, ctx, pi }, pauseAutoMock);
+    const result = await runPostUnitVerification(makeVerificationContext(s, ctx, pi), pauseAutoMock);
 
-    assert.equal(result, "continue");
+    assert.equal(result, "retry");
     assert.equal(pauseAutoMock.mock.callCount(), 0);
-    assert.equal(s.pendingVerificationRetry, null);
-    assert.equal(s.verificationRetryCount.size, 0);
+    assert.equal(s.pendingVerificationRetry?.unitId, "M001/S01/T01");
+    assert.equal(s.verificationRetryCount.get("execute-task:M001/S01/T01"), 1);
 
     const evidencePath = join(tempDir, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-VERIFY.json");
     const evidence = JSON.parse(readFileSync(evidencePath, "utf-8"));
     assert.equal(evidence.passed, false);
-    assert.ok(!("retryAttempt" in evidence), "completed task failure evidence must not request a retry");
-    assert.ok(!("maxRetries" in evidence), "completed task failure evidence must not carry retry budget");
+    assert.equal(evidence.retryAttempt, 1);
+    assert.equal(evidence.maxRetries, 2);
   });
 });
 
@@ -766,7 +1023,7 @@ describe("Post-execution retry behavior", () => {
     const pauseAutoMock = mock.fn(async () => {});
     const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
 
-    const vctx: VerificationContext = { s, ctx, pi };
+    const vctx = makeVerificationContext(s, ctx, pi);
     const result = await runPostUnitVerification(vctx, pauseAutoMock);
 
     // When autofix is disabled and verification fails, should pause

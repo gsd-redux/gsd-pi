@@ -18,9 +18,13 @@ interface TaskIdentity {
 interface AttemptSnapshot {
   attemptId: string;
   attemptNumber: number;
+  retryOfAttemptId?: string;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
   nextStage: "execute" | "verify" | "route";
+  coordinationDispatchId: number;
+  workerId: string;
+  milestoneLeaseToken: number;
 }
 
 interface CutoverInput {
@@ -61,10 +65,11 @@ interface CutoverDeps {
   settleTaskAttempt(input: {
     invocation: { idempotencyKey: string; sourceTransport: "internal"; actorType: string };
     attemptId: string;
-    outcome: "failed";
+    outcome: "succeeded" | "failed" | "interrupted";
     failureClass: string;
     summary: string;
     output: Record<string, unknown>;
+    recovery?: { workerId: string; milestoneLeaseToken: number };
   }): {
     status: "committed" | "replayed";
     operationId: string;
@@ -140,8 +145,12 @@ function fakeDomain() {
       const attempt: AttemptSnapshot = {
         attemptId: `attempt-${attempts.length + 1}`,
         attemptNumber: attempts.length + 1,
+        ...(claim.retryOfAttemptId ? { retryOfAttemptId: claim.retryOfAttemptId } : {}),
         state: "running",
         nextStage: "execute",
+        coordinationDispatchId: claim.coordinationDispatchId,
+        workerId: claim.workerId,
+        milestoneLeaseToken: claim.milestoneLeaseToken,
       };
       attempts.push(attempt);
       return {
@@ -158,8 +167,8 @@ function fakeDomain() {
       const attempt = attempts.find((candidate) => candidate.attemptId === settlement.attemptId);
       assert.ok(attempt);
       attempt.state = "settled";
-      attempt.outcome = "failed";
-      attempt.nextStage = "route";
+      attempt.outcome = settlement.outcome;
+      attempt.nextStage = settlement.outcome === "succeeded" ? "verify" : "route";
       return {
         status: "committed",
         operationId: `settle-operation-${attempt.attemptNumber}`,
@@ -265,8 +274,6 @@ test("execute-task commits its canonical claim before running and accepts only s
       sourceTransport: "internal",
       actorType: "agent",
       actorId: "worker-1",
-      traceId: "trace-1",
-      turnId: "turn-1",
     },
     task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
     workerId: "worker-1",
@@ -383,6 +390,202 @@ test("a retry claim links the immediately preceding settled Attempt", async () =
   assert.equal(domain.claims[1].invocation.idempotencyKey, "internal:auto:attempt.claim:42");
 });
 
+test("a replacement lease interrupts a stale running Attempt before claiming its lineage-linked retry", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  const result = await runWithTaskExecutionAttempt(input({
+    dispatchId: 42,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  }), async () => {
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, domain.deps);
+
+  assert.equal(result.action, "next");
+  assert.deepEqual(domain.calls.slice(0, 3).map((call) => call.name), [
+    "read-latest",
+    "settle",
+    "claim",
+  ]);
+  assert.deepEqual(domain.settlements[0], {
+    invocation: {
+      idempotencyKey: "internal:auto:attempt.interrupt:attempt-1:worker-2:8",
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "worker-2",
+    },
+    attemptId: "attempt-1",
+    outcome: "interrupted",
+    failureClass: "stale-worker",
+    summary: "Replaced stale Task Attempt after milestone lease takeover",
+    output: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      staleDispatchId: 41,
+      staleWorkerId: "worker-1",
+      staleMilestoneLeaseToken: 7,
+      replacementDispatchId: 42,
+      replacementWorkerId: "worker-2",
+      replacementMilestoneLeaseToken: 8,
+    },
+    recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+  });
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
+test("a live running Attempt rejects a different dispatch that has not taken over its lease", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+
+  await assert.rejects(runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, domain.deps), /active|running|Attempt/i);
+
+  assert.equal(ran, false);
+  assert.equal(domain.settlements.length, 0);
+  assert.equal(domain.claims.length, 0);
+});
+
+test("lost first-claim response replays the exact claim without self-linking or interruption", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  const running: AttemptSnapshot = {
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  };
+  domain.attempts.push(running);
+
+  await runWithTaskExecutionAttempt(input(), async () => {
+    domain.completeSucceeded(running.attemptId);
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    claimTaskAttempt(claim) {
+      domain.claims.push(claim);
+      return {
+        status: "replayed",
+        operationId: "claim-operation-1",
+        resultingRevision: 1,
+        attemptId: running.attemptId,
+        attemptNumber: running.attemptNumber,
+      };
+    },
+  });
+
+  assert.equal(domain.settlements.length, 0);
+  assert.equal(domain.claims[0].retryOfAttemptId, undefined);
+});
+
+test("lost recovered-retry claim response replays with the original predecessor lineage", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "interrupted",
+    nextStage: "route",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  const retry: AttemptSnapshot = {
+    attemptId: "attempt-2",
+    attemptNumber: 2,
+    retryOfAttemptId: "attempt-1",
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 42,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  };
+  domain.attempts.push(retry);
+
+  await runWithTaskExecutionAttempt(input({
+    dispatchId: 42,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  }), async () => {
+    domain.completeSucceeded(retry.attemptId);
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    claimTaskAttempt(claim) {
+      domain.claims.push(claim);
+      return {
+        status: "replayed",
+        operationId: "claim-operation-2",
+        resultingRevision: 3,
+        attemptId: retry.attemptId,
+        attemptNumber: retry.attemptNumber,
+      };
+    },
+  });
+
+  assert.equal(domain.settlements.length, 0);
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
+test("stale Attempt interruption failure aborts before retry claim or provider execution", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+  const rejected = new Error("replacement lease is not authoritative");
+
+  await assert.rejects(runWithTaskExecutionAttempt(input({
+    dispatchId: 42,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  }), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    settleTaskAttempt() {
+      throw rejected;
+    },
+  }), rejected);
+
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+});
+
 test("verified Task publication uses the latest succeeded Attempt and stable auto identity", async () => {
   const { publishVerifiedTaskExecution } = await subject();
   const published: unknown[] = [];
@@ -394,6 +597,9 @@ test("verified Task publication uses the latest succeeded Attempt and stable aut
       state: "settled",
       outcome: "succeeded",
       nextStage: "verify",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
     }),
     async publishVerifiedTaskCompletion(value) {
       published.push(value);
@@ -405,9 +611,6 @@ test("verified Task publication uses the latest succeeded Attempt and stable aut
       idempotencyKey: "internal:auto:task.publish:attempt-7",
       sourceTransport: "internal",
       actorType: "agent",
-      actorId: "worker-1",
-      traceId: "trace-1",
-      turnId: "turn-1",
     },
     basePath: "/project",
     task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
@@ -426,6 +629,9 @@ test("failed Task execution cannot publish after host verification", async () =>
       state: "settled",
       outcome: "failed",
       nextStage: "route",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
     }),
     async publishVerifiedTaskCompletion() {
       published = true;

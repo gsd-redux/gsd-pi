@@ -238,6 +238,21 @@ test("a canonical lifecycle without an Attempt fails closed instead of using leg
   assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "in_progress");
 });
 
+test("private completion identity cannot fall back when the canonical lifecycle is missing", async () => {
+  const basePath = createBase();
+
+  const result = await executeTaskComplete(
+    completionParams() as never,
+    basePath,
+    invocation("pi:gsd_task_complete:missing-lifecycle"),
+  );
+
+  assert.equal(result.isError, true);
+  assert.match(String(result.content[0]?.text), /canonical.*lifecycle|lifecycle.*canonical/i);
+  assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "in_progress");
+  assert.equal(row("SELECT COUNT(*) AS count FROM workflow_attempt_results").count, 0);
+});
+
 test("Pi canonical and alias completion calls converge on one private staged Result", async () => {
   process.env.GSD_ADVERTISE_TOOL_ALIASES = "1";
   const basePath = createBase();
@@ -255,7 +270,8 @@ test("Pi canonical and alias completion calls converge on one private staged Res
 
   assert.deepEqual(replay, first);
   assert.equal(first.isError, undefined);
-  assert.match(String(first.content[0]?.text), /awaiting host verification/i);
+  const firstContent = first.content as Array<{ text?: unknown }>;
+  assert.match(String(firstContent[0]?.text), /awaiting host verification/i);
   assert.equal((first.details as Record<string, unknown>).attemptId, attemptId);
   assert.deepEqual(row(`
     SELECT operation.operation_type, operation.idempotency_key, operation.source_transport,

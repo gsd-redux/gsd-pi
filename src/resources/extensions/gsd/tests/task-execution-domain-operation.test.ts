@@ -20,6 +20,10 @@ import {
   adoptOrTransitionLifecycle,
   readDomainOperationFence,
 } from "../db/writers/lifecycle-commands.ts";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.ts";
 
 interface ExecutionInvocation {
   idempotencyKey: string;
@@ -75,9 +79,13 @@ interface TaskExecutionDomain {
 interface AttemptSnapshot {
   attemptId: string;
   attemptNumber: number;
+  retryOfAttemptId?: string;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
   nextStage: "execute" | "verify" | "route";
+  coordinationDispatchId: number;
+  workerId: string;
+  milestoneLeaseToken: number;
 }
 
 const tempDirs = new Set<string>();
@@ -345,12 +353,42 @@ for (const contract of [
       state: "settled",
       outcome: contract.outcome,
       nextStage: contract.nextStage,
+      coordinationDispatchId: dispatchId,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
     } as const;
     assert.deepEqual(readTaskAttempt(claim.attemptId), expectedSnapshot);
     assert.deepEqual(
       readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" }),
       expectedSnapshot,
     );
+    if (contract.outcome === "succeeded") {
+      const startedAt = "2026-07-12T00:02:00.000Z";
+      const verdict = recordTaskTechnicalVerdict({
+        invocation: invocation("task-attempt/verify/pass"),
+        attemptId: claim.attemptId,
+        testedSourceRevision: "git:test-source-revision",
+        verdict: "pass",
+        rationale: "Host-owned verification passed.",
+        evidence: {
+          evidenceClass: "command",
+          commandOrTool: "npm test",
+          workingDirectory: "/tmp/project",
+          startedAt,
+          endedAt: "2026-07-12T00:02:01.000Z",
+          exitCode: 0,
+          observation: "passed",
+          durableOutputRef: "db://host-verification/attempt-1",
+          environment: { runner: "node-test", platform: "test" },
+        },
+      });
+      assert.equal(verdict.nextStage, "verify");
+      assert.equal(count("workflow_technical_verdicts"), 1);
+      assert.equal(count("workflow_verification_evidence"), 1);
+      assert.throws(() => db().prepare(`
+        UPDATE workflow_technical_verdicts SET rationale = 'rewritten'
+      `).run(), /immutable/i);
+    }
     assert.throws(() => db().prepare(`
       UPDATE workflow_attempt_results SET summary = 'rewritten' WHERE result_id = ?
     `).run(settled.resultId), /immutable/i);
@@ -388,6 +426,94 @@ test("lost-response replay returns the original claim identity after unrelated r
 
   assert.deepEqual(replayed, { ...committed, status: "replayed" });
   assert.deepEqual(executionSnapshot(), beforeReplay);
+});
+
+test("failed host verification records immutable evidence and routes before retry", async () => {
+  const { claimTaskAttempt, settleTaskAttempt, readTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  settleTaskAttempt(settleInput(claim.attemptId, "succeeded"));
+
+  const verdict = recordTaskTechnicalVerdict({
+    invocation: invocation("task-attempt/verify/fail"),
+    attemptId: claim.attemptId,
+    testedSourceRevision: "git:test-source-revision",
+    verdict: "fail",
+    rationale: "Host test failed.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "npm test",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 1,
+      observation: "failed",
+      durableOutputRef: "db://host-verification/attempt-1",
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+
+  assert.equal(verdict.nextStage, "route");
+  assert.equal(readTaskAttempt(claim.attemptId)?.nextStage, "route");
+  assert.deepEqual(row("SELECT verdict, rationale FROM workflow_technical_verdicts"), {
+    verdict: "fail",
+    rationale: "Host test failed.",
+  });
+});
+
+test("one Attempt cannot record a second host Technical Verdict", async () => {
+  const { claimTaskAttempt, settleTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  settleTaskAttempt(settleInput(claim.attemptId, "succeeded"));
+  const base = {
+    attemptId: claim.attemptId,
+    rationale: "Host verification completed.",
+    evidence: {
+      evidenceClass: "command" as const,
+      commandOrTool: "npm test",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      durableOutputRef: "db://host-verification/attempt-1",
+      environment: { runner: "node-test", platform: "test" },
+    },
+  };
+  recordTaskTechnicalVerdict({
+    ...base,
+    invocation: invocation("task-attempt/verify/first"),
+    testedSourceRevision: "git:first-source-revision",
+    verdict: "pass",
+    evidence: { ...base.evidence, exitCode: 0, observation: "passed" },
+  });
+
+  assert.throws(() => recordTaskTechnicalVerdict({
+    ...base,
+    invocation: invocation("task-attempt/verify/second"),
+    testedSourceRevision: "git:second-source-revision",
+    verdict: "fail",
+    evidence: { ...base.evidence, exitCode: 1, observation: "failed" },
+  }), /already|one|verdict|verified/i);
+
+  assert.equal(count("workflow_technical_verdicts"), 1);
+  assert.equal(count("workflow_verification_evidence"), 1);
+  assert.equal(row("SELECT verdict FROM workflow_technical_verdicts").verdict, "pass");
+  const authoritative = row(`
+    SELECT verdict.verdict_id, verdict.operation_id, verdict.project_revision,
+           evidence.evidence_id
+    FROM workflow_technical_verdicts verdict
+    JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
+  `);
+  assert.deepEqual(readTaskTechnicalVerdict(claim.attemptId), {
+    attemptId: claim.attemptId,
+    verdictId: authoritative.verdict_id,
+    evidenceId: authoritative.evidence_id,
+    verdict: "pass",
+    testedSourceRevision: "git:first-source-revision",
+    nextStage: "verify",
+    operationId: authoritative.operation_id,
+    resultingRevision: authoritative.project_revision,
+  });
 });
 
 test("lost-response replay returns the original settlement identity without duplicating facts", async () => {
@@ -428,19 +554,26 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
         acquired_at = '2026-07-12T00:01:00.000Z',
         expires_at = '2099-07-12T00:00:00.000Z', status = 'held'
     WHERE milestone_id = 'M001';
+    UPDATE unit_dispatches
+    SET status = 'canceled', ended_at = '2026-07-12T00:01:00.000Z',
+        exit_reason = 'stale-dispatch-lease-takeover'
+    WHERE id = ${dispatchId};
   `);
 
-  const interrupted = settleTaskAttempt({
+  const interruptInput = {
     ...settleInput(first.attemptId, "interrupted", "task-attempt/recover/1"),
     failureClass: "stale-worker",
     recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
-  });
+  };
+  const interrupted = settleTaskAttempt(interruptInput);
+  const replayedInterrupt = settleTaskAttempt(interruptInput);
   assert.equal(interrupted.nextStage, "route");
+  assert.deepEqual(replayedInterrupt, { ...interrupted, status: "replayed" });
   assert.deepEqual(row("SELECT outcome, failure_class FROM workflow_attempt_results"), {
     outcome: "interrupted",
     failure_class: "stale-worker",
   });
-  assert.equal(row("SELECT status FROM unit_dispatches").status, "failed");
+  assert.equal(row("SELECT status FROM unit_dispatches").status, "canceled");
   db().exec(`
     INSERT INTO unit_dispatches (
       trace_id, turn_id, worker_id, milestone_lease_token,

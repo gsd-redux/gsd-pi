@@ -30,8 +30,8 @@ import {
   _getAdapter,
 } from "../../../src/resources/extensions/gsd/gsd-db.ts";
 import { registerDbTools } from "../../../src/resources/extensions/gsd/bootstrap/db-tools.ts";
+import { claimTaskAttempt } from "../../../src/resources/extensions/gsd/task-execution-domain-operation.ts";
 import {
-  executeTaskComplete,
   executeSummarySave,
   executeMilestoneStatus,
 } from "../../../src/resources/extensions/gsd/tools/workflow-tool-executors.ts";
@@ -52,6 +52,59 @@ function seedMilestoneAndSlice(base: string): void {
   );
 }
 
+function claimCanonicalTaskAuthority(base: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  const db = _getAdapter();
+  assert.ok(db, "DB should be open before claiming canonical task authority");
+  const now = "2026-07-12T00:00:00.000Z";
+  db.prepare(`
+    INSERT OR IGNORE INTO milestones (id, title, status, created_at)
+    VALUES ('M001', 'Parity milestone', 'active', ?)
+  `).run(now);
+  db.prepare(`
+    INSERT OR IGNORE INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('M001', 'S01', 'Parity slice', 'active', ?)
+  `).run(now);
+  db.prepare(`
+    INSERT OR IGNORE INTO tasks (milestone_id, slice_id, id, title, status, verify, sequence)
+    VALUES ('M001', 'S01', 'T01', 'Demo', 'in_progress', 'npm test', 1)
+  `).run();
+  db.prepare(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES ('parity-worker', 'test-host', 1, ?, 'test', ?, 'active', ?)
+  `).run(now, now, base);
+  db.prepare(`
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES ('M001', 'parity-worker', 7, ?, '2099-07-12T00:00:00.000Z', 'held')
+  `).run(now);
+  const dispatch = db.prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'fixture-trace', 'fixture-turn', 'parity-worker', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 1, ?
+    )
+  `).run(now);
+  claimTaskAttempt({
+    invocation: {
+      idempotencyKey: "fixture:mcp-parity:claim:M001/S01/T01",
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "parity-worker",
+    },
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "parity-worker",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(dispatch.lastInsertRowid),
+  });
+}
+
 function cleanup(base: string): void {
   try {
     closeDatabase();
@@ -66,9 +119,10 @@ function cleanup(base: string): void {
 }
 
 function makeMockServer() {
+  type TestRequestExtra = { _meta?: Record<string, unknown> };
   const tools: Array<{
     name: string;
-    handler: (args: Record<string, unknown>) => Promise<unknown>;
+    handler: (args: Record<string, unknown>, extra?: TestRequestExtra) => Promise<unknown>;
   }> = [];
   return {
     tools,
@@ -76,9 +130,14 @@ function makeMockServer() {
       name: string,
       _description: string,
       _params: Record<string, unknown>,
-      handler: (args: Record<string, unknown>) => Promise<unknown>,
+      handler: (args: Record<string, unknown>, extra?: TestRequestExtra) => Promise<unknown>,
     ) {
-      tools.push({ name, handler });
+      tools.push({
+        name,
+        handler: (args, extra) => handler(args, extra ?? {
+          _meta: { "io.opengsd/idempotency-key": `mcp-parity:${name}` },
+        }),
+      });
     },
   };
 }
@@ -208,7 +267,7 @@ function snapshotState(base: string, milestoneId: string, sliceId: string, taskI
   // string field `full_summary_md`). Recursive normalization is simpler and
   // more robust than maintaining an elision list.
   const taskRow = normalizeParams(row as Record<string, unknown>);
-  assert.equal(taskRow.status, "complete", "task status must be 'complete' after completion");
+  assert.equal(taskRow.status, "in_progress", "staged Task must remain in progress until host verification");
 
   const journalPath = join(base, ".gsd", "event-log.jsonl");
   const journalEvents: SnapshotShape["journalEvents"] = [];
@@ -262,21 +321,15 @@ process.env.GSD_WORKFLOW_WRITE_GATE_MODULE ??= fileURLToPath(new URL(
 ));
 
 describe("ADR-008 parity: gsd_task_complete native vs MCP", () => {
-  it("native and MCP produce equivalent DB row, summary, and journal event", async () => {
+  it("native and MCP produce equivalent staged DB row, summary, and journal event", async () => {
     let baseNative = "";
     let baseMcp = "";
     try {
       // ─── Native path ─────────────────────────────────────────────────
-      // The native wrapper in db-tools.ts:670-674 is:
-      //   const taskCompleteExecute = async (_tcid, params, ...) => {
-      //     const { executeTaskComplete } = await loadWorkflowExecutors();
-      //     return executeTaskComplete(params, resolveCtxCwd(_ctx));
-      //   };
-      // Calling executeTaskComplete directly with a basePath is the same
-      // post-resolution call shape.
       baseNative = makeTmpBase();
       seedMilestoneAndSlice(baseNative);
-      const nativeResult = await executeTaskComplete(COMPLETION_ARGS, baseNative);
+      claimCanonicalTaskAuthority(baseNative);
+      const nativeResult = await runNativeDbTool(baseNative, "gsd_task_complete", COMPLETION_ARGS);
       assert.ok(!nativeResult.isError, "native completion must succeed");
 
       const snapshotNative = snapshotState(baseNative, "M001", "S01", "T01");
@@ -285,6 +338,7 @@ describe("ADR-008 parity: gsd_task_complete native vs MCP", () => {
       // ─── MCP path ────────────────────────────────────────────────────
       baseMcp = makeTmpBase();
       seedMilestoneAndSlice(baseMcp);
+      claimCanonicalTaskAuthority(baseMcp);
 
       const server = makeMockServer();
       registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0]);
@@ -292,7 +346,7 @@ describe("ADR-008 parity: gsd_task_complete native vs MCP", () => {
       assert.ok(taskTool, "gsd_task_complete must be registered on the MCP surface");
 
       const mcpResult = await taskTool.handler({ projectDir: baseMcp, ...COMPLETION_ARGS });
-      assert.ok(!mcpResult.isError, "mcp completion must succeed");
+      assert.ok(!mcpResult.isError, `mcp completion must succeed: ${JSON.stringify(mcpResult)}`);
 
       const snapshotMcp = snapshotState(baseMcp, "M001", "S01", "T01");
 

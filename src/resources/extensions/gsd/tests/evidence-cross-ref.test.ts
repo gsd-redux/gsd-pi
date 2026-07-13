@@ -6,6 +6,25 @@ import assert from "node:assert/strict";
 
 import { crossReferenceEvidence } from "../safety/evidence-cross-ref.ts";
 import type { EvidenceEntry } from "../safety/evidence-collector.ts";
+import { isTaskAttemptAwaitingVerification } from "../task-execution-domain-operation.ts";
+
+test("evidence cross-reference waits for the canonical succeeded verify-stage Result", () => {
+  assert.equal(isTaskAttemptAwaitingVerification(null), false);
+  assert.equal(isTaskAttemptAwaitingVerification({
+    state: "running",
+    nextStage: "execute",
+  }), false);
+  assert.equal(isTaskAttemptAwaitingVerification({
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "verify",
+  }), true);
+  assert.equal(isTaskAttemptAwaitingVerification({
+    state: "settled",
+    outcome: "failed",
+    nextStage: "route",
+  }), false);
+});
 
 test("claims of passing verification become errors when recorded bash evidence failed", () => {
   const mismatches = crossReferenceEvidence(

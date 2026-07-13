@@ -45,18 +45,49 @@ import { resolveUokFlags } from "./uok/flags.js";
 import { UokGateRunner } from "./uok/gate-runner.js";
 import { verificationRetryKey } from "./auto/verification-retry-policy.js";
 import { decideVerificationVerdict } from "./verification-verdict.js";
-import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets } from "./repository-registry.js";
 import type { SliceRow } from "./db-task-slice-rows.js";
 import { getSlice } from "./gsd-db.js";
 import { getLedger } from "./metrics.js";
 import { getUnitCostSpikeAction, resolveUnitCostSpikeMultiplier } from "./auto-budget.js";
 import { formatPostUnitStatusCard } from "./auto-status-message.js";
 import { detectWebApp } from "./web-app-uat.js";
+import {
+  isTaskAttemptAwaitingVerification,
+  readLatestTaskAttempt,
+  type TaskExecutionAttemptSnapshot,
+} from "./task-execution-domain-operation.js";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+  type RecordTaskTechnicalVerdictInput,
+  type TaskTechnicalVerdictSnapshot,
+} from "./task-verification-domain-operation.js";
+import { internalExecutionInvocation } from "./execution-invocation.js";
+import {
+  captureVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
+  verificationSourceChanged,
+  type VerificationSourceSnapshot,
+} from "./verification-source-integrity.js";
+
+type TaskIdentity = { milestoneId: string; sliceId: string; taskId: string };
+type VerificationAttemptSnapshot = Pick<
+  TaskExecutionAttemptSnapshot,
+  "attemptId" | "state" | "outcome" | "nextStage"
+>;
+
+export interface TaskVerificationAuthority {
+  readLatestTaskAttempt(task: TaskIdentity): VerificationAttemptSnapshot | null;
+  readTaskTechnicalVerdict(attemptId: string): TaskTechnicalVerdictSnapshot | null;
+  recordTaskTechnicalVerdict(input: RecordTaskTechnicalVerdictInput): void;
+}
 
 export interface VerificationContext {
   s: AutoSession;
   ctx: ExtensionContext;
   pi: ExtensionAPI;
+  taskAuthority?: TaskVerificationAuthority;
+  runPostExecutionChecks?: typeof runPostExecutionChecks;
 }
 
 export type VerificationResult = "continue" | "retry" | "pause";
@@ -66,6 +97,12 @@ interface VerificationEvidenceLocation {
   dir: string;
   fileSliceId?: string;
 }
+
+const defaultTaskVerificationAuthority: TaskVerificationAuthority = {
+  readLatestTaskAttempt,
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+};
 
 function resolveVerificationEvidenceLocation(
   basePath: string,
@@ -107,6 +144,63 @@ function getCurrentUnitCostStats(unitId: string): { unitCostUsd: number; rolling
   };
 }
 
+function verificationFailureSummary(
+  failedCommands: string[],
+  fallback: string | null,
+): string {
+  if (failedCommands.length === 0) return fallback ?? "host verification policy";
+  if (failedCommands.length <= 3) return failedCommands.join(", ");
+  return `${failedCommands.slice(0, 3).join(", ")}... and ${failedCommands.length - 3} more`;
+}
+
+function recordHostTechnicalVerdict(input: {
+  context: VerificationContext;
+  attempt: VerificationAttemptSnapshot;
+  result: VerificationGateResult;
+  verdict: RecordTaskTechnicalVerdictInput["verdict"];
+  rationale: string;
+  sourceBefore?: VerificationSourceSnapshot;
+  sourceAfter?: VerificationSourceSnapshot;
+  sourceError?: string;
+}): void {
+  const { s } = input.context;
+  const authority = input.context.taskAuthority ?? defaultTaskVerificationAuthority;
+  if (!isTaskAttemptAwaitingVerification(input.attempt)) {
+    throw new Error("Host verification requires the latest succeeded canonical Attempt at the verify stage");
+  }
+  const startedAtMs = Number.isFinite(input.result.timestamp) ? input.result.timestamp : Date.now();
+  const durationMs = input.result.checks.reduce((total, check) => total + Math.max(0, check.durationMs), 0);
+  const endedAtMs = startedAtMs + durationMs;
+  const commands = input.result.checks.map((check) => check.command).filter(Boolean);
+  const targetSourceRevisions = Object.fromEntries(
+    (input.sourceBefore?.targets ?? []).map((target) => [target.targetId, target.revision]),
+  );
+  authority.recordTaskTechnicalVerdict({
+    invocation: internalExecutionInvocation(`internal:auto:attempt.verify:${input.attempt.attemptId}`),
+    attemptId: input.attempt.attemptId,
+    testedSourceRevision: input.sourceBefore?.aggregateRevision ?? "unavailable",
+    verdict: input.verdict,
+    rationale: input.rationale,
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: commands.length > 0 ? commands.join(" && ") : "gsd-host-verification-policy",
+      workingDirectory: s.basePath,
+      startedAt: new Date(startedAtMs).toISOString(),
+      endedAt: new Date(endedAtMs).toISOString(),
+      exitCode: input.verdict === "pass" ? 0 : (input.result.checks.find((check) => check.exitCode !== 0)?.exitCode ?? 1),
+      observation: input.verdict === "pass" ? "passed" : input.verdict === "fail" ? "failed" : "inconclusive",
+      durableOutputRef: `db://host-verification/${input.attempt.attemptId}`,
+      environment: {
+        node: process.version,
+        platform: process.platform,
+        discoverySource: input.result.discoverySource,
+        targetSourceRevisions,
+        sourceRevisionAfter: input.sourceAfter?.aggregateRevision ?? "unavailable",
+        sourceIntegrity: input.sourceError ?? "stable",
+      },
+    },
+  });
+}
 
 function resolveVerificationTargets(
   basePath: string,
@@ -114,39 +208,18 @@ function resolveVerificationTargets(
   task: TaskRow | null,
   slice: SliceRow | null,
 ): VerificationTarget[] {
-  const registry = createRepositoryRegistryFromPreferences(basePath, prefs);
-  const defaultTargets = defaultRepositoryTargets(registry);
-  const taskTargetRepositories = task?.target_repositories?.length ? task.target_repositories : null;
-  const sliceTargetRepositories = slice?.target_repositories?.length ? slice.target_repositories : null;
-  const explicitIds = taskTargetRepositories ?? sliceTargetRepositories ?? null;
-  const explicitTargetsRequested = Boolean(explicitIds);
-  const requestedIds = explicitIds ?? defaultTargets;
-
-  const targets: VerificationTarget[] = [];
-  const seen = new Set<string>();
-  for (const id of requestedIds) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const repo = registry.byId.get(id);
-    if (!repo) {
-      logWarning("engine", `verification: requested repository "${id}" not found; available: ${Array.from(registry.byId.keys()).join(", ")}`);
-      continue;
-    }
-    targets.push({
-      id: repo.id,
-      cwd: repo.root,
-      // Top-level verification commands override per-repo defaults.
-      preferenceCommands: prefs?.verification_commands?.length
-        ? undefined
-        : repo.verification,
-    });
+  const resolved = resolveVerificationRepositoryTargets(basePath, prefs, task, slice);
+  for (const id of resolved.missingRepositoryIds) {
+    logWarning("engine", `verification: requested repository "${id}" not found`);
   }
-
-  if (!explicitTargetsRequested && targets.length === 0) {
-    const project = registry.byId.get("project");
-    if (project) targets.push({ id: "project", cwd: project.root });
-  }
-  return targets;
+  return resolved.repositories.map((repo) => ({
+    id: repo.id,
+    cwd: repo.root,
+    // Top-level verification commands override per-repo defaults.
+    preferenceCommands: prefs?.verification_commands?.length
+      ? undefined
+      : repo.verification,
+  }));
 }
 
 function hasExplicitVerificationTargets(task: TaskRow | null, slice: SliceRow | null): boolean {
@@ -430,12 +503,57 @@ export async function runPostUnitVerification(
   }
 
   try {
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
+    if (!mid || !sid || !tid) {
+      throw new Error("Host verification requires a canonical Task identity");
+    }
+    const taskAuthority = vctx.taskAuthority ?? defaultTaskVerificationAuthority;
+    const latestAttempt = taskAuthority.readLatestTaskAttempt({
+      milestoneId: mid,
+      sliceId: sid,
+      taskId: tid,
+    });
+    if (!latestAttempt || !isTaskAttemptAwaitingVerification(latestAttempt)) {
+      throw new Error("Host verification requires the latest succeeded canonical Attempt at the verify stage");
+    }
+    const replayedVerdict = taskAuthority.readTaskTechnicalVerdict(latestAttempt.attemptId);
     const effectivePrefs = loadEffectiveGSDPreferences();
     const prefs = effectivePrefs?.preferences;
     const uokFlags = resolveUokFlags(prefs);
+    const autoFixEnabled = prefs?.verification_auto_fix !== false;
+    const maxRetries =
+      typeof prefs?.verification_max_retries === "number"
+        ? prefs.verification_max_retries
+        : 2;
+    const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
+
+    async function handleReplayedFailure(failureContext: string): Promise<VerificationResult> {
+      const pendingRetry = s.pendingVerificationRetry;
+      if (pendingRetry?.unitId === s.currentUnit!.id) {
+        return "retry";
+      }
+      const replayAttempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
+      if (!autoFixEnabled || replayAttempt > maxRetries) {
+        s.verificationRetryCount.delete(retryKey);
+        s.verificationRetryFailureHashes.delete(retryKey);
+        s.pendingVerificationRetry = null;
+        await pauseAuto(ctx, pi, { message: failureContext, category: "unknown" });
+        return "pause";
+      }
+      s.verificationRetryCount.set(retryKey, replayAttempt);
+      s.pendingVerificationRetry = {
+        unitId: s.currentUnit!.id,
+        failureContext,
+        attempt: replayAttempt,
+      };
+      return "retry";
+    }
+
+    if (replayedVerdict && replayedVerdict.verdict !== "pass") {
+      return await handleReplayedFailure(`Stored host verification verdict is ${replayedVerdict.verdict}`);
+    }
 
     // Read task plan verify field
-    const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
     let taskPlanVerify: string | undefined;
     let taskRow: TaskRow | null = null;
     let sliceRow: SliceRow | null = null;
@@ -458,36 +576,70 @@ export async function runPostUnitVerification(
       });
       return "pause";
     }
-    const result = verificationTargets.length <= 1
-      ? runVerificationGate({
-        cwd: verificationTargets[0]?.cwd ?? s.basePath,
-        preferenceCommands: prefs?.verification_commands ?? verificationTargets[0]?.preferenceCommands,
-        taskPlanVerify,
-      })
-      : runVerificationGateForTargets({
-        targets: verificationTargets,
-        preferenceCommands: prefs?.verification_commands,
-        taskPlanVerify,
-      });
+    const sourceTargets = verificationTargets.length > 0
+      ? verificationTargets.map((target) => ({ id: target.id, cwd: target.cwd }))
+      : [{ id: "root", cwd: s.basePath }];
+    const sourceBeforeResult = captureVerificationSourceSnapshot(sourceTargets);
+    if (replayedVerdict) {
+      if (
+        sourceBeforeResult.ok &&
+        replayedVerdict.testedSourceRevision.startsWith("sha256:") &&
+        sourceBeforeResult.snapshot.aggregateRevision === replayedVerdict.testedSourceRevision
+      ) {
+        s.verificationRetryCount.delete(retryKey);
+        s.verificationRetryFailureHashes.delete(retryKey);
+        s.pendingVerificationRetry = null;
+        return "continue";
+      }
+      return await handleReplayedFailure(sourceBeforeResult.ok
+        ? "Stored passing host verdict does not match the current verification source"
+        : sourceBeforeResult.error);
+    }
+    const result: VerificationGateResult = sourceBeforeResult.ok
+      ? verificationTargets.length <= 1
+        ? runVerificationGate({
+          cwd: verificationTargets[0]?.cwd ?? s.basePath,
+          preferenceCommands: prefs?.verification_commands ?? verificationTargets[0]?.preferenceCommands,
+          taskPlanVerify,
+        })
+        : runVerificationGateForTargets({
+          targets: verificationTargets,
+          preferenceCommands: prefs?.verification_commands,
+          taskPlanVerify,
+        })
+      : {
+        passed: false,
+        checks: [{
+          command: "gsd-source-snapshot",
+          exitCode: 1,
+          stdout: "",
+          stderr: sourceBeforeResult.error,
+          durationMs: 0,
+        }],
+        discoverySource: "none",
+        timestamp: Date.now(),
+      };
 
     // Capture runtime errors
-    const runtimeErrors = await captureRuntimeErrors();
-    if (runtimeErrors.length > 0) {
-      result.runtimeErrors = runtimeErrors;
-      if (runtimeErrors.some((e) => e.blocking)) {
-        result.passed = false;
+    if (sourceBeforeResult.ok) {
+      const runtimeErrors = await captureRuntimeErrors();
+      if (runtimeErrors.length > 0) {
+        result.runtimeErrors = runtimeErrors;
+        if (runtimeErrors.some((e) => e.blocking)) {
+          result.passed = false;
+        }
       }
-    }
 
-    // Dependency audit
-    const auditWarnings = runDependencyAudit(s.basePath);
-    if (auditWarnings.length > 0) {
-      result.auditWarnings = auditWarnings;
-      process.stderr.write(
-        `verification-gate: ${auditWarnings.length} audit warning(s)\n`,
-      );
-      for (const w of auditWarnings) {
-        process.stderr.write(`  [${w.severity}] ${w.name}: ${w.title}\n`);
+      // Dependency audit
+      const auditWarnings = runDependencyAudit(s.basePath);
+      if (auditWarnings.length > 0) {
+        result.auditWarnings = auditWarnings;
+        process.stderr.write(
+          `verification-gate: ${auditWarnings.length} audit warning(s)\n`,
+        );
+        for (const w of auditWarnings) {
+          process.stderr.write(`  [${w.severity}] ${w.name}: ${w.title}\n`);
+        }
       }
     }
 
@@ -530,12 +682,6 @@ export async function runPostUnitVerification(
     }
 
     // Auto-fix retry preferences
-    const autoFixEnabled = prefs?.verification_auto_fix !== false;
-    const maxRetries =
-      typeof prefs?.verification_max_retries === "number"
-        ? prefs.verification_max_retries
-        : 2;
-
     if (result.checks.length > 0) {
       const passCount = result.checks.filter((c) => c.exitCode === 0).length;
       const total = result.checks.length;
@@ -570,51 +716,17 @@ export async function runPostUnitVerification(
     }
 
     // Write verification evidence JSON
-    const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
     const attempt = s.verificationRetryCount.get(retryKey) ?? 0;
-    const taskAlreadyComplete = taskRow?.status === "complete" || taskRow?.status === "done";
-    if (mid && sid && tid) {
-      try {
-        const evidenceLocation = resolveVerificationEvidenceLocation(s.basePath, mid, sid);
-        if (evidenceLocation) {
-          if (result.passed) {
-            writeVerificationJSON(
-              result,
-              evidenceLocation.dir,
-              tid,
-              s.currentUnit.id,
-              undefined,
-              undefined,
-              evidenceLocation.fileSliceId,
-            );
-          } else {
-            const nextAttempt = attempt + 1;
-            const includeRetryMetadata =
-              !result.passed &&
-              !taskAlreadyComplete &&
-              verdict.retryable &&
-              autoFixEnabled &&
-              nextAttempt <= maxRetries;
-            writeVerificationJSON(
-              result,
-              evidenceLocation.dir,
-              tid,
-              s.currentUnit.id,
-              includeRetryMetadata ? nextAttempt : undefined,
-              includeRetryMetadata ? maxRetries : undefined,
-              evidenceLocation.fileSliceId,
-            );
-          }
-        }
-      } catch (evidenceErr) {
-        logWarning("engine", `verification-evidence write error: ${(evidenceErr as Error).message}`);
-      }
-    }
-
+    const browserUatContinuation =
+      verdict.reason === "no-host-checks" &&
+      detectWebApp(s.basePath) &&
+      !result.runtimeErrors?.some((error) => error.blocking) &&
+      isTaskAttemptAwaitingVerification(latestAttempt);
     // ── Post-execution checks (run after main verification passes for execute-task units) ──
     let postExecChecks: PostExecutionCheckJSON[] | undefined;
     let postExecBlockingFailure = false;
     let postExecFailureSummary: string | null = null;
+    let postExecInfrastructureError: string | null = null;
 
     if (result.passed && mid && sid && tid) {
       // Check preferences — respect enhanced_verification and enhanced_verification_post
@@ -636,7 +748,7 @@ export async function runPostUnitVerification(
             );
 
             // Run post-execution checks
-            const postExecResult: PostExecutionResult = runPostExecutionChecks(
+            const postExecResult: PostExecutionResult = (vctx.runPostExecutionChecks ?? runPostExecutionChecks)(
               taskRow,
               priorTasks,
               s.basePath
@@ -741,43 +853,119 @@ export async function runPostUnitVerification(
             }
           }
         } catch (postExecErr) {
-          // Post-execution check errors are non-fatal — log and continue
-          logWarning("engine", `gsd-post-exec: error — ${(postExecErr as Error).message}`);
+          postExecInfrastructureError = postExecErr instanceof Error
+            ? postExecErr.message
+            : String(postExecErr);
+          postExecFailureSummary = `Post-execution checks could not complete: ${postExecInfrastructureError}`;
+          logWarning("engine", `gsd-post-exec: infrastructure error — ${postExecInfrastructureError}`);
+          ctx.ui.notify(postExecFailureSummary, "error");
         }
-      }
-    }
-
-    // Re-write verification evidence JSON with post-execution checks
-    if (postExecChecks && postExecChecks.length > 0 && mid && sid && tid) {
-      try {
-        const evidenceLocation = resolveVerificationEvidenceLocation(s.basePath, mid, sid);
-        if (evidenceLocation) {
-          // Add postExecutionChecks to the result for the JSON write
-          const resultWithPostExec = {
-            ...result,
-            // Mark as failed if there was a blocking post-exec failure
-            passed: result.passed && !postExecBlockingFailure,
-          };
-          // Manually write with postExecutionChecks field
-          writeVerificationJSONWithPostExec(
-            resultWithPostExec,
-            evidenceLocation.dir,
-            tid,
-            s.currentUnit.id,
-            postExecChecks,
-            postExecBlockingFailure ? attempt + 1 : undefined,
-            postExecBlockingFailure ? maxRetries : undefined,
-            evidenceLocation.fileSliceId,
-          );
-        }
-      } catch (evidenceErr) {
-        logWarning("engine", `verification-evidence: post-exec write error — ${(evidenceErr as Error).message}`);
       }
     }
 
     // Update result.passed based on post-execution checks
-    if (postExecBlockingFailure) {
+    if (postExecBlockingFailure || postExecInfrastructureError) {
       result.passed = false;
+    }
+    if (postExecInfrastructureError) {
+      result.checks.push({
+        command: "gsd-post-execution-checks",
+        exitCode: 1,
+        stdout: "",
+        stderr: postExecInfrastructureError,
+        durationMs: 0,
+      });
+    }
+
+    const sourceAfterResult = sourceBeforeResult.ok
+      ? captureVerificationSourceSnapshot(sourceTargets)
+      : sourceBeforeResult;
+    let sourceError = sourceBeforeResult.ok ? undefined : sourceBeforeResult.error;
+    if (sourceBeforeResult.ok && !sourceAfterResult.ok) {
+      sourceError = sourceAfterResult.error;
+    } else if (
+      sourceBeforeResult.ok &&
+      sourceAfterResult.ok &&
+      verificationSourceChanged(sourceBeforeResult.snapshot, sourceAfterResult.snapshot)
+    ) {
+      sourceError = "Verification target source changed while host checks were running";
+    }
+    if (sourceError) {
+      result.passed = false;
+      result.checks.push({
+        command: "gsd-source-integrity",
+        exitCode: 1,
+        stdout: "",
+        stderr: sourceError,
+        durationMs: 0,
+      });
+    }
+    const hostTechnicalPassed =
+      !sourceError &&
+      !postExecInfrastructureError &&
+      (result.passed || browserUatContinuation);
+    const hostTechnicalVerdict: RecordTaskTechnicalVerdictInput["verdict"] = sourceError || postExecInfrastructureError
+      ? "inconclusive"
+      : hostTechnicalPassed
+        ? "pass"
+        : "fail";
+    if (mid && sid && tid) {
+      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result);
+      if (sourceError) {
+        rationale = sourceError;
+      } else if (postExecInfrastructureError) {
+        rationale = postExecFailureSummary ?? postExecInfrastructureError;
+      } else if (hostTechnicalPassed) {
+        rationale = browserUatContinuation
+          ? "Canonical executor Result succeeded; browser-facing behavior continues to automated slice UAT."
+          : "All host-owned technical verification checks passed.";
+      }
+      recordHostTechnicalVerdict({
+        context: vctx,
+        attempt: latestAttempt,
+        result,
+        verdict: hostTechnicalVerdict,
+        rationale,
+        ...(sourceBeforeResult.ok ? { sourceBefore: sourceBeforeResult.snapshot } : {}),
+        ...(sourceAfterResult.ok ? { sourceAfter: sourceAfterResult.snapshot } : {}),
+        ...(sourceError ? { sourceError } : {}),
+      });
+
+      try {
+        const evidenceLocation = resolveVerificationEvidenceLocation(s.basePath, mid, sid);
+        if (evidenceLocation) {
+          if (postExecChecks && postExecChecks.length > 0) {
+            writeVerificationJSONWithPostExec(
+              result,
+              evidenceLocation.dir,
+              tid,
+              s.currentUnit.id,
+              postExecChecks,
+              postExecBlockingFailure ? attempt + 1 : undefined,
+              postExecBlockingFailure ? maxRetries : undefined,
+              evidenceLocation.fileSliceId,
+            );
+          } else {
+            const nextAttempt = attempt + 1;
+            const includeRetryMetadata =
+              !result.passed &&
+              !browserUatContinuation &&
+              autoFixEnabled &&
+              nextAttempt <= maxRetries;
+            writeVerificationJSON(
+              result,
+              evidenceLocation.dir,
+              tid,
+              s.currentUnit.id,
+              includeRetryMetadata ? nextAttempt : undefined,
+              includeRetryMetadata ? maxRetries : undefined,
+              evidenceLocation.fileSliceId,
+            );
+          }
+        }
+      } catch (evidenceErr) {
+        logWarning("engine", `verification-evidence write error: ${(evidenceErr as Error).message}`);
+      }
     }
 
     // Emit Layer 2 verify_result event with the final, post-exec verdict so hooks
@@ -814,68 +1002,16 @@ export async function runPostUnitVerification(
     }
 
     // ── Auto-fix retry logic ──
-    if (result.passed) {
+    if (hostTechnicalPassed) {
       s.verificationRetryCount.delete(retryKey);
       s.verificationRetryFailureHashes.delete(retryKey);
       s.pendingVerificationRetry = null;
-      return "continue";
-    } else if (
-      verdict.reason === "no-host-checks" &&
-      taskAlreadyComplete &&
-      detectWebApp(s.basePath) &&
-      !result.runtimeErrors?.some((e) => e.blocking)
-    ) {
-      s.verificationRetryCount.delete(retryKey);
-      s.verificationRetryFailureHashes.delete(retryKey);
-      s.pendingVerificationRetry = null;
-      ctx.ui.notify(
-        "No task-level host verification command was found for a completed browser-facing task; continuing so slice UAT can verify the UI with browser tools.",
-        "warning",
-      );
-      return "continue";
-    } else if (verdict.reason === "no-host-checks") {
-      s.verificationRetryCount.delete(retryKey);
-      s.verificationRetryFailureHashes.delete(retryKey);
-      s.pendingVerificationRetry = null;
-      const pauseMessage = `Verification failed: ${verdict.failureContext}`;
-      ctx.ui.notify(
-        `Verification gate FAILED — ${verdict.failureContext}`,
-        "error",
-      );
-      process.stderr.write(`verification-gate: ${verdict.failureContext}\n`);
-      await pauseAuto(ctx, pi, {
-        message: pauseMessage,
-        category: "unknown",
-      });
-      return "pause";
-    } else if (postExecBlockingFailure) {
-      // Post-execution failures are cross-task consistency issues — retrying the same task won't fix them.
-      // Skip retry and pause immediately for human review.
-      s.verificationRetryCount.delete(retryKey);
-      s.verificationRetryFailureHashes.delete(retryKey);
-      s.pendingVerificationRetry = null;
-      const failureDetail = postExecFailureSummary ?? "unknown post-execution check failure";
-      ctx.ui.notify(
-        `Post-execution checks failed (${failureDetail}) — pausing for human review`,
-        "error",
-      );
-      await pauseAuto(ctx, pi, {
-        message: `Post-execution checks failed: ${failureDetail}.`,
-        category: "unknown",
-      });
-      return "pause";
-    } else if (taskAlreadyComplete) {
-      s.verificationRetryCount.delete(retryKey);
-      s.verificationRetryFailureHashes.delete(retryKey);
-      s.pendingVerificationRetry = null;
-      logWarning(
-        "engine",
-        `Verification gate failed for completed task ${s.currentUnit.id}; treating failure as non-blocking to avoid re-dispatching an already-complete task.`,
-      );
-      ctx.ui.notify(
-        `Verification failed after ${tid ?? s.currentUnit.id} was already complete; continuing without retry.`,
-        "warning",
-      );
+      if (browserUatContinuation) {
+        ctx.ui.notify(
+          "No task-level command was available; the canonical executor Result passed and browser-facing behavior will continue to automated slice UAT.",
+          "warning",
+        );
+      }
       return "continue";
     } else if (autoFixEnabled && attempt + 1 <= maxRetries) {
       const { unitCostUsd, rollingAvgUsd } = getCurrentUnitCostStats(s.currentUnit.id);
@@ -904,7 +1040,7 @@ export async function runPostUnitVerification(
         );
       }
       const nextAttempt = attempt + 1;
-      const failureContext = verdict.failureContext || formatFailureContext(result);
+      const failureContext = postExecFailureSummary || verdict.failureContext || formatFailureContext(result);
       const failureSignature = formatFailureSignature(result);
       s.verificationRetryCount.set(retryKey, nextAttempt);
       s.pendingVerificationRetry = {
@@ -916,9 +1052,7 @@ export async function runPostUnitVerification(
       const failedCmds = result.checks
         .filter((c) => c.exitCode !== 0)
         .map((c) => c.command);
-      const cmdSummary = failedCmds.length <= 3
-        ? failedCmds.join(", ")
-        : `${failedCmds.slice(0, 3).join(", ")}... and ${failedCmds.length - 3} more`;
+      const cmdSummary = verificationFailureSummary(failedCmds, postExecFailureSummary);
       ctx.ui.notify(
         `Verification failed (${cmdSummary}) — auto-fix attempt ${nextAttempt}/${maxRetries}`,
         "warning",

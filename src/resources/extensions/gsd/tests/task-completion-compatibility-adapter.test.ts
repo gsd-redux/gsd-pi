@@ -2,6 +2,7 @@
 // File Purpose: Executable contract for staged Task completion and verified legacy publication.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -16,7 +17,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { _setDomainOperationFaultForTest } from "../db/domain-operation.js";
+import {
+  _setDomainOperationFaultForTest,
+  executeDomainOperation,
+} from "../db/domain-operation.js";
 import { clearParseCache } from "../files.js";
 import {
   _getAdapter,
@@ -25,6 +29,12 @@ import {
 } from "../gsd-db.js";
 import { clearPathCache } from "../paths.js";
 import { claimTaskAttempt } from "../task-execution-domain-operation.js";
+import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
+import {
+  appendKernelCheckpoint,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 
 interface TaskIdentity {
@@ -67,6 +77,7 @@ interface StagedTaskCompletionReceipt {
   attemptId: string;
   resultId: string;
   summaryPath: string;
+  nextStage: "verify" | "route";
 }
 
 interface PublishedTaskCompletionReceipt {
@@ -112,9 +123,59 @@ function invocation(key: string): ExecutionInvocation {
   };
 }
 
+function recordPassingHostVerdict(basePath: string, attemptId: string): void {
+  const source = captureVerificationSourceSnapshot([{ id: "project", cwd: basePath }]);
+  assert.equal(source.ok, true, source.ok ? undefined : source.error);
+  recordTaskTechnicalVerdict({
+    invocation: invocation(`pi:host-verification:${attemptId}`),
+    attemptId,
+    testedSourceRevision: source.snapshot.aggregateRevision,
+    verdict: "pass",
+    rationale: "Host verification passed.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "node --test",
+      workingDirectory: basePath,
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 0,
+      observation: "passed",
+      durableOutputRef: `db://host-verification/${attemptId}`,
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+}
+
+function recordFailingHostVerdict(basePath: string, attemptId: string): void {
+  recordTaskTechnicalVerdict({
+    invocation: invocation(`pi:host-verification-failed:${attemptId}`),
+    attemptId,
+    testedSourceRevision: "git:test-source-revision",
+    verdict: "fail",
+    rationale: "Host verification failed.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "node --test",
+      workingDirectory: basePath,
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 1,
+      observation: "failed",
+      durableOutputRef: `db://host-verification/${attemptId}`,
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+}
+
 function createFixture(): { basePath: string; planPath: string; attemptId: string } {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-task-completion-adapter-"));
   tempDirs.add(basePath);
+  execFileSync("git", ["init", "-q"], { cwd: basePath });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: basePath });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: basePath });
+  writeFileSync(join(basePath, "tracked.txt"), "verified\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: basePath });
+  execFileSync("git", ["commit", "-qm", "fixture"], { cwd: basePath });
   const phaseDir = join(basePath, ".gsd", "phases", "01-test");
   mkdirSync(phaseDir, { recursive: true });
   const planPath = join(phaseDir, "01-01-PLAN.md");
@@ -287,10 +348,44 @@ test("a summary projection failure leaves the immutable Result and staged legacy
   assert.equal(taskState().status, "in_progress");
 });
 
+test("staging does not rewrite the unchanged PLAN projection", async (t) => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath, planPath } = createFixture();
+  writeFileSync(planPath, "# user-owned staging sentinel\n");
+  const originalRename = fsPromises.rename.bind(fsPromises);
+  t.mock.method(fsPromises, "rename", async (...args: Parameters<typeof fsPromises.rename>) => {
+    if (String(args[1]) === planPath) {
+      throw new Error("PLAN projection must not run while staging");
+    }
+    return originalRename(...args);
+  });
+
+  const staged = await stageTaskCompletion(stageInput(basePath));
+
+  assert.equal(staged.nextStage, "verify");
+  assert.equal(existsSync(staged.summaryPath), true);
+  assert.equal(readFileSync(planPath, "utf8"), "# user-owned staging sentinel\n");
+});
+
+test("a newly committed settlement rejects an already-closed legacy Task", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  db().prepare(`
+    UPDATE tasks SET status = 'complete', completed_at = '2026-07-12T00:10:00.000Z'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+
+  await assert.rejects(stageTaskCompletion(stageInput(basePath)), /closed|complete|replay/i);
+
+  assert.equal(count("workflow_attempt_results"), 0);
+  assert.equal(row("SELECT attempt_state FROM workflow_execution_attempts").attempt_state, "running");
+});
+
 test("verified publication alone completes the legacy Task and checks its projection", async () => {
   const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
   const { basePath, planPath, attemptId } = createFixture();
   const staged = await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
 
   const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
 
@@ -322,10 +417,168 @@ test("verified publication alone completes the legacy Task and checks its projec
   );
 });
 
+for (const mutation of ["tracked", "untracked"] as const) {
+  test(`verified publication rejects ${mutation} source mutation after host verification`, async () => {
+    const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+    const { basePath, attemptId } = createFixture();
+    await stageTaskCompletion(stageInput(basePath));
+    recordPassingHostVerdict(basePath, attemptId);
+    const path = mutation === "tracked" ? "tracked.txt" : "untracked.txt";
+    writeFileSync(join(basePath, path), "changed after verification\n");
+
+    await assert.rejects(
+      publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+      /source|revision|verification/i,
+    );
+
+    assert.equal(taskState().status, "in_progress");
+    assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+  });
+}
+
+test("verified publication rejects a passing verdict when verify is no longer the current Kernel head", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.route-after-verification",
+    idempotencyKey: "test/task-completion/route-after-verification",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { attemptId },
+  }, (context) => {
+    const scope = row(`
+      SELECT attempt.lifecycle_id, checkpoint.kernel_checkpoint_id
+      FROM workflow_execution_attempts attempt
+      JOIN workflow_kernel_checkpoints checkpoint
+        ON checkpoint.attempt_id = attempt.attempt_id
+      WHERE attempt.attempt_id = '${attemptId.replaceAll("'", "''")}'
+        AND checkpoint.next_stage = 'verify'
+    `);
+    appendKernelCheckpoint(context, {
+      lifecycleId: String(scope.lifecycle_id),
+      attemptId,
+      nextStage: "route",
+      previousKernelCheckpointId: String(scope.kernel_checkpoint_id),
+    });
+    return {
+      events: [{
+        eventType: "test.route-after-verification",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: { attemptId },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/task-completion/route-after-verification",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+
+  await assert.rejects(
+    publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+    /verify|verdict|evidence|publish/i,
+  );
+  assert.equal(taskState().status, "in_progress");
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+});
+
+test("a failed host verdict cannot be replaced with pass or published", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  recordFailingHostVerdict(basePath, attemptId);
+
+  assert.throws(
+    () => recordPassingHostVerdict(basePath, attemptId),
+    /already|one|verdict|verified|verify stage/i,
+  );
+  await assert.rejects(
+    publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+    /verify|verdict|evidence|publish/i,
+  );
+  assert.equal(taskState().status, "in_progress");
+  assert.equal(taskState().completed_at, null);
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+  assert.equal(count("workflow_technical_verdicts"), 1);
+  assert.equal(row("SELECT verdict FROM workflow_technical_verdicts").verdict, "fail");
+});
+
+test("superseding the host criterion invalidates its old passing verdict for publication", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
+  const criterionId = String(row(`
+    SELECT criterion_id FROM workflow_acceptance_criteria
+    WHERE criterion_key = 'host-technical-verification'
+  `).criterion_id);
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.supersede-host-criterion",
+    idempotencyKey: "test/task-completion/supersede-host-criterion",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { attemptId, criterionId },
+  }, (context) => {
+    db().prepare(`
+      INSERT INTO workflow_acceptance_criteria (
+        criterion_id, criterion_key, project_id, lifecycle_id, requirement_id,
+        criterion_kind, evidence_class, required, description,
+        supersedes_criterion_id, created_at, operation_id,
+        project_revision, authority_epoch
+      )
+      SELECT
+        'host-technical-verification-v2', criterion_key, project_id, lifecycle_id,
+        requirement_id, criterion_kind, evidence_class, required,
+        'Updated host-owned technical verification policy.', criterion_id,
+        '2026-07-12T00:03:00.000Z', :operation_id, :project_revision, :authority_epoch
+      FROM workflow_acceptance_criteria
+      WHERE criterion_id = :criterion_id
+    `).run({
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+      ":criterion_id": criterionId,
+    });
+    return {
+      events: [{
+        eventType: "test.host-criterion.superseded",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: { attemptId, criterionId },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/task-completion/host-criterion-v2",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+
+  await assert.rejects(
+    publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+    /verify|verdict|evidence|publish/i,
+  );
+  assert.equal(taskState().status, "in_progress");
+  assert.equal(taskState().completed_at, null);
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+});
+
 test("a publish fault rolls canonical closeout and legacy completion back together", async () => {
   const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
   const { basePath, attemptId } = createFixture();
   await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
   _setDomainOperationFaultForTest("after-mutation");
 
   await assert.rejects(
@@ -358,6 +611,7 @@ test("exact stage and publication replay repair projections without duplicate fa
   const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
   const { basePath, planPath, attemptId } = createFixture();
   const staged = await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
   const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
   const beforeReplay = {
     revision: row("SELECT revision FROM project_authority").revision,

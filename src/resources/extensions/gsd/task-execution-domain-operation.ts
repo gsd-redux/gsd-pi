@@ -18,6 +18,7 @@ import {
   type ClaimRunningAttemptResult,
 } from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
 
 export interface ClaimTaskAttemptInput {
   invocation: ExecutionInvocation;
@@ -64,9 +65,25 @@ export interface SettleTaskAttemptReceipt {
 export interface TaskExecutionAttemptSnapshot {
   attemptId: string;
   attemptNumber: number;
+  retryOfAttemptId?: string;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
   nextStage: KernelStage;
+  coordinationDispatchId: number;
+  workerId: string;
+  milestoneLeaseToken: number;
+}
+
+export function isTaskAttemptAwaitingVerification<
+  T extends Pick<TaskExecutionAttemptSnapshot, "state" | "outcome" | "nextStage">,
+>(attempt: T | null | undefined): attempt is T & {
+  state: "settled";
+  outcome: "succeeded";
+  nextStage: "verify";
+} {
+  return attempt?.state === "settled" &&
+    attempt.outcome === "succeeded" &&
+    attempt.nextStage === "verify";
 }
 
 interface ClaimedAttemptRow {
@@ -93,9 +110,13 @@ interface SettledResultRow {
 interface AttemptSnapshotRow {
   attempt_id: string;
   attempt_number: number;
+  retry_of_attempt_id: string | null;
   attempt_state: "running" | "settled";
   outcome: TaskExecutionAttemptSnapshot["outcome"] | null;
   next_stage: KernelStage;
+  coordination_dispatch_id: number;
+  worker_id: string;
+  milestone_lease_token: number;
 }
 
 function taskIdentity(input: ClaimTaskAttemptInput): string {
@@ -167,6 +188,10 @@ function claimAttempt(
     taskId: input.task.taskId,
     lifecycleStatus: "in_progress",
     adoptedFromStatus: "ready",
+  });
+  ensureHostTechnicalCriterion(context, {
+    projectId: context.projectId,
+    lifecycleId: lifecycle.lifecycleId,
   });
   return claimRunningAttempt(context, {
     lifecycleId: lifecycle.lifecycleId,
@@ -242,15 +267,21 @@ function snapshot(row: AttemptSnapshotRow | undefined): TaskExecutionAttemptSnap
   return {
     attemptId: row.attempt_id,
     attemptNumber: row.attempt_number,
+    ...(row.retry_of_attempt_id ? { retryOfAttemptId: row.retry_of_attempt_id } : {}),
     state: row.attempt_state,
     ...(row.outcome ? { outcome: row.outcome } : {}),
     nextStage: row.next_stage,
+    coordinationDispatchId: row.coordination_dispatch_id,
+    workerId: row.worker_id,
+    milestoneLeaseToken: row.milestone_lease_token,
   };
 }
 
 export function readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null {
   const row = getDb().prepare(`
-    SELECT attempt.attempt_id, attempt.attempt_number, attempt.attempt_state,
+    SELECT attempt.attempt_id, attempt.attempt_number, attempt.retry_of_attempt_id,
+           attempt.attempt_state,
+           attempt.coordination_dispatch_id, attempt.worker_id, attempt.milestone_lease_token,
            result.outcome, checkpoint.next_stage
     FROM workflow_execution_attempts attempt
     LEFT JOIN workflow_attempt_results result
@@ -270,7 +301,9 @@ export function readLatestTaskAttempt(
   task: ClaimTaskAttemptInput["task"],
 ): TaskExecutionAttemptSnapshot | null {
   const row = getDb().prepare(`
-    SELECT attempt.attempt_id, attempt.attempt_number, attempt.attempt_state,
+    SELECT attempt.attempt_id, attempt.attempt_number, attempt.retry_of_attempt_id,
+           attempt.attempt_state,
+           attempt.coordination_dispatch_id, attempt.worker_id, attempt.milestone_lease_token,
            result.outcome, checkpoint.next_stage
     FROM workflow_item_lifecycles lifecycle
     JOIN workflow_execution_attempts attempt
@@ -315,6 +348,20 @@ function terminalizeDispatch(
     ":lease_token": attempt.milestone_lease_token,
   });
   if (Number((result as { changes?: number }).changes ?? 0) !== 1) {
+    if (outcome === "interrupted") {
+      const canceled = getDb().prepare(`
+        SELECT 1 AS present FROM unit_dispatches
+        WHERE id = :dispatch_id
+          AND worker_id = :worker_id
+          AND milestone_lease_token = :lease_token
+          AND status = 'canceled'
+      `).get({
+        ":dispatch_id": attempt.coordination_dispatch_id,
+        ":worker_id": attempt.worker_id,
+        ":lease_token": attempt.milestone_lease_token,
+      });
+      if (canceled) return;
+    }
     throw new Error("Task execution settlement did not terminalize exactly one coordination dispatch");
   }
 }

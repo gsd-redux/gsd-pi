@@ -13,6 +13,7 @@ import {
 import type { ExecutionInvocation } from "./execution-invocation.js";
 import {
   getTask,
+  getSlice,
   insertTask,
   insertVerificationEvidence,
   transaction,
@@ -20,6 +21,12 @@ import {
 import { renderPlanCheckboxes, renderTaskSummary } from "./markdown-renderer.js";
 import { clearPathCache, resolveTaskFile } from "./paths.js";
 import { settleTaskAttempt } from "./task-execution-domain-operation.js";
+import { readTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import {
+  captureVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
+} from "./verification-source-integrity.js";
 import { renderSummaryContent } from "./workflow-projections.js";
 
 export interface TaskCompletionIdentity {
@@ -76,6 +83,7 @@ export interface PublishedTaskCompletionReceipt {
 interface AttemptRow {
   attempt_id: string;
   lifecycle_id: string;
+  kernel_checkpoint_id: string;
 }
 
 export type TaskCompletionAuthority = "canonical" | "legacy";
@@ -152,7 +160,12 @@ export function resolveTaskCompletionAuthority(
     ":task_id": task.taskId,
   }) as Record<string, unknown> | undefined;
 
-  if (!lifecycle) return "legacy";
+  if (!lifecycle) {
+    if (idempotencyKey) {
+      throw new Error("Canonical Task completion lifecycle is missing for private invocation");
+    }
+    return "legacy";
+  }
   if (Number(lifecycle["has_running_attempt"]) === 1) return "canonical";
   throw new Error("Canonical Task completion requires a running or replay-matched Attempt");
 }
@@ -176,10 +189,6 @@ function runningAttemptId(task: TaskCompletionIdentity): string {
   }) as Record<string, unknown> | undefined;
   if (!attempt) throw new Error("Task completion requires a running canonical Attempt");
   return String(attempt["attempt_id"]);
-}
-
-function resolveStageAttempt(input: StageTaskCompletionInput): string {
-  return replayAttemptId(input.invocation.idempotencyKey, input.task) ?? runningAttemptId(input.task);
 }
 
 function stageLegacyTask(input: StageTaskCompletionInput): void {
@@ -217,7 +226,7 @@ function stageLegacyTask(input: StageTaskCompletionInput): void {
   });
 }
 
-async function renderTaskCompletionProjections(
+async function renderTaskSummaryProjection(
   basePath: string,
   task: TaskCompletionIdentity,
 ): Promise<string> {
@@ -229,10 +238,8 @@ async function renderTaskCompletionProjections(
       task.taskId,
     );
     if (!wroteSummary) throw new Error("summary projection write returned false");
-    const wrotePlan = await renderPlanCheckboxes(basePath, task.milestoneId, task.sliceId);
-    if (!wrotePlan) throw new Error("plan projection write returned false");
   } catch (error) {
-    throw new Error(`Task completion projection failed: ${(error as Error).message}`);
+    throw new Error(`Task completion summary projection failed: ${(error as Error).message}`);
   }
 
   clearPathCache();
@@ -247,10 +254,30 @@ async function renderTaskCompletionProjections(
   return summaryPath;
 }
 
+async function renderPublishedTaskCompletionProjections(
+  basePath: string,
+  task: TaskCompletionIdentity,
+): Promise<string> {
+  const summaryPath = await renderTaskSummaryProjection(basePath, task);
+  try {
+    const wrotePlan = await renderPlanCheckboxes(basePath, task.milestoneId, task.sliceId);
+    if (!wrotePlan) throw new Error("plan projection write returned false");
+  } catch (error) {
+    throw new Error(`Task completion PLAN projection failed: ${(error as Error).message}`);
+  }
+  return summaryPath;
+}
+
 export async function stageTaskCompletion(
   input: StageTaskCompletionInput,
 ): Promise<StagedTaskCompletionReceipt> {
-  const attemptId = resolveStageAttempt(input);
+  const replayAttempt = replayAttemptId(input.invocation.idempotencyKey, input.task);
+  const task = requireTask(input.task);
+  const legacyClosed = task.status === "complete" || task.status === "done";
+  if (legacyClosed && !replayAttempt) {
+    throw new Error("A newly committed Task settlement cannot target an already-complete legacy Task");
+  }
+  const attemptId = replayAttempt ?? runningAttemptId(input.task);
   const blocked = input.completion.blockerDiscovered;
   const settlement = settleTaskAttempt({
     invocation: input.invocation,
@@ -275,11 +302,10 @@ export async function stageTaskCompletion(
     },
   });
 
-  const task = requireTask(input.task);
-  if (task.status !== "complete" && task.status !== "done") {
+  if (!legacyClosed) {
     stageLegacyTask(input);
   }
-  const summaryPath = await renderTaskCompletionProjections(input.basePath, input.task);
+  const summaryPath = await renderTaskSummaryProjection(input.basePath, input.task);
   return {
     status: settlement.status,
     attemptId,
@@ -291,7 +317,7 @@ export async function stageTaskCompletion(
 
 function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): AttemptRow {
   const attempt = getDb().prepare(`
-    SELECT attempt.attempt_id, attempt.lifecycle_id
+    SELECT attempt.attempt_id, attempt.lifecycle_id, checkpoint.kernel_checkpoint_id
     FROM workflow_execution_attempts attempt
     JOIN workflow_attempt_results result
       ON result.attempt_id = attempt.attempt_id
@@ -299,34 +325,62 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
     JOIN workflow_item_lifecycles lifecycle
       ON lifecycle.lifecycle_id = attempt.lifecycle_id
      AND lifecycle.project_id = attempt.project_id
+    JOIN workflow_kernel_checkpoints checkpoint
+      ON checkpoint.attempt_id = attempt.attempt_id
+     AND checkpoint.project_id = attempt.project_id
+    JOIN workflow_acceptance_criteria criterion
+      ON criterion.lifecycle_id = attempt.lifecycle_id
+     AND criterion.project_id = attempt.project_id
+     AND criterion.criterion_key = 'host-technical-verification'
+    JOIN workflow_technical_verdicts verdict
+      ON verdict.criterion_id = criterion.criterion_id
+     AND verdict.lifecycle_id = attempt.lifecycle_id
+     AND verdict.attempt_id = attempt.attempt_id
+     AND verdict.project_id = attempt.project_id
+    JOIN workflow_verification_evidence evidence
+      ON evidence.verdict_id = verdict.verdict_id
+     AND evidence.attempt_id = attempt.attempt_id
+     AND evidence.project_id = attempt.project_id
     WHERE attempt.attempt_id = :attempt_id
       AND lifecycle.item_kind = 'task'
       AND lifecycle.milestone_id = :milestone_id
       AND lifecycle.slice_id = :slice_id
       AND lifecycle.task_id = :task_id
+      AND lifecycle.lifecycle_status = 'in_progress'
+      AND attempt.attempt_state = 'settled'
       AND result.outcome = 'succeeded'
+      AND checkpoint.next_stage = 'verify'
+      AND verdict.verdict = 'pass'
+      AND evidence.observation = 'passed'
+      AND evidence.source_revision = verdict.tested_source_revision
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_kernel_checkpoints successor
+        WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_acceptance_criteria successor
+        WHERE successor.supersedes_criterion_id = criterion.criterion_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_technical_verdicts successor
+        WHERE successor.supersedes_verdict_id = verdict.verdict_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_technical_verdicts other
+        WHERE other.attempt_id = attempt.attempt_id
+          AND other.project_id = attempt.project_id
+          AND other.verdict_id != verdict.verdict_id
+      )
   `).get({
     ":attempt_id": input.attemptId,
     ":milestone_id": input.task.milestoneId,
     ":slice_id": input.task.sliceId,
     ":task_id": input.task.taskId,
   }) as unknown as AttemptRow | undefined;
-  if (!attempt) throw new Error("Verified Task publication requires a succeeded canonical Attempt Result");
+  if (!attempt) {
+    throw new Error("Verified Task publication requires a succeeded Attempt with passing host Technical Verdict evidence");
+  }
   return attempt;
-}
-
-function kernelHead(attemptId: string): Record<string, unknown> {
-  const head = getDb().prepare(`
-    SELECT kernel_checkpoint_id
-    FROM workflow_kernel_checkpoints
-    WHERE attempt_id = :attempt_id
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_kernel_checkpoints successor
-        WHERE successor.previous_kernel_checkpoint_id = workflow_kernel_checkpoints.kernel_checkpoint_id
-      )
-  `).get({ ":attempt_id": attemptId }) as Record<string, unknown> | undefined;
-  if (!head) throw new Error("Verified Task publication requires a current Kernel checkpoint");
-  return head;
 }
 
 function publishCanonicalCompletion(
@@ -361,7 +415,7 @@ function publishCanonicalCompletion(
       lifecycleStatus: "completed",
     });
 
-    let previousCheckpointId = String(kernelHead(attempt.attempt_id)["kernel_checkpoint_id"]);
+    let previousCheckpointId = attempt.kernel_checkpoint_id;
     for (const nextStage of ["route", "closeout", "settled"] as const) {
       const checkpoint = appendKernelCheckpoint(context, {
         lifecycleId: attempt.lifecycle_id,
@@ -393,11 +447,36 @@ function publishCanonicalCompletion(
   return operation.status;
 }
 
+function requireCurrentVerifiedSource(input: PublishVerifiedTaskCompletionInput): void {
+  if (readDomainOperationFence(input.invocation.idempotencyKey).replay) return;
+
+  const verdict = readTaskTechnicalVerdict(input.attemptId);
+  if (!verdict || verdict.verdict !== "pass") {
+    throw new Error("Verified Task publication requires a passing host Technical Verdict");
+  }
+  const preferences = loadEffectiveGSDPreferences(input.basePath)?.preferences;
+  const task = getTask(input.task.milestoneId, input.task.sliceId, input.task.taskId);
+  const slice = getSlice(input.task.milestoneId, input.task.sliceId);
+  const resolved = resolveVerificationRepositoryTargets(input.basePath, preferences, task, slice);
+  if (resolved.explicitTargetsRequested && resolved.repositories.length === 0) {
+    throw new Error("Verified Task publication cannot resolve its verification target repositories");
+  }
+  const targets = resolved.repositories.length > 0
+    ? resolved.repositories.map((repository) => ({ id: repository.id, cwd: repository.root }))
+    : [{ id: "root", cwd: input.basePath }];
+  const source = captureVerificationSourceSnapshot(targets);
+  if (!source.ok) throw new Error(source.error);
+  if (source.snapshot.aggregateRevision !== verdict.testedSourceRevision) {
+    throw new Error("Verified Task publication source no longer matches its host verification evidence");
+  }
+}
+
 export async function publishVerifiedTaskCompletion(
   input: PublishVerifiedTaskCompletionInput,
 ): Promise<PublishedTaskCompletionReceipt> {
+  requireCurrentVerifiedSource(input);
   const status = publishCanonicalCompletion(input);
-  const summaryPath = await renderTaskCompletionProjections(input.basePath, input.task);
+  const summaryPath = await renderPublishedTaskCompletionProjections(input.basePath, input.task);
   return {
     status,
     attemptId: input.attemptId,

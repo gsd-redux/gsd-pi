@@ -6,18 +6,12 @@ import type {
   ClaimTaskAttemptReceipt,
   SettleTaskAttemptInput,
   SettleTaskAttemptReceipt,
+  TaskExecutionAttemptSnapshot,
 } from "../task-execution-domain-operation.js";
-import type { KernelStage } from "../db/kernel-stage-policy.js";
+import { isTaskAttemptAwaitingVerification } from "../task-execution-domain-operation.js";
 import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
+import { internalExecutionInvocation } from "../execution-invocation.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
-
-export interface TaskExecutionAttemptSnapshot {
-  attemptId: string;
-  attemptNumber: number;
-  state: "running" | "settled";
-  outcome?: "succeeded" | "failed" | "interrupted";
-  nextStage: KernelStage;
-}
 
 export interface TaskExecutionCutoverInput {
   unitType: string;
@@ -90,6 +84,50 @@ function failureReason(result: UnitPhaseResult): string {
   return "unit ended without an executor Result";
 }
 
+function interruptStaleAttempt(
+  input: TaskExecutionCutoverInput,
+  predecessor: TaskExecutionAttemptSnapshot,
+  identity: ReturnType<typeof requireTaskClaimIdentity>,
+  deps: TaskExecutionCutoverDeps,
+): void {
+  if (identity.milestoneLeaseToken <= predecessor.milestoneLeaseToken) {
+    throw new Error("execute-task cannot replace an active running Attempt without a newer milestone lease");
+  }
+  deps.settleTaskAttempt({
+    invocation: internalExecutionInvocation(
+      `internal:auto:attempt.interrupt:${predecessor.attemptId}:${identity.workerId}:${identity.milestoneLeaseToken}`,
+      { actorId: identity.workerId },
+    ),
+    attemptId: predecessor.attemptId,
+    outcome: "interrupted",
+    failureClass: "stale-worker",
+    summary: "Replaced stale Task Attempt after milestone lease takeover",
+    output: {
+      unitType: input.unitType,
+      unitId: input.unitId,
+      staleDispatchId: predecessor.coordinationDispatchId,
+      staleWorkerId: predecessor.workerId,
+      staleMilestoneLeaseToken: predecessor.milestoneLeaseToken,
+      replacementDispatchId: identity.dispatchId,
+      replacementWorkerId: identity.workerId,
+      replacementMilestoneLeaseToken: identity.milestoneLeaseToken,
+    },
+    recovery: {
+      workerId: identity.workerId,
+      milestoneLeaseToken: identity.milestoneLeaseToken,
+    },
+  });
+}
+
+function isClaimReplay(
+  predecessor: TaskExecutionAttemptSnapshot,
+  identity: ReturnType<typeof requireTaskClaimIdentity>,
+): boolean {
+  return predecessor.coordinationDispatchId === identity.dispatchId &&
+    predecessor.workerId === identity.workerId &&
+    predecessor.milestoneLeaseToken === identity.milestoneLeaseToken;
+}
+
 function settleRunningAttempt(
   input: TaskExecutionCutoverInput,
   attemptId: string,
@@ -100,11 +138,7 @@ function settleRunningAttempt(
   const attempt = deps.readTaskAttempt(attemptId);
   if (attempt?.state !== "settled") {
     deps.settleTaskAttempt({
-      invocation: {
-        idempotencyKey: `internal:auto:attempt.settle:${attemptId}`,
-        sourceTransport: "internal",
-        actorType: "agent",
-      },
+      invocation: internalExecutionInvocation(`internal:auto:attempt.settle:${attemptId}`),
       attemptId,
       outcome: "failed",
       failureClass,
@@ -122,11 +156,7 @@ function reconcileNext(
   deps: TaskExecutionCutoverDeps,
 ): UnitPhaseResult {
   const attempt = deps.readTaskAttempt(attemptId);
-  if (
-    attempt?.state === "settled" &&
-    attempt.outcome === "succeeded" &&
-    attempt.nextStage === "verify"
-  ) {
+  if (isTaskAttemptAwaitingVerification(attempt)) {
     input.markCanonicalDispatchSettled();
     return result;
   }
@@ -158,20 +188,29 @@ export async function runWithTaskExecutionAttempt(
   const task = parseTaskIdentity(input.unitId);
   const identity = requireTaskClaimIdentity(input);
   const predecessor = deps.readLatestTaskAttempt(task);
+  let retryOfAttemptId: string | undefined;
+  if (predecessor?.state === "running") {
+    if (isClaimReplay(predecessor, identity)) {
+      retryOfAttemptId = predecessor.retryOfAttemptId;
+    } else {
+      interruptStaleAttempt(input, predecessor, identity, deps);
+      retryOfAttemptId = predecessor.attemptId;
+    }
+  } else if (predecessor) {
+    retryOfAttemptId = predecessor.attemptId;
+  }
   const claim = deps.claimTaskAttempt({
-    invocation: {
-      idempotencyKey: `internal:auto:attempt.claim:${identity.dispatchId}`,
-      sourceTransport: "internal",
-      actorType: "agent",
-      actorId: identity.workerId,
-      traceId: input.traceId,
-      turnId: input.turnId,
-    },
+    invocation: internalExecutionInvocation(
+      `internal:auto:attempt.claim:${identity.dispatchId}`,
+      {
+        actorId: identity.workerId,
+      },
+    ),
     task,
     workerId: identity.workerId,
     milestoneLeaseToken: identity.milestoneLeaseToken,
     coordinationDispatchId: identity.dispatchId,
-    ...(predecessor?.state === "settled" ? { retryOfAttemptId: predecessor.attemptId } : {}),
+    ...(retryOfAttemptId ? { retryOfAttemptId } : {}),
   });
 
   let result: UnitPhaseResult;
@@ -206,22 +245,11 @@ export async function publishVerifiedTaskExecution(
   }
   const task = parseTaskIdentity(input.unitId);
   const attempt = deps.readLatestTaskAttempt(task);
-  if (
-    attempt?.state !== "settled" ||
-    attempt.outcome !== "succeeded" ||
-    attempt.nextStage !== "verify"
-  ) {
+  if (!isTaskAttemptAwaitingVerification(attempt)) {
     throw new Error("Verified Task publication requires a succeeded Attempt at the verify stage");
   }
   await deps.publishVerifiedTaskCompletion({
-    invocation: {
-      idempotencyKey: `internal:auto:task.publish:${attempt.attemptId}`,
-      sourceTransport: "internal",
-      actorType: "agent",
-      ...(input.workerId ? { actorId: input.workerId } : {}),
-      traceId: input.traceId,
-      turnId: input.turnId,
-    },
+    invocation: internalExecutionInvocation(`internal:auto:task.publish:${attempt.attemptId}`),
     basePath: input.basePath,
     task,
     attemptId: attempt.attemptId,

@@ -103,6 +103,10 @@ import { saveCustomVerifyRetryCounts } from "./auto/custom-verify-retry-store.js
 import { getLedger } from "./metrics.js";
 import { getUnitCostSpikeAction, resolveUnitCostSpikeMultiplier } from "./auto-budget.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
+import {
+  isTaskAttemptAwaitingVerification,
+  readLatestTaskAttempt,
+} from "./task-execution-domain-operation.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
@@ -1648,8 +1652,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           try {
             const actual = getEvidence();
             if (sMid && sSid && sTid && isDbAvailable()) {
-              const taskRow = getTask(sMid, sSid, sTid);
-              if (taskRow?.status === "complete") {
+              const attempt = readLatestTaskAttempt({
+                milestoneId: sMid,
+                sliceId: sSid,
+                taskId: sTid,
+              });
+              if (isTaskAttemptAwaitingVerification(attempt)) {
                 const claimedEvidence: ClaimedEvidence[] = getVerificationEvidence(sMid, sSid, sTid)
                   .map((row) => ({
                     command: row.command,

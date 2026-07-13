@@ -28,6 +28,7 @@ import { autoLoop as rawAutoLoop } from "../auto/loop.js";
 import { runPreDispatch } from "../auto/pre-dispatch.js";
 import { runDispatch } from "../auto/dispatch.js";
 import { runUnitPhase, resetSessionTimeoutState } from "../auto/unit-phase.js";
+import { runPostUnitVerification } from "../auto-verification.js";
 import { detectStuck } from "../auto/detect-stuck.js";
 import type { UnitResult, AgentEndEvent, LoopState } from "../auto/types.js";
 import type { LoopDeps } from "../auto/loop-deps.js";
@@ -44,6 +45,10 @@ import { SourceObservationStore } from "../source-observations.js";
 import { autoCommitCurrentBranch } from "../worktree.js";
 import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
 import { stageTaskCompletion } from "../task-completion-compatibility-adapter.js";
+import {
+  publishVerifiedTaskExecution,
+  runWithTaskExecutionAttempt,
+} from "../auto/task-execution-cutover.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1395,6 +1400,8 @@ function makeMockDeps(
   const callLog: string[] = [];
 
   const baseDeps: LoopDeps = {
+    taskExecutionBoundary: async (_input, run) => run(),
+    taskPublicationBoundary: async () => {},
     lockBase: () => "/tmp/test-lock",
     buildSnapshotOpts: () => ({}),
     stopAuto: async () => {
@@ -1536,6 +1543,7 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
   execSync("git init --initial-branch=main", { cwd: basePath, stdio: "ignore" });
   execSync("git config user.email test@test.com", { cwd: basePath, stdio: "ignore" });
   execSync("git config user.name Test", { cwd: basePath, stdio: "ignore" });
+  execSync("git commit --allow-empty -m initial", { cwd: basePath, stdio: "ignore" });
   return {
     active: true,
     verbose: false,
@@ -1947,6 +1955,7 @@ test("autoLoop publishes a canonical Task only after host verification without l
   ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
   const pi = makeMockPi();
   const basePath = realpathSync(makeLoopTestBase("gsd-canonical-task-publish-"));
+  execSync("git commit --allow-empty -m initial", { cwd: basePath, stdio: "ignore" });
   const slicePath = join(basePath, ".gsd", "milestones", "M001", "slices", "S01");
   mkdirSync(join(slicePath, "tasks"), { recursive: true });
   writeFileSync(join(slicePath, "S01-PLAN.md"), "# Slice Plan\n\n- [ ] **T01:** task one\n");
@@ -1956,7 +1965,14 @@ test("autoLoop publishes a canonical Task only after host verification without l
     openDatabase(join(basePath, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
-    insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task One", status: "pending" });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Task One",
+      status: "pending",
+      planning: { verify: 'node -e "process.exit(0)"' },
+    });
     const workerId = registerAutoWorker({ projectRootRealpath: basePath });
     const lease = claimMilestoneLease(workerId, "M001");
     assert.equal(lease.ok, true);
@@ -1971,6 +1987,9 @@ test("autoLoop publishes a canonical Task only after host verification without l
     });
     const deps = makeMockDeps({
       isDbAvailable: () => true,
+      taskExecutionBoundary: runWithTaskExecutionAttempt,
+      taskPublicationBoundary: publishVerifiedTaskExecution,
+      runPostUnitVerification,
       postUnitPostVerification: async () => {
         deps.callLog.push("postUnitPostVerification");
         s.active = false;
@@ -2009,16 +2028,17 @@ test("autoLoop publishes a canonical Task only after host verification without l
     resolveAgentEnd(makeEvent());
     await loopPromise;
 
-    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
     const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.equal(
+      getTask("M001", "S01", "T01")?.status,
+      "complete",
+      `canonical Attempt after host verification: ${JSON.stringify(attempt)}`,
+    );
     assert.ok(attempt);
-    assert.deepEqual(attempt, {
-      attemptId: attempt.attemptId,
-      attemptNumber: 1,
-      state: "settled",
-      outcome: "succeeded",
-      nextStage: "settled",
-    });
+    assert.equal(attempt.attemptNumber, 1);
+    assert.equal(attempt.state, "settled");
+    assert.equal(attempt.outcome, "succeeded");
+    assert.equal(attempt.nextStage, "settled");
     assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
   } finally {
     try { closeDatabase(); } catch { /* noop */ }
