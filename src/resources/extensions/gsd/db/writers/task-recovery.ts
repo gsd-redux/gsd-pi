@@ -401,7 +401,7 @@ export function appendRecoveryWorkCheckpoint(
   context: Readonly<DomainOperationContext>,
   input: AppendRecoveryWorkCheckpointInput,
 ): { checkpointId: string; sequence: number } {
-  requireOperation(context, ["attempt.route", "task.blocker.resolve"]);
+  requireOperation(context, ["attempt.route", "task.blocker.resolve", "task.checkpoint.append"]);
   const scopeKey = normalizedKey(input.scopeKey, "scopeKey");
   const head = getDb().prepare(`
     SELECT checkpoint_id, lifecycle_id, sequence
