@@ -887,6 +887,9 @@ export async function autoLoop(
               markFailed: markDispatchFailed,
               logWriteFailure: logDispatchLedgerWriteFailure,
             }));
+          if (customDispatchId !== null && !customDispatchSettled) {
+            throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} after unit break`);
+          }
           finishIncompleteIteration({
             status: "stopped",
             reason: unitPhaseResult.reason ?? "unit-break",
@@ -903,6 +906,9 @@ export async function autoLoop(
               markFailed: markDispatchFailed,
               logWriteFailure: logDispatchLedgerWriteFailure,
             }));
+          if (customDispatchId !== null && !customDispatchSettled) {
+            throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} before unit retry`);
+          }
           finishIncompleteIteration({
             status: "retry",
             reason: unitPhaseResult.reason,

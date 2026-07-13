@@ -328,8 +328,8 @@ export interface FailureOpts {
 }
 
 /** Transition a dispatch into `failed`, optionally scheduling a retry. */
-export function markFailed(dispatchId: number, opts: FailureOpts): void {
-  if (!isDbAvailable()) return;
+export function markFailed(dispatchId: number, opts: FailureOpts): boolean {
+  if (!isDbAvailable()) return false;
   const now = new Date();
   const nowIso = now.toISOString();
   const nextRunIso = opts.retryAfterMs
@@ -362,7 +362,7 @@ export function markFailed(dispatchId: number, opts: FailureOpts): void {
         ? (result as { changes: number }).changes
         : 0;
   });
-  if (changes < 1) return;
+  if (changes < 1) return false;
   insertAuditEvent({
     eventId: randomUUID(),
     traceId: dispatchId.toString(),
@@ -371,6 +371,7 @@ export function markFailed(dispatchId: number, opts: FailureOpts): void {
     ts: nowIso,
     payload: { dispatchId, errorSummary: opts.errorSummary, retryAfterMs: opts.retryAfterMs ?? null },
   });
+  return true;
 }
 
 /** Transition a dispatch into `stuck`. */

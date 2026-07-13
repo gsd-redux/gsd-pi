@@ -6,7 +6,7 @@ interface DispatchLedgerWriteDeps {
 }
 
 interface DispatchLedgerFailDeps extends DispatchLedgerWriteDeps {
-  markFailed: (dispatchId: number, details: { errorSummary: string }) => void;
+  markFailed: (dispatchId: number, details: { errorSummary: string }) => boolean;
 }
 
 interface DispatchLedgerCompleteDeps extends DispatchLedgerWriteDeps {
@@ -28,8 +28,7 @@ export function settleDispatchFailed(
   if (dispatchId === null) return false;
 
   try {
-    deps.markFailed(dispatchId, { errorSummary });
-    return true;
+    return deps.markFailed(dispatchId, { errorSummary });
   } catch (err) {
     deps.logWriteFailure(err);
     return false;
