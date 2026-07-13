@@ -2444,6 +2444,24 @@ async function pumpSdkMessages(
 						return;
 					}
 
+					// SDK trust boundary: guard the raw frame before dispatching on its
+					// `.type`. The SDK is expected to read the frame's top-level type
+					// before yielding, but this whole adapter exists because the
+					// subprocess violates its own type contract at runtime (undefined
+					// `.event` payloads, holey content arrays). Guarding the one place
+					// every frame enters removes the last raw-frame `.type` read that
+					// could reproduce the "reading 'type'" crash.
+					if (!msg || typeof msg !== "object" || typeof (msg as { type?: unknown }).type !== "string") {
+						let shape: string;
+						try {
+							shape = JSON.stringify(msg);
+						} catch {
+							shape = String(msg);
+						}
+						console.warn(`[claude-code] dropped malformed SDK message (missing .type): ${shape}`);
+						continue;
+					}
+
 					switch (msg.type) {
 						// -- Init --
 						case "system": {
@@ -2534,8 +2552,17 @@ async function pumpSdkMessages(
 						case "assistant": {
 							const sdkAssistant = msg as SDKAssistantMessage;
 
-							// Capture text content from complete messages
-							for (const block of sdkAssistant.message.content) {
+							// Capture text content from complete messages. The SDK content
+							// array can carry a null/undefined element (a hole); reading
+							// `block.type` on it throws "reading 'type'" and kills the loop.
+							const sdkContent = Array.isArray(sdkAssistant.message?.content)
+								? sdkAssistant.message.content
+								: [];
+							for (const block of sdkContent) {
+								if (!block || typeof block !== "object") {
+									console.warn(`[claude-code] skipped malformed SDK assistant content block: ${String(block)}`);
+									continue;
+								}
 								if (block.type === "text") {
 									lastTextContent = block.text;
 								} else if (block.type === "thinking") {
@@ -2550,6 +2577,13 @@ async function pumpSdkMessages(
 							// Capture content from the completed turn before resetting
 							if (builder) {
 								for (const [contentIndex, block] of builder.message.content.entries()) {
+									// Defense-in-depth: the partial builder only ever pushes
+									// well-formed blocks, so this array is dense today. Guard the
+									// hole/undefined case anyway so a future refactor that breaks
+									// the push-only invariant cannot resurrect the ".type" crash.
+									if (!block || typeof block !== "object") {
+										continue;
+									}
 									if (block.type === "text" && block.text) {
 										lastTextContent = block.text;
 										// Accumulate completed prose in order — a multi-question
@@ -2672,7 +2706,17 @@ async function pumpSdkMessages(
 								api: "anthropic-messages",
 								provider: "claude-code",
 								model: modelId,
-								usage: mapUsage(result.usage, result.total_cost_usd),
+								// SDK trust boundary: a `result` frame missing `.usage` would
+								// make mapUsage read `.input_tokens` off undefined and throw.
+								usage: mapUsage(
+									result.usage ?? {
+										input_tokens: 0,
+										output_tokens: 0,
+										cache_read_input_tokens: 0,
+										cache_creation_input_tokens: 0,
+									},
+									result.total_cost_usd,
+								),
 								stopReason: result.is_error ? "error" : "stop",
 								timestamp: Date.now(),
 							};
