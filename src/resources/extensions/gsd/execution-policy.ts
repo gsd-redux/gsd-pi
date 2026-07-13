@@ -25,7 +25,10 @@ export interface ExecutionPolicy {
     unitType: string,
     unitId: string,
     context: { basePath: string },
-  ): Promise<"continue" | "retry" | "pause">;
+  ): Promise<"continue" | "retry" | "pause" | "abort">;
+
+  /** Return true only when the configured verification boundary explicitly requires a person. */
+  requiresHumanVerification?(unitType: string, unitId: string): boolean;
 
   /** Determine recovery action when a unit fails. */
   recover(

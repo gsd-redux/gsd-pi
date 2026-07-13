@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { resolveDispatchRecoveryAttempts } from "../auto/unit-phase.ts";
 import { runFinalize } from "../auto/finalize.ts";
 import { AutoSession } from "../auto/session.ts";
+import { hashVerificationFailureContext } from "../auto/verification-retry-policy.ts";
 import { readUnitRuntimeRecord, writeUnitRuntimeRecord } from "../unit-runtime.ts";
 import { captureRootDirtySnapshot } from "../root-write-leak-guard.ts";
 
@@ -174,6 +175,89 @@ test("runFinalize clears currentUnit after successful finalize", async () => {
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
+});
+
+test("runFinalize keeps a durable Task verification retry agent-owned across repeated failure signatures", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-finalize-task-retry-"));
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const s = new AutoSession();
+  s.basePath = base;
+  let verificationAttempt = 0;
+  let pauseCalls = 0;
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: (...args: unknown[]) => void, _timeout?: number, ...args: unknown[]) =>
+    originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+  t.after(() => {
+    globalThis.setTimeout = originalSetTimeout;
+  });
+
+  async function finalizeAttempt(startedAt: number) {
+    s.currentUnit = {
+      type: "execute-task",
+      id: "M001/S01/T01",
+      startedAt,
+    };
+    return runFinalizeWithDeps(s, {
+      pauseAuto: async () => {
+        pauseCalls++;
+      },
+      runPostUnitVerification: async () => {
+        verificationAttempt++;
+        s.pendingVerificationRetry = {
+          unitId: "M001/S01/T01",
+          failureContext: "npm test failed after volatile timing",
+          signature: "npm test#1",
+          attempt: verificationAttempt,
+        };
+        return "retry";
+      },
+    });
+  }
+
+  assert.deepEqual(await finalizeAttempt(1), { action: "continue" });
+  assert.deepEqual(await finalizeAttempt(2), { action: "continue" });
+  assert.equal(pauseCalls, 0, "durable Task recovery must remain agent-owned after the same failure repeats");
+  assert.equal(s.pendingVerificationRetry?.attempt, 2);
+});
+
+test("runFinalize still pauses a non-Task verification retry with a repeated failure signature", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-finalize-slice-retry-"));
+  t.after(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const s = new AutoSession();
+  s.basePath = base;
+  s.currentUnit = {
+    type: "complete-slice",
+    id: "M001/S01",
+    startedAt: 1,
+  };
+  s.verificationRetryFailureHashes.set(
+    "complete-slice:M001/S01",
+    hashVerificationFailureContext("npm test failed"),
+  );
+  let pauseCalls = 0;
+
+  const result = await runFinalizeWithDeps(s, {
+    pauseAuto: async () => {
+      pauseCalls++;
+    },
+    runPostUnitVerification: async () => {
+      s.pendingVerificationRetry = {
+        unitId: "M001/S01",
+        failureContext: "npm test failed",
+        attempt: 2,
+      };
+      return "retry";
+    },
+  });
+
+  assert.deepEqual(result, { action: "break", reason: "duplicate-failure-context" });
+  assert.equal(pauseCalls, 1);
 });
 
 test("runFinalize marks unit runtime finalized after successful finalize", async () => {

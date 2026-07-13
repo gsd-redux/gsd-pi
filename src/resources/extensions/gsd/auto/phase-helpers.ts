@@ -48,10 +48,15 @@ export async function applyVerificationRetryPolicy(
   const key = unitType && retryInfo
     ? verificationRetryKey(unitType, retryInfo.unitId)
     : undefined;
+  // Task host verification only returns retry after durable recovery authorizes it.
+  // Repeated evidence belongs to that policy, not this legacy loop guard.
+  const durableTaskRetry = unitType === "execute-task" && phase === "verification-retry";
   const decision = decideVerificationRetry({
     unitType,
     retryInfo,
-    previousFailureHash: key ? s.verificationRetryFailureHashes.get(key) : undefined,
+    previousFailureHash: !durableTaskRetry && key
+      ? s.verificationRetryFailureHashes.get(key)
+      : undefined,
   });
 
   if (decision.action === "pause") {

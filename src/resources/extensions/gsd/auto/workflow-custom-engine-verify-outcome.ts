@@ -16,6 +16,23 @@ export interface HandleCustomEngineVerifyOutcomeDeps {
 
 export type CustomEngineVerifyFlow = { action: "break" } | { action: "continue" };
 
+export function handleCustomEngineTaskVerifyOutcome(input: {
+  outcome: "retry" | "abort";
+  finishTurn: (
+    status: "stopped" | "retry",
+    failureClass: "verification",
+    error: string,
+  ) => void;
+}): CustomEngineVerifyFlow {
+  if (input.outcome === "abort") {
+    input.finishTurn("stopped", "verification", "custom-engine-task-verify-abort");
+    return { action: "break" };
+  }
+
+  input.finishTurn("retry", "verification", "custom-engine-task-verify-retry");
+  return { action: "continue" };
+}
+
 export async function handleCustomEngineVerifyPause(input: {
   unitType: string;
   unitId: string;

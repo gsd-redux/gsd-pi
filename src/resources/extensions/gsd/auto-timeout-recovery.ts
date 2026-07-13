@@ -23,6 +23,9 @@ import { bumpAndResolveSynthetic } from "./auto/resolve.js";
 import { finalizeProjectResearchTimeout } from "./project-research-policy.js";
 import { applySupervisorModelIfConfigured } from "./auto-model-selection.js";
 import { getInFlightToolCount } from "./auto-tool-tracking.js";
+import { parseUnitId } from "./unit-id.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+import { isDbAvailable } from "./gsd-db.js";
 
 export interface RecoveryContext {
   basePath: string;
@@ -74,7 +77,11 @@ export async function recoverTimedOutUnit(
       recovery: status,
     });
 
-    const durableComplete = status.dbComplete || (status.summaryExists && status.taskChecked && status.nextActionAdvanced);
+    const { milestone, slice, task } = parseUnitId(unitId);
+    const latestAttempt = isDbAvailable() && milestone && slice && task
+      ? readLatestTaskAttempt({ milestoneId: milestone, sliceId: slice, taskId: task })
+      : null;
+    const durableComplete = latestAttempt?.state === "settled" && latestAttempt.outcome === "succeeded";
     if (durableComplete) {
       writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
         phase: "finalized",
@@ -152,13 +159,14 @@ export async function recoverTimedOutUnit(
 
     if (placeholder) {
       writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
-        phase: "skipped",
+        phase: "recovered",
         recovery: status,
         recoveryAttempts: recoveryAttempts + 1,
         lastRecoveryReason: reason,
+        lastProgressKind: `${reason}-recovery-durable-handoff`,
       });
       ctx.ui.notify(
-        `${unitType} ${unitId} skipped after ${maxRecoveryAttempts} recovery attempts (${diagnostic}). Blocker artifacts written. Advancing pipeline. (attempt ${attemptNumber})`,
+        `${unitType} ${unitId} ended after ${maxRecoveryAttempts} recovery attempts (${diagnostic}). Diagnostic artifacts were written; durable Task recovery will decide the next action. (attempt ${attemptNumber})`,
         "warning",
       );
       unitRecoveryCount.delete(recoveryKey);

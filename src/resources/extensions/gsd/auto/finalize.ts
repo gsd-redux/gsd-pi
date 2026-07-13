@@ -247,6 +247,12 @@ export async function runFinalize(
       deps.pauseAuto,
     );
 
+    if (verificationResult === "abort") {
+      debugLog("autoLoop", { phase: "exit", reason: "verification-abort" });
+      clearFinalizingUnit();
+      return { action: "break", reason: "verification-abort" };
+    }
+
     if (verificationResult === "pause") {
       debugLog("autoLoop", { phase: "exit", reason: "verification-pause" });
       clearFinalizingUnit();

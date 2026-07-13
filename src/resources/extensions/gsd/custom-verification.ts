@@ -11,7 +11,7 @@
  *   - (no policy): returns "continue" (passthrough)
  *
  * Observability:
- * - Return value is the typed verification outcome ("continue" | "retry" | "pause").
+ * - Return value is the typed verification outcome ("continue" | "retry" | "pause" | "abort").
  * - shell-command captures stderr from spawnSync — callers can inspect on retry.
  * - content-heuristic logs the specific failure (missing file, below minSize, pattern mismatch).
  * - The frozen DEFINITION.yaml on disk is the single source of truth for step policies.
@@ -26,7 +26,7 @@ import { readFrozenDefinition } from "./custom-workflow-engine.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
-export type VerificationOutcome = "continue" | "retry" | "pause";
+export type VerificationOutcome = "continue" | "retry" | "pause" | "abort";
 
 /**
  * Run custom verification for a specific step in a workflow run.
@@ -37,7 +37,7 @@ export type VerificationOutcome = "continue" | "retry" | "pause";
  *
  * @param runDir — absolute path to the workflow run directory
  * @param stepId — the step ID to verify (e.g. "step-1")
- * @returns "continue" if verification passes, "retry" if it should retry, "pause" if it needs review
+ * @returns "continue" if verification passes, "retry" if it should retry, or "pause" if it needs review
  * @throws Error if DEFINITION.yaml is missing or unreadable
  */
 export function runCustomVerification(

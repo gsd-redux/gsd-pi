@@ -83,10 +83,10 @@ function makeRecordingCtx() {
   assert.ok(crashed, "should crash when basePath is undefined (reproduces #1855)");
 }
 
-// ═══ DB-complete execute-task recovery advances without steering ═════════════
+// ═══ Legacy DB-complete execute-task cannot bypass Attempt authority ═════════
 
 {
-  console.log("\n=== execute-task timeout recovery trusts closed DB status ===");
+  console.log("\n=== execute-task timeout recovery ignores closed Task row without Attempt proof ===");
   const base = mkdtempSync(join(tmpdir(), "gsd-timeout-db-complete-"));
   mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
 
@@ -104,18 +104,28 @@ function makeRecordingCtx() {
 
     const ctx = makeMockCtx();
     const pi = makeRecordingPi();
-    const result = await recoverTimedOutUnit(ctx, pi, "execute-task", "M001/S01/T01", "idle", {
+    const recoveryContext = {
       basePath: base,
       verbose: false,
       currentUnitStartedAt: Date.now(),
       unitRecoveryCount: new Map(),
-    });
+    };
+    const result = await recoverTimedOutUnit(ctx, pi, "execute-task", "M001/S01/T01", "idle", recoveryContext);
 
-    assert.equal(result, "recovered", "db-complete task should recover immediately");
-    assert.equal(pi.messages.length, 0, "db-complete task should not send steering recovery");
+    assert.equal(result, "recovered", "timeout recovery should steer the active canonical execution");
+    assert.equal(pi.messages.length, 1, "a legacy closed Task row must not bypass canonical recovery");
     const runtime = JSON.parse(readFileSync(join(base, ".gsd", "runtime", "units", "execute-task-M001-S01-T01.json"), "utf-8"));
-    assert.equal(runtime.phase, "finalized", "db-complete task should be finalized");
+    assert.equal(runtime.phase, "recovered", "projection-era Task completion is not canonical execution proof");
     assert.equal(runtime.recovery.dbComplete, true, "runtime recovery should record DB completion");
+
+    await recoverTimedOutUnit(ctx, pi, "execute-task", "M001/S01/T01", "idle", recoveryContext);
+    await recoverTimedOutUnit(ctx, pi, "execute-task", "M001/S01/T01", "idle", recoveryContext);
+    const exhaustedRuntime = JSON.parse(readFileSync(
+      join(base, ".gsd", "runtime", "units", "execute-task-M001-S01-T01.json"),
+      "utf-8",
+    ));
+    assert.equal(exhaustedRuntime.phase, "recovered", "exhaustion must hand off to durable recovery, not mark the Task skipped");
+    assert.equal(pi.messages.length, 2, "only bounded steering retries should emit new turns");
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

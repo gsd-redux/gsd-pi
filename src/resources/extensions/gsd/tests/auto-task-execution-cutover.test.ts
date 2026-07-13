@@ -2,7 +2,31 @@
 // File Purpose: Executable contract for fail-closed canonical Task execution in auto-mode.
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, test } from "node:test";
+
+import {
+  _getAdapter,
+  closeDatabase,
+  openDatabase,
+} from "../gsd-db.js";
+import {
+  executeDomainOperation,
+} from "../db/domain-operation.js";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.js";
+import { ReconciliationFailedError } from "../state-reconciliation.js";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  readTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.js";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
 
 type UnitPhaseResult =
   | { action: "break"; reason: string }
@@ -17,11 +41,14 @@ interface TaskIdentity {
 
 interface AttemptSnapshot {
   attemptId: string;
+  resultId?: string;
+  resultFailureClass?: string;
+  resultSummary?: string;
   attemptNumber: number;
   retryOfAttemptId?: string;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
-  nextStage: "execute" | "verify" | "route";
+  nextStage: "execute" | "verify" | "route" | "settled";
   coordinationDispatchId: number;
   workerId: string;
   milestoneLeaseToken: number;
@@ -77,6 +104,18 @@ interface CutoverDeps {
     resultId: string;
     nextStage: "route";
   };
+  routeTaskFailure(input: {
+    invocation: { idempotencyKey: string; sourceTransport: "internal"; actorType: string };
+    attemptId: string;
+    resultId: string;
+    owner: "agent";
+    classification: { failureKind: string; action?: "retry" | "escalate" | "stop" };
+    summary: string;
+    evidence: Record<string, unknown>;
+    rationale: string;
+  }): {
+    action: "retry" | "repair" | "remediate" | "replan" | "abort";
+  };
 }
 
 interface CutoverSubject {
@@ -110,6 +149,14 @@ interface CutoverSubject {
     },
   ): Promise<void>;
 }
+
+const tempDirs = new Set<string>();
+
+afterEach(() => {
+  closeDatabase();
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+  tempDirs.clear();
+});
 
 test("only a canonical succeeded Task Attempt at verify is ready for host verification", async () => {
   const { isTaskExecutionReadyForHostVerification } = await subject();
@@ -169,6 +216,7 @@ function fakeDomain() {
   const attempts: AttemptSnapshot[] = [];
   const claims: Array<Parameters<CutoverDeps["claimTaskAttempt"]>[0]> = [];
   const settlements: Array<Parameters<CutoverDeps["settleTaskAttempt"]>[0]> = [];
+  const routes: Array<Parameters<CutoverDeps["routeTaskFailure"]>[0]> = [];
 
   const deps: CutoverDeps = {
     readLatestTaskAttempt(task) {
@@ -209,6 +257,9 @@ function fakeDomain() {
       attempt.state = "settled";
       attempt.outcome = settlement.outcome;
       attempt.nextStage = settlement.outcome === "succeeded" ? "verify" : "route";
+      attempt.resultId = `result-${attempt.attemptNumber}`;
+      attempt.resultFailureClass = settlement.failureClass;
+      attempt.resultSummary = settlement.summary;
       return {
         status: "committed",
         operationId: `settle-operation-${attempt.attemptNumber}`,
@@ -217,12 +268,18 @@ function fakeDomain() {
         nextStage: "route",
       };
     },
+    routeTaskFailure(route) {
+      calls.push({ name: "route", value: route });
+      routes.push(route);
+      return { action: "retry" };
+    },
   };
 
   return {
     calls,
     claims,
     settlements,
+    routes,
     attempts,
     deps,
     completeSucceeded(attemptId: string) {
@@ -233,6 +290,106 @@ function fakeDomain() {
       attempt.nextStage = "verify";
     },
   };
+}
+
+function database() {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  return adapter;
+}
+
+function seedCanonicalTask(): number {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-task-phase-recovery-"));
+  tempDirs.add(dir);
+  assert.equal(openDatabase(join(dir, "gsd.db")), true);
+  database().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M001', 'Task recovery', 'active', '2026-07-12T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('M001', 'S01', 'Recovery', 'active', '2026-07-12T00:00:00.000Z');
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status)
+    VALUES ('M001', 'S01', 'T01', 'Classify failure', 'pending');
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-1', 'test-host', 1, '2026-07-12T00:00:00.000Z', 'test',
+      '2026-07-12T00:00:00.000Z', 'active', '/tmp/project'
+    );
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES (
+      'M001', 'worker-1', 7, '2026-07-12T00:00:00.000Z',
+      '2099-07-12T00:00:00.000Z', 'held'
+    );
+  `);
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.ready",
+    idempotencyKey: "fixture/task-ready",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+    });
+    return {
+      events: [{
+        eventType: "test.task.ready",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: { taskId: "T01" },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/m001/s01/t01",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  return insertClaimedDispatch(1);
+}
+
+function insertClaimedDispatch(attemptNumber: number): number {
+  database().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (?, ?, 'worker-1', 7, 'M001', 'S01', 'T01',
+      'execute-task', 'M001/S01/T01', 'claimed', ?, ?)
+  `).run(
+    `trace-dispatch-${attemptNumber}`,
+    `turn-dispatch-${attemptNumber}`,
+    attemptNumber,
+    `2026-07-12T00:0${attemptNumber}:00.000Z`,
+  );
+  const row = database().prepare("SELECT MAX(id) AS id FROM unit_dispatches").get() as {
+    id: number;
+  };
+  return Number(row.id);
+}
+
+function canonicalDeps(): CutoverDeps {
+  return {
+    readLatestTaskAttempt,
+    readTaskAttempt,
+    claimTaskAttempt,
+    settleTaskAttempt,
+    routeTaskFailure(route) {
+      return recordFailureAndSelectRecovery(
+        route as Parameters<typeof recordFailureAndSelectRecovery>[0],
+      );
+    },
+  } as CutoverDeps;
 }
 
 test("non-task units pass through without reading or mutating Task execution authority", async () => {
@@ -333,16 +490,24 @@ test("execute-task next without a succeeded Result settles failed and becomes a 
     },
   }), async () => ({ action: "next", data: {} }), domain.deps);
 
-  assert.deepEqual(result, { action: "retry", reason: "missing-executor-result" });
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
   assert.equal(dispatchSettled, true);
   assert.equal(domain.settlements.length, 1);
   assert.equal(domain.settlements[0].attemptId, "attempt-1");
   assert.equal(domain.settlements[0].outcome, "failed");
-  assert.match(domain.settlements[0].failureClass, /missing|executor/i);
+  assert.equal(domain.settlements[0].failureClass, "lifecycle-progression");
   assert.equal(
     domain.settlements[0].invocation.idempotencyKey,
     "internal:auto:attempt.settle:attempt-1",
   );
+  assert.equal(domain.routes.length, 1);
+  assert.equal(domain.routes[0].attemptId, "attempt-1");
+  assert.equal(domain.routes[0].resultId, "result-1");
+  assert.deepEqual(domain.routes[0].invocation, {
+    idempotencyKey: "internal:auto:attempt.route:result-1",
+    sourceTransport: "internal",
+    actorType: "agent",
+  });
 });
 
 test("execute-task next does not advance a failed canonical Result into verification", async () => {
@@ -359,19 +524,21 @@ test("execute-task next does not advance a failed canonical Result into verifica
     attempt.state = "settled";
     attempt.outcome = "failed";
     attempt.nextStage = "route";
+    attempt.resultId = "result-1";
     return { action: "next", data: {} };
   }, domain.deps);
 
-  assert.deepEqual(result, { action: "retry", reason: "executor-result-failed" });
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
   assert.equal(dispatchSettled, true);
   assert.equal(domain.settlements.length, 0, "an immutable failed Result must not be settled twice");
+  assert.equal(domain.routes.length, 1, "an existing unrouted Result must be routed before retry");
 });
 
 for (const phaseResult of [
   { action: "retry", reason: "zero-tool-calls" },
   { action: "break", reason: "provider-pause" },
 ] as const) {
-  test(`execute-task ${phaseResult.action} settles failed and marks its canonical dispatch settled`, async () => {
+  test(`execute-task ${phaseResult.action} settles, routes, and follows the durable retry action`, async () => {
     const { runWithTaskExecutionAttempt } = await subject();
     const domain = fakeDomain();
     let dispatchSettled = false;
@@ -382,32 +549,230 @@ for (const phaseResult of [
       },
     }), async () => phaseResult, domain.deps);
 
-    assert.equal(result, phaseResult);
+    assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
     assert.equal(dispatchSettled, true);
     assert.equal(domain.settlements.length, 1);
     assert.equal(domain.settlements[0].outcome, "failed");
     assert.match(domain.settlements[0].summary, new RegExp(phaseResult.reason, "i"));
+    assert.equal(domain.routes.length, 1);
+    if (phaseResult.action === "retry") {
+      assert.notEqual(
+        domain.routes[0].classification.failureKind,
+        "provider",
+        "an executor retry request cannot manufacture transient-provider authority",
+      );
+    }
   });
 }
 
-test("execute-task exceptions settle failed and mark the canonical dispatch before rethrowing", async () => {
+for (const phaseResult of [
+  { action: "retry", reason: "zero-tool-calls" },
+  { action: "break", reason: "provider-pause" },
+  { action: "break", reason: "session-timeout" },
+] as const) {
+  test(`execute-task ${phaseResult.reason} selects durable transient recovery and admits Attempt 2`, async () => {
+    const { runWithTaskExecutionAttempt } = await subject();
+    const firstDispatchId = seedCanonicalTask();
+
+    const firstResult = await runWithTaskExecutionAttempt(input({
+      dispatchId: firstDispatchId,
+    }), async () => phaseResult, canonicalDeps());
+
+    assert.deepEqual(firstResult, { action: "retry", reason: "task-recovery-retry" });
+    assert.deepEqual(database().prepare(`
+      SELECT observation.failure_kind, action.action, budget.policy_class, budget.max_uses
+      FROM workflow_failure_observations observation
+      JOIN workflow_recovery_actions action
+        ON action.failure_observation_id = observation.failure_observation_id
+      LEFT JOIN workflow_recovery_budgets budget
+        ON budget.recovery_budget_id = action.recovery_budget_id
+    `).get(), {
+      failure_kind: "transient-execution",
+      action: "retry",
+      policy_class: "transient-execution",
+      max_uses: 2,
+    });
+
+    const secondDispatchId = insertClaimedDispatch(2);
+    const terminalResult = await runWithTaskExecutionAttempt(input({
+      dispatchId: secondDispatchId,
+    }), async () => ({ action: "break", reason: "unit-hard-timeout" }), canonicalDeps());
+
+    assert.deepEqual(terminalResult, { action: "break", reason: "task-recovery-abort" });
+    const firstAttempt = database().prepare(`
+      SELECT attempt_id FROM workflow_execution_attempts WHERE attempt_number = 1
+    `).get() as { attempt_id: string };
+    assert.deepEqual(database().prepare(`
+      SELECT attempt_number, retry_of_attempt_id, attempt_state
+      FROM workflow_execution_attempts
+      ORDER BY attempt_number
+    `).all(), [
+      { attempt_number: 1, retry_of_attempt_id: null, attempt_state: "settled" },
+      {
+        attempt_number: 2,
+        retry_of_attempt_id: firstAttempt.attempt_id,
+        attempt_state: "settled",
+      },
+    ]);
+    assert.deepEqual(database().prepare(`
+      SELECT observation.failure_kind, action.action
+      FROM workflow_failure_observations observation
+      JOIN workflow_recovery_actions action
+        ON action.failure_observation_id = observation.failure_observation_id
+      ORDER BY observation.project_revision
+    `).all(), [
+      { failure_kind: "transient-execution", action: "retry" },
+      { failure_kind: "runtime-unknown", action: "abort" },
+    ]);
+  });
+}
+
+test("a durable abort overrides an executor retry", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => ({
+    action: "retry",
+    reason: "unknown executor failure",
+  }), {
+    ...domain.deps,
+    routeTaskFailure(route) {
+      domain.routes.push(route);
+      return { action: "abort" };
+    },
+  });
+
+  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.equal(domain.routes.length, 1);
+});
+
+test("execute-task exceptions settle, route, and return the durable recovery action", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   const failure = new Error("provider exploded");
   let dispatchSettled = false;
 
-  await assert.rejects(runWithTaskExecutionAttempt(input({
+  const result = await runWithTaskExecutionAttempt(input({
     markCanonicalDispatchSettled() {
       dispatchSettled = true;
     },
   }), async () => {
     throw failure;
-  }, domain.deps), failure);
+  }, domain.deps);
 
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
   assert.equal(dispatchSettled, true);
   assert.equal(domain.settlements.length, 1);
   assert.equal(domain.settlements[0].outcome, "failed");
   assert.match(domain.settlements[0].summary, /provider exploded/i);
+  assert.equal(domain.routes.length, 1);
+});
+
+test("typed executor failures retain their canonical classification through settlement and routing", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  const failure = new ReconciliationFailedError({});
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    throw failure;
+  }, domain.deps);
+
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
+  assert.equal(domain.settlements[0].failureClass, "reconciliation-drift");
+  assert.equal(domain.routes[0].classification.failureKind, "reconciliation-drift");
+  assert.deepEqual(
+    (domain.settlements[0].output.recoveryClassification as { failureKind: string }).failureKind,
+    "reconciliation-drift",
+  );
+});
+
+test("a durable abort for stale-worker takeover stops before replacement claim or execution", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    state: "running",
+    nextStage: "execute",
+    coordinationDispatchId: 41,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+
+  const result = await runWithTaskExecutionAttempt(input({
+    dispatchId: 42,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  }), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    routeTaskFailure(route) {
+      domain.routes.push(route);
+      return { action: "abort" };
+    },
+  });
+
+  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+  assert.equal(domain.routes.length, 1);
+});
+
+test("an already-failed predecessor is routed before its lineage-linked retry claim", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "failed",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  await runWithTaskExecutionAttempt(input(), async () => {
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, domain.deps);
+
+  assert.deepEqual(domain.calls.slice(0, 3).map((call) => call.name), [
+    "read-latest",
+    "route",
+    "claim",
+  ]);
+  assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
+});
+
+test("a succeeded predecessor awaiting verification resumes verification without executing again", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "verify",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, domain.deps);
+
+  assert.deepEqual(result, { action: "next", data: {} });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
 });
 
 test("a retry claim links the immediately preceding settled Attempt", async () => {
@@ -456,8 +821,9 @@ test("a replacement lease interrupts a stale running Attempt before claiming its
   assert.deepEqual(domain.calls.slice(0, 3).map((call) => call.name), [
     "read-latest",
     "settle",
-    "claim",
+    "route",
   ]);
+  assert.equal(domain.calls[3]?.name, "claim");
   assert.deepEqual(domain.settlements[0], {
     invocation: {
       idempotencyKey: "internal:auto:attempt.interrupt:attempt-1:worker-2:8",
@@ -478,6 +844,11 @@ test("a replacement lease interrupts a stale running Attempt before claiming its
       replacementDispatchId: 42,
       replacementWorkerId: "worker-2",
       replacementMilestoneLeaseToken: 8,
+      recoveryClassification: {
+        failureKind: "stale-worker",
+        action: "stop",
+        rationale: "Run `/gsd doctor` to detect and clear the stale worker or lock, then run `/gsd auto` to resume.",
+      },
     },
     recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
   });
@@ -656,6 +1027,31 @@ test("verified Task publication uses the latest succeeded Attempt and stable aut
     task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
     attemptId: "attempt-7",
   }]);
+});
+
+test("settled Task publication delegates replay validation to the stable publication operation", async () => {
+  const { publishVerifiedTaskExecution } = await subject();
+  const rejected = new Error("settled Attempt does not belong to the stable publication operation");
+  let publicationCalls = 0;
+
+  await assert.rejects(publishVerifiedTaskExecution({ ...input(), basePath: "/project" }, {
+    readLatestTaskAttempt: () => ({
+      attemptId: "attempt-7",
+      attemptNumber: 7,
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "settled",
+      coordinationDispatchId: 41,
+      workerId: "worker-1",
+      milestoneLeaseToken: 7,
+    }),
+    async publishVerifiedTaskCompletion() {
+      publicationCalls++;
+      throw rejected;
+    },
+  }), rejected);
+
+  assert.equal(publicationCalls, 1);
 });
 
 test("failed Task execution cannot publish after host verification", async () => {

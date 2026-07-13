@@ -28,7 +28,10 @@ import {
   openDatabase,
 } from "../gsd-db.js";
 import { clearPathCache } from "../paths.js";
-import { claimTaskAttempt } from "../task-execution-domain-operation.js";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+} from "../task-execution-domain-operation.js";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 import {
@@ -638,5 +641,56 @@ test("exact stage and publication replay repair projections without duplicate fa
     task: taskState(),
     summary: readFileSync(staged.summaryPath, "utf8"),
     plan: readFileSync(planPath, "utf8"),
+  }, beforeReplay);
+});
+
+test("auto publication replays a committed Task completion after PLAN projection failure", async (t) => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { publishVerifiedTaskExecution } = await import("../auto/task-execution-cutover.js");
+  const { basePath, planPath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
+  const originalRename = fsPromises.rename.bind(fsPromises);
+  t.mock.method(fsPromises, "rename", async (...args: Parameters<typeof fsPromises.rename>) => {
+    if (String(args[1]).endsWith("PLAN.md")) {
+      throw new Error("simulated PLAN projection failure");
+    }
+    return originalRename(...args);
+  });
+  const input = {
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    workerId: "worker-1",
+    traceId: "trace-1",
+    turnId: "turn-1",
+    basePath,
+  };
+  const dependencies = { readLatestTaskAttempt, publishVerifiedTaskCompletion };
+
+  await assert.rejects(
+    publishVerifiedTaskExecution(input, dependencies),
+    /PLAN projection failed/i,
+  );
+  assert.equal(taskState().status, "complete");
+  assert.equal(
+    readLatestTaskAttempt(TASK)?.nextStage,
+    "settled",
+    "the publication operation committed before the projection failed",
+  );
+  assert.match(readFileSync(planPath, "utf8"), /\[ \][^\n]*\*\*T01/);
+  const beforeReplay = {
+    revision: row("SELECT revision FROM project_authority").revision,
+    operations: count("workflow_operations"),
+    checkpoints: count("workflow_kernel_checkpoints"),
+  };
+
+  t.mock.restoreAll();
+  await publishVerifiedTaskExecution(input, dependencies);
+
+  assert.match(readFileSync(planPath, "utf8"), /\[x\][^\n]*\*\*T01/i);
+  assert.deepEqual({
+    revision: row("SELECT revision FROM project_authority").revision,
+    operations: count("workflow_operations"),
+    checkpoints: count("workflow_kernel_checkpoints"),
   }, beforeReplay);
 });

@@ -9,7 +9,9 @@ import { randomUUID } from "node:crypto";
 
 import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, diagnoseWorktreeIntegrityFailure, buildLoopRemediationSteps, writeBlockerPlaceholder, refreshRecoveryDbForArtifact, writeReactiveExecuteBlocker } from "../auto-recovery.ts";
 import { resolveMilestoneFile } from "../paths.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, saveGateResult } from "../gsd-db.ts";
+import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, saveGateResult } from "../gsd-db.ts";
+import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { internalExecutionInvocation } from "../execution-invocation.ts";
 import { readEvents } from "../workflow-events.ts";
 import { clearParseCache } from "../files.ts";
 import { parseRoadmap } from "../parsers-legacy.ts";
@@ -56,6 +58,53 @@ function makeTmpProject(): string {
   insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", scope: "slice" });
   tmpDirs.push(dir);
   return dir;
+}
+
+function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
+  const db = _getAdapter();
+  assert.ok(db);
+  db.exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'recovery-worker', 'test-host', 1, '2026-07-13T00:00:00.000Z', 'test',
+      '2026-07-13T00:00:00.000Z', 'active', '/tmp/project'
+    );
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES (
+      'M001', 'recovery-worker', 7, '2026-07-13T00:00:00.000Z',
+      '2099-07-13T00:00:00.000Z', 'held'
+    );
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-recovery', 'turn-recovery', 'recovery-worker', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 1, '2026-07-13T00:00:00.000Z'
+    );
+  `);
+  const dispatch = db.prepare("SELECT id FROM unit_dispatches WHERE trace_id = 'trace-recovery'").get();
+  const claim = claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:artifact-recovery:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "recovery-worker",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(dispatch?.["id"]),
+  });
+  if (outcome) {
+    settleTaskAttempt({
+      invocation: internalExecutionInvocation(`test:artifact-recovery:settle:${outcome}`),
+      attemptId: claim.attemptId,
+      outcome,
+      failureClass: outcome === "succeeded" ? "none" : "executor-failed",
+      summary: `executor ${outcome}`,
+      output: {},
+    });
+  }
 }
 
 function runGit(base: string, args: string[]): void {
@@ -295,11 +344,24 @@ test("refreshRecoveryDbForArtifact treats missing execute-task DB rows as fatal 
     ok: false,
     fatal: true,
     reason: "execute-task-artifact-db-missing",
-    message: "Stuck recovery found execute-task M001/S01/T01 artifacts, but no matching DB task row exists after refresh.",
+    message: "Stuck recovery found execute-task M001/S01/T01 artifacts, but no matching DB task row exists.",
   });
 });
 
-test("refreshRecoveryDbForArtifact promotes an open execute-task DB row when artifacts are verified on disk (#1204)", () => {
+test("refreshRecoveryDbForArtifact does not report execute-task recovery success without a DB", () => {
+  closeDatabase();
+  assert.deepEqual(
+    refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", process.cwd()),
+    {
+      ok: false,
+      fatal: false,
+      reason: "execute-task-attempt-db-unavailable",
+      message: "Stuck recovery cannot confirm canonical Task Attempt readiness for execute-task M001/S01/T01 because the workflow DB is unavailable.",
+    },
+  );
+});
+
+test("refreshRecoveryDbForArtifact rejects a Task row without an actionable Attempt Result", () => {
   const dir = makeTmpProject();
   insertTask({
     milestoneId: "M001",
@@ -319,18 +381,20 @@ test("refreshRecoveryDbForArtifact promotes an open execute-task DB row when art
 
   const result = refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", dir);
 
-  assert.deepEqual(result, { ok: true });
-  assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+  assert.deepEqual(result, {
+    ok: false,
+    fatal: true,
+    reason: "execute-task-attempt-not-actionable",
+    message: "Stuck recovery found execute-task M001/S01/T01 artifacts, but its latest canonical Task Attempt has no actionable verify or route Result.",
+  });
+  assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
   const planContent = readFileSync(join(sliceDir, "S01-PLAN.md"), "utf-8");
-  assert.ok(planContent.includes("[x] **T01:"), "plan checkbox should be re-rendered to [x]");
+  assert.ok(planContent.includes("[ ] **T01:"), "projection must remain non-authoritative");
   const events = readEvents(join(dir, ".gsd", "event-log.jsonl"));
-  assert.ok(
-    events.some((e) => e.cmd === "complete-task" && e.trigger_reason === "stuck-artifact-recovery"),
-    "a complete-task recovery event should be appended",
-  );
+  assert.equal(events.some((event) => event.cmd === "complete-task"), false);
 });
 
-test("refreshRecoveryDbForArtifact still appends the recovery event when the plan checkbox sync throws after DB promotion (#1221)", () => {
+test("refreshRecoveryDbForArtifact does not mistake an unreadable projection for canonical recovery", () => {
   const dir = makeTmpProject();
   insertTask({
     milestoneId: "M001",
@@ -347,12 +411,39 @@ test("refreshRecoveryDbForArtifact still appends the recovery event when the pla
 
   const result = refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", dir);
 
-  assert.deepEqual(result, { ok: true });
-  assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "execute-task-attempt-not-actionable");
+  assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
   const events = readEvents(join(dir, ".gsd", "event-log.jsonl"));
-  assert.ok(
-    events.some((e) => e.cmd === "complete-task" && e.trigger_reason === "stuck-artifact-recovery"),
-    "recovery event must still be appended even when the plan checkbox sync fails",
+  assert.equal(events.some((event) => event.cmd === "complete-task"), false);
+});
+
+test("refreshRecoveryDbForArtifact accepts canonical verify and route Result heads", () => {
+  const first = makeTmpProject();
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Task", status: "pending" });
+  seedCanonicalTaskAttempt("succeeded");
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", first),
+    true,
+    "a succeeded Result at verify is sufficient without SUMMARY or PLAN projections",
+  );
+  assert.deepEqual(
+    refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", first),
+    { ok: true },
+  );
+
+  closeDatabase();
+  const second = makeTmpProject();
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Task", status: "complete" });
+  seedCanonicalTaskAttempt("failed");
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", second),
+    true,
+    "a failed Result at route remains actionable for canonical recovery",
+  );
+  assert.deepEqual(
+    refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", second),
+    { ok: true },
   );
 });
 
@@ -1969,7 +2060,7 @@ test("#4068: verifyExpectedArtifact parallel-research treats PARALLEL-BLOCKER as
   }
 });
 
-test("#57: verifyExpectedArtifact reactive-execute treats REACTIVE-BLOCKER as terminal completion", () => {
+test("verifyExpectedArtifact treats REACTIVE-BLOCKER as diagnostic only", () => {
   const base = makeTmpBase();
   try {
     const blockerPath = resolveExpectedArtifactPath("reactive-execute", "M001/S01/reactive+T01,T02", base);
@@ -1978,15 +2069,15 @@ test("#57: verifyExpectedArtifact reactive-execute treats REACTIVE-BLOCKER as te
 
     assert.equal(
       verifyExpectedArtifact("reactive-execute", "M001/S01/reactive+T01,T02", base),
-      true,
-      "REACTIVE-BLOCKER must satisfy verification even when task summaries are missing",
+      false,
+      "REACTIVE-BLOCKER cannot replace canonical batch completion evidence",
     );
   } finally {
     cleanup(base);
   }
 });
 
-test("#57: writeReactiveExecuteBlocker reconciles batch task statuses and appends events", () => {
+test("writeReactiveExecuteBlocker never derives Task completion or cancellation from summaries", () => {
   const base = makeTmpBase();
   try {
     openDatabase(join(base, ".gsd", "gsd.db"));
@@ -2013,10 +2104,11 @@ test("#57: writeReactiveExecuteBlocker reconciles batch task statuses and append
     );
 
     assert.ok(recovery, "recovery should run with DB available");
-    assert.deepEqual(recovery!.completedTaskIds, ["T01"]);
-    assert.deepEqual(recovery!.skippedTaskIds, ["T02"]);
-    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
-    assert.equal(getTask("M001", "S01", "T02")?.status, "skipped");
+    assert.deepEqual(recovery!.completedTaskIds, []);
+    assert.deepEqual(recovery!.skippedTaskIds, []);
+    assert.deepEqual(recovery!.unchangedTaskIds, ["T01", "T02", "T03"]);
+    assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "pending");
     assert.equal(getTask("M001", "S01", "T03")?.status, "complete");
     assert.ok(existsSync(recovery!.blockerPath), "reactive blocker should be written");
     const blocker = readFileSync(recovery!.blockerPath, "utf-8");
@@ -2024,8 +2116,7 @@ test("#57: writeReactiveExecuteBlocker reconciles batch task statuses and append
     assert.match(blocker, /Summary missing\*\*: T02/);
 
     const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
-    assert.ok(events.some((e) => e.cmd === "complete-task" && e.params.taskId === "T01" && e.trigger_reason === "reactive-execute-blocker-recovery"));
-    assert.ok(events.some((e) => e.cmd === "skip-task" && e.params.taskId === "T02" && e.trigger_reason === "reactive-execute-blocker-recovery"));
+    assert.equal(events.some((e) => e.trigger_reason === "reactive-execute-blocker-recovery"), false);
   } finally {
     closeDatabase();
     cleanup(base);
@@ -2092,10 +2183,11 @@ test("#1343: writeReactiveExecuteBlocker uses slice-qualified summaries in flat-
 
     assert.ok(recovery, "recovery should run with DB available");
     // S02 never wrote S02-T03-SUMMARY.md; the sibling S01-T03-SUMMARY.md must
-    // NOT make S02/T03 look complete. It has to be skipped.
+    // not change S02/T03's canonical state.
     assert.deepEqual(recovery!.completedTaskIds, []);
-    assert.deepEqual(recovery!.skippedTaskIds, ["T03"]);
-    assert.equal(getTask("M001", "S02", "T03")?.status, "skipped");
+    assert.deepEqual(recovery!.skippedTaskIds, []);
+    assert.deepEqual(recovery!.unchangedTaskIds, ["T03"]);
+    assert.equal(getTask("M001", "S02", "T03")?.status, "pending");
   } finally {
     closeDatabase();
     cleanup(base);

@@ -152,7 +152,7 @@ test("#3607: execute-task legacy branch — wrong task id in checkbox does not m
   );
 });
 
-test("execute-task DB lag branch — pending DB status can verify from checked plan plus summary", (t) => {
+test("execute-task DB branch ignores checked plan and summary without an Attempt Result", (t) => {
   closeDatabase();
   const { base, planPath } = scaffoldProject(t);
   openDatabase(join(base, ".gsd", "gsd.db"));
@@ -173,8 +173,25 @@ test("execute-task DB lag branch — pending DB status can verify from checked p
 
   assert.equal(
     verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "checked plan entry plus summary should verify while DB reconcile catches up",
+    false,
+    "DB-backed verification must not accept projection evidence without an Attempt Result",
+  );
+});
+
+test("execute-task DB branch ignores legacy complete Task status without an Attempt Result", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  openDatabase(join(base, ".gsd", "gsd.db"));
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Implement feature", status: "complete" });
+  writeFileSync(planPath, "- [x] **T01: Implement feature**\n");
+
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "legacy Task completion and projections cannot replace canonical Attempt readiness",
   );
 });
 

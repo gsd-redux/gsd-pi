@@ -12,7 +12,6 @@
 import { parseUnitId } from "./unit-id.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import { appendEvent } from "./workflow-events.js";
-import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
 import {
   isDbAvailable,
@@ -20,7 +19,6 @@ import {
   getSlice,
   getSliceTasks,
   getPendingGatesForTurn,
-  updateTaskStatus,
   updateSliceStatus,
   insertSlice,
   getMilestone,
@@ -28,14 +26,13 @@ import {
   getCompletedMilestoneTaskFileHints,
   getMilestoneCommitAttributionShas,
   recordMilestoneCommitAttribution,
-  transaction,
 } from "./gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { readIntegrationBranch } from "./git-service.js";
-import { isClosedStatus, isInactiveStatus } from "./status-guards.js";
+import { isClosedStatus } from "./status-guards.js";
 import {
   resolveSlicePath,
   resolveSliceFile,
@@ -50,7 +47,6 @@ import {
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -71,6 +67,7 @@ import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import {
+  readExecuteTaskArtifactReadiness,
   resolveArtifactVerificationBase,
 } from "./artifact-verification.js";
 import {
@@ -135,12 +132,62 @@ export function refreshRecoveryDbForArtifact(
   basePath: string,
 ): ArtifactRecoveryDbRefreshResult {
   if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") return { ok: true };
-  if (!isDbAvailable()) return { ok: true };
+  if (!isDbAvailable()) {
+    if (unitType === "execute-task") {
+      return {
+        ok: false,
+        fatal: false,
+        reason: "execute-task-attempt-db-unavailable",
+        message: `Stuck recovery cannot confirm canonical Task Attempt readiness for execute-task ${unitId} because the workflow DB is unavailable.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  if (unitType === "execute-task") {
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+    if (!mid || !sid || !tid) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-invalid-unit-id",
+        message: `Stuck recovery found execute-task ${unitId} artifacts, but the unit id could not be parsed for DB verification.`,
+      };
+    }
+    if (!getTask(mid, sid, tid)) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-artifact-db-missing",
+        message: `Stuck recovery found execute-task ${unitId} artifacts, but no matching DB task row exists.`,
+      };
+    }
+    let readiness: ReturnType<typeof readExecuteTaskArtifactReadiness>;
+    try {
+      readiness = readExecuteTaskArtifactReadiness(mid, sid, tid);
+    } catch (err) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-attempt-read-failed",
+        message: `Stuck recovery could not read canonical Task Attempt state for execute-task ${unitId}: ${getErrorMessage(err)}`,
+      };
+    }
+    if (!readiness) {
+      return {
+        ok: false,
+        fatal: true,
+        reason: "execute-task-attempt-not-actionable",
+        message: `Stuck recovery found execute-task ${unitId} artifacts, but its latest canonical Task Attempt has no actionable verify or route Result.`,
+      };
+    }
+    return { ok: true };
+  }
 
   if (!refreshWorkflowDatabaseFromDisk()) {
     return {
       ok: false,
-      fatal: unitType === "execute-task" || unitType === "complete-milestone",
+      fatal: unitType === "complete-milestone",
       reason: `${unitType}-db-refresh-failed`,
       message: `Stuck recovery found ${unitType} ${unitId} artifacts, but the DB refresh failed.`,
     };
@@ -210,81 +257,6 @@ export function refreshRecoveryDbForArtifact(
     return { ok: true };
   }
 
-  if (unitType !== "execute-task") return { ok: true };
-
-  const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
-  if (!mid || !sid || !tid) {
-    return {
-      ok: false,
-      fatal: true,
-      reason: "execute-task-invalid-unit-id",
-      message: `Stuck recovery found execute-task ${unitId} artifacts, but the unit id could not be parsed for DB verification.`,
-    };
-  }
-
-  const task = getTask(mid, sid, tid);
-  if (!task) {
-    return {
-      ok: false,
-      fatal: true,
-      reason: "execute-task-artifact-db-missing",
-      message: `Stuck recovery found execute-task ${unitId} artifacts, but no matching DB task row exists after refresh.`,
-    };
-  }
-
-  if (!isClosedStatus(task.status)) {
-    // The artifact was already confirmed on disk by verifyExpectedArtifact
-    // upstream (Gate 1 accepts a checked disk checkbox as proof of completion),
-    // but the DB task row is still open. A bare refreshWorkflowDatabaseFromDisk
-    // never promotes the disk checkbox into task status (the checkbox is
-    // rendered *from* the DB, never *into* it), so this divergence can never
-    // self-heal. Promote the task to align the DB with disk instead of failing
-    // shut — otherwise the lowest-pending derivation re-picks the same task
-    // forever and execute-task hard-stops with "state did not advance" (#1204).
-    // Mirrors the promotion pattern used by the context-exhaustion and
-    // reactive-execute-blocker recovery paths.
-    const ts = new Date().toISOString();
-    // Only the DB promotion is load-bearing: if it throws, nothing advanced
-    // and failing shut is correct. The plan checkbox rewrite and cache clears
-    // are best-effort follow-ups — a throw there must NOT abort recovery, or
-    // the DB is left complete without ever emitting the stuck-artifact-recovery
-    // event (#1221), stranding worktree reconciliation.
-    try {
-      updateTaskStatus(mid, sid, tid, "complete", ts);
-    } catch (e) {
-      return {
-        ok: false,
-        fatal: true,
-        reason: "execute-task-artifact-db-promote-failed",
-        message: `Stuck recovery found execute-task ${unitId} artifacts, but promoting the DB task status from '${task.status}' failed: ${getErrorMessage(e)}`,
-      };
-    }
-    try {
-      const artifactBase = resolveArtifactVerificationBase(unitId, basePath);
-      const planPath = resolveExpectedArtifactPath("plan-slice", `${mid}/${sid}`, artifactBase);
-      if (planPath && existsSync(planPath)) {
-        const planContent = readFileSync(planPath, "utf-8");
-        const updatedPlan = planContent.replace(
-          new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${tid}:`, "m"),
-          `$1[x] **${tid}:`,
-        );
-        if (updatedPlan !== planContent) {
-          atomicWriteSync(planPath, updatedPlan);
-        }
-      }
-      clearPathCache();
-      clearParseCache();
-    } catch (e) {
-      logWarning("recovery", `stuck-artifact plan checkbox sync failed after DB promotion of ${unitId}: ${getErrorMessage(e)}`);
-    }
-    // Append event so worktree reconciliation can replay this recovery completion.
-    try {
-      appendEvent(basePath, { cmd: "complete-task", params: { milestoneId: mid, sliceId: sid, taskId: tid }, ts, actor: "system", trigger_reason: "stuck-artifact-recovery" });
-    } catch (e) {
-      logWarning("recovery", `appendEvent failed for stuck-artifact task promotion: ${getErrorMessage(e)}`);
-    }
-  }
-
   return { ok: true };
 }
 
@@ -296,11 +268,10 @@ export interface ReactiveExecuteBlockerRecovery {
 }
 
 /**
- * Terminal recovery for a failed reactive-execute batch.
+ * Diagnostic placeholder for a failed reactive-execute batch.
  *
- * Summary-present tasks are reconciled closed as complete; missing-summary
- * tasks are closed as skipped. The slice-level blocker sentinel makes the
- * failed batch terminal without fabricating per-task summaries.
+ * SUMMARY files are projection evidence only. This records which projections
+ * exist without changing canonical Task state or appending lifecycle events.
  */
 export function writeReactiveExecuteBlocker(
   unitId: string,
@@ -333,31 +304,6 @@ export function writeReactiveExecuteBlocker(
 
   const summaryPresent = batchIds.filter((tid) => hasSummary(tid));
   const summaryMissing = batchIds.filter((tid) => !hasSummary(tid));
-  const completedTaskIds: string[] = [];
-  const skippedTaskIds: string[] = [];
-  const unchangedTaskIds: string[] = [];
-  const ts = new Date().toISOString();
-
-  transaction(() => {
-    for (const tid of summaryPresent) {
-      const task = getTask(mid, sid, tid);
-      if (!task || isInactiveStatus(task.status)) {
-        unchangedTaskIds.push(tid);
-        continue;
-      }
-      updateTaskStatus(mid, sid, tid, "complete", ts);
-      completedTaskIds.push(tid);
-    }
-    for (const tid of summaryMissing) {
-      const task = getTask(mid, sid, tid);
-      if (!task || isInactiveStatus(task.status)) {
-        unchangedTaskIds.push(tid);
-        continue;
-      }
-      updateTaskStatus(mid, sid, tid, "skipped", ts);
-      skippedTaskIds.push(tid);
-    }
-  });
 
   const dir = dirname(blockerPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -371,45 +317,22 @@ export function writeReactiveExecuteBlocker(
     `**Batch tasks**: ${batchIds.join(", ")}`,
     `**Summary present**: ${summaryPresent.length > 0 ? summaryPresent.join(", ") : "none"}`,
     `**Summary missing**: ${summaryMissing.length > 0 ? summaryMissing.join(", ") : "none"}`,
-    `**Marked complete**: ${completedTaskIds.length > 0 ? completedTaskIds.join(", ") : "none"}`,
-    `**Marked skipped**: ${skippedTaskIds.length > 0 ? skippedTaskIds.join(", ") : "none"}`,
+    "**Canonical Task changes**: none",
     "",
-    "This placeholder was written by auto-mode so the pipeline can advance without re-dispatching the same reactive batch.",
-    "Review skipped tasks before relying on downstream artifacts.",
+    "This diagnostic placeholder does not complete, skip, or cancel Tasks.",
+    "Review the durable recovery state before relying on downstream artifacts.",
   ].join("\n");
   writeFileSync(blockerPath, content, "utf-8");
-
-  for (const tid of completedTaskIds) {
-    try {
-      appendEvent(base, {
-        cmd: "complete-task",
-        params: { milestoneId: mid, sliceId: sid, taskId: tid },
-        ts,
-        actor: "system",
-        trigger_reason: "reactive-execute-blocker-recovery",
-      });
-    } catch (e) {
-      logWarning("recovery", `appendEvent failed for reactive complete recovery: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  for (const tid of skippedTaskIds) {
-    try {
-      appendEvent(base, {
-        cmd: "skip-task",
-        params: { milestoneId: mid, sliceId: sid, taskId: tid },
-        ts,
-        actor: "system",
-        trigger_reason: "reactive-execute-blocker-recovery",
-      });
-    } catch (e) {
-      logWarning("recovery", `appendEvent failed for reactive skip recovery: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
 
   clearPathCache();
   clearParseCache();
 
-  return { blockerPath, completedTaskIds, skippedTaskIds, unchangedTaskIds };
+  return {
+    blockerPath,
+    completedTaskIds: [],
+    skippedTaskIds: [],
+    unchangedTaskIds: batchIds,
+  };
 }
 
 /**
@@ -450,32 +373,11 @@ export function writeBlockerPlaceholder(
   clearPathCache();
   clearParseCache();
 
-  // Mark the task/slice as complete in the DB so verifyExpectedArtifact passes.
-  // Without this, the DB status stays "pending" and the dispatch loop
-  // re-derives the same unit indefinitely (#2531, #2653).
+  // Legacy non-Task placeholder handling remains until its owning lifecycle
+  // cutover. Task placeholders are diagnostic-only.
   if (isDbAvailable()) {
-    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+    const { milestone: mid, slice: sid } = parseUnitId(unitId);
     const ts = new Date().toISOString();
-    if (unitType === "execute-task" && mid && sid && tid) {
-      try {
-        updateTaskStatus(mid, sid, tid, "complete", ts);
-        const planPath = resolveExpectedArtifactPath("plan-slice", `${mid}/${sid}`, artifactBase);
-        if (planPath && existsSync(planPath)) {
-          const planContent = readFileSync(planPath, "utf-8");
-          const updatedPlan = planContent.replace(
-            new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${tid}:`, "m"),
-            `$1[x] **${tid}:`,
-          );
-          if (updatedPlan !== planContent) {
-            atomicWriteSync(planPath, updatedPlan);
-          }
-        }
-      } catch (e) {
-        logWarning("recovery", `updateTaskStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`);
-      }
-      // Append event so worktree reconciliation can replay this recovery completion
-      try { appendEvent(base, { cmd: "complete-task", params: { milestoneId: mid, sliceId: sid, taskId: tid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for task recovery: ${e instanceof Error ? e.message : String(e)}`); }
-    }
     if (unitType === "complete-slice" && mid && sid) {
       try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
       try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }

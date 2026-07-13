@@ -296,7 +296,7 @@ test('verifyExpectedArtifact: hook types always return true', () => {
 });
 
 
-test('writeBlockerPlaceholder: updates DB task status for execute-task (#2531)', async () => {
+test('writeBlockerPlaceholder: execute-task diagnostics never update DB authority', async () => {
   const base = createFixtureBase();
   try {
     const { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getTask, isDbAvailable } =
@@ -312,17 +312,15 @@ test('writeBlockerPlaceholder: updates DB task status for execute-task (#2531)',
       insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
       insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "pending" });
 
-      // Before fix: writeBlockerPlaceholder wrote the file but left DB as "pending"
       writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "idle recovery exhausted");
 
       const task = getTask("M001", "S01", "T01");
-      assert.equal(task?.status, "complete",
-        "writeBlockerPlaceholder must update DB task status to 'complete' so verifyExpectedArtifact passes");
+      assert.equal(task?.status, "pending",
+        "a placeholder must not derive canonical Task completion");
 
-      // Verify the full chain works: verifyExpectedArtifact should return true
       const verified = verifyExpectedArtifact("execute-task", "M001/S01/T01", base);
-      assert.equal(verified, true,
-        "verifyExpectedArtifact should pass after writeBlockerPlaceholder updates DB status");
+      assert.equal(verified, false,
+        "a diagnostic placeholder must not satisfy Task completion verification");
     } finally {
       if (isDbAvailable()) closeDatabase();
     }
@@ -359,7 +357,7 @@ test('writeBlockerPlaceholder: does NOT update DB for non-execute-task types', a
   }
 });
 
-test('writeBlockerPlaceholder: updates execute-task plan checkbox after DB recovery (#4126)', async () => {
+test('writeBlockerPlaceholder leaves execute-task plan projection and DB authority unchanged', async () => {
   const base = createFixtureBase();
   try {
     const {
@@ -394,13 +392,13 @@ test('writeBlockerPlaceholder: updates execute-task plan checkbox after DB recov
       writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "context exhaustion recovery");
 
       const task = getTask("M001", "S01", "T01");
-      assert.equal(task?.status, "complete", "execute-task recovery should still mark the DB task complete");
+      assert.equal(task?.status, "pending", "execute-task recovery cannot fabricate Task completion");
 
       const planContent = readFileSync(join(sliceDir, "S01-PLAN.md"), "utf-8");
       assert.match(
         planContent,
-        /\- \[x\] \*\*T01: Recoverable task\*\*/,
-        "execute-task recovery should re-render the slice plan checkbox after marking the DB row complete",
+        /\- \[ \] \*\*T01: Recoverable task\*\*/,
+        "diagnostic recovery must not rewrite the plan projection as complete",
       );
     } finally {
       if (isDbAvailable()) closeDatabase();

@@ -13,7 +13,8 @@
 
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { RecoveryAction, CloseoutResult } from "./engine-types.js";
-import { runCustomVerification } from "./custom-verification.js";
+import { runCustomVerification, type VerificationOutcome } from "./custom-verification.js";
+import { readFrozenDefinition } from "./custom-workflow-engine.js";
 import { parseUnitId } from "./unit-id.js";
 
 export class CustomExecutionPolicy implements ExecutionPolicy {
@@ -48,10 +49,17 @@ export class CustomExecutionPolicy implements ExecutionPolicy {
     _unitType: string,
     unitId: string,
     _context: { basePath: string },
-  ): Promise<"continue" | "retry" | "pause"> {
+  ): Promise<VerificationOutcome> {
     const { milestone, slice, task } = parseUnitId(unitId);
     const stepId = task ?? slice ?? milestone;
     return runCustomVerification(this.runDir, stepId);
+  }
+
+  requiresHumanVerification(_unitType: string, unitId: string): boolean {
+    const { milestone, slice, task } = parseUnitId(unitId);
+    const stepId = task ?? slice ?? milestone;
+    const step = readFrozenDefinition(this.runDir).steps.find((candidate) => candidate.id === stepId);
+    return step?.verify?.policy === "human-review";
   }
 
   /** Default recovery: retry the step. */

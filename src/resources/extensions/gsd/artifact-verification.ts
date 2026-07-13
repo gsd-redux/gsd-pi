@@ -7,7 +7,6 @@ import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
 import {
   isDbAvailable,
-  getTask,
   getSlice,
   getSliceTasks,
   getPendingGatesForTurn,
@@ -46,6 +45,22 @@ import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+
+export type ExecuteTaskArtifactReadiness = "verify" | "route";
+
+/** Return the next actionable stage only when the latest Task Attempt has a Result. */
+export function readExecuteTaskArtifactReadiness(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): ExecuteTaskArtifactReadiness | null {
+  const attempt = readLatestTaskAttempt({ milestoneId, sliceId, taskId });
+  if (attempt?.state !== "settled" || !attempt.resultId) return null;
+  if (attempt.nextStage === "verify" && attempt.outcome === "succeeded") return "verify";
+  if (attempt.nextStage === "route") return "route";
+  return null;
+}
 /**
  * Optional override for the legacy roadmap parser used by verifyExpectedArtifact.
  * Production leaves this null so the real parseLegacyRoadmap runs; tests inject
@@ -133,7 +148,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, tid: string): boolean {
+function hasLegacyCheckedTaskCompletion(base: string, mid: string, sid: string, tid: string): boolean {
   const slicePath = resolveSlicePath(base, mid, sid);
   if (!slicePath) return false;
 
@@ -209,7 +224,7 @@ export function verifyExpectedArtifact(
     if (!mid || !sid || !batchPart) return false;
     const blockerPath = resolveExpectedArtifactPath(unitType, unitId, base);
     if (blockerPath && existsSync(blockerPath)) {
-      return true;
+      logWarning("recovery", `reactive-execute blocker is diagnostic only for ${unitId}: ${blockerPath}`);
     }
     const slicePath = resolveSlicePath(base, mid, sid);
     if (!slicePath) return false;
@@ -288,6 +303,17 @@ export function verifyExpectedArtifact(
       return true;
     } catch (err) {
       logWarning("recovery", `parallel-research verification failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  if (unitType === "execute-task" && isDbAvailable()) {
+    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+    if (!mid || !sid || !tid) return false;
+    try {
+      return readExecuteTaskArtifactReadiness(mid, sid, tid) !== null;
+    } catch (err) {
+      logWarning("recovery", `execute-task Attempt readiness failed for ${unitId}: ${getErrorMessage(err)}`);
       return false;
     }
   }
@@ -409,19 +435,10 @@ export function verifyExpectedArtifact(
   }
 
   if (unitType === "execute-task") {
+    if (isDbAvailable()) return false;
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
-    if (mid && sid && tid) {
-      const dbTask = getTask(mid, sid, tid);
-      if (dbTask) {
-        if (dbTask.status !== "complete" && dbTask.status !== "done" && !hasCheckedTaskCompletionOnDisk(base, mid, sid, tid)) {
-          return false;
-        }
-      } else if (!isDbAvailable()) {
-        if (!hasCheckedTaskCompletionOnDisk(base, mid, sid, tid)) return false;
-      } else {
-        return false;
-      }
-    }
+    if (!mid || !sid || !tid) return false;
+    return hasLegacyCheckedTaskCompletion(base, mid, sid, tid);
   }
 
   if (unitType === "complete-slice") {

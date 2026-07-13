@@ -100,9 +100,9 @@ function createFixture(): { basePath: string; attemptId: string } {
   return { basePath, attemptId: claim.attemptId };
 }
 
-async function stage(basePath: string): Promise<void> {
+async function stage(basePath: string, key = "custom/stage"): Promise<void> {
   await stageTaskCompletion({
-    invocation: invocation("custom/stage"),
+    invocation: invocation(key),
     basePath,
     task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
     completion: {
@@ -117,6 +117,37 @@ async function stage(basePath: string): Promise<void> {
       verificationEvidence: [],
     },
   });
+}
+
+function insertRetryDispatch(attemptNumber: number): number {
+  db().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      :trace_id, :turn_id, 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', :attempt_n, :started_at
+    )
+  `).run({
+    ":trace_id": `trace-${attemptNumber}`,
+    ":turn_id": `turn-${attemptNumber}`,
+    ":attempt_n": attemptNumber,
+    ":started_at": `2026-07-12T00:0${attemptNumber}:00.000Z`,
+  });
+  return Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id);
+}
+
+function claimRetry(priorAttemptId: string, attemptNumber: number): string {
+  return claimTaskAttempt({
+    invocation: invocation(`custom/claim/${attemptNumber}`),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: insertRetryDispatch(attemptNumber),
+    retryOfAttemptId: priorAttemptId,
+  }).attemptId;
 }
 
 afterEach(() => {
@@ -155,6 +186,109 @@ test("custom execute-task persists host verdict and source proof before publicat
   assert.equal(readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.nextStage, "settled");
 });
 
+test("custom execute-task invalidates a stale passing verdict and replays result-causal drift recovery", async () => {
+  const { basePath, attemptId } = createFixture();
+  await stage(basePath);
+  assert.equal(await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => "continue",
+  }), "continue");
+  writeFileSync(join(basePath, "tracked.ts"), "export const verified = false;\n");
+
+  const replayed = await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => { throw new Error("stored verdict must not rerun policy"); },
+  });
+
+  assert.equal(replayed, "retry");
+  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "inconclusive");
+  assert.deepEqual(db().prepare(`
+    SELECT verdict, supersedes_verdict_id
+    FROM workflow_technical_verdicts ORDER BY project_revision
+  `).all(), [
+    { verdict: "pass", supersedes_verdict_id: null },
+    {
+      verdict: "inconclusive",
+      supersedes_verdict_id: db().prepare(`
+        SELECT verdict_id FROM workflow_technical_verdicts WHERE verdict = 'pass'
+      `).get()?.["verdict_id"],
+    },
+  ]);
+  assert.deepEqual(row(`
+    SELECT observation.result_id, observation.failure_kind, action.action
+    FROM workflow_failure_observations observation
+    JOIN workflow_recovery_actions action
+      ON action.failure_observation_id = observation.failure_observation_id
+  `), {
+    result_id: readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.resultId,
+    failure_kind: "verification-drift",
+    action: "remediate",
+  });
+
+  assert.equal(await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => { throw new Error("stored drift recovery must not rerun policy"); },
+  }), "retry");
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_technical_verdicts").count), 2);
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_failure_observations").count), 1);
+});
+
+test("custom execute-task routes a policy exception as an inconclusive durable failure", async () => {
+  const { basePath, attemptId } = createFixture();
+  await stage(basePath);
+
+  const outcome = await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => { throw new Error("verification runner unavailable"); },
+  });
+
+  assert.equal(outcome, "retry");
+  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "inconclusive");
+  assert.match(String(row("SELECT rationale FROM workflow_technical_verdicts").rationale), /runner unavailable/);
+  assert.equal(row("SELECT action FROM workflow_recovery_actions").action, "remediate");
+});
+
+test("custom execute-task routes an unproven pause as an agent-fixable durable failure", async () => {
+  const { basePath, attemptId } = createFixture();
+  await stage(basePath);
+
+  const outcome = await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => "pause",
+  });
+
+  assert.equal(outcome, "retry");
+  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "fail");
+  assert.equal(row("SELECT action FROM workflow_recovery_actions").action, "remediate");
+});
+
+test("custom execute-task pauses only when policy ownership is explicitly human", async () => {
+  const { basePath, attemptId } = createFixture();
+  await stage(basePath);
+
+  const outcome = await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    humanReviewPolicy: true,
+    verifyPolicy: async () => "pause",
+  });
+
+  assert.equal(outcome, "pause");
+  assert.equal(readTaskTechnicalVerdict(attemptId), null);
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_recovery_actions").count), 0);
+});
+
 test("custom policy retry records a failed verdict and prevents publication", async () => {
   const { basePath, attemptId } = createFixture();
   await stage(basePath);
@@ -169,6 +303,31 @@ test("custom policy retry records a failed verdict and prevents publication", as
   assert.equal(verified, "retry");
   assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "fail");
   assert.equal(readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.nextStage, "route");
+  assert.deepEqual(row(`
+    SELECT observation.result_id, action.action
+    FROM workflow_failure_observations observation
+    JOIN workflow_recovery_actions action
+      ON action.failure_observation_id = observation.failure_observation_id
+  `), {
+    result_id: readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.resultId,
+    action: "remediate",
+  });
+
+  const replayed = await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => { throw new Error("persisted verdict must replay without policy execution"); },
+  });
+  assert.equal(replayed, "retry");
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_failure_observations").count), 1);
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_recovery_actions").count), 1);
+
+  const retryAttemptId = claimRetry(attemptId, 2);
+  assert.deepEqual(db().prepare(`
+    SELECT attempt_number, retry_of_attempt_id
+    FROM workflow_execution_attempts WHERE attempt_id = :attempt_id
+  `).get({ ":attempt_id": retryAttemptId }), { attempt_number: 2, retry_of_attempt_id: attemptId });
   await assert.rejects(publishVerifiedTaskExecution({
     unitType: "execute-task",
     unitId: "M001/S01/T01",
@@ -178,4 +337,30 @@ test("custom policy retry records a failed verdict and prevents publication", as
     basePath,
   }, { readLatestTaskAttempt, publishVerifiedTaskCompletion }), /verify stage|succeeded Attempt/i);
   assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "in_progress");
+});
+
+test("custom verification aborts after durable remediation budget exhaustion", async () => {
+  const { basePath, attemptId: firstAttemptId } = createFixture();
+  let attemptId = firstAttemptId;
+
+  for (const attemptNumber of [1, 2, 3]) {
+    await stage(basePath, `custom/stage/${attemptNumber}`);
+    const outcome = await runCustomEngineHostVerification({
+      unitType: "execute-task",
+      basePath,
+      unitId: "M001/S01/T01",
+      verifyPolicy: async () => "retry",
+    });
+
+    assert.equal(outcome, attemptNumber < 3 ? "retry" : "abort");
+    if (attemptNumber < 3) attemptId = claimRetry(attemptId, attemptNumber + 1);
+  }
+
+  assert.deepEqual(db().prepare(`
+    SELECT action FROM workflow_recovery_actions ORDER BY project_revision
+  `).all(), [
+    { action: "remediate" },
+    { action: "remediate" },
+    { action: "abort" },
+  ]);
 });
