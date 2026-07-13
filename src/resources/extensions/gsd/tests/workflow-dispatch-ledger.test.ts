@@ -7,7 +7,23 @@ import test from "node:test";
 import {
   settleDispatchCompleted,
   settleDispatchFailed,
+  settleDispatchIfNeeded,
 } from "../auto/workflow-dispatch-ledger.ts";
+
+test("canonical settlement suppresses later legacy completion and finalize-failure writes", () => {
+  const calls: string[] = [];
+
+  assert.equal(settleDispatchIfNeeded(true, () => {
+    calls.push("completed");
+    return true;
+  }), true);
+  assert.equal(settleDispatchIfNeeded(true, () => {
+    calls.push("finalize-failed");
+    return true;
+  }), true);
+
+  assert.deepEqual(calls, []);
+});
 
 test("settleDispatchFailed writes failures and reports settled state", () => {
   const calls: Array<{ dispatchId: number; errorSummary: string }> = [];

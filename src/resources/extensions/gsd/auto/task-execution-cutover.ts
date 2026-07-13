@@ -7,6 +7,8 @@ import type {
   SettleTaskAttemptInput,
   SettleTaskAttemptReceipt,
 } from "../task-execution-domain-operation.js";
+import type { KernelStage } from "../db/kernel-stage-policy.js";
+import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
 
 export interface TaskExecutionAttemptSnapshot {
@@ -14,7 +16,7 @@ export interface TaskExecutionAttemptSnapshot {
   attemptNumber: number;
   state: "running" | "settled";
   outcome?: "succeeded" | "failed" | "interrupted";
-  nextStage: "execute" | "verify" | "route";
+  nextStage: KernelStage;
 }
 
 export interface TaskExecutionCutoverInput {
@@ -33,6 +35,20 @@ export interface TaskExecutionCutoverDeps {
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
+}
+
+export interface VerifiedTaskPublicationDeps {
+  readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): TaskExecutionAttemptSnapshot | null;
+  publishVerifiedTaskCompletion(input: PublishVerifiedTaskCompletionInput): Promise<unknown>;
+}
+
+export interface VerifiedTaskPublicationInput {
+  unitType: string;
+  unitId: string;
+  workerId: string | null;
+  traceId: string;
+  turnId: string;
+  basePath: string;
 }
 
 function parseTaskIdentity(unitId: string): ClaimTaskAttemptInput["task"] {
@@ -179,4 +195,35 @@ export async function runWithTaskExecutionAttempt(
     deps,
   );
   return result;
+}
+
+export async function publishVerifiedTaskExecution(
+  input: VerifiedTaskPublicationInput,
+  deps: VerifiedTaskPublicationDeps,
+): Promise<void> {
+  if (input.unitType !== "execute-task") {
+    throw new Error("Verified Task publication requires an execute-task unit");
+  }
+  const task = parseTaskIdentity(input.unitId);
+  const attempt = deps.readLatestTaskAttempt(task);
+  if (
+    attempt?.state !== "settled" ||
+    attempt.outcome !== "succeeded" ||
+    attempt.nextStage !== "verify"
+  ) {
+    throw new Error("Verified Task publication requires a succeeded Attempt at the verify stage");
+  }
+  await deps.publishVerifiedTaskCompletion({
+    invocation: {
+      idempotencyKey: `internal:auto:task.publish:${attempt.attemptId}`,
+      sourceTransport: "internal",
+      actorType: "agent",
+      ...(input.workerId ? { actorId: input.workerId } : {}),
+      traceId: input.traceId,
+      turnId: input.turnId,
+    },
+    basePath: input.basePath,
+    task,
+    attemptId: attempt.attemptId,
+  });
 }

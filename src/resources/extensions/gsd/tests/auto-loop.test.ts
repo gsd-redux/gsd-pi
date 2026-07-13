@@ -35,13 +35,15 @@ import type { AutoAdvanceResult, AutoOrchestrationModule, AutoStatus, UnitRef } 
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
+import { openDatabase, closeDatabase, getTask, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease } from "../db/milestone-leases.js";
-import { recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
+import { getLatestForUnit, recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
 import { SourceObservationStore } from "../source-observations.js";
 import { autoCommitCurrentBranch } from "../worktree.js";
+import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
+import { stageTaskCompletion } from "../task-completion-compatibility-adapter.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1936,6 +1938,94 @@ test("autoLoop skips provider dispatch when execute-task is already complete in 
   }
 });
 
+test("autoLoop publishes a canonical Task only after host verification without legacy dispatch re-settlement", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.setWidget = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const basePath = realpathSync(makeLoopTestBase("gsd-canonical-task-publish-"));
+  const slicePath = join(basePath, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(join(slicePath, "tasks"), { recursive: true });
+  writeFileSync(join(slicePath, "S01-PLAN.md"), "# Slice Plan\n\n- [ ] **T01:** task one\n");
+  writeFileSync(join(slicePath, "tasks", "T01-PLAN.md"), "# Task Plan\n");
+
+  try {
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
+    insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task One", status: "pending" });
+    const workerId = registerAutoWorker({ projectRootRealpath: basePath });
+    const lease = claimMilestoneLease(workerId, "M001");
+    assert.equal(lease.ok, true);
+    if (!lease.ok) return;
+
+    const s = makeLoopSession({
+      basePath,
+      originalBasePath: basePath,
+      canonicalProjectRoot: basePath,
+      workerId,
+      milestoneLeaseToken: lease.token,
+    });
+    const deps = makeMockDeps({
+      isDbAvailable: () => true,
+      postUnitPostVerification: async () => {
+        deps.callLog.push("postUnitPostVerification");
+        s.active = false;
+        return "continue" as const;
+      },
+    });
+
+    const loopPromise = autoLoop(ctx, pi, s, deps);
+    await waitForMicrotasks(
+      () => readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.state === "running",
+      "canonical Task Attempt claim",
+    );
+    await stageTaskCompletion({
+      invocation: {
+        idempotencyKey: "test:auto-loop:stage:T01",
+        sourceTransport: "internal",
+        actorType: "agent",
+        actorId: workerId,
+      },
+      basePath,
+      task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+      completion: {
+        oneLiner: "Executor candidate completed",
+        narrative: "Candidate result awaiting host verification.",
+        verification: "Executor reported success.",
+        deviations: "None.",
+        knownIssues: "None.",
+        keyFiles: ["src/task.ts"],
+        keyDecisions: ["Publish only after host verification."],
+        blockerDiscovered: false,
+        verificationEvidence: [],
+      },
+    });
+    assert.equal(getTask("M001", "S01", "T01")?.status, "in_progress");
+
+    resolveAgentEnd(makeEvent());
+    await loopPromise;
+
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.ok(attempt);
+    assert.deepEqual(attempt, {
+      attemptId: attempt.attemptId,
+      attemptNumber: 1,
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "settled",
+    });
+    assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
+  } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(basePath, { recursive: true, force: true });
+  }
+});
+
 test("autoLoop stops before success notification when postflight stash restore needs recovery", async () => {
   _resetPendingResolve();
 
@@ -2321,8 +2411,8 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
       deps.callLog.push("resolveDispatch");
       return {
         action: "dispatch" as const,
-        unitType: "execute-task",
-        unitId: "M001/S01/T01",
+        unitType: "plan-slice",
+        unitId: "M001/S01",
         prompt: "do the thing",
       };
     },

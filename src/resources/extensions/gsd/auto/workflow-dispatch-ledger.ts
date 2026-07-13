@@ -13,6 +13,13 @@ interface DispatchLedgerCompleteDeps extends DispatchLedgerWriteDeps {
   markCompleted: (dispatchId: number) => void;
 }
 
+export function settleDispatchIfNeeded(
+  alreadySettled: boolean,
+  settle: () => boolean,
+): boolean {
+  return alreadySettled || settle();
+}
+
 export function settleDispatchFailed(
   dispatchId: number | null,
   errorSummary: string,

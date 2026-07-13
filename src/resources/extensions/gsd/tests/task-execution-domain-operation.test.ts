@@ -68,6 +68,16 @@ interface SettleTaskAttemptReceipt {
 interface TaskExecutionDomain {
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
+  readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): AttemptSnapshot | null;
+  readTaskAttempt(attemptId: string): AttemptSnapshot | null;
+}
+
+interface AttemptSnapshot {
+  attemptId: string;
+  attemptNumber: number;
+  state: "running" | "settled";
+  outcome?: "succeeded" | "failed" | "interrupted";
+  nextStage: "execute" | "verify" | "route";
 }
 
 const tempDirs = new Set<string>();
@@ -302,7 +312,7 @@ for (const contract of [
   { outcome: "failed", nextStage: "route" },
 ] as const) {
   test(`${contract.outcome} settlement persists one immutable Result, leaves the Task in progress, and advances to ${contract.nextStage}`, async () => {
-    const { claimTaskAttempt, settleTaskAttempt } = await subject();
+    const { claimTaskAttempt, settleTaskAttempt, readLatestTaskAttempt, readTaskAttempt } = await subject();
     const { dispatchId } = seedFixture();
     const claim = claimTaskAttempt(claimInput(dispatchId));
 
@@ -329,6 +339,18 @@ for (const contract of [
       { sequence: 1, next_stage: "execute" },
       { sequence: 2, next_stage: contract.nextStage },
     ]);
+    const expectedSnapshot = {
+      attemptId: claim.attemptId,
+      attemptNumber: 1,
+      state: "settled",
+      outcome: contract.outcome,
+      nextStage: contract.nextStage,
+    } as const;
+    assert.deepEqual(readTaskAttempt(claim.attemptId), expectedSnapshot);
+    assert.deepEqual(
+      readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" }),
+      expectedSnapshot,
+    );
     assert.throws(() => db().prepare(`
       UPDATE workflow_attempt_results SET summary = 'rewritten' WHERE result_id = ?
     `).run(settled.resultId), /immutable/i);

@@ -8,6 +8,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import type { KernelStage } from "./db/kernel-stage-policy.js";
 import {
   adoptOrTransitionLifecycle,
   appendKernelCheckpoint,
@@ -60,6 +61,14 @@ export interface SettleTaskAttemptReceipt {
   nextStage: "verify" | "route";
 }
 
+export interface TaskExecutionAttemptSnapshot {
+  attemptId: string;
+  attemptNumber: number;
+  state: "running" | "settled";
+  outcome?: "succeeded" | "failed" | "interrupted";
+  nextStage: KernelStage;
+}
+
 interface ClaimedAttemptRow {
   attempt_id: string;
   attempt_number: number;
@@ -79,6 +88,14 @@ interface AttemptExecutionRow {
 interface SettledResultRow {
   result_id: string;
   outcome: SettleTaskAttemptInput["outcome"];
+}
+
+interface AttemptSnapshotRow {
+  attempt_id: string;
+  attempt_number: number;
+  attempt_state: "running" | "settled";
+  outcome: TaskExecutionAttemptSnapshot["outcome"] | null;
+  next_stage: KernelStage;
 }
 
 function taskIdentity(input: ClaimTaskAttemptInput): string {
@@ -218,6 +235,65 @@ function loadSettledResult(operationId: string): SettledResultRow {
 
 function nextStage(outcome: SettleTaskAttemptInput["outcome"]): "verify" | "route" {
   return outcome === "succeeded" ? "verify" : "route";
+}
+
+function snapshot(row: AttemptSnapshotRow | undefined): TaskExecutionAttemptSnapshot | null {
+  if (!row) return null;
+  return {
+    attemptId: row.attempt_id,
+    attemptNumber: row.attempt_number,
+    state: row.attempt_state,
+    ...(row.outcome ? { outcome: row.outcome } : {}),
+    nextStage: row.next_stage,
+  };
+}
+
+export function readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null {
+  const row = getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.attempt_number, attempt.attempt_state,
+           result.outcome, checkpoint.next_stage
+    FROM workflow_execution_attempts attempt
+    LEFT JOIN workflow_attempt_results result
+      ON result.attempt_id = attempt.attempt_id
+     AND result.project_id = attempt.project_id
+    JOIN workflow_kernel_checkpoints checkpoint
+      ON checkpoint.attempt_id = attempt.attempt_id
+     AND checkpoint.project_id = attempt.project_id
+    WHERE attempt.attempt_id = :attempt_id
+    ORDER BY checkpoint.sequence DESC
+    LIMIT 1
+  `).get({ ":attempt_id": attemptId }) as unknown as AttemptSnapshotRow | undefined;
+  return snapshot(row);
+}
+
+export function readLatestTaskAttempt(
+  task: ClaimTaskAttemptInput["task"],
+): TaskExecutionAttemptSnapshot | null {
+  const row = getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.attempt_number, attempt.attempt_state,
+           result.outcome, checkpoint.next_stage
+    FROM workflow_item_lifecycles lifecycle
+    JOIN workflow_execution_attempts attempt
+      ON attempt.lifecycle_id = lifecycle.lifecycle_id
+     AND attempt.project_id = lifecycle.project_id
+    LEFT JOIN workflow_attempt_results result
+      ON result.attempt_id = attempt.attempt_id
+     AND result.project_id = attempt.project_id
+    JOIN workflow_kernel_checkpoints checkpoint
+      ON checkpoint.attempt_id = attempt.attempt_id
+     AND checkpoint.project_id = attempt.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+    ORDER BY attempt.attempt_number DESC, checkpoint.sequence DESC
+    LIMIT 1
+  `).get({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as unknown as AttemptSnapshotRow | undefined;
+  return snapshot(row);
 }
 
 function terminalizeDispatch(

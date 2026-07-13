@@ -80,6 +80,25 @@ interface CutoverSubject {
     run: () => Promise<T>,
     deps: CutoverDeps,
   ): Promise<T>;
+  publishVerifiedTaskExecution(
+    input: Pick<CutoverInput, "unitType" | "unitId" | "workerId" | "traceId" | "turnId"> & { basePath: string },
+    deps: {
+      readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
+      publishVerifiedTaskCompletion(input: {
+        invocation: {
+          idempotencyKey: string;
+          sourceTransport: "internal";
+          actorType: string;
+          actorId?: string;
+          traceId?: string;
+          turnId?: string;
+        };
+        basePath: string;
+        task: TaskIdentity;
+        attemptId: string;
+      }): Promise<unknown>;
+    },
+  ): Promise<void>;
 }
 
 async function subject(): Promise<CutoverSubject> {
@@ -362,4 +381,56 @@ test("a retry claim links the immediately preceding settled Attempt", async () =
   assert.equal(domain.claims[0].retryOfAttemptId, undefined);
   assert.equal(domain.claims[1].retryOfAttemptId, "attempt-1");
   assert.equal(domain.claims[1].invocation.idempotencyKey, "internal:auto:attempt.claim:42");
+});
+
+test("verified Task publication uses the latest succeeded Attempt and stable auto identity", async () => {
+  const { publishVerifiedTaskExecution } = await subject();
+  const published: unknown[] = [];
+
+  await publishVerifiedTaskExecution({ ...input(), basePath: "/project" }, {
+    readLatestTaskAttempt: () => ({
+      attemptId: "attempt-7",
+      attemptNumber: 7,
+      state: "settled",
+      outcome: "succeeded",
+      nextStage: "verify",
+    }),
+    async publishVerifiedTaskCompletion(value) {
+      published.push(value);
+    },
+  });
+
+  assert.deepEqual(published, [{
+    invocation: {
+      idempotencyKey: "internal:auto:task.publish:attempt-7",
+      sourceTransport: "internal",
+      actorType: "agent",
+      actorId: "worker-1",
+      traceId: "trace-1",
+      turnId: "turn-1",
+    },
+    basePath: "/project",
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    attemptId: "attempt-7",
+  }]);
+});
+
+test("failed Task execution cannot publish after host verification", async () => {
+  const { publishVerifiedTaskExecution } = await subject();
+  let published = false;
+
+  await assert.rejects(publishVerifiedTaskExecution({ ...input(), basePath: "/project" }, {
+    readLatestTaskAttempt: () => ({
+      attemptId: "attempt-7",
+      attemptNumber: 7,
+      state: "settled",
+      outcome: "failed",
+      nextStage: "route",
+    }),
+    async publishVerifiedTaskCompletion() {
+      published = true;
+    },
+  }), /succeeded|verify/i);
+
+  assert.equal(published, false);
 });

@@ -72,6 +72,7 @@ import {
 import {
   settleDispatchCompleted,
   settleDispatchFailed,
+  settleDispatchIfNeeded,
 } from "./workflow-dispatch-ledger.js";
 import { emitOpenUnitEndForUnit } from "../crash-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
@@ -105,6 +106,17 @@ import { handleCustomEngineReconcile } from "./workflow-custom-engine-reconcile.
 import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-reconcile-outcome.js";
 import { formatLeaseConflictNotice } from "./lease-conflict-notice.js";
 import { setAutoOutcomeWidget, unitVerb } from "../auto-dashboard.js";
+import {
+  publishVerifiedTaskExecution,
+  runWithTaskExecutionAttempt,
+} from "./task-execution-cutover.js";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  readTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.js";
+import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -178,6 +190,16 @@ const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
 const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
 const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
+const TASK_EXECUTION_CUTOVER_DEPS = {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  readTaskAttempt,
+  settleTaskAttempt,
+};
+const VERIFIED_TASK_PUBLICATION_DEPS = {
+  publishVerifiedTaskCompletion,
+  readLatestTaskAttempt,
+};
 
 function stableStuckStateScopeId(s: AutoSession): string {
   return normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath));
@@ -737,6 +759,9 @@ export async function autoLoop(
         observedUnitType = iterData.unitType;
         observedUnitId = iterData.unitId;
 
+        let customDispatchId: number | null = null;
+        let customDispatchSettled = false;
+
         // ── Progress widget (mirrors the dev path) ──
         deps.updateProgressWidget(ctx, iterData.unitType, iterData.unitId, iterData.state);
 
@@ -760,21 +785,63 @@ export async function autoLoop(
 
         // ── Unit execution (shared with dev path) ──
         await enforceMinRequestInterval(s, prefs);
+        if (iterData.unitType === "execute-task") {
+          const lease = ensureDispatchLease(s, iterData.mid, {
+            claimMilestoneLease,
+            logLeaseRecovered: logDispatchLeaseRecovered,
+            logLeaseRecoveryFailed: logDispatchLeaseRecoveryFailed,
+          });
+          if (lease.kind !== "ready") {
+            throw new Error(`Custom engine execute-task requires a canonical milestone lease: ${lease.reason}`);
+          }
+          const claim = openDispatchClaim(s, flowId, turnId, iterData, {
+            getRecentDispatchesForUnit,
+            recordDispatchClaim,
+            markDispatchRunning,
+            logClaimRejected: logDispatchClaimRejected,
+            logClaimFailed: logDispatchClaimFailed,
+          });
+          if (claim.kind !== "opened") {
+            const reason = claim.kind === "skip" ? claim.reason : "dispatch claim degraded";
+            throw new Error(`Custom engine execute-task requires a canonical coordination dispatch: ${reason}`);
+          }
+          customDispatchId = claim.dispatchId;
+        }
         let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
         try {
-          unitPhaseResult = await runUnitPhaseViaContract(
-            dispatchContract,
-            ic,
-            iterData,
-            loopState,
-            undefined,
-            unitDispatchDeps,
+          unitPhaseResult = await runWithTaskExecutionAttempt(
+            {
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              dispatchId: customDispatchId,
+              workerId: s.workerId,
+              milestoneLeaseToken: s.milestoneLeaseToken,
+              traceId: flowId,
+              turnId,
+              markCanonicalDispatchSettled() {
+                customDispatchSettled = true;
+              },
+            },
+            () => runUnitPhaseViaContract(
+              dispatchContract,
+              ic,
+              iterData,
+              loopState,
+              undefined,
+              unitDispatchDeps,
+            ),
+            TASK_EXECUTION_CUTOVER_DEPS,
           );
         } catch (err) {
           if (err instanceof ModelPolicyDispatchBlockedError) {
             throw err;
           }
           await closeOutCrashedUnit(ctx, s, deps, iterData, err);
+          customDispatchSettled = settleDispatchIfNeeded(customDispatchSettled, () =>
+            settleDispatchFailed(customDispatchId, formatDispatchExceptionSummary({ error: err }), {
+              markFailed: markDispatchFailed,
+              logWriteFailure: logDispatchLedgerWriteFailure,
+            }));
           throw err;
         }
         if (unitPhaseResult.action === "next") {
@@ -882,6 +949,17 @@ export async function autoLoop(
             unitId: iterData.unitId,
           });
           continue;
+        }
+
+        if (iterData.unitType === "execute-task") {
+          await publishVerifiedTaskExecution({
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            workerId: s.workerId,
+            traceId: flowId,
+            turnId,
+            basePath: s.basePath,
+          }, VERIFIED_TASK_PUBLICATION_DEPS);
         }
 
         // Verification passed — mark step complete
@@ -1317,27 +1395,43 @@ export async function autoLoop(
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
       try {
-        unitPhaseResult = await runUnitPhaseViaContract(
-          dispatchContract,
-          ic,
-          iterData,
-          loopState,
-          sidecarItem,
-          unitDispatchDeps,
+        unitPhaseResult = await runWithTaskExecutionAttempt(
+          {
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            dispatchId,
+            workerId: s.workerId,
+            milestoneLeaseToken: s.milestoneLeaseToken,
+            traceId: flowId,
+            turnId,
+            markCanonicalDispatchSettled() {
+              dispatchSettled = true;
+            },
+          },
+          () => runUnitPhaseViaContract(
+            dispatchContract,
+            ic,
+            iterData,
+            loopState,
+            sidecarItem,
+            unitDispatchDeps,
+          ),
+          TASK_EXECUTION_CUTOVER_DEPS,
         );
       } catch (err) {
         if (err instanceof ModelPolicyDispatchBlockedError) {
           throw err;
         }
         await closeOutCrashedUnit(ctx, s, deps, iterData, err);
-        dispatchSettled = settleDispatchFailed(
-          dispatchId,
-          formatDispatchExceptionSummary({ error: err }),
-          {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          },
-        ) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(
+            dispatchId,
+            formatDispatchExceptionSummary({ error: err }),
+            {
+              markFailed: markDispatchFailed,
+              logWriteFailure: logDispatchLedgerWriteFailure,
+            },
+          ));
         throw err;
       }
       if (unitPhaseResult.action === "next") {
@@ -1349,10 +1443,11 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       if (unitPhaseResult.action === "break") {
-        dispatchSettled = settleDispatchFailed(dispatchId, "unit-break", {
-          markFailed: markDispatchFailed,
-          logWriteFailure: logDispatchLedgerWriteFailure,
-        }) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(dispatchId, "unit-break", {
+            markFailed: markDispatchFailed,
+            logWriteFailure: logDispatchLedgerWriteFailure,
+          }));
         finishIncompleteIteration({
           status: "stopped",
           reason: unitPhaseResult.reason ?? "unit-break",
@@ -1364,10 +1459,11 @@ export async function autoLoop(
         break;
       }
       if (unitPhaseResult.action === "retry") {
-        dispatchSettled = settleDispatchFailed(dispatchId, unitPhaseResult.reason, {
-          markFailed: markDispatchFailed,
-          logWriteFailure: logDispatchLedgerWriteFailure,
-        }) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(dispatchId, unitPhaseResult.reason, {
+            markFailed: markDispatchFailed,
+            logWriteFailure: logDispatchLedgerWriteFailure,
+          }));
         finishIncompleteIteration({
           status: "retry",
           reason: unitPhaseResult.reason,
@@ -1398,14 +1494,15 @@ export async function autoLoop(
           status: "failed",
           error,
         });
-        dispatchSettled = settleDispatchFailed(
-          dispatchId,
-          error,
-          {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          },
-        ) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(
+            dispatchId,
+            error,
+            {
+              markFailed: markDispatchFailed,
+              logWriteFailure: logDispatchLedgerWriteFailure,
+            },
+          ));
         throw err;
       }
       phaseReporter.report("finalize", finalizeResult.action, {
@@ -1446,10 +1543,11 @@ export async function autoLoop(
             : { action: "next" },
       );
       if (finalizeDecision.action === "stop") {
-        dispatchSettled = settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
-          markFailed: markDispatchFailed,
-          logWriteFailure: logDispatchLedgerWriteFailure,
-        }) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
+            markFailed: markDispatchFailed,
+            logWriteFailure: logDispatchLedgerWriteFailure,
+          }));
         finishIncompleteIteration({
           status: "stopped",
           reason: finalizeReason ?? "finalize-break",
@@ -1461,10 +1559,11 @@ export async function autoLoop(
         break;
       }
       if (finalizeDecision.action === "retry") {
-        dispatchSettled = settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
-          markFailed: markDispatchFailed,
-          logWriteFailure: logDispatchLedgerWriteFailure,
-        }) || dispatchSettled;
+        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+          settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
+            markFailed: markDispatchFailed,
+            logWriteFailure: logDispatchLedgerWriteFailure,
+          }));
         await s.orchestration?.retryActiveUnit({
           unitType: iterData.unitType,
           unitId: iterData.unitId,
@@ -1480,10 +1579,22 @@ export async function autoLoop(
         continue;
       }
 
-      dispatchSettled = settleDispatchCompleted(dispatchId, {
-        markCompleted: markDispatchCompleted,
-        logWriteFailure: logDispatchLedgerWriteFailure,
-      }) || dispatchSettled;
+      if (iterData.unitType === "execute-task") {
+        await publishVerifiedTaskExecution({
+          unitType: iterData.unitType,
+          unitId: iterData.unitId,
+          workerId: s.workerId,
+          traceId: flowId,
+          turnId,
+          basePath: s.basePath,
+        }, VERIFIED_TASK_PUBLICATION_DEPS);
+      }
+
+      dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
+        settleDispatchCompleted(dispatchId, {
+          markCompleted: markDispatchCompleted,
+          logWriteFailure: logDispatchLedgerWriteFailure,
+        }));
       await s.orchestration?.completeActiveUnit({
         unitType: iterData.unitType,
         unitId: iterData.unitId,
@@ -1508,7 +1619,7 @@ export async function autoLoop(
             markFailed: markDispatchFailed,
             logWriteFailure: logDispatchLedgerWriteFailure,
           },
-        ) || dispatchSettled;
+        );
       }
 
       // ── Pre-send model-policy block: not a retryable error (#4959 / #4850) ──
