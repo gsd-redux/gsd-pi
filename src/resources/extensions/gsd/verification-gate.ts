@@ -200,8 +200,8 @@ function hasPythonTests(dir: string): boolean {
 
 // ─── Failure Context Formatting ──────────────────────────────────────────────
 
-/** Maximum chars of stderr to include per failed check in failure context. */
-const MAX_STDERR_PER_CHECK = 2_000;
+/** Maximum chars of command output to include per failed check. */
+const MAX_FAILURE_OUTPUT_PER_CHECK = 2_000;
 
 /** Maximum total chars for the combined failure context output. */
 const MAX_FAILURE_CONTEXT_CHARS = 10_000;
@@ -222,13 +222,15 @@ export function formatFailureContext(result: VerificationResult): string {
   const blocks: string[] = [];
 
   for (const check of failures) {
-    let stderr = check.stderr ?? "";
-    if (stderr.length > MAX_STDERR_PER_CHECK) {
-      stderr = stderr.slice(0, MAX_STDERR_PER_CHECK) + "\n…[truncated]";
+    const hasStderr = (check.stderr ?? "").trim().length > 0;
+    const outputLabel = hasStderr ? "stderr" : "stdout";
+    let output = hasStderr ? check.stderr ?? "" : check.stdout ?? "";
+    if (output.length > MAX_FAILURE_OUTPUT_PER_CHECK) {
+      output = output.slice(0, MAX_FAILURE_OUTPUT_PER_CHECK) + "\n…[truncated]";
     }
 
     blocks.push(
-      `### ❌ \`${check.command}\` (exit code ${check.exitCode})\n\`\`\`stderr\n${stderr}\n\`\`\``,
+      `### ❌ \`${check.command}\` (exit code ${check.exitCode})\n\`\`\`${outputLabel}\n${output}\n\`\`\``,
     );
   }
 
@@ -488,6 +490,20 @@ export interface VerificationTarget {
   preferenceCommands?: string[];
 }
 
+function verificationChildEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of [
+    "GSD_PROJECT_ROOT",
+    "GSD_MILESTONE_LOCK",
+    "GSD_PARALLEL_WORKER",
+    "GSD_SLICE_LOCK",
+    "GSD_SLICE_WORKER_TOKEN",
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
 // When targets use different discovery methods, return the highest-priority
 // source. Precedence: explicit preference > task-plan > package-json >
 // python-project. This avoids a misleading "mixed" label while still
@@ -556,6 +572,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
         ];
     const result: SpawnSyncReturns<string> = spawnSync(shellBin, shellArgs, {
       cwd: options.cwd,
+      env: verificationChildEnvironment(),
       stdio: "pipe",
       encoding: "utf-8",
       timeout: options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,

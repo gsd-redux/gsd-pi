@@ -108,6 +108,47 @@ export function _shouldProceedWithInvalidRepoClassificationForTest(
   return reason === "missing .git" && hasGit;
 }
 
+function observeTaskPlan(s: AutoSession, unitType: string, unitId: string): void {
+  if (unitType !== "execute-task") return;
+  const { milestone, slice, task } = parseUnitId(unitId);
+  if (!milestone || !slice || !task || !isDbAvailable()) return;
+  try {
+    const taskRow = getTask(milestone, slice, task);
+    if (taskRow) s.sourceObservations.observePlanTask(taskRow);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarning("prompt", `failed to preload source observations for ${unitId}: ${message}`);
+  }
+}
+
+export function restoreTaskHostVerificationContext(
+  ic: Pick<IterationContext, "s" | "prefs">,
+  unitType: string,
+  unitId: string,
+): void {
+  const { s, prefs } = ic;
+  s.setCurrentUnit({
+    type: unitType,
+    id: unitId,
+    startedAt: Date.now(),
+    workspaceRoot: s.basePath,
+  });
+  observeTaskPlan(s, unitType, unitId);
+  s.rootWriteBaseline = isIsolatedWorktreeSession(s)
+    ? captureRootDirtySnapshot(s.originalBasePath)
+    : null;
+
+  const safetyConfig = resolveSafetyHarnessConfig(
+    prefs?.safety_harness as Record<string, unknown> | undefined,
+  );
+  if (!safetyConfig.enabled || !safetyConfig.evidence_collection) return;
+  resetEvidence();
+  const { milestone, slice, task } = parseUnitId(unitId);
+  if (milestone && slice && task) {
+    loadEvidenceFromDisk(s.basePath, milestone, slice, task);
+  }
+}
+
 // ─── Session timeout auto-resume state ────────────────────────────────────────
 
 let consecutiveSessionTimeouts = 0;
@@ -418,18 +459,7 @@ export async function runUnitPhase(
   const unitStartedAt = Date.now();
   s.unitDispatchCount.set(dispatchKey, nextDispatchCount);
   s.setCurrentUnit({ type: unitType, id: unitId, startedAt: unitStartedAt, workspaceRoot: s.basePath });
-  if (unitType === "execute-task") {
-    const { milestone, slice, task } = parseUnitId(unitId);
-    if (milestone && slice && task && isDbAvailable()) {
-      try {
-        const taskRow = getTask(milestone, slice, task);
-        if (taskRow) s.sourceObservations.observePlanTask(taskRow);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logWarning("prompt", `failed to preload source observations for ${unitId}: ${message}`);
-      }
-    }
-  }
+  observeTaskPlan(s, unitType, unitId);
   s.rootWriteBaseline = isIsolatedWorktreeSession(s)
     ? captureRootDirtySnapshot(s.originalBasePath)
     : null;

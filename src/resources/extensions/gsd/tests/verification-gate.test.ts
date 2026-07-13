@@ -432,6 +432,45 @@ describe("verification-gate: execution", () => {
     assert.equal(typeof result.timestamp, "number");
   });
 
+  test("host verification removes GSD control-plane routing while preserving ordinary environment", () => {
+    const routingKeys = [
+      "GSD_PROJECT_ROOT",
+      "GSD_MILESTONE_LOCK",
+      "GSD_PARALLEL_WORKER",
+      "GSD_SLICE_LOCK",
+      "GSD_SLICE_WORKER_TOKEN",
+    ] as const;
+    const previousRouting = new Map(routingKeys.map((key) => [key, process.env[key]]));
+    const previousSentinel = process.env.VERIFICATION_CHILD_SENTINEL;
+    for (const key of routingKeys) process.env[key] = `control-plane:${key}`;
+    process.env.VERIFICATION_CHILD_SENTINEL = "preserved";
+    const probePath = join(tmp, "verification-env-probe.js");
+    writeFileSync(
+      probePath,
+      `process.stdout.write(JSON.stringify({ routing: ${JSON.stringify(routingKeys)}.map((key) => process.env[key]), sentinel: process.env.VERIFICATION_CHILD_SENTINEL }));\n`,
+    );
+    try {
+      const result = runVerificationGate({
+        cwd: tmp,
+        preferenceCommands: ["node verification-env-probe.js"],
+      });
+
+      assert.equal(result.passed, true);
+      assert.deepEqual(JSON.parse(result.checks[0]?.stdout ?? "{}"), {
+        routing: [null, null, null, null, null],
+        sentinel: "preserved",
+      });
+    } finally {
+      for (const key of routingKeys) {
+        const previous = previousRouting.get(key);
+        if (previous === undefined) delete process.env[key];
+        else process.env[key] = previous;
+      }
+      if (previousSentinel === undefined) delete process.env.VERIFICATION_CHILD_SENTINEL;
+      else process.env.VERIFICATION_CHILD_SENTINEL = previousSentinel;
+    }
+  });
+
   test("one command fails → gate fails with exit code + stderr", () => {
     const result = runVerificationGate({
       cwd: tmp,
@@ -848,6 +887,22 @@ test("formatFailureContext: formats a single failure with command, exit code, st
   assert.ok(output.includes("exit code 1"), "should include exit code");
   assert.ok(output.includes("error: unused var"), "should include stderr content");
   assert.ok(output.includes("```stderr"), "should have stderr code block");
+});
+
+test("formatFailureContext: preserves stdout-only failure evidence", () => {
+  const result: import("../types.ts").VerificationResult = {
+    passed: false,
+    checks: [
+      { command: "node --test", exitCode: 1, stdout: "not ok 1 - fixture assertion", stderr: "", durationMs: 500 },
+    ],
+    discoverySource: "task-plan",
+    timestamp: Date.now(),
+  };
+
+  const output = formatFailureContext(result);
+
+  assert.match(output, /not ok 1 - fixture assertion/);
+  assert.match(output, /```stdout/);
 });
 
 test("formatFailureContext: formats multiple failures", () => {

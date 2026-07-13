@@ -2373,6 +2373,8 @@ test("#4414: verifyExpectedArtifact parallel-research succeeds when all research
 
 test("parallel-research verification accepts canonical project artifacts from a worktree base", () => {
   const base = makeTmpBase();
+  const previousProjectRoot = process.env.GSD_PROJECT_ROOT;
+  delete process.env.GSD_PROJECT_ROOT;
   try {
     const milestoneDir = join(base, ".gsd", "milestones", "M001");
     mkdirSync(join(milestoneDir, "slices", "S02", "tasks"), { recursive: true });
@@ -2408,6 +2410,7 @@ test("parallel-research verification accepts canonical project artifacts from a 
       "worktree verification should use the same canonical artifacts as dispatch",
     );
   } finally {
+    if (previousProjectRoot !== undefined) process.env.GSD_PROJECT_ROOT = previousProjectRoot;
     cleanup(base);
   }
 });

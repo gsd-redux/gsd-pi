@@ -2455,6 +2455,132 @@ test("autoLoop publishes a canonical Task only after host verification without l
   }
 });
 
+test("autoLoop resumes host verification for a settled succeeded Attempt without rerunning the executor", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.setWidget = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const basePath = realpathSync(makeLoopTestBase("gsd-canonical-task-resume-verify-"));
+  execSync("git commit --allow-empty -m initial", { cwd: basePath, stdio: "ignore" });
+  const originalBasePath = realpathSync(makeLoopTestBase("gsd-canonical-task-resume-root-"));
+  execSync("git commit --allow-empty -m initial", { cwd: originalBasePath, stdio: "ignore" });
+  writeFileSync(join(originalBasePath, "preexisting-root-note.txt"), "must not become a restart leak\n");
+  const slicePath = join(basePath, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(join(slicePath, "tasks"), { recursive: true });
+  writeFileSync(join(slicePath, "S01-PLAN.md"), "# Slice Plan\n\n- [ ] **T01:** task one\n");
+  writeFileSync(join(slicePath, "tasks", "T01-PLAN.md"), "# Task Plan\n");
+
+  try {
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Task One",
+      status: "pending",
+      planning: { verify: 'node -e "process.exit(0)"' },
+    });
+    const workerId = registerAutoWorker({ projectRootRealpath: basePath });
+    const lease = claimMilestoneLease(workerId, "M001");
+    assert.equal(lease.ok, true);
+    if (!lease.ok) return;
+
+    const seedDispatch = recordDispatchClaim({
+      traceId: "seed-resume-verification",
+      workerId,
+      milestoneLeaseToken: lease.token,
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+    });
+    assert.equal(seedDispatch.ok, true);
+    if (!seedDispatch.ok) return;
+    const claimed = claimTaskAttempt({
+      invocation: {
+        idempotencyKey: "test:auto-loop:resume-verify:claim",
+        sourceTransport: "internal",
+        actorType: "test",
+      },
+      task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+      workerId,
+      milestoneLeaseToken: lease.token,
+      coordinationDispatchId: seedDispatch.dispatchId,
+    });
+    await stageTaskCompletion({
+      invocation: {
+        idempotencyKey: "test:auto-loop:resume-verify:stage",
+        sourceTransport: "internal",
+        actorType: "agent",
+        actorId: workerId,
+      },
+      basePath,
+      task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+      completion: {
+        oneLiner: "Executor candidate completed before restart",
+        narrative: "Candidate Result awaits restarted host verification.",
+        verification: "Host verification has not run yet.",
+        deviations: "None.",
+        knownIssues: "None.",
+        keyFiles: ["src/task.ts"],
+        keyDecisions: ["Resume at verification without rerunning execution."],
+        blockerDiscovered: false,
+        verificationEvidence: [],
+      },
+    });
+    markCanceled(seedDispatch.dispatchId, "simulated process exit after Attempt settlement");
+    assert.equal(readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.nextStage, "verify");
+
+    const s = makeLoopSession({
+      basePath,
+      originalBasePath,
+      canonicalProjectRoot: basePath,
+      workerId,
+      milestoneLeaseToken: lease.token,
+    });
+    let verificationCalls = 0;
+    let stopReason: string | undefined;
+    const deps = makeMockDeps({
+      isDbAvailable: () => true,
+      taskExecutionBoundary: runWithTaskExecutionAttempt,
+      taskPublicationBoundary: publishVerifiedTaskExecution,
+      runPostUnitVerification: async (vctx, pauseAuto) => {
+        verificationCalls += 1;
+        return runPostUnitVerification(vctx, pauseAuto);
+      },
+      postUnitPostVerification: async () => {
+        s.active = false;
+        return "continue" as const;
+      },
+      stopAuto: async (_ctx, _pi, reason) => {
+        stopReason = reason;
+        s.active = false;
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+
+    const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.equal(attempt?.attemptId, claimed.attemptId, "restart must not claim a successor Attempt");
+    assert.equal(pi.calls.length, 0, "restart must not dispatch the executor again");
+    assert.equal(verificationCalls, 1);
+    assert.equal(attempt?.nextStage, "settled");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(stopReason, undefined, "pre-existing root dirt must not be reported as a resumed-unit leak");
+    assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
+  } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(basePath, { recursive: true, force: true });
+    rmSync(originalBasePath, { recursive: true, force: true });
+  }
+});
+
 test("autoLoop refreshes its milestone lease while an execute-task call is pending and clears the heartbeat on exit", async () => {
   _resetPendingResolve();
   mock.timers.enable({ apis: ["setInterval"] });

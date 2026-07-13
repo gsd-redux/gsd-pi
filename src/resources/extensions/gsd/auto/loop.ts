@@ -27,7 +27,10 @@ import {
 import { _clearCurrentResolve } from "./resolve.js";
 import { runGuards } from "./phases.js";
 import { runFinalize } from "./finalize.js";
-import { resetSessionTimeoutState } from "./unit-phase.js";
+import {
+  resetSessionTimeoutState,
+  restoreTaskHostVerificationContext,
+} from "./unit-phase.js";
 import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
@@ -113,6 +116,7 @@ import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-rec
 import { formatLeaseConflictNotice } from "./lease-conflict-notice.js";
 import { setAutoOutcomeWidget, unitVerb } from "../auto-dashboard.js";
 import {
+  isTaskExecutionReadyForHostVerification,
   publishVerifiedTaskExecution,
   runWithTaskExecutionAttempt,
 } from "./task-execution-cutover.js";
@@ -1584,6 +1588,14 @@ export async function autoLoop(
         unitType: iterData.unitType,
         unitId: iterData.unitId,
       });
+      if (
+        unitPhaseResult.action === "next" &&
+        iterData.unitType === "execute-task" &&
+        !s.currentUnit &&
+        isTaskExecutionReadyForHostVerification(iterData.unitType, iterData.unitId)
+      ) {
+        restoreTaskHostVerificationContext(ic, iterData.unitType, iterData.unitId);
+      }
       if (unitPhaseResult.action === "break") {
         dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
           settleDispatchFailed(dispatchId, "unit-break", {
