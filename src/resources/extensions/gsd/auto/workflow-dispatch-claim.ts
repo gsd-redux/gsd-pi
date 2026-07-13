@@ -170,7 +170,9 @@ export function openDispatchClaim(
       }
       return { kind: "skip", reason: "stale-lease" };
     }
-    deps.markDispatchRunning(claim.dispatchId);
+    if (iterData.unitType !== "execute-task") {
+      deps.markDispatchRunning(claim.dispatchId);
+    }
     return { kind: "opened", dispatchId: claim.dispatchId };
   } catch (err) {
     deps.logClaimFailed(err);

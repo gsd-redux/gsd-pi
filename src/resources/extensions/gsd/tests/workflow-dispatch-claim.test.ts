@@ -95,7 +95,7 @@ test("openDispatchClaim degrades when iteration has no milestone id", () => {
   );
 });
 
-test("openDispatchClaim records attempts and marks successful claims running", () => {
+test("openDispatchClaim records execute-task attempts and leaves activation to the Task Domain Operation", () => {
   const running: number[] = [];
   const claimInputs: unknown[] = [];
 
@@ -113,7 +113,7 @@ test("openDispatchClaim records attempts and marks successful claims running", (
   }));
 
   assert.deepEqual(outcome, { kind: "opened", dispatchId: 99 });
-  assert.deepEqual(running, [99]);
+  assert.deepEqual(running, []);
   assert.deepEqual(claimInputs, [{
     traceId: "flow-1",
     turnId: "turn-1",
@@ -126,6 +126,21 @@ test("openDispatchClaim records attempts and marks successful claims running", (
     unitId: "M001/S001/T001",
     attemptN: 3,
   }]);
+});
+
+test("openDispatchClaim keeps marking non-task claims running", () => {
+  const running: number[] = [];
+
+  const outcome = openDispatchClaim(
+    makeSession(),
+    "flow-1",
+    "turn-1",
+    makeIterationData({ unitType: "plan-slice", unitId: "M001/S001" }),
+    makeDeps({ markDispatchRunning: dispatchId => running.push(dispatchId) }),
+  );
+
+  assert.deepEqual(outcome, { kind: "opened", dispatchId: 42 });
+  assert.deepEqual(running, [42]);
 });
 
 test("openDispatchClaim skips already-active claims with existing dispatch details", () => {
