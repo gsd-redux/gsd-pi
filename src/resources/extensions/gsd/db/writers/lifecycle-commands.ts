@@ -91,6 +91,7 @@ export interface SettleAttemptInput {
     workerId: string;
     milestoneLeaseToken: number;
   };
+  cancellation?: boolean;
 }
 
 export interface SettleAttemptResult {
@@ -670,7 +671,12 @@ export function settleAttemptWithResult(
       throw new Error("Attempt recovery requires interrupted outcome");
     }
   }
-  const requiredOperationType = input.recovery ? "attempt.interrupt" : "attempt.settle";
+  if (input.cancellation && (input.outcome !== "interrupted" || input.recovery)) {
+    throw new Error("Task cancellation requires an interrupted non-recovery settlement");
+  }
+  let requiredOperationType = "attempt.settle";
+  if (input.cancellation) requiredOperationType = "task.cancel";
+  else if (input.recovery) requiredOperationType = "attempt.interrupt";
   if (operationType !== requiredOperationType) {
     throw new Error(`Attempt settlement requires an ${requiredOperationType} Domain Operation`);
   }

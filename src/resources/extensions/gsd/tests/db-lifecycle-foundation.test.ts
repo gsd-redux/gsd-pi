@@ -15,6 +15,11 @@ import {
   closeDatabase,
   openDatabase,
 } from "../gsd-db.ts";
+import {
+  createAttemptSettlementShapeTrigger,
+  createAttemptTransitionFencingTrigger,
+} from "../db-attempt-recovery-schema.ts";
+import type { DbAdapter } from "../db-adapter.ts";
 
 const require = createRequire(import.meta.url);
 const tempDirs = new Set<string>();
@@ -236,6 +241,23 @@ function rewindToV35(dbPath: string): void {
       DELETE FROM schema_version;
       INSERT INTO schema_version (version, applied_at)
       VALUES (35, '2026-07-12T00:00:00.000Z');
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+function rewindToV36(dbPath: string): void {
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const db = openRawDatabase(dbPath);
+  try {
+    createAttemptSettlementShapeTrigger(db as unknown as DbAdapter);
+    createAttemptTransitionFencingTrigger(db as unknown as DbAdapter);
+    db.exec(`
+      DELETE FROM schema_version;
+      INSERT INTO schema_version (version, applied_at)
+      VALUES (36, '2026-07-12T00:00:00.000Z');
     `);
   } finally {
     db.close();
@@ -1165,6 +1187,96 @@ test("settled Attempt inserts require an explicit outcome and attempt.settle pro
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.count, 0);
   } finally {
     db.close();
+  }
+});
+
+test("v37 narrowly authorizes interrupted running Attempt cancellation and retries after rollback", () => {
+  const dbPath = createDatabasePath();
+  rewindToV36(dbPath);
+
+  _setMigrationFaultForTest(true);
+  assert.throws(() => openDatabase(dbPath), /migration fault injected/);
+  _setMigrationFaultForTest(false);
+
+  const rolledBack = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(rolledBack), 36);
+    const sql = String(rolledBack.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_settlement_shape_v36'
+    `).get()?.sql);
+    assert.doesNotMatch(sql, /task\.cancel/);
+    const fencingSql = String(rolledBack.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_transition_fencing'
+    `).get()?.sql);
+    assert.doesNotMatch(fencingSql, /task\.cancel/);
+  } finally {
+    rolledBack.close();
+  }
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const upgraded = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(upgraded), SCHEMA_VERSION);
+    const sql = String(upgraded.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_settlement_shape_v36'
+    `).get()?.sql);
+    assert.match(sql, /task\.cancel/);
+    const fencingSql = String(upgraded.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_transition_fencing'
+    `).get()?.sql);
+    assert.match(fencingSql, /task\.cancel/);
+
+    seedHierarchy(upgraded);
+    insertOperation(upgraded, "op-v37-claim", 1);
+    insertOperation(upgraded, "op-v37-cancel", 2, 0, "task.cancel");
+    insertTaskLifecycle(upgraded, "life-v37-cancel", "M-A", "op-v37-claim", 1);
+    upgraded.exec(`
+      INSERT INTO workers (
+        worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+        project_root_realpath
+      ) VALUES (
+        'worker-v37', 'test-host', 1, '2026-07-12T00:00:00.000Z', 'test',
+        '2026-07-12T00:00:00.000Z', 'active', '/tmp/v37'
+      );
+      INSERT INTO milestone_leases (
+        milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+      ) VALUES (
+        'M-A', 'worker-v37', 7, '2026-07-12T00:00:00.000Z',
+        '2099-07-12T00:00:00.000Z', 'held'
+      );
+    `);
+    upgraded.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number, attempt_state,
+        worker_id, milestone_lease_token, claimed_at,
+        claim_operation_id, claim_project_revision, claim_authority_epoch
+      ) VALUES (
+        'attempt-v37-cancel', ?, 'life-v37-cancel', 1, 'claimed',
+        'worker-v37', 7, '2026-07-12T00:02:00.000Z', 'op-v37-claim', 1, 0
+      )
+    `).run(projectId(upgraded));
+    upgraded.prepare(`
+      UPDATE workflow_execution_attempts
+      SET attempt_state = 'running', started_at = '2026-07-12T00:02:30.000Z'
+      WHERE attempt_id = 'attempt-v37-cancel'
+    `).run();
+
+    assert.throws(
+      () => settleAttempt(upgraded, "attempt-v37-cancel", "op-v37-cancel", 2, "succeeded"),
+      /recovery requires interrupted outcome|settlement/i,
+    );
+    settleAttempt(upgraded, "attempt-v37-cancel", "op-v37-cancel", 2, "interrupted");
+    assert.equal(upgraded.prepare(`
+      SELECT settle_outcome FROM workflow_execution_attempts
+      WHERE attempt_id = 'attempt-v37-cancel'
+    `).get()?.settle_outcome, "interrupted");
+  } finally {
+    upgraded.close();
   }
 });
 

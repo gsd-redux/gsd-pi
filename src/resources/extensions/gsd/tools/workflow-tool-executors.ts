@@ -866,6 +866,7 @@ export async function executeTaskComplete(
 export async function executeTaskReopen(
   params: ReopenTaskExecutorParams,
   basePath: string = process.cwd(),
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -876,7 +877,7 @@ export async function executeTaskReopen(
     };
   }
   try {
-    const result = await handleReopenTask(params, basePath);
+    const result = await handleReopenTask(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error reopening task: ${result.error}` }],

@@ -3,6 +3,7 @@
 
 import type { DbAdapter } from "./db-adapter.js";
 import { createAttemptRecoverySchemaV36 } from "./db-attempt-recovery-schema.js";
+import { createTaskCancellationSchemaV37 } from "./db-task-cancellation-schema.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
@@ -523,4 +524,8 @@ export function applyMigrationV35ProjectionImportKernelCloseoutFoundation(db: Db
 
 export function applyMigrationV36AttemptRecovery(db: DbAdapter): void {
   createAttemptRecoverySchemaV36(db);
+}
+
+export function applyMigrationV37TaskCancellation(db: DbAdapter): void {
+  createTaskCancellationSchemaV37(db);
 }

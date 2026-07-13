@@ -15,6 +15,7 @@ import {
   insertTask,
 } from '../gsd-db.ts';
 import { handleReopenTask } from '../tools/reopen-task.ts';
+import { internalExecutionInvocation } from '../execution-invocation.ts';
 import {
   reopenReasonArtifactPath,
   writeReopenReason,
@@ -91,7 +92,7 @@ test('handleReopenTask: persists a claimable reopen reason when reason is provid
       sliceId: 'S01',
       taskId: 'T01',
       reason: 'Full suite caught NavNodeTest regression — update count assertion to 12.',
-    }, base);
+    }, base, internalExecutionInvocation('test/reopen-reason/provided'));
     assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
 
     const claimed = claimReopenReasonForInjection(base, 'M001', 'S01', 'T01');
@@ -108,7 +109,11 @@ test('handleReopenTask: no reason provided leaves nothing to claim', async () =>
   try {
     seedCompleteTask();
 
-    await handleReopenTask({ milestoneId: 'M001', sliceId: 'S01', taskId: 'T01' }, base);
+    await handleReopenTask(
+      { milestoneId: 'M001', sliceId: 'S01', taskId: 'T01' },
+      base,
+      internalExecutionInvocation('test/reopen-reason/omitted'),
+    );
 
     assert.equal(claimReopenReasonForInjection(base, 'M001', 'S01', 'T01'), null);
   } finally {

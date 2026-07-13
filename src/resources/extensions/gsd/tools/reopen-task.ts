@@ -10,15 +10,7 @@
 // GSD — reopen-task tool handler
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
-import {
-  getMilestone,
-  getSlice,
-  getTask,
-  updateTaskStatus,
-  transaction,
-} from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
-import { isClosedStatus } from "../status-guards.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
@@ -26,6 +18,8 @@ import { logWarning } from "../workflow-logger.js";
 import { writeReopenReason } from "../reopen-reason.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { reopenTask } from "../task-lifecycle-domain-operation.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
   buildFlatTaskFileName,
   buildTaskFileName,
@@ -56,6 +50,7 @@ export interface ReopenTaskResult {
 export async function handleReopenTask(
   params: ReopenTaskParams,
   basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ReopenTaskResult | { error: string }> {
   // ── Validate required fields ────────────────────────────────────────────
   if (!params.taskId || typeof params.taskId !== "string" || params.taskId.trim() === "") {
@@ -68,49 +63,33 @@ export async function handleReopenTask(
     return { error: "milestoneId is required and must be a non-empty string" };
   }
 
-  // ── Guards + DB write inside a single transaction (prevents TOCTOU) ────
-  let guardError: string | null = null;
-
-  transaction(() => {
-    const milestone = getMilestone(params.milestoneId);
-    if (!milestone) {
-      guardError = `milestone not found: ${params.milestoneId}`;
-      return;
-    }
-    if (isClosedStatus(milestone.status)) {
-      guardError = `cannot reopen task in a closed milestone: ${params.milestoneId} (status: ${milestone.status})`;
-      return;
-    }
-
-    const slice = getSlice(params.milestoneId, params.sliceId);
-    if (!slice) {
-      guardError = `slice not found: ${params.milestoneId}/${params.sliceId}`;
-      return;
-    }
-    if (isClosedStatus(slice.status)) {
-      guardError = `cannot reopen task in a closed slice: ${params.sliceId} (status: ${slice.status}) — use gsd_slice_reopen first`;
-      return;
-    }
-
-    const task = getTask(params.milestoneId, params.sliceId, params.taskId);
-    if (!task) {
-      guardError = `task not found: ${params.milestoneId}/${params.sliceId}/${params.taskId}`;
-      return;
-    }
-    if (!isClosedStatus(task.status)) {
-      guardError = `task ${params.taskId} is not complete (status: ${task.status}) — nothing to reopen`;
-      return;
-    }
-
-    updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, "pending");
-  });
-
-  if (guardError) {
-    return { error: guardError };
+  let receipt;
+  try {
+    receipt = reopenTask({
+      invocation,
+      task: {
+        milestoneId: params.milestoneId,
+        sliceId: params.sliceId,
+        taskId: params.taskId,
+      },
+      reason: params.reason?.trim() || "Task reopened for execution follow-up",
+    });
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
   }
 
   // ── Invalidate caches ────────────────────────────────────────────────────
   invalidateStateCache();
+
+  // A replay can arrive after newer work has already claimed or completed the
+  // Task. Never let an old request rewrite those newer readable projections.
+  if (receipt.status === "replayed") {
+    return {
+      milestoneId: params.milestoneId,
+      sliceId: params.sliceId,
+      taskId: params.taskId,
+    };
+  }
 
   // ── Clean up stale filesystem artifacts (M12 fix) ────────────────────────
   // Without this, the DB-filesystem reconciler sees the SUMMARY.md and

@@ -51,6 +51,13 @@ import { handleCompleteMilestone } from "../../tools/complete-milestone.ts";
 import { handleReopenTask } from "../../tools/reopen-task.ts";
 import { handleReopenSlice } from "../../tools/reopen-slice.ts";
 import { handleReopenMilestone } from "../../tools/reopen-milestone.ts";
+import { internalExecutionInvocation } from "../../execution-invocation.ts";
+
+let reopenInvocationSequence = 0;
+function reopenInvocation() {
+  reopenInvocationSequence += 1;
+  return internalExecutionInvocation(`test/state-machine/reopen/${reopenInvocationSequence}`);
+}
 
 // ── State derivation ──────────────────────────────────────────────────────
 import {
@@ -611,6 +618,7 @@ describe("state-machine-live-validation", () => {
       const result = await handleReopenTask(
         { milestoneId: "M001", sliceId: "S01", taskId: "T01", reason: "Need to redo" },
         base,
+        reopenInvocation(),
       );
       assert.ok(!("error" in result), `expected success: ${JSON.stringify(result)}`);
 
@@ -628,6 +636,7 @@ describe("state-machine-live-validation", () => {
       const result = await handleReopenTask(
         { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
         base,
+        reopenInvocation(),
       );
       assert.ok("error" in result);
       assert.match((result as any).error, /not complete/);
@@ -643,6 +652,7 @@ describe("state-machine-live-validation", () => {
       const result = await handleReopenTask(
         { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
         base,
+        reopenInvocation(),
       );
       assert.ok("error" in result);
       assert.match((result as any).error, /closed slice/);
@@ -658,6 +668,7 @@ describe("state-machine-live-validation", () => {
       const result = await handleReopenTask(
         { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
         base,
+        reopenInvocation(),
       );
       assert.ok("error" in result);
       assert.match((result as any).error, /closed milestone/);
@@ -880,6 +891,7 @@ describe("state-machine-live-validation", () => {
       await handleReopenTask(
         { milestoneId: "M001", sliceId: "S01", taskId: "T01", reason: "redo" },
         base,
+        reopenInvocation(),
       );
 
       const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
@@ -913,7 +925,11 @@ describe("state-machine-live-validation", () => {
       assert.ok(existsSync(summaryPath), "SUMMARY.md exists after completion");
 
       // Reopen — now deletes SUMMARY.md from disk (M12 fix)
-      const r2 = await handleReopenTask({ milestoneId: "M001", sliceId: "S01", taskId: "T01" }, base);
+      const r2 = await handleReopenTask(
+        { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+        base,
+        reopenInvocation(),
+      );
       assert.ok(!("error" in r2), `reopen: ${JSON.stringify(r2)}`);
 
       // Task is now properly pending — SUMMARY.md was cleaned up

@@ -1355,41 +1355,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_task_reopen (gsd_reopen_task alias) ───────────────────────────
   // Single-writer v3, Stream 3: reversibility tools for closed units.
 
-  const reopenTaskExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
-    const basePath = resolveCtxCwd(_ctx);
-    const dbAvailable = await ensureDbOpen(basePath);
-    if (!dbAvailable) {
-      return {
-        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot reopen task." }],
-        details: { operation: "reopen_task", error: "db_unavailable" } as any,
-      };
-    }
-    try {
-      const { handleReopenTask } = await import("../tools/reopen-task.js");
-      const result = await handleReopenTask(params, basePath);
-      if ("error" in result) {
-        return {
-          content: [{ type: "text" as const, text: `Error reopening task: ${result.error}` }],
-          details: { operation: "reopen_task", error: result.error } as any,
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: `Reopened task ${result.taskId} (${result.sliceId}/${result.milestoneId})` }],
-        details: {
-          operation: "reopen_task",
-          milestoneId: result.milestoneId,
-          sliceId: result.sliceId,
-          taskId: result.taskId,
-        } as any,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError("tool", `reopen_task tool failed: ${msg}`, { tool: "gsd_task_reopen", error: String(err) });
-      return {
-        content: [{ type: "text" as const, text: `Error reopening task: ${msg}` }],
-        details: { operation: "reopen_task", error: msg } as any,
-      };
-    }
+  const reopenTaskExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeTaskReopen } = await loadWorkflowExecutors();
+    return executeTaskReopen(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piExecutionInvocation("gsd_task_reopen", toolCallId),
+    );
   };
 
   const reopenTaskTool = {

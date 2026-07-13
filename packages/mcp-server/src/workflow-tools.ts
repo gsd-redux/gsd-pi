@@ -347,7 +347,8 @@ type WorkflowToolExecutors = {
       actorName?: string;
       triggerReason?: string;
     },
-    basePath?: string,
+    basePath: string,
+    invocation: ExecutionInvocation,
   ) => Promise<unknown>;
   executeSliceReopen: (
     params: {
@@ -1126,11 +1127,12 @@ async function handleTaskComplete(
 async function handleTaskReopen(
   projectDir: string,
   args: Omit<z.infer<typeof taskReopenSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_task_reopen", projectDir, args.milestoneId);
   const { executeTaskReopen } = await getWorkflowToolExecutors();
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeTaskReopen(args, projectDir)),
+    await runSerializedWorkflowOperation(() => executeTaskReopen(args, projectDir, invocation)),
   );
 }
 
@@ -2765,10 +2767,14 @@ export function registerWorkflowTools(
     "gsd_task_reopen",
     "Reset a completed task back to pending so it can be re-done.",
     taskReopenParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(taskReopenSchema, args);
       const { projectDir, ...taskArgs } = parsed;
-      return handleTaskReopen(projectDir, taskArgs);
+      return handleTaskReopen(
+        projectDir,
+        taskArgs,
+        mcpExecutionInvocation("gsd_task_reopen", extra),
+      );
     },
   );
 
@@ -2776,11 +2782,15 @@ export function registerWorkflowTools(
     "gsd_reopen_task",
     "Alias for gsd_task_reopen. Reset a completed task back to pending so it can be re-done.",
     taskReopenParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_reopen_task", "gsd_task_reopen");
       const parsed = parseWorkflowArgs(taskReopenSchema, args);
       const { projectDir, ...taskArgs } = parsed;
-      return handleTaskReopen(projectDir, taskArgs);
+      return handleTaskReopen(
+        projectDir,
+        taskArgs,
+        mcpExecutionInvocation("gsd_task_reopen", extra),
+      );
     },
   );
 

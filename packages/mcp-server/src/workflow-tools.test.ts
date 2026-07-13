@@ -1561,15 +1561,17 @@ describe("workflow MCP tools", () => {
     // `escalation` payload, and asserting the field reached the executor.
     const base = makeTmpBase();
     const capturePath = join(base, "captured-args.json");
+    const reopenCapturePath = join(base, "captured-reopen-args.json");
     const mockModulePath = join(base, "mock-executors.mjs");
     const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
     const prevCapture = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+    const prevReopenCapture = process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
     try {
       // Mock module: implements the WorkflowToolExecutors shape.
       // executeTaskComplete writes its received args to disk for assertion.
       // Other executors are no-op stubs to satisfy isWorkflowToolExecutors.
       const mockSource = `
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const noop = async () => ({ content: [{ type: "text", text: "noop" }] });
 
@@ -1587,9 +1589,19 @@ export const executeReassessRoadmap = noop;
 export const executeSaveGateResult = noop;
 export const executeSummarySave = noop;
 export const executeUatResultSave = noop;
-export const executeTaskReopen = noop;
 export const executeSliceReopen = noop;
 export const executeMilestoneReopen = noop;
+
+export const executeTaskReopen = async (params, projectDir, invocation) => {
+  const capturePath = process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
+  if (capturePath) {
+    let captures = [];
+    try { captures = JSON.parse(readFileSync(capturePath, "utf8")); } catch {}
+    captures.push({ params, projectDir, invocation });
+    writeFileSync(capturePath, JSON.stringify(captures, null, 2));
+  }
+  return { content: [{ type: "text", text: "mock task reopen" }] };
+};
 
 export const executeTaskComplete = async (params, projectDir, invocation) => {
   const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
@@ -1605,6 +1617,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       writeFileSync(mockModulePath, mockSource, "utf-8");
       process.env.GSD_WORKFLOW_EXECUTORS_MODULE = mockModulePath;
       process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = capturePath;
+      process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH = reopenCapturePath;
 
       // Fresh import bypasses the cached workflowToolExecutorsPromise so the
       // mock module is actually loaded for this test.
@@ -1615,8 +1628,12 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       freshRegisterWorkflowTools(server as any);
       const taskTool = server.tools.find((t) => t.name === "gsd_task_complete");
       const aliasTool = server.tools.find((t) => t.name === "gsd_complete_task");
+      const reopenTool = server.tools.find((t) => t.name === "gsd_task_reopen");
+      const reopenAlias = server.tools.find((t) => t.name === "gsd_reopen_task");
       assert.ok(taskTool, "task tool should be registered");
       assert.ok(aliasTool, "task completion alias should be registered");
+      assert.ok(reopenTool, "task reopen tool should be registered");
+      assert.ok(reopenAlias, "task reopen alias should be registered");
 
       // Mirrors the ADR-011 escalation schema: question + 2-4 options
       // (each with id/label/tradeoffs) + recommendation + rationale +
@@ -1689,6 +1706,29 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         captured.invocation,
         "canonical and alias task completion must share one private execution identity",
       );
+
+      const reopenArgs = {
+        projectDir: base,
+        taskId: "T01",
+        sliceId: "S01",
+        milestoneId: "M001",
+        reason: "verification found a regression",
+      };
+      const reopenMetadata = { _meta: { "io.opengsd/idempotency-key": "stable-task-reopen" } };
+      await reopenTool!.handler(reopenArgs, reopenMetadata);
+      await reopenAlias!.handler(reopenArgs, reopenMetadata);
+      const reopenCaptures = JSON.parse(readFileSync(reopenCapturePath, "utf-8"));
+      assert.equal(reopenCaptures.length, 2);
+      for (const reopenCapture of reopenCaptures) {
+        assert.equal(reopenCapture.projectDir, realpathSync(base));
+        assert.equal(reopenCapture.params.projectDir, undefined);
+        assert.deepEqual(reopenCapture.invocation, {
+          idempotencyKey: "mcp:gsd_task_reopen:stable-task-reopen",
+          sourceTransport: "workflow-mcp",
+          actorType: "agent",
+          traceId: "stable-task-reopen",
+        });
+      }
     } finally {
       if (prevModule === undefined) {
         delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
@@ -1699,6 +1739,11 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         delete process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
       } else {
         process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = prevCapture;
+      }
+      if (prevReopenCapture === undefined) {
+        delete process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
+      } else {
+        process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH = prevReopenCapture;
       }
       cleanup(base);
     }

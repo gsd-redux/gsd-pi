@@ -2,7 +2,7 @@
 // File Purpose: Executable contract for private Pi identity at the staged Task completion boundary.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,6 +185,48 @@ function registeredCompletionTools(): RegisteredTool[] {
   return tools.filter((tool) => tool.name === "gsd_task_complete" || tool.name === "gsd_complete_task");
 }
 
+function registeredReopenTools(): RegisteredTool[] {
+  const tools: RegisteredTool[] = [];
+  registerDbTools({
+    registerTool(tool: RegisteredTool) {
+      tools.push(tool);
+    },
+  } as unknown as Parameters<typeof registerDbTools>[0]);
+  return tools.filter((tool) => tool.name === "gsd_task_reopen" || tool.name === "gsd_reopen_task");
+}
+
+function completeCanonicalFixture(): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.completed",
+    idempotencyKey: "fixture/task-completed",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+    });
+    db().prepare(`UPDATE tasks SET status = 'complete' WHERE id = 'T01'`).run();
+    return {
+      events: [{
+        eventType: "test.task.completed",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{ projectionKey: "test/task-completed", projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+}
+
 afterEach(() => {
   closeDatabase();
   delete process.env.GSD_ADVERTISE_TOOL_ALIASES;
@@ -286,6 +328,42 @@ test("Pi canonical and alias completion calls converge on one private staged Res
     outcome: "succeeded",
   });
   assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "in_progress");
+});
+
+test("Pi canonical and alias reopen calls converge without replaying projection cleanup", async () => {
+  process.env.GSD_ADVERTISE_TOOL_ALIASES = "1";
+  const basePath = createBase();
+  completeCanonicalFixture();
+  const tools = registeredReopenTools();
+  const canonical = tools.find((tool) => tool.name === "gsd_task_reopen");
+  const alias = tools.find((tool) => tool.name === "gsd_reopen_task");
+  assert.ok(canonical);
+  assert.ok(alias);
+
+  const params = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    reason: "new verification found a regression",
+  };
+  const first = await canonical.execute("reopen-call-42", params, undefined, undefined, { cwd: basePath });
+  const summaryPath = join(basePath, ".gsd", "phases", "01-test", "01-01-T01-SUMMARY.md");
+  writeFileSync(summaryPath, "# Newer summary\n");
+  const replay = await alias.execute("reopen-call-42", params, undefined, undefined, { cwd: basePath });
+
+  assert.deepEqual(replay, first);
+  assert.ok(existsSync(summaryPath), "replay must not delete a projection created after the original reopen");
+  assert.deepEqual(row(`
+    SELECT operation_type, idempotency_key, source_transport
+    FROM workflow_operations WHERE operation_type = 'task.reopen'
+  `), {
+    operation_type: "task.reopen",
+    idempotency_key: "pi:gsd_task_reopen:reopen-call-42",
+    source_transport: "pi-tool",
+  });
+  assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_work_checkpoints`).count, 1);
+  assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "ready");
+  assert.equal(row(`SELECT status FROM tasks WHERE id = 'T01'`).status, "pending");
 });
 
 test("a canonical blocker submission records a failed Result and routes instead of awaiting verification", async () => {

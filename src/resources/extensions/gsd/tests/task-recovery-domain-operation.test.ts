@@ -19,9 +19,11 @@ import {
 import { recordFailureObservation } from "../db/writers/task-recovery.ts";
 import {
   appendTaskWorkCheckpoint,
+  cancelTask,
   grantTaskWaiver,
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
+  reopenTask,
   resolveTaskBlocker,
   terminateTaskWaiver,
 } from "../task-recovery-domain-operation.ts";
@@ -203,6 +205,142 @@ function seedRetryFailure(
     output: {},
   });
   return { attemptId: claim.attemptId, resultId: settlement.resultId };
+}
+
+function seedReadyTask(): { lifecycleId: string; dispatchId: number } {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-task-lifecycle-operation-"));
+  tempDirs.add(dir);
+  assert.equal(openDatabase(join(dir, "gsd.db")), true);
+  db().exec(`
+    INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M001', 'Recovery', 'active', '2026-07-13T00:00:00.000Z');
+    INSERT INTO slices (milestone_id, id, title, status, created_at)
+    VALUES ('M001', 'S01', 'Recovery operation', 'active', '2026-07-13T00:00:00.000Z');
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status)
+    VALUES ('M001', 'S01', 'T01', 'Lifecycle recovery', 'pending');
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-1', 'test-host', 1, '2026-07-13T00:00:00.000Z', 'test',
+      '2026-07-13T00:00:00.000Z', 'active', '/tmp/project'
+    );
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES (
+      'M001', 'worker-1', 7, '2026-07-13T00:00:00.000Z',
+      '2099-07-13T00:00:00.000Z', 'held'
+    );
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'lifecycle-trace-1', 'lifecycle-turn-1', 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 1, '2026-07-13T00:00:00.000Z'
+    );
+  `);
+  const fence = readDomainOperationFence();
+  let lifecycleId = "";
+  executeDomainOperation({
+    operationType: "test.task.ready",
+    idempotencyKey: "fixture/lifecycle-ready",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    lifecycleId = adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+    }).lifecycleId;
+    return {
+      events: [{
+        eventType: "test.task.ready",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/task/lifecycle-ready",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  return { lifecycleId, dispatchId: Number(row("SELECT id FROM unit_dispatches").id) };
+}
+
+function completeTaskWithHistory(): { lifecycleId: string; attemptId: string } {
+  const seeded = seedReadyTask();
+  const claim = claimTaskAttempt({
+    invocation: invocation("fixture/completed/claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: seeded.dispatchId,
+  });
+  settleTaskAttempt({
+    invocation: invocation("fixture/completed/settle"),
+    attemptId: claim.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "Task completed",
+    output: { summary: "durable history" },
+  });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.complete",
+    idempotencyKey: "fixture/completed/closeout",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+    });
+    db().prepare(`
+      UPDATE tasks SET status = 'complete', completed_at = '2026-07-13T01:00:00.000Z'
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+    return {
+      events: [{ eventType: "test.task.complete", entityType: "task", entityId: "M001/S01/T01", payload: {}, destinations: ["test"] }],
+      projections: [{ projectionKey: "test/task/complete", projectionKind: "test", rendererVersion: "1" }],
+    };
+  });
+  return { lifecycleId: seeded.lifecycleId, attemptId: claim.attemptId };
+}
+
+function insertClaimedDispatch(attemptNumber: number): number {
+  db().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      :trace_id, :turn_id, 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', :attempt_n, :started_at
+    )
+  `).run({
+    ":trace_id": `lifecycle-trace-${attemptNumber}`,
+    ":turn_id": `lifecycle-turn-${attemptNumber}`,
+    ":attempt_n": attemptNumber,
+    ":started_at": `2026-07-13T02:00:0${attemptNumber}.000Z`,
+  });
+  return Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id);
 }
 
 afterEach(() => {
@@ -502,4 +640,174 @@ test("appendTaskWorkCheckpoint extends one current head with a replay-safe recei
   assert.equal(first.status, "committed");
   assert.equal(replay.status, "replayed");
   assert.equal(count("workflow_work_checkpoints"), 1);
+});
+
+test("reopenTask moves completed work to ready and pending without erasing history", () => {
+  const completed = completeTaskWithHistory();
+  const before = {
+    attempts: count("workflow_execution_attempts"),
+    results: count("workflow_attempt_results"),
+    checkpoints: count("workflow_kernel_checkpoints"),
+  };
+  const input = {
+    invocation: invocation("task/reopen/completed"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "fresh verification found a regression",
+  };
+
+  const first = reopenTask(input);
+  const replay = reopenTask(input);
+
+  assert.equal(first.status, "committed");
+  assert.equal(replay.status, "replayed");
+  assert.deepEqual({ ...replay, status: "committed" }, first);
+  assert.deepEqual(row(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles WHERE lifecycle_id = :lifecycle_id
+  `, { ":lifecycle_id": completed.lifecycleId }), { lifecycle_status: "ready" });
+  assert.deepEqual(row(`
+    SELECT status, completed_at FROM tasks
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `), { status: "pending", completed_at: null });
+  assert.deepEqual({
+    attempts: count("workflow_execution_attempts"),
+    results: count("workflow_attempt_results"),
+    checkpoints: count("workflow_kernel_checkpoints"),
+  }, before);
+
+  const dispatchId = insertClaimedDispatch(2);
+  assert.equal(count("workflow_execution_attempts"), 1, "reopen itself must not claim work");
+  const claimed = claimTaskAttempt({
+    invocation: invocation("task/reopen/later-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: dispatchId,
+    retryOfAttemptId: completed.attemptId,
+  });
+  assert.equal(claimed.attemptNumber, 2);
+  assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "in_progress");
+});
+
+test("reopenTask maps cancelled and skipped work to ready and pending", () => {
+  const seeded = seedReadyTask();
+  cancelTask({
+    invocation: invocation("task/cancel/ready-for-reopen"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "the work is intentionally omitted",
+  });
+  assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "cancelled");
+  assert.equal(row(`SELECT status FROM tasks`).status, "skipped");
+
+  reopenTask({
+    invocation: invocation("task/reopen/cancelled"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "the omitted work is required again",
+  });
+  assert.equal(row(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles WHERE lifecycle_id = :lifecycle_id
+  `, { ":lifecycle_id": seeded.lifecycleId }).lifecycle_status, "ready");
+  assert.equal(row(`SELECT status FROM tasks`).status, "pending");
+});
+
+test("cancelTask atomically interrupts running work before cancelling its lifecycle", () => {
+  const seeded = seedReadyTask();
+  const claim = claimTaskAttempt({
+    invocation: invocation("task/cancel/running-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: seeded.dispatchId,
+  });
+  const beforeRevision = Number(row(`SELECT revision FROM project_authority`).revision);
+
+  const cancelled = cancelTask({
+    invocation: invocation("task/cancel/running"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "the user withdrew this work",
+  });
+
+  assert.equal(cancelled.resultingRevision, beforeRevision + 1);
+  assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "cancelled");
+  assert.equal(row(`SELECT status FROM tasks`).status, "skipped");
+  assert.deepEqual(row(`
+    SELECT attempt.attempt_state, result.outcome
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_attempt_results result ON result.attempt_id = attempt.attempt_id
+    WHERE attempt.attempt_id = :attempt_id
+  `, { ":attempt_id": claim.attemptId }), {
+    attempt_state: "settled",
+    outcome: "interrupted",
+  });
+  assert.equal(row(`
+    SELECT next_stage FROM workflow_kernel_checkpoints
+    WHERE attempt_id = :attempt_id ORDER BY sequence DESC LIMIT 1
+  `, { ":attempt_id": claim.attemptId }).next_stage, "route");
+  assert.equal(row(`
+    SELECT status FROM unit_dispatches WHERE id = :dispatch_id
+  `, { ":dispatch_id": seeded.dispatchId }).status, "canceled");
+});
+
+test("cancelTask terminates an abandoned running Attempt after its worker lease expires", () => {
+  const seeded = seedReadyTask();
+  const claim = claimTaskAttempt({
+    invocation: invocation("task/cancel/expired-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: seeded.dispatchId,
+  });
+  db().prepare(`
+    UPDATE milestone_leases
+    SET expires_at = '2020-01-01T00:00:00.000Z'
+    WHERE milestone_id = 'M001' AND worker_id = 'worker-1'
+  `).run();
+
+  const cancelled = cancelTask({
+    invocation: invocation("task/cancel/expired-running"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "abandoned work is no longer required",
+  });
+
+  assert.equal(cancelled.interruptedAttemptId, claim.attemptId);
+  assert.equal(row(`SELECT settle_outcome FROM workflow_execution_attempts`).settle_outcome, "interrupted");
+  assert.equal(row(`SELECT status FROM unit_dispatches`).status, "canceled");
+  assert.equal(row(`SELECT lifecycle_status FROM workflow_item_lifecycles`).lifecycle_status, "cancelled");
+});
+
+test("reopenTask rejects closed parents without changing terminal Task history", () => {
+  const completed = completeTaskWithHistory();
+  db().prepare(`UPDATE slices SET status = 'complete' WHERE milestone_id = 'M001' AND id = 'S01'`).run();
+  const beforeRevision = Number(row(`SELECT revision FROM project_authority`).revision);
+
+  assert.throws(() => reopenTask({
+    invocation: invocation("task/reopen/closed-parent"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "must reopen the parent first",
+  }), /closed slice/);
+  db().prepare(`UPDATE slices SET status = 'deferred' WHERE milestone_id = 'M001' AND id = 'S01'`).run();
+  assert.throws(() => reopenTask({
+    invocation: invocation("task/reopen/deferred-slice"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "deferred work remains terminal",
+  }), /closed slice/);
+  db().prepare(`UPDATE slices SET status = 'active' WHERE milestone_id = 'M001' AND id = 'S01'`).run();
+  db().prepare(`UPDATE milestones SET status = 'deferred' WHERE id = 'M001'`).run();
+  assert.throws(() => reopenTask({
+    invocation: invocation("task/reopen/deferred-milestone"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "deferred work remains terminal",
+  }), /closed milestone/);
+  db().prepare(`UPDATE milestones SET status = 'active' WHERE id = 'M001'`).run();
+  db().prepare(`UPDATE slices SET status = 'quarantined' WHERE milestone_id = 'M001' AND id = 'S01'`).run();
+  assert.throws(() => reopenTask({
+    invocation: invocation("task/reopen/unknown-slice"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    reason: "unknown parent state cannot be treated as open",
+  }), /unknown status quarantined/);
+  assert.equal(Number(row(`SELECT revision FROM project_authority`).revision), beforeRevision);
+  assert.equal(row(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles WHERE lifecycle_id = :lifecycle_id
+  `, { ":lifecycle_id": completed.lifecycleId }).lifecycle_status, "completed");
+  assert.equal(count("workflow_execution_attempts"), 1);
+  assert.equal(count("workflow_attempt_results"), 1);
 });

@@ -68,13 +68,19 @@ export function terminalizeTaskExecutionDispatch(
   input: Pick<TaskDispatchIdentity, "dispatchId" | "workerId" | "milestoneLeaseToken"> & {
     outcome: "succeeded" | "failed" | "interrupted";
     endedAt: string;
+    cancellation?: boolean;
   },
 ): void {
   const operationType = requireActiveDomainOperationContext(context);
-  const requiredOperationType = input.outcome === "interrupted" ? "attempt.interrupt" : "attempt.settle";
+  let requiredOperationType = "attempt.settle";
+  if (input.cancellation) requiredOperationType = "task.cancel";
+  else if (input.outcome === "interrupted") requiredOperationType = "attempt.interrupt";
   if (operationType !== requiredOperationType) {
     throw new Error(`Task dispatch terminalization requires an ${requiredOperationType} Domain Operation`);
   }
+  let dispatchStatus = "failed";
+  if (input.cancellation) dispatchStatus = "canceled";
+  else if (input.outcome === "succeeded") dispatchStatus = "completed";
   const result = getDb().prepare(`
     UPDATE unit_dispatches
     SET status = :status, ended_at = :ended_at
@@ -83,7 +89,7 @@ export function terminalizeTaskExecutionDispatch(
       AND milestone_lease_token = :lease_token
       AND status IN ('claimed', 'running')
   `).run({
-    ":status": input.outcome === "succeeded" ? "completed" : "failed",
+    ":status": dispatchStatus,
     ":ended_at": input.endedAt,
     ":dispatch_id": input.dispatchId,
     ":worker_id": input.workerId,

@@ -109,6 +109,12 @@ export interface RecordRequirementDispositionInput {
   createdAt?: string;
 }
 
+export interface LegacyTaskStateInput {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+}
+
 function requireOperation(
   context: Readonly<DomainOperationContext>,
   allowed: readonly string[],
@@ -401,7 +407,13 @@ export function appendRecoveryWorkCheckpoint(
   context: Readonly<DomainOperationContext>,
   input: AppendRecoveryWorkCheckpointInput,
 ): { checkpointId: string; sequence: number } {
-  requireOperation(context, ["attempt.route", "task.blocker.resolve", "task.checkpoint.append"]);
+  requireOperation(context, [
+    "attempt.route",
+    "task.blocker.resolve",
+    "task.checkpoint.append",
+    "task.reopen",
+    "task.cancel",
+  ]);
   const scopeKey = normalizedKey(input.scopeKey, "scopeKey");
   const head = getDb().prepare(`
     SELECT checkpoint_id, lifecycle_id, sequence
@@ -451,6 +463,42 @@ export function appendRecoveryWorkCheckpoint(
     ":authority_epoch": context.resultingAuthorityEpoch,
   });
   return { checkpointId, sequence };
+}
+
+function updateLegacyTaskState(
+  context: Readonly<DomainOperationContext>,
+  input: LegacyTaskStateInput,
+  operationType: "task.reopen" | "task.cancel",
+  status: "pending" | "skipped",
+): void {
+  requireOperation(context, [operationType]);
+  const updated = getDb().prepare(`
+    UPDATE tasks
+    SET status = :status, completed_at = NULL
+    WHERE milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND id = :task_id
+  `).run({
+    ":status": status,
+    ":milestone_id": requireText(input.milestoneId, "milestoneId"),
+    ":slice_id": requireText(input.sliceId, "sliceId"),
+    ":task_id": requireText(input.taskId, "taskId"),
+  });
+  if (changedRows(updated) !== 1) throw new Error("Task compatibility state update must affect one row");
+}
+
+export function reopenLegacyTaskState(
+  context: Readonly<DomainOperationContext>,
+  input: LegacyTaskStateInput,
+): void {
+  updateLegacyTaskState(context, input, "task.reopen", "pending");
+}
+
+export function cancelLegacyTaskState(
+  context: Readonly<DomainOperationContext>,
+  input: LegacyTaskStateInput,
+): void {
+  updateLegacyTaskState(context, input, "task.cancel", "skipped");
 }
 
 export function grantRecoveryWaiver(

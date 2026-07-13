@@ -26,6 +26,13 @@ import {
 } from "./db/writers/task-recovery.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+
+export {
+  cancelTask,
+  reopenTask,
+  type TaskLifecycleIdentity,
+  type TaskLifecycleReceipt,
+} from "./task-lifecycle-domain-operation.js";
 import {
   normalizeFailureFingerprint,
   selectRecoveryDecision,
