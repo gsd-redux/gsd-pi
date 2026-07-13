@@ -34,6 +34,7 @@ interface RouteHeadInput {
   lifecycleId: string;
   attemptId: string;
   kernelCheckpointId: string;
+  boundaryStage?: "execute" | "verify";
 }
 
 export interface OpenRecoveryBlockerInput extends RouteHeadInput {
@@ -46,6 +47,7 @@ export interface OpenRecoveryBlockerInput extends RouteHeadInput {
 
 export interface RecordFailureObservationInput extends RouteHeadInput {
   resultId: string;
+  boundaryStage?: "execute" | "verify";
   blockerId?: string;
   recoveryOwner: RecoveryOwner;
   failureKind: string;
@@ -154,9 +156,20 @@ function requireCurrentRouteHead(
   const resultJoin = input.resultId
     ? "JOIN workflow_attempt_results result ON result.attempt_id = attempt.attempt_id AND result.project_id = attempt.project_id"
     : "";
-  const resultGuard = input.resultId
-    ? "AND result.result_id = :result_id AND result.outcome IN ('failed', 'interrupted')"
-    : "";
+  let resultGuard = "";
+  if (input.resultId) {
+    resultGuard = input.boundaryStage === "verify"
+      ? `AND result.result_id = :result_id
+         AND result.outcome = 'succeeded'
+         AND EXISTS (
+           SELECT 1 FROM workflow_technical_verdicts verdict
+           WHERE verdict.project_id = result.project_id
+             AND verdict.lifecycle_id = result.lifecycle_id
+             AND verdict.attempt_id = result.attempt_id
+             AND verdict.verdict IN ('fail', 'inconclusive')
+         )`
+      : "AND result.result_id = :result_id AND result.outcome IN ('failed', 'interrupted')";
+  }
   const parameters: Record<string, unknown> = {
     ":project_id": context.projectId,
     ":lifecycle_id": input.lifecycleId,
@@ -280,7 +293,7 @@ export function recordFailureObservation(
       operation_id, project_revision, authority_epoch
     ) VALUES (
       :observation_id, :project_id, :lifecycle_id, :attempt_id, :result_id,
-      :blocker_id, :recovery_owner, 'execute', :failure_kind,
+      :blocker_id, :recovery_owner, :boundary_stage, :failure_kind,
       :failure_fingerprint, :summary, :evidence_json, :observed_at,
       :operation_id, :project_revision, :authority_epoch
     )
@@ -292,6 +305,7 @@ export function recordFailureObservation(
     ":result_id": input.resultId,
     ":blocker_id": input.blockerId ?? null,
     ":recovery_owner": input.recoveryOwner,
+    ":boundary_stage": input.boundaryStage ?? "execute",
     ":failure_kind": normalizedKey(input.failureKind, "failureKind"),
     ":failure_fingerprint": normalizedKey(input.failureFingerprint, "failureFingerprint"),
     ":summary": requireText(input.summary, "summary"),

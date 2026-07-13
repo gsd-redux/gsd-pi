@@ -56,9 +56,10 @@ interface FailedAttemptScope extends TaskScope {
   attemptId: string;
   resultId: string;
   kernelCheckpointId: string;
+  boundaryStage: "execute" | "verify";
 }
 
-type RouteFailureInput = {
+export type RouteFailureInput = {
   invocation: ExecutionInvocation;
   attemptId: string;
   resultId: string;
@@ -177,11 +178,12 @@ function checkpointScope(scope: Pick<FailedAttemptScope, "milestoneId" | "sliceI
   return `task:${taskEntity(scope)}`.toLowerCase();
 }
 
-function loadFailedAttemptScope(attemptId: string, resultId: string): FailedAttemptScope {
+function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAttemptScope {
   const scope = getDb().prepare(`
     SELECT lifecycle.lifecycle_id, lifecycle.milestone_id, lifecycle.slice_id,
            lifecycle.task_id, attempt.attempt_id, result.result_id,
-           checkpoint.kernel_checkpoint_id
+           checkpoint.kernel_checkpoint_id,
+           CASE WHEN result.outcome = 'succeeded' THEN 'verify' ELSE 'execute' END AS boundary_stage
     FROM workflow_execution_attempts attempt
     JOIN workflow_attempt_results result
       ON result.attempt_id = attempt.attempt_id
@@ -196,14 +198,23 @@ function loadFailedAttemptScope(attemptId: string, resultId: string): FailedAtte
     WHERE attempt.attempt_id = :attempt_id
       AND result.result_id = :result_id
       AND attempt.attempt_state = 'settled'
-      AND result.outcome IN ('failed', 'interrupted')
+      AND (
+        result.outcome IN ('failed', 'interrupted') OR
+        (result.outcome = 'succeeded' AND EXISTS (
+          SELECT 1 FROM workflow_technical_verdicts verdict
+          WHERE verdict.project_id = result.project_id
+            AND verdict.lifecycle_id = result.lifecycle_id
+            AND verdict.attempt_id = result.attempt_id
+            AND verdict.verdict IN ('fail', 'inconclusive')
+        ))
+      )
       AND checkpoint.next_stage = 'route'
       AND NOT EXISTS (
         SELECT 1 FROM workflow_kernel_checkpoints successor
         WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
       )
   `).get({ ":attempt_id": attemptId, ":result_id": resultId }) as Record<string, unknown> | undefined;
-  if (!scope) throw new Error("Task recovery requires the current failed or interrupted Result route head");
+  if (!scope) throw new Error("Task recovery requires a current execute or verification failure route head");
   return {
     lifecycleId: String(scope["lifecycle_id"]),
     milestoneId: String(scope["milestone_id"]),
@@ -212,6 +223,7 @@ function loadFailedAttemptScope(attemptId: string, resultId: string): FailedAtte
     attemptId: String(scope["attempt_id"]),
     resultId: String(scope["result_id"]),
     kernelCheckpointId: String(scope["kernel_checkpoint_id"]),
+    boundaryStage: String(scope["boundary_stage"]) as "execute" | "verify",
   };
 }
 
@@ -344,7 +356,7 @@ export function recordFailureAndSelectRecovery(
       ...(input.owner === "agent" ? {} : { blocker: input.blocker }),
     },
   ), (context) => {
-    const scope = loadFailedAttemptScope(input.attemptId, input.resultId);
+    const scope = loadRoutedFailureScope(input.attemptId, input.resultId);
     requireUnroutedResult(input.resultId);
     const failureKind = input.classification.failureKind.trim().toLowerCase();
     const fingerprint = normalizeFailureFingerprint(failureKind, input.summary);
@@ -368,6 +380,7 @@ export function recordFailureAndSelectRecovery(
       lifecycleId: scope.lifecycleId,
       attemptId: scope.attemptId,
       resultId: scope.resultId,
+      boundaryStage: scope.boundaryStage,
       kernelCheckpointId: scope.kernelCheckpointId,
       ...(blockerId ? { blockerId } : {}),
       recoveryOwner: decision.owner,

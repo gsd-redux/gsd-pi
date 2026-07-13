@@ -150,3 +150,65 @@ gates; the full merge gate remains the final pre-PR check.
 4. Prove fault/restart/projection and cross-mode convergence, remove the
    obsolete shortcut authority, and document any intentionally deferred S05
    cascade work.
+
+## T05 runtime cutover findings
+
+Research after T04 found that durable recovery records exist but runtime retry
+authority still bypasses them. The Task wrapper settles failed and interrupted
+Attempts, then a later dispatch may claim a retry from the immediate predecessor
+without requiring a current Recovery Action. Host-verification failures have a
+succeeded Result plus a failed or inconclusive Technical Verdict, so the current
+failed-Result-only router cannot authorize their remediation.
+
+T05 closes the drift door in this order:
+
+1. Add a verdict-causal recovery face and require a current retry-capable
+   Recovery Action before a routed predecessor can be claimed again.
+2. Route execute failures, stale interruptions, and host-verification failures
+   immediately after their immutable failure fact is committed. Translate the
+   durable action into retry or agent-owned abort; never invent a human pause.
+3. Remove Task-specific ephemeral counters and status resets from hook, timeout,
+   and artifact recovery. Retry remains Attempt lineage; terminal follow-up is
+   an explicit reopen.
+4. Stop checked PLAN files, SUMMARY files, and blocker placeholders from
+   fabricating Task completion or cancellation.
+5. Remove completion compensation that rolls committed database state backward
+   when a projection fails, then reject generic closed-to-open Task writes.
+
+Broader Markdown import, event-ledger replay, reactive graph, CONTINUE, and UAT
+projection authority remain separately identified drift surfaces. They are not
+allowed to bypass the Task recovery seal introduced here and will be cut over in
+their owning milestone slices rather than folded into one unsafe rewrite.
+
+## T05 convergence decisions
+
+The implementation review added five constraints that are easy to miss when
+the happy path is the only path tested:
+
+- Publication is complete when its Domain Operation commits. A failed PLAN or
+  SUMMARY render must replay the same publication operation and repair the
+  projection even though the Attempt head is already settled.
+- A repeated verification failure signature cannot override a retry-capable
+  Recovery Action. Legacy duplicate-hash and cost counters remain telemetry or
+  non-Task policy; the durable recovery budget owns Task exhaustion.
+- Source drift after a passing Technical Verdict appends an inconclusive
+  superseding verdict and routes `verification-drift`. A read-time comparison
+  cannot manufacture an undocumented abort.
+- Agent-fixable verification setup and policy errors append fail or
+  inconclusive evidence before recovery is selected. Only an explicitly
+  human-owned verification policy may pause without agent remediation.
+- Timeout recovery recognizes a settled, succeeded Attempt rather than a
+  closed Task row, checked PLAN item, or SUMMARY file. Hook retry intent is
+  retained until the canonical reopen and orchestration retry both succeed.
+- Provider pauses, timeouts, and other known transient execution outcomes map
+  to a bounded durable policy class. Unknown or hard failures remain terminal;
+  free-form phase text cannot silently decide between retry and abort.
+- A verification write that fails before commit propagates without inventing
+  an abort, leaving the succeeded Attempt at `verify` for a clean retry.
+- Hook retry intent is bound to the reviewed completion operation. A stale
+  review cannot reopen a newer completion, and persistence/acknowledgement
+  failures are observable and fail closed.
+
+Reactive graph advancement and slice/milestone descendant cascades remain S05
+work. Diagnostic blockers may describe those failures, but they do not mutate
+or prove Task lifecycle state.

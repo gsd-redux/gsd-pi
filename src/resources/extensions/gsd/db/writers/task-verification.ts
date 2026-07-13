@@ -40,6 +40,7 @@ export interface HostTechnicalVerdictWriteInput {
   rationale: string;
   evidence: HostTechnicalEvidenceInput;
   createdAt: string;
+  supersedesVerdictId?: string;
 }
 
 export function currentHostTechnicalCriterionId(projectId: string, lifecycleId: string): string | undefined {
@@ -106,11 +107,11 @@ export function insertHostTechnicalVerdict(
     INSERT INTO workflow_technical_verdicts (
       verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
       tested_source_revision, verdict, policy_id, policy_version, rationale,
-      created_at, operation_id, project_revision, authority_epoch
+      supersedes_verdict_id, created_at, operation_id, project_revision, authority_epoch
     ) VALUES (
       :verdict_id, :project_id, :criterion_id, :lifecycle_id, :attempt_id,
       :source_revision, :verdict, 'gsd-host-verification', '1', :rationale,
-      :created_at, :operation_id, :project_revision, :authority_epoch
+      :supersedes_verdict_id, :created_at, :operation_id, :project_revision, :authority_epoch
     )
   `).run({
     ":verdict_id": verdictId,
@@ -121,6 +122,7 @@ export function insertHostTechnicalVerdict(
     ":source_revision": input.testedSourceRevision,
     ":verdict": input.verdict,
     ":rationale": input.rationale,
+    ":supersedes_verdict_id": input.supersedesVerdictId ?? null,
     ":created_at": input.createdAt,
     ":operation_id": context.operationId,
     ":project_revision": context.resultingRevision,

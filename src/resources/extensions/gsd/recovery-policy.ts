@@ -24,6 +24,7 @@ export type HumanBlockerKind =
   | "user_limit";
 export type TaskFailureKind =
   | RecoveryFailureKind
+  | "transient-execution"
   | "verification-failed"
   | "objective-uat"
   | "plan-invalid"
@@ -95,6 +96,7 @@ function budgetedRule(
   classification: Extract<RecoveryPolicyInput, { owner: "agent" }>["classification"],
 ): BudgetedRule | null {
   switch (classification.failureKind) {
+    case "transient-execution":
     case "tool-unavailable":
       return { action: "retry", policyClass: "transient-execution", maxUses: 2 };
     case "provider":

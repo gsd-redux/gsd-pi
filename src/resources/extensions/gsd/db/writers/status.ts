@@ -10,11 +10,10 @@
 //     events that write raw "done"/"in-progress" and tests assert those exact
 //     stored values, so converging on write is a separate, behavior-sensitive
 //     change (migrate replay/import to canonical first).
-//   - Generalizing the closed→open guard to task/slice: four legitimate reopen
-//     callers (undo, tools/reopen-task, auto-post-unit, tools/plan-slice) move
-//     entities to open statuses through the generic faces. Generalizing safely
-//     needs sanctioned reopenTaskStatus/reopenSliceStatus faces first, mirroring
-//     the existing milestone updateMilestoneStatus/reopenMilestoneStatus split.
+//   - Generalizing the closed→open guard to slices: legitimate reopen callers
+//     still move slices to open statuses through the generic face. Generalizing
+//     safely needs a sanctioned reopenSliceStatus face first, mirroring the
+//     existing milestone updateMilestoneStatus/reopenMilestoneStatus split.
 import { getDbOrNull } from "../engine.js";
 import { GSDError, GSD_STALE_STATE } from "../../errors.js";
 import { isClosedStatus } from "../../status-guards.js";
@@ -43,10 +42,9 @@ function requireDb() {
  * writes — the update*Status faces delegate here so the guard and (future)
  * normalization/journal/cache policy live in one place rather than per face.
  *
- * Milestone closed→open guard: generic updates may close, park/unpark, or
- * advance a milestone, but may not reopen a closed one; callers must use
- * reopenMilestoneStatus() (gsd_milestone_reopen). Tasks and slices are not yet
- * guarded — see the file header.
+ * Closed→open guard: generic updates may close or advance Tasks and milestones,
+ * but may not reopen closed rows; callers must use the corresponding semantic
+ * reopen operation. Slices are not yet guarded — see the file header.
  */
 export function applyStatusTransition(t: StatusTransition): void {
   const db = requireDb();
@@ -54,7 +52,16 @@ export function applyStatusTransition(t: StatusTransition): void {
   const preserve = t.preserveCompletion ? 1 : 0;
 
   switch (t.entity) {
-    case "task":
+    case "task": {
+      const row = db.prepare(
+        "SELECT status FROM tasks WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :id",
+      ).get({ ":milestone_id": t.milestoneId, ":slice_id": t.sliceId, ":id": t.taskId });
+      const currentStatus = typeof row?.["status"] === "string" ? (row["status"] as string) : null;
+      if (currentStatus && isClosedStatus(currentStatus) && !isClosedStatus(t.status)) {
+        throw new Error(
+          `Cannot update closed task ${t.taskId} from ${currentStatus} to ${t.status}; use gsd_task_reopen for an explicit reopen.`,
+        );
+      }
       db.prepare(
         `UPDATE tasks SET status = :status,
            completed_at = CASE WHEN :preserve_completion = 1 AND tasks.completed_at IS NOT NULL
@@ -69,6 +76,7 @@ export function applyStatusTransition(t: StatusTransition): void {
         ":id": t.taskId,
       });
       return;
+    }
 
     case "slice":
       db.prepare(

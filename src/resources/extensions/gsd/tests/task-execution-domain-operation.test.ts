@@ -21,9 +21,11 @@ import {
   readDomainOperationFence,
 } from "../db/writers/lifecycle-commands.ts";
 import {
+  invalidateTaskTechnicalPass,
   readTaskTechnicalVerdict,
   recordTaskTechnicalVerdict,
 } from "../task-verification-domain-operation.ts";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
 
 interface ExecutionInvocation {
   idempotencyKey: string;
@@ -78,6 +80,14 @@ interface TaskExecutionDomain {
 
 interface AttemptSnapshot {
   attemptId: string;
+  resultId?: string;
+  resultFailureClass?: string;
+  resultSummary?: string;
+  resultRecovery?: {
+    failureKind: string;
+    action: "retry" | "escalate" | "stop";
+    rationale: string;
+  };
   attemptNumber: number;
   retryOfAttemptId?: string;
   state: "running" | "settled";
@@ -349,6 +359,11 @@ for (const contract of [
     ]);
     const expectedSnapshot = {
       attemptId: claim.attemptId,
+      resultId: settled.resultId,
+      resultFailureClass: contract.outcome === "succeeded" ? "none" : "executor-error",
+      resultSummary: contract.outcome === "succeeded"
+        ? "executor produced its result"
+        : "executor stopped without a valid result",
       attemptNumber: 1,
       state: "settled",
       outcome: contract.outcome,
@@ -394,6 +409,31 @@ for (const contract of [
     `).run(settled.resultId), /immutable/i);
   });
 }
+
+test("failed Result snapshots preserve the recovery classification needed after restart", async () => {
+  const { claimTaskAttempt, settleTaskAttempt, readTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+
+  settleTaskAttempt({
+    ...settleInput(claim.attemptId, "failed"),
+    failureClass: "reconciliation-drift",
+    summary: "Reconciliation failed",
+    output: {
+      recoveryClassification: {
+        failureKind: "reconciliation-drift",
+        action: "escalate",
+        rationale: "Repair canonical drift before retrying",
+      },
+    },
+  });
+
+  assert.deepEqual(readTaskAttempt(claim.attemptId)?.resultRecovery, {
+    failureKind: "reconciliation-drift",
+    action: "escalate",
+    rationale: "Repair canonical drift before retrying",
+  });
+});
 
 test("lost-response replay returns the original claim identity after unrelated revision advance without duplicating facts", async () => {
   const { claimTaskAttempt } = await subject();
@@ -461,6 +501,57 @@ test("failed host verification records immutable evidence and routes before retr
   });
 });
 
+test("retry claim requires the current route head's retry-capable Recovery Action", async () => {
+  const { claimTaskAttempt, settleTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const first = claimTaskAttempt(claimInput(dispatchId));
+  const failed = settleTaskAttempt(settleInput(first.attemptId, "failed"));
+  db().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-dispatch-2', 'turn-dispatch-2', 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 2, '2026-07-12T00:03:00.000Z'
+    )
+  `).run();
+  const retryDispatchId = Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id);
+  const retryInput = {
+    ...claimInput(retryDispatchId, "task-attempt/claim/retry-authorized"),
+    retryOfAttemptId: first.attemptId,
+  };
+
+  assert.throws(
+    () => claimTaskAttempt(retryInput),
+    /current route head.*retry-capable Recovery Action|retry-capable Recovery Action/i,
+  );
+  assert.equal(count("workflow_execution_attempts"), 1);
+  assert.equal(row(`SELECT status FROM unit_dispatches WHERE id = ${retryDispatchId}`).status, "claimed");
+
+  const recovery = recordFailureAndSelectRecovery({
+    invocation: invocation("task-attempt/route/retry-authorized"),
+    attemptId: first.attemptId,
+    resultId: failed.resultId,
+    owner: "agent",
+    classification: { failureKind: "tool-unavailable" },
+    summary: "tool surface unavailable",
+    evidence: { source: "executor" },
+    rationale: "retry the transient tool failure",
+  });
+  assert.equal(recovery.action, "retry");
+
+  const retry = claimTaskAttempt(retryInput);
+  assert.equal(retry.attemptNumber, 2);
+  assert.deepEqual(rows(`
+    SELECT attempt_number, retry_of_attempt_id FROM workflow_execution_attempts ORDER BY attempt_number
+  `), [
+    { attempt_number: 1, retry_of_attempt_id: null },
+    { attempt_number: 2, retry_of_attempt_id: first.attemptId },
+  ]);
+});
+
 test("one Attempt cannot record a second host Technical Verdict", async () => {
   const { claimTaskAttempt, settleTaskAttempt } = await subject();
   const { dispatchId } = seedFixture();
@@ -513,6 +604,82 @@ test("one Attempt cannot record a second host Technical Verdict", async () => {
     nextStage: "verify",
     operationId: authoritative.operation_id,
     resultingRevision: authoritative.project_revision,
+  });
+});
+
+test("source drift supersedes a passing verdict atomically and replays without duplicate facts", async () => {
+  const { claimTaskAttempt, settleTaskAttempt, readTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  settleTaskAttempt(settleInput(claim.attemptId, "succeeded"));
+  const passed = recordTaskTechnicalVerdict({
+    invocation: invocation("task-attempt/verify/drift/pass"),
+    attemptId: claim.attemptId,
+    testedSourceRevision: "sha256:original-source",
+    verdict: "pass",
+    rationale: "Host verification passed the original source.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "npm test",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 0,
+      observation: "passed",
+      durableOutputRef: "db://host-verification/attempt-1/pass",
+      environment: { runner: "node-test", sourceRevisionAfter: "sha256:original-source" },
+    },
+  });
+  const input = {
+    invocation: invocation(`task-attempt/verify/drift/${passed.verdictId}`),
+    attemptId: claim.attemptId,
+    supersedesVerdictId: passed.verdictId,
+    rationale: "Stored passing verdict no longer matches sha256:changed-source.",
+    evidence: {
+      evidenceClass: "command" as const,
+      commandOrTool: "gsd-source-integrity",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-12T00:03:00.000Z",
+      endedAt: "2026-07-12T00:03:00.000Z",
+      exitCode: 1,
+      observation: "inconclusive" as const,
+      durableOutputRef: "db://host-verification/attempt-1/source-drift",
+      environment: {
+        runner: "node-test",
+        sourceRevisionBefore: "sha256:original-source",
+        sourceRevisionAfter: "sha256:changed-source",
+      },
+    },
+  };
+
+  const invalidated = invalidateTaskTechnicalPass(input);
+  const beforeReplay = executionSnapshot();
+  const replayed = invalidateTaskTechnicalPass(input);
+
+  assert.deepEqual(replayed, { ...invalidated, status: "replayed" });
+  assert.deepEqual(executionSnapshot(), beforeReplay);
+  assert.equal(readTaskAttempt(claim.attemptId)?.nextStage, "route");
+  assert.deepEqual(rows(`
+    SELECT verdict, tested_source_revision, supersedes_verdict_id
+    FROM workflow_technical_verdicts ORDER BY project_revision
+  `), [
+    { verdict: "pass", tested_source_revision: "sha256:original-source", supersedes_verdict_id: null },
+    {
+      verdict: "inconclusive",
+      tested_source_revision: "sha256:original-source",
+      supersedes_verdict_id: passed.verdictId,
+    },
+  ]);
+  assert.deepEqual(readTaskTechnicalVerdict(claim.attemptId), {
+    attemptId: claim.attemptId,
+    verdictId: invalidated.verdictId,
+    evidenceId: invalidated.evidenceId,
+    verdict: "inconclusive",
+    testedSourceRevision: "sha256:original-source",
+    supersedesVerdictId: passed.verdictId,
+    nextStage: "route",
+    operationId: invalidated.operationId,
+    resultingRevision: invalidated.resultingRevision,
   });
 });
 
@@ -574,6 +741,17 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
     failure_class: "stale-worker",
   });
   assert.equal(row("SELECT status FROM unit_dispatches").status, "canceled");
+  const routed = recordFailureAndSelectRecovery({
+    invocation: invocation("task-attempt/recover/route"),
+    attemptId: first.attemptId,
+    resultId: interrupted.resultId,
+    owner: "agent",
+    classification: { failureKind: "stale-worker" },
+    summary: "Replacement lease interrupted a stale worker",
+    evidence: { workerId: "worker-2", milestoneLeaseToken: 8 },
+    rationale: "Repair stale ownership before the lineage retry",
+  });
+  assert.equal(routed.action, "repair");
   db().exec(`
     INSERT INTO unit_dispatches (
       trace_id, turn_id, worker_id, milestone_lease_token,

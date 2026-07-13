@@ -23,6 +23,14 @@ import {
 } from "./db/writers/task-execution.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
+import type { RecoveryAction } from "./recovery-classification.js";
+import type { TaskFailureKind } from "./recovery-policy.js";
+
+export interface TaskResultRecoveryClassification {
+  failureKind: TaskFailureKind;
+  action: RecoveryAction;
+  rationale: string;
+}
 
 export interface ClaimTaskAttemptInput {
   invocation: ExecutionInvocation;
@@ -68,6 +76,10 @@ export interface SettleTaskAttemptReceipt {
 
 export interface TaskExecutionAttemptSnapshot {
   attemptId: string;
+  resultId?: string;
+  resultFailureClass?: string;
+  resultSummary?: string;
+  resultRecovery?: TaskResultRecoveryClassification;
   attemptNumber: number;
   retryOfAttemptId?: string;
   state: "running" | "settled";
@@ -113,6 +125,10 @@ interface SettledResultRow {
 
 interface AttemptSnapshotRow {
   attempt_id: string;
+  result_id: string | null;
+  failure_class: string | null;
+  summary: string | null;
+  output_json: string | null;
   attempt_number: number;
   retry_of_attempt_id: string | null;
   attempt_state: "running" | "settled";
@@ -233,8 +249,13 @@ function nextStage(outcome: SettleTaskAttemptInput["outcome"]): "verify" | "rout
 
 function snapshot(row: AttemptSnapshotRow | undefined): TaskExecutionAttemptSnapshot | null {
   if (!row) return null;
+  const resultRecovery = parseResultRecovery(row.output_json);
   return {
     attemptId: row.attempt_id,
+    ...(row.result_id ? { resultId: row.result_id } : {}),
+    ...(row.failure_class ? { resultFailureClass: row.failure_class } : {}),
+    ...(row.summary ? { resultSummary: row.summary } : {}),
+    ...(resultRecovery ? { resultRecovery } : {}),
     attemptNumber: row.attempt_number,
     ...(row.retry_of_attempt_id ? { retryOfAttemptId: row.retry_of_attempt_id } : {}),
     state: row.attempt_state,
@@ -246,12 +267,32 @@ function snapshot(row: AttemptSnapshotRow | undefined): TaskExecutionAttemptSnap
   };
 }
 
+function parseResultRecovery(outputJson: string | null): TaskResultRecoveryClassification | undefined {
+  if (!outputJson) return undefined;
+  try {
+    const output = JSON.parse(outputJson) as Record<string, unknown>;
+    const recovery = output["recoveryClassification"] as Record<string, unknown> | undefined;
+    if (!recovery || typeof recovery["failureKind"] !== "string" ||
+        typeof recovery["action"] !== "string" || typeof recovery["rationale"] !== "string") {
+      return undefined;
+    }
+    return {
+      failureKind: recovery["failureKind"] as TaskFailureKind,
+      action: recovery["action"] as RecoveryAction,
+      rationale: recovery["rationale"],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null {
   const row = getDb().prepare(`
     SELECT attempt.attempt_id, attempt.attempt_number, attempt.retry_of_attempt_id,
            attempt.attempt_state,
            attempt.coordination_dispatch_id, attempt.worker_id, attempt.milestone_lease_token,
-           result.outcome, checkpoint.next_stage
+           result.result_id, result.outcome, result.failure_class, result.summary, result.output_json,
+           checkpoint.next_stage
     FROM workflow_execution_attempts attempt
     LEFT JOIN workflow_attempt_results result
       ON result.attempt_id = attempt.attempt_id
@@ -273,7 +314,8 @@ export function readLatestTaskAttempt(
     SELECT attempt.attempt_id, attempt.attempt_number, attempt.retry_of_attempt_id,
            attempt.attempt_state,
            attempt.coordination_dispatch_id, attempt.worker_id, attempt.milestone_lease_token,
-           result.outcome, checkpoint.next_stage
+           result.result_id, result.outcome, result.failure_class, result.summary, result.output_json,
+           checkpoint.next_stage
     FROM workflow_item_lifecycles lifecycle
     JOIN workflow_execution_attempts attempt
       ON attempt.lifecycle_id = lifecycle.lifecycle_id

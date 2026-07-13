@@ -128,6 +128,7 @@ interface AttemptRow {
   attempt_id: string;
   attempt_number: number;
   attempt_state: string;
+  next_stage: string | null;
 }
 
 interface KernelHeadRow {
@@ -590,10 +591,21 @@ export function claimRunningAttempt(
   }
 
   const prior = getDb().prepare(`
-    SELECT attempt_id, attempt_number, attempt_state
-    FROM workflow_execution_attempts
-    WHERE lifecycle_id = :lifecycle_id
-    ORDER BY attempt_number DESC LIMIT 1
+    SELECT attempt.attempt_id, attempt.attempt_number, attempt.attempt_state,
+           (
+             SELECT checkpoint.next_stage
+             FROM workflow_kernel_checkpoints checkpoint
+             WHERE checkpoint.lifecycle_id = attempt.lifecycle_id
+               AND checkpoint.attempt_id = attempt.attempt_id
+               AND checkpoint.project_id = attempt.project_id
+               AND NOT EXISTS (
+                 SELECT 1 FROM workflow_kernel_checkpoints successor
+                 WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
+               )
+           ) AS next_stage
+    FROM workflow_execution_attempts attempt
+    WHERE attempt.lifecycle_id = :lifecycle_id
+    ORDER BY attempt.attempt_number DESC LIMIT 1
   `).get({ ":lifecycle_id": input.lifecycleId }) as unknown as AttemptRow | undefined;
   if (!prior && input.retryOfAttemptId !== undefined) {
     throw new Error("retry Attempt has no predecessor");
@@ -604,6 +616,31 @@ export function claimRunningAttempt(
   if (prior && input.retryOfAttemptId !== prior.attempt_id) {
     throw new Error("retry must reference the immediate predecessor Attempt");
   }
+  if (prior?.next_stage === "route") {
+    const authorized = getDb().prepare(`
+      SELECT 1 AS authorized
+      FROM workflow_recovery_actions action
+      JOIN workflow_failure_observations observation
+        ON observation.failure_observation_id = action.failure_observation_id
+       AND observation.project_id = action.project_id
+       AND observation.lifecycle_id = action.lifecycle_id
+      WHERE action.project_id = :project_id
+        AND action.lifecycle_id = :lifecycle_id
+        AND action.target_lifecycle_id = :lifecycle_id
+        AND observation.attempt_id = :attempt_id
+        AND action.action IN ('retry', 'repair', 'remediate', 'replan')
+        AND action.project_revision < :project_revision
+    `).get({
+      ":project_id": context.projectId,
+      ":lifecycle_id": input.lifecycleId,
+      ":attempt_id": prior.attempt_id,
+      ":project_revision": context.resultingRevision,
+    });
+    if (!authorized) {
+      throw new Error("retry claim requires the current route head's retry-capable Recovery Action");
+    }
+  }
+  if (prior && !prior.next_stage) throw new Error("retry predecessor is missing its current Kernel head");
 
   const attemptId = randomUUID();
   const attemptNumber = (prior?.attempt_number ?? 0) + 1;

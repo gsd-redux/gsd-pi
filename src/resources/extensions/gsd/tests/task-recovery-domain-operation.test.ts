@@ -28,6 +28,7 @@ import {
   terminateTaskWaiver,
 } from "../task-recovery-domain-operation.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 
 const tempDirs = new Set<string>();
@@ -432,6 +433,70 @@ test("recordFailureAndSelectRecovery atomically selects and replays one bounded 
     invocation: invocation("recovery/agent/duplicate"),
   }), /already has a recovery/);
   assert.equal(count("workflow_failure_observations"), 1);
+});
+
+test("failed Technical Verdict routes one durable recovery action for a succeeded Attempt and replays", () => {
+  const seeded = seedReadyTask();
+  const claim = claimTaskAttempt({
+    invocation: invocation("verification-recovery/claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: seeded.dispatchId,
+  });
+  const settled = settleTaskAttempt({
+    invocation: invocation("verification-recovery/settle"),
+    attemptId: claim.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "executor produced its result",
+    output: { changedFiles: ["src/task.ts"] },
+  });
+  recordTaskTechnicalVerdict({
+    invocation: invocation("verification-recovery/verdict"),
+    attemptId: claim.attemptId,
+    testedSourceRevision: "git:verification-recovery",
+    verdict: "fail",
+    rationale: "Host test failed after successful execution.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "npm test",
+      workingDirectory: "/tmp/project",
+      startedAt: "2026-07-13T01:00:00.000Z",
+      endedAt: "2026-07-13T01:00:01.000Z",
+      exitCode: 1,
+      observation: "failed",
+      durableOutputRef: "db://host-verification/verification-recovery",
+      environment: { runner: "node-test", platform: "test" },
+    },
+  });
+  const input = {
+    invocation: invocation("verification-recovery/route"),
+    attemptId: claim.attemptId,
+    resultId: settled.resultId,
+    owner: "agent" as const,
+    classification: { failureKind: "verification-failed" as const },
+    summary: "host verification failed after successful execution",
+    evidence: { verdict: "fail", testedSourceRevision: "git:verification-recovery" },
+    rationale: "remediate the durable verification failure",
+  };
+
+  const committed = recordFailureAndSelectRecovery(input);
+  const replayed = recordFailureAndSelectRecovery(input);
+
+  assert.equal(committed.status, "committed");
+  assert.equal(committed.action, "remediate");
+  assert.deepEqual(replayed, { ...committed, status: "replayed" });
+  assert.equal(count("workflow_technical_verdicts"), 1);
+  assert.equal(count("workflow_failure_observations"), 1);
+  assert.equal(count("workflow_recovery_actions"), 1);
+  assert.deepEqual(row(`
+    SELECT result.outcome, checkpoint.next_stage
+    FROM workflow_attempt_results result
+    JOIN workflow_kernel_checkpoints checkpoint ON checkpoint.attempt_id = result.attempt_id
+    WHERE result.result_id = :result_id
+    ORDER BY checkpoint.sequence DESC LIMIT 1
+  `, { ":result_id": settled.resultId }), { outcome: "succeeded", next_stage: "route" });
 });
 
 test("an orphan observation prevents a second recovery bundle for the same Result", () => {
