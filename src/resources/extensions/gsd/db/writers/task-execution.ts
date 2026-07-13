@@ -98,18 +98,25 @@ export function terminalizeTaskExecutionDispatch(
   if (Number((result as { changes?: number }).changes ?? 0) === 1) return;
 
   if (input.outcome === "interrupted") {
-    const canceled = getDb().prepare(`
+    const alreadyTerminal = getDb().prepare(`
       SELECT 1 AS present FROM unit_dispatches
       WHERE id = :dispatch_id
         AND worker_id = :worker_id
         AND milestone_lease_token = :lease_token
-        AND status = 'canceled'
+        AND (
+          status = 'canceled'
+          OR (
+            :recovery_interruption = 1
+            AND status IN ('failed', 'stuck', 'paused')
+          )
+        )
     `).get({
       ":dispatch_id": input.dispatchId,
       ":worker_id": input.workerId,
       ":lease_token": input.milestoneLeaseToken,
+      ":recovery_interruption": operationType === "attempt.interrupt" ? 1 : 0,
     });
-    if (canceled) return;
+    if (alreadyTerminal) return;
   }
   throw new Error("Task execution settlement did not terminalize exactly one coordination dispatch");
 }

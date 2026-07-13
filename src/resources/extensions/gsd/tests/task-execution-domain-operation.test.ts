@@ -202,6 +202,23 @@ function seedFixture(): { dispatchId: number } {
   return { dispatchId: Number(row("SELECT id FROM unit_dispatches").id) };
 }
 
+function installReplacementLease(): void {
+  db().exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-2', 'test-host', 2, '2026-07-12T00:01:00.000Z', 'test',
+      '2026-07-12T00:01:00.000Z', 'active', '/tmp/project'
+    );
+    UPDATE milestone_leases
+    SET worker_id = 'worker-2', fencing_token = 8,
+        acquired_at = '2026-07-12T00:01:00.000Z',
+        expires_at = '2099-07-12T00:00:00.000Z', status = 'held'
+    WHERE milestone_id = 'M001';
+  `);
+}
+
 function claimInput(dispatchId: number, key = "task-attempt/claim/1"): ClaimTaskAttemptInput {
   return {
     invocation: invocation(key),
@@ -708,19 +725,8 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
     recovery: { workerId: "worker-1", milestoneLeaseToken: 7 },
   }), /lease|current|valid|stale/i);
   assert.deepEqual(executionSnapshot(), beforePrematureRecovery);
+  installReplacementLease();
   db().exec(`
-    INSERT INTO workers (
-      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
-      project_root_realpath
-    ) VALUES (
-      'worker-2', 'test-host', 2, '2026-07-12T00:01:00.000Z', 'test',
-      '2026-07-12T00:01:00.000Z', 'active', '/tmp/project'
-    );
-    UPDATE milestone_leases
-    SET worker_id = 'worker-2', fencing_token = 8,
-        acquired_at = '2026-07-12T00:01:00.000Z',
-        expires_at = '2099-07-12T00:00:00.000Z', status = 'held'
-    WHERE milestone_id = 'M001';
     UPDATE unit_dispatches
     SET status = 'canceled', ended_at = '2026-07-12T00:01:00.000Z',
         exit_reason = 'stale-dispatch-lease-takeover'
@@ -780,4 +786,86 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
     { attempt_number: 1, retry_of_attempt_id: null, attempt_state: "settled" },
     { attempt_number: 2, retry_of_attempt_id: first.attemptId, attempt_state: "running" },
   ]);
+});
+
+test("a replacement lease can interrupt an Attempt whose original dispatch already failed", async () => {
+  const { claimTaskAttempt, settleTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  installReplacementLease();
+  db().exec(`
+    UPDATE unit_dispatches
+    SET status = 'failed', ended_at = '2026-07-12T00:01:00.000Z',
+        error_summary = 'prior executor session failed after the Attempt claim'
+    WHERE id = ${dispatchId};
+  `);
+
+  const interrupted = settleTaskAttempt({
+    ...settleInput(claim.attemptId, "interrupted", "task-attempt/recover/failed-dispatch"),
+    failureClass: "stale-worker",
+    recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+  });
+
+  assert.equal(interrupted.nextStage, "route");
+  assert.deepEqual(row(`
+    SELECT attempt_state, settle_outcome, recovery_worker_id,
+           recovery_milestone_lease_token
+    FROM workflow_execution_attempts
+  `), {
+    attempt_state: "settled",
+    settle_outcome: "interrupted",
+    recovery_worker_id: "worker-2",
+    recovery_milestone_lease_token: 8,
+  });
+  assert.equal(row("SELECT status FROM unit_dispatches").status, "failed");
+});
+
+for (const dispatchStatus of ["stuck", "paused"] as const) {
+  test(`a replacement lease preserves an already ${dispatchStatus} dispatch while interrupting its Attempt`, async () => {
+    const { claimTaskAttempt, settleTaskAttempt } = await subject();
+    const { dispatchId } = seedFixture();
+    const claim = claimTaskAttempt(claimInput(dispatchId));
+    installReplacementLease();
+    db().prepare(`
+      UPDATE unit_dispatches
+      SET status = :status, ended_at = '2026-07-12T00:01:00.000Z'
+      WHERE id = :dispatch_id
+    `).run({ ":status": dispatchStatus, ":dispatch_id": dispatchId });
+
+    const interrupted = settleTaskAttempt({
+      ...settleInput(
+        claim.attemptId,
+        "interrupted",
+        `task-attempt/recover/${dispatchStatus}-dispatch`,
+      ),
+      failureClass: "stale-worker",
+      recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+    });
+
+    assert.equal(interrupted.nextStage, "route");
+    assert.equal(row("SELECT attempt_state FROM workflow_execution_attempts").attempt_state, "settled");
+    assert.equal(row("SELECT status FROM unit_dispatches").status, dispatchStatus);
+  });
+}
+
+test("a replacement lease cannot reinterpret a completed dispatch as interrupted", async () => {
+  const { claimTaskAttempt, settleTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  installReplacementLease();
+  db().exec(`
+    UPDATE unit_dispatches
+    SET status = 'completed', ended_at = '2026-07-12T00:01:00.000Z'
+    WHERE id = ${dispatchId};
+  `);
+  const before = executionSnapshot();
+
+  assert.throws(() => settleTaskAttempt({
+    ...settleInput(claim.attemptId, "interrupted", "task-attempt/recover/completed-dispatch"),
+    failureClass: "stale-worker",
+    recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+  }), /did not terminalize exactly one coordination dispatch/i);
+
+  assert.deepEqual(executionSnapshot(), before);
+  assert.equal(row("SELECT status FROM unit_dispatches").status, "completed");
 });
