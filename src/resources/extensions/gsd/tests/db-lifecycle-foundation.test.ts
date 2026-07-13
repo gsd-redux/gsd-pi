@@ -48,6 +48,10 @@ function tableExists(db: RawDb, table: string): boolean {
   );
 }
 
+function columnExists(db: RawDb, table: string, column: string): boolean {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((row) => row.name === column);
+}
+
 function maxSchemaVersion(db: RawDb): number {
   return Number(db.prepare("SELECT MAX(version) AS version FROM schema_version").get()?.version);
 }
@@ -75,7 +79,13 @@ function seedHierarchy(db: RawDb): void {
   `);
 }
 
-function insertOperation(db: RawDb, id: string, revision: number, authorityEpoch = 0): void {
+function insertOperation(
+  db: RawDb,
+  id: string,
+  revision: number,
+  authorityEpoch = 0,
+  operationType = "attempt.settle",
+): void {
   const project = projectId(db);
   db.prepare(`
     INSERT INTO workflow_operations (
@@ -83,10 +93,11 @@ function insertOperation(db: RawDb, id: string, revision: number, authorityEpoch
       expected_revision, resulting_revision,
       expected_authority_epoch, resulting_authority_epoch,
       actor_type, actor_id, source_transport, request_hash, created_at
-    ) VALUES (?, ?, 'test', ?, ?, ?, ?, ?, 'agent', 'test', 'test', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'agent', 'test', 'test', ?, ?)
   `).run(
     id,
     project,
+    operationType,
     `key-${id}`,
     revision - 1,
     revision,
@@ -160,13 +171,19 @@ function insertAttempt(
   );
 }
 
-function settleAttempt(db: RawDb, attemptId: string, operationId: string, revision: number): void {
+function settleAttempt(
+  db: RawDb,
+  attemptId: string,
+  operationId: string,
+  revision: number,
+  outcome: "succeeded" | "failed" | "interrupted" = "succeeded",
+): void {
   db.prepare(`
     UPDATE workflow_execution_attempts
-    SET attempt_state = 'settled', ended_at = ?,
+    SET attempt_state = 'settled', ended_at = ?, settle_outcome = ?,
         settle_operation_id = ?, settle_project_revision = ?, settle_authority_epoch = 0
     WHERE attempt_id = ?
-  `).run("2026-07-12T00:03:00.000Z", operationId, revision, attemptId);
+  `).run("2026-07-12T00:03:00.000Z", outcome, operationId, revision, attemptId);
 }
 
 function openFreshFixture(): { dbPath: string; db: RawDb } {
@@ -194,6 +211,31 @@ function rewindToV31(dbPath: string): void {
       DELETE FROM schema_version;
       INSERT INTO schema_version (version, applied_at)
       VALUES (31, '2026-07-12T00:00:00.000Z');
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+function rewindToV35(dbPath: string): void {
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const db = openRawDatabase(dbPath);
+  try {
+    db.exec(`
+      DROP TRIGGER IF EXISTS trg_workflow_attempt_transition_fencing;
+      DROP TRIGGER IF EXISTS trg_workflow_attempt_transition_dispatch_scope;
+      DROP TRIGGER IF EXISTS trg_workflow_attempt_settlement_shape_v36;
+      DROP TRIGGER IF EXISTS trg_workflow_attempt_settlement_insert_shape_v36;
+      DROP TRIGGER IF EXISTS trg_workflow_attempt_result_outcome_v36;
+      DROP TRIGGER IF EXISTS trg_workflow_kernel_stage_transition_v36;
+      DROP TRIGGER IF EXISTS trg_workflow_kernel_execute_result_v36;
+      ALTER TABLE workflow_execution_attempts DROP COLUMN recovery_milestone_lease_token;
+      ALTER TABLE workflow_execution_attempts DROP COLUMN recovery_worker_id;
+      ALTER TABLE workflow_execution_attempts DROP COLUMN settle_outcome;
+      DELETE FROM schema_version;
+      INSERT INTO schema_version (version, applied_at)
+      VALUES (35, '2026-07-12T00:00:00.000Z');
     `);
   } finally {
     db.close();
@@ -357,7 +399,7 @@ test("lifecycle histories reject backward revisions and Authority Epochs", () =>
       assert.throws(
         () => db.prepare(`
           UPDATE workflow_execution_attempts
-          SET attempt_state = 'settled', ended_at = '',
+          SET attempt_state = 'settled', ended_at = '', settle_outcome = 'succeeded',
               settle_operation_id = ?, settle_project_revision = ?,
               settle_authority_epoch = 0
           WHERE attempt_id = 'attempt-a1'
@@ -558,7 +600,7 @@ test("Attempt transitions preserve claim and start timestamps", () => {
     assert.throws(
       () => db.exec(`
         UPDATE workflow_execution_attempts
-        SET attempt_state = 'settled', claimed_at = 'rewritten',
+        SET attempt_state = 'settled', claimed_at = 'rewritten', settle_outcome = 'succeeded',
             ended_at = '2026-07-12T00:03:00.000Z',
             settle_operation_id = 'op-3', settle_project_revision = 3,
             settle_authority_epoch = 0
@@ -569,7 +611,7 @@ test("Attempt transitions preserve claim and start timestamps", () => {
     assert.throws(
       () => db.exec(`
         UPDATE workflow_execution_attempts
-        SET attempt_state = 'settled', started_at = 'rewritten',
+        SET attempt_state = 'settled', started_at = 'rewritten', settle_outcome = 'succeeded',
             ended_at = '2026-07-12T00:04:00.000Z',
             settle_operation_id = 'op-4', settle_project_revision = 4,
             settle_authority_epoch = 0
@@ -588,7 +630,7 @@ test("v32 rejects conflated vocabularies and orphaned canonical records", () => 
     insertOperations(db, 4);
     insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
     insertAttempt(db, "attempt-a1", "life-a", 1, "op-2", 2);
-    settleAttempt(db, "attempt-a1", "op-3", 3);
+    settleAttempt(db, "attempt-a1", "op-3", 3, "failed");
 
     assert.throws(
       () => db.prepare(`
@@ -654,7 +696,7 @@ test("immutable Attempt Results never fabricate lifecycle or requirement state",
     insertOperations(db, 5);
     insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
     insertAttempt(db, "attempt-a1", "life-a", 1, "op-2", 2);
-    settleAttempt(db, "attempt-a1", "op-3", 3);
+    settleAttempt(db, "attempt-a1", "op-3", 3, "failed");
 
     db.prepare(`
       INSERT INTO workflow_attempt_results (
@@ -709,7 +751,7 @@ test("retry after restart preserves settled Attempt and Result history", () => {
     insertOperations(db, 6);
     insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
     insertAttempt(db, "attempt-a1", "life-a", 1, "op-2", 2);
-    settleAttempt(db, "attempt-a1", "op-3", 3);
+    settleAttempt(db, "attempt-a1", "op-3", 3, "interrupted");
     db.prepare(`
       INSERT INTO workflow_attempt_results (
         result_id, project_id, lifecycle_id, attempt_id, outcome,
@@ -1021,5 +1063,99 @@ test("faulted v31 migration rolls back all v32 state and retries cleanly", () =>
     assert.equal(retried.prepare("SELECT COUNT(*) AS count FROM tasks WHERE milestone_id = 'M-A'").get()?.count, 1);
   } finally {
     retried.close();
+  }
+});
+
+test("faulted v35 Attempt recovery migration rolls back its columns and retries cleanly", () => {
+  const dbPath = createDatabasePath();
+  rewindToV35(dbPath);
+  const legacy = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(legacy), 35);
+    assert.equal(columnExists(legacy, "workflow_execution_attempts", "settle_outcome"), false);
+    seedHierarchy(legacy);
+    insertOperations(legacy, 3);
+    insertTaskLifecycle(legacy, "life-v35", "M-A", "op-1", 1);
+    legacy.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number, attempt_state,
+        claimed_at, started_at, ended_at,
+        claim_operation_id, claim_project_revision, claim_authority_epoch,
+        settle_operation_id, settle_project_revision, settle_authority_epoch
+      ) VALUES (
+        'attempt-v35', ?, 'life-v35', 1, 'settled',
+        '2026-07-12T00:01:00.000Z', '2026-07-12T00:01:00.000Z', '2026-07-12T00:02:00.000Z',
+        'op-2', 2, 0, 'op-3', 3, 0
+      )
+    `).run(projectId(legacy));
+    legacy.prepare(`
+      INSERT INTO workflow_attempt_results (
+        result_id, project_id, lifecycle_id, attempt_id, outcome,
+        failure_class, summary, output_json, created_at,
+        operation_id, project_revision, authority_epoch
+      ) VALUES (
+        'result-v35', ?, 'life-v35', 'attempt-v35', 'failed',
+        'test', 'legacy failure', '{}', '2026-07-12T00:02:00.000Z',
+        'op-3', 3, 0
+      )
+    `).run(projectId(legacy));
+  } finally {
+    legacy.close();
+  }
+
+  _setMigrationFaultForTest(true);
+  assert.throws(() => openDatabase(dbPath), /migration fault injected/);
+  _setMigrationFaultForTest(false);
+
+  const rolledBack = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(rolledBack), 35);
+    assert.equal(columnExists(rolledBack, "workflow_execution_attempts", "settle_outcome"), false);
+    assert.equal(columnExists(rolledBack, "workflow_execution_attempts", "recovery_worker_id"), false);
+    assert.equal(columnExists(rolledBack, "workflow_execution_attempts", "recovery_milestone_lease_token"), false);
+    assert.equal(rolledBack.prepare("SELECT outcome FROM workflow_attempt_results WHERE result_id = 'result-v35'").get()?.outcome, "failed");
+  } finally {
+    rolledBack.close();
+  }
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const retried = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(retried), SCHEMA_VERSION);
+    assert.equal(columnExists(retried, "workflow_execution_attempts", "settle_outcome"), true);
+    assert.equal(columnExists(retried, "workflow_execution_attempts", "recovery_worker_id"), true);
+    assert.equal(columnExists(retried, "workflow_execution_attempts", "recovery_milestone_lease_token"), true);
+    assert.equal(retried.prepare(`
+      SELECT settle_outcome FROM workflow_execution_attempts WHERE attempt_id = 'attempt-v35'
+    `).get()?.settle_outcome, "failed");
+    assert.throws(() => retried.prepare(`
+      UPDATE workflow_execution_attempts SET ended_at = 'rewritten' WHERE attempt_id = 'attempt-v35'
+    `).run(), /immutable/);
+    assert.equal(retried.prepare("PRAGMA quick_check").get()?.quick_check, "ok");
+  } finally {
+    retried.close();
+  }
+});
+
+test("settled Attempt inserts require an explicit outcome and attempt.settle provenance", () => {
+  const { db } = openFreshFixture();
+  try {
+    insertOperations(db, 3);
+    insertOperation(db, "op-4", 4, 0, "test");
+    insertTaskLifecycle(db, "life-insert-shape", "M-A", "op-1", 1);
+    const insertSettled = db.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number, attempt_state,
+        claimed_at, started_at, ended_at, settle_outcome,
+        claim_operation_id, claim_project_revision, claim_authority_epoch,
+        settle_operation_id, settle_project_revision, settle_authority_epoch
+      ) VALUES (?, ?, 'life-insert-shape', 1, 'settled', '', '', '', ?, 'op-2', 2, 0, ?, ?, 0)
+    `);
+    assert.throws(() => insertSettled.run("attempt-missing-outcome", projectId(db), null, "op-3", 3), /settlement|outcome|identity/i);
+    assert.throws(() => insertSettled.run("attempt-wrong-operation", projectId(db), "succeeded", "op-4", 4), /settlement|operation|identity/i);
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.count, 0);
+  } finally {
+    db.close();
   }
 });

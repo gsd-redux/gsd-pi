@@ -2,6 +2,7 @@
 // File Purpose: Schema migration DDL steps for the GSD database facade.
 
 import type { DbAdapter } from "./db-adapter.js";
+import { createAttemptRecoverySchemaV36 } from "./db-attempt-recovery-schema.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
@@ -518,4 +519,8 @@ export function applyMigrationV34RecoveryEvidenceFoundation(db: DbAdapter): void
 
 export function applyMigrationV35ProjectionImportKernelCloseoutFoundation(db: DbAdapter): void {
   createProjectionImportKernelCloseoutFoundationSchemaV35(db);
+}
+
+export function applyMigrationV36AttemptRecovery(db: DbAdapter): void {
+  createAttemptRecoverySchemaV36(db);
 }

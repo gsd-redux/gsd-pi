@@ -10,6 +10,11 @@ import {
 } from "../domain-operation.js";
 import { getDb, isInTransaction } from "../engine.js";
 import {
+  isAllowedKernelStageTransition,
+  type KernelStage,
+} from "../kernel-stage-policy.js";
+export { isAllowedKernelStageTransition };
+import {
   type CanonicalLifecycleStatus,
   compareLifecycleShadow,
   type LifecycleShadowComparison,
@@ -26,7 +31,6 @@ export {
 
 const ITEM_KINDS = new Set(["milestone", "slice", "task"]);
 const ATTEMPT_OUTCOMES = new Set(["succeeded", "failed", "interrupted"]);
-const KERNEL_STAGES = new Set(["execute", "verify", "route", "closeout", "settled"]);
 
 export interface DomainOperationFence {
   projectId: string;
@@ -83,6 +87,10 @@ export interface SettleAttemptInput {
   output: DomainJsonValue;
   endedAt?: string;
   createdAt?: string;
+  recovery?: {
+    workerId: string;
+    milestoneLeaseToken: number;
+  };
 }
 
 export interface SettleAttemptResult {
@@ -95,7 +103,7 @@ export interface SettleAttemptResult {
 export interface AppendKernelCheckpointInput {
   lifecycleId: string;
   attemptId: string;
-  nextStage: "execute" | "verify" | "route" | "closeout" | "settled";
+  nextStage: KernelStage;
   previousKernelCheckpointId?: string | null;
   createdAt?: string;
 }
@@ -125,6 +133,7 @@ interface KernelHeadRow {
   kernel_checkpoint_id: string;
   attempt_id: string;
   sequence: number;
+  next_stage: AppendKernelCheckpointInput["nextStage"];
 }
 
 function requireNonBlank(value: string, field: string): void {
@@ -145,12 +154,12 @@ function changes(result: unknown): number {
   return typeof value === "number" ? value : 0;
 }
 
-function requireActiveContext(context: Readonly<DomainOperationContext>): void {
+function requireActiveContext(context: Readonly<DomainOperationContext>): string {
   if (!isInTransaction()) {
     throw new Error("lifecycle writer requires an active Domain Operation context");
   }
   const active = getDb().prepare(`
-    SELECT 1 AS active
+    SELECT operation.operation_type
     FROM workflow_operations operation
     JOIN project_authority authority ON authority.project_id = operation.project_id
     WHERE operation.operation_id = :operation_id
@@ -166,6 +175,7 @@ function requireActiveContext(context: Readonly<DomainOperationContext>): void {
     ":resulting_authority_epoch": context.resultingAuthorityEpoch,
   });
   if (!active) throw new Error("lifecycle writer context is not the active Domain Operation provenance");
+  return String((active as Record<string, unknown>)["operation_type"]);
 }
 
 function validateLifecycleIdentity(input: LifecycleCommandInput): void {
@@ -430,7 +440,7 @@ export function readLifecycleShadowComparison(
 
 function loadKernelHead(projectId: string, lifecycleId: string): KernelHeadRow | undefined {
   return getDb().prepare(`
-    SELECT head.kernel_checkpoint_id, head.attempt_id, head.sequence
+    SELECT head.kernel_checkpoint_id, head.attempt_id, head.sequence, head.next_stage
     FROM workflow_kernel_checkpoints head
     WHERE head.project_id = :project_id AND head.lifecycle_id = :lifecycle_id
       AND NOT EXISTS (
@@ -447,13 +457,40 @@ export function appendKernelCheckpoint(
   requireActiveContext(context);
   requireNonBlank(input.lifecycleId, "lifecycleId");
   requireNonBlank(input.attemptId, "attemptId");
-  if (!KERNEL_STAGES.has(input.nextStage)) throw new Error(`invalid Kernel stage ${input.nextStage}`);
   const now = requireTimestamp(input.createdAt ?? new Date().toISOString(), "createdAt");
   const head = loadKernelHead(context.projectId, input.lifecycleId);
   const expectedPrevious = head?.kernel_checkpoint_id ?? null;
   const suppliedPrevious = input.previousKernelCheckpointId ?? null;
   if (suppliedPrevious !== expectedPrevious) {
     throw new Error("Kernel checkpoint must extend the current head");
+  }
+  if (head?.attempt_id === input.attemptId) {
+    if (!isAllowedKernelStageTransition(head.next_stage, input.nextStage)) {
+      throw new Error(`invalid Kernel stage transition ${head.next_stage} -> ${input.nextStage}`);
+    }
+    if (head.next_stage === "execute") {
+      const expectedOutcomes = input.nextStage === "verify"
+        ? ["succeeded"]
+        : ["failed", "interrupted"];
+      const result = getDb().prepare(`
+        SELECT 1 AS present FROM workflow_attempt_results
+        WHERE project_id = ? AND lifecycle_id = ?
+          AND attempt_id = ? AND operation_id = ?
+          AND project_revision = ? AND authority_epoch = ?
+          AND outcome IN (${expectedOutcomes.map(() => "?").join(", ")})
+      `).get(
+        context.projectId,
+        input.lifecycleId,
+        input.attemptId,
+        context.operationId,
+        context.resultingRevision,
+        context.resultingAuthorityEpoch,
+        ...expectedOutcomes,
+      );
+      if (!result) {
+        throw new Error(`${input.nextStage} checkpoint requires a matching Attempt Result in the same Domain Operation`);
+      }
+    }
   }
   const checkpointId = randomUUID();
   const sequence = (head?.sequence ?? 0) + 1;
@@ -594,9 +631,22 @@ export function settleAttemptWithResult(
   context: Readonly<DomainOperationContext>,
   input: SettleAttemptInput,
 ): SettleAttemptResult {
-  requireActiveContext(context);
+  const operationType = requireActiveContext(context);
   requireNonBlank(input.attemptId, "attemptId");
   if (!ATTEMPT_OUTCOMES.has(input.outcome)) throw new Error(`invalid Attempt outcome ${input.outcome}`);
+  if (input.recovery) {
+    requireNonBlank(input.recovery.workerId, "recovery.workerId");
+    if (!Number.isSafeInteger(input.recovery.milestoneLeaseToken) || input.recovery.milestoneLeaseToken <= 0) {
+      throw new Error("recovery.milestoneLeaseToken must be a positive safe integer");
+    }
+    if (input.outcome !== "interrupted") {
+      throw new Error("Attempt recovery requires interrupted outcome");
+    }
+  }
+  const requiredOperationType = input.recovery ? "attempt.interrupt" : "attempt.settle";
+  if (operationType !== requiredOperationType) {
+    throw new Error(`Attempt settlement requires an ${requiredOperationType} Domain Operation`);
+  }
   requireNonBlank(input.failureClass, "failureClass");
   if (typeof input.summary !== "string") throw new Error("summary must be a string");
   const endedAt = requireTimestamp(input.endedAt ?? new Date().toISOString(), "endedAt");
@@ -620,12 +670,18 @@ export function settleAttemptWithResult(
   const updated = getDb().prepare(`
     UPDATE workflow_execution_attempts
     SET attempt_state = 'settled', ended_at = :ended_at,
+        settle_outcome = :settle_outcome,
+        recovery_worker_id = :recovery_worker_id,
+        recovery_milestone_lease_token = :recovery_lease_token,
         settle_operation_id = :operation_id,
         settle_project_revision = :project_revision,
         settle_authority_epoch = :authority_epoch
     WHERE attempt_id = :attempt_id AND project_id = :project_id AND attempt_state = 'running'
   `).run({
     ":ended_at": endedAt,
+    ":settle_outcome": input.outcome,
+    ":recovery_worker_id": input.recovery?.workerId ?? null,
+    ":recovery_lease_token": input.recovery?.milestoneLeaseToken ?? null,
     ":operation_id": context.operationId,
     ":project_revision": context.resultingRevision,
     ":authority_epoch": context.resultingAuthorityEpoch,

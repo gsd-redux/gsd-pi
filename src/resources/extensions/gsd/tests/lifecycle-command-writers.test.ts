@@ -28,6 +28,7 @@ import {
   type CanonicalLifecycleStatus,
   claimRunningAttempt,
   compareLifecycleShadow,
+  isAllowedKernelStageTransition,
   readDomainOperationFence,
   settleAttemptWithResult,
 } from "../db/writers/lifecycle-commands.ts";
@@ -497,6 +498,17 @@ test("claims running Attempts, settles immutable Results, and claims a running r
   assert.match(claim.value.attemptId, /\S/);
   assert.match(claim.value.kernelCheckpointId, /\S/);
 
+  const beforeWrongSettlement = snapshot();
+  assert.throws(() => executeAtFence("kernel.checkpoint", "attempt/1/wrong-settle", (context) =>
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "failed",
+      failureClass: "test_failure",
+      summary: "wrong operation type",
+      output: {},
+    })), /attempt\.settle/i);
+  assert.deepEqual(snapshot(), beforeWrongSettlement);
+
   const failed = executeAtFence("attempt.settle", "attempt/1/settle", (context) =>
     settleAttemptWithResult(context, {
       attemptId: claim.value.attemptId,
@@ -611,13 +623,21 @@ test("appends a later same-Attempt kernel head and rejects a stale branch", (t) 
       coordinationDispatchId: 1, workerId: "worker-1", milestoneLeaseToken: 7,
     });
   });
-  const verify = executeAtFence("kernel.checkpoint", "checkpoint/verify", (context) =>
-    appendKernelCheckpoint(context, {
+  const verify = executeAtFence("attempt.settle", "checkpoint/verify", (context) => {
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "succeeded",
+      failureClass: "none",
+      summary: "execution succeeded",
+      output: {},
+    });
+    return appendKernelCheckpoint(context, {
       lifecycleId: adopted.value.lifecycleId,
       attemptId: claim.value.attemptId,
       nextStage: "verify",
       previousKernelCheckpointId: claim.value.kernelCheckpointId,
-    }));
+    });
+  });
   assert.deepEqual(verify.value, {
     kernelCheckpointId: verify.value.kernelCheckpointId,
     sequence: 2,
@@ -635,6 +655,163 @@ test("appends a later same-Attempt kernel head and rejects a stale branch", (t) 
       previousKernelCheckpointId: claim.value.kernelCheckpointId,
     })), /checkpoint|current|head|stale/i);
   assert.deepEqual(snapshot(), beforeStale);
+});
+
+test("rejects invalid same-Attempt Kernel stage transitions without residue", (t) => {
+  openFixture(t);
+  const adopted = adoptTask();
+  executeAtFence("lifecycle.ready", "stage/ready", (context) =>
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01",
+      lifecycleStatus: "ready",
+    }));
+  const claim = executeAtFence("attempt.claim", "stage/claim", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01",
+      lifecycleStatus: "in_progress",
+    });
+    return claimRunningAttempt(context, {
+      lifecycleId: adopted.value.lifecycleId,
+      coordinationDispatchId: 1, workerId: "worker-1", milestoneLeaseToken: 7,
+    });
+  });
+  const before = snapshot();
+
+  assert.equal(isAllowedKernelStageTransition("execute", "verify"), true);
+  assert.equal(isAllowedKernelStageTransition("execute", "route"), true);
+  assert.equal(isAllowedKernelStageTransition("verify", "route"), true);
+  assert.equal(isAllowedKernelStageTransition("route", "closeout"), true);
+  assert.equal(isAllowedKernelStageTransition("closeout", "settled"), true);
+  assert.equal(isAllowedKernelStageTransition("verify", "closeout"), false);
+  assert.equal(isAllowedKernelStageTransition("route", "settled"), false);
+
+  for (const nextStage of ["verify", "route"] as const) {
+    assert.throws(() => executeAtFence("kernel.checkpoint", `stage/missing-result/${nextStage}`, (context) =>
+      appendKernelCheckpoint(context, {
+        lifecycleId: adopted.value.lifecycleId,
+        attemptId: claim.value.attemptId,
+        nextStage,
+        previousKernelCheckpointId: claim.value.kernelCheckpointId,
+      })), /matching Attempt Result/i);
+    assert.deepEqual(snapshot(), before);
+  }
+
+  assert.throws(() => executeAtFence("kernel.checkpoint", "stage/skip-verify", (context) =>
+    appendKernelCheckpoint(context, {
+      lifecycleId: adopted.value.lifecycleId,
+      attemptId: claim.value.attemptId,
+      nextStage: "closeout",
+      previousKernelCheckpointId: claim.value.kernelCheckpointId,
+    })), /invalid Kernel stage transition/i);
+  assert.deepEqual(snapshot(), before);
+});
+
+test("only a replacement lease can interrupt an orphaned running Attempt", (t) => {
+  openFixture(t);
+  const adopted = adoptTask();
+  executeAtFence("lifecycle.ready", "recovery/ready", (context) =>
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01",
+      lifecycleStatus: "ready",
+    }));
+  const claim = executeAtFence("attempt.claim", "recovery/claim", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01",
+      lifecycleStatus: "in_progress",
+    });
+    return claimRunningAttempt(context, {
+      lifecycleId: adopted.value.lifecycleId,
+      coordinationDispatchId: 1, workerId: "worker-1", milestoneLeaseToken: 7,
+    });
+  });
+  const liveLease = snapshot();
+  assert.throws(() => executeAtFence("attempt.interrupt", "recovery/live", (context) =>
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "interrupted",
+      failureClass: "stale-worker",
+      summary: "must not fence a live claimant",
+      output: {},
+      recovery: { workerId: "worker-1", milestoneLeaseToken: 7 },
+    })), /lease|orphan|current|replacement/i);
+  assert.deepEqual(snapshot(), liveLease);
+
+  db().exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-2', 'test-host', 2, '2026-07-12T00:01:00.000Z', 'test',
+      '2026-07-12T00:01:00.000Z', 'active', '/tmp/project'
+    );
+    UPDATE milestone_leases
+    SET worker_id = 'worker-2', fencing_token = 8,
+        acquired_at = '2026-07-12T00:01:00.000Z',
+        expires_at = '2099-07-12T00:00:00.000Z', status = 'held'
+    WHERE milestone_id = 'M001';
+  `);
+  const replacedLease = snapshot();
+  assert.throws(() => executeAtFence("attempt.interrupt", "recovery/schema-stale-success", (context) => {
+    db().prepare(`
+      UPDATE workflow_execution_attempts
+      SET attempt_state = 'settled', ended_at = '2026-07-12T00:02:00.000Z',
+          settle_outcome = 'succeeded', recovery_worker_id = 'worker-2',
+          recovery_milestone_lease_token = 8,
+          settle_operation_id = :operation_id,
+          settle_project_revision = :revision,
+          settle_authority_epoch = :epoch
+      WHERE attempt_id = :attempt_id
+    `).run({
+      ":operation_id": context.operationId,
+      ":revision": context.resultingRevision,
+      ":epoch": context.resultingAuthorityEpoch,
+      ":attempt_id": claim.value.attemptId,
+    });
+  }), /interrupted|outcome|recovery/i);
+  assert.deepEqual(snapshot(), replacedLease);
+  assert.throws(() => executeAtFence("attempt.settle", "recovery/wrong-operation", (context) =>
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "interrupted",
+      failureClass: "stale-worker",
+      summary: "the recovery path must be explicit",
+      output: {},
+      recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+    })), /attempt\.interrupt/i);
+  assert.deepEqual(snapshot(), replacedLease);
+  assert.throws(() => executeAtFence("attempt.recover", "recovery/stale-success", (context) =>
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "succeeded",
+      failureClass: "none",
+      summary: "a replacement cannot report the stale worker's success",
+      output: {},
+      recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+    })), /interrupted|outcome|recovery/i);
+  assert.deepEqual(snapshot(), replacedLease);
+
+  const recovered = executeAtFence("attempt.interrupt", "recovery/interrupted", (context) =>
+    settleAttemptWithResult(context, {
+      attemptId: claim.value.attemptId,
+      outcome: "interrupted",
+      failureClass: "stale-worker",
+      summary: "replacement fenced the orphan",
+      output: {},
+      recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
+    }));
+  assert.equal(recovered.value.outcome, "interrupted");
+  assert.deepEqual(row(`
+    SELECT worker_id, milestone_lease_token, settle_outcome,
+           recovery_worker_id, recovery_milestone_lease_token
+    FROM workflow_execution_attempts WHERE attempt_id = '${claim.value.attemptId}'
+  `), {
+    worker_id: "worker-1",
+    milestone_lease_token: 7,
+    settle_outcome: "interrupted",
+    recovery_worker_id: "worker-2",
+    recovery_milestone_lease_token: 8,
+  });
+  assert.equal(row("SELECT outcome FROM workflow_attempt_results").outcome, "interrupted");
 });
 
 test("writer failures roll back lifecycle facts and the surrounding Domain Operation", (t) => {
@@ -1073,6 +1250,7 @@ test("lifecycle writers and pure comparison remain below handlers and orchestrat
     "node:crypto",
     "../engine.js",
     "../domain-operation.js",
+    "../kernel-stage-policy.js",
     "../lifecycle-shadow-comparison.js",
   ]);
   const writerImports = importSpecifiers(writerPath);

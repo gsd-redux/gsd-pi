@@ -116,7 +116,7 @@ function insertOperation(db: RawDb, revision: number): string {
       expected_revision, resulting_revision,
       expected_authority_epoch, resulting_authority_epoch,
       actor_type, actor_id, source_transport, request_hash, created_at
-    ) VALUES (?, ?, 'test', ?, ?, ?, 0, 0, 'user', 'developer', 'test', ?, ?)
+    ) VALUES (?, ?, 'attempt.settle', ?, ?, ?, 0, 0, 'user', 'developer', 'test', ?, ?)
   `).run(
     operationId,
     projectId(db),
@@ -165,9 +165,10 @@ function insertSettledAttempt(
   db.prepare(`
     UPDATE workflow_execution_attempts
     SET attempt_state = 'settled', ended_at = '2026-07-12T00:01:00.000Z',
+        settle_outcome = ?,
         settle_operation_id = ?, settle_project_revision = ?, settle_authority_epoch = 0
     WHERE attempt_id = ?
-  `).run(`op-${input.settleRevision}`, input.settleRevision, input.attemptId);
+  `).run(input.outcome, `op-${input.settleRevision}`, input.settleRevision, input.attemptId);
   const resultId = `result-${input.attemptId}`;
   db.prepare(`
     INSERT INTO workflow_attempt_results (
