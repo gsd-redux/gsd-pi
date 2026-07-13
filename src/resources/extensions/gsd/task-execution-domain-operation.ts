@@ -95,10 +95,54 @@ function operationPayload(input: ClaimTaskAttemptInput): DomainJsonValue {
   };
 }
 
+function activateDispatch(input: ClaimTaskAttemptInput): void {
+  const entityId = taskIdentity(input);
+  const parameters = {
+    ":dispatch_id": input.coordinationDispatchId,
+    ":worker_id": input.workerId,
+    ":lease_token": input.milestoneLeaseToken,
+    ":milestone_id": input.task.milestoneId,
+    ":slice_id": input.task.sliceId,
+    ":task_id": input.task.taskId,
+    ":unit_id": entityId,
+  };
+  const activated = getDb().prepare(`
+    UPDATE unit_dispatches
+    SET status = 'running'
+    WHERE id = :dispatch_id
+      AND worker_id = :worker_id
+      AND milestone_lease_token = :lease_token
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id = :task_id
+      AND unit_type = 'execute-task'
+      AND unit_id = :unit_id
+      AND status = 'claimed'
+  `).run(parameters);
+  if (Number((activated as { changes?: number }).changes ?? 0) === 1) return;
+
+  const alreadyRunning = getDb().prepare(`
+    SELECT 1 AS present FROM unit_dispatches
+    WHERE id = :dispatch_id
+      AND worker_id = :worker_id
+      AND milestone_lease_token = :lease_token
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id = :task_id
+      AND unit_type = 'execute-task'
+      AND unit_id = :unit_id
+      AND status = 'running'
+  `).get(parameters);
+  if (!alreadyRunning) {
+    throw new Error("Task Attempt claim must activate exactly one matching coordination dispatch");
+  }
+}
+
 function claimAttempt(
   context: Readonly<DomainOperationContext>,
   input: ClaimTaskAttemptInput,
 ): ClaimRunningAttemptResult {
+  activateDispatch(input);
   const lifecycle = adoptOrTransitionLifecycle(context, {
     itemKind: "task",
     milestoneId: input.task.milestoneId,

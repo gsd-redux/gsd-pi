@@ -136,7 +136,7 @@ function seedFixture(): { dispatchId: number } {
     ) VALUES (
       'trace-dispatch-1', 'turn-dispatch-1', 'worker-1', 7,
       'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
-      'running', 1, '2026-07-12T00:00:00.000Z'
+      'claimed', 1, '2026-07-12T00:00:00.000Z'
     );
   `);
   const fence = readDomainOperationFence();
@@ -257,6 +257,7 @@ test("claimTaskAttempt atomically records lifecycle, Attempt, execute checkpoint
     milestone_lease_token: 7,
     claim_operation_id: receipt.operationId,
   });
+  assert.equal(row("SELECT status FROM unit_dispatches WHERE id = " + dispatchId).status, "running");
   assert.deepEqual(row("SELECT attempt_id, sequence, next_stage, operation_id FROM workflow_kernel_checkpoints"), {
     attempt_id: receipt.attemptId,
     sequence: 1,
@@ -273,6 +274,27 @@ test("claimTaskAttempt atomically records lifecycle, Attempt, execute checkpoint
     SELECT entity_type, entity_id FROM workflow_domain_events
     WHERE operation_id = '${receipt.operationId}'
   `), { entity_type: "task", entity_id: "M001/S01/T01" });
+});
+
+test("claimTaskAttempt rolls back when the claimed dispatch fence does not match", async () => {
+  const { claimTaskAttempt } = await subject();
+  const { dispatchId } = seedFixture();
+  const before = {
+    revision: row("SELECT revision FROM project_authority").revision,
+    operations: count("workflow_operations"),
+  };
+
+  assert.throws(() => claimTaskAttempt({
+    ...claimInput(dispatchId, "task-attempt/claim/wrong-fence"),
+    milestoneLeaseToken: 8,
+  }), /matching coordination dispatch/i);
+
+  assert.deepEqual({
+    revision: row("SELECT revision FROM project_authority").revision,
+    operations: count("workflow_operations"),
+  }, before);
+  assert.equal(count("workflow_execution_attempts"), 0);
+  assert.equal(row("SELECT status FROM unit_dispatches WHERE id = " + dispatchId).status, "claimed");
 });
 
 for (const contract of [
@@ -405,7 +427,7 @@ test("a replacement lease can interrupt the fenced Attempt and a lineage-linked 
     ) VALUES (
       'trace-dispatch-2', 'turn-dispatch-2', 'worker-2', 8,
       'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
-      'running', 2, '2026-07-12T00:01:00.000Z'
+      'claimed', 2, '2026-07-12T00:01:00.000Z'
     );
   `);
   const retryDispatchId = Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id);
