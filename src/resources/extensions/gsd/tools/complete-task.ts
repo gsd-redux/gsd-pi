@@ -6,12 +6,11 @@
  *
  * Validates inputs, writes task row and rendered SUMMARY.md to DB in a
  * transaction, then renders projections to disk and invalidates caches.
- * If the critical task summary / plan projection write fails, the DB
- * completion is compensated back to pending so DB state does not drift ahead
- * of PLAN.md.
+ * Projection failures are reported as stale without reverting the committed
+ * completion, so recovery can repair disk from durable DB state.
  */
 
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type { CompleteTaskParams, EscalationArtifact } from "../types.js";
@@ -25,14 +24,12 @@ import {
   getMilestone,
   getSlice,
   getTask,
-  updateTaskStatus,
-  deleteVerificationEvidence,
   saveGateResult,
   getPendingGatesForTurn,
   getUnresolvedBlockingReworkFindingsForTask,
-  getBlockingReworkFindingsForTask,
   applyReworkResolutions,
-  type ReworkFindingStatus,
+  setTaskEscalationPending,
+  setTaskEscalationAwaitingReview,
 } from "../gsd-db.js";
 import { getWorkflowDatabasePath, ensureWorkflowDbAtPath } from "../db-workspace.js";
 import { getGatesForTurn } from "../gate-registry.js";
@@ -59,7 +56,11 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { isStaleWrite } from "../auto/turn-epoch.js";
-import { buildEscalationArtifact, writeEscalationArtifact } from "../escalation.js";
+import {
+  buildEscalationArtifact,
+  escalationArtifactPath,
+  writeEscalationArtifact,
+} from "../escalation.js";
 
 export interface CompleteTaskResult {
   taskId: string;
@@ -236,38 +237,6 @@ function satisfiesBlockingReworkFinding(resolution: ReturnType<typeof normalizeR
   return (resolution.decisionRef ?? "").trim().length > 0;
 }
 
-/**
- * Snapshot of a rework finding's status/evidence as it existed *before* this
- * completion applied its reworkResolution. Captured inside the completion
- * transaction so the compensating rollback paths can restore the exact prior
- * state.
- */
-type ReworkFindingSnapshot = {
-  milestoneId: string;
-  sliceId: string;
-  taskId: string;
-  findingId: string;
-  status: ReworkFindingStatus;
-  evidence: string;
-  decisionRef?: string;
-};
-
-/**
- * Restore rework findings to their pre-completion state.
- *
- * The completion transaction flips blocking findings to resolved/
- * deferred-with-override via applyReworkResolutions. When a later projection
- * or escalation write fails and we compensate by reverting the task to
- * `pending`, we must also revert those findings. Otherwise a retry sees no
- * unresolved blocking findings (getUnresolvedBlockingReworkFindingsForTask
- * only returns `pending` rows) and completes the task with the blocking gate
- * silently skipped.
- */
-function revertAppliedReworkResolutions(snapshot: ReworkFindingSnapshot[]): void {
-  if (snapshot.length === 0) return;
-  applyReworkResolutions(snapshot);
-}
-
 function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskRow {
   return {
     milestone_id: params.milestoneId,
@@ -354,8 +323,7 @@ export async function handleCompleteTask(
   let guardError: string | null = null;
   let summaryMd = "";
   let repairTaskSummaryRow: TaskRow | null = null;
-  let appliedReworkSnapshot: ReworkFindingSnapshot[] = [];
-  const rollbackDbPath = getWorkflowDatabasePath();
+  const workflowDbPath = getWorkflowDatabasePath();
 
   // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
   // Building the artifact runs the full shape validation (2-4 options, unique
@@ -364,11 +332,12 @@ export async function handleCompleteTask(
   // SUMMARY.md, flipping the plan checkbox, or closing execute-task gates —
   // otherwise a rejected payload would leave the task marked complete with
   // no escalation recorded, and the loop would silently advance past it.
-  // The filesystem write happens later (after side effects) because that's
-  // the cheapest ordering and validation is where 99% of failures live.
+  // The transaction below stores the validated artifact path and escalation
+  // flag with completion; the readable JSON projection is written afterward.
   const reworkResolutions = normalizeReworkResolution(params);
 
   let validatedEscalationArtifact: ReturnType<typeof buildEscalationArtifact> | null = null;
+  let validatedEscalationPath: string | null = null;
   let escalationWriteEnabled = false;
   if (params.escalation) {
     escalationWriteEnabled = loadEffectiveGSDPreferences()?.preferences?.phases?.mid_execution_escalation === true;
@@ -389,6 +358,21 @@ export async function handleCompleteTask(
           error: `complete-task escalation payload invalid for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(validationErr as Error).message}`,
         };
       }
+      validatedEscalationPath = escalationArtifactPath(
+        artifactBasePath,
+        params.milestoneId,
+        params.sliceId,
+        params.taskId,
+      );
+      if (!validatedEscalationPath) {
+        return {
+          error: `complete-task escalation path unavailable for ${params.milestoneId}/${params.sliceId}/${params.taskId}; run doctor`,
+        };
+      }
+    } else if (params.escalation.continueWithDefault === false) {
+      return {
+        error: `complete-task received a hard-blocker escalation (continueWithDefault=false) but phases.mid_execution_escalation is disabled for ${params.milestoneId}/${params.sliceId}/${params.taskId}`,
+      };
     }
   }
 
@@ -478,6 +462,18 @@ export async function handleCompleteTask(
       fullSummaryMd: summaryMd,
     });
 
+    if (validatedEscalationArtifact && validatedEscalationPath) {
+      const setEscalationState = validatedEscalationArtifact.continueWithDefault
+        ? setTaskEscalationAwaitingReview
+        : setTaskEscalationPending;
+      setEscalationState(
+        params.milestoneId,
+        params.sliceId,
+        params.taskId,
+        validatedEscalationPath,
+      );
+    }
+
     // Only persist resolutions that actually satisfy the evidence
     // requirement. The guard above admits a finding as long as ONE satisfying
     // entry exists, but applyReworkResolutions writes by findingId and lets the
@@ -488,25 +484,6 @@ export async function handleCompleteTask(
     // keeps the applied set and the gate consistent.
     const resolutionsToApply = reworkResolutions.filter(satisfiesBlockingReworkFinding);
     if (resolutionsToApply.length > 0) {
-      // Snapshot the pre-resolution state of the findings we're about to
-      // change so a compensating rollback can restore them exactly (see
-      // revertAppliedReworkResolutions).
-      const resolvedFindingIdsForSnapshot = new Set(resolutionsToApply.map((r) => r.findingId));
-      appliedReworkSnapshot = getBlockingReworkFindingsForTask(
-        params.milestoneId,
-        params.sliceId,
-        params.taskId,
-      )
-        .filter((finding) => resolvedFindingIdsForSnapshot.has(finding.finding_id))
-        .map((finding) => ({
-          milestoneId: params.milestoneId,
-          sliceId: params.sliceId,
-          taskId: params.taskId,
-          findingId: finding.finding_id,
-          status: finding.status,
-          evidence: finding.evidence,
-          decisionRef: finding.decision_ref,
-        }));
       applyReworkResolutions(resolutionsToApply);
     }
 
@@ -573,7 +550,7 @@ export async function handleCompleteTask(
 
     // Toggle or regenerate the plan projection from DB. Missing projection
     // files are rebuilt by the renderer instead of being skipped.
-    if (!ensureWorkflowDbAtPath(rollbackDbPath)) {
+    if (!ensureWorkflowDbAtPath(workflowDbPath)) {
       throw new Error(`database unavailable before plan projection render for ${params.milestoneId}/${params.sliceId}`);
     }
     const wrotePlan = await renderPlanCheckboxes(artifactBasePath, params.milestoneId, params.sliceId);
@@ -586,36 +563,14 @@ export async function handleCompleteTask(
       `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}`,
       { error: (renderErr as Error).message },
     );
-    let rollbackSucceeded = false;
-    try {
-      ensureWorkflowDbAtPath(rollbackDbPath);
-      deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
-      updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, "pending");
-      revertAppliedReworkResolutions(appliedReworkSnapshot);
-      invalidateStateCache();
-      rollbackSucceeded = true;
-    } catch (rollbackErr) {
-      logWarning(
-        "projection",
-        `complete_task rollback failed after projection write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
-      );
-    }
-    try {
-      if (existsSync(summaryPath)) unlinkSync(summaryPath);
-    } catch (summaryErr) {
-      logWarning(
-        "projection",
-        `complete_task could not remove SUMMARY.md after projection write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(summaryErr as Error).message}`,
-      );
-    }
-    // Clear path/parse caches regardless of rollback outcome so stale
-    // entries from the failed write attempt don't leak into subsequent calls.
+    // The database completion is authoritative. Leave its summary/evidence and
+    // any successfully written projection in place so recovery can repair the
+    // stale disk projection without another lifecycle mutation.
     clearPathCache();
     clearParseCache();
-    const returnMsg = rollbackSucceeded
-      ? `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; rolled completion back to pending`
-      : `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; rollback also failed — task may remain complete with stale plan`;
-    return { error: returnMsg };
+    return {
+      error: `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; completion remains committed and the disk projection is stale`,
+    };
   }
 
   // ── Close gates owned by execute-task (Q5/Q6/Q7) for this task ────────
@@ -658,19 +613,10 @@ export async function handleCompleteTask(
   }
 
   // ── ADR-011 Phase 2: write escalation artifact (opt-in) ────────────────
-  // Validation already happened BEFORE side effects — this block only
-  // performs the disk write for a pre-validated artifact. For
-  // continueWithDefault=false, a write failure here would otherwise leave
-  // the task marked complete with SUMMARY.md + closed gates but no
-  // escalation, which silently advances the loop past a pause the user
-  // asked for. We compensate by reverting the DB-level completion: set
-  // status back to 'pending' and delete the verification_evidence rows
-  // (same shape as the disk-render-failure rollback above). SUMMARY.md
-  // on disk is left in place because the next complete-task retry will
-  // overwrite it; gate rows are UPSERT-keyed per task and will also be
-  // overwritten. This restores the invariant that deriveState() sees a
-  // consistent "task not done" view so the loop re-dispatches the task.
+  // Validation and authoritative escalation state were committed with the
+  // Task. This block only writes the readable artifact projection.
   let escalationMetadata: CompleteTaskResult["escalation"] | undefined;
+  let escalationProjectionError: string | null = null;
   if (validatedEscalationArtifact) {
     try {
       const escalationPath = writeEscalationArtifact(artifactBasePath, validatedEscalationArtifact);
@@ -686,48 +632,10 @@ export async function handleCompleteTask(
       const msg = `complete-task escalation write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(escalationErr as Error).message}`;
       logWarning("tool", msg);
       if (validatedEscalationArtifact.continueWithDefault === false) {
-        // Compensating rollback: revert DB completion so the loop pauses on
-        // re-dispatch instead of silently advancing. Mirror the existing
-        // renderErr rollback (line ~261).
-        try {
-          deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
-          updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
-          revertAppliedReworkResolutions(appliedReworkSnapshot);
-          invalidateStateCache();
-          logWarning(
-            "tool",
-            `complete-task rolled back DB completion for ${params.milestoneId}/${params.sliceId}/${params.taskId} after escalation write failure; SUMMARY.md left on disk for retry.`,
-          );
-        } catch (rollbackErr) {
-          logWarning(
-            "tool",
-            `complete-task rollback failed after escalation write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
-          );
-        }
-        return { error: msg };
+        escalationProjectionError = `${msg}; completion remains committed and the escalation projection is stale`;
       }
     }
   } else if (params.escalation && !escalationWriteEnabled) {
-    if (params.escalation.continueWithDefault === false) {
-      const msg = `complete-task received a hard-blocker escalation (continueWithDefault=false) but phases.mid_execution_escalation is disabled for ${params.milestoneId}/${params.sliceId}/${params.taskId}; reverting to pending instead of silently advancing.`;
-      logWarning("tool", msg);
-      try {
-        deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
-        updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
-        revertAppliedReworkResolutions(appliedReworkSnapshot);
-        invalidateStateCache();
-        logWarning(
-          "tool",
-          `complete-task rolled back DB completion for ${params.milestoneId}/${params.sliceId}/${params.taskId} because hard-blocker escalation handling is disabled; SUMMARY.md left on disk for retry.`,
-        );
-      } catch (rollbackErr) {
-        logWarning(
-          "tool",
-          `complete-task rollback failed after disabled hard-blocker escalation for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
-        );
-      }
-      return { error: msg };
-    }
     logWarning(
       "tool",
       `complete-task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
@@ -763,6 +671,10 @@ export async function handleCompleteTask(
     });
   } catch (eventErr) {
     logError("tool", `complete-task event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
+  }
+
+  if (escalationProjectionError) {
+    return { error: escalationProjectionError };
   }
 
   return {

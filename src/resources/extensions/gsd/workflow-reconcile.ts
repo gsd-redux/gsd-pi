@@ -26,6 +26,7 @@ import {
   setTaskBlockerDiscovered,
   insertOrIgnoreSlice,
   insertOrIgnoreTask,
+  getDb,
 } from "./gsd-db.js";
 import { openWorkflowDatabasePath } from "./db-workspace.js";
 import { isClosedStatus } from "./status-guards.js";
@@ -35,6 +36,13 @@ import { clearParseCache } from "./files.js";
 import { writeManifest } from "./workflow-manifest.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { acquireSyncLock, releaseSyncLock } from "./sync-lock.js";
+
+const TASK_STATE_EVENT_COMMANDS = new Set([
+  "complete_task",
+  "start_task",
+  "skip_task",
+  "report_blocker",
+]);
 
 // ─── Replay Helpers ──────────────────────────────────────────────────────────
 
@@ -96,6 +104,25 @@ function replayEvents(events: WorkflowEvent[]): void {
     if (!cmd) {
       logWarning("reconcile", `Event with non-string cmd skipped: ${JSON.stringify(event.cmd)}`);
       continue;
+    }
+    if (TASK_STATE_EVENT_COMMANDS.has(cmd)) {
+      const canonicalLifecycle = getDb().prepare(`
+        SELECT 1 AS present
+        FROM workflow_item_lifecycles
+        WHERE item_kind = 'task'
+          AND milestone_id = :milestone_id
+          AND slice_id = :slice_id
+          AND task_id = :task_id
+        LIMIT 1
+      `).get({
+        ":milestone_id": p["milestoneId"],
+        ":slice_id": p["sliceId"],
+        ":task_id": p["taskId"],
+      });
+      if (canonicalLifecycle) {
+        logWarning("reconcile", `Ignoring legacy ${cmd} replay for canonically adopted Task ${p["milestoneId"]}/${p["sliceId"]}/${p["taskId"]}`);
+        continue;
+      }
     }
     switch (cmd) {
       case "complete_task": {

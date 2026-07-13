@@ -21,13 +21,14 @@ import type {
   PostUnitHookOutcomeVerdict,
 } from "./types.js";
 import { resolvePostUnitHooks, resolvePreDispatchHooks } from "./preferences.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseUnitId } from "./unit-id.js";
 import { resolveMilestonePath } from "./paths.js";
 import { queryJournal, type JournalEntry } from "./journal.js";
 import { readUnitRuntimeRecord, type UnitRuntimePhase } from "./unit-runtime.js";
 import { extractFrontmatterVerdict } from "./verdict-parser.js";
+import { getDbOrNull } from "./db/engine.js";
 
 // ─── Artifact Path Resolution ──────────────────────────────────────────────
 
@@ -124,6 +125,76 @@ const HOOK_OUTCOME_VERDICTS = new Set<PostUnitHookOutcomeVerdict>([
 interface HookTriggerRef {
   triggerUnitType: string;
   triggerUnitId: string;
+  completionOperationId?: string;
+  legacyCompletedAt?: string;
+}
+
+export interface RetryTrigger {
+  unitType: string;
+  unitId: string;
+  retryArtifact?: string;
+  completionOperationId?: string;
+  legacyCompletedAt?: string;
+}
+
+function captureTaskCompletionIdentity(trigger: HookTriggerRef): Pick<
+  RetryTrigger,
+  "completionOperationId" | "legacyCompletedAt"
+> {
+  if (trigger.triggerUnitType !== "execute-task") return {};
+  const { milestone, slice, task } = parseUnitId(trigger.triggerUnitId);
+  if (!milestone || !slice || !task) {
+    throw new Error(`Cannot dispatch execute-task hook: invalid Task identity ${trigger.triggerUnitId}`);
+  }
+  const db = getDbOrNull();
+  if (!db) {
+    throw new Error(`Cannot dispatch execute-task hook for ${trigger.triggerUnitId}: database unavailable`);
+  }
+  let row: Record<string, unknown> | undefined;
+  try {
+    row = db.prepare(`
+      SELECT task.status, task.completed_at,
+             lifecycle.lifecycle_status, lifecycle.last_operation_id
+      FROM tasks task
+      LEFT JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.item_kind = 'task'
+       AND lifecycle.milestone_id = task.milestone_id
+       AND lifecycle.slice_id = task.slice_id
+       AND lifecycle.task_id = task.id
+      WHERE task.milestone_id = :milestone_id
+        AND task.slice_id = :slice_id
+        AND task.id = :task_id
+    `).get({
+      ":milestone_id": milestone,
+      ":slice_id": slice,
+      ":task_id": task,
+    }) as Record<string, unknown> | undefined;
+  } catch (error) {
+    throw new Error(
+      `Cannot dispatch execute-task hook for ${trigger.triggerUnitId}: completion identity query failed`,
+      { cause: error },
+    );
+  }
+  if (!row || row["status"] !== "complete") {
+    throw new Error(`Cannot dispatch execute-task hook for ${trigger.triggerUnitId}: Task is not complete`);
+  }
+  if (
+    row["lifecycle_status"] === "completed"
+    && typeof row["last_operation_id"] === "string"
+    && row["last_operation_id"].length > 0
+  ) {
+    return { completionOperationId: row["last_operation_id"] };
+  }
+  if (
+    !row["lifecycle_status"]
+    && typeof row["completed_at"] === "string"
+    && row["completed_at"].length > 0
+  ) {
+    return { legacyCompletedAt: row["completed_at"] };
+  }
+  throw new Error(
+    `Cannot dispatch execute-task hook for ${trigger.triggerUnitId}: Task has no canonical completion identity`,
+  );
 }
 
 interface GateOutcome {
@@ -157,6 +228,8 @@ export class RuleRegistry {
     triggerUnitType: string;
     triggerUnitId: string;
     forceRun?: boolean;
+    completionOperationId?: string;
+    legacyCompletedAt?: string;
   }> = [];
   cycleCounts: Map<string, number> = new Map();
   /**
@@ -167,7 +240,7 @@ export class RuleRegistry {
    */
   redispatchedGateKeys: Set<string> = new Set();
   retryPending: boolean = false;
-  retryTrigger: { unitType: string; unitId: string; retryArtifact?: string } | null = null;
+  retryTrigger: RetryTrigger | null = null;
   hookFailure: HookFailureState | null = null;
   gateBlockPending: PostUnitGateBlock | null = null;
 
@@ -276,11 +349,17 @@ export class RuleRegistry {
     );
     if (hooks.length === 0) return null;
 
+    const completionIdentity = captureTaskCompletionIdentity({
+      triggerUnitType: completedUnitType,
+      triggerUnitId: completedUnitId,
+    });
+
     // Build hook queue for this trigger
     this.hookQueue = hooks.map(config => ({
       config,
       triggerUnitType: completedUnitType,
       triggerUnitId: completedUnitId,
+      ...completionIdentity,
     }));
 
     return this._dequeueNextHook(basePath);
@@ -289,7 +368,14 @@ export class RuleRegistry {
   private _dequeueNextHook(basePath: string): HookDispatchResult | null {
     while (this.hookQueue.length > 0) {
       const entry = this.hookQueue.shift()!;
-      const { config, triggerUnitType, triggerUnitId, forceRun } = entry;
+      const {
+        config,
+        triggerUnitType,
+        triggerUnitId,
+        forceRun,
+        completionOperationId,
+        legacyCompletedAt,
+      } = entry;
 
       // Advisory hooks preserve existing idempotency: any configured artifact
       // means the hook already ran. Blocking gates must verify outcome first.
@@ -318,7 +404,12 @@ export class RuleRegistry {
         }
       }
 
-      const dispatch = this._startHook(config, triggerUnitType, triggerUnitId);
+      const dispatch = this._startHook(config, {
+        triggerUnitType,
+        triggerUnitId,
+        completionOperationId,
+        legacyCompletedAt,
+      });
       if (dispatch) return dispatch;
       if (isBlockingHook(config)) {
         const cycleKey = hookCycleKey(config, { triggerUnitType, triggerUnitId });
@@ -386,9 +477,9 @@ export class RuleRegistry {
 
   private _startHook(
     config: PostUnitHookConfig,
-    triggerUnitType: string,
-    triggerUnitId: string,
+    trigger: HookTriggerRef,
   ): HookDispatchResult | null {
+    const { triggerUnitType, triggerUnitId, completionOperationId, legacyCompletedAt } = trigger;
     const cycleKey = `${config.name}/${triggerUnitType}/${triggerUnitId}`;
     const currentCycle = (this.cycleCounts.get(cycleKey) ?? 0) + 1;
     const maxCycles = config.max_cycles ?? 1;
@@ -402,6 +493,8 @@ export class RuleRegistry {
       triggerUnitId,
       cycle: currentCycle,
       pendingRetry: false,
+      completionOperationId,
+      legacyCompletedAt,
     };
 
     return this._buildHookDispatch(config, triggerUnitId);
@@ -516,7 +609,7 @@ export class RuleRegistry {
     reason: string,
   ): HookDispatchResult | null {
     if (config) {
-      const retry = this._startHook(config, hook.triggerUnitType, hook.triggerUnitId);
+      const retry = this._startHook(config, hook);
       if (retry) return retry;
     }
 
@@ -671,12 +764,24 @@ export class RuleRegistry {
     const maxCycles = hookMaxCycles(config);
     if (currentCycle >= maxCycles) return false;
 
+    if (
+      hook.triggerUnitType === "execute-task"
+      && !hook.completionOperationId
+      && !hook.legacyCompletedAt
+    ) {
+      throw new Error(
+        `Cannot retry execute-task ${hook.triggerUnitId}: active hook has no canonical completion identity`,
+      );
+    }
+
     this.activeHook = null;
     this.hookQueue = [];
     this.retryPending = true;
     this.retryTrigger = {
       unitType: hook.triggerUnitType,
       unitId: hook.triggerUnitId,
+      ...(hook.completionOperationId ? { completionOperationId: hook.completionOperationId } : {}),
+      ...(hook.legacyCompletedAt ? { legacyCompletedAt: hook.legacyCompletedAt } : {}),
     };
     if (retryArtifact !== undefined) {
       this.retryTrigger.retryArtifact = retryArtifact;
@@ -703,6 +808,8 @@ export class RuleRegistry {
         triggerUnitType: trigger.triggerUnitType,
         triggerUnitId: trigger.triggerUnitId,
         forceRun: true,
+        completionOperationId: trigger.completionOperationId,
+        legacyCompletedAt: trigger.legacyCompletedAt,
       });
       return this._dequeueNextHook(basePath);
     }
@@ -889,6 +996,11 @@ export class RuleRegistry {
     return this.retryPending;
   }
 
+  peekRetryTrigger(): RetryTrigger | null {
+    if (!this.retryPending || !this.retryTrigger) return null;
+    return { ...this.retryTrigger };
+  }
+
   consumeHookFailure(): HookFailureState | null {
     if (!this.hookFailure) return null;
     const failure = { ...this.hookFailure };
@@ -904,11 +1016,28 @@ export class RuleRegistry {
    * Returns the trigger unit info for a pending retry, or null.
    * Clears the retry state after reading.
    */
-  consumeRetryTrigger(): { unitType: string; unitId: string; retryArtifact?: string } | null {
+  consumeRetryTrigger(): RetryTrigger | null {
     if (!this.retryPending || !this.retryTrigger) return null;
     const trigger = { ...this.retryTrigger };
     this.retryPending = false;
     this.retryTrigger = null;
+    return trigger;
+  }
+
+  acknowledgeRetryTrigger(basePath: string): RetryTrigger | null {
+    if (!this.retryPending || !this.retryTrigger) return null;
+    const trigger = { ...this.retryTrigger };
+    this.retryPending = false;
+    this.retryTrigger = null;
+    try {
+      this._persistStateOrThrow(basePath);
+    } catch (error) {
+      this.retryPending = true;
+      this.retryTrigger = trigger;
+      const message = `failed to persist hook state: ${(error as Error).message}`;
+      logWarning("registry", message);
+      throw new Error(message, { cause: error });
+    }
     return trigger;
   }
 
@@ -943,6 +1072,16 @@ export class RuleRegistry {
 
   /** Persist current hook state to disk. */
   persistState(basePath: string): void {
+    try {
+      this._persistStateOrThrow(basePath);
+    } catch (error) {
+      const message = `failed to persist hook state: ${(error as Error).message}`;
+      logWarning("registry", message);
+      if (this.retryPending) throw new Error(message, { cause: error });
+    }
+  }
+
+  private _persistStateOrThrow(basePath: string): void {
     const state: PersistedHookState = {
       cycleCounts: Object.fromEntries(this.cycleCounts),
       redispatchedGateKeys: Array.from(this.redispatchedGateKeys),
@@ -952,16 +1091,19 @@ export class RuleRegistry {
         triggerUnitType: entry.triggerUnitType,
         triggerUnitId: entry.triggerUnitId,
         forceRun: entry.forceRun,
+        completionOperationId: entry.completionOperationId,
+        legacyCompletedAt: entry.legacyCompletedAt,
       })),
+      retryPending: this.retryPending,
+      retryTrigger: this.retryTrigger ? { ...this.retryTrigger } : null,
       savedAt: new Date().toISOString(),
     };
-    try {
-      const dir = join(basePath, ".gsd");
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      writeFileSync(this._hookStatePath(basePath), JSON.stringify(state, null, 2), "utf-8");
-    } catch (e) {
-      logWarning("registry", `failed to persist hook state: ${(e as Error).message}`);
-    }
+    const dir = join(basePath, ".gsd");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const statePath = this._hookStatePath(basePath);
+    const temporaryPath = `${statePath}.tmp`;
+    writeFileSync(temporaryPath, JSON.stringify(state, null, 2), "utf-8");
+    renameSync(temporaryPath, statePath);
   }
 
   /** Restore hook state from disk after a crash/restart. */
@@ -1001,9 +1143,24 @@ export class RuleRegistry {
               triggerUnitType: entry.triggerUnitType,
               triggerUnitId: entry.triggerUnitId,
               forceRun: entry.forceRun,
+              completionOperationId: entry.completionOperationId,
+              legacyCompletedAt: entry.legacyCompletedAt,
             });
           }
         }
+      }
+      const retryTrigger = state.retryTrigger;
+      if (
+        state.retryPending === true &&
+        retryTrigger &&
+        typeof retryTrigger.unitType === "string" &&
+        typeof retryTrigger.unitId === "string"
+      ) {
+        this.retryPending = true;
+        this.retryTrigger = { ...retryTrigger };
+      } else {
+        this.retryPending = false;
+        this.retryTrigger = null;
       }
     } catch (e) {
       logWarning("registry", `failed to restore hook state: ${(e as Error).message}`);
@@ -1017,7 +1174,15 @@ export class RuleRegistry {
       if (existsSync(filePath)) {
         writeFileSync(
           filePath,
-          JSON.stringify({ cycleCounts: {}, redispatchedGateKeys: [], activeHook: null, hookQueue: [], savedAt: new Date().toISOString() }, null, 2),
+          JSON.stringify({
+            cycleCounts: {},
+            redispatchedGateKeys: [],
+            activeHook: null,
+            hookQueue: [],
+            retryPending: false,
+            retryTrigger: null,
+            savedAt: new Date().toISOString(),
+          }, null, 2),
           "utf-8",
         );
       }
@@ -1085,18 +1250,25 @@ export class RuleRegistry {
       return null;
     }
 
+    const completionIdentity = captureTaskCompletionIdentity({
+      triggerUnitType: unitType,
+      triggerUnitId: unitId,
+    });
+
     this.activeHook = {
       hookName: hook.name,
       triggerUnitType: unitType,
       triggerUnitId: unitId,
       cycle: 1,
       pendingRetry: false,
+      ...completionIdentity,
     };
 
     this.hookQueue = [{
       config: hook,
       triggerUnitType: unitType,
       triggerUnitId: unitId,
+      ...completionIdentity,
     }];
 
     const cycleKey = `${hook.name}/${unitType}/${unitId}`;

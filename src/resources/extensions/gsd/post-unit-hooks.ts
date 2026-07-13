@@ -12,7 +12,11 @@ import type {
   PostUnitGateBlock,
 } from "./types.js";
 import type { SidecarItem } from "./auto/session.js";
-import { getOrCreateRegistry, resolveHookArtifactPath } from "./rule-registry.js";
+import {
+  getOrCreateRegistry,
+  resolveHookArtifactPath,
+  type RetryTrigger,
+} from "./rule-registry.js";
 
 // Re-export resolveHookArtifactPath so existing importers still work.
 export { resolveHookArtifactPath } from "./rule-registry.js";
@@ -35,8 +39,16 @@ export function isRetryPending(): boolean {
   return getOrCreateRegistry().isRetryPending();
 }
 
-export function consumeRetryTrigger(): { unitType: string; unitId: string; retryArtifact?: string } | null {
+export function peekRetryTrigger(): RetryTrigger | null {
+  return getOrCreateRegistry().peekRetryTrigger();
+}
+
+export function consumeRetryTrigger(): RetryTrigger | null {
   return getOrCreateRegistry().consumeRetryTrigger();
+}
+
+export function acknowledgeRetryTrigger(basePath: string): RetryTrigger | null {
+  return getOrCreateRegistry().acknowledgeRetryTrigger(basePath);
 }
 
 export function consumeHookFailure(): { hookName: string; unitType: string; unitId: string; reason: string } | null {

@@ -9,7 +9,6 @@ import {
   getSliceTasks,
   isDbAvailable,
   isMemoriesFtsAvailable,
-  repairTaskCompletionFromSummary,
   _getAdapter,
 } from "./gsd-db.js";
 import { MEMORIES_FTS_REBUILT_KEY } from "./db-memory-fts-schema.js";
@@ -30,15 +29,10 @@ import { readEvents } from "./workflow-events.js";
 import { flushWorkflowProjections } from "./projection-flush.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
 import { parsePlan } from "./parsers-legacy.js";
-import { parseSummary } from "./files.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 
 const USER_AUTHORED_ARTIFACT_TYPES = new Set(["CONTEXT", "RESEARCH"]);
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function relativeFile(basePath: string, filePath: string): string {
   return relative(basePath, filePath).split("\\").join("/");
@@ -255,125 +249,6 @@ function resolveArtifactDiskPath(basePath: string, artifactPath: string, row?: A
     if (flatPath) return flatPath;
   }
   return resolveLiteralArtifactDiskPath(basePath, artifactPath, row);
-}
-
-function taskExistsInPlan(basePath: string, milestoneId: string, sliceId: string, taskId: string): boolean {
-  const planPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
-  if (!planPath || !existsSync(planPath)) return false;
-  try {
-    return parsePlan(readFileSync(planPath, "utf-8")).tasks.some((task) => task.id === taskId);
-  } catch {
-    return false;
-  }
-}
-
-function isPassingVerificationResult(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) return false;
-  if (/\b(fail(?:ed|ing)?|error|blocked|mixed|untested)\b/.test(normalized)) return false;
-  if (
-    /\b(?:not|never|no|didn't|did\s+not|cannot|can't|won't|couldn't)\s+(?:\w+\s+){0,3}?(?:pass(?:ed|ing)?|success(?:ful)?|succeeded)\b/.test(
-      normalized,
-    )
-  ) {
-    return false;
-  }
-  return /\b(pass(?:ed|ing)?|success(?:ful)?|succeeded)\b/.test(normalized) || normalized === "all-pass";
-}
-
-function readTaskCompletionEvidenceFromSummary(
-  basePath: string,
-  row: {
-    path: string;
-    milestone_id: string;
-    slice_id: string | null;
-    task_id: string | null;
-    task_status: string | null;
-    task_count: number;
-  },
-): {
-  completedAt: string;
-  verificationResult: string;
-  title: string;
-  oneLiner: string;
-  narrative: string;
-  duration: string;
-  blockerDiscovered: boolean;
-  deviations: string;
-  knownIssues: string;
-  keyFiles: string[];
-  keyDecisions: string[];
-  fullSummaryMd: string;
-} | null {
-  if (!row.slice_id || !row.task_id) return null;
-  if (!row.task_status && Number(row.task_count) > 0 && !taskExistsInPlan(basePath, row.milestone_id, row.slice_id, row.task_id)) {
-    return null;
-  }
-  const diskPath = resolveArtifactDiskPath(basePath, row.path, { ...row, artifact_type: "SUMMARY" });
-  if (!diskPath) return null;
-  try {
-    const fullSummaryMd = readFileSync(diskPath, "utf-8");
-    const summary = parseSummary(fullSummaryMd);
-    const fm = summary.frontmatter;
-    if (fm.id !== row.task_id || fm.parent !== row.slice_id || fm.milestone !== row.milestone_id) return null;
-    if (fm.blocker_discovered) return null;
-    if (!isPassingVerificationResult(fm.verification_result)) return null;
-    const completedAt = fm.completed_at.trim();
-    if (!completedAt || !Number.isFinite(Date.parse(completedAt))) return null;
-    return {
-      completedAt,
-      verificationResult: fm.verification_result.trim(),
-      title: summary.title.replace(new RegExp(`^${escapeRegExp(row.task_id)}:\\s*`), "").trim(),
-      oneLiner: summary.oneLiner,
-      narrative: summary.whatHappened,
-      duration: fm.duration,
-      blockerDiscovered: fm.blocker_discovered,
-      deviations: summary.deviations,
-      knownIssues: summary.knownLimitations,
-      keyFiles: fm.key_files.filter((file) => file !== "(none)"),
-      keyDecisions: fm.key_decisions.filter((decision) => decision !== "(none)"),
-      fullSummaryMd,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function repairTaskArtifactDbStatusDivergence(
-  basePath: string,
-  row: {
-    path: string;
-    artifact_type?: string;
-    milestone_id: string;
-    slice_id: string | null;
-    task_id: string | null;
-    task_status: string | null;
-    task_count: number;
-  },
-): boolean {
-  const evidence = readTaskCompletionEvidenceFromSummary(basePath, row);
-  if (!evidence || !row.slice_id || !row.task_id) return false;
-  repairTaskCompletionFromSummary({
-    milestoneId: row.milestone_id,
-    sliceId: row.slice_id,
-    taskId: row.task_id,
-    ...evidence,
-  });
-  return true;
-}
-
-function artifactDbStatusDivergenceFixable(
-  basePath: string,
-  row: {
-    path: string;
-    milestone_id: string;
-    slice_id: string | null;
-    task_id: string | null;
-    task_status: string | null;
-    task_count: number;
-  },
-): boolean {
-  return readTaskCompletionEvidenceFromSummary(basePath, row) !== null;
 }
 
 function artifactUnitId(row: { milestone_id: string | null; slice_id: string | null; task_id: string | null }): string {
@@ -798,29 +673,13 @@ export async function checkEngineHealth(
               : row.milestone_id;
           if (seen.has(unitId)) continue;
           seen.add(unitId);
-          const fixable = artifactDbStatusDivergenceFixable(basePath, row);
-          let repairFailed = false;
-          if (options?.repair && fixable) {
-            try {
-              if (repairTaskArtifactDbStatusDivergence(basePath, row)) {
-                fixesApplied.push(`repaired task completion from SUMMARY artifact for ${unitId}`);
-                continue;
-              }
-            } catch {
-              repairFailed = true;
-            }
-          }
           issues.push({
             severity: "error",
             code: "artifact_db_status_divergence",
             scope: row.task_id ? "task" : row.slice_id ? "slice" : "milestone",
             unitId,
-            message: repairFailed
-              ? `Completion artifact ${row.path} exists while DB state for ${unitId} is still open or missing. Doctor found valid SUMMARY completion evidence but could not repair the database state.`
-              : fixable
-              ? `Completion artifact ${row.path} exists while DB state for ${unitId} is still open or missing. Doctor can repair this from the SUMMARY completion evidence.`
-              : `Completion artifact ${row.path} exists while DB state for ${unitId} is still open or missing. Runtime will not import it silently; run explicit recovery/repair after review.`,
-            fixable,
+            message: `Completion artifact ${row.path} exists while DB state for ${unitId} is still open or missing. Runtime will not import it silently; run explicit recovery/repair after review.`,
+            fixable: false,
           });
         }
       } catch {

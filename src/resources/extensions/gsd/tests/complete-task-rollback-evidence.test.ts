@@ -41,7 +41,7 @@ const VALID_PARAMS = {
   ],
 };
 
-describe("complete-task projection failures roll back DB completion", () => {
+describe("complete-task projection failures preserve committed DB completion", () => {
   let base: string;
 
   afterEach(() => {
@@ -112,7 +112,7 @@ describe("complete-task projection failures roll back DB completion", () => {
     assert.equal(task?.status, "complete", "task should remain complete after successful projection");
   });
 
-  it("rolls back DB completion and clears verification_evidence when disk projection write fails", async () => {
+  it("keeps DB completion and verification evidence when disk projection write fails", async () => {
     base = makeTmpBase();
     openDatabase(join(base, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001" });
@@ -124,22 +124,22 @@ describe("complete-task projection failures roll back DB completion", () => {
     writeFileSync(tasksDir, "not-a-directory");
 
     const result = await handleCompleteTask(VALID_PARAMS, base);
-    assert.ok("error" in result, "expected rollback error when projection write fails");
+    assert.ok("error" in result, "expected stale projection error when projection write fails");
     assert.ok(
-      (result as { error: string }).error.includes("rolled completion back to pending"),
-      `error should mention rollback; got: ${"error" in result ? result.error : ""}`,
+      (result as { error: string }).error.includes("completion remains committed"),
+      `error should report committed completion; got: ${"error" in result ? result.error : ""}`,
     );
 
     const adapter = _getAdapter()!;
     const task = adapter.prepare(
       `SELECT status FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'`,
     ).get() as { status: string } | undefined;
-    assert.ok(task, "task row should still exist after rollback");
-    assert.equal(task!.status, "pending", "task status should be rolled back to pending");
+    assert.ok(task, "task row should still exist after projection failure");
+    assert.equal(task!.status, "complete", "task completion should remain committed");
 
     const evidenceRows = adapter.prepare(
       `SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'`,
     ).all();
-    assert.equal(evidenceRows.length, 0, "verification_evidence should be deleted after rollback");
+    assert.equal(evidenceRows.length, 2, "verification evidence should remain committed for projection repair");
   });
 });

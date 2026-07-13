@@ -99,6 +99,28 @@ test("checkEngineHealth reports memories_fts without the rebuild marker", async 
   assert.equal(ftsIssue.fixable, false);
 });
 
+test("checkEngineHealth does not advertise orphaned Tasks as automatically fixable", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-orphaned-task-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  const adapter = _getAdapter()!;
+  adapter.exec("PRAGMA foreign_keys = OFF");
+  adapter.prepare(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, sequence)
+    VALUES ('M001', 'S99', 'T01', 'Orphaned Task', 'pending', 1)
+  `).run();
+  adapter.exec("PRAGMA foreign_keys = ON");
+
+  const issues: any[] = [];
+  await checkEngineHealth(base, issues, []);
+
+  const orphan = issues.find((issue) => issue.code === "db_orphaned_task");
+  assert.ok(orphan);
+  assert.equal(orphan.fixable, false);
+});
+
 test("checkEngineHealth reports checkbox divergence against DB status", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-doctor-checkbox-drift-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -896,7 +918,7 @@ function taskSummary(id: string, verificationResult = "passed"): string {
   ].join("\n");
 }
 
-test("checkEngineHealth marks valid task artifact DB divergence fixable and repairs it", async (t) => {
+test("checkEngineHealth never repairs Task completion from a valid SUMMARY projection", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-doctor-artifact-db-repair-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
 
@@ -926,27 +948,24 @@ test("checkEngineHealth marks valid task artifact DB divergence fixable and repa
 
   const divergence = detectIssues.find((issue) => issue.code === "artifact_db_status_divergence" && issue.unitId === "M001/S01/T01");
   assert.ok(divergence, "doctor should report the artifact/DB divergence");
-  assert.equal(divergence.fixable, true);
+  assert.equal(divergence.fixable, false);
 
   const repairIssues: any[] = [];
   const fixes: string[] = [];
   await checkEngineHealth(base, repairIssues, fixes, { repair: true });
 
-  assert.ok(
-    fixes.includes("repaired task completion from SUMMARY artifact for M001/S01/T01"),
-    "repair mode should report the task completion repair",
-  );
+  assert.equal(fixes.some((fix) => fix.includes("task completion")), false);
   assert.equal(
     repairIssues.some((issue) => issue.code === "artifact_db_status_divergence" && issue.unitId === "M001/S01/T01"),
-    false,
-    "repaired divergence should not be reported in the same doctor run",
+    true,
+    "repair mode must preserve the diagnostic until canonical execution resolves it",
   );
 
   const task = getTask("M001", "S01", "T01");
-  assert.equal(task?.status, "complete");
-  assert.equal(task?.completed_at, "2026-01-01T00:00:00.000Z");
-  assert.equal(task?.verification_result, "passed");
-  assert.match(task?.full_summary_md ?? "", /# T01: Done/);
+  assert.equal(task?.status, "pending");
+  assert.equal(task?.completed_at, null);
+  assert.equal(task?.verification_result, "");
+  assert.equal(task?.full_summary_md, "");
 });
 
 test("checkEngineHealth keeps failed and negated-pass summaries non-fixable", async (t) => {

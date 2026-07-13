@@ -53,15 +53,17 @@ import { regenerateIfMissing } from "./workflow-projections.js";
 import { WorktreeStateProjection } from "./worktree-state-projection.js";
 import { createWorkspace, scopeMilestone } from "./workspace.js";
 import { normalizeWorktreePathForCompare } from "./worktree-root.js";
-import { isDbAvailable, getTask, getSlice, getMilestone, getMilestoneSlices, updateTaskStatus, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getMilestone, getMilestoneSlices, _getAdapter, getVerificationEvidence } from "./gsd-db.js";
+import { internalExecutionInvocation } from "./execution-invocation.js";
+import { reopenTask } from "./task-lifecycle-domain-operation.js";
 import { getWorkflowDatabasePath, refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
 import { renderPlanCheckboxes, renderRoadmapFromDb, roadmapRenderMarksSliceDone } from "./markdown-renderer.js";
 import { awaitWorkerResume, consumeSignal } from "./session-status-io.js";
 import {
   checkPostUnitHooks,
+  acknowledgeRetryTrigger,
   consumeHookFailure,
-  isRetryPending,
-  consumeRetryTrigger,
+  peekRetryTrigger,
   consumeGateBlock,
   persistHookState,
   resolveHookArtifactPath,
@@ -462,6 +464,105 @@ function resolveTaskArtifactPath(
   const taskDir = resolveTasksDir(basePath, mid, sid) ?? slicePath;
   const file = resolveFile(taskDir, tid, suffix);
   return file ? join(taskDir, file) : null;
+}
+
+type PendingHookRetry = NonNullable<ReturnType<typeof peekRetryTrigger>>;
+
+function hookRetryIdempotencyKey(trigger: PendingHookRetry): string | null {
+  if (trigger.completionOperationId) {
+    return `internal:auto:hook-retry:${trigger.unitId}:operation:${trigger.completionOperationId}`;
+  }
+  if (trigger.legacyCompletedAt) {
+    return `internal:auto:hook-retry:${trigger.unitId}:legacy:${trigger.legacyCompletedAt}`;
+  }
+  return null;
+}
+
+async function prepareHookRetry(
+  trigger: PendingHookRetry,
+  projectRoot: string,
+): Promise<"retry" | "obsolete"> {
+  const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
+  if (trigger.unitType === "execute-task") {
+    if (!mid || !sid || !tid) {
+      throw new Error(`Hook retry execute-task identity is invalid: ${trigger.unitId}`);
+    }
+    const retryKey = hookRetryIdempotencyKey(trigger);
+    if (!retryKey) {
+      throw new Error(`Hook retry Task ${mid}/${sid}/${tid} has no canonical completion identity`);
+    }
+    const db = _getAdapter();
+    if (!db) {
+      throw new Error(`Hook retry Task ${mid}/${sid}/${tid} cannot be prepared: database unavailable`);
+    }
+    const task = getTask(mid, sid, tid);
+    if (!task) throw new Error(`Hook retry Task ${mid}/${sid}/${tid} is missing`);
+    const lifecycle = db.prepare(`
+      SELECT lifecycle_status, last_operation_id
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'task'
+        AND milestone_id = :milestone_id
+        AND slice_id = :slice_id
+        AND task_id = :task_id
+    `).get({
+      ":milestone_id": mid,
+      ":slice_id": sid,
+      ":task_id": tid,
+    });
+    const preparedOperation = db.prepare(`
+      SELECT operation_id
+      FROM workflow_operations
+      WHERE idempotency_key = :idempotency_key
+    `).get({ ":idempotency_key": retryKey });
+    const alreadyPrepared = task.status === "pending"
+      && lifecycle?.["lifecycle_status"] === "ready"
+      && typeof preparedOperation?.["operation_id"] === "string"
+      && lifecycle["last_operation_id"] === preparedOperation["operation_id"];
+    let reviewedCompletionIsCurrent = false;
+    let currentCompletionIdentityIsKnown = false;
+    if (trigger.completionOperationId) {
+      currentCompletionIdentityIsKnown = task.status === "complete"
+        && lifecycle?.["lifecycle_status"] === "completed"
+        && typeof lifecycle["last_operation_id"] === "string"
+        && lifecycle["last_operation_id"].length > 0;
+      reviewedCompletionIsCurrent = task.status === "complete"
+        && lifecycle?.["lifecycle_status"] === "completed"
+        && lifecycle["last_operation_id"] === trigger.completionOperationId;
+    } else if (trigger.legacyCompletedAt) {
+      currentCompletionIdentityIsKnown = task.status === "complete"
+        && !lifecycle
+        && typeof task.completed_at === "string"
+        && task.completed_at.length > 0;
+      reviewedCompletionIsCurrent = task.status === "complete"
+        && !lifecycle
+        && task.completed_at === trigger.legacyCompletedAt;
+    }
+    if (!alreadyPrepared && !reviewedCompletionIsCurrent) {
+      if (task.status === "complete" && !currentCompletionIdentityIsKnown) {
+        throw new Error(`Hook retry Task ${mid}/${sid}/${tid} has no canonical completion identity`);
+      }
+      return "obsolete";
+    }
+
+    if (!alreadyPrepared) {
+      reopenTask({
+        invocation: internalExecutionInvocation(retryKey),
+        task: { milestoneId: mid, sliceId: sid, taskId: tid },
+        reason: `Post-unit hook requested retry of ${trigger.unitType} ${trigger.unitId}`,
+      });
+    }
+    await renderPlanCheckboxes(projectRoot, mid, sid);
+
+    const summaryPath = resolveTaskArtifactPath(projectRoot, mid, sid, tid, "SUMMARY");
+    if (summaryPath && existsSync(summaryPath)) unlinkSync(summaryPath);
+  }
+
+  if (trigger.retryArtifact) {
+    const retryArtifactPath = resolveHookArtifactPath(projectRoot, trigger.unitId, trigger.retryArtifact);
+    if (existsSync(retryArtifactPath)) unlinkSync(retryArtifactPath);
+  }
+  invalidateAllCaches();
+  return "retry";
 }
 
 function resolveVerificationFailureMarkerPath(
@@ -1960,12 +2061,35 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       //   the artifact was never written. Retrying can never succeed.
       // - Tool invocation error (#2883/#3595): malformed JSON args or queued
       //   user message — retry will produce the same failure.
+      // - DB-backed Tasks: Attempt, Result, Verdict, and Recovery rows own the
+      //   recovery decision; this legacy artifact ladder must not compete.
       //
       // User-driven deep setup prompts may ask for approval before the final
       // root artifact write. If a premature write hits the write gate in the
       // same turn, the user wait is the meaningful state; pause instead of
       // writing a placeholder over PROJECT/REQUIREMENTS.
-      if (!triggerArtifactVerified && USER_DRIVEN_DEEP_UNITS.has(s.currentUnit.type) && isAwaitingUserInput(opts?.agentEndMessages)) {
+      if (!triggerArtifactVerified && s.currentUnit.type === "execute-task" && isDbAvailable()) {
+        const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
+        if (s.pendingVerificationRetry?.unitId === s.currentUnit.id) {
+          s.pendingVerificationRetry = null;
+        }
+        s.lastToolInvocationError = null;
+        s.toolUnavailableRetries = 0;
+        s.verificationRetryCount.delete(retryKey);
+        s.verificationRetryFailureHashes.delete(retryKey);
+        s.exhaustedVerificationUnits.delete(retryKey);
+        saveCustomVerifyRetryCounts(s, {
+          logFailure: err => debugLog("postUnit", {
+            phase: "save-verify-retries-failed",
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        });
+        debugLog("postUnit", {
+          phase: "task-artifact-recovery-deferred-to-durable-authority",
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+        });
+      } else if (!triggerArtifactVerified && USER_DRIVEN_DEEP_UNITS.has(s.currentUnit.type) && isAwaitingUserInput(opts?.agentEndMessages)) {
         debugLog("postUnit", {
           phase: "artifact-verify-awaiting-user",
           unitType: s.currentUnit.type,
@@ -2370,61 +2494,27 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     }
 
     // Check if a hook requested a retry of the trigger unit
-    if (isRetryPending()) {
-      const trigger = consumeRetryTrigger();
-      if (trigger) {
-        persistHookState(s.basePath);
-        ctx.ui.notify(
-          `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
-          "info",
-        );
-
-        await s.orchestration?.retryActiveUnit({
-          unitType: trigger.unitType,
-          unitId: trigger.unitId,
-        });
-
-        // ── State reset: undo the completion so deriveState re-derives the unit ──
-        try {
-          const { milestone: mid, slice: sid, task: tid } = parseUnitId(trigger.unitId);
-
-          // 1. Reset task status in DB and re-render plan checkboxes
-          if (mid && sid && tid) {
-            try {
-              updateTaskStatus(mid, sid, tid, "pending");
-              await renderPlanCheckboxes(s.canonicalProjectRoot, mid, sid);
-            } catch (dbErr) {
-              // DB unavailable — fail explicitly rather than silently reverting to markdown mutation.
-              // Use 'gsd recover --confirm' to import markdown into the DB if needed.
-              logError("engine", `retry state-reset failed (DB unavailable): ${(dbErr as Error).message}. Run 'gsd recover --confirm' to import markdown into the DB.`);
-            }
-          }
-
-          // 2. Delete SUMMARY.md for the task
-          if (mid && sid && tid) {
-            // Phase C: read+delete via canonical project root.
-            const summaryPath = resolveTaskArtifactPath(s.canonicalProjectRoot, mid, sid, tid, "SUMMARY");
-            if (summaryPath && existsSync(summaryPath)) {
-              unlinkSync(summaryPath);
-            }
-          }
-
-          // 3. Delete the retry_on artifact (e.g. NEEDS-REWORK.md)
-          if (trigger.retryArtifact) {
-            const retryArtifactPath = resolveHookArtifactPath(s.canonicalProjectRoot, trigger.unitId, trigger.retryArtifact);
-            if (existsSync(retryArtifactPath)) {
-              unlinkSync(retryArtifactPath);
-            }
-          }
-
-          // 5. Invalidate caches so deriveState reads fresh disk state
-          invalidateAllCaches();
-        } catch (e) {
-          debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
+    const trigger = peekRetryTrigger();
+    if (trigger) {
+      ctx.ui.notify(
+        `Hook requested retry of ${trigger.unitType} ${trigger.unitId} — resetting trigger unit state.`,
+        "info",
+      );
+      try {
+        const disposition = await prepareHookRetry(trigger, s.canonicalProjectRoot);
+        if (disposition === "retry") {
+          if (!s.orchestration) throw new Error("Hook retry requires an active orchestration session");
+          await s.orchestration.retryActiveUnit({
+            unitType: trigger.unitType,
+            unitId: trigger.unitId,
+          });
         }
-
-        // Fall through to normal dispatch — deriveState will re-derive the unit
+        acknowledgeRetryTrigger(s.basePath);
+      } catch (e) {
+        debugLog("postUnitPostVerification", { phase: "retry-state-reset", error: String(e) });
+        throw e;
       }
+      // Fall through to normal dispatch — deriveState will re-derive the unit.
     }
 
     const gateBlock = consumeGateBlock();

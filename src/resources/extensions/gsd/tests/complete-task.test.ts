@@ -243,10 +243,10 @@ console.log('\n=== complete-task: accessor CRUD ===');
   assertEq(sliceTasks.length, 1, 'getSliceTasks should return 1 task');
   assertEq(sliceTasks[0].id, 'T01', 'getSliceTasks first task id');
 
-  // updateTaskStatus changes status
-  updateTaskStatus('M001', 'S01', 'T01', 'failed', new Date().toISOString());
+  // updateTaskStatus preserves allowed closed-to-closed transitions.
+  updateTaskStatus('M001', 'S01', 'T01', 'skipped', new Date().toISOString());
   const updatedTask = getTask('M001', 'S01', 'T01');
-  assertEq(updatedTask!.status, 'failed', 'task status should be updated to failed');
+  assertEq(updatedTask!.status, 'skipped', 'task status should be updated to skipped');
   assertTrue(updatedTask!.completed_at !== null, 'completed_at should be set after status update');
 
   cleanup(dbPath);
@@ -457,10 +457,10 @@ console.log('\n=== complete-task: flat-phase duplicate task IDs are slice-qualif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// complete-task: Projection failure rolls DB completion back
+// complete-task: Projection failure preserves DB completion
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-task: projection failure rolls DB completion back ===');
+console.log('\n=== complete-task: projection failure preserves DB completion ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
@@ -481,18 +481,18 @@ console.log('\n=== complete-task: projection failure rolls DB completion back ==
   }
 
   const task = getTask('M001', 'S01', 'T01');
-  assertTrue(task !== null, 'task row should remain for retry');
-  assertEq(task!.status, 'pending', 'task status should be rolled back to pending');
-  assertEq(task!.completed_at, null, 'rolled back task should not keep completed_at');
+  assertTrue(task !== null, 'task row should remain for projection repair');
+  assertEq(task!.status, 'complete', 'task completion should remain committed');
+  assertTrue(task!.completed_at !== null, 'committed task should keep completed_at');
 
   const adapter = _getAdapter()!;
   const evRows = adapter.prepare(
     "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
   ).all();
-  assertEq(evRows.length, 0, 'verification evidence should be deleted when projection rollback runs');
+  assertEq(evRows.length, 1, 'verification evidence should remain committed for projection repair');
 
   const summaryPath = path.join(path.dirname(planPath), 'S01-T01-SUMMARY.md');
-  assertTrue(!fs.existsSync(summaryPath), 'SUMMARY.md should be removed so disk state stays pending');
+  assertTrue(fs.existsSync(summaryPath), 'successfully written SUMMARY.md should remain available for repair');
 
   cleanupDir(basePath);
   cleanup(dbPath);
@@ -535,7 +535,7 @@ console.log('\n=== complete-task: handler leaves completed sibling summaries unt
 // complete-task: hard-blocker escalation with mid-execution escalation disabled
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-task: disabled hard-blocker escalation rolls back completion ===');
+console.log('\n=== complete-task: disabled hard-blocker escalation rejects before completion ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
@@ -567,27 +567,75 @@ console.log('\n=== complete-task: disabled hard-blocker escalation rolls back co
   }
 
   const task = getTask('M001', 'S01', 'T01');
-  assertTrue(task !== null, 'task row should remain after rollback');
-  assertEq(task!.status, 'pending', 'task status should be rolled back to pending');
-  assertEq(task!.blocker_discovered, true, 'blocker flag should remain recorded for visibility');
-  assertEq(task!.escalation_pending, 0, 'disabled preference should not create a pending escalation flag');
-  assertEq(task!.escalation_awaiting_review, 0, 'disabled preference should not create an awaiting-review flag');
+  assertEq(task, null, 'disabled hard-blocker escalation should not create or complete the task');
 
   const adapter = _getAdapter()!;
   const evRows = adapter.prepare(
     "SELECT * FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
   ).all();
-  assertEq(evRows.length, 0, 'verification evidence should be deleted when completion rolls back');
+  assertEq(evRows.length, 0, 'disabled hard-blocker escalation should not persist verification evidence');
 
   cleanupDir(basePath);
   cleanup(dbPath);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// complete-task: rollback reverts applied rework resolutions
+// complete-task: hard-blocker escalation projection write failure
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-task: rollback reverts applied rework resolutions ===');
+console.log('\n=== complete-task: escalation write failure preserves completion ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath, planPath } = createTempProject();
+  writeProjectPreferences(basePath, 'phases:\n  mid_execution_escalation: true\n');
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  // A directory at the artifact path makes the final atomic rename fail while
+  // leaving the earlier SUMMARY and PLAN writes available.
+  fs.mkdirSync(path.join(path.dirname(planPath), 'T01-ESCALATION.json'));
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask({
+    ...makeValidParams(),
+    blockerDiscovered: true,
+    escalation: {
+      question: 'Should execution pause for the hard blocker?',
+      options: makeEscalationOptions(),
+      recommendation: 'pause',
+      recommendationRationale: 'The blocker should not be silently advanced.',
+      continueWithDefault: false,
+    },
+  }, basePath));
+
+  assertTrue('error' in result, 'hard-blocker escalation write failure should return an error');
+  if ('error' in result) {
+    assertMatch(result.error, /escalation write failed/, 'error should identify the escalation projection');
+    assertMatch(result.error, /completion remains committed/, 'error should report durable completion');
+  }
+  const task = getTask('M001', 'S01', 'T01');
+  assertEq(task?.status, 'complete', 'task completion should remain committed');
+  assertEq(task?.escalation_pending, 1, 'hard-blocker recovery intent should remain pending');
+  assertEq(task?.escalation_awaiting_review, 0, 'hard blocker should not be marked awaiting review');
+  assertMatch(task?.escalation_artifact_path ?? '', /T01-ESCALATION\.json$/, 'recovery intent should retain the artifact path');
+  const evidence = _getAdapter()!.prepare(
+    "SELECT COUNT(*) AS count FROM verification_evidence WHERE task_id = 'T01' AND slice_id = 'S01' AND milestone_id = 'M001'"
+  ).get();
+  assertEq(evidence?.['count'], 1, 'verification evidence should remain committed');
+  const eventLogPath = path.join(basePath, '.gsd', 'event-log.jsonl');
+  const eventLog = fs.existsSync(eventLogPath) ? fs.readFileSync(eventLogPath, 'utf8') : '';
+  assertTrue(eventLog.length > 0, 'post-mutation event log should still be written');
+  assertMatch(eventLog, /"cmd":"complete-task"/, 'event log should record completion');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: escalation errors preserve applied rework resolutions
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: disabled escalation preserves pending rework ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
@@ -612,10 +660,8 @@ console.log('\n=== complete-task: rollback reverts applied rework resolutions ==
     }],
   });
 
-  // Completion resolves the blocking finding but then rolls back because the
-  // hard-blocker escalation is disabled. The rollback must also revert the
-  // finding. Otherwise a retry would see no unresolved blocking findings and
-  // silently skip the blocking gate.
+  // Disabled hard-blocker escalation is rejected before completion, so no
+  // task or rework lifecycle mutation can be applied.
   const result = await withWorkingDirectory(basePath, () => handleCompleteTask({
     ...makeValidParams(),
     blockerDiscovered: true,
@@ -633,22 +679,59 @@ console.log('\n=== complete-task: rollback reverts applied rework resolutions ==
     },
   }, basePath));
 
-  assertTrue('error' in result, 'completion should roll back when hard-blocker escalation is disabled');
-  assertEq(getTask('M001', 'S01', 'T01')?.status, 'pending', 'task status should roll back to pending');
+  assertTrue('error' in result, 'completion should report disabled hard-blocker escalation');
+  assertEq(getTask('M001', 'S01', 'T01')?.status, 'pending', 'task should remain pending');
 
   const finding = _getAdapter()!.prepare(
     "SELECT status, evidence, decision_ref FROM rework_brief_findings WHERE brief_id = 'RB-001' AND finding_id = 'F1'"
   ).get() as { status: string; evidence: string; decision_ref: string };
-  assertEq(finding.status, 'pending', 'rework finding should revert to pending after rollback');
-  assertEq(finding.evidence, '', 'rework finding evidence should be cleared after rollback');
+  assertEq(finding.status, 'pending', 'rework finding should remain pending');
+  assertEq(finding.evidence, '', 'rework finding evidence should not be applied');
 
-  // Retry-safety invariant: the blocking gate must fire again because the
-  // finding is unresolved once more.
+  // A retry without the required rework resolution remains blocked.
   const retry = await withWorkingDirectory(basePath, () => handleCompleteTask(makeValidParams(), basePath));
-  assertTrue('error' in retry, 'retry without reworkResolution should be blocked again');
+  assertTrue('error' in retry, 'retry should remain blocked by unresolved rework');
   if ('error' in retry) {
-    assertMatch(retry.error, /unresolved blocking rework finding/i, 'retry should re-trigger the blocking gate');
+    assertMatch(retry.error, /unresolved blocking rework/i, 'retry should report unresolved rework');
   }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: escalation validation remains pre-commit
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: invalid escalation remains pre-commit ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath } = createTempProject();
+  writeProjectPreferences(basePath, 'phases:\n  mid_execution_escalation: true\n');
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  const result = await withWorkingDirectory(basePath, () => handleCompleteTask({
+    ...makeValidParams(),
+    escalation: {
+      question: 'Invalid duplicate options?',
+      options: [
+        { id: 'same', label: 'First', tradeoffs: 'First path.' },
+        { id: 'same', label: 'Second', tradeoffs: 'Second path.' },
+      ],
+      recommendation: 'same',
+      recommendationRationale: 'This payload must be rejected.',
+      continueWithDefault: false,
+    },
+  }, basePath));
+
+  assertTrue('error' in result, 'invalid escalation should be rejected');
+  if ('error' in result) {
+    assertMatch(result.error, /payload invalid/, 'error should identify pre-commit validation');
+  }
+  assertEq(getTask('M001', 'S01', 'T01'), null, 'invalid escalation should not create or complete the task');
 
   cleanupDir(basePath);
   cleanup(dbPath);

@@ -10,6 +10,7 @@ import {
   getActiveHook,
   resetHookState,
   isRetryPending,
+  peekRetryTrigger,
   consumeRetryTrigger,
   consumeGateBlock,
   resolveHookArtifactPath,
@@ -118,13 +119,13 @@ test('Advisory hook keeps artifact idempotency without verdict frontmatter', () 
   try {
     writeHookPreferences(base, `  - name: docs-hint
     after:
-      - execute-task
+      - plan-slice
     prompt: Review docs
     artifact: DOCS-HINT.md
 `);
     writeFileSync(resolveHookArtifactPath(base, "M001/S01/T01", "DOCS-HINT.md"), "plain advisory note", "utf-8");
 
-    const result = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const result = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.deepStrictEqual(result, null, "existing advisory artifact remains idempotent");
     assert.deepStrictEqual(consumeGateBlock(), null, "advisory hook does not create gate block");
   } finally {
@@ -140,7 +141,7 @@ test('Blocking hook skips only after passing frontmatter verdict', () => {
   try {
     writeHookPreferences(base, `  - name: security-review
     after:
-      - execute-task
+      - plan-slice
     prompt: Review security
     artifact: SECURITY-REVIEW.md
     criticality: blocking
@@ -151,7 +152,7 @@ test('Blocking hook skips only after passing frontmatter verdict', () => {
       "utf-8",
     );
 
-    const result = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const result = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.deepStrictEqual(result, null, "passing gate artifact is idempotent");
     assert.deepStrictEqual(consumeGateBlock(), null, "passing gate does not block");
   } finally {
@@ -167,14 +168,14 @@ test('Blocking hook reruns invalid artifact once then blocks at cycle budget', (
   try {
     writeHookPreferences(base, `  - name: security-review
     after:
-      - execute-task
+      - plan-slice
     prompt: Review security
     artifact: SECURITY-REVIEW.md
     criticality: blocking
 `);
     writeFileSync(resolveHookArtifactPath(base, "M001/S01/T01", "SECURITY-REVIEW.md"), "partial output", "utf-8");
 
-    const dispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const dispatch = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.ok(dispatch, "invalid gate artifact dispatches the blocking hook");
     assert.equal(dispatch.unitType, "hook/security-review");
 
@@ -197,13 +198,13 @@ test('Blocking hook restored from disk does not trust artifact without clean hoo
   try {
     writeHookPreferences(base, `  - name: security-review
     after:
-      - execute-task
+      - plan-slice
     prompt: Review security
     artifact: SECURITY-REVIEW.md
     criticality: blocking
     max_cycles: 2
 `);
-    const firstDispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const firstDispatch = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.ok(firstDispatch, "gate dispatches first cycle");
     persistHookState(base);
 
@@ -216,7 +217,7 @@ test('Blocking hook restored from disk does not trust artifact without clean hoo
     resetHookState();
     restoreHookState(base);
 
-    const resumed = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const resumed = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.ok(resumed, "persisted active gate reruns when clean hook completion was not observed");
     assert.equal(resumed.unitType, "hook/security-review");
   } finally {
@@ -459,7 +460,7 @@ test('Blocking hook needs-rework verdict requests trigger unit retry', () => {
   try {
     writeHookPreferences(base, `  - name: review-arbiter
     after:
-      - execute-task
+      - plan-slice
     prompt: Review task
     artifact: REVIEW-DEBATE.md
     criticality: blocking
@@ -467,7 +468,7 @@ test('Blocking hook needs-rework verdict requests trigger unit retry', () => {
     on_block:
       action: retry-unit
 `);
-    const dispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const dispatch = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.ok(dispatch, "gate dispatches");
     writeFileSync(
       resolveHookArtifactPath(base, "M001/S01/T01", "REVIEW-DEBATE.md"),
@@ -478,8 +479,13 @@ test('Blocking hook needs-rework verdict requests trigger unit retry', () => {
     const afterHook = checkPostUnitHooks("hook/review-arbiter", "M001/S01/T01", base);
     assert.deepStrictEqual(afterHook, null, "needs-rework routes via retry signal");
     assert.ok(isRetryPending(), "retry is pending");
+    assert.deepStrictEqual(peekRetryTrigger(), {
+      unitType: "plan-slice",
+      unitId: "M001/S01/T01",
+    });
+    assert.ok(isRetryPending(), "peeking through the facade keeps the retry pending");
     assert.deepStrictEqual(consumeRetryTrigger(), {
-      unitType: "execute-task",
+      unitType: "plan-slice",
       unitId: "M001/S01/T01",
     });
   } finally {
@@ -696,7 +702,7 @@ test('Dispatch results omit primary-only model so fallbacks survive (#1229)', ()
   try {
     writeHookPreferences(base, `  - name: code-review
     after:
-      - execute-task
+      - plan-slice
     prompt: Review the change
     artifact: REVIEW-PASS.md
     model:
@@ -706,14 +712,14 @@ test('Dispatch results omit primary-only model so fallbacks survive (#1229)', ()
         - fallback-b
 `);
 
-    const autoDispatch = checkPostUnitHooks("execute-task", "M001/S01/T01", base);
+    const autoDispatch = checkPostUnitHooks("plan-slice", "M001/S01/T01", base);
     assert.ok(autoDispatch, "auto-mode dispatches the configured hook");
     assert.equal(autoDispatch.unitType, "hook/code-review", "auto dispatch is hook-prefixed");
     assert.equal(autoDispatch.model, undefined, "auto dispatch does not carry a primary-only model");
 
     resetHookState();
 
-    const manualDispatch = triggerHookManually("code-review", "execute-task", "M001/S01/T01", base);
+    const manualDispatch = triggerHookManually("code-review", "plan-slice", "M001/S01/T01", base);
     assert.ok(manualDispatch, "manual trigger dispatches the configured hook");
     assert.equal(manualDispatch.unitType, "hook/code-review", "manual dispatch is hook-prefixed");
     assert.equal(manualDispatch.model, undefined, "manual dispatch does not carry a primary-only model");

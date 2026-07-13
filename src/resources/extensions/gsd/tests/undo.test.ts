@@ -14,6 +14,7 @@ import {
   uncheckTaskInPlan,
 } from "../undo.ts";
 import {
+  _getAdapter,
   openDatabase,
   closeDatabase,
   insertMilestone,
@@ -22,6 +23,11 @@ import {
   getTask,
   getSlice,
 } from "../gsd-db.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { existsSync } from "node:fs";
 
@@ -79,11 +85,17 @@ test("handleUndo execute-task with --force reopens the task row and re-renders p
       "utf-8",
     );
 
+    const before = canonicalTaskHistory();
     const { notifications, ctx } = makeCtx();
     await handleUndo("--force", ctx, {} as any, base);
 
     const task = getTask("M001", "S01", "T01");
     assert.equal(task?.status, "pending");
+    const after = canonicalTaskHistory();
+    assert.equal(after.lifecycleId, before.lifecycleId);
+    assert.equal(after.lifecycleStatus, "ready");
+    assert.deepEqual(after.events, ["test.undo.task.completed", "task.reopened"]);
+    assert.equal(after.reopenOperations, 1);
 
     const planContent = readFileSync(
       join(base, ".gsd", "phases", "01-test", "01-01-PLAN.md"),
@@ -275,7 +287,76 @@ function setupTaskFixture(base: string): void {
   insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active", risk: "low", depends: [] });
   insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "First task", status: "complete" });
   insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Second task", status: "pending" });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.undo.task.completed",
+    idempotencyKey: "test:undo:fixture:task-completed",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+      adoptedFromStatus: "completed",
+    });
+    return {
+      events: [{
+        eventType: "test.undo.task.completed",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/undo/task/completed",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
   invalidateAllCaches();
+}
+
+function canonicalTaskHistory(): {
+  lifecycleId: string;
+  lifecycleStatus: string;
+  events: string[];
+  reopenOperations: number;
+} {
+  const db = _getAdapter();
+  assert.ok(db);
+  const lifecycle = db.prepare(`
+    SELECT lifecycle_id, lifecycle_status
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'task'
+      AND milestone_id = 'M001'
+      AND slice_id = 'S01'
+      AND task_id = 'T01'
+  `).get() as Record<string, unknown> | undefined;
+  assert.ok(lifecycle);
+  const events = db.prepare(`
+    SELECT event_type
+    FROM workflow_domain_events
+    WHERE entity_type = 'task' AND entity_id = 'M001/S01/T01'
+    ORDER BY project_revision, event_index
+  `).all() as Array<Record<string, unknown>>;
+  const reopenOperations = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_operations
+    WHERE operation_type = 'task.reopen'
+  `).get() as Record<string, unknown> | undefined;
+  return {
+    lifecycleId: String(lifecycle["lifecycle_id"]),
+    lifecycleStatus: String(lifecycle["lifecycle_status"]),
+    events: events.map((event) => String(event["event_type"])),
+    reopenOperations: Number(reopenOperations?.["count"] ?? 0),
+  };
 }
 
 test("handleUndoTask without args shows usage", async () => {
@@ -313,15 +394,22 @@ test("handleUndoTask with --force resets task and re-renders plan", async () => 
   const base = makeTempDir("gsd-undo-task-force");
   try {
     setupTaskFixture(base);
+    const before = canonicalTaskHistory();
     const { notifications, ctx } = makeCtx();
+    await handleUndoTask("M001/S01/T01 --force", ctx, {} as any, base);
     await handleUndoTask("M001/S01/T01 --force", ctx, {} as any, base);
 
     // DB status reset
     const task = getTask("M001", "S01", "T01");
     assert.equal(task?.status, "pending");
+    const after = canonicalTaskHistory();
+    assert.equal(after.lifecycleId, before.lifecycleId);
+    assert.equal(after.lifecycleStatus, "ready");
+    assert.deepEqual(after.events, ["test.undo.task.completed", "task.reopened"]);
+    assert.equal(after.reopenOperations, 1, "replaying undo must reuse the completion-scoped command");
 
     // Summary file deleted
-    const summaryPath = join(base, ".gsd", "phases", "01-test", "T01-SUMMARY.md");
+    const summaryPath = join(base, ".gsd", "phases", "01-test", "tasks", "T01-SUMMARY.md");
     assert.equal(existsSync(summaryPath), false);
 
     // Plan checkbox unchecked — renderPlanCheckboxes re-renders to the flat-phase path
@@ -335,6 +423,62 @@ test("handleUndoTask with --force resets task and re-renders plan", async () => 
     // Success notification
     assert.equal(notifications[0]?.level, "success");
     assert.match(notifications[0]?.message ?? "", /Reset task M001\/S01\/T01/);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleUndoTask keeps the canonical reopen when summary cleanup fails", async () => {
+  const base = makeTempDir("gsd-undo-task-cleanup-failure");
+  try {
+    setupTaskFixture(base);
+    const summaryPath = join(base, ".gsd", "phases", "01-test", "tasks", "T01-SUMMARY.md");
+    rmSync(summaryPath);
+    mkdirSync(summaryPath);
+
+    const { ctx } = makeCtx();
+    await assert.rejects(
+      handleUndoTask("M001/S01/T01 --force", ctx, {} as any, base),
+      /directory|operation not permitted|EISDIR/i,
+    );
+
+    assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
+    const afterFailure = canonicalTaskHistory();
+    assert.equal(afterFailure.lifecycleStatus, "ready");
+    assert.deepEqual(afterFailure.events, ["test.undo.task.completed", "task.reopened"]);
+    assert.equal(afterFailure.reopenOperations, 1);
+
+    rmSync(summaryPath, { recursive: true });
+    await handleUndoTask("M001/S01/T01 --force", ctx, {} as any, base);
+    assert.equal(canonicalTaskHistory().reopenOperations, 1);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleUndoTask rejects inconsistent legacy and canonical heads", async () => {
+  const base = makeTempDir("gsd-undo-task-inconsistent-heads");
+  try {
+    setupTaskFixture(base);
+    const db = _getAdapter();
+    assert.ok(db);
+    db.prepare(`
+      UPDATE tasks SET status = 'pending', completed_at = NULL
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+
+    const { ctx } = makeCtx();
+    await assert.rejects(
+      handleUndoTask("M001/S01/T01 --force", ctx, {} as any, base),
+      /matching legacy and canonical lifecycle heads/i,
+    );
+
+    const history = canonicalTaskHistory();
+    assert.equal(history.lifecycleStatus, "completed");
+    assert.deepEqual(history.events, ["test.undo.task.completed"]);
+    assert.equal(history.reopenOperations, 0);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

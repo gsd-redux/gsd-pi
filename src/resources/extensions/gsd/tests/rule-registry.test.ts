@@ -198,6 +198,50 @@ describe("RuleRegistry", () => {
     assert.deepStrictEqual(registry.consumeRetryTrigger(), null, "retryTrigger cleared");
   });
 
+  test("peekRetryTrigger observes a pending retry without consuming it", () => {
+    const registry = new RuleRegistry([]);
+    const expected = {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      retryArtifact: "NEEDS-REWORK.md",
+    };
+    registry.retryPending = true;
+    registry.retryTrigger = expected;
+
+    const peeked = registry.peekRetryTrigger();
+
+    assert.deepStrictEqual(peeked, expected);
+    assert.notStrictEqual(peeked, registry.retryTrigger, "peek returns a defensive copy");
+    assert.equal(registry.isRetryPending(), true, "peek leaves the retry pending");
+    assert.deepStrictEqual(registry.consumeRetryTrigger(), expected, "consume still acknowledges the trigger");
+    assert.equal(registry.isRetryPending(), false);
+  });
+
+  test("pending hook retry survives registry persistence until acknowledged", () => {
+    const basePath = mkdtempSync(join(tmpdir(), "gsd-hook-retry-state-"));
+    const expected = {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      retryArtifact: "NEEDS-REWORK.md",
+    };
+    try {
+      const beforeRestart = new RuleRegistry([]);
+      beforeRestart.retryPending = true;
+      beforeRestart.retryTrigger = expected;
+      beforeRestart.persistState(basePath);
+
+      const afterRestart = new RuleRegistry([]);
+      afterRestart.restoreState(basePath);
+
+      assert.equal(afterRestart.isRetryPending(), true);
+      assert.deepEqual(afterRestart.peekRetryTrigger(), expected);
+      assert.deepEqual(afterRestart.consumeRetryTrigger(), expected);
+      assert.equal(afterRestart.isRetryPending(), false);
+    } finally {
+      rmSync(basePath, { recursive: true, force: true });
+    }
+  });
+
   test("singleton getRegistry throws when not initialized", () => {
     let threw = false;
     try {
@@ -409,7 +453,7 @@ describe("RuleRegistry", () => {
           "    prepend: POLICY TEXT HERE",
           "post_unit_hooks:",
           "  - name: review-after-task",
-          "    after: [execute-task]",
+          "    after: [plan-slice]",
           "    prompt: Review {taskId}",
           "---",
         ].join("\n"),
@@ -431,7 +475,7 @@ describe("RuleRegistry", () => {
       assert.ok(preResult.prompt?.startsWith("POLICY TEXT HERE"), "pre-dispatch hook prepends policy text");
       assert.deepStrictEqual(preResult.firedHooks, ["policy-prepend"]);
 
-      const postResult = registry.evaluatePostUnit("execute-task", "M001/S01/T01", projectRoot);
+      const postResult = registry.evaluatePostUnit("plan-slice", "M001/S01/T01", projectRoot);
       assert.notEqual(postResult, null, "post-unit hook dispatches from basePath preferences");
       assert.deepStrictEqual(postResult!.hookName, "review-after-task");
       assert.equal(postResult!.prompt.includes("Review T01"), true);
@@ -460,12 +504,12 @@ describe("RuleRegistry", () => {
           "version: 1",
           "post_unit_hooks:",
           "  - name: review-arbiter",
-          "    after: [execute-task]",
+          "    after: [plan-slice]",
           "    prompt: Review {taskId}",
           "    artifact: REVIEW.md",
           "    max_cycles: 1",
           "  - name: follow-up-review",
-          "    after: [execute-task]",
+          "    after: [plan-slice]",
           "    prompt: Follow-up review {taskId}",
           "---",
         ].join("\n"),
@@ -474,7 +518,7 @@ describe("RuleRegistry", () => {
       process.env.GSD_HOME = tempGsdHome;
 
       const registry = new RuleRegistry([]);
-      const firstHook = registry.evaluatePostUnit("execute-task", unitId, projectRoot);
+      const firstHook = registry.evaluatePostUnit("plan-slice", unitId, projectRoot);
       assert.equal(firstHook?.hookName, "review-arbiter");
 
       writeFileSync(
@@ -507,7 +551,7 @@ describe("RuleRegistry", () => {
 
       const resumedRegistry = new RuleRegistry([]);
       resumedRegistry.restoreState(projectRoot);
-      const resumedHook = resumedRegistry.evaluatePostUnit("execute-task", unitId, projectRoot);
+      const resumedHook = resumedRegistry.evaluatePostUnit("plan-slice", unitId, projectRoot);
       assert.equal(resumedHook, null, "resumed hook evaluation must not skip failed hook artifact");
       assert.equal(resumedRegistry.consumeHookFailure()?.hookName, "review-arbiter");
     } finally {

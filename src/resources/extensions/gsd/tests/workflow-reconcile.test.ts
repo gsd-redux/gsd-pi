@@ -6,7 +6,20 @@ import { tmpdir } from "node:os";
 
 import { appendEvent, readEvents } from "../workflow-events.ts";
 import { listConflicts, reconcileWorktreeLogs, resolveConflict } from "../workflow-reconcile.ts";
-import { closeDatabase } from "../gsd-db.ts";
+import {
+  _getAdapter,
+  closeDatabase,
+  getTask,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.ts";
 
 const tmpDirs: string[] = [];
 
@@ -108,4 +121,62 @@ test("reconcileWorktreeLogs treats canonical worktree project-ledger appends as 
 
   assert.equal(result.autoMerged, 0, "project-ledger append should not replay the root log");
   assert.equal(result.conflicts.length, 0, "missing worktree shard is not a conflict");
+});
+
+test("legacy Task events cannot overwrite adopted canonical lifecycle history", () => {
+  const { main, worktree } = makeTmpRepo();
+  mkdirSync(join(main, ".gsd"), { recursive: true });
+  openDatabase(join(main, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "Task", status: "pending" });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.task.ready",
+    idempotencyKey: "test:workflow-reconcile:task-ready",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { taskId: "T01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "ready",
+      adoptedFromStatus: "pending",
+    });
+    return {
+      events: [{
+        eventType: "test.task.ready",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/task/ready",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  closeDatabase();
+
+  appendEvent(worktree, {
+    cmd: "complete-task",
+    params: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    ts: "2026-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  reconcileWorktreeLogs(main, worktree);
+
+  assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
+  assert.equal(
+    _getAdapter()?.prepare("SELECT lifecycle_status FROM workflow_item_lifecycles WHERE task_id = 'T01'").get()?.lifecycle_status,
+    "ready",
+  );
 });
