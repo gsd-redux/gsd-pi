@@ -14,7 +14,7 @@ import {
   getSliceTasks,
   getSlice,
   openDatabase,
-  updateTaskStatus,
+  _getAdapter,
   updateSliceStatus,
 } from "../gsd-db.ts";
 import { migrateHierarchyToDb, milestoneIdsFromEntities } from "../md-importer.ts";
@@ -120,7 +120,12 @@ function seedTwoMilestonesWithReopenedBTask(base: string): void {
   assert.equal(getSlice("M002", "S01")?.status, "complete");
   assert.equal(taskStatus("M002"), "complete");
   updateSliceStatus("M002", "S01", "pending");
-  updateTaskStatus("M002", "S01", "T01", "pending");
+  // Fixture-only bypass: reproduce a legacy reopened row without asking the
+  // guarded generic status writer to perform a forbidden closed→open change.
+  _getAdapter()!.prepare(`
+    UPDATE tasks SET status = 'pending', completed_at = NULL
+    WHERE milestone_id = 'M002' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
   assert.equal(getSlice("M002", "S01")?.status, "pending", "precondition: B/S01 reopened");
   assert.equal(taskStatus("M002"), "pending", "precondition: B/S01/T01 reopened");
 }

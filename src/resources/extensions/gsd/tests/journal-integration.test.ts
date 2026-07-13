@@ -446,7 +446,7 @@ test("runDispatch retries when complete-milestone summary exists on disk and stu
   assert.equal(stopCalls, 0, "artifact-based recovery should not hard-stop the loop");
 });
 
-test("runDispatch promotes execute-task DB status when artifacts exist but DB status is still open (#1204)", async (t) => {
+test("runDispatch does not promote an open execute-task from SUMMARY projections at Level 1", async (t) => {
   const capture = createEventCapture();
   let pauseCalls = 0;
   let stopCalls = 0;
@@ -523,16 +523,19 @@ test("runDispatch promotes execute-task DB status when artifacts exist but DB st
 
   const result = await runDispatch(ic, preData, loopState);
 
-  assert.equal(result.action, "continue");
-  assert.equal(pauseCalls, 0, "disk-verified promotion should not pause auto-mode");
-  assert.equal(stopCalls, 0, "disk-verified promotion should not hard-stop the loop");
-  assert.equal(invalidateCalls, 1, "successful promotion should invalidate caches before retrying");
-  assert.equal(loopState.recentUnits.length, 0, "successful promotion should clear the stuck window");
+  assert.equal(result.action, "next");
+  assert.equal(pauseCalls, 0, "Level 1 should retry after cache invalidation");
+  assert.equal(stopCalls, 0, "Level 1 should not hard-stop the loop");
+  assert.equal(invalidateCalls, 1, "Level 1 should invalidate caches before retrying");
   assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 1 recovery increments the attempt counter");
-  assert.equal(getTask("M001", "S01", "T01")?.status, "complete", "the open DB task should be promoted to complete");
+  assert.equal(
+    getTask("M001", "S01", "T01")?.status,
+    "pending",
+    "SUMMARY and checked-box projections must not close the authoritative DB task",
+  );
 });
 
-test("runDispatch promotes execute-task DB status at Level 2 when artifacts exist but DB status is still open (#1204)", async (t) => {
+test("runDispatch stops at Level 2 rather than promoting execute-task from SUMMARY projections", async (t) => {
   const capture = createEventCapture();
   let pauseCalls = 0;
   let stopCalls = 0;
@@ -602,13 +605,16 @@ test("runDispatch promotes execute-task DB status at Level 2 when artifacts exis
 
   const result = await runDispatch(ic, preData, loopState);
 
-  assert.equal(result.action, "continue");
-  assert.equal(pauseCalls, 0, "Level 2 disk-verified promotion should not pause auto-mode");
-  assert.equal(stopCalls, 0, "Level 2 disk-verified promotion should not hard-stop the loop");
-  assert.equal(invalidateCalls, 1, "Level 2 should invalidate caches before the final artifact recheck");
-  assert.equal(loopState.recentUnits.length, 0, "Level 2 successful promotion should clear the stuck window");
+  assert.equal(result.action, "break");
+  assert.equal(pauseCalls, 0, "a stale projection is not a fatal canonical-state mismatch");
+  assert.equal(stopCalls, 1, "Level 2 should stop when no canonical Attempt Result is actionable");
+  assert.equal(invalidateCalls, 1, "Level 2 should invalidate caches before the final authority check");
   assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 2 does not reset the recovery counter");
-  assert.equal(getTask("M001", "S01", "T01")?.status, "complete", "the open DB task should be promoted to complete");
+  assert.equal(
+    getTask("M001", "S01", "T01")?.status,
+    "pending",
+    "SUMMARY and checked-box projections must not close the authoritative DB task",
+  );
 });
 
 test("runDispatch clears execute-task stuck state when artifacts and DB status are complete", async (t) => {

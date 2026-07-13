@@ -33,7 +33,7 @@ export function createTaskVerificationRecoverySchemaV38(db: DbAdapter): void {
         )
     )
     BEGIN
-      SELECT RAISE(ABORT, 'failure observation Result does not match its causal Task boundary');
+      SELECT RAISE(ABORT, 'failure observation requires a matching failed or interrupted Result, or a succeeded Result with a failed or inconclusive verification verdict, at its causal Task boundary');
     END;
   `);
 }

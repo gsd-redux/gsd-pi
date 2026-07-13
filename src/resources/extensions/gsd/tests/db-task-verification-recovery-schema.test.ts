@@ -197,7 +197,10 @@ for (const verdict of [null, "pass"] as const) {
     const { db } = createCurrentFixture();
     try {
       if (verdict) insertVerdict(db, verdict);
-      assert.throws(() => insertVerifyFailure(db), /causal Task boundary/i);
+      assert.throws(
+        () => insertVerifyFailure(db),
+        /failed or interrupted result.*causal Task boundary/i,
+      );
       assert.equal(
         db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
         0,

@@ -21,6 +21,7 @@ import {
   insertTask,
   getSlice,
   getSliceTasks,
+  _getAdapter,
   updateSliceStatus,
   updateTaskStatus,
 } from "../gsd-db.ts";
@@ -86,7 +87,11 @@ describe("handleSkipSlice cascades skip to tasks (#4375)", () => {
 
     // Simulate historical inconsistent state: slice skipped but a task was
     // later recreated or reset to pending by some migration/bug path.
-    updateTaskStatus("M001", "S03", "T01", "pending");
+    // Bypass the guarded writer because this invalid state is the fixture.
+    _getAdapter()!.prepare(`
+      UPDATE tasks SET status = 'pending', completed_at = NULL
+      WHERE milestone_id = 'M001' AND slice_id = 'S03' AND id = 'T01'
+    `).run();
 
     const second = handleSkipSlice({ milestoneId: "M001", sliceId: "S03" });
     assert.equal(second.error, undefined, "re-running must succeed (no 'already skipped' hard error)");

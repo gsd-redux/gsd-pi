@@ -303,7 +303,7 @@ test("executeTaskComplete derives missing verification from evidence", async () 
   }
 });
 
-test("executeTaskComplete surfaces escalation questions and metadata", async () => {
+test("executeTaskComplete creates the legacy escalation directory and surfaces its metadata", async () => {
   const base = makeTmpBase();
   try {
     openTestDb(base);
@@ -352,7 +352,9 @@ test("executeTaskComplete surfaces escalation questions and metadata", async () 
     ).get("M001", "S01", "T01") as Record<string, unknown> | undefined;
     assert.equal(row?.escalation_pending, 0);
     assert.equal(row?.escalation_awaiting_review, 1);
-    assert.ok(String(row?.escalation_artifact_path ?? "").endsWith("T01-ESCALATION.json"));
+    const expectedArtifactPath = join(normalizeRealPath(planDir), "tasks", "T01-ESCALATION.json");
+    assert.equal(row?.escalation_artifact_path, expectedArtifactPath);
+    assert.equal(existsSync(expectedArtifactPath), true);
   } finally {
     closeDatabase();
     cleanup(base);
