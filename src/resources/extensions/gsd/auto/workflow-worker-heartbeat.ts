@@ -49,3 +49,20 @@ export function maintainWorkerHeartbeat(
     deps.logHeartbeatFailure(err);
   }
 }
+
+export async function runWithWorkerHeartbeat<T>(
+  session: WorkerHeartbeatSession,
+  deps: MaintainWorkerHeartbeatDeps,
+  intervalMs: number,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!session.workerId) return run();
+
+  maintainWorkerHeartbeat(session, deps);
+  const handle = setInterval(() => maintainWorkerHeartbeat(session, deps), intervalMs);
+  try {
+    return await run();
+  } finally {
+    clearInterval(handle);
+  }
+}

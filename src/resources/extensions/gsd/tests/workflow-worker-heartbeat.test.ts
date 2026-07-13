@@ -2,10 +2,11 @@
 // File Purpose: Unit tests for auto-mode worker heartbeat adapter.
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 
 import {
   maintainWorkerHeartbeat,
+  runWithWorkerHeartbeat,
   type MaintainWorkerHeartbeatDeps,
   type WorkerHeartbeatSession,
 } from "../auto/workflow-worker-heartbeat.ts";
@@ -151,4 +152,32 @@ test("maintainWorkerHeartbeat clears stale lease tokens when refresh misses", ()
     fencingToken: 7,
   }]);
   assert.equal(session.milestoneLeaseToken, null);
+});
+
+test("runWithWorkerHeartbeat clears its interval when unit execution rejects", async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+
+  try {
+    const failure = new Error("unit execution failed");
+    const { deps, calls } = makeDeps();
+    const session: WorkerHeartbeatSession = {
+      workerId: "worker-1",
+      currentMilestoneId: "M001",
+      milestoneLeaseToken: 7,
+    };
+
+    await assert.rejects(
+      runWithWorkerHeartbeat(session, deps, 1_000, async () => {
+        throw failure;
+      }),
+      failure,
+    );
+    const callsAfterRejection = calls.length;
+
+    mock.timers.tick(1_000);
+
+    assert.equal(calls.length, callsAfterRejection);
+  } finally {
+    mock.timers.reset();
+  }
 });

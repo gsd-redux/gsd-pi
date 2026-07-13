@@ -43,7 +43,12 @@ import {
   getRecentUnitKeysForProjectRoot,
   markLatestActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
-import { claimMilestoneLease, refreshMilestoneLease, forceReleaseLeasesForWorker } from "../db/milestone-leases.js";
+import {
+  claimMilestoneLease,
+  refreshMilestoneLease,
+  forceReleaseLeasesForWorker,
+  milestoneLeaseTtlSeconds,
+} from "../db/milestone-leases.js";
 import { heartbeatAutoWorker, getAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
 import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.js";
 import { resolveUokFlags } from "../uok/flags.js";
@@ -83,7 +88,7 @@ import { createWorkflowPhaseReporter } from "./workflow-phase-reporter.js";
 import { createWorkflowTurnReporter } from "./workflow-turn-reporter.js";
 import { validateWorkflowSessionLock } from "./workflow-session-lock.js";
 import { dequeueSidecarItem } from "./workflow-sidecar-queue.js";
-import { maintainWorkerHeartbeat } from "./workflow-worker-heartbeat.js";
+import { maintainWorkerHeartbeat, runWithWorkerHeartbeat } from "./workflow-worker-heartbeat.js";
 import { gsdRoot } from "../paths.js";
 import {
   measureMemoryPressure,
@@ -196,6 +201,7 @@ function resolveCompletionStopFromOutcome(
 const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
 const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
+const WORKER_HEARTBEAT_INTERVAL_MS = milestoneLeaseTtlSeconds() * 500;
 const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
 const TASK_EXECUTION_CUTOVER_DEPS = {
@@ -489,23 +495,28 @@ export async function autoLoop(
   let consecutiveOrchestrationSkips = 0;
   let lastOrchestrationSkipKey: string | null = null;
   const recentErrorMessages: string[] = [];
+  const workerHeartbeatDeps = {
+    heartbeatAutoWorker,
+    refreshMilestoneLease,
+    logHeartbeatFailure: (err: unknown) => debugLog("autoLoop", {
+      phase: "heartbeat-failed",
+      error: err instanceof Error ? err.message : String(err),
+    }),
+    logLeaseRefreshMiss: (details: {
+      workerId: string;
+      milestoneId: string;
+      fencingToken: number;
+    }) => debugLog("autoLoop", {
+      phase: "lease-refresh-missed",
+      ...details,
+    }),
+  };
 
   while (s.active) {
     iteration++;
     debugLog("autoLoop", { phase: "loop-top", iteration });
 
-    maintainWorkerHeartbeat(s, {
-      heartbeatAutoWorker,
-      refreshMilestoneLease,
-      logHeartbeatFailure: err => debugLog("autoLoop", {
-        phase: "heartbeat-failed",
-        error: err instanceof Error ? err.message : String(err),
-      }),
-      logLeaseRefreshMiss: details => debugLog("autoLoop", {
-        phase: "lease-refresh-missed",
-        ...details,
-      }),
-    });
+    maintainWorkerHeartbeat(s, workerHeartbeatDeps);
 
     // ── Journal: per-iteration flow grouping ──
     const flowId = randomUUID();
@@ -818,28 +829,33 @@ export async function autoLoop(
         }
         let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
         try {
-          unitPhaseResult = await (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
-            {
-              unitType: iterData.unitType,
-              unitId: iterData.unitId,
-              dispatchId: customDispatchId,
-              workerId: s.workerId,
-              milestoneLeaseToken: s.milestoneLeaseToken,
-              traceId: flowId,
-              turnId,
-              markCanonicalDispatchSettled() {
-                customDispatchSettled = true;
+          unitPhaseResult = await runWithWorkerHeartbeat(
+            s,
+            workerHeartbeatDeps,
+            WORKER_HEARTBEAT_INTERVAL_MS,
+            () => (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
+              {
+                unitType: iterData.unitType,
+                unitId: iterData.unitId,
+                dispatchId: customDispatchId,
+                workerId: s.workerId,
+                milestoneLeaseToken: s.milestoneLeaseToken,
+                traceId: flowId,
+                turnId,
+                markCanonicalDispatchSettled() {
+                  customDispatchSettled = true;
+                },
               },
-            },
-            () => runUnitPhaseViaContract(
-              dispatchContract,
-              ic,
-              iterData,
-              loopState,
-              undefined,
-              unitDispatchDeps,
+              () => runUnitPhaseViaContract(
+                dispatchContract,
+                ic,
+                iterData,
+                loopState,
+                undefined,
+                unitDispatchDeps,
+              ),
+              TASK_EXECUTION_CUTOVER_DEPS,
             ),
-            TASK_EXECUTION_CUTOVER_DEPS,
           );
         } catch (err) {
           if (err instanceof ModelPolicyDispatchBlockedError) {
@@ -1496,28 +1512,33 @@ export async function autoLoop(
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
       try {
-        unitPhaseResult = await (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
-          {
-            unitType: iterData.unitType,
-            unitId: iterData.unitId,
-            dispatchId,
-            workerId: s.workerId,
-            milestoneLeaseToken: s.milestoneLeaseToken,
-            traceId: flowId,
-            turnId,
-            markCanonicalDispatchSettled() {
-              dispatchSettled = true;
+        unitPhaseResult = await runWithWorkerHeartbeat(
+          s,
+          workerHeartbeatDeps,
+          WORKER_HEARTBEAT_INTERVAL_MS,
+          () => (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
+            {
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              dispatchId,
+              workerId: s.workerId,
+              milestoneLeaseToken: s.milestoneLeaseToken,
+              traceId: flowId,
+              turnId,
+              markCanonicalDispatchSettled() {
+                dispatchSettled = true;
+              },
             },
-          },
-          () => runUnitPhaseViaContract(
-            dispatchContract,
-            ic,
-            iterData,
-            loopState,
-            sidecarItem,
-            unitDispatchDeps,
+            () => runUnitPhaseViaContract(
+              dispatchContract,
+              ic,
+              iterData,
+              loopState,
+              sidecarItem,
+              unitDispatchDeps,
+            ),
+            TASK_EXECUTION_CUTOVER_DEPS,
           ),
-          TASK_EXECUTION_CUTOVER_DEPS,
         );
       } catch (err) {
         if (err instanceof ModelPolicyDispatchBlockedError) {

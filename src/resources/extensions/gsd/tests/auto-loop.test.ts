@@ -36,9 +36,9 @@ import type { AutoAdvanceResult, AutoOrchestrationModule, AutoStatus, UnitRef } 
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
-import { openDatabase, closeDatabase, getTask, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
+import { _getAdapter, openDatabase, closeDatabase, getTask, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
-import { claimMilestoneLease } from "../db/milestone-leases.js";
+import { claimMilestoneLease, getMilestoneLease, milestoneLeaseTtlSeconds } from "../db/milestone-leases.js";
 import { getLatestForUnit, recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
 import { SourceObservationStore } from "../source-observations.js";
@@ -2318,6 +2318,126 @@ test("autoLoop publishes a canonical Task only after host verification without l
     assert.equal(attempt.nextStage, "settled");
     assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
   } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(basePath, { recursive: true, force: true });
+  }
+});
+
+test("autoLoop refreshes its milestone lease while an execute-task call is pending and clears the heartbeat on exit", async () => {
+  _resetPendingResolve();
+  mock.timers.enable({ apis: ["setInterval"] });
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.setWidget = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const basePath = realpathSync(makeLoopTestBase("gsd-task-lease-heartbeat-"));
+  execSync("git commit --allow-empty -m initial", { cwd: basePath, stdio: "ignore" });
+  const slicePath = join(basePath, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(join(slicePath, "tasks"), { recursive: true });
+  writeFileSync(join(slicePath, "S01-PLAN.md"), "# Slice Plan\n\n- [ ] **T01:** task one\n");
+  writeFileSync(join(slicePath, "tasks", "T01-PLAN.md"), "# Task Plan\n");
+
+  try {
+    openDatabase(join(basePath, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "active" });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Task One",
+      status: "pending",
+      planning: { verify: 'node -e "process.exit(0)"' },
+    });
+    const workerId = registerAutoWorker({ projectRootRealpath: basePath });
+    const lease = claimMilestoneLease(workerId, "M001");
+    assert.equal(lease.ok, true);
+    if (!lease.ok) return;
+
+    const s = makeLoopSession({
+      basePath,
+      originalBasePath: basePath,
+      canonicalProjectRoot: basePath,
+      workerId,
+      milestoneLeaseToken: lease.token,
+    });
+    const deps = makeMockDeps({
+      isDbAvailable: () => true,
+      taskExecutionBoundary: runWithTaskExecutionAttempt,
+      taskPublicationBoundary: publishVerifiedTaskExecution,
+      runPostUnitVerification,
+      postUnitPostVerification: async () => {
+        s.active = false;
+        return "continue" as const;
+      },
+    });
+
+    const loopPromise = autoLoop(ctx, pi, s, deps);
+    await waitForMicrotasks(
+      () => readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.state === "running",
+      "canonical Task Attempt claim",
+    );
+
+    const expiredAt = "1970-01-01T00:00:00.000Z";
+    _getAdapter()!.prepare(
+      "UPDATE milestone_leases SET expires_at = :expires_at WHERE milestone_id = :milestone_id",
+    ).run({ ":expires_at": expiredAt, ":milestone_id": "M001" });
+    mock.timers.tick(milestoneLeaseTtlSeconds() * 500);
+
+    const refreshedLease = getMilestoneLease("M001");
+    assert.equal(refreshedLease?.worker_id, workerId);
+    assert.equal(refreshedLease?.fencing_token, lease.token);
+    assert.equal(refreshedLease?.status, "held");
+    const leaseWasRefreshed = Date.parse(refreshedLease?.expires_at ?? "") > Date.now();
+    if (!leaseWasRefreshed) {
+      _getAdapter()!.prepare(
+        "UPDATE milestone_leases SET expires_at = :expires_at WHERE milestone_id = :milestone_id",
+      ).run({
+        ":expires_at": new Date(Date.now() + milestoneLeaseTtlSeconds() * 1000).toISOString(),
+        ":milestone_id": "M001",
+      });
+    }
+
+    await stageTaskCompletion({
+      invocation: {
+        idempotencyKey: "test:auto-loop:heartbeat-stage:T01",
+        sourceTransport: "internal",
+        actorType: "agent",
+        actorId: workerId,
+      },
+      basePath,
+      task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+      completion: {
+        oneLiner: "Executor candidate completed",
+        narrative: "Candidate result awaiting host verification.",
+        verification: "Executor reported success.",
+        deviations: "None.",
+        knownIssues: "None.",
+        keyFiles: ["src/task.ts"],
+        keyDecisions: ["Keep the lease alive while execution is pending."],
+        blockerDiscovered: false,
+        verificationEvidence: [],
+      },
+    });
+
+    resolveAgentEnd(makeEvent());
+    await loopPromise;
+
+    const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.equal(attempt?.state, "settled");
+    assert.equal(attempt?.outcome, "succeeded");
+    assert.equal(getLatestForUnit("M001/S01/T01")?.status, "completed");
+    assert.equal(leaseWasRefreshed, true, "the in-flight heartbeat must renew the original lease");
+
+    _getAdapter()!.prepare(
+      "UPDATE milestone_leases SET expires_at = :expires_at WHERE milestone_id = :milestone_id",
+    ).run({ ":expires_at": expiredAt, ":milestone_id": "M001" });
+    mock.timers.tick(milestoneLeaseTtlSeconds() * 500);
+    assert.equal(getMilestoneLease("M001")?.expires_at, expiredAt);
+  } finally {
+    mock.timers.reset();
     try { closeDatabase(); } catch { /* noop */ }
     rmSync(basePath, { recursive: true, force: true });
   }
