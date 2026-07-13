@@ -52,6 +52,8 @@ Host-owned verification runs after the executor Result. GSD records a durable Te
 
 Task recovery keeps three intents separate. Reopen returns a terminal task to canonical `ready` plus legacy `pending` without starting work or deleting history; retry creates a lineage-linked Attempt after a failed or interrupted Attempt without resetting task status; cancel moves actionable work to canonical `cancelled` plus legacy `skipped`, interrupting any running Attempt first. Projection and summary rendering failures are retryable delivery work after the database transaction commits. They return a visible error and leave the authoritative lifecycle state intact instead of rolling a committed completion back to pending.
 
+An agent-owned recovery abort remains fail-closed after its retry budget is exhausted. If you repair the underlying defect, call the control-plane-only `gsd_task_recovery_resume` tool with the exact current abort `recoveryActionId`, a nonblank `repairSummary`, and non-empty structured verification `evidence`, then resume auto mode. The operation preserves the failed Attempt, Result, abort Recovery Action, and exhausted budget while authorizing exactly one immediate lineage-linked Attempt. A dispatched worker cannot call this tool, and stale actions, duplicate authorizations, open blockers, or later Attempts are rejected.
+
 In worktree mode, the project-root database and project-root `.gsd/` state remain authoritative. Worktree markdown projections are diagnostics, not state to sync back. Runtime state derivation does not silently rebuild from markdown when the database is unavailable. The legacy markdown fallback is only enabled with `GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK=1` for tests and explicit recovery work.
 
 ## Deep Planning Mode

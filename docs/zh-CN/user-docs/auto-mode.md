@@ -38,6 +38,8 @@ GSD 数据库是 milestone、slice、task、需求、summary 和 completion stat
 
 Task recovery 会把三种意图分开处理：reopen 把 terminal task 回到 canonical `ready` 和 legacy `pending`，但不启动新工作；retry 在 failed 或 interrupted Attempt 后创建带 lineage 的新 Attempt，但不重置 task status；cancel 把可执行工作转为 canonical `cancelled` 和 legacy `skipped`，如果有 running Attempt 会先中断它。
 
+Agent-owned recovery abort 在 retry budget 耗尽后仍保持 fail-closed。如果底层缺陷已经修复，请使用当前 abort 的准确 `recoveryActionId`、非空 `repairSummary` 和非空结构化验证 `evidence` 调用仅限 control plane 的 `gsd_task_recovery_resume` 工具，然后恢复 auto mode。该操作会保留 failed Attempt、Result、abort Recovery Action 和已耗尽的 budget，只授权一个紧接其后的 lineage-linked Attempt。Dispatched worker 无权调用此工具；stale action、重复授权、open blocker 或更晚的 Attempt 都会被拒绝。
+
 投影或 summary 渲染失败属于可重试的交付工作，而不是生命周期回滚理由。数据库 transaction 一旦提交，权威 lifecycle 状态保持不变；失败会作为可见错误暴露出来，并通过后续重试修复投影，而不是把已提交的 completion 回滚到 pending。
 
 ## 关键特性
