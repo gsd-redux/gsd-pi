@@ -913,6 +913,8 @@ interface McpToolServer {
 }
 
 const MCP_IDEMPOTENCY_META_KEY = "io.opengsd/idempotency-key";
+const CLAUDE_CODE_TOOL_USE_META_KEY = "claudecode/toolUseId";
+const CLAUDE_CODE_IDEMPOTENCY_PREFIX = "transport:claude-code:";
 
 function mcpInvocation(
   canonicalToolName: string,
@@ -923,17 +925,30 @@ function mcpInvocation(
   const stableExplicitKey = typeof explicitKey === "string" && explicitKey.trim()
     ? explicitKey.trim()
     : undefined;
-  if (!stableExplicitKey) {
+  const claudeCodeToolUseId = extra?._meta?.[CLAUDE_CODE_TOOL_USE_META_KEY];
+  const stableClaudeCodeToolUseId = typeof claudeCodeToolUseId === "string" && claudeCodeToolUseId.trim()
+    ? claudeCodeToolUseId.trim()
+    : undefined;
+  if (stableExplicitKey?.startsWith(CLAUDE_CODE_IDEMPOTENCY_PREFIX)) {
+    throw new Error(
+      `${mutationKind} ${canonicalToolName} cannot use the reserved Claude Code transport identity namespace`,
+    );
+  }
+  const stableKey = explicitKey === undefined && stableClaudeCodeToolUseId
+    ? `${CLAUDE_CODE_IDEMPOTENCY_PREFIX}${stableClaudeCodeToolUseId}`
+    : stableExplicitKey;
+  if (!stableKey) {
     throw new Error(
       `${mutationKind} ${canonicalToolName} requires replay-stable private request metadata ` +
-      `_meta["${MCP_IDEMPOTENCY_META_KEY}"]. Retry with the same nonblank value.`,
+      `_meta["${MCP_IDEMPOTENCY_META_KEY}"] or _meta["${CLAUDE_CODE_TOOL_USE_META_KEY}"]. ` +
+      `Retry with the same nonblank value.`,
     );
   }
   return {
-    idempotencyKey: `mcp:${canonicalToolName}:${stableExplicitKey}`,
+    idempotencyKey: `mcp:${canonicalToolName}:${stableKey}`,
     sourceTransport: "workflow-mcp",
     actorType: "agent",
-    traceId: stableExplicitKey,
+    traceId: stableKey,
   };
 }
 

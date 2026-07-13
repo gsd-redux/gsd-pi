@@ -14,7 +14,7 @@ import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { gsdRoot, resolveTasksDir, resolveSlicePath, resolveSliceFile, resolveTaskFile, buildTaskFileName, buildSliceFileName } from "./paths.js";
 import { sendDesktopNotification } from "./notifications.js";
-import { getDb, getTask, getSlice, getSliceTasks, updateSliceStatus } from "./gsd-db.js";
+import { getDb, getMilestone, getTask, getSlice, getSliceTasks, updateSliceStatus } from "./gsd-db.js";
 import { renderPlanCheckboxes, renderRoadmapCheckboxes } from "./markdown-renderer.js";
 import { UNIT_REGISTRY } from "./unit-registry.js";
 import { reopenTask } from "./task-lifecycle-domain-operation.js";
@@ -27,6 +27,7 @@ const RESET_TASK_REOPEN_REASON = "Task reopened by an explicit slice reset comma
 interface UndoTaskState {
   legacyStatus: string;
   completedAt: string | null;
+  lifecycleId: string | null;
   lifecycleStatus: string | null;
   lifecycleOperationId: string | null;
 }
@@ -36,6 +37,7 @@ function readUndoTaskState(mid: string, sid: string, tid: string): UndoTaskState
   const row = getDb().prepare(`
     SELECT task.status AS legacy_status,
            task.completed_at,
+           lifecycle.lifecycle_id,
            lifecycle.lifecycle_status,
            lifecycle.last_operation_id AS lifecycle_operation_id
     FROM tasks task
@@ -56,6 +58,7 @@ function readUndoTaskState(mid: string, sid: string, tid: string): UndoTaskState
   return {
     legacyStatus: String(row["legacy_status"]),
     completedAt: row["completed_at"] ? String(row["completed_at"]) : null,
+    lifecycleId: row["lifecycle_id"] ? String(row["lifecycle_id"]) : null,
     lifecycleStatus: row["lifecycle_status"] ? String(row["lifecycle_status"]) : null,
     lifecycleOperationId: row["lifecycle_operation_id"]
       ? String(row["lifecycle_operation_id"])
@@ -97,20 +100,59 @@ function reopenTaskForUndo(mid: string, sid: string, tid: string): void {
   });
 }
 
-function resetTaskForSlice(mid: string, sid: string, tid: string): void {
+function readResettableTaskState(mid: string, sid: string, tid: string): UndoTaskState {
   const state = readUndoTaskState(mid, sid, tid);
   const legacyStatus = normalizeLegacyLifecycleStatus(state.legacyStatus);
-  if (legacyStatus === "pending" && !state.lifecycleStatus) return;
-  if (legacyStatus === "pending" && state.lifecycleStatus === "ready") return;
+  if (legacyStatus === "pending" && (!state.lifecycleStatus || state.lifecycleStatus === "ready")) return state;
   if (legacyStatus === "completed" || legacyStatus === "cancelled") {
-    reopenTask({
-      invocation: internalExecutionInvocation(resetTaskIdempotencyKey(mid, sid, tid, state)),
-      task: { milestoneId: mid, sliceId: sid, taskId: tid },
-      reason: RESET_TASK_REOPEN_REASON,
-    });
-    return;
+    if (state.lifecycleStatus && state.lifecycleStatus !== legacyStatus) {
+      throw new Error(`Task ${mid}/${sid}/${tid} has mismatched legacy and canonical lifecycle heads`);
+    }
+    if (state.lifecycleId && getDb().prepare(`
+      SELECT 1 AS running
+      FROM workflow_execution_attempts
+      WHERE lifecycle_id = :lifecycle_id AND attempt_state = 'running'
+    `).get({ ":lifecycle_id": state.lifecycleId })) {
+      throw new Error(`Task ${mid}/${sid}/${tid} has a running Attempt and cannot be reset safely`);
+    }
+    return state;
   }
   throw new Error(`Task ${mid}/${sid}/${tid} cannot be reset safely from ${state.legacyStatus}`);
+}
+
+function resetTaskForSlice(mid: string, sid: string, tid: string): void {
+  const state = readResettableTaskState(mid, sid, tid);
+  if (normalizeLegacyLifecycleStatus(state.legacyStatus) === "pending") return;
+  reopenTask({
+    invocation: internalExecutionInvocation(resetTaskIdempotencyKey(mid, sid, tid, state)),
+    task: { milestoneId: mid, sliceId: sid, taskId: tid },
+    reason: RESET_TASK_REOPEN_REASON,
+  });
+}
+
+function assertResettableMilestone(mid: string): void {
+  const milestone = getMilestone(mid);
+  if (!milestone) throw new Error(`Milestone ${mid} has unknown status missing`);
+  const legacyStatus = normalizeLegacyLifecycleStatus(milestone.status);
+  if (!legacyStatus) throw new Error(`Milestone ${mid} has unknown status ${milestone.status}`);
+  if (legacyStatus === "completed" || legacyStatus === "cancelled") {
+    throw new Error(`Slice reset cannot reopen tasks in a closed milestone: ${mid} (status: ${milestone.status})`);
+  }
+  const terminalCanonicalMilestone = getDb().prepare(`
+    SELECT lifecycle_status
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone'
+      AND milestone_id = :milestone_id
+      AND slice_id IS NULL
+      AND task_id IS NULL
+      AND lifecycle_status IN ('completed', 'cancelled')
+  `).get({ ":milestone_id": mid }) as Record<string, unknown> | undefined;
+  if (terminalCanonicalMilestone) {
+    throw new Error(
+      `Slice reset cannot reopen tasks under terminal canonical milestone ${mid} ` +
+      `(status: ${String(terminalCanonicalMilestone["lifecycle_status"])})`,
+    );
+  }
 }
 
 /**
@@ -429,7 +471,35 @@ export async function handleResetSlice(
     return;
   }
 
+  const canonicalSlice = getDb().prepare(`
+    SELECT 1 AS adopted
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice'
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id IS NULL
+  `).get({
+    ":milestone_id": mid,
+    ":slice_id": sid,
+  }) as Record<string, unknown> | undefined;
+  if (canonicalSlice) {
+    ctx.ui.notify(
+      `Slice ${mid}/${sid} has canonical slice history and cannot be reset safely. ` +
+      "Use the canonical slice reopen workflow when it is available.",
+      "error",
+    );
+    return;
+  }
+
   const tasks = getSliceTasks(mid, sid);
+
+  try {
+    assertResettableMilestone(mid);
+    for (const task of tasks) readResettableTaskState(mid, sid, task.id);
+  } catch (error) {
+    ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+    return;
+  }
 
   if (!force) {
     ctx.ui.notify(

@@ -103,12 +103,12 @@ test("MCP canonical and alias planning calls replay one explicit private request
     const first = await canonical.handler(params(base), {
       requestId: "rpc-canonical",
       sessionId: "session-a",
-      _meta: meta,
+      _meta: { ...meta, "claudecode/toolUseId": "toolu-first" },
     });
     const replay = await alias.handler(params(base), {
       requestId: "rpc-alias",
       sessionId: "session-b",
-      _meta: meta,
+      _meta: { ...meta, "claudecode/toolUseId": "toolu-second" },
     });
 
     assert.deepEqual(replay, first, "canonical and alias retries must preserve the public MCP result");
@@ -116,6 +116,38 @@ test("MCP canonical and alias planning calls replay one explicit private request
     assert.deepEqual(operations(), [{
       operation_type: "workflow.milestone.plan",
       idempotency_key: "mcp:gsd_plan_milestone:planning-retry-42",
+      expected_revision: 0,
+      resulting_revision: 1,
+    }]);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("MCP canonical and alias planning calls replay one Claude Code tool identity", async () => {
+  const base = makeBase();
+  try {
+    const server = makeServer();
+    registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0]);
+    const canonical = tool(server, "gsd_plan_milestone");
+    const alias = tool(server, "gsd_milestone_plan");
+    const privateMeta = { "claudecode/toolUseId": "toolu_planning_retry_42" };
+
+    const first = await canonical.handler(params(base), {
+      requestId: "rpc-canonical",
+      sessionId: "session-a",
+      _meta: privateMeta,
+    });
+    const replay = await alias.handler(params(base), {
+      requestId: "rpc-alias",
+      sessionId: "session-b",
+      _meta: privateMeta,
+    });
+
+    assert.deepEqual(replay, first, "Claude Code transport retries must preserve the public MCP result");
+    assert.deepEqual(operations(), [{
+      operation_type: "workflow.milestone.plan",
+      idempotency_key: "mcp:gsd_plan_milestone:transport:claude-code:toolu_planning_retry_42",
       expected_revision: 0,
       resulting_revision: 1,
     }]);
@@ -144,6 +176,52 @@ test("MCP planning without explicit private request identity fails before mutati
   }
 });
 
+test("MCP planning rejects malformed explicit identity instead of falling back to Claude metadata", async () => {
+  const base = makeBase();
+  try {
+    const server = makeServer();
+    registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0], { advertiseAliases: false });
+    const canonical = tool(server, "gsd_plan_milestone");
+
+    for (const explicitKey of ["   ", 42]) {
+      const result = await canonical.handler(params(base), {
+        requestId: `rpc-malformed-${String(explicitKey)}`,
+        _meta: {
+          "io.opengsd/idempotency-key": explicitKey,
+          "claudecode/toolUseId": "toolu_valid_fallback",
+        },
+      });
+      assert.equal(result["isError"], true);
+      assert.match(JSON.stringify(result), /requires replay-stable private request metadata/i);
+    }
+    assert.deepEqual(operations(), []);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("MCP planning reserves the Claude transport identity namespace", async () => {
+  const base = makeBase();
+  try {
+    const server = makeServer();
+    registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0], { advertiseAliases: false });
+    const canonical = tool(server, "gsd_plan_milestone");
+    const result = await canonical.handler(params(base), {
+      requestId: "rpc-reserved-namespace",
+      _meta: {
+        "io.opengsd/idempotency-key": "transport:claude-code:toolu_collision",
+        "claudecode/toolUseId": "toolu_other_call",
+      },
+    });
+
+    assert.equal(result["isError"], true);
+    assert.match(JSON.stringify(result), /reserved.*Claude Code transport identity/i);
+    assert.deepEqual(operations(), []);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("MCP planning rejects changed payload under the same explicit private request key", async () => {
   const base = makeBase();
   try {
@@ -159,6 +237,32 @@ test("MCP planning rejects changed payload under the same explicit private reque
     const first = await canonical.handler(params(base), extra);
     assert.equal(first["isError"], undefined);
     const conflict = await canonical.handler(params(base, "Changed title must not commit"), extra);
+
+    assert.equal(conflict["isError"], true);
+    assert.match(JSON.stringify(conflict), /idempotency conflict/i);
+    assert.equal(operations().length, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("MCP planning rejects changed payload under the same Claude Code tool identity", async () => {
+  const base = makeBase();
+  try {
+    const server = makeServer();
+    registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0], { advertiseAliases: false });
+    const canonical = tool(server, "gsd_plan_milestone");
+    const extra = {
+      requestId: "rpc-first",
+      _meta: { "claudecode/toolUseId": "toolu_planning_conflict" },
+    };
+
+    const first = await canonical.handler(params(base), extra);
+    assert.equal(first["isError"], undefined);
+    const conflict = await canonical.handler(params(base, "Changed title must not commit"), {
+      ...extra,
+      requestId: "rpc-retry",
+    });
 
     assert.equal(conflict["isError"], true);
     assert.match(JSON.stringify(conflict), /idempotency conflict/i);

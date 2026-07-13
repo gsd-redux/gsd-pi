@@ -1509,6 +1509,9 @@ describe("workflow MCP tools", () => {
         verificationEvidence: [
           { command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 },
         ],
+      }, {
+        requestId: "rpc-task-complete",
+        _meta: { "claudecode/toolUseId": "toolu_task_complete" },
       });
 
       assert.match((taskResult as any).content[0].text as string, /Staged task T01; awaiting host verification/);

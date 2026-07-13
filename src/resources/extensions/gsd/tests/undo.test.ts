@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -27,9 +27,9 @@ import { executeDomainOperation } from "../db/domain-operation.ts";
 import {
   adoptOrTransitionLifecycle,
   readDomainOperationFence,
+  type LifecycleIdentity,
 } from "../db/writers/lifecycle-commands.ts";
 import { invalidateAllCaches } from "../cache.ts";
-import { existsSync } from "node:fs";
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `${prefix}-`));
@@ -536,7 +536,7 @@ test("handleUndoTask accepts partial ID (T01) and resolves from state", async ()
 
 // ─── handleResetSlice tests ──────────────────────────────────────────────────
 
-function setupSliceFixture(base: string): void {
+function setupSliceFixture(base: string, secondTaskStatus = "complete"): void {
   const mDir = join(base, ".gsd", "phases", "01-test");
   // Flat-phase: no slices/ or tasks/ subdirs — everything is in the phase dir
   mkdirSync(mDir, { recursive: true });
@@ -583,8 +583,45 @@ function setupSliceFixture(base: string): void {
   insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "complete", risk: "low", depends: [] });
   insertSlice({ id: "S02", milestoneId: "M001", title: "Next Slice", status: "pending", risk: "low", depends: ["S01"] });
   insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "First task", status: "complete" });
-  insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Second task", status: "complete" });
+  insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Second task", status: secondTaskStatus });
   invalidateAllCaches();
+}
+
+function adoptCompletedLifecycle(identity: LifecycleIdentity): void {
+  const entityId = [identity.milestoneId, identity.sliceId, identity.taskId]
+    .filter(Boolean)
+    .join("/");
+  const operationType = `test.reset-slice.${identity.itemKind}-adopted`;
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType,
+    idempotencyKey: `${operationType}:${entityId}`,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { entityId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      ...identity,
+      lifecycleStatus: "completed",
+      adoptedFromStatus: "completed",
+    });
+    return {
+      events: [{
+        eventType: operationType,
+        entityType: identity.itemKind,
+        entityId,
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: `test/reset-slice/${identity.itemKind}-adopted`,
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
 }
 
 test("handleResetSlice without args shows usage", async () => {
@@ -659,6 +696,108 @@ test("handleResetSlice with --force resets slice and all tasks", async () => {
     // Success notification
     assert.equal(notifications[0]?.level, "success");
     assert.match(notifications[0]?.message ?? "", /Reset slice M001\/S01/);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice fails closed before mutating an adopted canonical slice", async () => {
+  const base = makeTempDir("gsd-reset-slice-adopted");
+  try {
+    setupSliceFixture(base);
+    adoptCompletedLifecycle({ itemKind: "slice", milestoneId: "M001", sliceId: "S01" });
+
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications[0]?.level, "error");
+    assert.match(notifications[0]?.message ?? "", /canonical slice history.*cannot be reset/i);
+    assert.equal(getSlice("M001", "S01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "complete");
+    assert.equal(
+      _getAdapter()!.prepare(`
+        SELECT lifecycle_status FROM workflow_item_lifecycles
+        WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S01'
+      `).get()?.lifecycle_status,
+      "completed",
+    );
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice validates every task before changing slice or task state", async () => {
+  const base = makeTempDir("gsd-reset-slice-preflight");
+  try {
+    setupSliceFixture(base, "in_progress");
+    adoptCompletedLifecycle({
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+    });
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications[0]?.level, "error");
+    assert.match(notifications[0]?.message ?? "", /cannot be reset safely from in_progress/i);
+    assert.equal(getSlice("M001", "S01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "in_progress");
+    assert.equal(
+      _getAdapter()!.prepare(`
+        SELECT lifecycle_status FROM workflow_item_lifecycles
+        WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'
+      `).get()?.lifecycle_status,
+      "completed",
+    );
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice fails closed before mutating a slice in a closed milestone", async () => {
+  const base = makeTempDir("gsd-reset-slice-closed-milestone");
+  try {
+    setupSliceFixture(base);
+    _getAdapter()!.prepare(`
+      UPDATE milestones
+      SET status = 'complete', completed_at = datetime('now')
+      WHERE id = 'M001'
+    `).run();
+
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications[0]?.level, "error");
+    assert.match(notifications[0]?.message ?? "", /closed milestone/i);
+    assert.equal(getSlice("M001", "S01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "complete");
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice fails closed under a terminal canonical milestone", async () => {
+  const base = makeTempDir("gsd-reset-slice-canonical-milestone");
+  try {
+    setupSliceFixture(base);
+    adoptCompletedLifecycle({ itemKind: "milestone", milestoneId: "M001" });
+
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications[0]?.level, "error");
+    assert.match(notifications[0]?.message ?? "", /terminal canonical milestone/i);
+    assert.equal(getSlice("M001", "S01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T01")?.status, "complete");
+    assert.equal(getTask("M001", "S01", "T02")?.status, "complete");
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
