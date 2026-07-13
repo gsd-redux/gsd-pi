@@ -10,7 +10,9 @@ import { createBashTool, createEditTool, createReadTool, createWriteTool } from 
 import { logWarning } from "../workflow-logger.js";
 import {
   getWorkflowDatabaseStatus,
+  openWorkflowDatabaseIsolated,
   openWorkflowDatabase,
+  resolveProjectRootDbPath,
   type WorkflowDatabaseOpenResult,
   type WorkflowDatabaseStatus,
 } from "../db-workspace.js";
@@ -36,6 +38,24 @@ export function resolveCtxCwd(ctx?: unknown): string {
   return safeWorkspaceCwd();
 }
 
+function activeWorktrees(projectRoot: string): string[] {
+  const live: string[] = [];
+  for (const worktreesDir of worktreesDirs(projectRoot)) {
+    if (!existsSync(worktreesDir)) continue;
+    try {
+      live.push(...readdirSync(worktreesDir)
+        .map((name) => join(worktreesDir, name))
+        .filter((path) => existsSync(join(path, ".git"))));
+    } catch (err) {
+      logWarning(
+        "bootstrap",
+        `Failed to scan worktrees: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return live;
+}
+
 /**
  * Base path for workflow MCP tools. Mirrors packages/mcp-server parseWorkflowArgs:
  * route writes to `<project>/.gsd/worktrees/<milestoneId>/` when that worktree exists.
@@ -51,25 +71,42 @@ export function resolveWorkflowToolBasePath(
     const worktree = getAutoWorktreePath(projectRoot, milestoneId);
     if (worktree) return worktree;
   } else {
-    const live: string[] = [];
-    for (const worktreesDir of worktreesDirs(projectRoot)) {
-      if (!existsSync(worktreesDir)) continue;
-      try {
-        live.push(
-          ...readdirSync(worktreesDir)
-            .map((name) => join(worktreesDir, name))
-            .filter((p) => existsSync(join(p, ".git"))),
-        );
-      } catch (err) {
-        logWarning(
-          "bootstrap",
-          `resolveWorkflowToolBasePath: failed to scan worktrees: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
+    const live = activeWorktrees(projectRoot);
     if (live.length === 1) return live[0]!;
   }
   return cwd;
+}
+
+function recoveryActionMilestoneId(projectRoot: string, recoveryActionId: string): string | null {
+  const database = openWorkflowDatabaseIsolated(resolveProjectRootDbPath(projectRoot));
+  if (!database) return null;
+  try {
+    const row = database.prepare(`
+      SELECT lifecycle.milestone_id
+      FROM workflow_recovery_actions action
+      JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.project_id = action.project_id
+       AND lifecycle.lifecycle_id = action.lifecycle_id
+      WHERE action.recovery_action_id = :recovery_action_id
+    `).get({ ":recovery_action_id": recoveryActionId });
+    return typeof row?.["milestone_id"] === "string" ? row["milestone_id"] : null;
+  } catch {
+    return null;
+  } finally {
+    database.close();
+  }
+}
+
+export function resolveTaskRecoveryResumeBasePath(
+  ctx: unknown,
+  recoveryActionId: string,
+  resolveMilestoneId: (projectRoot: string, recoveryActionId: string) => string | null = recoveryActionMilestoneId,
+): string {
+  const cwd = resolveCtxCwd(ctx);
+  const projectRoot = resolveWorktreeProjectRoot(cwd);
+  const milestoneId = resolveMilestoneId(projectRoot, recoveryActionId);
+  return (milestoneId ? getAutoWorktreePath(projectRoot, milestoneId) : null)
+    ?? resolveWorkflowToolBasePath(ctx);
 }
 
 export { resolveProjectRootDbPath } from "../db-workspace.js";

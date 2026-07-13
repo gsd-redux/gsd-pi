@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runPostUnitVerification } from "../auto-verification.ts";
+import {
+	_routeHostTechnicalFailureForTest,
+	runPostUnitVerification,
+} from "../auto-verification.ts";
 
 function createVerificationContext(currentUnit: { type: string; id: string } | null) {
 	return {
@@ -33,4 +36,23 @@ test("post-unit verification continues when no host-owned verification is needed
 		"continue",
 	);
 	assert.equal(paused, false);
+});
+
+test("built-in verification retries a replayed authorized abort", () => {
+	const outcome = _routeHostTechnicalFailureForTest({
+		routeTaskFailure: () => ({
+			action: "abort",
+			status: "replayed",
+			resumeAuthorized: true,
+		}),
+	} as never, {
+		attemptId: "attempt-1",
+		resultId: "result-1",
+	} as never, {
+		verdictId: "verdict-1",
+		evidenceId: "evidence-1",
+		verdict: "fail",
+	});
+
+	assert.equal(outcome, "retry");
 });

@@ -568,6 +568,32 @@ function resolveSoleActiveWorktree(projectRoot: string): string | null {
   return live[0];
 }
 
+async function bridgeRecoveryActionMilestoneId(
+  projectDir: string,
+  recoveryActionId: string,
+): Promise<string | null> {
+  const bridge = await importBridgeModule();
+  if (!await bridge.ensureDbOpen(projectDir)) return null;
+  const row = bridge.getDb().prepare(`
+    SELECT lifecycle.milestone_id
+    FROM workflow_recovery_actions action
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = action.project_id
+     AND lifecycle.lifecycle_id = action.lifecycle_id
+    WHERE action.recovery_action_id = :recovery_action_id
+  `).get({ ":recovery_action_id": recoveryActionId });
+  return typeof row?.milestone_id === "string" ? row.milestone_id : null;
+}
+
+export async function resolveRecoveryActionProjectDir(
+  projectRoot: string,
+  recoveryActionId: string,
+  resolveMilestoneId: (projectDir: string, recoveryActionId: string) => Promise<string | null> = bridgeRecoveryActionMilestoneId,
+): Promise<string> {
+  const milestoneId = await resolveMilestoneId(projectRoot, recoveryActionId);
+  return resolveActiveWorktreeBasePath(projectRoot, milestoneId) ?? projectRoot;
+}
+
 function isHomeDirectory(candidate: string): boolean {
   let resolvedHome: string;
   try {
@@ -1166,12 +1192,13 @@ async function handleTaskRecoveryResume(
   args: Omit<z.infer<typeof taskRecoveryResumeSchema>, "projectDir">,
   invocation: ExecutionInvocation,
 ): Promise<unknown> {
-  await enforceWorkflowWriteGate("gsd_task_recovery_resume", projectDir);
-  const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() =>
-      executeTaskRecoveryResume(args, projectDir, invocation)
-    ),
+    await runSerializedWorkflowOperation(async () => {
+      const resolvedProjectDir = await resolveRecoveryActionProjectDir(projectDir, args.recoveryActionId);
+      await enforceWorkflowWriteGate("gsd_task_recovery_resume", resolvedProjectDir);
+      const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
+      return executeTaskRecoveryResume(args, resolvedProjectDir, invocation);
+    }),
   );
 }
 

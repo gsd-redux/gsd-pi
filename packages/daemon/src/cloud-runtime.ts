@@ -157,7 +157,12 @@ export class CloudRuntime {
     if (message.type !== "tool_call" || !message.requestId || !message.toolName) return;
     this.inFlight.set(message.requestId, message);
     try {
-      const result = await this.executor.execute(message.toolName, message.args ?? {}, message.projectAlias);
+      const result = await this.executor.execute(
+        message.toolName,
+        message.args ?? {},
+        message.projectAlias,
+        message.requestId,
+      );
       if (!this.inFlight.has(message.requestId)) return;
       this.send({ type: "tool_result", requestId: message.requestId, result });
     } catch (err) {

@@ -8,7 +8,12 @@ import { Text } from "@gsd/pi-tui";
 import { SUMMARY_SAVE_CONTENT_MAX_LENGTH } from "@opengsd/contracts";
 
 import { loadEffectiveGSDPreferences } from "../preferences.js";
-import { ensureDbOpen, resolveCtxCwd, resolveWorkflowToolBasePath } from "./dynamic-tools.js";
+import {
+  ensureDbOpen,
+  resolveCtxCwd,
+  resolveTaskRecoveryResumeBasePath,
+  resolveWorkflowToolBasePath,
+} from "./dynamic-tools.js";
 import { importWorkflowExecutorsModule } from "../workflow-mcp.js";
 import { loadWriteGateSnapshot, shouldBlockRootArtifactSaveInSnapshot } from "./write-gate.js";
 import { logError } from "../workflow-logger.js";
@@ -1422,7 +1427,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       const { executeTaskRecoveryResume } = await loadWorkflowExecutors();
       return executeTaskRecoveryResume(
         params,
-        resolveWorkflowToolBasePath(ctx, params),
+        resolveTaskRecoveryResumeBasePath(ctx, params.recoveryActionId),
         piExecutionInvocation("gsd_task_recovery_resume", toolCallId),
       );
     },

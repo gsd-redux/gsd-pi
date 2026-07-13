@@ -270,11 +270,13 @@ function routeHostTechnicalFailure(
     case "replan":
       return "retry";
     case "abort":
-      return "abort";
+      return recovery.status === "replayed" && recovery.resumeAuthorized ? "retry" : "abort";
     default:
       throw new Error(`Unsupported agent recovery action ${recovery.action}`);
   }
 }
+
+export const _routeHostTechnicalFailureForTest = routeHostTechnicalFailure;
 
 function invalidateStoredHostPass(
   authority: TaskVerificationAuthority,

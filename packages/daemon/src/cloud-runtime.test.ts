@@ -22,6 +22,36 @@ type RuntimeInternals = {
   handleSocketOpen: (socket: unknown) => void;
 };
 
+test("cloud runtime forwards the stable request identity to tool execution", async () => {
+  let execution: unknown[] | undefined;
+  const runtime = new CloudRuntime(
+    { gateway_url: "ws://127.0.0.1:1", device_token: "fixture", runtime_id: "runtime" },
+    {
+      execute: async (...args: unknown[]) => {
+        execution = args;
+        return {};
+      },
+      advertisedProjects: async () => [],
+    } as never,
+    { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined } as never,
+  );
+
+  await (runtime as unknown as { handleMessage: (text: string) => Promise<void> }).handleMessage(JSON.stringify({
+    type: "tool_call",
+    requestId: "request-42",
+    toolName: "gsd_task_recovery_resume",
+    args: { recoveryActionId: "action-1" },
+  }));
+
+  assert.deepEqual(execution, [
+    "gsd_task_recovery_resume",
+    { recoveryActionId: "action-1" },
+    undefined,
+    "request-42",
+  ]);
+  runtime.stop();
+});
+
 test("cloud runtime buffers sends while disconnected and flushes them on reconnect (FIFO)", () => {
   const runtime = makeRuntime();
   const internals = runtime as unknown as RuntimeInternals;

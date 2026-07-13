@@ -33,6 +33,7 @@ import {
   _buildBridgeImportCandidates,
   _buildImportCandidates,
   registerWorkflowTools,
+  resolveRecoveryActionProjectDir,
   WORKFLOW_TOOL_NAMES,
   CANONICAL_WORKFLOW_TOOL_NAMES,
   WORKFLOW_TOOL_ALIAS_NAMES,
@@ -421,6 +422,25 @@ describe("workflow MCP tools", () => {
       "repairSummary",
     ]);
     assert.ok(!("idempotencyKey" in tool.params));
+  });
+
+  it("routes task recovery resume to the worktree owning the action", async () => {
+    const base = makeTmpBase();
+    const first = join(base, ".gsd-worktrees", "M001-first");
+    const second = join(base, ".gsd-worktrees", "M002-second");
+    for (const worktree of [first, second]) {
+      mkdirSync(worktree, { recursive: true });
+      writeFileSync(join(worktree, ".git"), "gitdir: /tmp/fake-git-dir\n");
+    }
+    try {
+      assert.equal(await resolveRecoveryActionProjectDir(
+        base,
+        "recovery-action-2",
+        async (_projectDir, actionId) => actionId === "recovery-action-2" ? "M002-second" : null,
+      ), second);
+    } finally {
+      cleanup(base);
+    }
   });
 
   it("caps gsd_summary_save content before executor invocation", () => {

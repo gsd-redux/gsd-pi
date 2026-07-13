@@ -4,7 +4,10 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { resolveWorkflowToolBasePath } from "../bootstrap/dynamic-tools.ts";
+import {
+  resolveTaskRecoveryResumeBasePath,
+  resolveWorkflowToolBasePath,
+} from "../bootstrap/dynamic-tools.ts";
 import { importWorkflowExecutorsModule } from "../workflow-mcp.ts";
 
 test("resolveWorkflowToolBasePath routes milestone writes to auto-worktree", () => {
@@ -19,6 +22,26 @@ test("resolveWorkflowToolBasePath routes milestone writes to auto-worktree", () 
       { milestone_id: "M002-mskcfz" },
     );
     assert.equal(base, worktree);
+  } finally {
+    rmSync(project, { recursive: true, force: true });
+  }
+});
+
+test("resolveTaskRecoveryResumeBasePath selects the worktree owning the recovery action", () => {
+  const project = mkdtempSync(join(tmpdir(), "gsd-recovery-base-"));
+  const first = join(project, ".gsd-worktrees", "M001-first");
+  const second = join(project, ".gsd-worktrees", "M002-second");
+  for (const worktree of [first, second]) {
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, ".git"), "gitdir: /tmp/fake-git-dir\n", "utf-8");
+  }
+
+  try {
+    assert.equal(resolveTaskRecoveryResumeBasePath(
+      { cwd: project },
+      "recovery-action-2",
+      (_projectRoot, actionId) => actionId === "recovery-action-2" ? "M002-second" : null,
+    ), second);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }

@@ -22,7 +22,8 @@ import {
 import type { SessionManager } from "./session-manager.js";
 import type { ProjectInfo } from "./types.js";
 
-type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
+type ToolHandler = (args: Record<string, unknown>, extra?: Record<string, unknown>) => Promise<unknown>;
+const workflowRequestId = Symbol("workflowRequestId");
 const WORKFLOW_TOOL_NAME_SET = new Set<string>(WORKFLOW_TOOL_NAMES);
 const QUERY_FIELDS = {
   all: ["state", "project", "requirements", "milestones"],
@@ -51,8 +52,14 @@ export class LocalToolExecutor {
     });
   }
 
-  async execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown> {
+  async execute(
+    toolName: string,
+    rawArgs: Record<string, unknown>,
+    projectAlias?: string,
+    requestId?: string,
+  ): Promise<unknown> {
     const args = { ...rawArgs };
+    if (requestId) Object.defineProperty(args, workflowRequestId, { value: requestId });
     if (projectAlias) {
       args.projectDir = await this.resolveProjectPath(projectAlias);
     }
@@ -222,7 +229,11 @@ export class LocalToolExecutor {
   private invokeRegisteredWorkflowTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
     const workflow = this.workflowHandlers.get(toolName);
     if (!workflow) throw new Error(`Unsupported forwarded GSD MCP tool: ${toolName}`);
-    return workflow(args);
+    const requestId = (args as Record<PropertyKey, unknown>)[workflowRequestId];
+    const extra = typeof requestId === "string"
+      ? { _meta: { "io.opengsd/idempotency-key": requestId } }
+      : undefined;
+    return workflow(args, extra);
   }
 
   private async executeGraph(args: Record<string, unknown>): Promise<unknown> {

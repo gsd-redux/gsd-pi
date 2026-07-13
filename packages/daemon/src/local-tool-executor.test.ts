@@ -67,11 +67,13 @@ test("local tool executor forwards cloud blocker resolution", async () => {
 test("local tool executor forwards task recovery resume to the registered workflow handler", async () => {
   const executor = new LocalToolExecutor({} as SessionManager, async () => []);
   let forwarded: Record<string, unknown> | undefined;
+  let forwardedExtra: Record<string, unknown> | undefined;
   const handlers = (executor as unknown as {
-    workflowHandlers: Map<string, (args: Record<string, unknown>) => Promise<unknown>>;
+    workflowHandlers: Map<string, (args: Record<string, unknown>, extra?: Record<string, unknown>) => Promise<unknown>>;
   }).workflowHandlers;
-  handlers.set("gsd_task_recovery_resume", async (args) => {
+  handlers.set("gsd_task_recovery_resume", async (args, extra) => {
     forwarded = args;
+    forwardedExtra = extra;
     return { resumed: true };
   });
 
@@ -79,12 +81,15 @@ test("local tool executor forwards task recovery resume to the registered workfl
     recoveryActionId: "recovery-action-1",
     repairSummary: "The defect was repaired.",
     evidence: { check: "passed" },
-  });
+  }, undefined, "cloud-request-42");
 
   assert.deepEqual(forwarded, {
     recoveryActionId: "recovery-action-1",
     repairSummary: "The defect was repaired.",
     evidence: { check: "passed" },
+  });
+  assert.deepEqual(forwardedExtra, {
+    _meta: { "io.opengsd/idempotency-key": "cloud-request-42" },
   });
   assert.deepEqual(result, { resumed: true });
 });

@@ -14,13 +14,12 @@ import {
   resolvePendingCustomTaskHumanReview,
   runCustomEngineHostVerification,
 } from "../auto/custom-task-host-verification.js";
+import { resolveTaskRecoveryResumeBasePath } from "../bootstrap/dynamic-tools.js";
 import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.js";
 import { publishVerifiedTaskCompletion, stageTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { claimTaskAttempt, readLatestTaskAttempt } from "../task-execution-domain-operation.js";
-import {
-  readTaskTechnicalVerdict,
-  recordTaskTechnicalVerdict,
-} from "../task-verification-domain-operation.js";
+import { resumeTaskRecovery } from "../task-recovery-domain-operation.js";
+import { readTaskTechnicalVerdict, recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 
 const tempDirs = new Set<string>();
@@ -614,4 +613,31 @@ test("custom verification aborts after durable remediation budget exhaustion", a
     { action: "remediate" },
     { action: "abort" },
   ]);
+
+  const recoveryActionId = String(row(`
+    SELECT recovery_action_id FROM workflow_recovery_actions
+    WHERE action = 'abort'
+  `).recovery_action_id);
+  const recoveryWorktree = join(basePath, ".gsd-worktrees", "M001");
+  const unrelatedWorktree = join(basePath, ".gsd-worktrees", "M002");
+  for (const worktree of [recoveryWorktree, unrelatedWorktree]) {
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, ".git"), "gitdir: /tmp/fake-git-dir\n");
+  }
+  assert.equal(
+    resolveTaskRecoveryResumeBasePath({ cwd: basePath }, recoveryActionId),
+    recoveryWorktree,
+  );
+  resumeTaskRecovery({
+    invocation: invocation("custom/recovery/resume"),
+    recoveryActionId,
+    repairSummary: "Repaired the verification defect.",
+    evidence: { test: "passed" },
+  });
+  assert.equal(await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => { throw new Error("persisted verdict must replay"); },
+  }), "retry");
 });
