@@ -114,6 +114,7 @@ interface CutoverDeps {
     evidence: Record<string, unknown>;
     rationale: string;
   }): {
+    status: "committed" | "replayed";
     action: "retry" | "repair" | "remediate" | "replan" | "abort";
   };
 }
@@ -271,7 +272,7 @@ function fakeDomain() {
     routeTaskFailure(route) {
       calls.push({ name: "route", value: route });
       routes.push(route);
-      return { action: "retry" };
+      return { status: "replayed", action: "retry" };
     },
   };
 
@@ -638,7 +639,7 @@ test("a durable abort overrides an executor retry", async () => {
     ...domain.deps,
     routeTaskFailure(route) {
       domain.routes.push(route);
-      return { action: "abort" };
+      return { status: "committed", action: "abort" };
     },
   });
 
@@ -711,7 +712,7 @@ test("a durable abort for stale-worker takeover stops before replacement claim o
     ...domain.deps,
     routeTaskFailure(route) {
       domain.routes.push(route);
-      return { action: "abort" };
+      return { status: "committed", action: "abort" };
     },
   });
 
@@ -721,7 +722,7 @@ test("a durable abort for stale-worker takeover stops before replacement claim o
   assert.equal(domain.routes.length, 1);
 });
 
-test("an already-failed predecessor is routed before its lineage-linked retry claim", async () => {
+test("a newly routed failed predecessor redispatches before its lineage-linked retry claim", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   domain.attempts.push({
@@ -736,16 +737,37 @@ test("an already-failed predecessor is routed before its lineage-linked retry cl
     milestoneLeaseToken: 7,
   });
 
-  await runWithTaskExecutionAttempt(input(), async () => {
+  let routeStatus: "committed" | "replayed" = "committed";
+  let runs = 0;
+  const deps = {
+    ...domain.deps,
+    routeTaskFailure(route: Parameters<CutoverDeps["routeTaskFailure"]>[0]) {
+      domain.calls.push({ name: "route", value: route });
+      domain.routes.push(route);
+      return { status: routeStatus, action: "repair" as const };
+    },
+  };
+
+  const routed = await runWithTaskExecutionAttempt(input(), async () => {
+    runs += 1;
     domain.completeSucceeded("attempt-2");
     return { action: "next", data: {} };
-  }, domain.deps);
+  }, deps);
 
-  assert.deepEqual(domain.calls.slice(0, 3).map((call) => call.name), [
-    "read-latest",
-    "route",
-    "claim",
-  ]);
+  assert.deepEqual(routed, { action: "retry", reason: "task-recovery-repair" });
+  assert.equal(runs, 0);
+  assert.equal(domain.claims.length, 0);
+  assert.deepEqual(domain.calls.map((call) => call.name), ["read-latest", "route"]);
+
+  routeStatus = "replayed";
+  const resumed = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+    runs += 1;
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, deps);
+
+  assert.equal(resumed.action, "next");
+  assert.equal(runs, 1);
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
 });
 
@@ -795,7 +817,7 @@ test("a retry claim links the immediately preceding settled Attempt", async () =
   assert.equal(domain.claims[1].invocation.idempotencyKey, "internal:auto:attempt.claim:42");
 });
 
-test("a replacement lease interrupts a stale running Attempt before claiming its lineage-linked retry", async () => {
+test("a replacement lease routes a stale running Attempt and redispatches before claiming its retry", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   domain.attempts.push({
@@ -808,22 +830,34 @@ test("a replacement lease interrupts a stale running Attempt before claiming its
     milestoneLeaseToken: 7,
   });
 
-  const result = await runWithTaskExecutionAttempt(input({
+  let routeStatus: "committed" | "replayed" = "committed";
+  let runs = 0;
+  const deps = {
+    ...domain.deps,
+    routeTaskFailure(route: Parameters<CutoverDeps["routeTaskFailure"]>[0]) {
+      domain.calls.push({ name: "route", value: route });
+      domain.routes.push(route);
+      return { status: routeStatus, action: "repair" as const };
+    },
+  };
+
+  const routed = await runWithTaskExecutionAttempt(input({
     dispatchId: 42,
     workerId: "worker-2",
     milestoneLeaseToken: 8,
   }), async () => {
-    domain.completeSucceeded("attempt-2");
+    runs += 1;
     return { action: "next", data: {} };
-  }, domain.deps);
+  }, deps);
 
-  assert.equal(result.action, "next");
+  assert.deepEqual(routed, { action: "retry", reason: "task-recovery-repair" });
+  assert.equal(runs, 0);
+  assert.equal(domain.claims.length, 0);
   assert.deepEqual(domain.calls.slice(0, 3).map((call) => call.name), [
     "read-latest",
     "settle",
     "route",
   ]);
-  assert.equal(domain.calls[3]?.name, "claim");
   assert.deepEqual(domain.settlements[0], {
     invocation: {
       idempotencyKey: "internal:auto:attempt.interrupt:attempt-1:worker-2:8",
@@ -852,6 +886,20 @@ test("a replacement lease interrupts a stale running Attempt before claiming its
     },
     recovery: { workerId: "worker-2", milestoneLeaseToken: 8 },
   });
+
+  routeStatus = "replayed";
+  const resumed = await runWithTaskExecutionAttempt(input({
+    dispatchId: 43,
+    workerId: "worker-2",
+    milestoneLeaseToken: 8,
+  }), async () => {
+    runs += 1;
+    domain.completeSucceeded("attempt-2");
+    return { action: "next", data: {} };
+  }, deps);
+
+  assert.equal(resumed.action, "next");
+  assert.equal(runs, 1);
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
 });
 

@@ -660,6 +660,7 @@ test("decideDispatchNodeKind maps workflow unit types to scheduler node kinds", 
   assert.equal(decideDispatchNodeKind("run-uat"), "verification");
   assert.equal(decideDispatchNodeKind("complete-slice"), "verification");
   assert.equal(decideDispatchNodeKind("replan-slice"), "reprocess");
+  assert.equal(decideDispatchNodeKind("replan-task"), "reprocess");
   assert.equal(decideDispatchNodeKind("reassess-roadmap"), "reprocess");
   assert.equal(decideDispatchNodeKind("execute-task"), "unit");
 });

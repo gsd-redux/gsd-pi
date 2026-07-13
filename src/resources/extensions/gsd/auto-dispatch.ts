@@ -67,6 +67,7 @@ import {
   buildResearchSlicePrompt,
   buildPlanSlicePrompt,
   buildRefineSlicePrompt,
+  buildTaskRecoveryReplanPrompt,
   buildExecuteTaskPrompt,
   buildCompleteSlicePrompt,
   buildCompleteMilestonePrompt,
@@ -81,6 +82,7 @@ import {
   checkNeedsReassessment,
   loadRoadmapCompletedSliceCandidates,
 } from "./auto-prompts.js";
+import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
 import { checkNeedsRunUat } from "./uat-dispatch.js";
 import { normalizeModelFieldConfig, resolveModelWithFallbacksForUnit, resolveThinkingLevelForUnit } from "./preferences-models.js";
 import { resolveUokFlags } from "./uok/flags.js";
@@ -1500,6 +1502,34 @@ export const DISPATCH_RULES: DispatchRule[] = [
           midTitle,
           sid,
           sTitle,
+          basePath,
+        ),
+      };
+    },
+  },
+  {
+    name: "executing → replan-task recovery",
+    match: async ({ state, mid, basePath }) => {
+      if (state.phase !== "executing" || !state.activeSlice || !state.activeTask) return null;
+      if (!isDbAvailable()) return null;
+      const sid = state.activeSlice.id;
+      const tid = state.activeTask.id;
+      const recovery = readPendingTaskRecoveryContext({
+        milestoneId: mid,
+        sliceId: sid,
+        taskId: tid,
+      });
+      if (recovery?.action !== "replan" || recovery.replanCompleted) return null;
+      return {
+        action: "dispatch",
+        unitType: "replan-task",
+        unitId: `${mid}/${sid}/${tid}`,
+        prompt: await buildTaskRecoveryReplanPrompt(
+          mid,
+          sid,
+          state.activeSlice.title,
+          tid,
+          state.activeTask.title,
           basePath,
         ),
       };

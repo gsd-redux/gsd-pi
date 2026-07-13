@@ -34,6 +34,7 @@ import {
   buildGateEvaluatePrompt,
   buildReassessRoadmapPrompt,
   buildWorkflowPreferencesPrompt,
+  renderTaskRecoveryDispatchContext,
 } from "../auto-prompts.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import {
@@ -589,6 +590,60 @@ test("execute-task prompt injects unresolved blocking rework findings", async (t
   assert.match(prompt, /Compile regression/);
   assert.match(prompt, /pnpm run typecheck:extensions/);
   assert.match(prompt, /reworkResolution/);
+});
+
+test("execute-task recovery context gives repair, remediation, and replan distinct executor contracts", () => {
+  const base = {
+    recoveryActionId: "action-1",
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    failureKind: "verification-failed",
+    summary: "Host verification failed",
+    evidence: { command: "pnpm test", exitCode: 1 },
+    rationale: "The failing evidence must be resolved before acceptance.",
+    replanCompleted: false,
+    checkpoint: {
+      checkpointId: "checkpoint-1",
+      confirmedContext: "Host verification failed",
+      unresolvedSummary: "verification-failed",
+      evidenceSummary: '{"command":"pnpm test","exitCode":1}',
+      suggestedNextAction: "recover",
+    },
+  } as const;
+
+  const repair = renderTaskRecoveryDispatchContext({ ...base, action: "repair" });
+  const remediate = renderTaskRecoveryDispatchContext({ ...base, action: "remediate" });
+  const replan = renderTaskRecoveryDispatchContext({ ...base, action: "replan" });
+
+  for (const block of [repair, remediate, replan]) {
+    assert.match(block, /action-1/);
+    assert.match(block, /attempt-1/);
+    assert.match(block, /Host verification failed/);
+    assert.match(block, /pnpm test/);
+    assert.match(block, /The failing evidence must be resolved/);
+    assert.match(block, /checkpoint-1/);
+  }
+  assert.match(repair, /repair the deterministic execution fault before continuing/i);
+  assert.doesNotMatch(repair, /gsd_replan_task/);
+  assert.match(remediate, /fix the failed verification evidence and rerun verification/i);
+  assert.doesNotMatch(remediate, /gsd_replan_task/);
+  assert.match(replan, /current task plan is superseded/i);
+  assert.match(replan, /planning unit must call `gsd_replan_task`, then stop before implementation/i);
+
+  const completedReplan = renderTaskRecoveryDispatchContext({
+    ...base,
+    action: "replan",
+    replanCompleted: true,
+  });
+  assert.match(completedReplan, /replacement Task plan is durable/i);
+  assert.doesNotMatch(completedReplan, /must call `gsd_replan_task`/i);
+
+  const replanContract = getUnitToolSurfaceContract("replan-task");
+  assert.deepEqual(replanContract?.allowedGsdTools, ["gsd_replan_task", "gsd_decision_save"]);
+  assert.deepEqual(replanContract?.requiredWorkflowTools, ["gsd_replan_task"]);
+  const executeContract = getUnitToolSurfaceContract("execute-task");
+  assert.ok(!executeContract?.allowedGsdTools.includes("gsd_replan_task"));
+  assert.ok(!executeContract?.requiredWorkflowTools.includes("gsd_replan_task"));
 });
 
 test("execute-task prompt omits on-demand slice research when the artifact is absent", async (t) => {

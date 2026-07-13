@@ -30,7 +30,13 @@ import { join, basename, relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
 import type { TokenProvider } from "./token-counter.js";
-import { getBlockingReworkFindingsForTask, getGateResults, getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
+import {
+  getBlockingReworkFindingsForTask,
+  getGateResults,
+  getPendingGates,
+  getPendingGatesForTurn,
+  isDbAvailable,
+} from "./gsd-db.js";
 import {
   GATE_REGISTRY,
   assertGateCoverage,
@@ -65,6 +71,10 @@ import { buildRunUatPresentationForType, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } fro
 import { classifyUatContentForRun } from "./uat-policy.js";
 import { checkNeedsRunUat as resolveNeedsRunUat, type UatDispatchCandidate } from "./uat-dispatch.js";
 import { buildWebAppUatGuidanceBlock } from "./web-app-uat.js";
+import {
+  readPendingTaskRecoveryContext,
+  type PendingTaskRecoveryContext,
+} from "./task-recovery-domain-operation.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
 
@@ -158,6 +168,50 @@ function renderBlockingReworkFindingsBlock(mid: string, sid: string, tid: string
     lines.push("");
   }
   return lines.join("\n").trim();
+}
+
+export function renderTaskRecoveryDispatchContext(
+  recovery: PendingTaskRecoveryContext,
+): string {
+  let executionContract: string;
+  switch (recovery.action) {
+    case "retry":
+      executionContract = "Retry the Task from the preserved checkpoint; do not discard the prior failure evidence.";
+      break;
+    case "repair":
+      executionContract = "First repair the deterministic execution fault before continuing the Task.";
+      break;
+    case "remediate":
+      executionContract = "Fix the failed verification evidence and rerun verification before completing the Task.";
+      break;
+    case "replan":
+      executionContract = recovery.replanCompleted
+        ? "The replacement Task plan is durable. Execute that replacement plan; do not repeat the invalid plan."
+        : "The current Task plan is superseded. This planning unit must call `gsd_replan_task`, then stop before implementation.";
+      break;
+  }
+  return [
+    "## Durable Task Recovery",
+    "",
+    `**Required action:** ${recovery.action}`,
+    `**Recovery action:** ${recovery.recoveryActionId}`,
+    `**Failed Attempt / Result:** ${recovery.attemptId} / ${recovery.resultId}`,
+    `**Failure kind:** ${recovery.failureKind}`,
+    `**Failure:** ${recovery.summary}`,
+    `**Rationale:** ${recovery.rationale}`,
+    `**Work checkpoint:** ${recovery.checkpoint.checkpointId}`,
+    `**Confirmed context:** ${recovery.checkpoint.confirmedContext}`,
+    `**Unresolved:** ${recovery.checkpoint.unresolvedSummary}`,
+    `**Suggested next action:** ${recovery.checkpoint.suggestedNextAction}`,
+    "",
+    "### Durable Evidence",
+    "",
+    "```json",
+    JSON.stringify(recovery.evidence, null, 2),
+    "```",
+    "",
+    executionContract,
+  ].join("\n");
 }
 
 function formatProjectClassificationForPlanning(classification: ProjectClassification): string {
@@ -2705,6 +2759,40 @@ export interface ExecuteTaskPromptOptions {
   contextModeRenderMode?: ContextModeRenderMode;
 }
 
+export async function buildTaskRecoveryReplanPrompt(
+  mid: string,
+  sid: string,
+  sTitle: string,
+  tid: string,
+  tTitle: string,
+  base: string,
+): Promise<string> {
+  const recovery = readPendingTaskRecoveryContext({
+    milestoneId: mid,
+    sliceId: sid,
+    taskId: tid,
+  });
+  if (recovery?.action !== "replan" || recovery.replanCompleted) {
+    throw new Error(`Task recovery replan is not pending for ${mid}/${sid}/${tid}`);
+  }
+  const taskPlanPath = resolveTaskFile(base, mid, sid, tid, "PLAN");
+  const taskPlanRelPath = relTaskFile(base, mid, sid, tid, "PLAN");
+  const taskPlanInline = taskPlanPath
+    ? (await loadFile(taskPlanPath))?.trim() || "_(current Task plan is empty)_"
+    : "_(current Task plan projection is missing; rebuild it from durable planning state and recovery evidence)_";
+  return loadPrompt("replan-task", {
+    workingDirectory: base,
+    milestoneId: mid,
+    sliceId: sid,
+    sliceTitle: sTitle,
+    taskId: tid,
+    taskTitle: tTitle,
+    taskPlanPath: taskPlanRelPath,
+    taskPlanInline,
+    recoveryContext: renderTaskRecoveryDispatchContext(recovery),
+  });
+}
+
 export async function buildExecuteTaskPrompt(
   mid: string, sid: string, sTitle: string,
   tid: string, tTitle: string, base: string,
@@ -2831,6 +2919,19 @@ export async function buildExecuteTaskPrompt(
 
   let phaseAnchorSection = planAnchor ? formatAnchorForPrompt(planAnchor) : "";
   trackPromptContext(contextTelemetry, "plan-anchor", phaseAnchorSection ? "inline" : "skipped", phaseAnchorSection, phaseAnchorSection ? undefined : "missing");
+
+  const recoveryContext = isDbAvailable()
+    ? readPendingTaskRecoveryContext({ milestoneId: mid, sliceId: sid, taskId: tid })
+    : null;
+  if (recoveryContext) {
+    const recoveryBlock = renderTaskRecoveryDispatchContext(recoveryContext);
+    phaseAnchorSection = phaseAnchorSection
+      ? `${recoveryBlock}\n\n---\n\n${phaseAnchorSection}`
+      : recoveryBlock;
+    trackPromptContext(contextTelemetry, "task-recovery", "inline", recoveryBlock);
+  } else {
+    trackPromptContext(contextTelemetry, "task-recovery", "skipped", null, "no pending recovery action");
+  }
 
   // #1272: inject a pending reopen reason into this task's prompt. When a gate
   // (e.g. complete-slice's full-suite run) reopened the task via gsd_task_reopen

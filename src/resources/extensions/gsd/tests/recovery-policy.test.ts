@@ -188,18 +188,18 @@ test("invalid persisted counters fail loudly", () => {
   }), /replanUses must be a non-negative safe integer/);
 });
 
-test("failure fingerprints ignore attempt identity and timestamp noise", () => {
-  const first = normalizeFailureFingerprint(
-    "Provider Timeout",
-    "Attempt 7 failed at 2026-07-12T15:00:00.000Z for 123e4567-e89b-42d3-a456-426614174000",
-  );
-  const replay = normalizeFailureFingerprint(
-    " provider timeout ",
-    "attempt 19 failed at 2026-07-13T09:10:11Z for 223e4567-e89b-42d3-a456-426614174999",
-  );
+test("failure fingerprints use only policy-relevant structured classification", () => {
+  const first = normalizeFailureFingerprint({ failureKind: "tool-unavailable" });
+  const replay = normalizeFailureFingerprint({ failureKind: "tool-unavailable", action: "retry" });
   assert.equal(first, replay);
   assert.match(first, /^[0-9a-f]{64}$/);
-  assert.notEqual(first, normalizeFailureFingerprint("provider timeout", "different failure"));
-  assert.throws(() => normalizeFailureFingerprint(" ", "failure"), /failureKind/);
-  assert.throws(() => normalizeFailureFingerprint("provider", " "), /summary/);
+  assert.notEqual(first, normalizeFailureFingerprint({ failureKind: "tool-schema" }));
+  assert.notEqual(
+    normalizeFailureFingerprint({ failureKind: "provider", action: "retry" }),
+    normalizeFailureFingerprint({ failureKind: "provider", action: "escalate" }),
+  );
+  assert.throws(
+    () => normalizeFailureFingerprint({ failureKind: " " as "provider" }),
+    /failureKind/,
+  );
 });

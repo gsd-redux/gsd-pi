@@ -84,6 +84,7 @@ interface AttemptRow {
   attempt_id: string;
   lifecycle_id: string;
   kernel_checkpoint_id: string;
+  next_stage: "verify" | "route";
 }
 
 export type TaskCompletionAuthority = "canonical" | "legacy";
@@ -317,7 +318,8 @@ export async function stageTaskCompletion(
 
 function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): AttemptRow {
   const attempt = getDb().prepare(`
-    SELECT attempt.attempt_id, attempt.lifecycle_id, checkpoint.kernel_checkpoint_id
+    SELECT attempt.attempt_id, attempt.lifecycle_id, checkpoint.kernel_checkpoint_id,
+           checkpoint.next_stage
     FROM workflow_execution_attempts attempt
     JOIN workflow_attempt_results result
       ON result.attempt_id = attempt.attempt_id
@@ -349,7 +351,7 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
       AND lifecycle.lifecycle_status = 'in_progress'
       AND attempt.attempt_state = 'settled'
       AND result.outcome = 'succeeded'
-      AND checkpoint.next_stage = 'verify'
+      AND checkpoint.next_stage IN ('verify', 'route')
       AND verdict.verdict = 'pass'
       AND evidence.observation = 'passed'
       AND evidence.source_revision = verdict.tested_source_revision
@@ -365,11 +367,26 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
         SELECT 1 FROM workflow_technical_verdicts successor
         WHERE successor.supersedes_verdict_id = verdict.verdict_id
       )
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_technical_verdicts other
-        WHERE other.attempt_id = attempt.attempt_id
-          AND other.project_id = attempt.project_id
-          AND other.verdict_id != verdict.verdict_id
+      AND (
+        checkpoint.next_stage = 'verify' OR EXISTS (
+          SELECT 1
+          FROM workflow_technical_verdicts previous
+          JOIN workflow_failure_observations observation
+            ON observation.attempt_id = attempt.attempt_id
+           AND observation.result_id = result.result_id
+           AND observation.project_id = attempt.project_id
+          JOIN workflow_recovery_actions action
+            ON action.failure_observation_id = observation.failure_observation_id
+           AND action.project_id = observation.project_id
+          JOIN workflow_blockers blocker
+            ON blocker.blocker_id = action.blocker_id
+           AND blocker.project_id = action.project_id
+          WHERE previous.verdict_id = verdict.supersedes_verdict_id
+            AND previous.verdict = 'inconclusive'
+            AND blocker.blocker_kind = 'subjective_uat'
+            AND blocker.blocker_status = 'resolved'
+            AND action.action = 'clarify'
+        )
       )
   `).get({
     ":attempt_id": input.attemptId,
@@ -416,7 +433,10 @@ function publishCanonicalCompletion(
     });
 
     let previousCheckpointId = attempt.kernel_checkpoint_id;
-    for (const nextStage of ["route", "closeout", "settled"] as const) {
+    const remainingStages = attempt.next_stage === "verify"
+      ? ["route", "closeout", "settled"] as const
+      : ["closeout", "settled"] as const;
+    for (const nextStage of remainingStages) {
       const checkpoint = appendKernelCheckpoint(context, {
         lifecycleId: attempt.lifecycle_id,
         attemptId: attempt.attempt_id,

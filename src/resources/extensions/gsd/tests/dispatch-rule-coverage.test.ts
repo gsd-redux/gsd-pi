@@ -448,9 +448,17 @@ test("dispatch-rule-coverage: rule registry has the expected size", () => {
   // intentionally.
   assert.equal(
     DISPATCH_RULES.length,
-    29,
+    30,
     `DISPATCH_RULES length changed (got ${DISPATCH_RULES.length}). ` +
       "If you added a rule, add a state stub to dispatch-rule-coverage.test.ts " +
       "and update this expected count.",
   );
+});
+
+test("dispatch-rule-coverage: Task replan recovery runs before every execution rule", () => {
+  const names = DISPATCH_RULES.map((rule) => rule.name);
+  const recovery = names.indexOf("executing → replan-task recovery");
+  assert.ok(recovery >= 0);
+  assert.ok(recovery < names.indexOf("executing → reactive-execute (parallel dispatch)"));
+  assert.ok(recovery < names.indexOf("executing → execute-task"));
 });

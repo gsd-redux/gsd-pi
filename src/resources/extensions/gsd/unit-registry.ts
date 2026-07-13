@@ -348,6 +348,16 @@ export const UNIT_REGISTRY = {
       ],
     },
   },
+  "replan-task": {
+    kind: "variant",
+    scopeClass: "standard",
+    phaseChain: ["planning"],
+    promptTemplate: "replan-task",
+    toolContract: {
+      allowedGsdTools: ["gsd_replan_task", "gsd_decision_save"],
+      requiredWorkflowTools: ["gsd_replan_task"],
+    },
+  },
   "execute-task-simple": {
     kind: "variant",
     scopeClass: "execute-task",

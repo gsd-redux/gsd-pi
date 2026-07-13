@@ -111,7 +111,11 @@ import {
   publishVerifiedTaskExecution,
   runWithTaskExecutionAttempt,
 } from "./task-execution-cutover.js";
-import { runCustomEngineHostVerification } from "./custom-task-host-verification.js";
+import {
+  requestCustomTaskHumanReviewFromUi,
+  resolvePendingCustomTaskHumanReview,
+  runCustomEngineHostVerification,
+} from "./custom-task-host-verification.js";
 import {
   claimTaskAttempt,
   readLatestTaskAttempt,
@@ -120,6 +124,7 @@ import {
 } from "../task-execution-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
+import { verifyExpectedArtifact } from "../artifact-verification.js";
 
 /**
  * Returns true if workerId is an active worker in this project whose OS
@@ -879,6 +884,30 @@ export async function autoLoop(
           continue;
         }
 
+        if (iterData.customEnginePreparation === "task-replan") {
+          const prepared = verifyExpectedArtifact(iterData.unitType, iterData.unitId, s.basePath);
+          phaseReporter.report("custom-engine", prepared ? "complete" : "retry", {
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            preparation: iterData.customEnginePreparation,
+          });
+          if (!prepared) {
+            finishIncompleteIteration({
+              status: "retry",
+              reason: "custom-engine-task-replan-not-durable",
+              retry: true,
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+            });
+            finishTurn("retry", "verification", "custom-engine-task-replan-not-durable");
+            continue;
+          }
+          deps.clearUnitTimeout();
+          completeIteration();
+          finishTurn("completed");
+          continue;
+        }
+
         // ── Verify first, then reconcile (only mark complete on pass) ──
         debugLog("autoLoop", { phase: "custom-engine-verify", iteration, unitId: iterData.unitId });
         let humanReviewPolicy = false;
@@ -892,14 +921,46 @@ export async function autoLoop(
             error: error instanceof Error ? error.message : String(error),
           });
         }
-        const verifyResult = await (deps.customEngineHostVerificationBoundary ?? runCustomEngineHostVerification)({
+        const hostVerification = deps.customEngineHostVerificationBoundary ?? runCustomEngineHostVerification;
+        const verificationInput = {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           basePath: s.basePath,
           preferences: prefs,
           humanReviewPolicy,
           verifyPolicy: () => policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath }),
-        });
+        };
+        let verifyResult = await hostVerification(verificationInput);
+        if (verifyResult === "pause" &&
+            iterData.unitType === "execute-task" &&
+            ctx.hasUI) {
+          try {
+            if (!s.workerId) {
+              throw new Error("Human-review response requires the active worker identity");
+            }
+            const actorId = s.cmdCtx?.sessionManager?.getSessionId?.() ?? s.workerId;
+            const resolution = await resolvePendingCustomTaskHumanReview({
+              unitId: iterData.unitId,
+              responseIdentity: {
+                actorId,
+                workerId: s.workerId,
+                traceId: flowId,
+                turnId,
+              },
+              requestReview: input => requestCustomTaskHumanReviewFromUi(ctx.ui, input),
+            });
+            if (resolution === "resolved" || resolution === "dismissed") {
+              verifyResult = await hostVerification(verificationInput);
+            }
+          } catch (error) {
+            debugLog("autoLoop", {
+              phase: "custom-engine-human-review-response-error",
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         if (iterData.unitType === "execute-task" && (verifyResult === "retry" || verifyResult === "abort")) {
           const verifyFlow = handleCustomEngineTaskVerifyOutcome({
             outcome: verifyResult,

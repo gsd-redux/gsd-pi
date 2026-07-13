@@ -2,7 +2,7 @@
 // File Purpose: Executable contract for replay-safe Task recovery Domain Operations.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -21,6 +21,7 @@ import {
   appendTaskWorkCheckpoint,
   cancelTask,
   grantTaskWaiver,
+  readPendingTaskRecoveryContext,
   recordFailureAndSelectRecovery,
   recordTaskRequirementDisposition,
   reopenTask,
@@ -30,6 +31,11 @@ import {
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
+import { buildTaskRecoveryReplanPrompt } from "../auto-prompts.ts";
+import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-iteration.ts";
+import { handleReplanTask } from "../tools/replan-task.ts";
+import { resolveDispatch } from "../auto-dispatch.ts";
+import { verifyExpectedArtifact } from "../artifact-verification.ts";
 
 const tempDirs = new Set<string>();
 
@@ -59,6 +65,8 @@ function invocation(key: string, actorType = "agent"): ExecutionInvocation {
 }
 
 function seedFailedAttempt(): {
+  basePath: string;
+  dbPath: string;
   lifecycleId: string;
   attemptId: string;
   resultId: string;
@@ -66,7 +74,9 @@ function seedFailedAttempt(): {
 } {
   const dir = mkdtempSync(join(tmpdir(), "gsd-task-recovery-operation-"));
   tempDirs.add(dir);
-  assert.equal(openDatabase(join(dir, "gsd.db")), true);
+  const dbPath = join(dir, ".gsd", "gsd.db");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(dbPath), true);
   db().exec(`
     INSERT INTO milestones (id, title, status, created_at)
     VALUES ('M001', 'Recovery', 'active', '2026-07-13T00:00:00.000Z');
@@ -161,12 +171,302 @@ function seedFailedAttempt(): {
       )
   `);
   return {
+    basePath: dir,
+    dbPath,
     lifecycleId: String(current.lifecycle_id),
     attemptId: claim.attemptId,
     resultId: settlement.resultId,
     kernelCheckpointId: String(current.kernel_checkpoint_id),
   };
 }
+
+for (const recoveryCase of [
+  { failureKind: "tool-unavailable" as const, action: "retry" },
+  { failureKind: "worktree-invalid" as const, action: "repair" },
+  { failureKind: "verification-failed" as const, action: "remediate" },
+]) {
+  test(`custom-engine ${recoveryCase.action} derives its execution prompt from durable recovery`, async () => {
+    const scope = seedFailedAttempt();
+    db().prepare(`
+      UPDATE tasks
+      SET description = 'Repair the canonical database contract',
+          estimate = '45m',
+          files = '["src/canonical-recovery.ts"]',
+          verify = 'pnpm test canonical-recovery',
+          inputs = '["durable failure evidence"]',
+          expected_output = '["recovered execution"]'
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+    const routed = recordFailureAndSelectRecovery({
+      invocation: invocation(`recovery/custom-engine/${recoveryCase.action}`),
+      attemptId: scope.attemptId,
+      resultId: scope.resultId,
+      owner: "agent",
+      classification: { failureKind: recoveryCase.failureKind },
+      summary: `${recoveryCase.action} must use durable failure evidence`,
+      evidence: { source: "durable-recovery-test", action: recoveryCase.action },
+      rationale: `The ${recoveryCase.action} action governs the next execution.`,
+    });
+    assert.equal(routed.action, recoveryCase.action);
+
+    closeDatabase();
+    assert.equal(openDatabase(scope.dbPath), true);
+    const staleEnginePrompt = `Repeat the stale engine plan for ${recoveryCase.action}.`;
+    const adapted = await buildCustomEngineIterationData({
+      step: {
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        prompt: staleEnginePrompt,
+      },
+      basePath: scope.basePath,
+      canonicalProjectRoot: scope.basePath,
+      currentMilestoneId: "M001",
+      deriveState: async () => ({
+        activeMilestone: { id: "M001", title: "Recovery" },
+        activeSlice: { id: "S01", title: "Recovery operation" },
+        activeTask: { id: "T01", title: "Recover atomically" },
+        phase: "executing",
+        recentDecisions: [],
+        blockers: [],
+        nextAction: "",
+        registry: [],
+      }),
+      logPostDerive: () => {},
+    });
+
+    assert.notEqual(adapted.prompt, staleEnginePrompt);
+    assert.match(adapted.prompt, new RegExp(`Required action:\\*\\* ${recoveryCase.action}`));
+    assert.match(adapted.prompt, new RegExp(`${recoveryCase.action} must use durable failure evidence`));
+    assert.match(adapted.prompt, /Repair the canonical database contract/);
+    assert.match(adapted.prompt, /src\/canonical-recovery\.ts/);
+    assert.match(adapted.prompt, /pnpm test canonical-recovery/);
+    assert.match(adapted.prompt, /Non-authoritative Custom Engine Context/);
+    assert.match(adapted.prompt, new RegExp(`Repeat the stale engine plan for ${recoveryCase.action}`));
+  });
+}
+
+test("replan recovery durably carries its evidence into restart-safe dispatch context", async () => {
+  const scope = seedFailedAttempt();
+  const staleEnginePrompt = "Run the stale custom engine implementation step without the migration boundary.";
+  const routed = recordFailureAndSelectRecovery({
+    invocation: invocation("recovery/replan/context"),
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+    owner: "agent",
+    classification: { failureKind: "plan-invalid" },
+    summary: "Task plan omitted the required migration boundary",
+    evidence: { failedCheck: "migration contract", source: "host-verification" },
+    rationale: "Supersede the invalid plan before another execution attempt.",
+  });
+
+  assert.equal(routed.action, "replan");
+  assert.ok(routed.workCheckpointId);
+  assert.deepEqual(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), {
+    action: "replan",
+    recoveryActionId: routed.recoveryActionId,
+    attemptId: scope.attemptId,
+    resultId: scope.resultId,
+    failureKind: "plan-invalid",
+    summary: "Task plan omitted the required migration boundary",
+    evidence: { failedCheck: "migration contract", source: "host-verification" },
+    rationale: "Supersede the invalid plan before another execution attempt.",
+    replanCompleted: false,
+    checkpoint: {
+      checkpointId: routed.workCheckpointId,
+      confirmedContext: "Task plan omitted the required migration boundary",
+      unresolvedSummary: "plan-invalid",
+      evidenceSummary: '{"failedCheck":"migration contract","source":"host-verification"}',
+      suggestedNextAction: "Replan the Task before implementation, then execute the replacement plan.",
+    },
+  });
+  assert.equal(count("replan_history"), 0, "routing must not fabricate completed replan history");
+
+  const retryDispatchId = insertClaimedDispatch(2);
+  assert.throws(() => claimTaskAttempt({
+    invocation: invocation("recovery/replan/premature-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: retryDispatchId,
+    retryOfAttemptId: scope.attemptId,
+  }), /requires a later durable Task replan before retry claim/);
+
+  closeDatabase();
+  assert.equal(openDatabase(scope.dbPath), true);
+  const recoveryPrompt = await buildTaskRecoveryReplanPrompt(
+    "M001", "S01", "Recovery operation", "T01", "Recover atomically", scope.basePath,
+  );
+  assert.match(recoveryPrompt, /planning-only recovery unit/i);
+  assert.match(recoveryPrompt, /Task plan omitted the required migration boundary/);
+  assert.match(recoveryPrompt, /migration contract/);
+  assert.match(recoveryPrompt, new RegExp(routed.recoveryActionId));
+  assert.match(recoveryPrompt, new RegExp(String(routed.workCheckpointId)));
+  assert.match(recoveryPrompt, /call `gsd_replan_task`/i);
+  assert.match(recoveryPrompt, /do not call `gsd_task_complete`/i);
+  const milestoneDir = join(scope.basePath, ".gsd", "milestones", "M001");
+  const sliceDir = join(milestoneDir, "slices", "S01");
+  mkdirSync(sliceDir, { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# Recovery context\n");
+  writeFileSync(join(milestoneDir, "M001-RESEARCH.md"), "# Recovery research\n");
+  writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), "# Recovery\n\n- [ ] **S01: Recovery operation**\n");
+  writeFileSync(join(sliceDir, "S01-CONTEXT.md"), "# Slice context\n");
+  writeFileSync(join(sliceDir, "S01-RESEARCH.md"), "# Slice research\n");
+  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n- [ ] **T01: Recover atomically**\n");
+  const state = {
+    activeMilestone: { id: "M001", title: "Recovery" },
+    activeSlice: { id: "S01", title: "Recovery operation" },
+    activeTask: { id: "T01", title: "Recover atomically" },
+    phase: "executing" as const,
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "",
+    registry: [],
+  };
+  const preparation = await resolveDispatch({
+    basePath: scope.basePath,
+    mid: "M001",
+    midTitle: "Recovery",
+    state,
+    prefs: undefined,
+  });
+  assert.equal(preparation.action, "dispatch");
+  assert.ok(preparation.action === "dispatch");
+  assert.equal(preparation.unitType, "replan-task");
+  assert.match(preparation.prompt, /planning-only recovery unit/i);
+  assert.equal(
+    verifyExpectedArtifact("replan-task", "M001/S01/T01", scope.basePath),
+    false,
+    "the preparation unit cannot complete before a durable Task replan",
+  );
+
+  const customPreparation = await buildCustomEngineIterationData({
+    step: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: staleEnginePrompt,
+    },
+    basePath: scope.basePath,
+    canonicalProjectRoot: scope.basePath,
+    currentMilestoneId: "M001",
+    deriveState: async () => state,
+    logPostDerive: () => {},
+  });
+  assert.equal(customPreparation.unitType, "replan-task");
+  assert.equal(customPreparation.unitId, "M001/S01/T01");
+  assert.equal(customPreparation.customEnginePreparation, "task-replan");
+  assert.match(customPreparation.prompt, /planning-only recovery unit/i);
+  assert.match(customPreparation.prompt, /call `gsd_replan_task`/i);
+  assert.doesNotMatch(customPreparation.prompt, /stale custom engine implementation step/i);
+
+  const taskDir = join(scope.basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  mkdirSync(taskDir, { recursive: true });
+  writeFileSync(join(taskDir, "T01-PLAN.md"), "# T01: Recover atomically\n\nOld invalid plan.\n");
+  const replanned = await handleReplanTask({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    title: "Recover atomically",
+    description: "Honor the migration boundary before execution.",
+    estimate: "1h",
+    files: ["src/recovery.ts"],
+    verify: "pnpm test",
+    inputs: ["migration contract"],
+    expectedOutput: ["durable recovery"],
+    triggerReason: "durable recovery replan",
+  }, scope.basePath, invocation("recovery/replan/replace"));
+  assert.ok(!("error" in replanned), "the canonical Task replan must persist a replacement plan");
+  assert.equal(count("replan_history"), 1);
+  assert.equal(
+    verifyExpectedArtifact("replan-task", "M001/S01/T01", scope.basePath),
+    true,
+    "the durable Task replan is the preparation unit's completion artifact",
+  );
+  assert.equal(row(`
+    SELECT description FROM tasks
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).description, "Honor the migration boundary before execution.");
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  })?.replanCompleted, true);
+
+  closeDatabase();
+  assert.equal(openDatabase(scope.dbPath), true);
+
+  const execution = await resolveDispatch({
+    basePath: scope.basePath,
+    mid: "M001",
+    midTitle: "Recovery",
+    state,
+    prefs: undefined,
+  });
+  assert.equal(execution.action, "dispatch");
+  assert.ok(execution.action === "dispatch");
+  assert.equal(execution.unitType, "execute-task");
+  assert.match(execution.prompt, /Required action:\*\* replan/);
+  assert.match(execution.prompt, /replacement Task plan is durable/i);
+  assert.match(execution.prompt, /Honor the migration boundary before execution/);
+
+  const customExecution = await buildCustomEngineIterationData({
+    step: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: staleEnginePrompt,
+    },
+    basePath: scope.basePath,
+    canonicalProjectRoot: scope.basePath,
+    currentMilestoneId: "M001",
+    deriveState: async () => state,
+    logPostDerive: () => {},
+  });
+  assert.equal(customExecution.unitType, "execute-task");
+  assert.equal(customExecution.customEnginePreparation, undefined);
+  assert.notEqual(customExecution.prompt, staleEnginePrompt);
+  assert.match(customExecution.prompt, /Durable Task Recovery/);
+  assert.match(customExecution.prompt, /replacement Task plan is durable/i);
+  assert.match(customExecution.prompt, /Canonical Task Plan \(Database Authority\)/);
+  assert.match(customExecution.prompt, /Honor the migration boundary before execution/);
+  assert.match(customExecution.prompt, /migration contract/);
+  assert.match(customExecution.prompt, /Non-authoritative Custom Engine Context/);
+  assert.match(customExecution.prompt, /stale custom engine implementation step/i);
+
+  const retryClaim = claimTaskAttempt({
+    invocation: invocation("recovery/replan/claim-after-plan"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: retryDispatchId,
+    retryOfAttemptId: scope.attemptId,
+  });
+  assert.equal(retryClaim.attemptNumber, 2);
+
+  closeDatabase();
+  assert.equal(openDatabase(scope.dbPath), true);
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), null, "the claimed replacement Attempt supersedes predecessor recovery context");
+
+  const normalCustomExecution = await buildCustomEngineIterationData({
+    step: {
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      prompt: staleEnginePrompt,
+    },
+    basePath: scope.basePath,
+    canonicalProjectRoot: scope.basePath,
+    currentMilestoneId: "M001",
+    deriveState: async () => state,
+    logPostDerive: () => {},
+  });
+  assert.equal(normalCustomExecution.prompt, staleEnginePrompt);
+});
 
 function seedRetryFailure(
   priorAttemptId: string,
@@ -353,22 +653,33 @@ afterEach(() => {
 
 test("durable budget use survives retries and exhausts to agent abort", () => {
   const firstFailure = seedFailedAttempt();
-  const route = (key: string, failure: { attemptId: string; resultId: string }) =>
+  const summaries = [
+    "Request 481 failed at /private/tmp/run-1: provider reported tool surface unavailable",
+    "Request 902 failed at /tmp/run-2: upstream wording says the tool surface is unavailable",
+    "Request 1337 failed at /workspace/run-3: another provider message for the same unavailable tool surface",
+  ];
+  const route = (
+    key: string,
+    failure: { attemptId: string; resultId: string },
+    summary: string,
+  ) =>
     recordFailureAndSelectRecovery({
       invocation: invocation(key),
       ...failure,
       owner: "agent",
       classification: { failureKind: "tool-unavailable" },
-      summary: "tool surface unavailable",
-      evidence: { source: "executor" },
+      summary,
+      evidence: { source: "executor", diagnostic: summary },
       rationale: "apply the durable recovery policy",
     });
 
-  const first = route("recovery/budget/1", firstFailure);
+  const first = route("recovery/budget/1", firstFailure, summaries[0]);
+  closeDatabase();
+  assert.equal(openDatabase(firstFailure.dbPath), true);
   const secondFailure = seedRetryFailure(firstFailure.attemptId, 2);
-  const second = route("recovery/budget/2", secondFailure);
+  const second = route("recovery/budget/2", secondFailure, summaries[1]);
   const thirdFailure = seedRetryFailure(secondFailure.attemptId, 3);
-  const third = route("recovery/budget/3", thirdFailure);
+  const third = route("recovery/budget/3", thirdFailure, summaries[2]);
 
   assert.equal(first.action, "retry");
   assert.equal(second.action, "retry");
@@ -377,6 +688,16 @@ test("durable budget use survives retries and exhausts to agent abort", () => {
   assert.equal(third.recoveryBudgetId, undefined);
   assert.equal(count("workflow_recovery_budgets"), 1);
   assert.equal(count("workflow_recovery_actions"), 3);
+  assert.deepEqual(
+    db().prepare(`
+      SELECT summary, evidence_json FROM workflow_failure_observations
+      ORDER BY project_revision
+    `).all(),
+    summaries.map((summary) => ({
+      summary,
+      evidence_json: JSON.stringify({ diagnostic: summary, source: "executor" }),
+    })),
+  );
 });
 
 test("a pre-commit fault leaves no recovery residue and the same request retries cleanly", () => {

@@ -46,6 +46,7 @@ import { hasImplementationArtifacts } from "./milestone-implementation-evidence.
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
 import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
 
 export type ExecuteTaskArtifactReadiness = "verify" | "route";
 
@@ -184,6 +185,17 @@ export function verifyExpectedArtifact(
 
   if (unitType === "workflow-preferences") {
     return hasCapturedWorkflowPrefs(base);
+  }
+
+  if (unitType === "replan-task") {
+    const { milestone, slice, task } = parseUnitId(unitId);
+    if (!milestone || !slice || !task) return false;
+    const recovery = readPendingTaskRecoveryContext({
+      milestoneId: milestone,
+      sliceId: slice,
+      taskId: task,
+    });
+    return recovery?.action === "replan" && recovery.replanCompleted;
   }
 
   if (unitType === "triage-captures") {

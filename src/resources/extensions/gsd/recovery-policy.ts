@@ -154,20 +154,14 @@ export function selectRecoveryDecision(input: RecoveryPolicyInput): RecoveryDeci
   };
 }
 
-function stableFingerprintSummary(summary: string): string {
-  return summary
-    .toLowerCase()
-    .replace(/\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}:\d{2}(?:\.\d+)?z\b/g, "<time>")
-    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/g, "<id>")
-    .replace(/\battempt(?:\s+(?:id\s*)?)?[#:]?\s*\d+\b/g, "attempt <n>")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-export function normalizeFailureFingerprint(failureKind: string, summary: string): string {
-  const kind = failureKind.trim().toLowerCase();
+export function normalizeFailureFingerprint(
+  classification: Extract<RecoveryPolicyInput, { owner: "agent" }>["classification"],
+): string {
+  const kind = classification.failureKind.trim().toLowerCase();
   if (!kind) throw new Error("failureKind must not be blank");
-  const stableSummary = stableFingerprintSummary(summary);
-  if (!stableSummary) throw new Error("summary must not be blank");
-  return createHash("sha256").update(`${kind}\n${stableSummary}`).digest("hex");
+  const identity = {
+    failureKind: kind,
+    action: kind === "provider" ? classification.action ?? null : null,
+  };
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }

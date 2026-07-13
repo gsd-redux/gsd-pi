@@ -618,7 +618,7 @@ export function claimRunningAttempt(
   }
   if (prior?.next_stage === "route") {
     const authorized = getDb().prepare(`
-      SELECT 1 AS authorized
+      SELECT action.action, action.recovery_action_id, action.project_revision
       FROM workflow_recovery_actions action
       JOIN workflow_failure_observations observation
         ON observation.failure_observation_id = action.failure_observation_id
@@ -638,6 +638,28 @@ export function claimRunningAttempt(
     });
     if (!authorized) {
       throw new Error("retry claim requires the current route head's retry-capable Recovery Action");
+    }
+    const recovery = authorized as Record<string, unknown>;
+    if (recovery["action"] === "replan") {
+      const replanned = getDb().prepare(`
+        SELECT 1 AS replanned
+        FROM workflow_domain_events event
+        JOIN workflow_item_lifecycles target
+          ON target.lifecycle_id = :lifecycle_id
+         AND target.project_id = :project_id
+        WHERE event.project_id = :project_id
+          AND event.event_type = 'workflow.task.replanned'
+          AND event.entity_type = 'task'
+          AND event.entity_id = target.milestone_id || '/' || target.slice_id || '/' || target.task_id
+          AND event.project_revision > :recovery_revision
+      `).get({
+        ":project_id": context.projectId,
+        ":lifecycle_id": input.lifecycleId,
+        ":recovery_revision": Number(recovery["project_revision"]),
+      });
+      if (!replanned) {
+        throw new Error("replan recovery requires a later durable Task replan before retry claim");
+      }
     }
   }
   if (prior && !prior.next_stage) throw new Error("retry predecessor is missing its current Kernel head");

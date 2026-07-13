@@ -548,7 +548,11 @@ export function decideDispatchNodeKind(
   ) {
     return "verification";
   }
-  if (unitType === "replan-slice" || unitType === "reassess-roadmap") {
+  if (
+    unitType === "replan-slice"
+    || unitType === "replan-task"
+    || unitType === "reassess-roadmap"
+  ) {
     return "reprocess";
   }
   return "unit";

@@ -58,7 +58,7 @@ const EXPECTED_KNOWN_UNIT_TYPES = [
 
 // The contract table carried two keys KNOWN_UNIT_TYPES never had (variants)
 // and lacked two it did have (sidecars without contracts).
-const EXPECTED_CONTRACT_ONLY_TYPES = ["discuss-slice", "execute-task-simple"];
+const EXPECTED_CONTRACT_ONLY_TYPES = ["discuss-slice", "execute-task-simple", "replan-task"];
 const EXPECTED_CONTRACT_LESS_TYPES = ["triage-captures", "quick-task"];
 
 const EXPECTED_EXECUTE_TASK_SET = ["execute-task", "execute-task-simple", "reactive-execute"];
@@ -76,6 +76,7 @@ const EXPECTED_PHASE_CHAINS: Record<string, string[] | undefined> = {
   "plan-slice": ["planning"],
   "refine-slice": ["planning"],
   "replan-slice": ["planning"],
+  "replan-task": ["planning"],
   "discuss-milestone": ["discuss", "planning"],
   "discuss-slice": ["discuss", "planning"],
   "discuss-project": ["discuss", "planning"],
@@ -112,6 +113,7 @@ const EXPECTED_DIRECT_PROMPT_TEMPLATES: Record<string, string> = {
   "complete-slice": "complete-slice",
   "reassess-roadmap": "reassess-roadmap",
   "execute-task": "execute-task",
+  "replan-task": "replan-task",
   "reactive-execute": "reactive-execute",
   "run-uat": "run-uat",
   "gate-evaluate": "gate-evaluate",

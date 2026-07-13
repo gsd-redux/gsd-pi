@@ -369,10 +369,9 @@ export async function runWithTaskExecutionAttempt(
     if (isClaimReplay(predecessor, identity)) {
       retryOfAttemptId = predecessor.retryOfAttemptId;
     } else {
-      const decision = applyRecoveryDecision(
-        interruptStaleAttempt(input, predecessor, identity, deps),
-      );
-      if (decision.action === "break") return decision;
+      const recovery = interruptStaleAttempt(input, predecessor, identity, deps);
+      const decision = applyRecoveryDecision(recovery);
+      if (decision.action === "break" || recovery.status === "committed") return decision;
       retryOfAttemptId = predecessor.attemptId;
     }
   } else if (predecessor) {
@@ -387,7 +386,7 @@ export async function runWithTaskExecutionAttempt(
         throw new Error("Task recovery requires the predecessor Result identity");
       }
       const summary = predecessor.resultSummary ?? "Task executor recorded a failed Result";
-      const decision = applyRecoveryDecision(routeTaskFailure(
+      const recovery = routeTaskFailure(
         input,
         predecessor.attemptId,
         predecessor.resultId,
@@ -398,8 +397,9 @@ export async function runWithTaskExecutionAttempt(
           new Error(summary),
         ),
         deps,
-      ));
-      if (decision.action === "break") return decision;
+      );
+      const decision = applyRecoveryDecision(recovery);
+      if (decision.action === "break" || recovery.status === "committed") return decision;
     }
     retryOfAttemptId = predecessor.attemptId;
   }
@@ -452,7 +452,11 @@ export async function publishVerifiedTaskExecution(
   const attempt = deps.readLatestTaskAttempt(task);
   const publicationReplayCandidate = attempt?.state === "settled" &&
     attempt.outcome === "succeeded" && attempt.nextStage === "settled";
-  if (!isTaskAttemptAwaitingVerification(attempt) && !publicationReplayCandidate) {
+  const resolvedHumanReviewCandidate = attempt?.state === "settled" &&
+    attempt.outcome === "succeeded" && attempt.nextStage === "route";
+  if (!isTaskAttemptAwaitingVerification(attempt) &&
+      !resolvedHumanReviewCandidate &&
+      !publicationReplayCandidate) {
     throw new Error("Verified Task publication requires a succeeded Attempt at the verify stage");
   }
   await deps.publishVerifiedTaskCompletion({
