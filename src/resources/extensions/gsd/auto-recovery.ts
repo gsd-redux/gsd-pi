@@ -15,6 +15,7 @@ import { appendEvent } from "./workflow-events.js";
 import { clearParseCache } from "./files.js";
 import {
   isDbAvailable,
+  getDb,
   getTask,
   getSlice,
   getSliceTasks,
@@ -336,6 +337,38 @@ export function writeReactiveExecuteBlocker(
 }
 
 /**
+ * Whether a slice already has canonical Domain-Operation lifecycle history.
+ * Adopted slices are real recovery/cascade territory owned by S05 — this
+ * legacy placeholder must not fabricate their completion (fail-closed).
+ */
+function hasAdoptedSliceHistory(milestoneId: string, sliceId: string): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1 AS adopted
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice'
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id IS NULL
+  `).get({ ":milestone_id": milestoneId, ":slice_id": sliceId }));
+}
+
+/**
+ * Whether a milestone already has canonical Domain-Operation lifecycle
+ * history. Adopted milestones must not have a fabricated blocker slice
+ * inserted to paper over a stuck plan-milestone unit (fail-closed).
+ */
+function hasAdoptedMilestoneHistory(milestoneId: string): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1 AS adopted
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone'
+      AND milestone_id = :milestone_id
+      AND slice_id IS NULL
+      AND task_id IS NULL
+  `).get({ ":milestone_id": milestoneId }));
+}
+
+/**
  * Write a placeholder artifact so the pipeline can advance past a stuck unit.
  * Returns the relative path written, or null if the path couldn't be resolved.
  */
@@ -379,18 +412,26 @@ export function writeBlockerPlaceholder(
     const { milestone: mid, slice: sid } = parseUnitId(unitId);
     const ts = new Date().toISOString();
     if (unitType === "complete-slice" && mid && sid) {
-      try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
-      try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      if (hasAdoptedSliceHistory(mid, sid)) {
+        logWarning("recovery", `Skipping fabricated complete-slice recovery for ${mid}/${sid}: adopted canonical slice history exists (fail-closed; see S05 for the real cascade).`);
+      } else {
+        try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
+        try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      }
     }
     // Insert a placeholder complete slice so deriveState sees activeMilestoneSlices.length > 0
     // and exits the pre-planning phase. Without this, activeMilestoneSlices stays empty
     // after the blocker ROADMAP.md is written, causing deriveState to return phase:'pre-planning'
     // indefinitely and re-dispatching plan-milestone in an infinite loop (#4378).
     if (unitType === "plan-milestone" && mid) {
-      try {
-        insertSlice({ id: "S00-blocker", milestoneId: mid, title: "Blocker placeholder — planning failed", status: "complete", sequence: 0 });
-      } catch (e) { logWarning("recovery", `insertSlice placeholder failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
-      try { appendEvent(base, { cmd: "plan-milestone", params: { milestoneId: mid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      if (hasAdoptedMilestoneHistory(mid)) {
+        logWarning("recovery", `Skipping fabricated S00-blocker slice for ${mid}: adopted canonical milestone history exists (fail-closed; see S05 for the real cascade).`);
+      } else {
+        try {
+          insertSlice({ id: "S00-blocker", milestoneId: mid, title: "Blocker placeholder — planning failed", status: "complete", sequence: 0 });
+        } catch (e) { logWarning("recovery", `insertSlice placeholder failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
+        try { appendEvent(base, { cmd: "plan-milestone", params: { milestoneId: mid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      }
     }
   }
 

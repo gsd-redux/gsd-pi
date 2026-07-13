@@ -9,10 +9,17 @@ import { randomUUID } from "node:crypto";
 
 import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, diagnoseWorktreeIntegrityFailure, buildLoopRemediationSteps, writeBlockerPlaceholder, refreshRecoveryDbForArtifact, writeReactiveExecuteBlocker } from "../auto-recovery.ts";
 import { resolveMilestoneFile } from "../paths.ts";
-import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, saveGateResult } from "../gsd-db.ts";
+import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult } from "../gsd-db.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { internalExecutionInvocation } from "../execution-invocation.ts";
 import { readEvents } from "../workflow-events.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
+import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+  type CanonicalLifecycleStatus,
+  type LifecycleIdentity,
+} from "../db/writers/lifecycle-commands.ts";
 import { clearParseCache } from "../files.ts";
 import { parseRoadmap } from "../parsers-legacy.ts";
 import { invalidateAllCaches } from "../cache.ts";
@@ -2188,6 +2195,116 @@ test("#1343: writeReactiveExecuteBlocker uses slice-qualified summaries in flat-
     assert.deepEqual(recovery!.skippedTaskIds, []);
     assert.deepEqual(recovery!.unchangedTaskIds, ["T03"]);
     assert.equal(getTask("M001", "S02", "T03")?.status, "pending");
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+// ─── T05: fail-closed adopted-history guard ──────────────────────────────────
+
+function adoptCanonicalHistory(
+  identity: LifecycleIdentity,
+  lifecycleStatus: CanonicalLifecycleStatus,
+): void {
+  const entityId = [identity.milestoneId, identity.sliceId, identity.taskId]
+    .filter(Boolean)
+    .join("/");
+  const operationType = `test.blocker-placeholder.${identity.itemKind}-adopted`;
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType,
+    idempotencyKey: `${operationType}:${entityId}`,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { entityId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      ...identity,
+      lifecycleStatus,
+      adoptedFromStatus: lifecycleStatus,
+    });
+    return {
+      events: [{
+        eventType: operationType,
+        entityType: identity.itemKind,
+        entityId,
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: `test/blocker-placeholder/${identity.itemKind}-adopted`,
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+}
+
+test("writeBlockerPlaceholder fails closed instead of fabricating slice completion for adopted canonical history", () => {
+  const base = makeTmpBase();
+  try {
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+    adoptCanonicalHistory(
+      { itemKind: "slice", milestoneId: "M001", sliceId: "S01" },
+      "in_progress",
+    );
+
+    const result = writeBlockerPlaceholder(
+      "complete-slice",
+      "M001/S01",
+      base,
+      "verification retries exhausted",
+    );
+
+    assert.ok(result, "diagnostic placeholder path is still returned");
+    assert.equal(
+      getSlice("M001", "S01")?.status,
+      "pending",
+      "adopted slice must not be fabricated to complete",
+    );
+    const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
+    assert.equal(
+      events.some((e) => e.trigger_reason === "blocker-placeholder-recovery"),
+      false,
+      "no blocker-placeholder-recovery event for an adopted slice",
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("writeBlockerPlaceholder fails closed instead of inserting an S00-blocker slice for an adopted canonical milestone", () => {
+  const base = makeTmpBase();
+  try {
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    adoptCanonicalHistory({ itemKind: "milestone", milestoneId: "M001" }, "ready");
+
+    const result = writeBlockerPlaceholder(
+      "plan-milestone",
+      "M001",
+      base,
+      "verification retries exhausted",
+    );
+
+    assert.ok(result, "diagnostic placeholder path is still returned");
+    assert.equal(
+      getSlice("M001", "S00-blocker"),
+      null,
+      "adopted milestone must not get a fabricated S00-blocker slice",
+    );
+    const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
+    assert.equal(
+      events.some((e) => e.trigger_reason === "blocker-placeholder-recovery"),
+      false,
+      "no blocker-placeholder-recovery event for an adopted milestone",
+    );
   } finally {
     closeDatabase();
     cleanup(base);
