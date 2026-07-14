@@ -73,7 +73,13 @@ Use `gsd_task_recovery_resume` only after the recorded cause has been repaired:
    non-empty structured evidence. Keep replay identity in private Pi/MCP
    metadata; never add it to the public arguments.
 4. Resume orchestration. The next claim must name the aborted Attempt as its
-   immediate predecessor and atomically consumes the authorization.
+   immediate predecessor and atomically consume the authorization.
+
+At successor claim, the database revalidates the causal Result and any current
+evidence-backed failure verdict. A resume is valid only when its
+`workCheckpointId` names the Work Checkpoint created by the same resume
+operation for the same lifecycle. The v39 migration applies the same
+current-head gate to recovery routes retained from v38.
 
 Do not cancel/reopen the Task, delete the abort, reset its budget, or edit the
 database directly. A stale action, duplicate resume, open blocker, running or

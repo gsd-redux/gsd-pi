@@ -3,6 +3,10 @@
 
 # M003/S04 Task recovery research
 
+> Historical design record. The current operational contract is maintained in
+> the [lifecycle command integration runbook](./lifecycle-command-integration-runbook.md),
+> with user-facing behavior in the [Auto Mode guide](../user-docs/auto-mode.md#state-authority).
+
 ## Outcome
 
 S04 should replace the current collection of Task reset shortcuts with one
