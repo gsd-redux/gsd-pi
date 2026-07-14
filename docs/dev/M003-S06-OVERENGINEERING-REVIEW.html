@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>M003 S06 Milestone Lifecycle Overengineering Review</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f5f7fa; --card:#fff; --ink:#17202a; --muted:#566573; --line:#d5dce3; --high:#a61b1b; --medium:#925c00; --low:#17633a; --accent:#175ea8; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    main { max-width:1080px; margin:0 auto; padding:36px 20px 64px; }
+    header, section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:24px; margin:0 0 18px; }
+    h1 { margin:.1rem 0 .6rem; font-size:2rem; line-height:1.15; }
+    h2 { margin:0 0 1rem; font-size:1.35rem; }
+    h3 { margin:.1rem 0 .65rem; font-size:1.08rem; }
+    p { margin:.5rem 0; }
+    ul, ol { margin:.5rem 0 .7rem 1.35rem; }
+    article { border-top:1px solid var(--line); padding:20px 0; }
+    article:first-of-type { border-top:0; padding-top:0; }
+    code { background:color-mix(in srgb, var(--line) 55%, transparent); border-radius:4px; padding:.1rem .3rem; overflow-wrap:anywhere; }
+    table { width:100%; border-collapse:collapse; margin:.8rem 0; }
+    th, td { text-align:left; vertical-align:top; padding:.6rem; border:1px solid var(--line); }
+    th { background:color-mix(in srgb, var(--line) 35%, transparent); }
+    .lede { color:var(--muted); font-size:1.06rem; }
+    .tag { display:inline-block; border:1px solid currentColor; border-radius:999px; padding:.08rem .48rem; font-size:.82rem; font-weight:700; margin-right:.3rem; }
+    .high { color:var(--high); } .medium { color:var(--medium); } .low { color:var(--low); } .accent { color:var(--accent); }
+    .callout { border-left:4px solid var(--accent); padding:.5rem 0 .5rem 1rem; margin:1rem 0 0; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#101419; --card:#171d23; --ink:#edf2f7; --muted:#b7c2cc; --line:#34404b; --high:#ff8d8d; --medium:#ffc461; --low:#83d9a9; --accent:#7db9f4; } }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>M003 S06 Milestone Lifecycle Overengineering Review</h1>
+    <p><strong>Scope:</strong> Current Milestone complete, validate, reopen, recovery, settlement, projection, transport, and compatibility paths. Reviewed handlers, database writers and Domain Operations, callers, tests, architecture/runbook documentation, adapters, and projection decisions.</p>
+    <p class="lede"><strong>Conclusion:</strong> the subsystem is overengineered mainly because the same lifecycle decision is implemented in several partially overlapping paths. The code already has the right deep primitive—revision-checked Domain Operations—but Milestone lifecycle still bypasses it. S06 should consolidate authority, not add another coordinator.</p>
+    <p class="callout"><strong>Recommended order:</strong> establish one Milestone Domain Operation, route every mutation through it, make closeout readiness a database-only query, then reduce transport and projection duplication. Keep git/worktree effects and rendering as post-commit adapters.</p>
+  </header>
+
+  <section>
+    <h2>Problem and Current Scale</h2>
+    <p>The user need is small: validate a Milestone, complete or reopen it once, preserve history, automate repair, and show readable status. The current implementation distributes that behavior across three public handlers, at least six direct completion writers/replayers, three closeout proof/settlement surfaces, filesystem cleanup and mirroring, and two Milestone-reopen transport adapters.</p>
+    <table>
+      <thead><tr><th>Concern</th><th>Current surfaces</th><th>Observed variability</th></tr></thead>
+      <tbody>
+        <tr><td>Mutation</td><td><code>complete-milestone.ts</code>, <code>cascades.ts</code>, worktree merge, startup journal recovery, stuck recovery, JSONL reconcile</td><td>One real Milestone lifecycle; callers differ mainly by trigger.</td></tr>
+        <tr><td>Closeout decision</td><td><code>milestone-closeout.ts</code>, <code>closeout-consistency-gate.ts</code>, <code>milestone-closeout-proof.ts</code>, <code>milestone-settlement.ts</code></td><td>Options permit open milestones, disk refresh, pass-through validation, summaries, and implementation checks.</td></tr>
+        <tr><td>Projection</td><td>Direct file write/delete, root mirror, projection flush, manifest, JSONL event</td><td>Two directory layouts and worktree/project-root locations are real; authority variation is not.</td></tr>
+        <tr><td>Transport</td><td>Shared workflow executor plus a direct bootstrap implementation for reopen</td><td>No meaningful behavior variation.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Findings</h2>
+
+    <article>
+      <h3><span class="tag high">High</span> Milestone completion has several independent writers</h3>
+      <p><strong>Category:</strong> Distributed authority and duplicated policy.</p>
+      <p><strong>Evidence:</strong> the normal handler directly calls <code>updateMilestoneStatus(..., "complete")</code> in <code>tools/complete-milestone.ts:149-203</code>. Merge finalization does the same in <code>worktree-lifecycle.ts:96-109</code>; startup journal recovery in <code>auto-start.ts:233-261</code>; stuck recovery in <code>auto-recovery.ts:218-257</code>; and JSONL replay in <code>workflow-reconcile.ts:196-208</code>. These paths enforce different prerequisites. The runbook explicitly says Milestone commands still lack the revision/Authority-Epoch fence and durable receipt at <code>docs/dev/lifecycle-command-integration-runbook.md:94-98</code>.</p>
+      <p><strong>Impact:</strong> retries can duplicate effects, stale recovery can win over newer work, and each new invariant must be copied into every writer. This is the largest source of drift and test burden.</p>
+      <p><strong>Smallest safe simplification:</strong> add one <code>milestone-lifecycle-domain-operation.ts</code> beside the proven Slice operation. Give it complete and reopen entry points; put legacy hierarchy mutation, canonical lifecycle transition, evidence checks, event/outbox, Projection Work, and receipt in the same transaction. Convert merge, startup, recovery, reconciliation, Pi, and MCP paths to requests into that operation. Do not introduce a generic manager or strategy registry.</p>
+      <p><strong>Change risk:</strong> <span class="high">High</span>—many callers and recovery paths change, so land characterization and replay/fault tests first.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag high">High</span> Projection files still create or decide workflow truth</h3>
+      <p><strong>Category:</strong> Authority inversion.</p>
+      <p><strong>Evidence:</strong> <code>closeout-consistency-gate.ts:75-153</code> treats Slice SUMMARY files as evidence and can manufacture a passing Milestone assessment plus four quality gates. <code>milestone-readiness.ts:38-48</code> classifies a Milestone terminal when <code>hasSummary</code> is true. <code>milestone-validation-verdict.ts:44-77</code> falls back from the database to three file locations. <code>milestone-closeout.ts:224-245</code> parses VALIDATION and requires Slice SUMMARY files during dispatch. This conflicts with ADR-046’s one-way projection rule at <code>docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md:74-112</code>.</p>
+      <p><strong>Impact:</strong> a stale or copied Markdown file can authorize closeout, while a missing projection can block valid database work. The repair code then needs more repair code.</p>
+      <p><strong>Smallest safe simplification:</strong> remove file fallback from normal readiness, validation, and completion decisions. Query normalized assessment, verdict, UAT, Waiver, child lifecycle, and evidence rows only. Missing files enqueue/repair Projection Work and set a stale diagnostic; they never create a pass or block a valid mutation. Preserve file ingestion only in the explicit import flow.</p>
+      <p><strong>Change risk:</strong> <span class="medium">Medium</span>—legacy projects may depend on implicit recovery, so provide one explicit import/repair command and a clear diagnostic.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag medium">Medium</span> Closeout policy is split across overlapping gate, proof, coordinator, and settlement layers</h3>
+      <p><strong>Category:</strong> Layering without distinct ownership.</p>
+      <p><strong>Evidence:</strong> <code>milestone-closeout.ts</code> is 300 lines and repeats validation, UAT, child-summary, implementation, and operational checks. It then calls <code>checkCloseoutConsistencyGate</code> at <code>milestone-closeout.ts:214-221</code>. <code>milestone-closeout-proof.ts:97-123</code> wraps that gate with optional artifact and implementation checks. <code>milestone-settlement.ts:35-80</code> calls the proof again to choose a pause message. Option flags such as <code>allowOpenMilestone</code>, <code>allowPassThroughValidation</code>, <code>refreshFromDisk</code>, and two implementation-evidence modes make the same concept mean different things by caller.</p>
+      <p><strong>Impact:</strong> maintainers must navigate four modules to answer “may this Milestone complete?”, and tests protect combinations of compatibility options rather than one business invariant.</p>
+      <p><strong>Smallest safe simplification:</strong> create one pure database closeout-readiness query returning typed blockers. Let the complete Domain Operation revalidate the same predicate transactionally. Keep one host settlement orchestrator for git/worktree effects and one independent projection-health check. Delete wrapper options as their callers migrate.</p>
+      <p><strong>Change risk:</strong> <span class="medium">Medium</span>—message formatting and host-effect sequencing are external behavior; keep typed blocker codes stable during consolidation.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag medium">Medium</span> Lifecycle handlers mix mutation, rendering, reconciliation, and telemetry</h3>
+      <p><strong>Category:</strong> Too many responsibilities.</p>
+      <p><strong>Evidence:</strong> <code>tools/complete-milestone.ts:130-278</code> validates, transacts, renders YAML/Markdown, chooses a path, avoids overwrite, clears three caches, flushes projections, writes a manifest, appends JSONL, logs partial failures, and shapes the public receipt. <code>tools/reopen-milestone.ts:59-137</code> performs the cascade, manually deletes Milestone/Slice/UAT/Task files for legacy and flat layouts, flushes, writes a manifest, and logs an event.</p>
+      <p><strong>Impact:</strong> replay behavior and projection currentness are hard to prove. Every file-layout change touches lifecycle code, and every lifecycle change risks projection behavior.</p>
+      <p><strong>Smallest safe simplification:</strong> make handlers thin: validate transport input, invoke the Domain Operation, then ask one projection dispatcher to render or remove artifacts only if the operation still owns the current lifecycle head. Manifest and compatibility JSONL should be projection destinations, not independent best-effort hooks in handlers.</p>
+      <p><strong>Change risk:</strong> <span class="medium">Medium</span>—projection filenames are compatibility contracts, but the move can preserve exact output.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag medium">Medium</span> One aggregate validation verdict is expanded into four apparently independent gates</h3>
+      <p><strong>Category:</strong> False precision.</p>
+      <p><strong>Evidence:</strong> <code>milestone-validation-gates.ts:18-51</code> documents that individual gate verdicts are unavailable, then writes every MV gate with the same overall verdict and empty findings. <code>tools/validate-milestone.ts:177-197</code> stores the aggregate assessment and these cloned gates in one transaction. Other closeout code later reasons about pending/closed gates as if they were independent evidence.</p>
+      <p><strong>Impact:</strong> extra rows and APIs suggest a proof granularity the input does not support; a single weak overall pass becomes four passes.</p>
+      <p><strong>Smallest safe simplification:</strong> either store only the aggregate Milestone verdict, or change validation input to provide a verdict and evidence reference for each required criterion. Prefer the first for S06 unless per-criterion evidence already exists canonically.</p>
+      <p><strong>Change risk:</strong> <span class="medium">Medium</span>—consumers of MV01–MV04 need a compatibility view or migration.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag low">Low</span> Reopen has two transport adapters with the same behavior</h3>
+      <p><strong>Category:</strong> Redundant forwarding layer.</p>
+      <p><strong>Evidence:</strong> <code>tools/workflow-tool-executors.ts:1113-1151</code> exports <code>executeMilestoneReopen</code>, but <code>bootstrap/db-tools.ts:1421-1483</code> independently opens the database, imports the handler, maps errors, and formats a nearly identical result. Search finds no production caller for the shared executor.</p>
+      <p><strong>Impact:</strong> public details and error semantics can diverge when S06 adds replay, duplicate, superseded, and stale fields.</p>
+      <p><strong>Smallest safe simplification:</strong> register the tool through <code>executeMilestoneReopen</code>, as complete and validate already do, then delete the direct adapter.</p>
+      <p><strong>Change risk:</strong> <span class="low">Low</span>—add one executor-contract test before deletion.</p>
+    </article>
+
+    <article>
+      <h3><span class="tag medium">Medium</span> Park/unpark remains a second, file-first Milestone lifecycle</h3>
+      <p><strong>Category:</strong> Compatibility behavior posing as authority.</p>
+      <p><strong>Evidence:</strong> <code>milestone-actions.ts:57-97</code> writes PARKED.md first and treats database update failure as a warning; <code>milestone-actions.ts:106-132</code> similarly removes the marker before best-effort DB sync; <code>milestone-actions.ts:190-209</code> answers parked state and reason only from the file. The S05 runbook explicitly defers park/unpark until after S06 at <code>lifecycle-command-integration-runbook.md:94-98</code>.</p>
+      <p><strong>Impact:</strong> folding this into S06 would expand blast radius, but ignoring it indefinitely preserves a second Milestone authority.</p>
+      <p><strong>Smallest safe simplification:</strong> keep park/unpark out of the S06 implementation, record it as the next bounded lifecycle cutover, and stop adding new consumers of PARKED.md. Later, make the database mutation authoritative and render PARKED.md as a projection.</p>
+      <p><strong>Change risk:</strong> <span class="medium">Medium</span>—guided flow and queue selection consume this state.</p>
+    </article>
+  </section>
+
+  <section>
+    <h2>What Should Stay</h2>
+    <ul>
+      <li><strong>The deep Domain Operation primitive is justified.</strong> <code>db/domain-operation.ts:21-72</code> provides revision, Authority Epoch, idempotency, event, outbox, and Projection Work semantics used across real transports and concurrent workers.</li>
+      <li><strong>Slice lifecycle is the right implementation pattern.</strong> <code>slice-lifecycle-domain-operation.ts:80-102</code> builds a fenced request; complete/reopen/cancel each commit one semantic event and projection target and return replay-aware receipts.</li>
+      <li><strong>Git/worktree publication is a real boundary.</strong> Host effects can fail independently and need durable settlement, but they should return typed results rather than mutate lifecycle directly.</li>
+      <li><strong>Legacy/flat path handling is real compatibility.</strong> Centralize it in projection renderers instead of deleting it during lifecycle convergence.</li>
+      <li><strong>Focused tests are valuable.</strong> Current tests cover closeout, projection staleness, merge recovery, and live state-machine failures; reuse them as characterization before deleting compatibility paths.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Open Questions</h2>
+    <ol>
+      <li>Does S06 complete the Milestone before or after required git/worktree merge receipts? ADR-046 says required host effects settle before lifecycle completion; make that ordering explicit in one acceptance test.</li>
+      <li>Is Milestone validation one aggregate verdict or a bundle of criterion verdicts? The schema and API should represent one model, not both.</li>
+      <li>Which legacy projects still rely on implicit VALIDATION/SUMMARY backfill? Measure this before removing fallback, then route those cases through explicit import.</li>
+      <li>Should reopening a Milestone preserve completed child work, or intentionally reset the entire hierarchy? Current behavior resets everything; confirm this product rule before encoding it canonically.</li>
+      <li>When will park/unpark converge? Give it an explicit owner so S06 does not absorb it accidentally.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Verification Performed</h2>
+    <ul>
+      <li>Read the accepted database-authority ADR and the lifecycle integration runbook.</li>
+      <li>Traced public complete, validate, and reopen handlers through workflow executors and bootstrap registration.</li>
+      <li>Traced direct Milestone status mutation through normal completion, merge, startup reconciliation, stuck recovery, JSONL replay, and legacy cascade code.</li>
+      <li>Inspected closeout gate, proof, settlement, readiness, validation-gate, projection, and park/unpark paths.</li>
+      <li>Reviewed nearby tests and found 14 test files directly referencing the sampled complete/reopen/proof/status-write surfaces; no code or tests were changed or executed for this review.</li>
+      <li>Validated this document as a self-contained HTML artifact with no external assets.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>
