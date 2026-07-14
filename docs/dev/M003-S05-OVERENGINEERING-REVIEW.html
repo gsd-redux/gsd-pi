@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>M003/S05 Slice Lifecycle Overengineering Review</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5b6670;
+      --paper: #f5f2e9;
+      --panel: #fffdf7;
+      --line: #d7d1c2;
+      --accent: #155e75;
+      --accent-soft: #dff4f7;
+      --high: #a52a2a;
+      --high-soft: #fbe7e4;
+      --medium: #9a5b00;
+      --medium-soft: #fff0cc;
+      --low: #356642;
+      --low-soft: #e3f2e6;
+      --code: #f0ece2;
+      --shadow: 0 12px 28px rgba(45, 38, 24, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(21, 94, 117, 0.10), transparent 32rem),
+        var(--paper);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 2rem));
+      margin: 2rem auto 4rem;
+    }
+
+    header, section {
+      margin-bottom: 1.25rem;
+      padding: clamp(1.25rem, 3vw, 2.25rem);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 253, 247, 0.95);
+      box-shadow: var(--shadow);
+    }
+
+    header {
+      border-top: 6px solid var(--accent);
+    }
+
+    h1, h2, h3 {
+      margin-top: 0;
+      line-height: 1.2;
+      text-wrap: balance;
+    }
+
+    h1 { font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -0.045em; }
+    h2 { margin-bottom: 1rem; font-size: clamp(1.4rem, 3vw, 2rem); }
+    h3 { margin-bottom: 0.6rem; font-size: 1.15rem; }
+
+    p { margin: 0.65rem 0; }
+    ul, ol { padding-left: 1.3rem; }
+    li + li { margin-top: 0.4rem; }
+
+    code {
+      padding: 0.12rem 0.34rem;
+      border-radius: 5px;
+      background: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      overflow-wrap: anywhere;
+    }
+
+    .eyebrow {
+      margin: 0 0 0.55rem;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .lede {
+      max-width: 78ch;
+      font-size: 1.15rem;
+    }
+
+    .meta, .summary-grid, .evidence-grid {
+      display: grid;
+      gap: 0.8rem;
+    }
+
+    .meta {
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      margin-top: 1.2rem;
+    }
+
+    .meta > div, .summary-grid > article, .evidence-grid > article {
+      padding: 0.9rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fffefb;
+    }
+
+    .meta strong, .label {
+      display: block;
+      color: var(--muted);
+      font-size: 0.76rem;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+    }
+
+    .summary-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .summary-grid .count { font-size: 1.75rem; font-weight: 800; }
+    .evidence-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+
+    .verdict {
+      margin-top: 1.25rem;
+      padding: 1rem 1.1rem;
+      border-left: 5px solid var(--accent);
+      border-radius: 0 10px 10px 0;
+      background: var(--accent-soft);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.65rem;
+      margin: 1.2rem 0 0;
+    }
+
+    .flow div {
+      position: relative;
+      min-height: 7rem;
+      padding: 0.85rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fffefb;
+    }
+
+    .flow div:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -0.58rem;
+      z-index: 2;
+      content: "→";
+      color: var(--accent);
+      font-size: 1.15rem;
+      font-weight: 900;
+      transform: translateY(-50%);
+    }
+
+    .finding {
+      margin-top: 1rem;
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      border-left-width: 6px;
+      border-radius: 13px;
+      background: #fffefb;
+    }
+
+    .finding.high { border-left-color: var(--high); }
+    .finding.medium { border-left-color: var(--medium); }
+    .finding.low { border-left-color: var(--low); }
+
+    .badges { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-bottom: 0.75rem; }
+    .badge {
+      display: inline-flex;
+      padding: 0.18rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.low { color: var(--low); background: var(--low-soft); }
+    .badge.category { color: var(--accent); background: var(--accent-soft); }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.9rem;
+      margin-top: 0.9rem;
+    }
+
+    .detail-grid > div {
+      padding: 0.85rem;
+      border-radius: 10px;
+      background: #f8f5ed;
+    }
+
+    .detail-grid h4 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+    .detail-grid p, .detail-grid ul { margin-top: 0.3rem; margin-bottom: 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      font-size: 0.94rem;
+    }
+
+    th, td {
+      padding: 0.72rem;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th { background: #ebe7dc; }
+
+    .callout {
+      padding: 0.85rem 1rem;
+      border-radius: 10px;
+      background: #f8f5ed;
+    }
+
+    .sequence {
+      counter-reset: stage;
+      list-style: none;
+      padding: 0;
+    }
+
+    .sequence li {
+      position: relative;
+      margin: 0 0 0.8rem;
+      padding: 0.9rem 1rem 0.9rem 3.4rem;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #fffefb;
+    }
+
+    .sequence li::before {
+      position: absolute;
+      top: 0.8rem;
+      left: 0.9rem;
+      display: grid;
+      width: 1.75rem;
+      height: 1.75rem;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: var(--accent);
+      counter-increment: stage;
+      content: counter(stage);
+      font-weight: 800;
+    }
+
+    footer {
+      padding: 1rem 0;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.86rem;
+    }
+
+    @media (max-width: 760px) {
+      .flow, .detail-grid { grid-template-columns: 1fr; }
+      .flow div:not(:last-child)::after {
+        top: auto;
+        right: 50%;
+        bottom: -0.8rem;
+        transform: translateX(50%) rotate(90deg);
+      }
+      table { display: block; overflow-x: auto; }
+    }
+
+    @media print {
+      body { background: white; }
+      main { width: 100%; margin: 0; }
+      header, section { box-shadow: none; break-inside: avoid; }
+      .finding { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">M003 / S05 · Architecture review</p>
+      <h1>Slice Lifecycle Overengineering Review</h1>
+      <p class="lede"><strong>Conclusion:</strong> the subsystem is not suffering from too many sophisticated abstractions. Its main cost is the opposite: four slice verbs are spread across parallel legacy and canonical write paths, transport adapters, and projection conventions. The best refactor is a narrow convergence onto the existing Domain Operation and lifecycle primitives, followed by deletion of obsolete adapters and renderers.</p>
+      <div class="meta">
+        <div><strong>Reviewed baseline</strong><code>origin/main</code> at <code>f7dbea8524</code></div>
+        <div><strong>Review date</strong>2026-07-14</div>
+        <div><strong>Scope</strong>Complete, reopen, replan, skip/cancel, executors, DB writers, projections, tests and callers</div>
+        <div><strong>Change policy</strong>Analysis only; no production or test code changed</div>
+      </div>
+      <div class="verdict"><strong>Recommended lean:</strong> preserve the transaction-safe cascade and canonical lifecycle primitives. Add no new framework. Put complete, reopen, and cancel through the same existing Domain Operation seam already used by replan; make both transports call the same executors; then delete the duplicate wiring and dead projection code.</div>
+    </header>
+
+    <section>
+      <h2>Current shape</h2>
+      <div class="summary-grid">
+        <article><span class="label">Lifecycle surface reviewed</span><span class="count">4,850</span>lines across the five principal handlers/executors, two DB writer files, and projection modules.</article>
+        <article><span class="label">Direct symbol-level test files</span><span class="count">23</span>10 complete, 4 reopen, 5 replan, and 4 skip test files directly call or name their handler/executor/cascade.</article>
+        <article><span class="label">Shared lifecycle primitive use</span><span class="count">40+</span>production call sites use <code>adoptLifecycleIfMissing</code> or <code>adoptOrTransitionLifecycle</code>; this abstraction has real variation.</article>
+        <article><span class="label">Projection flush use</span><span class="count">11</span>production callers use <code>flushWorkflowProjections</code>; its small seam is intentional, not speculative.</article>
+      </div>
+
+      <div class="flow" aria-label="Current slice lifecycle flow">
+        <div><strong>Transport</strong><br>Pi registration or workflow MCP parsing, with partially duplicated adapters.</div>
+        <div><strong>Handler</strong><br>Validation, policy, result formatting, artifact work, and sometimes coercion.</div>
+        <div><strong>Authority write</strong><br>Replan uses a Domain Operation; complete/reopen/skip use legacy cascades directly.</div>
+        <div><strong>Follow-on</strong><br>Different combinations of cache invalidation, projection, cleanup, manifest, event log, and graph rebuild.</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Findings</h2>
+
+      <article class="finding high">
+        <div class="badges"><span class="badge high">High priority</span><span class="badge high">High change risk</span><span class="badge category">Fragmented authority</span></div>
+        <h3>1. The four verbs do not share one durable lifecycle command boundary</h3>
+        <p><strong>Why this is avoidable complexity:</strong> the code has one accepted authority model and already has the reusable machinery to implement it, yet equivalent slice decisions are encoded differently depending on the verb. This forces every maintainer to reason about legacy hierarchy status, canonical lifecycle status, Domain Operation provenance, projection work, and transport replay separately.</p>
+        <div class="detail-grid">
+          <div>
+            <h4>Evidence</h4>
+            <ul>
+              <li><code>tools/replan-slice.ts:117-324</code> uses <code>executePlanningDomainOperation</code>, adopts/transitions canonical lifecycles, records a durable event and Projection Work, and returns committed/replayed status.</li>
+              <li><code>db/writers/cascades.ts:140-195</code>, <code>:53-85</code>, and <code>:208-243</code> implement complete, reopen, and skip as direct legacy-table transactions without a Domain Operation or canonical slice transition.</li>
+              <li><code>tools/reassess-roadmap.ts:406-444</code> maps a removed slice to legacy <code>skipped</code> plus canonical <code>cancelled</code>. Direct <code>gsd_skip_slice</code> only executes <code>skipSliceCascade</code>, so two user routes for removing work produce different canonical state.</li>
+              <li><code>tools/complete-slice.ts:377-470</code> commits legacy completion before summary/UAT content and gate results. <code>:495-563</code> persists gates and compatibility events later, outside that transaction.</li>
+              <li><code>docs/dev/architecture.md:36</code> explicitly records that file-derived slice completion, UAT, and broader lifecycle routing have not fully cut over.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Impact</h4>
+            <ul>
+              <li>Retry behavior is verb-specific: replan has a durable idempotent receipt; complete/reopen/skip do not.</li>
+              <li>Canonical shadow and legacy status can disagree after skip, complete, or reopen.</li>
+              <li>Callers must remember which side effects are authoritative and which are best-effort for each verb.</li>
+              <li>Fault tests need to cover combinations of crash windows rather than one transaction contract.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Smallest safe simplification</h4>
+            <p>Reuse the existing Domain Operation kernel through a narrow slice-lifecycle adapter. Inside each command's <code>mutate</code> callback, call context-bound leaves extracted from the transaction-owning cascades, then transition the slice/task lifecycle rows. Record the verb's immutable event and durable Projection Work in the same operation. Keep one explicit writer per verb—<code>completeSlice</code>, <code>reopenSlice</code>, <code>cancelSlice</code>, and the existing <code>replanSlice</code>—rather than building a generic command registry.</p>
+          </div>
+          <div>
+            <h4>Blast radius / sequencing</h4>
+            <p>High. This crosses database revision fencing, public tools, legacy status compatibility, projection work, and restart behavior. Land one verb at a time behind contract tests. Start with skip/cancel because the semantic mismatch is observable and the handler is smallest; complete should land last because it also owns gates, UAT, and closeout content.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding medium">
+        <div class="badges"><span class="badge medium">Medium priority</span><span class="badge medium">Medium change risk</span><span class="badge category">Duplicate adapters</span></div>
+        <h3>2. Pi and workflow MCP maintain parallel slice adapters that can drift</h3>
+        <p><strong>Why this is overengineered:</strong> the transport layer has both a shared executor module and locally reimplemented adapters. The extra paths do not protect meaningful transport variability; they repeat database-open checks, error shaping, handler invocation, state rebuilds, and response text.</p>
+        <div class="detail-grid">
+          <div>
+            <h4>Evidence</h4>
+            <ul>
+              <li><code>tools/workflow-tool-executors.ts:948-987</code> exports <code>executeSliceReopen</code>. Workflow MCP calls it at <code>packages/mcp-server/src/workflow-tools.ts:1205-1213</code>.</li>
+              <li>Pi ignores that executor and reimplements reopen at <code>bootstrap/db-tools.ts:1440-1475</code>.</li>
+              <li>The workflow contract names <code>executeSkipSlice</code> at <code>packages/contracts/src/workflow.ts:108-113</code>, but no such executor exists. Pi implements skip at <code>bootstrap/db-tools.ts:988-1054</code>; workflow MCP implements another version at <code>packages/mcp-server/src/workflow-tools.ts:2633-2654</code>.</li>
+              <li>The variants return different text, detail fields, and error semantics. Executor failures set <code>isError: true</code>; some local registration failures do not.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Impact</h4>
+            <p>Behavior can differ by transport even when both routes ultimately call the same core handler. A change to state refresh, worktree routing, error codes, or a new invocation identity must be made in several places and is easy to test on only one surface.</p>
+          </div>
+          <div>
+            <h4>Smallest safe simplification</h4>
+            <p>Add the contract-promised <code>executeSkipSlice</code>. Route Pi reopen and skip through <code>loadWorkflowExecutors()</code>, as complete and replan already do. Keep only transport-owned work outside the executor: schema parsing, base-path selection, write-gate enforcement, serialized invocation, and private invocation identity.</p>
+          </div>
+          <div>
+            <h4>Blast radius</h4>
+            <p>Medium. Response text and <code>isError</code> behavior may be observable. Pin one parity table across direct executor, Pi registration, and workflow MCP before deleting either adapter.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding medium">
+        <div class="badges"><span class="badge medium">Medium priority</span><span class="badge high">High change risk</span><span class="badge category">Command / projection coupling</span></div>
+        <h3>3. Completing a slice is also a 25-field Markdown authoring protocol</h3>
+        <p><strong>Why this is overengineered:</strong> one lifecycle command accepts identity, narrative, UAT prose, requirement changes, dependency metadata, file summaries, observability notes, and gate evidence. Transport coercion and renderer recovery exist largely because the lifecycle mutation is coupled to a document-shaped payload.</p>
+        <div class="detail-grid">
+          <div>
+            <h4>Evidence</h4>
+            <ul>
+              <li><code>types.ts:750-803</code> defines 25 complete-slice fields, most of which exist to populate sections or frontmatter.</li>
+              <li><code>workflow-tool-executors.ts:1046-1114</code> spends roughly 70 lines coercing scalar/array and string/object variants before calling the handler.</li>
+              <li><code>tools/complete-slice.ts:104-289</code> hand-renders summary/UAT Markdown and contains a parser for three requirement sections.</li>
+              <li>On duplicate recovery, <code>tools/complete-slice.ts:426-455</code> reads stored rendered Markdown and parses sections back into completion input. That makes a projection-shaped blob participate in reconstructing a command.</li>
+              <li>ADR-046 requires every machine-relevant fact to have a normalized representation and forbids reconstructing workflow truth from narrative prose (<code>docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md:74-104</code>).</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Impact</h4>
+            <ul>
+              <li>Natural tool use is harder because the agent must fill document metadata while making a lifecycle decision.</li>
+              <li>Formatting changes affect transport schemas and completion behavior.</li>
+              <li>Projection recovery depends on heading spellings and prose separators.</li>
+              <li>Tests protect coercion and template plumbing instead of primarily protecting closeout authority.</li>
+            </ul>
+          </div>
+          <div>
+            <h4>Smallest safe simplification</h4>
+            <p>Do not introduce another generic DTO. Persist normalized closeout facts and evidence in the Domain Operation, retain at most one narrative note as canonical DB content, and render SUMMARY/UAT from those rows. During compatibility, accept the current fields in the adapter and translate them once; keep them out of the core complete-slice writer.</p>
+          </div>
+          <div>
+            <h4>Blast radius / sequencing</h4>
+            <p>High because this changes a public MCP schema and DB representation. First move the existing payload into normalized DB writes without changing the external schema. Only then deprecate redundant input fields. Do not combine this with the initial lifecycle cutover PR.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="finding low">
+        <div class="badges"><span class="badge low">Low priority</span><span class="badge low">Low change risk</span><span class="badge category">Duplicate work</span></div>
+        <h3>4. Complete-slice renders the milestone roadmap twice</h3>
+        <p><strong>Evidence:</strong> <code>tools/complete-slice.ts:473-489</code> calls <code>renderRoadmapFromDb</code> and verifies the returned content. Later, <code>:542-545</code> calls <code>renderMilestoneShellProjections</code>, whose first step is another <code>renderRoadmapFromDb</code> call at <code>workflow-projections.ts:450-455</code>.</p>
+        <p><strong>Impact:</strong> every successful completion repeats a database read and disk write, and each path has its own failure logging. The duplication also makes it less obvious which render attempt establishes projection freshness.</p>
+        <p><strong>Recommendation:</strong> perform one shell projection pass and verify the resulting roadmap file/content once. Keep the summary/UAT write separate until durable Projection Work owns those artifacts. Avoid adding a configurable projection pipeline just to remove this duplicate call.</p>
+        <p><strong>Risk:</strong> Low. Preserve the existing “DB completion remains committed” result and stale-projection reporting in focused failure tests.</p>
+      </article>
+
+      <article class="finding medium">
+        <div class="badges"><span class="badge medium">Medium priority</span><span class="badge medium">Medium change risk</span><span class="badge category">Obsolete abstraction</span></div>
+        <h3>5. A known-lossy PLAN renderer remains exported and heavily tested after production stopped using it</h3>
+        <p><strong>Evidence:</strong> <code>workflow-projections.ts:54-119</code> contains <code>renderPlanContent</code> and <code>renderPlanProjection</code>. <code>renderAllProjections</code> explicitly refuses to call them because they omit important sections and corrupt multi-line task descriptions (<code>:485-489</code>). Missing-file recovery uses the authoritative <code>renderPlanFromDb</code> instead (<code>:577-582</code>). Production searches find no caller of <code>renderPlanProjection</code>; direct uses are tests. Several test suites continue to protect the simplified renderer.</p>
+        <p><strong>Impact:</strong> maintainers see two apparent PLAN rendering authorities, and tests increase confidence in a path the runtime intentionally avoids. Future work can accidentally resurrect the lossy renderer.</p>
+        <p><strong>Recommendation:</strong> remove <code>renderPlanProjection</code> and <code>renderPlanContent</code> after confirming they are not part of a supported package export. Delete or redirect their abstraction-focused tests to <code>markdown-renderer.ts</code> behavior. Keep the regression test that proves <code>renderAllProjections</code> preserves an authoritative PLAN.</p>
+        <p><strong>Risk:</strong> Medium, solely because an exported function may have unknown out-of-repo consumers. If this module is private to the bundled extension, risk drops to Low.</p>
+      </article>
+
+      <article class="finding low">
+        <div class="badges"><span class="badge low">Optional cleanup</span><span class="badge low">Low change risk</span><span class="badge category">Premature generality</span></div>
+        <h3>6. Complete-slice has a generic gate-dispatch loop for one actual gate</h3>
+        <p><strong>Evidence:</strong> <code>tools/complete-slice.ts:57-67</code> maps gate IDs through a switch that only handles Q8. The handler then builds a registry map and loops pending gates at <code>:500-525</code>. Adding a gate is not actually a one-place change: the registry and this switch must both change.</p>
+        <p><strong>Impact:</strong> small, but it makes Q8 closure harder to follow and suggests extension capacity the implementation does not currently have.</p>
+        <p><strong>Recommendation:</strong> while moving completion into a Domain Operation, express Q8 closure directly as one typed closeout rule. Generalize only when a second complete-slice-owned gate has materially different field mapping.</p>
+        <p><strong>Risk:</strong> Low. Preserve pending-to-pass/omitted semantics and unknown-gate behavior.</p>
+      </article>
+    </section>
+
+    <section>
+      <h2>What should stay</h2>
+      <div class="evidence-grid">
+        <article><h3>Transaction-safe cascade semantics</h3><p><code>db/writers/cascades.ts</code> puts structural guards and related hierarchy writes in one transaction and returns discriminated outcomes. This prevents TOCTOU bugs and is good behavior to preserve. Extract context-bound leaves for Domain Operations; do not nest the transaction-owning cascade or inline its policy back into handlers.</p></article>
+        <article><h3>Canonical lifecycle primitives</h3><p><code>adoptLifecycleIfMissing</code> and <code>adoptOrTransitionLifecycle</code> support three real hierarchy kinds and dozens of callers. Their identity validation, provenance checks, state versions, and transition policy justify the abstraction.</p></article>
+        <article><h3>Projection failure isolation</h3><p>Lifecycle completion surviving a projection failure is required behavior. The current handlers consistently treat projection writes as repairable follow-on work. Preserve that property while moving the retry record into durable Projection Work.</p></article>
+        <article><h3>Layout-aware cleanup</h3><p>Reopen cleanup handles both legacy and flat layouts because both layouts exist in deployed projects. That branching is compatibility complexity, not speculative flexibility. Consolidate it only behind an already-needed projection ownership API.</p></article>
+        <article><h3>Projection flush seam</h3><p><code>projection-flush.ts</code> is only 20 lines, but it has 11 production callers and gives mutation exits one name for a real responsibility. It should eventually delegate to the durable projection worker; deleting the seam now would scatter calls.</p></article>
+        <article><h3>Replan preservation rules</h3><p>Replan deliberately retains removed task identities, blocks edits to completed work, and transitions omitted work to cancelled. Those are user-visible integrity rules, not ceremony. Move them intact if extracting a writer.</p></article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Recommended implementation order</h2>
+      <ol class="sequence">
+        <li><strong>Pin cross-transport parity.</strong> Add one table-driven contract covering Pi and workflow MCP outcomes for success, missing DB, stale/replayed invocation, blocked write gate, and projection failure.</li>
+        <li><strong>Unify skip/cancel first.</strong> Decide its canonical meaning, add <code>executeSkipSlice</code>, record a Domain Operation plus canonical cancelled lifecycle, and route both transports through it.</li>
+        <li><strong>Unify reopen.</strong> Give reopen invocation identity, transition the slice and resettable task lifecycle heads inside the Domain Operation, and replace the Pi-local adapter with <code>executeSliceReopen</code>.</li>
+        <li><strong>Unify complete.</strong> Add evidence/closeout preconditions and idempotent operation identity before changing its public content schema. Keep projections noncritical.</li>
+        <li><strong>Shrink projection code.</strong> Remove the second roadmap render and delete the lossy PLAN renderer/tests after the supported-export check.</li>
+        <li><strong>Normalize closeout content last.</strong> Translate the existing 25-field transport payload into normalized DB facts, then deprecate projection-only fields over a compatibility window.</li>
+      </ol>
+      <p class="callout"><strong>Checkpoint rule:</strong> each verb should land independently with restart, exact replay, stale revision, canonical/legacy shadow, projection obstruction, and transport parity tests green before the next verb moves.</p>
+    </section>
+
+    <section>
+      <h2>Blast-radius matrix</h2>
+      <table>
+        <thead><tr><th>Recommendation</th><th>Primary callers/contracts</th><th>Tests to preserve or add</th><th>Risk</th></tr></thead>
+        <tbody>
+          <tr><td>Domain Operation for skip/cancel</td><td>Pi registration, workflow MCP, auto phase derivation, reassess-roadmap compatibility, milestone completion</td><td>Transport parity, canonical shadow, exact replay, skipped dependency behavior, task cascade</td><td>High</td></tr>
+          <tr><td>Domain Operation for reopen</td><td>Pi, MCP, UAT/planning fallback, projection cleanup, completed-task desync recovery</td><td>Closed milestone, desync recovery, no partial reset, lifecycle transition, restart/replay</td><td>High</td></tr>
+          <tr><td>Domain Operation for complete</td><td>Auto complete-slice unit, Pi/MCP, gates, UAT, requirements, closeout, graph/projection follow-on</td><td>Evidence freshness, incomplete tasks, duplicate replay, projection obstruction, gate closure, both layouts</td><td>High</td></tr>
+          <tr><td>Shared skip/reopen executors</td><td><code>bootstrap/db-tools.ts</code>, <code>packages/mcp-server</code>, contracts</td><td>Identical <code>details</code>, <code>isError</code>, messages/codes, base-path routing</td><td>Medium</td></tr>
+          <tr><td>Remove duplicate roadmap render</td><td>Complete-slice only</td><td>Roadmap marked done, stale flag on obstruction, shell projections refreshed</td><td>Low</td></tr>
+          <tr><td>Remove lossy PLAN renderer</td><td>No known production callers; test-only direct users</td><td>Authoritative renderer output and “do not overwrite PLAN” regression</td><td>Medium</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Open questions</h2>
+      <ol>
+        <li><strong>Does “skip” mean permanent cancellation, temporary deferral, or either based on reason?</strong> Reassess currently treats removal as canonical cancellation. The direct skip tool needs one explicit semantic before cutover; do not average the two.</li>
+        <li><strong>Which closeout fields are machine-relevant?</strong> Requirements, verification, UAT mode/verdict, dependency outputs, and gate results need normalized rows. Narrative, lessons, and prose summaries may remain canonical DB content rendered verbatim.</li>
+        <li><strong>Is <code>workflow-projections.ts</code> a supported external API?</strong> If not, delete the unused PLAN exports directly. If yes, deprecate them with a clear replacement rather than silently preserving an unsafe renderer.</li>
+        <li><strong>What is the compatibility window for the complete-slice tool schema?</strong> Transport adapters can absorb old fields while the core writer becomes narrow, but removal should be versioned and tested.</li>
+        <li><strong>Should reopen invalidate downstream evidence/decisions now or in a later slice?</strong> ADR-046 requires dependency-reachable revalidation. That behavior should be named and tested, not smuggled into generic projection cleanup.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Verification</h2>
+      <ul>
+        <li>Reviewed the requested subsystem on <code>origin/main</code> commit <code>f7dbea852400e1f6e9b298e31ea24480da8d36a4</code>.</li>
+        <li>Traced production callers and transport registrations with repository-wide symbol searches.</li>
+        <li>Inspected direct tests for complete, reopen, replan, skip, workflow executors, cascades, projection preservation, and workflow MCP behavior.</li>
+        <li>Compared implementation against the accepted authority and projection invariants in ADR-046 and <code>docs/dev/architecture.md</code>.</li>
+        <li>No production code or tests were modified. Recommendations are ordered by smallest safe deletion/convergence and include explicit risk.</li>
+      </ul>
+    </section>
+
+    <footer>M003/S05 · Slice lifecycle subsystem · Maintainer review artifact</footer>
+  </main>
+</body>
+</html>
