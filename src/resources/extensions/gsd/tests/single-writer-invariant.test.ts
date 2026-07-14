@@ -60,6 +60,7 @@ const SCHEMA_DB_WRITER_FILES = new Set([
   "db-lifecycle-foundation-schema.ts",
   "db-projection-import-kernel-closeout-foundation-schema.ts",
   "db-recovery-evidence-foundation-schema.ts",
+  "db-task-recovery-current-head-schema.ts",
   "db-task-verification-recovery-schema.ts",
   "db-memory-fts-schema.ts",
   "db-schema-metadata.ts",

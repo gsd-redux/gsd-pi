@@ -423,11 +423,45 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
       AND (
         result.outcome IN ('failed', 'interrupted') OR
         (result.outcome = 'succeeded' AND EXISTS (
-          SELECT 1 FROM workflow_technical_verdicts verdict
+          SELECT 1
+          FROM workflow_technical_verdicts verdict
+          JOIN workflow_acceptance_criteria criterion
+            ON criterion.criterion_id = verdict.criterion_id
+           AND criterion.project_id = verdict.project_id
+           AND criterion.lifecycle_id = verdict.lifecycle_id
+          JOIN workflow_verification_evidence evidence
+            ON evidence.verdict_id = verdict.verdict_id
+           AND evidence.project_id = verdict.project_id
+           AND evidence.attempt_id = verdict.attempt_id
           WHERE verdict.project_id = result.project_id
             AND verdict.lifecycle_id = result.lifecycle_id
             AND verdict.attempt_id = result.attempt_id
             AND verdict.verdict IN ('fail', 'inconclusive')
+            AND NOT EXISTS (
+              SELECT 1 FROM workflow_acceptance_criteria successor
+              WHERE successor.supersedes_criterion_id = criterion.criterion_id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM workflow_technical_verdicts successor
+              WHERE successor.supersedes_verdict_id = verdict.verdict_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM workflow_technical_verdicts newer
+              JOIN workflow_verification_evidence newer_evidence
+                ON newer_evidence.verdict_id = newer.verdict_id
+               AND newer_evidence.project_id = newer.project_id
+               AND newer_evidence.attempt_id = newer.attempt_id
+              WHERE newer.project_id = verdict.project_id
+                AND newer.criterion_id = verdict.criterion_id
+                AND newer.lifecycle_id = verdict.lifecycle_id
+                AND newer.attempt_id = verdict.attempt_id
+                AND newer.project_revision > verdict.project_revision
+                AND NOT EXISTS (
+                  SELECT 1 FROM workflow_technical_verdicts successor
+                  WHERE successor.supersedes_verdict_id = newer.verdict_id
+                )
+            )
         ))
       )
       AND checkpoint.next_stage = 'route'
@@ -449,10 +483,14 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
   };
 }
 
-function requireRoutableResult(resultId: string, supersedesResolvedBlockerId?: string): void {
+function requireRoutableResult(
+  resultId: string,
+  newOwner: RouteFailureInput["owner"],
+  supersedesResolvedBlockerId?: string,
+): void {
   const routed = getDb().prepare(`
     SELECT action.recovery_action_id, action.action, action.blocker_id,
-           observation.recovery_owner, blocker.blocker_kind, blocker.blocker_status
+           observation.recovery_owner, blocker.blocker_status
     FROM workflow_failure_observations observation
     LEFT JOIN workflow_recovery_actions action
       ON action.failure_observation_id = observation.failure_observation_id
@@ -462,13 +500,13 @@ function requireRoutableResult(resultId: string, supersedesResolvedBlockerId?: s
     LIMIT 1
   `).get({ ":result_id": resultId }) as Record<string, unknown> | undefined;
   if (!routed) return;
-  const supersedesResolvedHumanReview = supersedesResolvedBlockerId &&
+  const supersedesResolvedBlocker = supersedesResolvedBlockerId &&
+    newOwner === "agent" &&
     routed["blocker_id"] === supersedesResolvedBlockerId &&
-    routed["recovery_owner"] === "user" &&
-    routed["action"] === "clarify" &&
-    routed["blocker_kind"] === "subjective_uat" &&
-    routed["blocker_status"] === "resolved";
-  if (!supersedesResolvedHumanReview) {
+    ["user", "external"].includes(String(routed["recovery_owner"])) &&
+    ["clarify", "pause"].includes(String(routed["action"])) &&
+    ["resolved", "dismissed"].includes(String(routed["blocker_status"]));
+  if (!supersedesResolvedBlocker) {
     throw new Error("Task Result already has a recovery observation");
   }
 }
@@ -764,7 +802,7 @@ export function recordFailureAndSelectRecovery(
     },
   ), (context) => {
     const scope = loadRoutedFailureScope(input.attemptId, input.resultId);
-    requireRoutableResult(input.resultId, input.supersedesResolvedBlockerId);
+    requireRoutableResult(input.resultId, input.owner, input.supersedesResolvedBlockerId);
     const failureKind = input.classification.failureKind.trim().toLowerCase();
     const fingerprint = normalizeFailureFingerprint(input.classification);
     const decision = input.owner === "agent"

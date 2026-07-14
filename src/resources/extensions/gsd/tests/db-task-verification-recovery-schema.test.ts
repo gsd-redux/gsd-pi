@@ -1,5 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: Executable contract for the v38 Task verification recovery trigger.
+// File Purpose: Executable contract for Task verification recovery trigger migrations.
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -10,6 +10,7 @@ import { afterEach, test } from "node:test";
 
 import type { DbAdapter } from "../db-adapter.ts";
 import { createRecoveryEvidenceFoundationSchemaV34 } from "../db-recovery-evidence-foundation-schema.ts";
+import { createTaskVerificationRecoverySchemaV38 } from "../db-task-verification-recovery-schema.ts";
 import {
   SCHEMA_VERSION,
   _setMigrationFaultForTest,
@@ -30,7 +31,7 @@ interface RawDb {
 }
 
 function createDatabasePath(): string {
-  const dir = mkdtempSync(join(tmpdir(), "gsd-v38-verification-recovery-"));
+  const dir = mkdtempSync(join(tmpdir(), "gsd-verification-recovery-"));
   tempDirs.add(dir);
   return join(dir, "gsd.db");
 }
@@ -85,6 +86,8 @@ function seedSucceededAttempt(db: RawDb): void {
   insertOperation(db, 3, "criterion.define");
   insertOperation(db, 4, "verification.verdict");
   insertOperation(db, 5, "recovery.observe");
+  insertOperation(db, 6, "verification.supersede");
+  insertOperation(db, 7, "recovery.observe.current-head");
 
   db.prepare(`
     INSERT INTO workflow_item_lifecycles (
@@ -135,7 +138,39 @@ function insertVerdict(db: RawDb, verdict: "pass" | "fail" | "inconclusive"): vo
   `).run(projectId(db), verdict);
 }
 
-function insertVerifyFailure(db: RawDb): void {
+function insertEvidence(
+  db: RawDb,
+  verdictId = "verdict-1",
+  sourceRevision = "sha256:tested-source",
+  operationRevision = 4,
+  observation: "failed" | "inconclusive" | "passed" = "failed",
+): void {
+  db.prepare(`
+    INSERT INTO workflow_verification_evidence (
+      evidence_id, project_id, verdict_id, criterion_id, lifecycle_id, attempt_id,
+      evidence_class, command_or_tool, working_directory, started_at, ended_at,
+      exit_code, observation, source_revision, observed_project_revision,
+      content_hash, durable_output_ref, environment_json, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (?, ?, ?, 'criterion-1', 'life-task', 'attempt-1',
+      'command', 'npm test', '/tmp/project',
+      '2026-07-13T00:00:00.000Z', '2026-07-13T00:00:01.000Z',
+      ?, ?, ?, 3,
+      'sha256:0000000000000000000000000000000000000000000000000000000000000000',
+      'db://verification-evidence', '{"runner":"node-test"}', '', ?, ?, 0)
+  `).run(
+    `evidence-${verdictId}`,
+    projectId(db),
+    verdictId,
+    observation === "passed" ? 0 : 1,
+    observation,
+    sourceRevision,
+    `op-${operationRevision}`,
+    operationRevision,
+  );
+}
+
+function insertVerifyFailure(db: RawDb, operationRevision = 5): void {
   db.prepare(`
     INSERT INTO workflow_failure_observations (
       failure_observation_id, project_id, lifecycle_id, attempt_id, result_id,
@@ -144,7 +179,45 @@ function insertVerifyFailure(db: RawDb): void {
       operation_id, project_revision, authority_epoch
     ) VALUES ('failure-1', ?, 'life-task', 'attempt-1', 'result-1',
       'agent', 'verify', 'verification-failed', 'verification-failed:host',
-      'Host verification did not pass', '{}', '', 'op-5', 5, 0)
+      'Host verification did not pass', '{}', '', ?, ?, 0)
+  `).run(projectId(db), `op-${operationRevision}`, operationRevision);
+}
+
+function supersedeVerdictWithPass(db: RawDb): void {
+  db.prepare(`
+    INSERT INTO workflow_technical_verdicts (
+      verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
+      tested_source_revision, verdict, policy_id, policy_version, rationale,
+      supersedes_verdict_id, created_at, operation_id, project_revision, authority_epoch
+    ) VALUES ('verdict-2', ?, 'criterion-1', 'life-task', 'attempt-1',
+      'sha256:tested-source', 'pass', 'host-verification', '1', 'Human review passed',
+      'verdict-1', '', 'op-6', 6, 0)
+  `).run(projectId(db));
+  insertEvidence(db, "verdict-2", "sha256:tested-source", 6, "passed");
+}
+
+function recordNewerSourcePass(db: RawDb): void {
+  db.prepare(`
+    INSERT INTO workflow_technical_verdicts (
+      verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
+      tested_source_revision, verdict, policy_id, policy_version, rationale,
+      created_at, operation_id, project_revision, authority_epoch
+    ) VALUES ('verdict-2', ?, 'criterion-1', 'life-task', 'attempt-1',
+      'sha256:newer-source', 'pass', 'host-verification', '1', 'New source passed',
+      '', 'op-6', 6, 0)
+  `).run(projectId(db));
+  insertEvidence(db, "verdict-2", "sha256:newer-source", 6, "passed");
+}
+
+function supersedeCriterion(db: RawDb): void {
+  db.prepare(`
+    INSERT INTO workflow_acceptance_criteria (
+      criterion_id, criterion_key, project_id, lifecycle_id,
+      criterion_kind, evidence_class, required, description,
+      supersedes_criterion_id, created_at, operation_id, project_revision, authority_epoch
+    ) VALUES ('criterion-2', 'task-host-verification', ?, 'life-task',
+      'technical', 'command', 1, 'Updated host verification must pass',
+      'criterion-1', '', 'op-6', 6, 0)
   `).run(projectId(db));
 }
 
@@ -167,6 +240,14 @@ function rewindToV37(db: RawDb): void {
   `);
 }
 
+function rewindToV38(db: RawDb): void {
+  createTaskVerificationRecoverySchemaV38(db as unknown as DbAdapter);
+  db.exec(`
+    DELETE FROM schema_version;
+    INSERT INTO schema_version (version, applied_at) VALUES (38, '');
+  `);
+}
+
 afterEach(() => {
   _setMigrationFaultForTest(false);
   closeDatabase();
@@ -176,70 +257,160 @@ afterEach(() => {
 
 for (const verdict of ["fail", "inconclusive"] as const) {
   const article = verdict === "inconclusive" ? "an" : "a";
-  test(`v38 accepts a succeeded Result with ${article} ${verdict} Technical Verdict at verify`, () => {
+  test(`current schema accepts a succeeded Result with ${article} ${verdict} Technical Verdict at verify`, (t) => {
     const { db } = createCurrentFixture();
-    try {
-      insertVerdict(db, verdict);
-      assert.doesNotThrow(() => insertVerifyFailure(db));
-      assert.equal(
-        db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
-        1,
-      );
-    } finally {
-      db.close();
-    }
+    t.after(() => db.close());
+    insertVerdict(db, verdict);
+    insertEvidence(
+      db,
+      "verdict-1",
+      "sha256:tested-source",
+      4,
+      verdict === "fail" ? "failed" : "inconclusive",
+    );
+    assert.doesNotThrow(() => insertVerifyFailure(db));
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+      1,
+    );
   });
 }
+
+for (const verdict of ["fail", "inconclusive"] as const) {
+  test(`current schema rejects verify recovery with an evidence-less ${verdict} verdict`, (t) => {
+    const { db } = createCurrentFixture();
+    t.after(() => db.close());
+    insertVerdict(db, verdict);
+    assert.throws(
+      () => insertVerifyFailure(db),
+      /failed or interrupted result.*current Technical Verdict/i,
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+      0,
+    );
+  });
+}
+
+test("current schema ignores an evidence-less newer verdict when selecting the current head", (t) => {
+  const { db } = createCurrentFixture();
+  t.after(() => db.close());
+  insertVerdict(db, "fail");
+  insertEvidence(db);
+  db.prepare(`
+    INSERT INTO workflow_technical_verdicts (
+      verdict_id, project_id, criterion_id, lifecycle_id, attempt_id,
+      tested_source_revision, verdict, policy_id, policy_version, rationale,
+      created_at, operation_id, project_revision, authority_epoch
+    ) VALUES ('verdict-2', ?, 'criterion-1', 'life-task', 'attempt-1',
+      'sha256:newer-source', 'pass', 'host-verification', '1', 'Orphan newer verdict',
+      '', 'op-6', 6, 0)
+  `).run(projectId(db));
+
+  assert.doesNotThrow(() => insertVerifyFailure(db, 7));
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+    1,
+  );
+});
 
 for (const verdict of [null, "pass"] as const) {
   const label = verdict ?? "no";
-  test(`v38 rejects verify recovery with ${label} Technical Verdict`, () => {
+  test(`current schema rejects verify recovery with ${label} Technical Verdict`, (t) => {
     const { db } = createCurrentFixture();
-    try {
-      if (verdict) insertVerdict(db, verdict);
-      assert.throws(
-        () => insertVerifyFailure(db),
-        /failed or interrupted result.*causal Task boundary/i,
-      );
-      assert.equal(
-        db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
-        0,
-      );
-    } finally {
-      db.close();
-    }
+    t.after(() => db.close());
+    if (verdict) insertVerdict(db, verdict);
+    assert.throws(
+      () => insertVerifyFailure(db),
+      /failed or interrupted result.*causal Task boundary/i,
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+      0,
+    );
   });
 }
 
-test("faulted v38 trigger migration rolls back and retries cleanly", () => {
+const staleHeadCases = [
+  { label: "a superseded failing verdict", prepare: supersedeVerdictWithPass },
+  { label: "a verdict on a superseded criterion", prepare: supersedeCriterion },
+  { label: "an older failing verdict for a different source revision", prepare: recordNewerSourcePass },
+] as const;
+
+for (const staleHead of staleHeadCases) {
+  test(`current schema rejects verify recovery authorized only by ${staleHead.label}`, (t) => {
+    const { db } = createCurrentFixture();
+    t.after(() => db.close());
+    insertVerdict(db, "fail");
+    insertEvidence(db);
+    staleHead.prepare(db);
+    assert.throws(
+      () => insertVerifyFailure(db, 7),
+      /failed or interrupted result.*current Technical Verdict/i,
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+      0,
+    );
+  });
+}
+
+for (const staleHead of staleHeadCases) {
+  test(`v38 database upgrades to reject verify recovery authorized only by ${staleHead.label}`, (t) => {
+    const { dbPath, db } = createCurrentFixture();
+    let fixtureDb: RawDb | undefined = db;
+    t.after(() => fixtureDb?.close());
+    insertVerdict(db, "fail");
+    insertEvidence(db);
+    staleHead.prepare(db);
+    rewindToV38(db);
+    db.close();
+    fixtureDb = undefined;
+
+    assert.equal(openDatabase(dbPath), true);
+    closeDatabase();
+    const upgraded = openRawDatabase(dbPath);
+    t.after(() => upgraded.close());
+    assert.equal(schemaVersion(upgraded), SCHEMA_VERSION);
+    assert.throws(
+      () => insertVerifyFailure(upgraded, 7),
+      /failed or interrupted result.*current Technical Verdict/i,
+    );
+  });
+}
+
+test("faulted verification recovery migration chain rolls back and retries cleanly", (t) => {
   const { dbPath, db } = createCurrentFixture();
+  let fixtureDb: RawDb | undefined = db;
+  t.after(() => fixtureDb?.close());
   insertVerdict(db, "fail");
+  insertEvidence(db);
   rewindToV37(db);
   db.close();
+  fixtureDb = undefined;
 
   _setMigrationFaultForTest(true);
   assert.throws(() => openDatabase(dbPath), /migration fault injected/);
   _setMigrationFaultForTest(false);
 
   const rolledBack = openRawDatabase(dbPath);
-  try {
-    assert.equal(schemaVersion(rolledBack), 37);
-    assert.throws(() => insertVerifyFailure(rolledBack), /matching failed or interrupted result/i);
-  } finally {
-    rolledBack.close();
-  }
+  let rolledBackOpen = true;
+  t.after(() => {
+    if (rolledBackOpen) rolledBack.close();
+  });
+  assert.equal(schemaVersion(rolledBack), 37);
+  assert.throws(() => insertVerifyFailure(rolledBack), /matching failed or interrupted result/i);
+  rolledBack.close();
+  rolledBackOpen = false;
 
   assert.equal(openDatabase(dbPath), true);
   closeDatabase();
   const retried = openRawDatabase(dbPath);
-  try {
-    assert.equal(schemaVersion(retried), 38);
-    assert.doesNotThrow(() => insertVerifyFailure(retried));
-    assert.equal(
-      retried.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
-      1,
-    );
-  } finally {
-    retried.close();
-  }
+  t.after(() => retried.close());
+  assert.equal(schemaVersion(retried), SCHEMA_VERSION);
+  assert.doesNotThrow(() => insertVerifyFailure(retried));
+  assert.equal(
+    retried.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+    1,
+  );
 });

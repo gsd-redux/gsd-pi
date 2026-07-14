@@ -257,6 +257,10 @@ function routeHostTechnicalFailure(
     },
     rationale: "Route built-in host verification through the durable recovery policy",
   } as const;
+  // A response can be lost after its Domain Operation already committed (a
+  // dropped connection, a fault injected between commit and return). Retrying
+  // the identical idempotency key is safe: it either replays the committed
+  // receipt or reproduces the same deterministic error.
   let recovery;
   try {
     recovery = authority.routeTaskFailure(routeInput);
