@@ -524,7 +524,15 @@ const SLICE_LIFECYCLE_CASES = [
 ] as const;
 
 function normalizeLifecycleToolResult(result: unknown, base: string): Record<string, unknown> {
-  const record = JSON.parse(JSON.stringify(result).replaceAll(base, "<PROJECT>")) as Record<string, unknown>;
+  const serialized = JSON.stringify(result);
+  // On Windows, JSON.stringify escapes path separators ("\\"), so the raw `base`
+  // (single backslashes) never matches the serialized paths and the workspace
+  // prefix survives, breaking the cross-transport comparison. Replace the
+  // JSON-escaped form of the base exactly as it appears in the serialized string;
+  // JSON.stringify(base) sans quotes yields that form and equals `base` verbatim
+  // on POSIX, so this stays correct on both platforms.
+  const escapedBase = JSON.stringify(base).slice(1, -1);
+  const record = JSON.parse(serialized.replaceAll(escapedBase, "<PROJECT>")) as Record<string, unknown>;
   const details = record.structuredContent ?? record.details;
   return {
     content: record.content,
