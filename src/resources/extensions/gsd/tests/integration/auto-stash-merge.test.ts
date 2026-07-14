@@ -15,6 +15,7 @@ import { execSync } from "node:child_process";
 import { createAutoWorktree } from "../../auto-worktree-creation.ts";
 import { mergeMilestoneToMain } from "../../auto-worktree-merge.ts";
 import { nativeMergeSquash } from "../../native-git-bridge.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -61,6 +62,7 @@ function addSliceToMilestone(
 test("#2151 bug 1: auto-stash unblocks merge when unrelated files are dirty", () => {
   const repo = createTempRepo();
   try {
+    seedMergeReadyMilestone(repo, "M200");
     const wtPath = createAutoWorktree(repo, "M200");
 
     addSliceToMilestone(repo, wtPath, "M200", "S01", "Stash test", [

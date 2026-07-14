@@ -29,6 +29,7 @@ import { createAutoWorktree } from "../../auto-worktree-creation.ts";
 import { isInAutoWorktree } from "../../auto-worktree-entry.ts";
 import { mergeMilestoneToMain } from "../../auto-worktree-merge.ts";
 import { getAutoWorktreeOriginalBase } from "../../auto-worktree-session-registry.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, {
@@ -96,6 +97,7 @@ test("single milestone worktree is merged to main when all complete (#962)", (t)
   createMilestoneArtifacts(tempDir, "M001");
   run("git add .", tempDir);
   run('git commit -m "add milestone"', tempDir);
+  seedMergeReadyMilestone(tempDir, "M001");
 
   // Create worktree and simulate work
   const wt = createAutoWorktree(tempDir, "M001");
@@ -162,6 +164,7 @@ test("last milestone worktree is merged when it's the final one (#962)", (t) => 
   createMilestoneArtifacts(tempDir, "M002");
   run("git add .", tempDir);
   run('git commit -m "add milestones"', tempDir);
+  seedMergeReadyMilestone(tempDir, "M001");
 
   // Complete M001 first (merge it)
   const wt1 = createAutoWorktree(tempDir, "M001");
@@ -175,6 +178,7 @@ test("last milestone worktree is merged when it's the final one (#962)", (t) => 
   mergeMilestoneToMain(tempDir, "M001", roadmap1);
 
   // Now complete M002 (the LAST milestone — this is the #962 scenario)
+  seedMergeReadyMilestone(tempDir, "M002");
   const wt2 = createAutoWorktree(tempDir, "M002");
   writeFileSync(join(wt2, "m002-work.ts"), "export const m002 = true;\n");
   run("git add .", wt2);

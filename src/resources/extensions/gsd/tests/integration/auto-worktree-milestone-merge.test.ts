@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
-import { createAutoWorktree } from "../../auto-worktree-creation.ts";
+import { createAutoWorktree as createAutoWorktreeBase } from "../../auto-worktree-creation.ts";
 import {
   mergeMilestoneToMain,
   _setRestoreEntryFnForTests,
@@ -36,7 +36,13 @@ import {
   insertTask,
   openDatabase,
 } from "../../gsd-db.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 import { createGsdIntegrationProject } from "./gsd-integration-fixture.ts";
+
+function createAutoWorktree(repo: string, milestoneId: string): string {
+  seedMergeReadyMilestone(repo, milestoneId);
+  return createAutoWorktreeBase(repo, milestoneId);
+}
 
 function run(cmd: string, cwd: string): string {
   // Safe: all inputs are hardcoded test strings, not user input
@@ -658,6 +664,7 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
     run("git checkout main", repo);
 
     process.chdir(wtPath);
+    seedMergeReadyMilestone(repo, "M150");
 
     const roadmap = makeRoadmap("M150", "Diverged milestone", [
       { id: "S01", title: "Base work" },
@@ -809,6 +816,7 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
     mkdirSync(join(repo, ".gsd", "worktrees", "M216"), { recursive: true });
     writeFileSync(join(repo, ".gsd", "STATE.md"), "# Local stale state\n");
     writeFileSync(join(repo, ".gsd", "worktrees", "M216", "stale.txt"), "stale local artifact\n");
+    seedMergeReadyMilestone(repo, "M216");
 
     const roadmap = makeRoadmap("M216", "Legacy external cleanup", [
       { id: "S01", title: "Legacy external cleanup" },
