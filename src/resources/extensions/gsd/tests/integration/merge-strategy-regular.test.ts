@@ -33,6 +33,7 @@ import { createAutoWorktree } from "../../auto-worktree-creation.ts";
 import { mergeMilestoneToMain } from "../../auto-worktree-merge.ts";
 import { closeDatabase } from "../../gsd-db.ts";
 import { getSliceBranchName } from "../../worktree.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 function run(cmd: string, cwd: string): string {
   // Safe: all inputs are hardcoded test strings, not user input
@@ -124,6 +125,7 @@ describe("mergeMilestoneToMain merge_strategy dispatch (#549)", { timeout: 300_0
       "---\nversion: 1\ngit:\n  merge_strategy: merge\n---\n",
     );
 
+    seedMergeReadyMilestone(repo, "M549");
     const wtPath = createAutoWorktree(repo, "M549");
     addSliceToMilestone(repo, wtPath, "M549", "S01", "Feature A", "feature-a.ts");
 
@@ -142,6 +144,7 @@ describe("mergeMilestoneToMain merge_strategy dispatch (#549)", { timeout: 300_0
     const repo = freshRepo();
     // No PREFERENCES.md — default squash path
 
+    seedMergeReadyMilestone(repo, "M550");
     const wtPath = createAutoWorktree(repo, "M550");
     addSliceToMilestone(repo, wtPath, "M550", "S01", "Feature B", "feature-b.ts");
 

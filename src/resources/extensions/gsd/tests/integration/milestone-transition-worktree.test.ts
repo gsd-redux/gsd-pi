@@ -21,6 +21,7 @@ import { isInAutoWorktree } from "../../auto-worktree-entry.ts";
 import { mergeMilestoneToMain } from "../../auto-worktree-merge.ts";
 import { getAutoWorktreeOriginalBase } from "../../auto-worktree-session-registry.ts";
 import { teardownAutoWorktree } from "../../auto-worktree-teardown.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +72,7 @@ test("worktree swap on milestone transition: merge old, create new", () => {
     run("git commit -m \"add milestones\"", tempDir);
 
     // Phase 1: Create worktree for M001 (simulates auto-mode start)
+    seedMergeReadyMilestone(tempDir, "M001");
     const wt1 = createAutoWorktree(tempDir, "M001");
     assert.equal(process.cwd(), wt1, "cwd should be in M001 worktree");
     assert.ok(isInAutoWorktree(tempDir), "should be in auto-worktree");
