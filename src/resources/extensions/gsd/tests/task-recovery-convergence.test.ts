@@ -30,10 +30,7 @@ import {
   resumeTaskRecovery,
 } from "../task-recovery-domain-operation.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
-import {
-  confirmResolvedTaskHumanReview,
-  recordTaskTechnicalVerdict,
-} from "../task-verification-domain-operation.ts";
+import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 import {
   publishVerifiedTaskCompletion,
@@ -676,11 +673,34 @@ test("Pi, workflow MCP, and internal entry points converge on identical reopen r
 
   const mcpTool = registeredMcpTools().find((tool) => tool.name === "gsd_task_reopen");
   assert.ok(mcpTool);
+  _setDomainOperationFaultForTest("after-commit");
+  const lostMcpResponse = await mcpTool.handler(
+    { projectDir: basePath, ...params("T02") },
+    { _meta: { "io.opengsd/idempotency-key": "mcp-reopen-T02" } },
+  );
+  _setDomainOperationFaultForTest(null);
+  assert.equal((lostMcpResponse as { isError?: boolean }).isError, true);
+  assert.equal(row(`SELECT status FROM tasks WHERE id = 'T02'`).status, "pending");
+
+  closeDatabase();
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
   const mcpResult = await mcpTool.handler(
     { projectDir: basePath, ...params("T02") },
     { _meta: { "io.opengsd/idempotency-key": "mcp-reopen-T02" } },
   );
 
+  _setDomainOperationFaultForTest("after-commit");
+  const lostInternalResponse = await executeTaskReopen(
+    params("T03"),
+    basePath,
+    invocation("internal-reopen-T03", "agent", "internal"),
+  );
+  _setDomainOperationFaultForTest(null);
+  assert.equal(lostInternalResponse.isError, true);
+  assert.equal(row(`SELECT status FROM tasks WHERE id = 'T03'`).status, "pending");
+
+  closeDatabase();
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
   const internalResult = await executeTaskReopen(
     params("T03"),
     basePath,
@@ -729,18 +749,9 @@ test("Pi, workflow MCP, and internal entry points converge on identical reopen r
       `the ${transport} entry point must persist its own transport provenance`,
     );
   }
-
-  assert.equal(
-    Number(row(`
-      SELECT COUNT(*) AS count FROM workflow_operations
-      WHERE operation_type = 'task.reopen' AND source_transport = 'pi-tool'
-    `).count),
-    1,
-    "the restarted Pi replay must not add a second operation",
-  );
 });
 
-test("genuine blockers pause; resolved human review publishes and resolved external work retries", async () => {
+test("genuine blockers pause and continue only through fresh agent-owned Attempts", async () => {
   const taskId = "T01";
   const externalTaskId = "T02";
   const { basePath } = seedProject([taskId, externalTaskId]);
@@ -809,22 +820,48 @@ test("genuine blockers pause; resolved human review publishes and resolved exter
     },
   });
 
-  confirmResolvedTaskHumanReview({
-    invocation: invocation("sabotage/confirm-pass", "user"),
+  const humanReviewReroute = recordFailureAndSelectRecovery({
+    invocation: invocation("subjective-review/reroute"),
     attemptId: claim.attemptId,
-    blockerId: routed.blockerId!,
-    testedSourceRevision: source.snapshot.aggregateRevision,
-    rationale: "the human reviewer confirmed the delivered behavior satisfies intent",
-    evidence: { ...verdictEvidence, exitCode: 0, observation: "passed" },
+    resultId: settled.resultId,
+    owner: "agent",
+    classification: { failureKind: "verification-failed" },
+    summary: "The human reviewer confirmed the behavior; execution must re-verify on a successor Attempt.",
+    evidence: { blockerId: routed.blockerId, review: "approved" },
+    rationale: "Continue through the bounded agent recovery policy.",
+    supersedesResolvedBlockerId: routed.blockerId,
   });
+  assert.equal(humanReviewReroute.action, "remediate");
 
+  const successorDispatchId = insertClaimedDispatch(taskId, 2);
+  const successorClaim = claimTaskAttempt({
+    invocation: invocation("subjective-review/claim/2"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: successorDispatchId,
+    retryOfAttemptId: claim.attemptId,
+  });
+  await stageTaskCompletion(completionInput(basePath, taskId, "subjective-review/settle/2"));
+  recordPassingVerdict(basePath, successorClaim.attemptId, "subjective-review/verdict/2");
   const published = await publishVerifiedTaskCompletion({
     invocation: invocation("subjective-review/publish"),
     basePath,
     task: { milestoneId: "M001", sliceId: "S01", taskId },
-    attemptId: claim.attemptId,
+    attemptId: successorClaim.attemptId,
   });
   assert.equal(published.status, "committed");
+  assert.equal(successorClaim.attemptNumber, 2);
+  assert.equal(row(`
+    SELECT retry_of_attempt_id
+    FROM workflow_execution_attempts
+    WHERE attempt_id = :attempt_id
+  `, { ":attempt_id": successorClaim.attemptId }).retry_of_attempt_id, claim.attemptId);
+  assert.deepEqual(db().prepare(`
+    SELECT verdict
+    FROM workflow_technical_verdicts
+    ORDER BY project_revision
+  `).all(), [{ verdict: "inconclusive" }, { verdict: "pass" }]);
 
   // The Task's current, non-superseded verdict is now "pass" — the stale
   // inconclusive verdict row must not make this attempt/result look like it

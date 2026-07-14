@@ -102,11 +102,11 @@ their dispatched tool surfaces do not include Task recovery resume or reopen
 authority.
 
 Closing a user/external Blocker does not erase or mutate its pause action. For
-an execution failure, reroute the same Result through the agent policy with the
-exact resolved/dismissed `blockerId` as `supersedesResolvedBlockerId`; the new
-retry-capable Recovery Action authorizes one fresh lineage successor. A
-subjective verification confirmation instead supersedes the inconclusive
-verdict and publishes the already-succeeded Attempt.
+execution or subjective verification failure, reroute the same Result through
+the agent policy with the exact resolved/dismissed `blockerId` as
+`supersedesResolvedBlockerId`; the new retry-capable Recovery Action authorizes
+one fresh lineage successor. The new Attempt must produce its own Result and
+current evidence-backed verdict before publication.
 
 ## Projection obstruction
 

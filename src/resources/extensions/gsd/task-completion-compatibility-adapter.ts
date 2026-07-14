@@ -351,7 +351,7 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
       AND lifecycle.lifecycle_status = 'in_progress'
       AND attempt.attempt_state = 'settled'
       AND result.outcome = 'succeeded'
-      AND checkpoint.next_stage IN ('verify', 'route')
+      AND checkpoint.next_stage = 'verify'
       AND verdict.verdict = 'pass'
       AND evidence.observation = 'passed'
       AND evidence.source_revision = verdict.tested_source_revision
@@ -366,27 +366,6 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
       AND NOT EXISTS (
         SELECT 1 FROM workflow_technical_verdicts successor
         WHERE successor.supersedes_verdict_id = verdict.verdict_id
-      )
-      AND (
-        checkpoint.next_stage = 'verify' OR EXISTS (
-          SELECT 1
-          FROM workflow_technical_verdicts previous
-          JOIN workflow_failure_observations observation
-            ON observation.attempt_id = attempt.attempt_id
-           AND observation.result_id = result.result_id
-           AND observation.project_id = attempt.project_id
-          JOIN workflow_recovery_actions action
-            ON action.failure_observation_id = observation.failure_observation_id
-           AND action.project_id = observation.project_id
-          JOIN workflow_blockers blocker
-            ON blocker.blocker_id = action.blocker_id
-           AND blocker.project_id = action.project_id
-          WHERE previous.verdict_id = verdict.supersedes_verdict_id
-            AND previous.verdict = 'inconclusive'
-            AND blocker.blocker_kind = 'subjective_uat'
-            AND blocker.blocker_status = 'resolved'
-            AND action.action = 'clarify'
-        )
       )
   `).get({
     ":attempt_id": input.attemptId,
