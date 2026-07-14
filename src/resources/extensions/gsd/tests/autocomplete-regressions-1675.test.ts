@@ -28,6 +28,7 @@ function createMockCtx() {
       },
       custom: async () => {},
     },
+    newSession: async () => ({ cancelled: true }),
     shutdown: async () => {},
   };
 }
