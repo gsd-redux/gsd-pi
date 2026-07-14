@@ -11,6 +11,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL } from "./db/sql-constants.js";
 import {
   appendRecoveryWorkCheckpoint,
   createOrReadRecoveryBudget,
@@ -422,47 +423,7 @@ function loadRoutedFailureScope(attemptId: string, resultId: string): FailedAtte
       AND attempt.attempt_state = 'settled'
       AND (
         result.outcome IN ('failed', 'interrupted') OR
-        (result.outcome = 'succeeded' AND EXISTS (
-          SELECT 1
-          FROM workflow_technical_verdicts verdict
-          JOIN workflow_acceptance_criteria criterion
-            ON criterion.criterion_id = verdict.criterion_id
-           AND criterion.project_id = verdict.project_id
-           AND criterion.lifecycle_id = verdict.lifecycle_id
-          JOIN workflow_verification_evidence evidence
-            ON evidence.verdict_id = verdict.verdict_id
-           AND evidence.project_id = verdict.project_id
-           AND evidence.attempt_id = verdict.attempt_id
-          WHERE verdict.project_id = result.project_id
-            AND verdict.lifecycle_id = result.lifecycle_id
-            AND verdict.attempt_id = result.attempt_id
-            AND verdict.verdict IN ('fail', 'inconclusive')
-            AND NOT EXISTS (
-              SELECT 1 FROM workflow_acceptance_criteria successor
-              WHERE successor.supersedes_criterion_id = criterion.criterion_id
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM workflow_technical_verdicts successor
-              WHERE successor.supersedes_verdict_id = verdict.verdict_id
-            )
-            AND NOT EXISTS (
-              SELECT 1
-              FROM workflow_technical_verdicts newer
-              JOIN workflow_verification_evidence newer_evidence
-                ON newer_evidence.verdict_id = newer.verdict_id
-               AND newer_evidence.project_id = newer.project_id
-               AND newer_evidence.attempt_id = newer.attempt_id
-              WHERE newer.project_id = verdict.project_id
-                AND newer.criterion_id = verdict.criterion_id
-                AND newer.lifecycle_id = verdict.lifecycle_id
-                AND newer.attempt_id = verdict.attempt_id
-                AND newer.project_revision > verdict.project_revision
-                AND NOT EXISTS (
-                  SELECT 1 FROM workflow_technical_verdicts successor
-                  WHERE successor.supersedes_verdict_id = newer.verdict_id
-                )
-            )
-        ))
+        (result.outcome = 'succeeded' AND ${CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL})
       )
       AND checkpoint.next_stage = 'route'
       AND NOT EXISTS (

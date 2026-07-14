@@ -58,23 +58,11 @@ See also:
 
 `QUEUE-ORDER.json` is the exception to the usual generated-artifact projection rule. `/gsd rethink` and related phase-management flows write it as the durable milestone reorder contract, and state derivation mirrors it into `milestones.sequence` before dispatch so stale DB sequence can be repaired without importing arbitrary markdown projections.
 
-`db/domain-operation.ts` provides the authoritative planning write seam: a
-project-scoped, revision- and Authority-Epoch-checked `BEGIN IMMEDIATE`
-transaction that atomically stores provenance, ordered events, outbox
-destinations, Projection Work, and the authority CAS. Exact retries return a
-durable receipt without rerunning mutation. Milestone/slice/task planning,
-task/slice replanning, and roadmap reassessment route through this seam while
-preserving their legacy response shapes. File-derived completion and UAT remain
-outside the cutover.
-
-Command primitives under `db/writers/lifecycle-commands.ts` compose
-canonical lifecycle, Attempt, Result, and Kernel checkpoint facts inside that
-transaction. `readDomainOperationFence()` recovers either the current fence or
-an existing idempotency key's original expected fence, while
-`db/lifecycle-shadow-comparison.ts` compares normalized legacy and canonical
-statuses without discarding exact values. Planning handlers use lifecycle
-adoption/transition and replay fences; Attempt integration remains blocked on
-proven lease-loss recovery.
+The current lifecycle authority and cutover boundaries are owned by the
+[architecture overview](./dev/architecture.md) and the
+[lifecycle command integration runbook](./dev/lifecycle-command-integration-runbook.md).
+This map covers prompt-to-database relationships without duplicating their
+cutover-status inventory.
 
 ---
 
@@ -359,7 +347,11 @@ unit completes
 
 ---
 
-## 7. Schema File → Tables Defined
+## 7. Primary Table-Owner Files
+
+Trigger-, index-, and constraint-only migration helpers are intentionally not
+duplicated here; [db-map.md](./db-map.md#2-schema-version-history) owns the
+complete migration history.
 
 | Source File | Tables |
 |------------|--------|
@@ -414,7 +406,7 @@ accepted V33 `subjective-uat` Answer instead of a Technical Verdict. Immutable
 Recovery Budgets store a `max_uses` allocation and no mutable consumed counter;
 consumption is derived by counting linked immutable Recovery Actions. The cap is
 one use for deterministic repair or two for every other policy class. A
-human-routed Failure Observation owns the exact V32 Blocker used by
+user- or external-owned Failure Observation owns the exact V32 Blocker used by
 clarify/pause, so an unrelated blocker cannot justify a pause. Criterion changes
 append a same-key supersession head, corrected Technical Verdicts supersede the
 current head for the same criterion, Attempt, and tested source revision, and
