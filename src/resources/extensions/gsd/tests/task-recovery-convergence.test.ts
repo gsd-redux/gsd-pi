@@ -827,7 +827,7 @@ test("genuine blockers pause and continue only through fresh agent-owned Attempt
     owner: "agent",
     classification: { failureKind: "verification-failed" },
     summary: "The human reviewer confirmed the behavior; execution must re-verify on a successor Attempt.",
-    evidence: { blockerId: routed.blockerId, review: "approved" },
+    evidence: { blockerId: routed.blockerId!, review: "approved" },
     rationale: "Continue through the bounded agent recovery policy.",
     supersedesResolvedBlockerId: routed.blockerId,
   });
