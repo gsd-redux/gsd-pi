@@ -179,7 +179,7 @@ async function complete(basePath: string) {
     oneLiner: "Validated closeout",
     narrative: "The Milestone is ready to close.",
     verificationPassed: true,
-  }, basePath);
+  }, basePath, invocation("milestone-complete/public"));
 }
 
 function sourceRevision(basePath: string): string {
@@ -427,6 +427,20 @@ test("Milestone completion rejects a file-only passing validation", async () => 
 
   assert.ok("error" in result, "a projection must not authorize completion");
   assert.match(result.error, /validation|database|evidence/i);
+});
+
+test("adopted Milestone completion fails closed without canonical invocation identity", async () => {
+  const basePath = makeBase();
+  const result = await handleCompleteMilestone({
+    milestoneId: "M001",
+    title: "Milestone validation",
+    oneLiner: "Validated closeout",
+    narrative: "The Milestone is ready to close.",
+    verificationPassed: true,
+  }, basePath);
+
+  assert.ok("error" in result);
+  assert.match(result.error, /canonical invocation identity/i);
 });
 
 test("Milestone completion rejects passing validation made stale by a descendant lifecycle change", async () => {

@@ -1,26 +1,58 @@
 // Project/App: gsd-pi
-// File Purpose: Complete-milestone surfaces and repairs swallowed projection obstructions.
+// File Purpose: Adopted complete-milestone surfaces and repairs projection obstructions.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { DomainOperationContext } from "../db/domain-operation.ts";
+import { adoptOrTransitionLifecycle } from "../db/writers/lifecycle-commands.ts";
+import type { ExecutionInvocation } from "../execution-invocation.ts";
+import { clearParseCache } from "../files.ts";
 import {
+  _getAdapter,
   closeDatabase,
+  executeDomainOperation,
   getMilestone,
-  insertAssessment,
   insertMilestone,
   insertSlice,
   insertTask,
   openDatabase,
-  updateSliceStatus,
+  readDomainOperationFence,
 } from "../gsd-db.ts";
+import { clearPathCache } from "../paths.ts";
 import {
   handleCompleteMilestone,
   type CompleteMilestoneParams,
 } from "../tools/complete-milestone.ts";
+import {
+  handleValidateMilestone,
+  type ValidateMilestoneParams,
+} from "../tools/validate-milestone.ts";
+
+function db() {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  return adapter;
+}
+
+function row(sql: string): Record<string, unknown> {
+  return db().prepare(sql).get() ?? {};
+}
+
+function invocation(idempotencyKey: string): ExecutionInvocation {
+  return {
+    idempotencyKey,
+    sourceTransport: "pi-tool",
+    actorType: "agent",
+    actorId: "milestone-projection-test",
+    traceId: `trace/${idempotencyKey}`,
+    turnId: `turn/${idempotencyKey}`,
+  };
+}
 
 function completionParams(): CompleteMilestoneParams {
   return {
@@ -28,13 +60,69 @@ function completionParams(): CompleteMilestoneParams {
     title: "M001: Projection delivery",
     oneLiner: "Milestone authority remains committed while projections catch up.",
     narrative: "The readable status can be repaired by an exact completion retry.",
-    verificationPassed: true,
+    verificationPassed: false,
   };
 }
 
-function seedCompletedMilestone(basePath: string): void {
+const validationParams: ValidateMilestoneParams = {
+  milestoneId: "M001",
+  verdict: "pass",
+  remediationRound: 0,
+  successCriteriaChecklist: "- [x] Complete",
+  sliceDeliveryAudit: "| S01 | delivered |",
+  crossSliceIntegration: "Passed",
+  requirementCoverage: "Covered",
+  verificationClasses: "| Class | Evidence | Verdict |\n| --- | --- | --- |\n| Contract | focused test | PASS |",
+  verdictRationale: "All current database evidence passes.",
+};
+
+function executeAtFence(
+  operationType: string,
+  idempotencyKey: string,
+  write: (context: Readonly<DomainOperationContext>) => void,
+): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType,
+    idempotencyKey,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { operationType, idempotencyKey },
+  }, (context) => {
+    write(context);
+    return {
+      events: [{
+        eventType: operationType,
+        entityType: "milestone",
+        entityId: "M001",
+        payload: { idempotencyKey },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: `test/${idempotencyKey}`.toLowerCase(),
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+}
+
+async function seedAdoptedMilestone(basePath: string): Promise<void> {
+  const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
+  mkdirSync(join(milestoneDir, "slices", "S01", "tasks"), { recursive: true });
+  writeFileSync(join(milestoneDir, "M001-CONTEXT.md"), "# M001\n");
+  writeFileSync(join(basePath, "source.ts"), "export const source = 'projection delivery';\n");
+  execFileSync("git", ["init"], { cwd: basePath, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: basePath });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: basePath });
+  execFileSync("git", ["add", "source.ts"], { cwd: basePath });
+  execFileSync("git", ["commit", "-m", "fixture"], { cwd: basePath, stdio: "ignore" });
+
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
   insertMilestone({ id: "M001", title: "Projection delivery", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Complete Slice" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Complete Slice", status: "complete" });
   insertTask({
     id: "T01",
     milestoneId: "M001",
@@ -42,43 +130,96 @@ function seedCompletedMilestone(basePath: string): void {
     title: "Complete Task",
     status: "complete",
   });
-  updateSliceStatus("M001", "S01", "complete", "2026-07-14T00:00:00.000Z");
-  insertAssessment({
-    path: join(basePath, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
-    milestoneId: "M001",
-    sliceId: null,
-    taskId: null,
-    status: "pass",
-    scope: "milestone-validation",
-    fullContent: "verdict: pass\n",
+  executeAtFence("test.milestone.fixture", "fixture/milestone/adopt", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId: "M001",
+      lifecycleStatus: "ready",
+    });
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S01",
+      lifecycleStatus: "completed",
+    });
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+    });
   });
+  const validation = await handleValidateMilestone(validationParams, basePath, {
+    invocation: invocation("fixture/milestone/validate"),
+    skipBrowserEvidenceGate: true,
+  });
+  assert.ok(!("error" in validation), `validation fixture failed: ${"error" in validation ? validation.error : ""}`);
 }
 
-test("complete-milestone surfaces a swallowed projection obstruction and repairs it on retry", async (t) => {
+function completionLineage(): Record<string, unknown> {
+  return {
+    operations: row(`
+      SELECT COUNT(*) AS count FROM workflow_operations
+      WHERE operation_type = 'milestone.complete'
+    `).count,
+    events: row(`
+      SELECT COUNT(*) AS count FROM workflow_domain_events
+      WHERE event_type = 'milestone.completed' AND entity_id = 'M001'
+    `).count,
+  };
+}
+
+test("adopted complete-milestone commits through projection obstruction and repairs exact retry", async (t) => {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-complete-milestone-stale-"));
   t.after(() => {
+    clearPathCache();
+    clearParseCache();
     closeDatabase();
     rmSync(basePath, { recursive: true, force: true });
   });
-  mkdirSync(join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), {
-    recursive: true,
-  });
-  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
-  seedCompletedMilestone(basePath);
+  await seedAdoptedMilestone(basePath);
 
   const statePath = join(basePath, ".gsd", "STATE.md");
   mkdirSync(statePath);
-  const obstructed = await handleCompleteMilestone(completionParams(), basePath);
+  const stableInvocation = invocation("milestone-complete/projection-obstruction");
+  const obstructed = await handleCompleteMilestone(
+    completionParams(),
+    basePath,
+    stableInvocation,
+  );
 
   assert.ok(!("error" in obstructed));
   assert.equal(obstructed.stale, true);
+  assert.equal(obstructed.replayed, false);
+  assert.equal(obstructed.current, true);
+  assert.ok(obstructed.operationId);
   assert.equal(getMilestone("M001")?.status, "complete");
+  assert.deepEqual(row(`
+    SELECT lifecycle_status, last_operation_id
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone' AND milestone_id = 'M001'
+      AND slice_id IS NULL AND task_id IS NULL
+  `), {
+    lifecycle_status: "completed",
+    last_operation_id: obstructed.operationId,
+  });
+  assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
 
   rmSync(statePath, { recursive: true, force: true });
-  const repaired = await handleCompleteMilestone(completionParams(), basePath);
+  const repaired = await handleCompleteMilestone(
+    completionParams(),
+    basePath,
+    stableInvocation,
+  );
 
   assert.ok(!("error" in repaired));
   assert.equal(repaired.alreadyComplete, true);
+  assert.equal(repaired.replayed, true);
+  assert.equal(repaired.current, true);
+  assert.equal(repaired.operationId, obstructed.operationId);
+  assert.equal(repaired.resultingRevision, obstructed.resultingRevision);
   assert.equal(repaired.stale, undefined);
   assert.equal(statSync(statePath).isFile(), true);
+  assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
 });

@@ -188,6 +188,13 @@ projection suppression.
 - A newer source revision or superseding criterion atomically withdraws its stale
   open question before creating the replacement. Validation and readiness accept
   only the current answered question and exact acceptance evidence.
+- T02 requires schema v43 because planned Milestones are canonically `ready`,
+  while v41 authorized direct `ready -> completed` only for Slices. The new
+  exception is limited to a causally matching `milestone.complete` operation.
+- Until T05 supplies private Pi/MCP invocation identity, adopted completion
+  fails closed at the handler. Unadopted compatibility completion remains
+  available; merge, journal, artifact-recovery, and reconciliation bypasses are
+  fenced separately in T06.
 
 1. **Characterize and RED the contract.** Add a Milestone capstone matrix for
    validate, complete, and reopen: deep hierarchy, terminal aliases, cancelled

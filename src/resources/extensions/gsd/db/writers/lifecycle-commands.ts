@@ -212,7 +212,7 @@ function isValidLifecycleTransition(
   if (from === "pending") return to === "ready" || to === "cancelled";
   if (from === "ready") {
     return to === "in_progress" || to === "paused" || to === "cancelled" ||
-      (itemKind === "slice" && to === "completed");
+      ((itemKind === "slice" || itemKind === "milestone") && to === "completed");
   }
   if (from === "in_progress") return to === "paused" || to === "completed" || to === "cancelled";
   if (from === "paused") return to === "ready" || to === "in_progress" || to === "cancelled";

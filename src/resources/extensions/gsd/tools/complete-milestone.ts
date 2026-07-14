@@ -32,8 +32,13 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import {
   isMilestoneLifecycleAdopted,
-  readMilestoneCloseoutReadiness,
 } from "../db/milestone-closeout-readiness.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
+import {
+  completeMilestone,
+  type MilestoneCompletionCloseout,
+  type MilestoneCompletionReceipt,
+} from "../milestone-lifecycle-domain-operation.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import {
   captureVerificationSourceSnapshot,
@@ -73,6 +78,26 @@ export interface CompleteMilestoneResult {
   summaryPath: string;
   stale?: boolean;
   alreadyComplete?: boolean;
+  operationId?: string;
+  resultingRevision?: number;
+  replayed?: boolean;
+  current?: boolean;
+}
+
+function completionCloseout(params: CompleteMilestoneParams): MilestoneCompletionCloseout {
+  return {
+    title: params.title,
+    oneLiner: params.oneLiner,
+    narrative: params.narrative,
+    successCriteriaResults: params.successCriteriaResults ?? "",
+    definitionOfDoneResults: params.definitionOfDoneResults ?? "",
+    requirementOutcomes: params.requirementOutcomes ?? "",
+    keyDecisions: params.keyDecisions ?? [],
+    keyFiles: params.keyFiles ?? [],
+    lessonsLearned: params.lessonsLearned ?? [],
+    followUps: params.followUps ?? "",
+    deviations: params.deviations ?? "",
+  };
 }
 
 function renderMilestoneSummaryMarkdown(params: CompleteMilestoneParams, completedAt: string): string {
@@ -139,6 +164,7 @@ ${params.followUps || "None."}
 export async function handleCompleteMilestone(
   params: CompleteMilestoneParams,
   basePath: string,
+  invocation?: ExecutionInvocation,
 ): Promise<CompleteMilestoneResult | { error: string }> {
   // ── Validate required fields ────────────────────────────────────────────
   if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
@@ -149,13 +175,14 @@ export async function handleCompleteMilestone(
   }
 
   const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
+  const adoptedLifecycle = isMilestoneLifecycleAdopted(params.milestoneId);
 
-  // ── Verify that verification passed ─────────────────────────────────────
-  if (params.verificationPassed !== true) {
+  // Legacy imports retain the caller gate. Adopted Milestones derive readiness
+  // only from the current canonical database receipt inside milestone.complete.
+  if (!adoptedLifecycle && params.verificationPassed !== true) {
     return { error: "verification did not pass — milestone completion blocked. verificationPassed must be explicitly set to true after all verification steps succeed" };
   }
 
-  const adoptedLifecycle = isMilestoneLifecycleAdopted(params.milestoneId);
   let currentSourceRevision: string | undefined;
   if (adoptedLifecycle) {
     const targets = resolveVerificationRepositoryTargets(
@@ -178,11 +205,36 @@ export async function handleCompleteMilestone(
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
-  const completedAt = new Date().toISOString();
+  let completedAt = new Date().toISOString();
   let guardError: string | null = null;
   let alreadyComplete = false;
+  let canonicalReceipt: MilestoneCompletionReceipt | undefined;
 
-  transaction(() => {
+  if (adoptedLifecycle) {
+    if (!invocation) {
+      return { error: "adopted Milestone completion requires canonical invocation identity" };
+    }
+    try {
+      canonicalReceipt = completeMilestone({
+        invocation,
+        milestoneId: params.milestoneId,
+        sourceRevision: currentSourceRevision!,
+        closeout: completionCloseout(params),
+        audit: {
+          ...(params.actorName ? { actorName: params.actorName } : {}),
+          ...(params.triggerReason ? { triggerReason: params.triggerReason } : {}),
+        },
+      });
+      completedAt = canonicalReceipt.completedAt;
+      alreadyComplete = canonicalReceipt.status === "replayed";
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  } else transaction(() => {
+    if (isMilestoneLifecycleAdopted(params.milestoneId)) {
+      guardError = `Refusing legacy completion for adopted Milestone ${params.milestoneId}`;
+      return;
+    }
     // State machine preconditions (inside txn for atomicity)
     const milestone = getMilestone(params.milestoneId);
     if (!milestone) {
@@ -194,27 +246,12 @@ export async function handleCompleteMilestone(
       return;
     }
 
-    // Adopted Milestones require the exact current canonical validation
-    // receipt. Legacy assessments remain an import compatibility path only.
-    if (adoptedLifecycle) {
-      const readiness = readMilestoneCloseoutReadiness({
-        milestoneId: params.milestoneId,
-        sourceRevision: currentSourceRevision,
-      });
-      if (!readiness.ready) {
-        guardError = `Refusing to complete ${params.milestoneId}: canonical validation is not current (${readiness.blockers
-          .map((blocker) => blocker.kind)
-          .join(", ")}).`;
-        return;
-      }
-    } else {
-      const validation = getLatestAssessmentByScope(params.milestoneId, "milestone-validation");
-      if (validation?.status !== "pass") {
-        guardError =
-          `Refusing to complete ${params.milestoneId}: latest milestone-validation verdict is ` +
-          `"${validation?.status ?? "absent"}". Only verdict=pass permits closeout.`;
-        return;
-      }
+    const validation = getLatestAssessmentByScope(params.milestoneId, "milestone-validation");
+    if (validation?.status !== "pass") {
+      guardError =
+        `Refusing to complete ${params.milestoneId}: latest milestone-validation verdict is ` +
+        `"${validation?.status ?? "absent"}". Only verdict=pass permits closeout.`;
+      return;
     }
 
     // Verify all slices are complete
@@ -252,7 +289,10 @@ export async function handleCompleteMilestone(
   }
 
   // ── Filesystem operations (outside transaction) ─────────────────────────
-  const summaryMd = renderMilestoneSummaryMarkdown(params, completedAt);
+  const summaryParams = canonicalReceipt
+    ? { ...params, ...canonicalReceipt.closeout }
+    : params;
+  const summaryMd = renderMilestoneSummaryMarkdown(summaryParams, completedAt);
 
   const summaryPath =
     resolveMilestoneFile(artifactBasePath, params.milestoneId, "SUMMARY") ??
@@ -319,5 +359,11 @@ export async function handleCompleteMilestone(
     summaryPath,
     ...(projectionStale ? { stale: true } : {}),
     ...(alreadyComplete ? { alreadyComplete: true } : {}),
+    ...(canonicalReceipt ? {
+      operationId: canonicalReceipt.operationId,
+      resultingRevision: canonicalReceipt.resultingRevision,
+      replayed: canonicalReceipt.status === "replayed",
+      current: canonicalReceipt.isCurrent,
+    } : {}),
   };
 }
