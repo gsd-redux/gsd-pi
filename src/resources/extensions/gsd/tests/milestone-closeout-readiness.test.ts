@@ -296,7 +296,7 @@ test("readiness requires the exact canonical validation receipt, source, and des
     }]);
   }
 
-  execute("test.task.reopened", (context) => {
+  execute("task.reopen", (context) => {
     adoptOrTransitionLifecycle(context, {
       itemKind: "task",
       milestoneId: "M001",

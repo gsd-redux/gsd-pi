@@ -11,6 +11,7 @@ import { getDb } from "./db/engine.js";
 import {
   completeMilestoneHierarchy,
   MilestoneLifecycleValidationError,
+  reopenMilestoneHierarchy,
   type MilestoneCompletionHierarchyResult,
 } from "./db/writers/milestone-lifecycle.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
@@ -78,6 +79,28 @@ interface StoredCompletionPayload {
 
 type StoredCompletionAudit = { actorName: string | null; triggerReason: string | null };
 
+export interface MilestoneReopenReceipt {
+  status: DomainOperationResult["status"];
+  operationId: string;
+  resultingRevision: number;
+  resultingAuthorityEpoch: number;
+  eventIds: string[];
+  outboxIds: number[];
+  projectionWorkIds: string[];
+  milestoneLifecycleId: string;
+  canonicalStatus: "ready";
+  legacyStatus: "active";
+  slicesReset: number;
+  tasksReset: number;
+  reopenedSliceIds: string[];
+  reopenedTaskIds: string[];
+  revokedWaiverIds: string[];
+  supersedingDispositionIds: string[];
+  reason: string;
+  audit: StoredCompletionAudit;
+  isCurrent: boolean;
+}
+
 function requiredText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new MilestoneLifecycleValidationError(`${field} must not be blank`);
@@ -111,16 +134,14 @@ function normalizedAudit(audit?: MilestoneCompletionAudit): StoredCompletionAudi
   };
 }
 
-function request(
+function operationRequest(
+  operationType: "milestone.complete" | "milestone.reopen",
   invocation: ExecutionInvocation,
-  milestoneId: string,
-  sourceRevision: string,
-  closeout: MilestoneCompletionCloseout,
-  audit: StoredCompletionAudit,
+  payload: Record<string, DomainJsonValue>,
 ): DomainOperationRequest {
   const fence = readDomainOperationFence(invocation.idempotencyKey);
   return {
-    operationType: "milestone.complete",
+    operationType,
     idempotencyKey: invocation.idempotencyKey,
     expectedRevision: fence.revision,
     expectedAuthorityEpoch: fence.authorityEpoch,
@@ -129,12 +150,7 @@ function request(
     sourceTransport: invocation.sourceTransport,
     ...(invocation.traceId ? { traceId: invocation.traceId } : {}),
     ...(invocation.turnId ? { turnId: invocation.turnId } : {}),
-    payload: {
-      milestoneId,
-      sourceRevision,
-      closeout: closeout as unknown as DomainJsonValue,
-      audit,
-    },
+    payload,
   };
 }
 
@@ -152,10 +168,14 @@ function shadowPayload(shadow: LifecycleShadowRecord): DomainJsonValue {
   };
 }
 
-function stringField(payload: Record<string, unknown>, field: string): string {
+function stringField(
+  payload: Record<string, unknown>,
+  field: string,
+  receipt = "completion",
+): string {
   const value = payload[field];
   if (typeof value !== "string" || !value) {
-    throw new Error(`Milestone completion receipt ${field} is corrupt`);
+    throw new Error(`Milestone ${receipt} receipt ${field} is corrupt`);
   }
   return value;
 }
@@ -168,11 +188,15 @@ function numberField(payload: Record<string, unknown>, field: string): number {
   return Number(value);
 }
 
-function stringArrayField(payload: Record<string, unknown>, field: string): string[] {
+function stringArrayField(
+  payload: Record<string, unknown>,
+  field: string,
+  receipt = "completion",
+): string[] {
   const value = payload[field];
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry) ||
       new Set(value).size !== value.length) {
-    throw new Error(`Milestone completion receipt ${field} is corrupt`);
+    throw new Error(`Milestone ${receipt} receipt ${field} is corrupt`);
   }
   return value as string[];
 }
@@ -229,6 +253,158 @@ function isCurrentCompletion(operationId: string, milestoneId: string): boolean 
   `).get({ ":milestone_id": milestoneId, ":operation_id": operationId }));
 }
 
+export function isCurrentMilestoneReopenOperation(
+  operationId: string,
+  milestoneId: string,
+): boolean {
+  const milestoneCurrent = getDb().prepare(`
+    SELECT 1 FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone' AND milestone_id = :milestone_id
+      AND slice_id IS NULL AND task_id IS NULL
+      AND lifecycle_status = 'ready' AND last_operation_id = :operation_id
+  `).get({ ":milestone_id": milestoneId, ":operation_id": operationId });
+  if (!milestoneCurrent) return false;
+
+  const staleDescendant = getDb().prepare(`
+    SELECT 1
+    FROM (
+      SELECT slice.id AS slice_id, NULL AS task_id, lifecycle.lifecycle_status,
+             lifecycle.last_operation_id
+      FROM slices slice
+      LEFT JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.item_kind = 'slice'
+       AND lifecycle.milestone_id = slice.milestone_id
+       AND lifecycle.slice_id = slice.id
+       AND lifecycle.task_id IS NULL
+      WHERE slice.milestone_id = :milestone_id
+      UNION ALL
+      SELECT task.slice_id, task.id AS task_id, lifecycle.lifecycle_status,
+             lifecycle.last_operation_id
+      FROM tasks task
+      LEFT JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.item_kind = 'task'
+       AND lifecycle.milestone_id = task.milestone_id
+       AND lifecycle.slice_id = task.slice_id
+       AND lifecycle.task_id = task.id
+      WHERE task.milestone_id = :milestone_id
+    ) descendant
+    WHERE descendant.lifecycle_status IS NULL
+       OR descendant.lifecycle_status != 'ready'
+       OR descendant.last_operation_id IS NULL
+       OR descendant.last_operation_id != :operation_id
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId, ":operation_id": operationId });
+  return !staleDescendant;
+}
+
+function storedReopenPayload(operationId: string): {
+  milestoneLifecycleId: string;
+  reopenedSliceIds: string[];
+  reopenedTaskIds: string[];
+  revokedWaiverIds: string[];
+  supersedingDispositionIds: string[];
+  reason: string;
+  audit: StoredCompletionAudit;
+} {
+  const events = getDb().prepare(`
+    SELECT payload_json FROM workflow_domain_events
+    WHERE operation_id = :operation_id AND event_type = 'milestone.reopened'
+  `).all({ ":operation_id": operationId }) as Array<Record<string, unknown>>;
+  if (events.length !== 1) throw new Error("Milestone reopen receipt requires one durable event");
+  const parsed = JSON.parse(String(events[0]!["payload_json"])) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Milestone reopen receipt payload is corrupt");
+  }
+  const payload = parsed as Record<string, unknown>;
+  const audit = payload["audit"];
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) {
+    throw new Error("Milestone reopen receipt audit is corrupt");
+  }
+  const storedAudit = audit as Record<string, unknown>;
+  if ((storedAudit["actorName"] !== null && typeof storedAudit["actorName"] !== "string") ||
+      (storedAudit["triggerReason"] !== null && typeof storedAudit["triggerReason"] !== "string")) {
+    throw new Error("Milestone reopen receipt audit is corrupt");
+  }
+  return {
+    milestoneLifecycleId: stringField(payload, "milestoneLifecycleId", "reopen"),
+    reopenedSliceIds: stringArrayField(payload, "reopenedSliceIds", "reopen"),
+    reopenedTaskIds: stringArrayField(payload, "reopenedTaskIds", "reopen"),
+    revokedWaiverIds: stringArrayField(payload, "revokedWaiverIds", "reopen"),
+    supersedingDispositionIds: stringArrayField(payload, "supersedingDispositionIds", "reopen"),
+    reason: stringField(payload, "reason", "reopen"),
+    audit: {
+      actorName: storedAudit["actorName"] as string | null,
+      triggerReason: storedAudit["triggerReason"] as string | null,
+    },
+  };
+}
+
+export function reopenMilestone(input: {
+  invocation: ExecutionInvocation;
+  milestoneId: string;
+  reason: string;
+  audit?: MilestoneCompletionAudit;
+}): MilestoneReopenReceipt {
+  const milestoneId = requiredText(input.milestoneId, "milestoneId");
+  const reason = requiredText(input.reason, "reason");
+  const audit = normalizedAudit(input.audit);
+  const operation = executeDomainOperation(
+    operationRequest("milestone.reopen", input.invocation, {
+      milestoneId,
+      reason,
+      audit,
+    }),
+    (context) => {
+      const result = reopenMilestoneHierarchy(context, { milestoneId, reason });
+      return {
+        events: [{
+          eventType: "milestone.reopened",
+          entityType: "milestone",
+          entityId: milestoneId,
+          payload: {
+            milestoneLifecycleId: result.milestoneLifecycleId,
+            reason,
+            audit,
+            reopenedSliceIds: result.reopenedSliceIds,
+            reopenedTaskIds: result.reopenedTaskIds,
+            revokedWaiverIds: result.revokedWaiverIds,
+            supersedingDispositionIds: result.supersedingDispositionIds,
+            lifecycleShadowComparisons: result.shadows.map((shadow) => shadowPayload(shadow)),
+          },
+          destinations: ["projection"],
+        }],
+        projections: [{
+          projectionKey: `lifecycle/${milestoneId}`.toLowerCase(),
+          projectionKind: "milestone-lifecycle",
+          rendererVersion: "1",
+        }],
+      };
+    },
+  );
+  const stored = storedReopenPayload(operation.operationId);
+  return {
+    status: operation.status,
+    operationId: operation.operationId,
+    resultingRevision: operation.resultingRevision,
+    resultingAuthorityEpoch: operation.resultingAuthorityEpoch,
+    eventIds: operation.eventIds,
+    outboxIds: operation.outboxIds,
+    projectionWorkIds: operation.projectionWorkIds,
+    milestoneLifecycleId: stored.milestoneLifecycleId,
+    canonicalStatus: "ready",
+    legacyStatus: "active",
+    slicesReset: stored.reopenedSliceIds.length,
+    tasksReset: stored.reopenedTaskIds.length,
+    reopenedSliceIds: stored.reopenedSliceIds,
+    reopenedTaskIds: stored.reopenedTaskIds,
+    revokedWaiverIds: stored.revokedWaiverIds,
+    supersedingDispositionIds: stored.supersedingDispositionIds,
+    reason: stored.reason,
+    audit: stored.audit,
+    isCurrent: isCurrentMilestoneReopenOperation(operation.operationId, milestoneId),
+  };
+}
+
 export function completeMilestone(input: {
   invocation: ExecutionInvocation;
   milestoneId: string;
@@ -241,7 +417,12 @@ export function completeMilestone(input: {
   const closeout = normalizedCloseout(input.closeout);
   const audit = normalizedAudit(input.audit);
   const operation = executeDomainOperation(
-    request(input.invocation, milestoneId, sourceRevision, closeout, audit),
+    operationRequest("milestone.complete", input.invocation, {
+      milestoneId,
+      sourceRevision,
+      closeout: closeout as unknown as DomainJsonValue,
+      audit,
+    }),
     (context) => {
       const result = completeMilestoneHierarchy(context, { milestoneId, sourceRevision });
       const { shadow, cancellationAuthorizations, ...storedResult } = result;

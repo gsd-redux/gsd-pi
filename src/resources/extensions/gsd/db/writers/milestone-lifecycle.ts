@@ -18,6 +18,10 @@ import {
   requireActiveDomainOperationContext,
   type LifecycleShadowRecord,
 } from "./lifecycle-commands.js";
+import {
+  recordRequirementDisposition,
+  terminateRecoveryWaiver,
+} from "./task-recovery.js";
 
 export interface MilestoneCompletionHierarchyInput {
   milestoneId: string;
@@ -49,6 +53,20 @@ export interface MilestoneCompletionHierarchyResult {
   shadow: LifecycleShadowRecord;
 }
 
+export interface MilestoneReopenHierarchyInput {
+  milestoneId: string;
+  reason: string;
+}
+
+export interface MilestoneReopenHierarchyResult {
+  milestoneLifecycleId: string;
+  reopenedSliceIds: string[];
+  reopenedTaskIds: string[];
+  revokedWaiverIds: string[];
+  supersedingDispositionIds: string[];
+  shadows: LifecycleShadowRecord[];
+}
+
 export class MilestoneLifecycleValidationError extends Error {}
 
 interface HierarchyRow {
@@ -62,6 +80,12 @@ interface HierarchyRow {
 
 interface CancellationAuthorizationRow {
   waiver_id: string;
+  disposition_id: string | null;
+}
+
+interface ReopenCancellationWaiverRow {
+  waiver_id: string;
+  requirement_id: string | null;
   disposition_id: string | null;
 }
 
@@ -83,13 +107,17 @@ function requireOperationTimestamp(context: Readonly<DomainOperationContext>): s
   }) as Record<string, unknown> | undefined;
   const completedAt = String(operation?.["created_at"] ?? "");
   if (!operation || !Number.isFinite(Date.parse(completedAt))) {
-    throw new Error("Milestone completion operation timestamp is missing or invalid");
+    throw new Error("Milestone lifecycle operation timestamp is missing or invalid");
   }
   return completedAt;
 }
 
 function blockerSummary(blockers: MilestoneCloseoutBlocker[]): string {
   return blockers.map((blocker) => blocker.kind).join(", ");
+}
+
+function changedRows(result: unknown): number {
+  return Number((result as { changes?: number }).changes ?? 0);
 }
 
 function requireMatchingShadow(row: HierarchyRow, identity: string): void {
@@ -139,6 +167,154 @@ function requireNoActiveAttempts(milestoneId: string): void {
     `${String(active["item_kind"])} ${milestoneId}${suffix} has active ` +
       `${String(active["attempt_state"])} Attempt ${String(active["attempt_id"])}`,
   );
+}
+
+function requireNoProgressedDependentMilestones(
+  context: Readonly<DomainOperationContext>,
+  milestoneId: string,
+): void {
+  const dependents = getDb().prepare(`
+    WITH RECURSIVE reachable(milestone_id) AS (
+      SELECT candidate.id
+      FROM milestones candidate
+      JOIN json_each(candidate.depends_on) dependency
+        ON CAST(dependency.value AS TEXT) = :milestone_id
+      UNION
+      SELECT candidate.id
+      FROM milestones candidate
+      JOIN json_each(candidate.depends_on) dependency
+      JOIN reachable prior
+        ON CAST(dependency.value AS TEXT) = prior.milestone_id
+    )
+    SELECT candidate.id, candidate.status AS legacy_status,
+           lifecycle.lifecycle_status AS canonical_status
+    FROM reachable
+    JOIN milestones candidate ON candidate.id = reachable.milestone_id
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = :project_id
+     AND lifecycle.item_kind = 'milestone'
+     AND lifecycle.milestone_id = candidate.id
+     AND lifecycle.slice_id IS NULL
+     AND lifecycle.task_id IS NULL
+    WHERE candidate.id != :milestone_id
+    ORDER BY candidate.sequence, candidate.id
+  `).all({
+    ":project_id": context.projectId,
+    ":milestone_id": milestoneId,
+  }) as Array<Record<string, unknown>>;
+  const progressed = dependents.find((dependent) => {
+    const legacyStatus = normalizeLegacyLifecycleStatus(String(dependent["legacy_status"]));
+    const canonicalStatus = dependent["canonical_status"] === null
+      ? null
+      : String(dependent["canonical_status"]);
+    return legacyStatus === "in_progress" || legacyStatus === "paused" || legacyStatus === "completed" ||
+      canonicalStatus === "in_progress" || canonicalStatus === "paused" || canonicalStatus === "completed";
+  });
+  if (progressed) {
+    throw new MilestoneLifecycleValidationError(
+      `cannot reopen Milestone ${milestoneId} while dependent Milestone ${String(progressed["id"])} has progressed`,
+    );
+  }
+}
+
+function revokeCancellationWaivers(
+  context: Readonly<DomainOperationContext>,
+  milestoneId: string,
+  reason: string,
+  reopenedAt: string,
+): { revokedWaiverIds: string[]; supersedingDispositionIds: string[] } {
+  const waivers = getDb().prepare(`
+    SELECT waiver.waiver_id, waiver.requirement_id,
+           disposition.disposition_id
+    FROM workflow_waivers waiver
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.project_id = waiver.project_id
+     AND lifecycle.lifecycle_id = waiver.lifecycle_id
+    LEFT JOIN workflow_requirement_dispositions disposition
+      ON disposition.project_id = waiver.project_id
+     AND disposition.requirement_id = waiver.requirement_id
+     AND disposition.waiver_id = waiver.waiver_id
+     AND disposition.disposition = 'waived'
+     AND NOT EXISTS (
+       SELECT 1
+       FROM workflow_requirement_dispositions successor
+       WHERE successor.supersedes_disposition_id = disposition.disposition_id
+     )
+    WHERE waiver.project_id = :project_id
+      AND lifecycle.milestone_id = :milestone_id
+      AND waiver.waiver_status = 'active'
+      AND (
+        (
+          lifecycle.item_kind = 'slice'
+          AND lifecycle.slice_id IS NOT NULL
+          AND lifecycle.task_id IS NULL
+          AND waiver.requirement_id IS NULL
+          AND waiver.blocker_id IS NULL
+          AND waiver.scope = 'slice:' || lifecycle.milestone_id || '/' || lifecycle.slice_id
+        ) OR (
+          lifecycle.item_kind = 'task'
+          AND lifecycle.slice_id IS NOT NULL
+          AND lifecycle.task_id IS NOT NULL
+          AND waiver.scope = lifecycle.milestone_id || '/' || lifecycle.slice_id || '/' || lifecycle.task_id || ' cancellation'
+        )
+      )
+    ORDER BY waiver.project_revision, waiver.waiver_id
+  `).all({
+    ":project_id": context.projectId,
+    ":milestone_id": milestoneId,
+  }) as unknown as ReopenCancellationWaiverRow[];
+  const revokedWaiverIds: string[] = [];
+  const supersedingDispositionIds: string[] = [];
+  for (const waiver of waivers) {
+    if (waiver.requirement_id && waiver.disposition_id) {
+      const disposition = recordRequirementDisposition(context, {
+        requirementId: waiver.requirement_id,
+        disposition: "unsatisfied",
+        supersedesDispositionId: waiver.disposition_id,
+        rationale: `Milestone ${milestoneId} reopened for full redo: ${reason}`,
+        createdAt: reopenedAt,
+      });
+      supersedingDispositionIds.push(disposition.dispositionId);
+    }
+    terminateRecoveryWaiver(context, {
+      waiverId: waiver.waiver_id,
+      disposition: "revoked",
+      endedAt: reopenedAt,
+    });
+    revokedWaiverIds.push(waiver.waiver_id);
+  }
+  return { revokedWaiverIds, supersedingDispositionIds };
+}
+
+function resetSliceQ8(milestoneId: string, sliceId: string): void {
+  const q8Rows = getDb().prepare(`
+    SELECT 1 FROM quality_gates
+    WHERE milestone_id = :milestone_id AND slice_id = :slice_id
+      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
+  `).all({ ":milestone_id": milestoneId, ":slice_id": sliceId });
+  if (q8Rows.length > 1) {
+    throw new MilestoneLifecycleValidationError(
+      `Milestone reopen found multiple Q8 quality gates for Slice ${sliceId}`,
+    );
+  }
+  const q8Write = q8Rows.length === 0
+    ? getDb().prepare(`
+        INSERT INTO quality_gates (
+          milestone_id, slice_id, gate_id, scope, task_id, status
+        ) VALUES (
+          :milestone_id, :slice_id, 'Q8', 'slice', '', 'pending'
+        )
+      `).run({ ":milestone_id": milestoneId, ":slice_id": sliceId })
+    : getDb().prepare(`
+        UPDATE quality_gates
+        SET status = 'pending', verdict = '', rationale = '',
+            findings = '', evaluated_at = NULL
+        WHERE milestone_id = :milestone_id AND slice_id = :slice_id
+          AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
+      `).run({ ":milestone_id": milestoneId, ":slice_id": sliceId });
+  if (changedRows(q8Write) !== 1) {
+    throw new Error(`Milestone reopen must establish one pending Q8 quality gate for Slice ${sliceId}`);
+  }
 }
 
 function currentSliceCancellationAuthorization(
@@ -450,5 +626,138 @@ export function completeMilestoneHierarchy(
     waiverIds,
     dispositionIds,
     shadow,
+  };
+}
+
+export function reopenMilestoneHierarchy(
+  context: Readonly<DomainOperationContext>,
+  input: MilestoneReopenHierarchyInput,
+): MilestoneReopenHierarchyResult {
+  if (requireActiveDomainOperationContext(context) !== "milestone.reopen") {
+    throw new Error("Milestone reopen requires a milestone.reopen Domain Operation");
+  }
+  const milestoneId = requireText(input.milestoneId, "milestoneId");
+  const reason = requireText(input.reason, "reason");
+  const reopenedAt = requireOperationTimestamp(context);
+  const milestone = loadMilestone(context, milestoneId);
+  requireTerminalState(milestone, `Milestone ${milestoneId}`);
+  const slices = loadSlices(context, milestoneId);
+  const tasks = loadTasks(context, milestoneId);
+  for (const slice of slices) {
+    requireTerminalState(slice, `Slice ${slice.sliceId}`);
+  }
+  for (const task of tasks) {
+    requireTerminalState(task, `Task ${task.sliceId}/${task.taskId}`);
+  }
+  requireNoActiveAttempts(milestoneId);
+  requireNoProgressedDependentMilestones(context, milestoneId);
+
+  const waiverResult = revokeCancellationWaivers(
+    context,
+    milestoneId,
+    reason,
+    reopenedAt,
+  );
+  const reopenedTaskIds: string[] = [];
+  for (const task of tasks) {
+    const taskId = task.taskId!;
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId,
+      sliceId: task.sliceId!,
+      taskId,
+      lifecycleStatus: "ready",
+      occurredAt: reopenedAt,
+    });
+    const updated = getDb().prepare(`
+      UPDATE tasks
+      SET status = 'pending', completed_at = NULL
+      WHERE milestone_id = :milestone_id
+        AND slice_id = :slice_id
+        AND id = :task_id
+        AND status = :expected_status
+    `).run({
+      ":milestone_id": milestoneId,
+      ":slice_id": task.sliceId,
+      ":task_id": taskId,
+      ":expected_status": task.legacyStatus,
+    });
+    if (changedRows(updated) !== 1) {
+      throw new Error(`Milestone reopen must update Task ${task.sliceId}/${taskId}`);
+    }
+    reopenedTaskIds.push(`${task.sliceId}/${taskId}`);
+  }
+
+  const reopenedSliceIds: string[] = [];
+  for (const slice of slices) {
+    const sliceId = slice.sliceId!;
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId,
+      sliceId,
+      lifecycleStatus: "ready",
+      occurredAt: reopenedAt,
+    });
+    const updated = getDb().prepare(`
+      UPDATE slices
+      SET status = 'in_progress', completed_at = NULL,
+          full_summary_md = '', full_uat_md = ''
+      WHERE milestone_id = :milestone_id
+        AND id = :slice_id
+        AND status = :expected_status
+    `).run({
+      ":milestone_id": milestoneId,
+      ":slice_id": sliceId,
+      ":expected_status": slice.legacyStatus,
+    });
+    if (changedRows(updated) !== 1) {
+      throw new Error(`Milestone reopen must update Slice ${sliceId}`);
+    }
+    resetSliceQ8(milestoneId, sliceId);
+    reopenedSliceIds.push(sliceId);
+  }
+
+  const milestoneLifecycle = adoptOrTransitionLifecycle(context, {
+    itemKind: "milestone",
+    milestoneId,
+    lifecycleStatus: "ready",
+    occurredAt: reopenedAt,
+  });
+  const updatedMilestone = getDb().prepare(`
+    UPDATE milestones
+    SET status = 'active', completed_at = NULL
+    WHERE id = :milestone_id AND status = :expected_status
+  `).run({
+    ":milestone_id": milestoneId,
+    ":expected_status": milestone.legacyStatus,
+  });
+  if (changedRows(updatedMilestone) !== 1) {
+    throw new Error(`Milestone reopen must update Milestone ${milestoneId}`);
+  }
+
+  const shadows = [
+    readLifecycleShadowComparison(context, { itemKind: "milestone", milestoneId }),
+    ...reopenedSliceIds.map((sliceId) =>
+      readLifecycleShadowComparison(context, { itemKind: "slice", milestoneId, sliceId })
+    ),
+    ...tasks.map((task) =>
+      readLifecycleShadowComparison(context, {
+        itemKind: "task",
+        milestoneId,
+        sliceId: task.sliceId!,
+        taskId: task.taskId!,
+      })
+    ),
+  ];
+  if (shadows.some((shadow) =>
+    shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta")) {
+    throw new Error("Milestone reopen did not converge canonical and legacy lifecycle state");
+  }
+  return {
+    milestoneLifecycleId: milestoneLifecycle.lifecycleId,
+    reopenedSliceIds,
+    reopenedTaskIds,
+    ...waiverResult,
+    shadows,
   };
 }

@@ -195,6 +195,25 @@ projection suppression.
   fails closed at the handler. Unadopted compatibility completion remains
   available; merge, journal, artifact-recovery, and reconciliation bypasses are
   fenced separately in T06.
+- T03 adds one `milestone.reopen` operation for the full-redo contract. It moves
+  the Milestone, every Slice, and every Task head to canonical `ready` while
+  preserving the established legacy `active`/`in_progress`/`pending` projection,
+  clears compatibility completion content, and resets each Slice Q8 gate.
+- Reopen rejects claimed or running Attempts, nonterminal or mismatched heads,
+  and progressed transitive dependent Milestones. It revokes only current
+  cancellation Waivers; a current waived Task disposition is preserved and
+  superseded by an immutable `unsatisfied` row.
+- Schema v44 causally authorizes terminal-to-ready transitions by hierarchy:
+  `milestone.reopen` for Milestones, `slice.reopen|milestone.reopen` for Slices,
+  and `task.reopen|slice.reopen|milestone.reopen` for Tasks. The legacy cascade
+  atomically refuses any hierarchy containing canonical authority, including
+  partial adoption.
+- T04 still owns per-artifact tombstone/current-operation fencing. T03 skips a
+  known superseded replay and surfaces projection staleness, but a newer
+  operation can still race between a currentness read and legacy file cleanup.
+- Until T05 supplies private Pi/MCP invocation identity, adopted reopen also
+  fails closed at the handler. Direct adapter and handler contracts use explicit
+  identity; production transport convergence is intentionally not fabricated.
 
 1. **Characterize and RED the contract.** Add a Milestone capstone matrix for
    validate, complete, and reopen: deep hierarchy, terminal aliases, cancelled

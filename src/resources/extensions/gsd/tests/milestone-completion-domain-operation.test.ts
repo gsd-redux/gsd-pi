@@ -324,7 +324,7 @@ async function rejectWithoutResidue(
 }
 
 function setNonterminal(kind: "slice" | "task"): void {
-  executeAtFence(`test.${kind}.nonterminal`, `fixture/${kind}/nonterminal`, (context) => {
+  executeAtFence(`${kind}.reopen`, `fixture/${kind}/nonterminal`, (context) => {
     if (kind === "slice") {
       adoptOrTransitionLifecycle(context, {
         itemKind: "slice", milestoneId: "M001", sliceId: "S01", lifecycleStatus: "ready",
@@ -427,7 +427,7 @@ function authorizeCancelledTaskWithTwoRequirements(): {
   waiverIds: string[];
   dispositionIds: string[];
 } {
-  executeAtFence("test.task.reopen", "fixture/cancelled-task/reopen", (context) => {
+  executeAtFence("task.reopen", "fixture/cancelled-task/reopen", (context) => {
     adoptOrTransitionLifecycle(context, {
       itemKind: "task",
       milestoneId: "M001",

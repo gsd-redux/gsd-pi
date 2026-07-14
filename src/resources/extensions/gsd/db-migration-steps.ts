@@ -10,6 +10,7 @@ import { createSliceCancellationSchemaV40 } from "./db-slice-cancellation-schema
 import { createSliceCompletionSchemaV41 } from "./db-slice-completion-schema.js";
 import { createMilestoneValidationSchemaV42 } from "./db-milestone-validation-schema.js";
 import { createMilestoneCompletionSchemaV43 } from "./db-milestone-completion-schema.js";
+import { createMilestoneReopenSchemaV44 } from "./db-milestone-reopen-schema.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
@@ -558,4 +559,8 @@ export function applyMigrationV42MilestoneValidation(db: DbAdapter): void {
 
 export function applyMigrationV43MilestoneCompletion(db: DbAdapter): void {
   createMilestoneCompletionSchemaV43(db);
+}
+
+export function applyMigrationV44MilestoneReopen(db: DbAdapter): void {
+  createMilestoneReopenSchemaV44(db);
 }

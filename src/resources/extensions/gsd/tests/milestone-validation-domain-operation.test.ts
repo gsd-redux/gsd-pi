@@ -447,7 +447,7 @@ test("Milestone completion rejects passing validation made stale by a descendant
   const basePath = makeBase();
   const validated = await validate(basePath, "milestone-validate/public/stale");
   assert.ok(!("error" in validated), "validation fixture should commit");
-  executeAtFence("test.task.reopened", "fixture/task/newer-revision", (context) => {
+  executeAtFence("task.reopen", "fixture/task/newer-revision", (context) => {
     adoptOrTransitionLifecycle(context, {
       itemKind: "task",
       milestoneId: "M001",

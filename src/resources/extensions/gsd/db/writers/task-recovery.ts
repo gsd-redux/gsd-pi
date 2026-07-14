@@ -575,7 +575,7 @@ export function recordRequirementDisposition(
   context: Readonly<DomainOperationContext>,
   input: RecordRequirementDispositionInput,
 ): { dispositionId: string; disposition: RecordRequirementDispositionInput["disposition"] } {
-  requireOperation(context, ["task.disposition.record", "task.waiver.terminate"]);
+  requireOperation(context, ["task.disposition.record", "task.waiver.terminate", "milestone.reopen"]);
   const requirementId = requireText(input.requirementId, "requirementId");
   const currentHead = currentDispositionHead(requirementId);
   const suppliedHead = input.supersedesDispositionId ?? null;
@@ -623,7 +623,7 @@ export function terminateRecoveryWaiver(
     endedAt?: string;
   },
 ): { waiverId: string; waiverStatus: "revoked" | "expired" } {
-  requireOperation(context, ["task.waiver.terminate"]);
+  requireOperation(context, ["task.waiver.terminate", "milestone.reopen"]);
   const waiverId = requireText(input.waiverId, "waiverId");
   const updated = getDb().prepare(`
     UPDATE workflow_waivers

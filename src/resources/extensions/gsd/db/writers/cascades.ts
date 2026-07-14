@@ -81,6 +81,7 @@ export function reopenSliceCascade(milestoneId: string, sliceId: string): Reopen
 export type ReopenMilestoneOutcome =
   | { ok: true; slicesReset: number; tasksReset: number }
   | { ok: false; reason: "milestone-not-found" }
+  | { ok: false; reason: "canonical-authority-present" }
   | { ok: false; reason: "milestone-not-closed"; status: string };
 
 /**
@@ -94,6 +95,15 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
   transaction(() => {
     const milestone = getMilestone(milestoneId);
     if (!milestone) { outcome = { ok: false, reason: "milestone-not-found" }; return; }
+    const canonicalAuthority = getDbOrNull()!.prepare(`
+      SELECT 1 FROM workflow_item_lifecycles
+      WHERE milestone_id = :milestone_id
+      LIMIT 1
+    `).get({ ":milestone_id": milestoneId });
+    if (canonicalAuthority) {
+      outcome = { ok: false, reason: "canonical-authority-present" };
+      return;
+    }
     if (!isClosedStatus(milestone.status)) { outcome = { ok: false, reason: "milestone-not-closed", status: milestone.status }; return; }
 
     const slices = getMilestoneSlices(milestoneId);

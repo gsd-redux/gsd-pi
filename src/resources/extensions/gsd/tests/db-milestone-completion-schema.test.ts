@@ -173,8 +173,8 @@ test("v43 authorizes only milestone.complete for Milestone ready-to-completed", 
   closeDatabase();
   const db = openRawDatabase(dbPath);
   try {
-    assert.equal(SCHEMA_VERSION, 43);
-    assert.equal(schemaVersion(db), 43);
+    assert.equal(SCHEMA_VERSION, 44);
+    assert.equal(schemaVersion(db), 44);
     seedLifecycleFixture(db);
 
     assert.throws(
@@ -277,7 +277,7 @@ test("a genuine v42 database gains the narrow Milestone completion authorization
   closeDatabase();
   const upgraded = openRawDatabase(dbPath);
   try {
-    assert.equal(schemaVersion(upgraded), 43);
+    assert.equal(schemaVersion(upgraded), 44);
     assert.throws(
       () => transitionToCompleted(upgraded, "life-ready", "op-wrong", 2),
       /invalid workflow lifecycle transition/,
