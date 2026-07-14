@@ -542,7 +542,7 @@ test("retry claim requires the current route head's retry-capable Recovery Actio
 
   assert.throws(
     () => claimTaskAttempt(retryInput),
-    /current route head.*retry-capable Recovery Action|retry-capable Recovery Action/i,
+    /current causal recovery authority/i,
   );
   assert.equal(count("workflow_execution_attempts"), 1);
   assert.equal(row(`SELECT status FROM unit_dispatches WHERE id = ${retryDispatchId}`).status, "claimed");

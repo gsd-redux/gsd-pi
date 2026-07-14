@@ -1258,6 +1258,7 @@ test("lifecycle writers and pure comparison remain below handlers and orchestrat
     "node:crypto",
     "../engine.js",
     "../domain-operation.js",
+    "../sql-constants.js",
     "../kernel-stage-policy.js",
     "../lifecycle-shadow-comparison.js",
   ]);
