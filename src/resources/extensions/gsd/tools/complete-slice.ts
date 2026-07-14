@@ -31,6 +31,7 @@ import {
   SliceLifecycleValidationError,
   type SliceCompletionCloseout,
 } from "../slice-lifecycle-domain-operation.js";
+import { setSliceCompletionSummaryProjectionIfCurrent } from "../db/writers/slice-lifecycle.js";
 
 export interface CompleteSliceResult {
   sliceId: string;
@@ -52,37 +53,6 @@ function sliceSummaryPath(basePath: string, milestoneId: string, sliceId: string
   // relSliceFile returns a path relative to basePath (e.g. ".gsd/phases/01-test/01-01-SUMMARY.md"),
   // so join with basePath (not gsdProjectionRoot which would double the ".gsd/" segment).
   return join(basePath, relSliceFile(basePath, milestoneId, sliceId, "SUMMARY"));
-}
-
-function setSliceSummaryMdIfCurrent(
-  milestoneId: string,
-  sliceId: string,
-  operationId: string,
-  summaryMd: string,
-  uatMd: string,
-): boolean {
-  const updated = getDb().prepare(`
-    UPDATE slices
-    SET full_summary_md = :summary_md, full_uat_md = :uat_md
-    WHERE milestone_id = :milestone_id
-      AND id = :slice_id
-      AND EXISTS (
-        SELECT 1 FROM workflow_item_lifecycles lifecycle
-        WHERE lifecycle.item_kind = 'slice'
-          AND lifecycle.milestone_id = :milestone_id
-          AND lifecycle.slice_id = :slice_id
-          AND lifecycle.task_id IS NULL
-          AND lifecycle.lifecycle_status = 'completed'
-          AND lifecycle.last_operation_id = :operation_id
-      )
-  `).run({
-    ":milestone_id": milestoneId,
-    ":slice_id": sliceId,
-    ":operation_id": operationId,
-    ":summary_md": summaryMd,
-    ":uat_md": uatMd,
-  });
-  return Number((updated as { changes?: number }).changes ?? 0) === 1;
 }
 
 async function removeOwnedProjection(path: string, content: string): Promise<void> {
@@ -439,13 +409,13 @@ export async function handleCompleteSlice(
   }
 
   try {
-    if (!setSliceSummaryMdIfCurrent(
-      params.milestoneId,
-      params.sliceId,
-      completion.operationId,
+    if (!setSliceCompletionSummaryProjectionIfCurrent({
+      milestoneId: params.milestoneId,
+      sliceId: params.sliceId,
+      operationId: completion.operationId,
       summaryMd,
       uatMd,
-    )) {
+    })) {
       superseded = true;
       projectionStale = true;
     } else {
