@@ -239,6 +239,34 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     assert.equal(s.pendingVerificationRetry, null);
   });
 
+  test("continues when DB pass is current and the validation projection is empty", async () => {
+    insertMilestone({ id: "M001" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
+    const path = join(tempDir, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
+    writeFileSync(path, "", "utf-8");
+    insertAssessment({
+      path,
+      milestoneId: "M001",
+      sliceId: null,
+      taskId: null,
+      status: "pass",
+      scope: "milestone-validation",
+      fullContent: "---\nverdict: pass\n---\n",
+    });
+    invalidateAllCaches();
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, "validate-milestone", "M001");
+
+    const result = await runPostUnitVerification({ s, ctx, pi } as VerificationContext, pauseAutoMock);
+
+    assert.equal(result, "continue");
+    assert.equal(pauseAutoMock.mock.callCount(), 0);
+    assert.equal(s.pendingVerificationRetry, null);
+  });
+
   test("continues when DB pass overrides stale worktree needs-attention after /gsd verdict", async () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
@@ -315,7 +343,7 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     assert.equal(pauseAutoMock.mock.callCount(), 0);
     assert.ok(s.pendingVerificationRetry);
     assert.equal(s.pendingVerificationRetry!.unitId, "M001");
-    assert.match(s.pendingVerificationRetry!.failureContext, /exists but is empty/);
+    assert.match(s.pendingVerificationRetry!.failureContext, /canonical validation result/i);
     assert.equal(s.pendingVerificationRetry!.attempt, 1);
   });
 

@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifyExpectedArtifact } from "../auto-recovery.ts";
 import { recoverTimedOutUnit, type RecoveryContext } from "../auto-timeout-recovery.ts";
-import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
+import { closeDatabase, insertAssessment, insertMilestone, insertSlice, insertTask, openDatabase } from "../gsd-db.ts";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -81,6 +81,46 @@ function makeRecordingCtx() {
     );
   }
   assert.ok(crashed, "should crash when basePath is undefined (reproduces #1855)");
+}
+
+// ═══ validate-milestone timeout recovery trusts DB authority ════════════════
+
+{
+  console.log("\n=== validate-milestone timeout recovery accepts DB validation without Markdown ===");
+  const base = mkdtempSync(join(tmpdir(), "gsd-timeout-db-validation-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+
+  try {
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "complete" });
+    insertAssessment({
+      path: ".gsd/milestones/M001/M001-VALIDATION.md",
+      milestoneId: "M001",
+      status: "pass",
+      scope: "milestone-validation",
+      fullContent: "---\nverdict: pass\n---\n",
+    });
+
+    const ctx = makeRecordingCtx();
+    const pi = makeRecordingPi();
+    const result = await recoverTimedOutUnit(ctx, pi, "validate-milestone", "M001", "idle", {
+      basePath: base,
+      verbose: false,
+      currentUnitStartedAt: Date.now(),
+      unitRecoveryCount: new Map(),
+    });
+
+    assert.equal(result, "recovered");
+    assert.equal(pi.messages.length, 0, "durable validation must advance without steering another model turn");
+    assert.ok(
+      ctx.notifications.some((entry: { message: string }) => entry.message.includes("durable outcome verified")),
+      "recovery should explain that the database-backed outcome was verified",
+    );
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
 }
 
 // ═══ Legacy DB-complete execute-task cannot bypass Attempt authority ═════════

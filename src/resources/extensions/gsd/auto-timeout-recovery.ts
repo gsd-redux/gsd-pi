@@ -12,12 +12,10 @@ import {
   inspectExecuteTaskDurability,
 } from "./unit-runtime.js";
 import {
-  resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
   verifyExpectedArtifact,
   writeBlockerPlaceholder,
 } from "./auto-recovery.js";
-import { existsSync } from "node:fs";
 
 import { bumpAndResolveSynthetic } from "./auto/resolve.js";
 import { finalizeProjectResearchTimeout } from "./project-research-policy.js";
@@ -211,17 +209,14 @@ export async function recoverTimedOutUnit(
     return "recovered";
   }
 
-  // Check if the artifact is already valid on disk — agent may have written it
-  // without signaling completion.
-  const artifactPath = resolveExpectedArtifactPath(unitType, unitId, basePath);
-  if (artifactPath && existsSync(artifactPath) && verifyExpectedArtifact(unitType, unitId, basePath)) {
+  if (verifyExpectedArtifact(unitType, unitId, basePath)) {
     writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
       phase: "finalized",
       recoveryAttempts: recoveryAttempts + 1,
       lastRecoveryReason: reason,
     });
     ctx.ui.notify(
-      `${reason === "idle" ? "Idle" : "Timeout"} recovery: ${unitType} ${unitId} artifact already exists on disk. Advancing. (attempt ${attemptNumber})`,
+      `${reason === "idle" ? "Idle" : "Timeout"} recovery: ${unitType} ${unitId} durable outcome verified. Advancing. (attempt ${attemptNumber})`,
       "info",
     );
     unitRecoveryCount.delete(recoveryKey);

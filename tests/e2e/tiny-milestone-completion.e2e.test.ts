@@ -19,11 +19,14 @@ import {
 	writeTranscript,
 } from "./_shared/index.ts";
 
+const PENDING_ANSWER = "export function answer() {\n\treturn \"pending\";\n}\n";
+const READY_ANSWER = "export function answer() {\n\treturn \"ready\";\n}\n";
+
 function commitFixture(dir: string): void {
 	commitProjectFiles(dir, ["package.json", "src/answer.js", "test/answer.test.js"], "test: seed tiny fixture");
 }
 
-function buildTranscript(): string {
+function buildTranscript(testedSourceRevision: string, workingDirectory: string): string {
 	return writeTranscript([
 		{
 			turn: 1,
@@ -277,7 +280,7 @@ function buildTranscript(): string {
 					name: "write",
 					input: {
 						path: "src/answer.js",
-						content: "export function answer() {\n\treturn \"ready\";\n}\n",
+						content: READY_ANSWER,
 					},
 				}],
 			},
@@ -378,6 +381,20 @@ function buildTranscript(): string {
 						crossSliceIntegration: "Single-slice milestone; no cross-slice boundary exists.",
 						requirementCoverage: "R001 is covered by S01/T01 and verified by `node --test test/answer.test.js`.",
 						verificationClasses: "| Class | Planned Check | Evidence | Verdict |\n| --- | --- | --- | --- |\n| Contract | Local command exits 0. | `node --test test/answer.test.js` exited 0 in T01. | PASS |",
+						verificationEvidence: [{
+							verificationClass: "Contract",
+							evidenceClass: "command",
+							commandOrTool: "node --test test/answer.test.js",
+							workingDirectory,
+							startedAt: "2026-07-14T12:00:00.000Z",
+							endedAt: "2026-07-14T12:00:01.000Z",
+							exitCode: 0,
+							observation: "passed",
+							durableOutputRef: "command://node-test/answer",
+							testedSourceRevision,
+							environment: { runtime: "node", suite: "test/answer.test.js" },
+							rationale: "The planned Contract command passed against the current source.",
+						}],
 						verdictRationale: "All planned source, task, slice, requirement, and contract evidence passed.",
 					},
 				}],
@@ -425,12 +442,16 @@ describe("tiny milestone completion e2e (fake LLM)", () => {
 	const avail = smokeBinaryAvailable();
 	const skipReason = avail.ok ? null : avail.reason;
 
-	test("headless new-milestone --auto completes a verified source change", { skip: skipReason ?? false, timeout: 180_000 }, (t) => {
+	test("headless new-milestone --auto completes a verified source change", { skip: skipReason ?? false, timeout: 180_000 }, async (t) => {
+		const { captureVerificationSourceSnapshot } = await import(
+			"../../dist/resources/extensions/gsd/verification-source-integrity.js"
+		);
+		const { ensureGitignore } = await import("../../dist/resources/extensions/gsd/gitignore.js");
 		const project = createTmpProject({
 			git: true,
 			files: {
 				"package.json": JSON.stringify({ type: "module", scripts: { test: "node --test test/answer.test.js" } }, null, 2) + "\n",
-				"src/answer.js": "export function answer() {\n\treturn \"pending\";\n}\n",
+				"src/answer.js": PENDING_ANSWER,
 				"test/answer.test.js": [
 					"import test from \"node:test\";",
 					"import assert from \"node:assert/strict\";",
@@ -452,7 +473,12 @@ describe("tiny milestone completion e2e (fake LLM)", () => {
 			},
 		}, null, 2) + "\n");
 
-		const transcript = buildTranscript();
+		ensureGitignore(project.dir);
+		writeFileSync(join(project.dir, "src/answer.js"), READY_ANSWER);
+		const source = captureVerificationSourceSnapshot([{ id: "project", cwd: project.dir }]);
+		assert.ok(source.ok, `expected source snapshot, got ${source.ok ? "" : source.error}`);
+		writeFileSync(join(project.dir, "src/answer.js"), PENDING_ANSWER);
+		const transcript = buildTranscript(source.snapshot.aggregateRevision, project.dir);
 		const result = gsdSync(
 			[
 				"headless",

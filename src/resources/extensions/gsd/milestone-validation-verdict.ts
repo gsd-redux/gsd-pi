@@ -38,10 +38,9 @@ function resolveCanonicalValidationVerdict(
  * Resolve the current database verdict. VALIDATION.md is a projection and can
  * only enter authority through an explicit import operation.
  */
-export async function resolveMilestoneValidationVerdict(
-  _basePath: string,
+export function readMilestoneValidationVerdict(
   milestoneId: string,
-): Promise<ValidationVerdict | undefined> {
+): ValidationVerdict | undefined {
   if (!isDbAvailable()) return undefined;
   if (isMilestoneLifecycleAdopted(milestoneId)) {
     return resolveCanonicalValidationVerdict(milestoneId);
@@ -49,4 +48,11 @@ export async function resolveMilestoneValidationVerdict(
   const assessment = getLatestAssessmentByScope(milestoneId, "milestone-validation");
   const status = typeof assessment?.status === "string" ? assessment.status : undefined;
   return status && isValidMilestoneVerdict(status) ? status : undefined;
+}
+
+export async function resolveMilestoneValidationVerdict(
+  _basePath: string,
+  milestoneId: string,
+): Promise<ValidationVerdict | undefined> {
+  return readMilestoneValidationVerdict(milestoneId);
 }

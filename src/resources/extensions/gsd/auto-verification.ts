@@ -15,17 +15,15 @@
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { gsdProjectionRoot, legacyMilestonesDir, relMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "./paths.js";
+import { gsdProjectionRoot, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "./paths.js";
 import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
-import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices } from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
 import { isClosedStatus } from "./status-guards.js";
-import { loadFile } from "./files.js";
 import {
   runVerificationGate,
   runVerificationGateForTargets,
@@ -472,22 +470,6 @@ async function runValidateMilestonePostCheck(
     return incompleteSliceCount > 0 || hasAssessmentArtifact;
   };
 
-  const validationBasePath = resolveCanonicalMilestoneRoot(s.basePath, mid);
-  // Layout-aware: matches the writer at tools/validate-milestone.ts:167.
-  // Flat-phase resolves to phases/NN-slug/NN-VALIDATION.md; legacy resolves
-  // to milestones/MID/MID-VALIDATION.md. See open-gsd/gsd-pi#876.
-  const validationFile = join(validationBasePath, relMilestoneFile(validationBasePath, mid, "VALIDATION"));
-  const validationContent = await loadFile(validationFile);
-  if (validationContent !== null && validationContent.trim() === "") {
-    if (await reassessmentInvalidatedValidation()) {
-      clearValidationRetry();
-      return "continue";
-    }
-    return setToolFailureRetry(
-      "You must call gsd_validate_milestone to persist the validation results. VALIDATION.md exists but is empty.",
-    );
-  }
-
   const verdict = await resolveMilestoneValidationVerdict(s.basePath, mid);
   if (!verdict) {
     if (await reassessmentInvalidatedValidation()) {
@@ -495,7 +477,7 @@ async function runValidateMilestonePostCheck(
       return "continue";
     }
     return setToolFailureRetry(
-      "You must call gsd_validate_milestone to persist the validation results. No VALIDATION.md was created.",
+      "You must call gsd_validate_milestone to persist the validation results. No current canonical validation result exists in the database.",
     );
   }
   if (verdict === "needs-attention") {

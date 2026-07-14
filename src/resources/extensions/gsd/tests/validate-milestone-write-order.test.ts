@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { handleValidateMilestone } from "../tools/validate-milestone.js";
+import { verifyExpectedArtifact } from "../auto-recovery.js";
 import { openDatabase, closeDatabase, _getAdapter, insertMilestone, insertSlice, insertArtifact } from "../gsd-db.js";
 import { clearPathCache } from "../paths.js";
 import { clearParseCache } from "../files.js";
@@ -121,6 +122,11 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
     ).get() as { status: string } | undefined;
     assert.ok(row, "assessment row should remain committed");
     assert.equal(row!.status, "pass");
+    assert.equal(
+      verifyExpectedArtifact("validate-milestone", "M001", base),
+      true,
+      "auto-mode must trust the committed validation when its Markdown projection is stale",
+    );
   });
 
   it("persists milestone validation gate_runs rows when UOK gates are enabled", async () => {

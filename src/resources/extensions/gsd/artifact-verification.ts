@@ -47,6 +47,7 @@ import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
 import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
 import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
+import { readMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
 
 export type ExecuteTaskArtifactReadiness = "verify" | "route";
 
@@ -326,6 +327,17 @@ export function verifyExpectedArtifact(
       return readExecuteTaskArtifactReadiness(mid, sid, tid) !== null;
     } catch (err) {
       logWarning("recovery", `execute-task Attempt readiness failed for ${unitId}: ${getErrorMessage(err)}`);
+      return false;
+    }
+  }
+
+  if (unitType === "validate-milestone" && isDbAvailable()) {
+    const { milestone } = parseUnitId(unitId);
+    if (!milestone) return false;
+    try {
+      return readMilestoneValidationVerdict(milestone) !== undefined;
+    } catch (err) {
+      logWarning("recovery", `validate-milestone DB verification failed for ${unitId}: ${getErrorMessage(err)}`);
       return false;
     }
   }
