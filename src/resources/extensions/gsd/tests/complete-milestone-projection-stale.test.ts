@@ -28,6 +28,7 @@ import {
   handleCompleteMilestone,
   type CompleteMilestoneParams,
 } from "../tools/complete-milestone.ts";
+import { executeCompleteMilestone } from "../tools/workflow-tool-executors.ts";
 import { reopenMilestone } from "../milestone-lifecycle-domain-operation.ts";
 import { _setProjectionFlushAfterRenderForTest } from "../projection-flush.ts";
 import { handleReopenMilestone } from "../tools/reopen-milestone.ts";
@@ -258,6 +259,20 @@ test("delayed completion replay cannot resurrect its summary after a newer Miles
   assert.equal(replay.stale, true);
   assert.equal(statSync(completed.summaryPath, { throwIfNoEntry: false }), undefined);
   assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
+
+  const executorReplay = await executeCompleteMilestone(
+    { ...completionParams() },
+    basePath,
+    stableInvocation,
+  );
+  assert.doesNotMatch(String(executorReplay.content[0]?.text), /already complete|^Completed milestone\b/i);
+  assert.match(
+    String(executorReplay.content[0]?.text),
+    /historical|superseded|no longer current/i,
+  );
+  assert.equal(executorReplay.details.replayed, true);
+  assert.equal(executorReplay.details.current, false);
+  assert.equal(executorReplay.details.superseded, true);
 });
 
 test("completion projection cannot publish after a newer Milestone reopen", async (t) => {

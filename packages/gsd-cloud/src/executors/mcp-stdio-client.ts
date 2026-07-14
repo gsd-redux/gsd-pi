@@ -76,9 +76,17 @@ export class McpStdioClient {
   }
 
   /** Invoke an MCP tool and return its raw result object. */
-  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ): Promise<unknown> {
     await this.ensureReady();
-    return this.request("tools/call", { name, arguments: args }, CALL_TIMEOUT_MS);
+    return this.request(
+      "tools/call",
+      { name, arguments: args, ...(meta ? { _meta: meta } : {}) },
+      CALL_TIMEOUT_MS,
+    );
   }
 
   close(): void {

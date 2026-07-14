@@ -87,14 +87,23 @@ export class GsdPiExecutor implements Executor {
     }
   }
 
-  async execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown> {
+  async execute(
+    toolName: string,
+    rawArgs: Record<string, unknown>,
+    projectAlias?: string,
+    requestId?: string,
+  ): Promise<unknown> {
     const routingKey = projectAlias
       ?? (typeof rawArgs.projectDir === "string" ? rawArgs.projectDir : undefined)
       ?? (typeof rawArgs.projectAlias === "string" ? rawArgs.projectAlias : undefined);
     const entry = await this.resolveProject(routingKey);
     const { projectAlias: _pa, ...args } = rawArgs;
     void _pa;
-    return entry.client.callTool(toolName, { ...args, projectDir: entry.path });
+    return entry.client.callTool(
+      toolName,
+      { ...args, projectDir: entry.path },
+      requestId ? { "io.opengsd/idempotency-key": requestId } : undefined,
+    );
   }
 
   async advertisedProjects(): Promise<AdvertisedProject[]> {

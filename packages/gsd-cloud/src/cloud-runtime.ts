@@ -258,7 +258,12 @@ export class CloudRuntime {
     let outcome: "success" | "error" | "cancelled" = "success";
     let errorMessage: string | undefined;
     try {
-      const result = await this.executor.execute(message.toolName, message.args ?? {}, routingKey);
+      const result = await this.executor.execute(
+        message.toolName,
+        message.args ?? {},
+        routingKey,
+        message.requestId,
+      );
       if (!this.inFlight.has(message.requestId)) {
         outcome = "cancelled";
         return;

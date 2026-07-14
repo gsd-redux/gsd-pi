@@ -31,7 +31,12 @@ export interface AdvertisedProject {
  *   CloudRuntime sends them in the `hello` message on every (re)connect.
  */
 export interface Executor {
-  execute(toolName: string, rawArgs: Record<string, unknown>, projectAlias?: string): Promise<unknown>;
+  execute(
+    toolName: string,
+    rawArgs: Record<string, unknown>,
+    projectAlias?: string,
+    requestId?: string,
+  ): Promise<unknown>;
   advertisedProjects(): Promise<AdvertisedProject[]>;
 
   /** Optional teardown hook (e.g. kill a spawned child process). */

@@ -45,8 +45,11 @@ import {
   captureVerificationSourceSnapshot,
   resolveVerificationRepositoryTargets,
 } from "../verification-source-integrity.js";
-import { renderMilestoneSummaryMarkdown } from "../milestone-summary-projection.js";
-import { renderMilestoneSummary } from "../markdown-renderer.js";
+import {
+  readMilestoneCompletionProjection,
+  renderMilestoneSummaryMarkdown,
+  type MilestoneCompletionProjection,
+} from "../milestone-summary-projection.js";
 
 export interface CompleteMilestoneParams {
   milestoneId: string;
@@ -111,10 +114,60 @@ async function repairSupersededSummary(
   summaryPath: string,
   deliveredContent: string,
 ): Promise<void> {
-  await removeOwnedProjection(summaryPath, deliveredContent);
-  if (isClosedStatus(getMilestone(milestoneId)?.status ?? "")) {
-    await renderMilestoneSummary(basePath, milestoneId);
+  const currentProjection = readMilestoneCompletionProjection(milestoneId);
+  if (currentProjection && isCurrentMilestoneCompletionOperation(
+    currentProjection.operationId,
+    milestoneId,
+  )) {
+    await writeMilestoneSummaryProjectionIfCurrent(
+      basePath,
+      milestoneId,
+      currentProjection,
+    );
+    return;
   }
+
+  // A canonically complete head without a matching durable event is sabotage or
+  // an imported compatibility state. Preserve its bytes rather than deleting a
+  // projection we cannot safely attribute to this delivery.
+  if (isClosedStatus(getMilestone(milestoneId)?.status ?? "")) return;
+  await removeOwnedProjection(summaryPath, deliveredContent);
+}
+
+async function writeMilestoneSummaryProjectionIfCurrent(
+  basePath: string,
+  milestoneId: string,
+  projection: MilestoneCompletionProjection,
+): Promise<boolean> {
+  const milestone = getMilestone(milestoneId);
+  if (!milestone) return false;
+  const isCurrent = () => isCurrentMilestoneCompletionOperation(
+    projection.operationId,
+    milestoneId,
+  );
+  if (!isCurrent()) return false;
+
+  const summaryPath = targetMilestoneFile(basePath, milestoneId, "SUMMARY", milestone.title);
+  const summaryMd = renderMilestoneSummaryMarkdown(
+    milestoneId,
+    projection.completedAt,
+    projection.closeout,
+  );
+  await saveFile(summaryPath, summaryMd);
+  if (isCurrent()) return existsSync(summaryPath);
+
+  await repairSupersededSummary(basePath, milestoneId, summaryPath, summaryMd);
+  return false;
+}
+
+/** Rebuild a missing adopted SUMMARY without creating or replaying authority. */
+export async function repairAdoptedMilestoneSummaryProjection(
+  basePath: string,
+  milestoneId: string,
+): Promise<boolean> {
+  const projection = readMilestoneCompletionProjection(milestoneId);
+  if (!projection) return false;
+  return writeMilestoneSummaryProjectionIfCurrent(basePath, milestoneId, projection);
 }
 
 function completionCloseout(params: CompleteMilestoneParams): MilestoneCompletionCloseout {

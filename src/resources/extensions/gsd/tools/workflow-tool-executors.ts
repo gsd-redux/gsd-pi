@@ -1132,8 +1132,14 @@ export async function executeMilestoneReopen(
         isError: true,
       };
     }
+    const historical = result.superseded || result.current === false;
     return {
-      content: [{ type: "text", text: `Reopened milestone ${result.milestoneId}` }],
+      content: [{
+        type: "text",
+        text: historical
+          ? `Milestone reopen receipt for ${result.milestoneId} has been superseded; current state was not changed.`
+          : `Reopened milestone ${result.milestoneId}`,
+      }],
       details: {
         operation: "reopen_milestone",
         milestoneId: result.milestoneId,
@@ -1317,7 +1323,10 @@ export async function executeCompleteMilestone(
       isError: true,
       };
     }
-    const message = result.stale
+    const historical = result.superseded || result.current === false;
+    const message = historical
+      ? `Milestone completion receipt for ${result.milestoneId} has been superseded; current state was not changed.`
+      : result.stale
       ? `${result.alreadyComplete ? `Milestone ${result.milestoneId} is already complete.` : `Completed milestone ${result.milestoneId}.`} The readable status update is pending repair.`
       : result.alreadyComplete
         ? `Milestone ${result.milestoneId} is already complete. Summary available at ${result.summaryPath}`

@@ -5,6 +5,7 @@ import { getDb } from "./db/engine.js";
 import type { MilestoneCompletionCloseout } from "./milestone-lifecycle-domain-operation.js";
 
 export interface MilestoneCompletionProjection {
+  operationId: string;
   completedAt: string;
   closeout: MilestoneCompletionCloseout;
 }
@@ -34,7 +35,7 @@ export function readMilestoneCompletionProjection(
   milestoneId: string,
 ): MilestoneCompletionProjection | null {
   const row = getDb().prepare(`
-    SELECT payload_json
+    SELECT operation_id, payload_json
     FROM workflow_domain_events
     WHERE event_type = 'milestone.completed'
       AND entity_type = 'milestone'
@@ -56,6 +57,7 @@ export function readMilestoneCompletionProjection(
   const closeout = closeoutValue as Record<string, unknown>;
 
   return {
+    operationId: requiredString(row["operation_id"], "operationId"),
     completedAt: requiredString(payload["completedAt"], "completedAt"),
     closeout: {
       title: requiredString(closeout["title"], "closeout.title"),

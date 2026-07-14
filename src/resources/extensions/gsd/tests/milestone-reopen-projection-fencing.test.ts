@@ -24,6 +24,7 @@ import {
 import { rebuildMarkdownProjectionsFromDb } from "../commands-maintenance.ts";
 import { clearPathCache, targetMilestoneFile, targetSliceFile, targetTaskFile } from "../paths.ts";
 import * as reopenTool from "../tools/reopen-milestone.ts";
+import { executeMilestoneReopen } from "../tools/workflow-tool-executors.ts";
 
 type CleanupDelivery = { artifactPath: string; operationId: string };
 type SetCleanupInterleave = (hook: ((delivery: CleanupDelivery) => void) | null) => void;
@@ -249,6 +250,16 @@ test("delayed Milestone reopen replay preserves projections from newer completio
   assert.equal(replay.stale, undefined);
   for (const path of fixture.artifacts) assert.equal(readFileSync(path, "utf8"), `NEW ${path}\n`);
   assert.equal(db().prepare("SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.reopen'").get()?.count, 1);
+
+  const executorReplay = await executeMilestoneReopen(request, fixture.base, stableInvocation);
+  assert.doesNotMatch(String(executorReplay.content[0]?.text), /^Reopened milestone\b/i);
+  assert.match(
+    String(executorReplay.content[0]?.text),
+    /historical|superseded|no longer current/i,
+  );
+  assert.equal(executorReplay.details.replayed, true);
+  assert.equal(executorReplay.details.current, false);
+  assert.equal(executorReplay.details.superseded, true);
 });
 
 test("full DB rebuild cannot resurrect completion artifacts after Milestone reopen", async (t) => {

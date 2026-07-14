@@ -4,6 +4,9 @@
 // spinning forever respawning children, and a closed client must never spawn again.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { McpStdioClient } from "./mcp-stdio-client.js";
 
 const noopLogger = {
@@ -35,4 +38,43 @@ test("close() permanently blocks further spawns", async () => {
   client.close();
   await assert.rejects(client.ensureReady(), /closed/i);
   await assert.rejects(client.callTool("gsd_status", {}), /closed/i);
+});
+
+test("Milestone lifecycle tool calls serialize gateway identity as private MCP metadata", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-cloud-mcp-meta-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const serverPath = join(base, "fake-mcp-server.mjs");
+  writeFileSync(serverPath, `
+import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === "tools/call" ? request.params : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+});
+`);
+  const client = new McpStdioClient(process.execPath, [serverPath], noopLogger as never);
+  t.after(() => client.close());
+  const callToolWithMeta = client.callTool.bind(client) as (
+    name: string,
+    args: Record<string, unknown>,
+    meta?: Record<string, unknown>,
+  ) => Promise<unknown>;
+  const toolNames = [
+    "gsd_complete_milestone",
+    "gsd_milestone_complete",
+    "gsd_milestone_reopen",
+    "gsd_reopen_milestone",
+  ];
+
+  for (const name of toolNames) {
+    const meta = { "io.opengsd/idempotency-key": `gateway-${name}` };
+    const result = await callToolWithMeta(name, { milestoneId: "M001" }, meta);
+    assert.deepEqual(result, {
+      name,
+      arguments: { milestoneId: "M001" },
+      _meta: meta,
+    });
+  }
 });

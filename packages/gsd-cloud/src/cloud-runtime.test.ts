@@ -106,6 +106,49 @@ test("one routing selector drives execution, cancellation, and telemetry", async
 
 });
 
+test("Milestone lifecycle gateway identity reaches the executor for canonical and alias tools", async (t) => {
+  const calls: Array<{ toolName: string; requestId?: string }> = [];
+  const runtime = new CloudRuntime(
+    { gateway_url: "wss://cloud.example.net", device_token: "fixture", runtime_id: "runtime" },
+    {
+      execute: async (
+        toolName: string,
+        _args: Record<string, unknown>,
+        _selector?: string,
+        requestId?: string,
+      ) => {
+        calls.push({ toolName, requestId });
+        return { ok: true };
+      },
+      advertisedProjects: async () => [],
+    } as never,
+    noopLogger as never,
+  );
+  const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
+  internals.socket = fakeSocket();
+
+  const toolNames = [
+    "gsd_complete_milestone",
+    "gsd_milestone_complete",
+    "gsd_milestone_reopen",
+    "gsd_reopen_milestone",
+  ];
+  for (const toolName of toolNames) {
+    await internals.handleSocketMessage(internals.socket, JSON.stringify({
+      type: "tool_call",
+      requestId: `gateway-${toolName}`,
+      toolName,
+      args: { milestoneId: "M001" },
+    }));
+  }
+
+  assert.deepEqual(calls, toolNames.map((toolName) => ({
+    toolName,
+    requestId: `gateway-${toolName}`,
+  })));
+});
+
 test("queued project bytes are reported only after transmission", async (t) => {
   const sentProjects: Array<string | undefined> = [];
   const telemetry = {
