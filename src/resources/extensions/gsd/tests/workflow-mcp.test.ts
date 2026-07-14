@@ -305,14 +305,17 @@ test("detectWorkflowMcpLaunchConfig memoizes repo root discovery for the same de
     const firstLaunch = detectWorkflowMcpLaunchConfig(worktreeRoot, {
       GSD_BIN_PATH: devCliPath,
     });
-    assert.equal(firstLaunch?.args?.[0], cliPath);
+    assert.equal(firstLaunch?.args?.[0], realpathSync(cliPath));
 
     rmSync(cliPath, { force: true });
 
     const secondLaunch = detectWorkflowMcpLaunchConfig(worktreeRoot, {
       GSD_BIN_PATH: devCliPath,
     });
-    assert.equal(secondLaunch?.args?.[0], cliPath);
+    assert.equal(
+      secondLaunch?.args?.[0],
+      join(realpathSync(repoRoot), "packages", "mcp-server", "dist", "cli.js"),
+    );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(worktreeRoot, { recursive: true, force: true });

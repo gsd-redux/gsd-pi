@@ -47,7 +47,8 @@ test("resolveTaskRecoveryResumeBasePath selects the worktree owning the recovery
   }
 });
 
-test("importWorkflowExecutorsModule loads executeSummarySave", async () => {
+test("importWorkflowExecutorsModule loads the required executor surface", async () => {
   const mod = await importWorkflowExecutorsModule();
   assert.equal(typeof mod.executeSummarySave, "function");
+  assert.equal(typeof mod.executeSkipSlice, "function");
 });

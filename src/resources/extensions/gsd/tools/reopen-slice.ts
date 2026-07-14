@@ -59,6 +59,8 @@ export interface ReopenSliceResult {
   milestoneId: string;
   sliceId: string;
   tasksReset: number;
+  duplicate?: boolean;
+  superseded?: boolean;
   stale?: boolean;
 }
 
@@ -148,6 +150,8 @@ export async function handleReopenSlice(
         milestoneId: params.milestoneId,
         sliceId: params.sliceId,
         tasksReset: tasksResetCount,
+        duplicate: true,
+        superseded: true,
       };
     }
   } catch (error) {
@@ -246,6 +250,7 @@ export async function handleReopenSlice(
     milestoneId: params.milestoneId,
     sliceId: params.sliceId,
     tasksReset: tasksResetCount,
+    ...(operationStatus === "replayed" ? { duplicate: true } : {}),
     ...(projectionStale ? { stale: true } : {}),
   };
 }

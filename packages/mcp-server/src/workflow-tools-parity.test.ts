@@ -610,6 +610,9 @@ async function runPersistentSliceLifecycleMatrix(
 
       const firstContract = normalizeLifecycleToolResult(first, fixture.root);
       const retryContract = normalizeLifecycleToolResult(retry, fixture.root);
+      const retryDetails = retryContract.details as Record<string, unknown>;
+      assert.equal(retryDetails.duplicate, true, "an exact retry must identify its durable replay");
+      delete retryDetails.duplicate;
       assert.deepEqual(
         retryContract,
         firstContract,

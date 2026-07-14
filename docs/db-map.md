@@ -113,6 +113,8 @@ history below explains each migration without duplicating that live value.
 | V37 | **Task cancellation authorization**: permits `task.cancel` to interrupt and settle an active Attempt without weakening ordinary lease fencing |
 | V38 | **Verification-caused recovery**: permits a succeeded Result with a failed or inconclusive host Technical Verdict to cause a verification-stage Failure Observation |
 | V39 | **Verification recovery current-head enforcement**: only the current non-superseded criterion and latest non-superseded evidence-backed failure verdict across tested source revisions may authorize recovery or a route-head successor claim, including routes retained from V38 |
+| V40 | **Slice cancellation authorization**: permits `slice.cancel` to settle running descendant Attempts as interrupted while retaining Task cancellation's dispatch and lease fences |
+| V41 | **Slice completion transition**: permits only Slice lifecycles to move directly from canonical `ready` to `completed`; Task and Milestone transition policy remains unchanged |
 
 ---
 
@@ -687,11 +689,11 @@ Non-correctness-critical state: UI cursors, dashboard caches, resume pointers. S
 ### 3e. Additive Canonical Foundation (V31)
 
 V31 created these tables on fresh databases and transactionally upgraded V30
-databases. The current v35 codebase routes milestone/slice/task planning,
-task/slice replanning, and roadmap reassessment through the Domain Operation
-transaction and lifecycle adoption primitives. Other production lifecycle,
-Attempt, completion, UAT, import-application, and projection-worker paths remain
-outside that cutover.
+databases. Production now routes milestone/slice/task planning, task/slice
+replanning, roadmap reassessment, Task execution/recovery/publication, and Slice
+complete/cancel/reopen/reset through Domain Operations and lifecycle primitives.
+Milestone lifecycle commands, UAT orchestration, import application, and the
+projection worker remain separate later cutovers.
 
 #### `project_authority`
 ```
@@ -806,10 +808,10 @@ request hash, and ordered event, outbox, and projection-work identities.
 The boundary requires safe non-negative revision/epoch integers, canonical
 finite JSON numbers, unique destinations per event, backward-only event causal
 links, lowercase normalized projection keys/kinds, unique projection keys, and
-at most 10,000 projection targets. It must own the outer transaction. Beyond
-the adopted planning handlers, other command adapters, projection delivery,
-import, closeout, lifecycle policy, and runtime authority cutover remain
-deferred.
+at most 10,000 projection targets. It must own the outer transaction. Adopted
+planning, Task, and Slice handlers use this boundary; Milestone command
+adapters, projection delivery, import, remaining closeout policy, and runtime
+read-authority cutover remain deferred.
 
 #### Lifecycle command primitives
 
@@ -825,15 +827,18 @@ checkpoint head.
 
 The schema triggers continue to enforce transition legality, live lease and
 optional dispatch fencing, retry order, provenance, and checkpoint lineage.
+V40 authorizes Slice cancellation to settle running descendants without
+weakening those fences; V41 adds only the Slice `ready -> completed` face.
 `db/lifecycle-shadow-comparison.ts` separately provides pure legacy/canonical
 status normalization and classifies exact matches, accepted semantic deltas,
 missing or extra shadow rows, and mismatches while preserving both raw values.
-Planning handlers now use replay fences and lifecycle adoption/transition.
+Planning, Task execution/recovery/publication, and Slice lifecycle handlers now
+use replay fences and lifecycle adoption/transition.
 First-time adoption normally starts at state version zero; when the same
 operation observes active legacy work and cancels it, the row records the legal
 observed-to-cancelled transition at state version one. Attempt, Result, and
-general Kernel-stage production callers remain blocked until lease-loss
-recovery and Kernel stage policy are proven.
+Kernel-stage production callers use the proven S03/S04 policy. Milestone
+lifecycle callers remain deferred.
 
 ---
 
@@ -1506,12 +1511,11 @@ guarantee that every Failure Observation has a Recovery Action or that every
 Technical Verdict has its Evidence: SQLite immediate insert constraints cannot
 safely enforce those circular bundle-completeness rules.
 
-Later command-specific writers must use the S06 Domain Operation boundary to
-atomically commit each failure/action bundle, each verdict/evidence bundle, and
-any applicable remediation links. Kernel queries must require bundle
-completeness before dispatch or closeout. Runtime readers/writers, UAT,
-recovery policy, legacy projections, and lifecycle completion do not cut over
-in V34.
+Command-specific writers use the Domain Operation boundary to atomically commit
+each failure/action bundle, each verdict/evidence bundle, and any applicable
+remediation links. Task execution, recovery, publication, and Slice lifecycle
+writers have cut over; S06 owns the remaining Milestone lifecycle boundary.
+Kernel queries require bundle completeness before dispatch or closeout.
 
 ### 3i. Additive Projection, Import, Kernel, And Closeout Foundation (V35)
 
@@ -1635,8 +1639,9 @@ authority_epoch               INTEGER NOT NULL
 - Checkpoints form one immutable, gap-free, no-fork current-head chain per
   lifecycle. Stages are `execute | verify | route | closeout | settled`.
 - Ordinary successors retain the Attempt. An Attempt change requires Execute
-  and a descendant retry/reopen Attempt linked to the previous Attempt. S06
-  owns legal stage prerequisites and atomic sibling facts.
+  and a descendant retry/reopen Attempt linked to the previous Attempt. The
+  S03/S04 Task execution and recovery policy owns legal stage prerequisites
+  and atomic sibling facts.
 - Current-head scans reuse the unique `(project_id, lifecycle_id, sequence)` index.
 
 #### `workflow_closeout_plans`
@@ -1716,7 +1721,7 @@ authority_epoch       INTEGER NOT NULL
 - Index: `idx_workflow_settlement_receipt_scope`.
 
 V35 enforces local shape, provenance, lineage, immutability, delivery fencing,
-and settlement ordering. The S06 Domain Operation boundary now owns the base
+and settlement ordering. The Domain Operation boundary owns the base
 atomic provenance/event/outbox/Projection Work bundle and authority CAS. Later
 milestones own command-specific adapters and sibling facts, queries, stage and
 readiness prerequisites, runtime cutover, and final lifecycle completion.
@@ -1870,8 +1875,8 @@ execution evidence remain authoritative.
 | `gsd_plan_milestone` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones, slices | ROADMAP.md |
 | `gsd_plan_slice` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, quality_gates, slices metadata; tasks only when a non-empty `tasks` payload performs full replacement/update; removed pending tasks become `skipped`/`cancelled` | NN-MM-PLAN.md with active task planning when tasks exist |
 | `gsd_plan_task` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, quality_gates, one task planning row | re-renders NN-MM-PLAN.md; task PLAN paths resolve to the slice plan |
-| `gsd_task_complete` | tasks, slices, rework_briefs, rework_brief_findings | tasks, verification_evidence, rework_brief_findings | S##-T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md; reads legacy T##-SUMMARY.md |
-| `gsd_slice_complete` | tasks, slices | slices, tasks (cascade skipped) | S##-SUMMARY.md, S##-UAT.md; toggles checkpoint in ROADMAP.md |
+| `gsd_task_complete` | project_authority, workflow operations/lifecycles, current Attempt/Result/verdict/evidence, tasks, slices, rework briefs/findings | project_authority, workflow operations/events/outbox/Projection Work, Attempt Result/checkpoints, Technical Verdict evidence/publication, tasks, verification evidence, rework findings | S##-T##-SUMMARY.md; toggles checkbox in NN-MM-PLAN.md after commit; reads legacy T##-SUMMARY.md |
+| `gsd_slice_complete` | project_authority, workflow operations/lifecycles, Tasks and their Attempts/Results/verdict evidence, milestones, slices, quality_gates | project_authority, workflow operations/events/outbox/Projection Work, Milestone/Slice lifecycles, milestones, slices, quality_gates, gate_runs | S##-SUMMARY.md, S##-UAT.md; toggles checkpoint in ROADMAP.md after commit |
 | `gsd_uat_result_save` | slices, artifacts | artifacts, assessments, quality_gates, gate_runs | S##-ASSESSMENT.md; UAT attempt JSON |
 | `gsd_complete_milestone` | milestones, slices, tasks | milestones | M##-SUMMARY.md |
 | `gsd_validate_milestone` | milestones, slices, tasks | assessments, quality_gates, gate_runs | VALIDATION.md |
@@ -1879,10 +1884,10 @@ execution evidence remain authoritative.
 | `gsd_replan_slice` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, slices, tasks, replan_history, quality_gates; removed pending tasks become `skipped`/`cancelled` | NN-MM-PLAN.md, NN-MM-REPLAN.md |
 | `gsd_replan_task` | project_authority, workflow_operations, workflow_item_lifecycles, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, one pending task planning row, replan_history | re-renders the task/slice PLAN projection |
 | `gsd_rework_brief_save` | rework_briefs, rework_brief_findings | rework_briefs, rework_brief_findings | — |
-| `gsd_skip_slice` | slices, tasks | slices, tasks | STATE.md (via rebuildState) |
+| `gsd_skip_slice` | project_authority, workflow operations/lifecycles, slices, tasks, running Attempts and dispatches | project_authority, workflow operations/events/outbox/Projection Work, Slice/Task lifecycles, Slice-scoped Waiver, workflow execution Attempts, immutable Attempt Results, Kernel checkpoints, slices, tasks, dispatches | readable state projections after commit |
 | `gsd_task_reopen` | tasks, slices, milestones | tasks | deletes S##-T##-SUMMARY.md and legacy T##-SUMMARY.md |
 | `gsd_task_recovery_resume` | project_authority, workflow_operations, workflow_item_lifecycles, workflow_execution_attempts, workflow_failure_observations, workflow_recovery_actions, workflow_blockers, workflow_domain_events, workflow_work_checkpoints | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_work_checkpoints | — |
-| `gsd_slice_reopen` | slices, tasks, milestones | slices, tasks | deletes S##-SUMMARY.md, UAT, all S##-T##-SUMMARY.md and legacy T##-SUMMARY.md |
+| `gsd_slice_reopen` | project_authority, workflow operations/lifecycles, workflow_waivers, slices, tasks, immutable execution history | project_authority, workflow operations/events/outbox/Projection Work, Slice/Task lifecycles, workflow_waivers, slices, tasks, quality_gates | repairs/removes Slice, UAT, Task SUMMARY, PLAN, ROADMAP, and STATE projections after commit |
 | `gsd_milestone_reopen` | milestones, slices, tasks | milestones, slices, tasks | deletes all summaries |
 | `gsd_save_gate_result` | quality_gates | quality_gates, gate_runs (same transaction) | — |
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
@@ -1896,6 +1901,24 @@ assessment artifacts are rebuilt from the committed domain event or assessment
 row, including its original creation time. Removed pending work retains its
 hierarchy and lifecycle identity as legacy `skipped` and canonical `cancelled`;
 active projections omit it, and explicit reopen is required before reuse.
+
+The three Slice lifecycle mutations use the same operation ledger and stable
+private identity across Pi, workflow MCP aliases, and internal adapters.
+Cancellation preserves completed Tasks, records the dependency-bypass decision
+in a durable Waiver, and atomically interrupts running descendants; completion
+requires evidence-backed terminal descendant parity; reopen/reset moves the
+full terminal subtree to legacy Slice `in_progress`, legacy Tasks `pending`, and
+canonical `ready` without
+deleting Attempts, Results, verdicts, evidence, dispatches, or checkpoints.
+Progressed transitive dependents must be reopened first. Rendering is
+post-commit. A stale public result
+means canonical state is committed and readable projections remain queued for
+repair; an exact retry reports `duplicate` without creating another operation.
+A historical retry reports both `duplicate` and `superseded` and cannot repair
+or present itself as the current lifecycle result.
+Legacy active-Slice selection still recognizes `skipped` directly. The S07
+canonical read cutover must require the current active Waiver when it replaces
+that compatibility adapter.
 
 `gsd_replan_task` updates exactly one existing pending task after rework. MCP callers may omit `projectDir`; the server defaults it to the current project/worktree root. Required fields are `milestoneId`, `sliceId`, `taskId`, `title`, `description`, `estimate`, `files`, `verify`, `inputs`, and `expectedOutput`; `reworkBriefRef` is optional and records the structured brief that triggered the replan. The handler rejects missing, closed/completed, and canonically cancelled tasks; those tasks must be reopened with `gsd_task_reopen` before replanning.
 
@@ -1942,11 +1965,7 @@ active projections omit it, and explicit reopen is required before reuse.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant callers normally increment the shared depth counter with no nested `BEGIN`; `executeDomainOperation()` is the exception and rejects an existing outer transaction so it owns the reserved-writer boundary. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
-3. **Cascade semantics**: hierarchy status cascades are named **Domain Write Operations** in `db/writers/cascades.ts`, each owning its own `transaction()` so the milestone/slice/task subtree transitions atomically (callers keep only projection/file-cleanup/event logic):
-   - `gsd_slice_complete` (`completeSliceCascade`) cascades `pending` tasks → `skipped`
-   - `gsd_skip_slice` (`skipSliceCascade`) rejects closed slices (`complete`/`done`/`closed`) without clearing `completed_at`, re-skips `skipped` slices as a no-op, cascades `pending`/`active` tasks → `skipped`, and preserves closed tasks
-   - `gsd_milestone_reopen` (`reopenMilestoneCascade`) cascades all slices → `in_progress`, all tasks → `pending`
-   - `gsd_slice_reopen` (`reopenSliceCascade`) and `undo`'s reset (`resetSliceCascade`) reopen a slice's subtree atomically
+3. **Cascade semantics**: production Slice hierarchy changes are transaction-bound leaves in `db/writers/slice-lifecycle.ts`, invoked only inside their owning Domain Operation. Complete validates evidence-backed terminal descendants; cancel preserves completed history and settles running descendants; reopen/reset performs one guarded full redo while preserving immutable execution history. Legacy Slice cascade helpers remain only for compatibility tests and later cleanup. `db/writers/cascades.ts` still owns `reopenMilestoneCascade`, the legacy Milestone boundary deferred to S06.
 
 4. **Conflict guards**: `insertSlice`, `insertTask` use `ON CONFLICT` to preserve existing completed status and non-empty fields. `insertTask` treats `complete`/`done`/`closed` as complete for `completed_at` stamping and preserves existing completion metadata when `preserveCompletionMetadata` is set; `skipped` stays terminal but does not get a completion timestamp.
 

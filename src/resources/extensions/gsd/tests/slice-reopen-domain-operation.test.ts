@@ -5,14 +5,16 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { afterEach, test, type TestContext } from "node:test";
 
 import {
   _getAdapter,
   closeDatabase,
   executeDomainOperation,
+  insertSlice,
   openDatabase,
   readDomainOperationFence,
+  syncSliceDependencies,
 } from "../gsd-db.ts";
 import type { DomainOperationContext } from "../db/domain-operation.ts";
 import { adoptOrTransitionLifecycle } from "../db/writers/lifecycle-commands.ts";
@@ -24,10 +26,16 @@ import {
 } from "../task-execution-domain-operation.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import {
+  targetSliceFile,
+  targetTaskFile,
+} from "../paths.ts";
+import {
   _setReopenSliceCleanupInterleaveForTest,
   handleReopenSlice,
 } from "../tools/reopen-slice.ts";
 import { handleResetSlice } from "../undo.ts";
+import { rebuildMarkdownProjectionsFromDb } from "../commands-maintenance.ts";
+import { renderSliceSummary } from "../markdown-renderer.ts";
 
 const tempDirs = new Set<string>();
 
@@ -280,6 +288,76 @@ function seedTerminalSlice(
   return base;
 }
 
+function cleanupFixture(t: TestContext, base: string): void {
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+    tempDirs.delete(base);
+  });
+}
+
+function seedReachableDownstreamSlice(status: "in_progress" | "complete"): void {
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Pending bridge",
+    status: "pending",
+    depends: ["S01"],
+    sequence: 2,
+  });
+  insertSlice({
+    id: "S03",
+    milestoneId: "M001",
+    title: "Started downstream work",
+    status,
+    depends: ["S02"],
+    sequence: 3,
+  });
+  executeAtFence(
+    "test.slice-reopen.downstream-state",
+    `fixture/slice-reopen/downstream-${status}`,
+    (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S02",
+        lifecycleStatus: "ready",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S03",
+        lifecycleStatus: status === "complete" ? "completed" : "in_progress",
+      });
+    },
+  );
+}
+
+function seedCyclicDownstreamSlice(): void {
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Started cyclic downstream work",
+    status: "in_progress",
+    depends: ["S01"],
+    sequence: 2,
+  });
+  db().prepare(`
+    UPDATE slices SET depends = '["S02"]'
+    WHERE milestone_id = 'M001' AND id = 'S01'
+  `).run();
+  syncSliceDependencies("M001", "S01", ["S02"]);
+  syncSliceDependencies("M001", "S02", ["S01"]);
+  executeAtFence("test.slice-reopen.cyclic-downstream", "fixture/slice-reopen/cycle", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S02",
+      lifecycleStatus: "in_progress",
+    });
+  });
+}
+
 function taskEvidenceSnapshot(taskId = "T01"): Record<string, unknown> {
   const lifecycleId = String(row(`
     SELECT lifecycle_id FROM workflow_item_lifecycles
@@ -450,6 +528,53 @@ test("reset retries the current reopen identity and repairs projections after a 
   assert.equal(compatibilityEventCount(base, "reopen-slice"), 1, "retry must not duplicate compatibility events");
 });
 
+test("full DB-to-Markdown rebuild cannot resurrect completion projections after reopen", async (t) => {
+  const base = seedTerminalSlice("complete");
+  cleanupFixture(t, base);
+  const taskSummaryPath = targetTaskFile(base, "M001", "S01", "T01", "SUMMARY");
+  const sliceSummaryPath = targetSliceFile(base, "M001", "S01", "SUMMARY");
+  const sliceUatPath = targetSliceFile(base, "M001", "S01", "UAT");
+  db().prepare(`
+    UPDATE tasks SET full_summary_md = '# Completed Task summary'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+  db().prepare(`
+    UPDATE slices
+    SET full_summary_md = '# Completed Slice summary', full_uat_md = '# Completed Slice UAT'
+    WHERE milestone_id = 'M001' AND id = 'S01'
+  `).run();
+  writeFileSync(taskSummaryPath, "# Completed Task summary\n");
+  assert.equal(await renderSliceSummary(base, "M001", "S01"), true);
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count FROM artifacts
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND task_id IS NULL
+      AND artifact_type IN ('SUMMARY', 'UAT')
+  `).count), 2, "completion projections must be persisted before reopen");
+
+  const reopened = await handleReopenSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Redo the Slice without restoring its previous completion projections.",
+  }, base, invocation("slice-reopen/public/rebuild-no-resurrection"));
+  assert.equal("error" in reopened, false);
+  assert.equal(existsSync(taskSummaryPath), false);
+  assert.equal(existsSync(sliceSummaryPath), false);
+  assert.equal(existsSync(sliceUatPath), false);
+
+  const rebuilt = await rebuildMarkdownProjectionsFromDb(base);
+
+  assert.deepEqual(rebuilt.errors, []);
+  assert.deepEqual({
+    taskSummary: existsSync(taskSummaryPath),
+    sliceSummary: existsSync(sliceSummaryPath),
+    sliceUat: existsSync(sliceUatPath),
+  }, {
+    taskSummary: false,
+    sliceSummary: false,
+    sliceUat: false,
+  }, "ready/pending hierarchy must not regain prior completion projections");
+});
+
 test("reset does not replay an old reopen after a descendant Task starts", async () => {
   const base = seedTerminalSlice("skipped");
   const notifications: Array<{ message: string; level: string }> = [];
@@ -556,7 +681,7 @@ test("a delayed reopen replay cannot delete projections from a newer Slice compl
     reason,
   }, base, oldInvocation);
 
-  assert.deepEqual(replay, first);
+  assert.deepEqual(replay, { ...first, duplicate: true, superseded: true });
   assert.equal(readFileSync(summaryPath, "utf8"), "# Newer summary\n");
   assert.equal(readFileSync(uatPath, "utf8"), "# Newer UAT\n");
 });
@@ -674,7 +799,7 @@ test("a delayed reopen replay cannot delete a newer descendant Task summary", as
 
   const replay = await handleReopenSlice({ milestoneId: "M001", sliceId: "S01", reason }, base, oldInvocation);
 
-  assert.deepEqual(replay, first);
+  assert.deepEqual(replay, { ...first, duplicate: true, superseded: true });
   assert.equal(readFileSync(summaryPath, "utf8"), "# Newer Task summary\n");
 });
 
@@ -691,6 +816,50 @@ test("public reopen rejects a running descendant and leaves exact zero durable r
   assert.equal("error" in result, true);
   assert.match("error" in result ? result.error : "", /running attempt|running descendant/i);
   assert.deepEqual(durableSnapshot(), before, "running-descendant rejection must leave zero residue");
+});
+
+test("public reopen rejects dependency-reachable downstream work without residue", async (t) => {
+  for (const downstreamStatus of ["in_progress", "complete"] as const) {
+    await t.test(downstreamStatus, async (t) => {
+      const base = seedTerminalSlice("complete");
+      cleanupFixture(t, base);
+      seedReachableDownstreamSlice(downstreamStatus);
+      const before = durableSnapshot();
+
+      const result = await handleReopenSlice({
+        milestoneId: "M001",
+        sliceId: "S01",
+        reason: "Downstream work must be reset explicitly before reopening its prerequisite.",
+      }, base, invocation(`slice-reopen/public/downstream-${downstreamStatus}-reject`));
+
+      assert.equal("error" in result, true);
+      assert.match("error" in result ? result.error : "", /depend|downstream|S03/i);
+      assert.deepEqual({
+        durable: durableSnapshot(),
+        compatibilityEvents: compatibilityEventCount(base, "reopen-slice"),
+      }, {
+        durable: before,
+        compatibilityEvents: 0,
+      }, "dependency rejection must leave exact zero durable or compatibility residue");
+    });
+  }
+});
+
+test("public reopen terminates on a cyclic dependency graph and rejects progressed downstream work", async (t) => {
+  const base = seedTerminalSlice("complete");
+  cleanupFixture(t, base);
+  seedCyclicDownstreamSlice();
+  const before = durableSnapshot();
+
+  const result = await handleReopenSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "A dependency cycle must terminate safely without ignoring progressed work.",
+  }, base, invocation("slice-reopen/public/downstream-cycle-reject"));
+
+  assert.equal("error" in result, true);
+  assert.match("error" in result ? result.error : "", /depend|downstream|S02/i);
+  assert.deepEqual(durableSnapshot(), before, "cyclic dependency rejection must leave zero durable residue");
 });
 
 test("public reopen rejects a deep legacy/canonical mismatch with exact zero durable residue", async () => {

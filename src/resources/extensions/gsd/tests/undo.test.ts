@@ -578,7 +578,7 @@ function setupSliceFixture(base: string, secondTaskStatus = "complete"): void {
   writeFileSync(join(mDir, "01-01-UAT.md"), "# UAT\nPassed.", "utf-8");
 
   // Set up DB
-  openDatabase(":memory:");
+  openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Test Slice", status: "complete", risk: "low", depends: [] });
   insertSlice({ id: "S02", milestoneId: "M001", title: "Next Slice", status: "pending", risk: "low", depends: ["S01"] });
@@ -806,7 +806,8 @@ test("handleResetSlice fails closed under a terminal canonical milestone", async
 test("handleResetSlice with non-existent slice returns error", async () => {
   const base = makeTempDir("gsd-reset-slice-notfound");
   try {
-    openDatabase(":memory:");
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001", title: "Test", status: "active" });
 
     const { notifications, ctx } = makeCtx();

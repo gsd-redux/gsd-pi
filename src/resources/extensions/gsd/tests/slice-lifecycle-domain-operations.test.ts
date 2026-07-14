@@ -11,6 +11,7 @@ import {
   _getAdapter,
   closeDatabase,
   executeDomainOperation,
+  getClosedSliceIds,
   openDatabase,
   readDomainOperationFence,
 } from "../gsd-db.ts";
@@ -24,7 +25,7 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
-import { cancelSlice } from "../slice-lifecycle-domain-operation.ts";
+import { cancelSlice, reopenSlice } from "../slice-lifecycle-domain-operation.ts";
 import { handleSkipSlice } from "../tools/skip-slice.ts";
 
 const tempDirs = new Set<string>();
@@ -351,6 +352,118 @@ test("direct Slice cancellation replays its durable receipt and rejects changed 
     durableSnapshot(),
     afterCommit,
     "changed idempotency reuse must leave exact zero residue",
+  );
+});
+
+test("slice.cancel records the dependency-bypass decision in one replay-safe Slice Waiver", () => {
+  seedMixedSlice();
+  db().prepare(`
+    INSERT INTO slices (milestone_id, id, title, status, depends, created_at, sequence)
+    VALUES (
+      'M001', 'S02', 'Depends on cancelled Slice', 'pending', '["S01"]',
+      '2026-07-14T00:00:00.000Z', 2
+    )
+  `).run();
+  const input = {
+    invocation: invocation("slice-cancel/dependency-waiver"),
+    slice: { milestoneId: "M001", sliceId: "S01" },
+    reason: "The dependency is intentionally bypassed by an authorized cancellation.",
+  };
+
+  const committed = cancelSlice(input);
+  assert.deepEqual(
+    getClosedSliceIds("M001"),
+    ["S01"],
+    "legacy dependency selection treats the cancelled Slice as satisfied",
+  );
+  const waiversAfterCommit = rows(`
+    SELECT waiver_id, lifecycle_id, waiver_status, scope, expires_at,
+           granted_by_actor_type, operation_id, project_revision, authority_epoch
+    FROM workflow_waivers
+    WHERE operation_id = '${committed.operationId}'
+    ORDER BY waiver_id
+  `);
+  assert.equal(
+    waiversAfterCommit.length,
+    1,
+    "unlocking a cancelled dependency requires one durable Waiver from the cancellation operation",
+  );
+  assert.equal(waiversAfterCommit[0]?.lifecycle_id, committed.sliceLifecycleId);
+  assert.equal(waiversAfterCommit[0]?.waiver_status, "active");
+  assert.equal(waiversAfterCommit[0]?.scope, "slice:M001/S01");
+  assert.equal(waiversAfterCommit[0]?.expires_at, null);
+  assert.equal(waiversAfterCommit[0]?.granted_by_actor_type, "policy");
+  assert.equal(waiversAfterCommit[0]?.project_revision, committed.resultingRevision);
+  assert.equal(waiversAfterCommit[0]?.authority_epoch, committed.resultingAuthorityEpoch);
+
+  const replayed = cancelSlice(input);
+  assert.equal(replayed.status, "replayed");
+  assert.equal(replayed.operationId, committed.operationId);
+  assert.deepEqual(
+    rows(`
+      SELECT waiver_id, lifecycle_id, waiver_status, scope, expires_at,
+             granted_by_actor_type, operation_id, project_revision, authority_epoch
+      FROM workflow_waivers
+      ORDER BY waiver_id
+    `),
+    waiversAfterCommit,
+    "exact replay must not duplicate or replace the cancellation Waiver",
+  );
+
+  db().prepare(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, sequence)
+    VALUES ('M001', 'S01', 'T99', 'Late legacy task', 'pending', 99)
+  `).run();
+
+  const reSkip = handleSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Heal any leftover unfinished work without changing the bypass decision.",
+  }, invocation("slice-cancel/dependency-waiver/reskip"));
+  assert.equal(reSkip.error, undefined);
+  assert.equal(reSkip.tasksSkipped, 1);
+  assert.equal(reSkip.duplicate, undefined);
+  assert.equal(reSkip.superseded, undefined);
+  assert.equal(
+    row("SELECT COUNT(*) AS count FROM workflow_waivers WHERE waiver_status = 'active'").count,
+    1,
+    "a new-key re-skip must reuse the current active Slice Waiver",
+  );
+
+  reopenSlice({
+    invocation: invocation("slice-cancel/dependency-waiver/reopen"),
+    slice: { milestoneId: "M001", sliceId: "S01" },
+    reason: "Restore the cancelled Slice to active work.",
+  });
+  const endedWaiver = row(`
+    SELECT waiver_status, ended_operation_id, ended_project_revision,
+           ended_authority_epoch, ended_at
+    FROM workflow_waivers
+    WHERE waiver_id = '${committed.waiverId}'
+  `);
+  assert.equal(endedWaiver.waiver_status, "revoked");
+  assert.ok(endedWaiver.ended_operation_id);
+  assert.ok(Number(endedWaiver.ended_project_revision) > committed.resultingRevision);
+  assert.ok(endedWaiver.ended_at);
+
+  const historicalSkip = handleSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: input.reason,
+  }, input.invocation);
+  assert.equal(historicalSkip.duplicate, true);
+  assert.equal(historicalSkip.superseded, true);
+
+  const replacement = handleSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "The restored Slice is now intentionally bypassed again.",
+  }, invocation("slice-cancel/dependency-waiver/replacement"));
+  assert.equal(replacement.error, undefined);
+  assert.equal(
+    row("SELECT COUNT(*) AS count FROM workflow_waivers WHERE waiver_status = 'active'").count,
+    1,
+    "a new cancellation may leave only its own Waiver active",
   );
 });
 

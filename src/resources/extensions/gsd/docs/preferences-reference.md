@@ -319,7 +319,22 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
 
 - `per_unit_cost_cap_usd`: number — per-unit retry cost ceiling in USD for verification retries. Must be a positive finite number when set; invalid values are rejected during preference validation. Default: `5.0`. During auto-verification and artifact-retry flows, auto-mode pauses when the current unit reaches this cap or when current unit cost spikes to at least `3.0x` the rolling average.
 
-- `uat_dispatch`: boolean — when `true`, enables UAT (User Acceptance Testing) dispatch mode. Default: `false`.
+- `uat_dispatch`: boolean — when `true`, dispatches routine artifact-driven UAT in addition to UAT that requires runtime or browser evidence. Runtime/browser-required UAT dispatches by default even when this is `false`. Deep planning sets it to `true` when the preference is absent and preserves an explicit `false`. Default: `false`.
+
+  Recommended for long autonomous runs:
+
+  ```yaml
+  verification_auto_fix: true
+  verification_max_retries: 2
+  uat_dispatch: true
+  ```
+
+  These settings control how verification is attempted; they do not grant
+  lifecycle authority. Failures are repaired and retried within the configured
+  limits. A pause should mean the agent exhausted its available repair path,
+  needs external access or a dependency, or genuinely needs a user decision.
+  No preference or Markdown UAT result can bypass canonical Task proof or
+  complete a Slice.
 
 - `post_unit_hooks`: array — hooks that fire after a unit completes. Each entry has:
   - `name`: string — unique hook identifier.
@@ -339,6 +354,10 @@ In `"parent"` mode, slice/task `targetRepositories` default to the declared chil
   Blocking hook artifacts must begin with YAML frontmatter containing either `verdict` or `outcome.verdict`.
   Supported verdicts are `pass`, `advisory`, `needs-rework`, `needs-remediation`, and `needs-attention`.
   `pass` and `advisory` continue; `needs-rework` retries the trigger unit when routed with `retry-unit`/`retry-task`; `needs-remediation` and `needs-attention` pause with recovery guidance.
+  Hook artifacts are compatibility inputs to hook routing, not lifecycle
+  authority. Any resulting Task or Slice retry, cancellation, completion, or
+  reopen still commits through the canonical database operation; editing a hook
+  artifact cannot directly change lifecycle state.
 
 - `pre_dispatch_hooks`: array — hooks that fire before a unit is dispatched. Each entry has:
   - `name`: string — unique hook identifier.

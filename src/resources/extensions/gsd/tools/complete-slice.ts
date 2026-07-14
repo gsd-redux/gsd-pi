@@ -39,6 +39,8 @@ export interface CompleteSliceResult {
    * True when this exact invocation replayed its durable operation receipt.
    */
   duplicate?: boolean;
+  /** True when a replayed receipt is no longer the current Slice lifecycle head. */
+  superseded?: boolean;
   stale?: boolean;
 }
 
@@ -375,6 +377,7 @@ export async function handleCompleteSlice(
       summaryPath,
       uatPath,
       duplicate: true,
+      superseded: true,
     };
   }
   const effectiveParams: CompleteSliceParams = {

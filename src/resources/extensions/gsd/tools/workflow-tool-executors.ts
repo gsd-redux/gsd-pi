@@ -982,6 +982,19 @@ export async function executeSliceReopen(
         isError: true,
       };
     }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical reopen receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "reopen_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          tasksReset: result.tasksReset,
+          duplicate: true,
+          superseded: true,
+        },
+      };
+    }
     const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
       content: [{ type: "text", text: `Reopened slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
@@ -990,6 +1003,7 @@ export async function executeSliceReopen(
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         tasksReset: result.tasksReset,
+        ...(result.duplicate ? { duplicate: true } : {}),
         ...(result.stale ? { stale: true } : {}),
       },
     };
@@ -1028,6 +1042,18 @@ export async function executeSkipSlice(
           errorCode: result.errorCode ?? "skip_failed",
         },
         isError: true,
+      };
+    }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical cancellation receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "skip_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          duplicate: true,
+          superseded: true,
+        },
       };
     }
 
@@ -1069,6 +1095,7 @@ export async function executeSkipSlice(
         reason: params.reason,
         tasksSkipped: result.tasksSkipped,
         wasAlreadySkipped: result.wasAlreadySkipped,
+        ...(result.duplicate ? { duplicate: true } : {}),
         ...(projectionStale ? { stale: true } : {}),
       },
     };
@@ -1219,6 +1246,20 @@ export async function executeSliceComplete(
       isError: true,
       };
     }
+    if (result.superseded) {
+      return {
+        content: [{ type: "text", text: `Reused a historical completion receipt for slice ${result.sliceId} (${result.milestoneId}); it is no longer current.` }],
+        details: {
+          operation: "complete_slice",
+          sliceId: result.sliceId,
+          milestoneId: result.milestoneId,
+          summaryPath: result.summaryPath,
+          uatPath: result.uatPath,
+          duplicate: true,
+          superseded: true,
+        },
+      };
+    }
     const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
       content: [{ type: "text", text: `Completed slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
@@ -1228,6 +1269,7 @@ export async function executeSliceComplete(
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
         uatPath: result.uatPath,
+        ...(result.duplicate ? { duplicate: true } : {}),
         ...(result.stale ? { stale: true } : {}),
       },
     };
@@ -1267,9 +1309,11 @@ export async function executeCompleteMilestone(
       isError: true,
       };
     }
-    const message = result.alreadyComplete
-      ? `Milestone ${result.milestoneId} is already complete. Summary available at ${result.summaryPath}`
-      : `Completed milestone ${result.milestoneId}. Summary written to ${result.summaryPath}`;
+    const message = result.stale
+      ? `${result.alreadyComplete ? `Milestone ${result.milestoneId} is already complete.` : `Completed milestone ${result.milestoneId}.`} The readable status update is pending repair.`
+      : result.alreadyComplete
+        ? `Milestone ${result.milestoneId} is already complete. Summary available at ${result.summaryPath}`
+        : `Completed milestone ${result.milestoneId}. Summary written to ${result.summaryPath}`;
     return {
       content: [{ type: "text", text: message }],
       details: {

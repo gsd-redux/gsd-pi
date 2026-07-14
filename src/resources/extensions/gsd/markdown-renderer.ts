@@ -11,7 +11,7 @@
 
 import { readFileSync, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { logWarning } from "./workflow-logger.js";
-import { isClosedStatus } from "./status-guards.js";
+import { isClosedStatus, toStatus } from "./status-guards.js";
 import { dirname, join } from "node:path";
 import {
   getAllMilestones,
@@ -673,11 +673,13 @@ export async function renderSliceArtifactsFromDb(
 ): Promise<boolean> {
   const artifacts = getSliceScopedArtifacts(milestoneId, sliceId);
   if (artifacts.length === 0) return false;
+  const sliceComplete = toStatus(getSlice(milestoneId, sliceId)?.status ?? "") === "complete";
 
   let wrote = false;
   for (const artifact of artifacts) {
     const artifactType = artifact.artifact_type.toUpperCase();
     if (!artifact.full_content.trim()) continue;
+    if ((artifactType === "SUMMARY" || artifactType === "UAT") && !sliceComplete) continue;
     if (artifactType === "PLAN" && isAutoRecoveryPlaceholderPlan(artifact.full_content)) continue;
 
     const absPath = join(basePath, relSliceFile(basePath, milestoneId, sliceId, artifactType));
@@ -751,7 +753,8 @@ export async function renderTaskSummary(
   taskId: string,
 ): Promise<boolean> {
   const task = getTask(milestoneId, sliceId, taskId);
-  if (!task || !task.full_summary_md) {
+  const status = task ? toStatus(task.status) : null;
+  if (!task || (status !== "in_progress" && status !== "complete") || !task.full_summary_md) {
     return false; // No summary to render — skip silently
   }
 
@@ -782,7 +785,7 @@ export async function renderSliceSummary(
   sliceId: string,
 ): Promise<boolean> {
   const slice = getSlice(milestoneId, sliceId);
-  if (!slice) {
+  if (!slice || toStatus(slice.status) !== "complete") {
     return false; // No slice data — skip silently
   }
 

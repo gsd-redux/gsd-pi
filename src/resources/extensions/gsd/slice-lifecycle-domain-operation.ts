@@ -12,6 +12,7 @@ import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import {
   cancelSliceHierarchy,
   completeSliceHierarchy,
+  grantSliceCancellationWaiver,
   reopenSliceHierarchy,
   SliceLifecycleValidationError,
   type SliceCancellationHierarchyResult,
@@ -50,6 +51,7 @@ export interface SliceCancellationReceipt {
   outboxIds: number[];
   projectionWorkIds: string[];
   sliceLifecycleId: string;
+  waiverId: string;
   canonicalStatus: "cancelled";
   legacyStatus: "skipped";
   wasAlreadySkipped: boolean;
@@ -57,10 +59,12 @@ export interface SliceCancellationReceipt {
   cancelledTaskIds: string[];
   preservedTaskIds: string[];
   interruptions: SliceCancellationInterruption[];
+  isCurrent: boolean;
 }
 
 interface StoredCancellationPayload {
   sliceLifecycleId: string;
+  waiverId: string;
   wasAlreadySkipped: boolean;
   cancelledTaskIds: string[];
   preservedTaskIds: string[];
@@ -134,8 +138,20 @@ export function cancelSlice(input: {
   };
   const reason = requireText(input.reason, "reason");
   const audit = auditPayload(input.audit);
+  const grantedByActorType = input.invocation.actorType === "user" ? "user" : "policy";
+  const grantedByActorId = input.invocation.actorId?.trim() || undefined;
+  if (grantedByActorType === "user" && !grantedByActorId) {
+    throw new SliceLifecycleValidationError("A user-authorized Slice cancellation requires actor identity");
+  }
   const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, { reason, audit }), (context) => {
     const result = cancelSliceHierarchy(context, { ...slice, reason });
+    const waiver = grantSliceCancellationWaiver(context, {
+      lifecycleId: result.sliceLifecycleId,
+      ...slice,
+      rationale: reason,
+      grantedByActorType,
+      ...(grantedByActorId ? { grantedByActorId } : {}),
+    });
     return {
       events: [{
         eventType: "slice.cancelled",
@@ -143,6 +159,7 @@ export function cancelSlice(input: {
         entityId: `${slice.milestoneId}/${slice.sliceId}`,
         payload: {
           sliceLifecycleId: result.sliceLifecycleId,
+          waiverId: waiver.waiverId,
           reason,
           audit,
           wasAlreadySkipped: result.wasAlreadySkipped,
@@ -170,6 +187,7 @@ export function cancelSlice(input: {
     outboxIds: operation.outboxIds,
     projectionWorkIds: operation.projectionWorkIds,
     sliceLifecycleId: stored.sliceLifecycleId,
+    waiverId: stored.waiverId,
     canonicalStatus: "cancelled",
     legacyStatus: "skipped",
     wasAlreadySkipped: stored.wasAlreadySkipped,
@@ -177,6 +195,8 @@ export function cancelSlice(input: {
     cancelledTaskIds: stored.cancelledTaskIds,
     preservedTaskIds: stored.preservedTaskIds,
     interruptions: stored.interruptions,
+    isCurrent: operation.status === "committed"
+      || isCurrentSliceOperation(operation.operationId, slice, "cancelled"),
   };
 }
 
@@ -220,6 +240,7 @@ export function reopenSlice(input: {
           reason,
           audit,
           reopenedTaskIds: result.reopenedTaskIds,
+          revokedWaiverIds: result.revokedWaiverIds,
           lifecycleShadowComparisons: shadowPayload(result),
         },
         destinations: ["projection"],
@@ -324,7 +345,7 @@ function storedCompletionPayload(operationId: string): StoredCompletionPayload {
 function isCurrentSliceOperation(
   operationId: string,
   slice: SliceLifecycleIdentity,
-  lifecycleStatus: "ready" | "completed",
+  lifecycleStatus: "ready" | "completed" | "cancelled",
 ): boolean {
   return Boolean(getDb().prepare(`
     SELECT 1

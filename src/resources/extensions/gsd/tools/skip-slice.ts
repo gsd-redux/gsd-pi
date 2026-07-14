@@ -54,6 +54,8 @@ export interface SkipSliceResult {
   sliceId: string;
   tasksSkipped: number;
   wasAlreadySkipped: boolean;
+  duplicate?: boolean;
+  superseded?: boolean;
   reason?: string;
   error?: string;
   errorCode?: SkipSliceErrorCode;
@@ -105,10 +107,20 @@ export function handleSkipSlice(
       reason: params.reason?.trim() || "User-directed skip",
       audit: { actorName: params.actorName, triggerReason: params.triggerReason },
     });
+    if (!result.isCurrent) {
+      return {
+        ...base,
+        tasksSkipped: result.tasksSkipped,
+        wasAlreadySkipped: result.wasAlreadySkipped,
+        duplicate: true,
+        superseded: true,
+      };
+    }
     return {
       ...base,
       tasksSkipped: result.tasksSkipped,
       wasAlreadySkipped: result.wasAlreadySkipped,
+      ...(result.status === "replayed" ? { duplicate: true } : {}),
     };
   } catch (error) {
     if (!(error instanceof SliceLifecycleValidationError)) throw error;

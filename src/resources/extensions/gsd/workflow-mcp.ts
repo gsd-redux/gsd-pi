@@ -163,9 +163,8 @@ export function getBundledWorkflowExecutorModulePath(): string | null {
   const candidates = [
     ...(repoRoot
       ? [
-          resolve(repoRoot, "dist", "resources", "extensions", "gsd", "tools", "workflow-tool-executors.js"),
-          resolve(repoRoot, "dist-test", "src", "resources", "extensions", "gsd", "tools", "workflow-tool-executors.ts"),
           resolve(repoRoot, "src", "resources", "extensions", "gsd", "tools", "workflow-tool-executors.ts"),
+          resolve(repoRoot, "dist", "resources", "extensions", "gsd", "tools", "workflow-tool-executors.js"),
         ]
       : []),
     resolve(fileURLToPath(new URL("./tools/workflow-tool-executors.js", import.meta.url))),
@@ -182,7 +181,10 @@ function workflowExecutorModuleImportUrl(modulePath: string): string {
 }
 
 function isWorkflowExecutorsModule(value: unknown): value is WorkflowExecutorsModule {
-  return Boolean(value && typeof value === "object" && typeof (value as WorkflowExecutorsModule).executeSummarySave === "function");
+  if (!value || typeof value !== "object") return false;
+  const module = value as WorkflowExecutorsModule;
+  return typeof module.executeSummarySave === "function"
+    && typeof module.executeSkipSlice === "function";
 }
 
 /** Load workflow-tool-executors for in-process tools and MCP bridge env wiring. */
@@ -220,8 +222,8 @@ function getBundledWorkflowWriteGateModulePath(): string | null {
   const candidates = [
     ...(repoRoot
       ? [
-          resolve(repoRoot, "dist", "resources", "extensions", "gsd", "bootstrap", "write-gate.js"),
           resolve(repoRoot, "src", "resources", "extensions", "gsd", "bootstrap", "write-gate.ts"),
+          resolve(repoRoot, "dist", "resources", "extensions", "gsd", "bootstrap", "write-gate.js"),
         ]
       : []),
     resolve(fileURLToPath(new URL("./bootstrap/write-gate.js", import.meta.url))),

@@ -7,9 +7,11 @@ This runbook governs the command primitives introduced in M003/S01 and first
 adopted by planning in M003/S02. They write canonical lifecycle, Attempt,
 Result, and Kernel checkpoint facts only inside an active Domain Operation.
 Milestone, slice, and task planning, task and slice replanning, and roadmap
-reassessment now use the lifecycle and replay-fence subset. Legacy hierarchy
-reads and public responses remain the compatibility contract until a later,
-separately proven read-authority cutover.
+reassessment now use the lifecycle and replay-fence subset. Task execution,
+Task recovery, verified Task completion, and Slice complete/cancel/reopen/reset
+also use command-specific Domain Operations. Legacy hierarchy reads and public
+responses remain the compatibility contract until a later, separately proven
+read-authority cutover.
 
 ## Command boundary
 
@@ -58,9 +60,51 @@ commands, or orchestration modules.
 - S04 makes terminal Task reopen ordering explicit. Canonical
   `completed/cancelled -> ready` commits with legacy `pending`; the later claim
   owns a separate `ready -> in_progress` revision.
-- Slice and milestone descendant reopen/reset cascades remain S05 work. S04
-  closes Task recovery authority only and must not infer hierarchy convergence
-  from its Task-level proof.
+- S05 owns Slice complete/cancel/reopen/reset. Milestone lifecycle commands
+  remain deferred to S06; do not infer milestone convergence from Slice proof.
+
+## S05 Slice lifecycle boundary
+
+- `slice.cancel`, `slice.complete`, and `slice.reopen` each own the full Slice
+  hierarchy mutation, semantic shadow evidence, ordered event/outbox lineage,
+  Projection Work, and authority revision in one Domain Operation.
+- Cancellation preserves completed Tasks, cancels unfinished Tasks, and settles
+  any running Attempt as an immutable interrupted Result with a terminal
+  dispatch. The same operation grants one durable Slice-scoped Waiver that
+  records the dependency-bypass decision. Reopen revokes that Waiver before a
+  later cancellation may grant a replacement. It never leaves a cancelled
+  lifecycle with a running Attempt or an unaudited bypass decision.
+- Completion requires terminal legacy/canonical parity for every descendant,
+  no running Attempt, and current published Result/verdict/evidence/Kernel proof
+  for each completed Task. Normalized closeout and Q8 facts commit before render.
+- Reopen/reset is a full redo: the Slice and every terminal descendant become
+  legacy Slice `in_progress`, legacy Tasks `pending`, and canonical `ready` in
+  one revision. Attempts, Results,
+  verdicts, evidence, dispatches, and checkpoints remain immutable history.
+  Reopen fails without residue while any dependency-reachable downstream Slice
+  has progressed; reopen downstream work first.
+- Pi, workflow MCP canonical names and aliases, internal reset, auto, and
+  recovery callers enter through shared executors with stable private identity.
+  JSONL reconciliation cannot replay a lifecycle mutation after canonical
+  adoption, and automated recovery cannot fabricate completion.
+- Exact retry returns the stored receipt. A changed payload conflicts; a stale
+  revision or Authority Epoch, deep mismatch, active descendant, or writer
+  failure leaves the hierarchy and operation ledger unchanged.
+
+### Deferred boundaries
+
+- `gsd_complete_milestone` and `gsd_milestone_reopen` still lack the Slice
+  operation's revision/Authority-Epoch fence, durable receipt, and descendant
+  convergence proof. S06 owns that cutover; park/unpark follows later.
+- Slice completion proves each completed Task's tested source revision, but it
+  does not yet record one integrated Slice source snapshot. Automated UAT runs
+  after completion, and its structured result/source identity is not part of
+  the `slice.completed` receipt.
+- Legacy Slice cascade helpers remain for compatibility tests and later
+  cleanup. Canonical read cutover and elimination of unexplained shadow drift
+  remain separate work. Until that read cutover, active-Slice selection still
+  recognizes legacy `skipped` directly; S07 must consume the current Waiver
+  explicitly when canonical dependency eligibility replaces that adapter.
 
 ## Resume after an agent-owned abort
 
@@ -126,6 +170,18 @@ Work pending. The projection-delivery contract separately governs claim,
 retry, and dead-letter state. Repair the filesystem and replay delivery. Do not
 restore status from a checked PLAN item, SUMMARY file, manifest, or blocker
 placeholder.
+
+Public lifecycle responses expose projection delivery separately from the
+canonical result. `stale: true` means the database commit succeeded but readable
+status still needs repair; `duplicate: true` means an exact replay reused the
+existing operation. A historical receipt reports both `duplicate: true` and
+`superseded: true` and must not use current-success wording or repair a newer
+projection. Callers must preserve these flags and say that the readable status
+update is pending when stale. Exact retry may repair delivery only while
+that operation is still the current lifecycle head; a delayed completion or
+reopen retry must not overwrite a newer projection. Doctor may report or retry
+pending Projection Work, but it must not claim a stale projection is repaired
+merely because the database state is current.
 
 Use these read-only diagnostics against the authoritative database:
 
@@ -255,18 +311,30 @@ ORDER BY resumed.project_revision DESC;
 Run the capstone plus the adjacent recovery, auto/custom verification, MCP, UOK,
 projection, and compatibility suites. UAT should execute the live runtime or
 browser path whenever automation can observe it; a human decision is reserved
-for subjective acceptance or unavailable authority/access. Close S04 only when
-the DB contains a successful Result, current passing Technical Verdict,
-publication/closeout operation, terminal dispatch, and passing UAT receipt.
-Markdown status alone never satisfies closeout.
+for subjective acceptance or unavailable authority/access. Close S05 only when
+the DB contains the Slice operation/event, descendant publication proof, Q8
+gate run, current Projection Work state, hosted-CI evidence, and passing UAT for
+the exact merged source. Slice completion currently proves each completed
+Task's tested source revision; one integrated Slice source snapshot and UAT
+identity are deferred rather than implied. Markdown status alone never
+satisfies closeout.
 
 ## Verification loop
 
 Run the smallest focused gate while editing, then the adjacent contract matrix:
 
 ```sh
-pnpm exec tsx --test src/resources/extensions/gsd/tests/lifecycle-command-writers.test.ts
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types --test \
+  src/resources/extensions/gsd/tests/slice-completion-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/slice-lifecycle-domain-operations.test.ts \
+  src/resources/extensions/gsd/tests/slice-reopen-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/slice-lifecycle-convergence.test.ts \
+  src/resources/extensions/gsd/tests/slice-lifecycle-multiprocess-contention.test.ts \
+  src/resources/extensions/gsd/tests/slice-lifecycle-executor-identity.test.ts \
+  src/resources/extensions/gsd/tests/workflow-authority-faults.test.ts
 pnpm exec tsx --test \
+  src/resources/extensions/gsd/tests/workflow-tool-executors.test.ts \
   src/resources/extensions/gsd/tests/task-recovery-convergence.test.ts \
   src/resources/extensions/gsd/tests/recovery-policy.test.ts \
   src/resources/extensions/gsd/tests/task-recovery-writers.test.ts \
@@ -283,6 +351,10 @@ pnpm exec tsx --test \
   src/resources/extensions/gsd/tests/db-projection-closeout-foundation.test.ts \
   src/resources/extensions/gsd/tests/domain-operation.test.ts \
   src/resources/extensions/gsd/tests/single-writer-invariant.test.ts
+pnpm run test:compile
+node --test-force-exit --test \
+  dist-test/packages/mcp-server/src/workflow-tools.test.js \
+  dist-test/packages/mcp-server/src/workflow-tools-parity.test.js
 pnpm run typecheck:extensions
 pnpm run baseline:workflow-authority
 pnpm run baseline:refactor:gate

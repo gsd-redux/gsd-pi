@@ -1,6 +1,8 @@
 // Project/App: gsd-pi
 // File Purpose: Context-bound Slice cancellation across canonical and compatibility state.
 
+import { randomUUID } from "node:crypto";
+
 import type { DomainOperationContext } from "../domain-operation.js";
 import { getDb } from "../engine.js";
 import {
@@ -59,9 +61,15 @@ export interface SliceCancellationHierarchyResult {
   shadows: LifecycleShadowRecord[];
 }
 
+export interface SliceCancellationWaiver {
+  waiverId: string;
+  waiverStatus: "active";
+}
+
 export interface SliceReopenHierarchyResult {
   sliceLifecycleId: string;
   reopenedTaskIds: string[];
+  revokedWaiverIds: string[];
   shadows: LifecycleShadowRecord[];
 }
 
@@ -92,6 +100,106 @@ function requireText(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new SliceLifecycleValidationError(`${field} must not be blank`);
   return normalized;
+}
+
+export function grantSliceCancellationWaiver(
+  context: Readonly<DomainOperationContext>,
+  input: {
+    lifecycleId: string;
+    milestoneId: string;
+    sliceId: string;
+    rationale: string;
+    grantedByActorType: "user" | "policy";
+    grantedByActorId?: string;
+  },
+): SliceCancellationWaiver {
+  if (requireActiveDomainOperationContext(context) !== "slice.cancel") {
+    throw new Error("slice.cancel Domain Operation required");
+  }
+  const actorId = input.grantedByActorId?.trim() || null;
+  if (input.grantedByActorType === "user" && !actorId) {
+    throw new SliceLifecycleValidationError("A user-authorized Slice cancellation requires actor identity");
+  }
+  const scope = `slice:${requireText(input.milestoneId, "milestoneId")}/${requireText(input.sliceId, "sliceId")}`;
+  const existing = getDb().prepare(`
+    SELECT waiver_id
+    FROM workflow_waivers
+    WHERE lifecycle_id = :lifecycle_id
+      AND waiver_status = 'active'
+      AND scope = :scope
+  `).all({
+    ":lifecycle_id": requireText(input.lifecycleId, "lifecycleId"),
+    ":scope": scope,
+  }) as Array<Record<string, unknown>>;
+  if (existing.length > 1) {
+    throw new SliceLifecycleValidationError("Slice cancellation found multiple active Waivers");
+  }
+  if (existing.length === 1) {
+    return { waiverId: String(existing[0]!["waiver_id"]), waiverStatus: "active" };
+  }
+  const waiverId = randomUUID();
+  getDb().prepare(`
+    INSERT INTO workflow_waivers (
+      waiver_id, project_id, lifecycle_id, requirement_id, blocker_id,
+      waiver_status, scope, rationale, granted_by_actor_type,
+      granted_by_actor_id, granted_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (
+      :waiver_id, :project_id, :lifecycle_id, NULL, NULL,
+      'active', :scope, :rationale, :actor_type,
+      :actor_id, :granted_at,
+      :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":waiver_id": waiverId,
+    ":project_id": context.projectId,
+    ":lifecycle_id": input.lifecycleId.trim(),
+    ":scope": scope,
+    ":rationale": requireText(input.rationale, "rationale"),
+    ":actor_type": input.grantedByActorType,
+    ":actor_id": actorId,
+    ":granted_at": new Date().toISOString(),
+    ":operation_id": context.operationId,
+    ":project_revision": context.resultingRevision,
+    ":authority_epoch": context.resultingAuthorityEpoch,
+  });
+  return { waiverId, waiverStatus: "active" };
+}
+
+function revokeSliceCancellationWaivers(
+  context: Readonly<DomainOperationContext>,
+  lifecycleId: string,
+  scope: string,
+): string[] {
+  const rows = getDb().prepare(`
+    SELECT waiver_id
+    FROM workflow_waivers
+    WHERE lifecycle_id = :lifecycle_id
+      AND waiver_status = 'active'
+      AND scope = :scope
+    ORDER BY granted_at, waiver_id
+  `).all({ ":lifecycle_id": lifecycleId, ":scope": scope }) as Array<Record<string, unknown>>;
+  const endedAt = new Date().toISOString();
+  for (const row of rows) {
+    const updated = getDb().prepare(`
+      UPDATE workflow_waivers
+      SET waiver_status = 'revoked', ended_at = :ended_at,
+          ended_operation_id = :operation_id,
+          ended_project_revision = :project_revision,
+          ended_authority_epoch = :authority_epoch
+      WHERE waiver_id = :waiver_id AND waiver_status = 'active'
+    `).run({
+      ":waiver_id": String(row["waiver_id"]),
+      ":ended_at": endedAt,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+    });
+    if (Number((updated as { changes?: number }).changes ?? 0) !== 1) {
+      throw new Error("Slice reopen must revoke each active cancellation Waiver exactly once");
+    }
+  }
+  return rows.map((row) => String(row["waiver_id"]));
 }
 
 function runningAttempt(lifecycleId: string): RunningAttempt | null {
@@ -141,6 +249,55 @@ function requireMatchingShadow(row: HierarchyRow, entity: string): void {
   const comparison = compareLifecycleShadow(row.legacyStatus, row.lifecycleStatus);
   if (comparison.kind !== "match" && comparison.kind !== "semantic_match_exact_delta") {
     throw new SliceLifecycleValidationError(`${entity} canonical and legacy lifecycle mismatch`);
+  }
+}
+
+function requireNoProgressedDownstreamSlices(slice: SliceIdentity): void {
+  const downstream = getDb().prepare(`
+    WITH RECURSIVE reachable(slice_id) AS (
+      SELECT candidate.id
+      FROM slices candidate
+      JOIN json_each(candidate.depends) dependency
+        ON CAST(dependency.value AS TEXT) = :slice_id
+      WHERE candidate.milestone_id = :milestone_id
+      UNION
+      SELECT candidate.id
+      FROM slices candidate
+      JOIN json_each(candidate.depends) dependency
+      JOIN reachable prior
+        ON CAST(dependency.value AS TEXT) = prior.slice_id
+      WHERE candidate.milestone_id = :milestone_id
+    )
+    SELECT candidate.id, candidate.status AS legacy_status,
+           lifecycle.lifecycle_status AS canonical_status
+    FROM reachable
+    JOIN slices candidate
+      ON candidate.milestone_id = :milestone_id
+     AND candidate.id = reachable.slice_id
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'slice'
+     AND lifecycle.milestone_id = candidate.milestone_id
+     AND lifecycle.slice_id = candidate.id
+     AND lifecycle.task_id IS NULL
+    WHERE candidate.id != :slice_id
+    ORDER BY candidate.sequence, candidate.id
+  `).all({
+    ":milestone_id": slice.milestoneId,
+    ":slice_id": slice.sliceId,
+  }) as Array<Record<string, unknown>>;
+
+  const progressed = downstream.find((candidate) => {
+    const legacy = normalizeLegacyLifecycleStatus(String(candidate["legacy_status"]));
+    const canonical = candidate["canonical_status"] === null
+      ? null
+      : String(candidate["canonical_status"]);
+    return legacy === "in_progress" || legacy === "paused" || legacy === "completed" ||
+      canonical === "in_progress" || canonical === "paused" || canonical === "completed";
+  });
+  if (progressed) {
+    throw new SliceLifecycleValidationError(
+      `cannot reopen Slice ${slice.sliceId} while downstream Slice ${String(progressed["id"])} has progressed; reopen downstream work first`,
+    );
   }
 }
 
@@ -678,6 +835,7 @@ export function reopenSliceHierarchy(
     sliceId: requireText(input.sliceId, "sliceId"),
   };
   requireText(input.reason, "reason");
+  requireNoProgressedDownstreamSlices(slice);
   const milestone = getDb().prepare(`
     SELECT milestone.status AS legacy_status, lifecycle.lifecycle_status
     FROM milestones milestone
@@ -770,6 +928,11 @@ export function reopenSliceHierarchy(
     itemKind: "slice", ...slice, lifecycleStatus: "ready",
     ...(!sliceState.lifecycleId ? { adoptedFromStatus: legacySliceStatus } : {}),
   });
+  const revokedWaiverIds = revokeSliceCancellationWaivers(
+    context,
+    sliceLifecycle.lifecycleId,
+    `slice:${slice.milestoneId}/${slice.sliceId}`,
+  );
   const updated = getDb().prepare(`
     UPDATE slices SET status = 'in_progress', completed_at = NULL
     WHERE milestone_id = :milestone_id AND id = :slice_id
@@ -808,5 +971,5 @@ export function reopenSliceHierarchy(
   if (shadows.some((shadow) => shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta")) {
     throw new Error("Slice reopen did not converge canonical and legacy lifecycle state");
   }
-  return { sliceLifecycleId: sliceLifecycle.lifecycleId, reopenedTaskIds, shadows };
+  return { sliceLifecycleId: sliceLifecycle.lifecycleId, reopenedTaskIds, revokedWaiverIds, shadows };
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, readFileSync, existsSync, symlinkSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, existsSync, symlinkSync, writeFileSync, unlinkSync, promises as fsPromises } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -21,7 +21,7 @@ import { registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease, getMilestoneLease } from "../db/milestone-leases.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
 import { autoSession } from "../auto-runtime-state.ts";
-import { normalizeRealPath, relSliceFile } from "../paths.ts";
+import { normalizeRealPath, relSliceFile, targetMilestoneFile } from "../paths.ts";
 import { recordUnitHarnessAbort } from "../unit-runtime.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
@@ -703,6 +703,137 @@ test("executeSliceReopen surfaces cleanup obstruction and repairs it on the same
     `).get()?.["count"] ?? 0),
     1,
   );
+});
+
+test("historical slice completion replay never presents superseded completion as current", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M001", "Historical lifecycle replay");
+  seedSlice("M001", "S01", "active");
+  seedCompletedTaskAuthority({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    runId: "historical-lifecycle-first-completion",
+  });
+  const completionInvocation = sliceLifecycleInvocation("complete");
+  const completionParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    sliceTitle: "Historical lifecycle replay",
+    oneLiner: "First completion.",
+    narrative: "This completion will later be superseded by a reopen.",
+    verification: "Focused authority tests passed.",
+    uatContent: "## Result\n\nPassed.",
+  };
+  const firstCompletion = await inProjectDir(base, () => executeSliceComplete(
+    completionParams,
+    base,
+    completionInvocation,
+  ));
+  assert.equal(firstCompletion.isError, undefined);
+
+  const reopenParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Redo the Slice with updated requirements.",
+  };
+  const firstReopen = await inProjectDir(base, () => executeSliceReopen(
+    reopenParams,
+    base,
+  ));
+  assert.equal(firstReopen.isError, undefined);
+
+  const historicalCompletion = await inProjectDir(base, () => executeSliceComplete(
+    completionParams,
+    base,
+    completionInvocation,
+  ));
+
+  assert.doesNotMatch(String(historicalCompletion.content[0]?.text), /^Completed slice\b/i);
+  assert.match(
+    String(historicalCompletion.content[0]?.text),
+    /historical|superseded|no longer current/i,
+  );
+  assert.equal(historicalCompletion.isError, undefined);
+  assert.equal(historicalCompletion.details.duplicate, true);
+  assert.equal(historicalCompletion.details.superseded, true);
+});
+
+test("historical slice reopen replay never presents superseded reopen as current", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M001", "Historical reopen replay");
+  seedSlice("M001", "S01", "active");
+  seedCompletedTaskAuthority({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    runId: "historical-reopen-first-completion",
+  });
+  const completionParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    sliceTitle: "Historical reopen replay",
+    oneLiner: "First completion.",
+    narrative: "This completion will be reopened and completed again.",
+    verification: "Focused authority tests passed.",
+    uatContent: "## Result\n\nPassed.",
+  };
+  const firstCompletion = await inProjectDir(base, () => executeSliceComplete(
+    completionParams,
+    base,
+  ));
+  assert.equal(firstCompletion.isError, undefined);
+
+  const reopenInvocation = sliceLifecycleInvocation("reopen");
+  const reopenParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Redo the Slice with updated requirements.",
+  };
+  const firstReopen = await inProjectDir(base, () => executeSliceReopen(
+    reopenParams,
+    base,
+    reopenInvocation,
+  ));
+  assert.equal(firstReopen.isError, undefined);
+
+  seedCompletedTaskAuthority({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    runId: "historical-reopen-second-completion",
+  });
+  const currentCompletion = await inProjectDir(base, () => executeSliceComplete({
+    ...completionParams,
+    oneLiner: "Second completion.",
+    narrative: "This completion supersedes the earlier reopen.",
+  }, base));
+  assert.equal(currentCompletion.isError, undefined);
+
+  const historicalReopen = await inProjectDir(base, () => executeSliceReopen(
+    reopenParams,
+    base,
+    reopenInvocation,
+  ));
+
+  assert.doesNotMatch(String(historicalReopen.content[0]?.text), /^Reopened slice\b/i);
+  assert.match(
+    String(historicalReopen.content[0]?.text),
+    /historical|superseded|no longer current/i,
+  );
+  assert.equal(historicalReopen.isError, undefined);
+  assert.equal(historicalReopen.details.duplicate, true);
+  assert.equal(historicalReopen.details.superseded, true);
 });
 
 test("executeSkipSlice surfaces projection obstruction and retries the full readable projection set", async (t) => {
@@ -2045,6 +2176,52 @@ test("executeCompleteMilestone returns success for already-complete milestones w
     closeDatabase();
     cleanup(base);
   }
+});
+
+test("executeCompleteMilestone reports pending readable status when summary projection fails", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M003", "Milestone Three");
+  seedSlice("M003", "S03", "complete");
+  _getAdapter()!.prepare(
+    "INSERT OR REPLACE INTO tasks (milestone_id, slice_id, id, title, status) VALUES (?, ?, ?, ?, ?)",
+  ).run("M003", "S03", "T03", "Task T03", "complete");
+  insertAssessment({
+    path: join(".gsd", "milestones", "M003", "M003-VALIDATION.md"),
+    milestoneId: "M003",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nValidated.",
+  });
+  const summaryPath = targetMilestoneFile(base, "M003", "SUMMARY", "Milestone Three");
+  const originalRename = fsPromises.rename.bind(fsPromises);
+  let summaryWriteBlocked = false;
+  t.mock.method(fsPromises, "rename", async (...args: Parameters<typeof fsPromises.rename>) => {
+    if (String(args[1]) === summaryPath) {
+      summaryWriteBlocked = true;
+      throw new Error("simulated milestone summary projection failure");
+    }
+    return originalRename(...args);
+  });
+
+  const result = await inProjectDir(base, () => executeCompleteMilestone({
+    milestoneId: "M003",
+    title: "Milestone Three",
+    oneLiner: "Completed milestone",
+    narrative: "Everything shipped.",
+    verificationPassed: true,
+  }, base));
+
+  assert.equal(result.isError, undefined);
+  assert.equal(summaryWriteBlocked, true, "fixture must obstruct the milestone SUMMARY write itself");
+  assert.equal(existsSync(summaryPath), false);
+  assert.equal(result.details.stale, true);
+  assert.match(String(result.content[0]?.text), /readable status update is pending repair/i);
+  assert.doesNotMatch(String(result.content[0]?.text), /summary (?:written|available)/i);
 });
 
 test("executeReassessRoadmap writes assessment and updates roadmap projection", async () => {
