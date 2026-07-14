@@ -18,8 +18,10 @@
 
 import {
   getSliceTasks,
-  reopenSliceCascade,
 } from "../gsd-db.js";
+import { randomUUID } from "node:crypto";
+import { reopenSlice, SliceLifecycleValidationError } from "../slice-lifecycle-domain-operation.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
 import { invalidateStateCache } from "../state.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
@@ -45,6 +47,7 @@ export interface ReopenSliceParams {
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
   triggerReason?: string;
+  invocation?: ExecutionInvocation;
 }
 
 export interface ReopenSliceResult {
@@ -65,21 +68,21 @@ export async function handleReopenSlice(
     return { error: "milestoneId is required and must be a non-empty string" };
   }
 
-  // ── Atomic reopen cascade (guards + writes in one transaction) ───────────
-  const outcome = reopenSliceCascade(params.milestoneId, params.sliceId);
-  if (!outcome.ok) {
-    switch (outcome.reason) {
-      case "milestone-not-found":
-        return { error: `milestone not found: ${params.milestoneId}` };
-      case "milestone-closed":
-        return { error: `cannot reopen slice in a closed milestone: ${params.milestoneId} (status: ${outcome.status})` };
-      case "slice-not-found":
-        return { error: `slice not found: ${params.milestoneId}/${params.sliceId}` };
-      case "slice-not-complete":
-        return { error: `slice ${params.sliceId} is not complete (status: ${outcome.status}) — nothing to reopen` };
-    }
+  let tasksResetCount: number;
+  try {
+    tasksResetCount = reopenSlice({
+      invocation: params.invocation ?? {
+        idempotencyKey: `internal:reopen-slice:${randomUUID()}`,
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      slice: { milestoneId: params.milestoneId, sliceId: params.sliceId },
+      reason: params.reason?.trim() || "User-directed full Slice redo",
+    }).tasksReset;
+  } catch (error) {
+    if (!(error instanceof SliceLifecycleValidationError)) throw error;
+    return { error: error.message };
   }
-  const tasksResetCount = outcome.tasksReset;
 
   // ── Invalidate caches ────────────────────────────────────────────────────
   invalidateStateCache();

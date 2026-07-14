@@ -11,9 +11,11 @@ import { getDb } from "./db/engine.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import {
   cancelSliceHierarchy,
+  reopenSliceHierarchy,
   SliceLifecycleValidationError,
   type SliceCancellationHierarchyResult,
   type SliceCancellationInterruption,
+  type SliceReopenHierarchyResult,
 } from "./db/writers/slice-lifecycle.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 
@@ -57,13 +59,14 @@ function requireText(value: string, field: string): string {
 }
 
 function request(
+  operationType: "slice.cancel" | "slice.reopen",
   invocation: ExecutionInvocation,
   slice: SliceLifecycleIdentity,
   reason: string,
 ): DomainOperationRequest {
   const fence = readDomainOperationFence(invocation.idempotencyKey);
   return {
-    operationType: "slice.cancel",
+    operationType,
     idempotencyKey: invocation.idempotencyKey,
     expectedRevision: fence.revision,
     expectedAuthorityEpoch: fence.authorityEpoch,
@@ -79,7 +82,9 @@ function request(
   };
 }
 
-function shadowPayload(result: SliceCancellationHierarchyResult): DomainJsonValue[] {
+function shadowPayload(
+  result: SliceCancellationHierarchyResult | SliceReopenHierarchyResult,
+): DomainJsonValue[] {
   return result.shadows.map((shadow) => ({
     itemKind: shadow.itemKind,
     milestoneId: shadow.milestoneId,
@@ -112,7 +117,7 @@ export function cancelSlice(input: {
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
   const reason = requireText(input.reason, "reason");
-  const operation = executeDomainOperation(request(input.invocation, slice, reason), (context) => {
+  const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, reason), (context) => {
     const result = cancelSliceHierarchy(context, { ...slice, reason });
     return {
       events: [{
@@ -154,5 +159,77 @@ export function cancelSlice(input: {
     cancelledTaskIds: stored.cancelledTaskIds,
     preservedTaskIds: stored.preservedTaskIds,
     interruptions: stored.interruptions,
+  };
+}
+
+export interface SliceReopenReceipt {
+  status: DomainOperationResult["status"];
+  operationId: string;
+  resultingRevision: number;
+  resultingAuthorityEpoch: number;
+  eventIds: string[];
+  outboxIds: number[];
+  projectionWorkIds: string[];
+  sliceLifecycleId: string;
+  canonicalStatus: "ready";
+  legacyStatus: "in_progress";
+  tasksReset: number;
+  reopenedTaskIds: string[];
+}
+
+export function reopenSlice(input: {
+  invocation: ExecutionInvocation;
+  slice: SliceLifecycleIdentity;
+  reason: string;
+}): SliceReopenReceipt {
+  const slice = {
+    milestoneId: requireText(input.slice.milestoneId, "milestoneId"),
+    sliceId: requireText(input.slice.sliceId, "sliceId"),
+  };
+  const reason = requireText(input.reason, "reason");
+  const operation = executeDomainOperation(request("slice.reopen", input.invocation, slice, reason), (context) => {
+    const result = reopenSliceHierarchy(context, { ...slice, reason });
+    return {
+      events: [{
+        eventType: "slice.reopened",
+        entityType: "slice",
+        entityId: `${slice.milestoneId}/${slice.sliceId}`,
+        payload: {
+          sliceLifecycleId: result.sliceLifecycleId,
+          reason,
+          reopenedTaskIds: result.reopenedTaskIds,
+          lifecycleShadowComparisons: shadowPayload(result),
+        },
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: `lifecycle/${slice.milestoneId}/${slice.sliceId}`.toLowerCase(),
+        projectionKind: "slice-lifecycle",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  const event = getDb().prepare(`
+    SELECT payload_json FROM workflow_domain_events
+    WHERE operation_id = :operation_id AND event_type = 'slice.reopened'
+  `).all({ ":operation_id": operation.operationId }) as Array<Record<string, unknown>>;
+  if (event.length !== 1) throw new Error("Slice reopen receipt requires one durable event");
+  const stored = JSON.parse(String(event[0]!["payload_json"])) as {
+    sliceLifecycleId: string;
+    reopenedTaskIds: string[];
+  };
+  return {
+    status: operation.status,
+    operationId: operation.operationId,
+    resultingRevision: operation.resultingRevision,
+    resultingAuthorityEpoch: operation.resultingAuthorityEpoch,
+    eventIds: operation.eventIds,
+    outboxIds: operation.outboxIds,
+    projectionWorkIds: operation.projectionWorkIds,
+    sliceLifecycleId: stored.sliceLifecycleId,
+    canonicalStatus: "ready",
+    legacyStatus: "in_progress",
+    tasksReset: stored.reopenedTaskIds.length,
+    reopenedTaskIds: stored.reopenedTaskIds,
   };
 }

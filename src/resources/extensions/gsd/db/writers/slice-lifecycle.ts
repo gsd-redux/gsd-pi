@@ -59,6 +59,12 @@ export interface SliceCancellationHierarchyResult {
   shadows: LifecycleShadowRecord[];
 }
 
+export interface SliceReopenHierarchyResult {
+  sliceLifecycleId: string;
+  reopenedTaskIds: string[];
+  shadows: LifecycleShadowRecord[];
+}
+
 export class SliceLifecycleValidationError extends Error {}
 
 function requireText(value: string, field: string): string {
@@ -132,7 +138,7 @@ function loadPlan(slice: SliceIdentity): {
      AND lifecycle.slice_id IS NULL
     WHERE milestone.id = :milestone_id
   `).get({ ":milestone_id": slice.milestoneId }) as Record<string, unknown> | undefined;
-  if (!milestone) throw new SliceLifecycleValidationError(`Milestone ${slice.milestoneId} not found`);
+  if (!milestone) throw new SliceLifecycleValidationError(`milestone not found: ${slice.milestoneId}`);
   const milestoneStatus = normalizeLegacyLifecycleStatus(String(milestone["legacy_status"]));
   if (!milestoneStatus) throw new SliceLifecycleValidationError(`Milestone ${slice.milestoneId} has an unknown legacy status`);
   if (milestoneStatus === "completed" || milestoneStatus === "cancelled") {
@@ -351,4 +357,123 @@ export function cancelSliceHierarchy(
     interruptions,
     shadows,
   };
+}
+
+export function reopenSliceHierarchy(
+  context: Readonly<DomainOperationContext>,
+  input: SliceIdentity & { reason: string },
+): SliceReopenHierarchyResult {
+  if (requireActiveDomainOperationContext(context) !== "slice.reopen") {
+    throw new Error("Slice reopen requires a slice.reopen Domain Operation");
+  }
+  const slice = {
+    milestoneId: requireText(input.milestoneId, "milestoneId"),
+    sliceId: requireText(input.sliceId, "sliceId"),
+  };
+  requireText(input.reason, "reason");
+  const milestone = getDb().prepare(`
+    SELECT milestone.status AS legacy_status, lifecycle.lifecycle_status
+    FROM milestones milestone
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'milestone' AND lifecycle.milestone_id = milestone.id
+     AND lifecycle.slice_id IS NULL
+    WHERE milestone.id = :milestone_id
+  `).get({ ":milestone_id": slice.milestoneId }) as Record<string, unknown> | undefined;
+  if (!milestone) throw new SliceLifecycleValidationError(`milestone not found: ${slice.milestoneId}`);
+  const milestoneStatus = normalizeLegacyLifecycleStatus(String(milestone["legacy_status"]));
+  if (!milestoneStatus || milestoneStatus === "completed" || milestoneStatus === "cancelled") {
+    throw new SliceLifecycleValidationError(`cannot reopen slice in a closed milestone: ${slice.milestoneId}`);
+  }
+  if (milestone["lifecycle_status"]) {
+    if (["completed", "cancelled"].includes(String(milestone["lifecycle_status"]))) {
+      throw new SliceLifecycleValidationError("cannot reopen slice under a terminal canonical milestone");
+    }
+    const shadow = compareLifecycleShadow(String(milestone["legacy_status"]), String(milestone["lifecycle_status"]));
+    if (shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta") {
+      throw new SliceLifecycleValidationError("Milestone canonical and legacy lifecycle mismatch");
+    }
+  }
+  const sliceRow = getDb().prepare(`
+    SELECT slice.status AS legacy_status, lifecycle.lifecycle_id, lifecycle.lifecycle_status
+    FROM slices slice
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'slice' AND lifecycle.milestone_id = slice.milestone_id
+     AND lifecycle.slice_id = slice.id AND lifecycle.task_id IS NULL
+    WHERE slice.milestone_id = :milestone_id AND slice.id = :slice_id
+  `).get({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId }) as Record<string, unknown> | undefined;
+  if (!sliceRow) throw new SliceLifecycleValidationError(`slice not found: ${slice.milestoneId}/${slice.sliceId}`);
+  const legacySliceStatus = normalizeLegacyLifecycleStatus(String(sliceRow["legacy_status"]));
+  if (!legacySliceStatus) throw new SliceLifecycleValidationError(`Slice ${slice.sliceId} has an unknown legacy status`);
+  const sliceState: HierarchyRow = {
+    taskId: null,
+    legacyStatus: String(sliceRow["legacy_status"]),
+    lifecycleId: sliceRow["lifecycle_id"] ? String(sliceRow["lifecycle_id"]) : null,
+    lifecycleStatus: sliceRow["lifecycle_status"] ? String(sliceRow["lifecycle_status"]) as CanonicalLifecycleStatus : null,
+  };
+  requireMatchingShadow(sliceState, `Slice ${slice.sliceId}`);
+  const tasks = getDb().prepare(`
+    SELECT task.id AS task_id, task.status AS legacy_status,
+           lifecycle.lifecycle_id, lifecycle.lifecycle_status
+    FROM tasks task
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'task' AND lifecycle.milestone_id = task.milestone_id
+     AND lifecycle.slice_id = task.slice_id AND lifecycle.task_id = task.id
+    WHERE task.milestone_id = :milestone_id AND task.slice_id = :slice_id
+    ORDER BY task.sequence, task.id
+  `).all({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId }) as Array<Record<string, unknown>>;
+  for (const task of tasks) {
+    const lifecycleId = task["lifecycle_id"] ? String(task["lifecycle_id"]) : null;
+    if (lifecycleId && runningAttempt(lifecycleId)) {
+      throw new SliceLifecycleValidationError(`Task ${String(task["task_id"])} has a running Attempt descendant`);
+    }
+    const state: HierarchyRow = {
+      taskId: String(task["task_id"]),
+      legacyStatus: String(task["legacy_status"]),
+      lifecycleId,
+      lifecycleStatus: task["lifecycle_status"] ? String(task["lifecycle_status"]) as CanonicalLifecycleStatus : null,
+    };
+    requireMatchingShadow(state, `Task ${state.taskId}`);
+    const legacyStatus = normalizeLegacyLifecycleStatus(state.legacyStatus);
+    if (legacyStatus !== "completed" && legacyStatus !== "cancelled") {
+      throw new SliceLifecycleValidationError(
+        `slice ${slice.sliceId} is not complete because Task ${state.taskId} is not terminal`,
+      );
+    }
+  }
+  const terminalSlice = legacySliceStatus === "completed" || legacySliceStatus === "cancelled";
+  if (!terminalSlice && (sliceState.lifecycleId || tasks.length === 0)) {
+    throw new SliceLifecycleValidationError(`slice ${slice.sliceId} is not complete — nothing to reopen`);
+  }
+  const reopenedTaskIds: string[] = [];
+  for (const task of tasks) {
+    const taskId = String(task["task_id"]);
+    const legacyStatus = normalizeLegacyLifecycleStatus(String(task["legacy_status"]))!;
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task", ...slice, taskId, lifecycleStatus: "ready",
+      ...(!task["lifecycle_id"] ? { adoptedFromStatus: legacyStatus } : {}),
+    });
+    const updated = getDb().prepare(`
+      UPDATE tasks SET status = 'pending', completed_at = NULL
+      WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :task_id
+    `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId, ":task_id": taskId });
+    if (Number((updated as { changes?: number }).changes ?? 0) !== 1) throw new Error("Slice reopen must update one Task");
+    reopenedTaskIds.push(taskId);
+  }
+  const sliceLifecycle = adoptOrTransitionLifecycle(context, {
+    itemKind: "slice", ...slice, lifecycleStatus: "ready",
+    ...(!sliceState.lifecycleId ? { adoptedFromStatus: legacySliceStatus } : {}),
+  });
+  const updated = getDb().prepare(`
+    UPDATE slices SET status = 'in_progress', completed_at = NULL
+    WHERE milestone_id = :milestone_id AND id = :slice_id
+  `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId });
+  if (Number((updated as { changes?: number }).changes ?? 0) !== 1) throw new Error("Slice reopen must update one Slice");
+  const shadows = [
+    readLifecycleShadowComparison(context, { itemKind: "slice", ...slice }),
+    ...reopenedTaskIds.map((taskId) => readLifecycleShadowComparison(context, { itemKind: "task", ...slice, taskId })),
+  ];
+  if (shadows.some((shadow) => shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta")) {
+    throw new Error("Slice reopen did not converge canonical and legacy lifecycle state");
+  }
+  return { sliceLifecycleId: sliceLifecycle.lifecycleId, reopenedTaskIds, shadows };
 }

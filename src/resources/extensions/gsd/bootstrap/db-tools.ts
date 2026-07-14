@@ -1438,7 +1438,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_slice_reopen (gsd_reopen_slice alias) ─────────────────────────
 
-  const reopenSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const reopenSliceExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const basePath = resolveCtxCwd(_ctx);
     const dbAvailable = await ensureDbOpen(basePath);
     if (!dbAvailable) {
@@ -1449,7 +1449,10 @@ export function registerDbTools(pi: ExtensionAPI): void {
     }
     try {
       const { handleReopenSlice } = await import("../tools/reopen-slice.js");
-      const result = await handleReopenSlice(params, basePath);
+      const result = await handleReopenSlice({
+        ...params,
+        invocation: piExecutionInvocation("gsd_slice_reopen", toolCallId),
+      }, basePath);
       if ("error" in result) {
         return {
           content: [{ type: "text" as const, text: `Error reopening slice: ${result.error}` }],
