@@ -353,8 +353,10 @@ test("lifecycle transitions preserve identity, provenance, and durable history",
   const { db } = openFreshFixture();
   try {
     insertOperation(db, "op-1", 1);
-    insertOperation(db, "op-2", 2);
-    insertOperation(db, "op-3", 3);
+    // Authorize terminal-to-ready so these assertions reach the identity and
+    // causal-provenance triggers that they are specifically testing.
+    insertOperation(db, "op-2", 2, 0, "task.reopen");
+    insertOperation(db, "op-3", 3, 0, "task.reopen");
     insertTaskLifecycle(db, "life-a", "M-A", "op-1", 1);
 
     db.prepare(`
@@ -1341,8 +1343,8 @@ test("v40 upgrade authorizes Slice cancellation in both Attempt settlement trigg
       fencingAllowsSliceCancel: /slice\.cancel/.test(fencingSql),
       sliceReadyCanComplete: /OLD\.item_kind = 'slice'.*NEW\.lifecycle_status = 'completed'/s.test(lifecycleSql),
     }, {
-      runtimeSchemaVersion: 43,
-      databaseSchemaVersion: 43,
+      runtimeSchemaVersion: 44,
+      databaseSchemaVersion: 44,
       settlementAllowsSliceCancel: true,
       fencingAllowsSliceCancel: true,
       sliceReadyCanComplete: true,

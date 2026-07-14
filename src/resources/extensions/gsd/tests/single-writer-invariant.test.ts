@@ -64,6 +64,9 @@ const SCHEMA_DB_WRITER_FILES = new Set([
   "db-task-recovery-current-head-schema.ts",
   "db-task-verification-recovery-schema.ts",
   "db-memory-fts-schema.ts",
+  "db-milestone-completion-schema.ts",
+  "db-milestone-reopen-schema.ts",
+  "db-milestone-validation-schema.ts",
   "db-schema-metadata.ts",
   "db-verification-evidence-schema.ts",
 ]);

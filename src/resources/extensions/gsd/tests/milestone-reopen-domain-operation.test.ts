@@ -602,12 +602,15 @@ test("adopted Milestone reopen handler returns and replays the canonical receipt
   const committed = await handleReopenMilestone(request, basePath, stableInvocation);
   assert.ok(!("error" in committed), `handler reopen failed: ${"error" in committed ? committed.error : ""}`);
   assert.ok(committed.operationId, "canonical handler result must expose its operation identity");
+  assert.equal(typeof committed.resultingRevision, "number");
   assert.deepEqual(committed, {
     milestoneId: "M001",
     slicesReset: 2,
     tasksReset: 2,
     operationId: committed.operationId,
+    resultingRevision: committed.resultingRevision,
     duplicate: false,
+    current: true,
   });
   const canonicalLineage = {
     revision: row("SELECT revision FROM project_authority").revision,
@@ -624,16 +627,20 @@ test("adopted Milestone reopen handler returns and replays the canonical receipt
     { operations: canonicalLineage.operations, events: canonicalLineage.events },
     { operations: 1, events: 1 },
   );
+  assert.equal(committed.resultingRevision, canonicalLineage.revision);
 
   const replayed = await handleReopenMilestone(request, basePath, stableInvocation);
 
   assert.ok(!("error" in replayed), `handler replay failed: ${"error" in replayed ? replayed.error : ""}`);
+  assert.equal(replayed.resultingRevision, committed.resultingRevision);
   assert.deepEqual(replayed, {
     milestoneId: "M001",
     slicesReset: 2,
     tasksReset: 2,
     operationId: committed.operationId,
+    resultingRevision: committed.resultingRevision,
     duplicate: true,
+    current: true,
   });
   assert.deepEqual({
     revision: row("SELECT revision FROM project_authority").revision,
