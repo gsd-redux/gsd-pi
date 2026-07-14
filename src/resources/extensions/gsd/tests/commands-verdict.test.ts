@@ -304,29 +304,29 @@ test("handleVerdict rejects when milestone validation is missing", async () => {
   }
 });
 
-test("handleVerdict rejects legacy overrides for adopted milestones", async () => {
+test("handleVerdict rejects legacy overrides for adopted milestones", async (t) => {
   const base = makeBase();
-  try {
-    openTestDb(base);
-    seedMilestone("M001", "Adopted Milestone");
-    seedSlice("M001", "S01", "complete");
-    const validationPath = writeValidation(base, "M001", "needs-attention");
-    adoptMilestone("M001");
-
-    const { ctx, calls } = makeMockCtx();
-    await handleVerdict('pass --milestone M001 --rationale "reviewed"', ctx, base);
-
-    assert.ok(
-      calls.some((call) => call.kind === "warning" && /canonical.*cannot be overridden/i.test(call.message)),
-      `expected canonical override rejection, got: ${JSON.stringify(calls)}`,
-    );
-    assert.match(readFileSync(validationPath, "utf-8"), /^verdict: needs-attention$/m);
-    assert.ok(!calls.some((call) => call.kind === "success"));
-  } finally {
+  t.after(() => {
     closeDatabase();
     invalidateStateCache();
     cleanup(base);
-  }
+  });
+
+  openTestDb(base);
+  seedMilestone("M001", "Adopted Milestone");
+  seedSlice("M001", "S01", "complete");
+  const validationPath = writeValidation(base, "M001", "needs-attention");
+  adoptMilestone("M001");
+
+  const { ctx, calls } = makeMockCtx();
+  await handleVerdict('pass --milestone M001 --rationale "reviewed"', ctx, base);
+
+  assert.ok(
+    calls.some((call) => call.kind === "warning" && /canonical.*cannot be overridden/i.test(call.message)),
+    `expected canonical override rejection, got: ${JSON.stringify(calls)}`,
+  );
+  assert.match(readFileSync(validationPath, "utf-8"), /^verdict: needs-attention$/m);
+  assert.ok(!calls.some((call) => call.kind === "success"));
 });
 
 // ─── handleVerdict — pass override flow ─────────────────────────────────

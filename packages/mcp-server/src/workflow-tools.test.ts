@@ -1676,11 +1676,19 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const noop = async () => ({ content: [{ type: "text", text: "noop" }] });
 
+function readCaptures(capturePath) {
+  try {
+    return JSON.parse(readFileSync(capturePath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
 const captureSliceLifecycle = async (executor, params, projectDir, invocation) => {
   const capturePath = process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH;
   if (capturePath) {
-    let captures = [];
-    try { captures = JSON.parse(readFileSync(capturePath, "utf8")); } catch {}
+    const captures = readCaptures(capturePath);
     captures.push({ executor, params, projectDir, invocation });
     writeFileSync(capturePath, JSON.stringify(captures, null, 2));
   }
@@ -1690,8 +1698,7 @@ const captureSliceLifecycle = async (executor, params, projectDir, invocation) =
 const captureMilestoneValidation = async (params, projectDir, options) => {
   const capturePath = process.env.GSD_TEST_MILESTONE_VALIDATION_CAPTURE_PATH;
   if (capturePath) {
-    let captures = [];
-    try { captures = JSON.parse(readFileSync(capturePath, "utf8")); } catch {}
+    const captures = readCaptures(capturePath);
     captures.push({ params, projectDir, invocation: options?.invocation });
     writeFileSync(capturePath, JSON.stringify(captures, null, 2));
   }
@@ -1978,6 +1985,11 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         _meta: { "io.opengsd/idempotency-key": "stable-milestone-validation" },
       };
       await validateMilestoneTool!.handler(validationArgs, validationMetadata);
+      const firstValidationCapture = readFileSync(validationCapturePath, "utf-8");
+      writeFileSync(validationCapturePath, "{malformed", "utf-8");
+      const malformedCaptureResult = await validateMilestoneAlias!.handler(validationArgs, validationMetadata);
+      assertToolError(malformedCaptureResult, /JSON|Unexpected|position/i);
+      writeFileSync(validationCapturePath, firstValidationCapture, "utf-8");
       await validateMilestoneAlias!.handler(validationArgs, validationMetadata);
       const validationCaptures = JSON.parse(readFileSync(validationCapturePath, "utf-8"));
       assert.equal(validationCaptures.length, 2);

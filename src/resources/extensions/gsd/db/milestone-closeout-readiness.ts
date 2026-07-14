@@ -210,6 +210,9 @@ function receiptBindingInvalidFields(
       ON result.attempt_id = attempt.attempt_id
      AND result.lifecycle_id = attempt.lifecycle_id
      AND result.project_id = attempt.project_id
+    JOIN workflow_operations result_operation
+      ON result_operation.operation_id = result.operation_id
+     AND result_operation.project_id = result.project_id
     WHERE attempt.project_id = :project_id
       AND attempt.lifecycle_id = :lifecycle_id
       AND attempt.attempt_id = :attempt_id
@@ -218,13 +221,20 @@ function receiptBindingInvalidFields(
       AND lifecycle.milestone_id = :milestone_id
       AND lifecycle.slice_id IS NULL
       AND lifecycle.task_id IS NULL
-      AND result.project_revision < :validation_revision
+      AND (
+        result.project_revision < :validation_revision OR (
+          result.project_revision = :validation_revision
+          AND result.operation_id = :validation_operation_id
+          AND result_operation.operation_type = 'milestone.validate'
+        )
+      )
   `).get({
     ":project_id": validation.project_id,
     ":lifecycle_id": bundle.lifecycleId,
     ":attempt_id": bundle.attemptId,
     ":milestone_id": milestoneId,
     ":validation_revision": validation.project_revision,
+    ":validation_operation_id": validation.operation_id,
   }) as unknown as AttemptRow | undefined;
   if (!attempt) invalidFields.push("attemptId");
   if (!attempt || attempt.result_id !== bundle.resultId) invalidFields.push("resultId");
@@ -279,6 +289,12 @@ function receiptBindingInvalidFields(
     : getDb().prepare(`
       SELECT acceptance.human_acceptance_id, acceptance.criterion_id
       FROM workflow_human_acceptances acceptance
+      JOIN workflow_domain_events answered
+        ON answered.operation_id = acceptance.operation_id
+       AND answered.project_id = acceptance.project_id
+       AND answered.event_type = 'milestone.subjective-uat.answered'
+       AND json_extract(answered.payload_json, '$.humanAcceptanceId') = acceptance.human_acceptance_id
+       AND json_extract(answered.payload_json, '$.testedSourceRevision') = :source_revision
       WHERE acceptance.project_id = :project_id
         AND acceptance.lifecycle_id = :lifecycle_id
         AND acceptance.project_revision < :validation_revision
@@ -289,10 +305,18 @@ function receiptBindingInvalidFields(
           SELECT 1 FROM workflow_human_acceptances successor
           WHERE successor.supersedes_human_acceptance_id = acceptance.human_acceptance_id
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_domain_events prepared
+          WHERE prepared.project_id = acceptance.project_id
+            AND prepared.event_type = 'milestone.subjective-uat.prepared'
+            AND json_extract(prepared.payload_json, '$.criterionId') = acceptance.criterion_id
+            AND prepared.project_revision > acceptance.project_revision
+        )
     `).all({
       ":project_id": validation.project_id,
       ":lifecycle_id": bundle.lifecycleId,
       ":validation_revision": validation.project_revision,
+      ":source_revision": bundle.testedSourceRevision,
       ":acceptance_ids": JSON.stringify([...bundle.humanAcceptanceIds]),
     }) as unknown as HumanProofRow[];
   const humanAcceptanceIds = new Set(humanProofs.map((proof) => proof.human_acceptance_id));
@@ -367,12 +391,25 @@ function currentCriteria(
                         acceptance.human_acceptance_id DESC
              ) AS rank
       FROM workflow_human_acceptances acceptance
+      JOIN workflow_domain_events answered
+        ON answered.operation_id = acceptance.operation_id
+       AND answered.project_id = acceptance.project_id
+       AND answered.event_type = 'milestone.subjective-uat.answered'
+       AND json_extract(answered.payload_json, '$.humanAcceptanceId') = acceptance.human_acceptance_id
+       AND json_extract(answered.payload_json, '$.testedSourceRevision') = :source_revision
       JOIN json_each(:payload_json, '$.humanAcceptanceIds') listed_acceptance
         ON listed_acceptance.value = acceptance.human_acceptance_id
       WHERE NOT EXISTS (
         SELECT 1 FROM workflow_human_acceptances successor
         WHERE successor.supersedes_human_acceptance_id = acceptance.human_acceptance_id
       )
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_domain_events prepared
+          WHERE prepared.project_id = acceptance.project_id
+            AND prepared.event_type = 'milestone.subjective-uat.prepared'
+            AND json_extract(prepared.payload_json, '$.criterionId') = acceptance.criterion_id
+            AND prepared.project_revision > acceptance.project_revision
+        )
     )
     SELECT criterion.criterion_id, criterion.criterion_key, criterion.criterion_kind,
            technical.verdict AS technical_verdict,

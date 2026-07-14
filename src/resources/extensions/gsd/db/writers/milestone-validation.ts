@@ -31,13 +31,13 @@ export interface PreparedMilestoneValidationCriterion {
   requirementId?: string;
 }
 
-export interface PrepareMilestoneValidationAttemptInput {
+interface PrepareMilestoneValidationAttemptInput {
   milestoneId: string;
   criteria: MilestoneValidationCriterionWriteInput[];
   claimedAt?: string;
 }
 
-export interface PrepareMilestoneValidationAttemptResult {
+interface PrepareMilestoneValidationAttemptResult {
   milestoneId: string;
   lifecycleId: string;
   attemptId: string;
@@ -46,7 +46,7 @@ export interface PrepareMilestoneValidationAttemptResult {
   criteria: PreparedMilestoneValidationCriterion[];
 }
 
-export interface SettleMilestoneValidationAttemptInput {
+interface SettleMilestoneValidationAttemptInput {
   attemptId: string;
   outcome: "succeeded" | "failed" | "interrupted";
   failureClass: string;
@@ -55,7 +55,7 @@ export interface SettleMilestoneValidationAttemptInput {
   endedAt?: string;
 }
 
-export interface SettleMilestoneValidationAttemptResult {
+interface SettleMilestoneValidationAttemptResult {
   milestoneId: string;
   lifecycleId: string;
   attemptId: string;
@@ -76,14 +76,14 @@ export interface MilestoneValidationEvidenceWriteInput {
   environment: { [key: string]: DomainJsonValue };
 }
 
-export interface MilestoneValidationCriterionResultWriteInput {
+interface MilestoneValidationCriterionResultWriteInput {
   criterionId: string;
   verdict: MilestoneValidationVerdict;
   rationale: string;
   evidence: MilestoneValidationEvidenceWriteInput[];
 }
 
-export interface InsertMilestoneValidationVerdictsInput {
+interface InsertMilestoneValidationVerdictsInput {
   attemptId: string;
   testedSourceRevision: string;
   policyId: string;
@@ -100,7 +100,7 @@ export interface InsertedMilestoneValidationVerdict {
   evidenceIds: string[];
 }
 
-export interface InsertMilestoneValidationVerdictsResult {
+interface InsertMilestoneValidationVerdictsResult {
   milestoneId: string;
   lifecycleId: string;
   attemptId: string;
@@ -108,6 +108,31 @@ export interface InsertMilestoneValidationVerdictsResult {
   verdict: MilestoneValidationVerdict;
   verdicts: InsertedMilestoneValidationVerdict[];
 }
+
+interface ValidateMilestoneCriterionWriteInput
+  extends MilestoneValidationCriterionWriteInput {
+  verdict: MilestoneValidationVerdict;
+  rationale: string;
+  evidence: MilestoneValidationEvidenceWriteInput[];
+}
+
+export interface ValidateMilestoneWriteInput {
+  milestoneId: string;
+  testedSourceRevision: string;
+  policyId: string;
+  policyVersion: string;
+  verdict: MilestoneValidationVerdict;
+  criteria: ValidateMilestoneCriterionWriteInput[];
+  outcome: SettleMilestoneValidationAttemptInput["outcome"];
+  failureClass: string;
+  summary: string;
+  output: DomainJsonValue;
+}
+
+export type ValidateMilestoneWriteResult =
+  & PrepareMilestoneValidationAttemptResult
+  & SettleMilestoneValidationAttemptResult
+  & InsertMilestoneValidationVerdictsResult;
 
 interface LifecycleRow {
   lifecycle_id: string;
@@ -258,13 +283,10 @@ function ensureTechnicalCriterion(
   };
 }
 
-export function prepareMilestoneValidationAttempt(
+function prepareMilestoneValidationAttemptRows(
   context: Readonly<DomainOperationContext>,
   input: PrepareMilestoneValidationAttemptInput,
 ): PrepareMilestoneValidationAttemptResult {
-  if (requireActiveDomainOperationContext(context) !== "milestone.validation.prepare") {
-    throw new Error("Milestone validation preparation requires a milestone.validation.prepare Domain Operation");
-  }
   requireNonBlank(input.milestoneId, "milestoneId");
   if (input.criteria.length === 0) throw new Error("Milestone validation requires objective criteria");
   const lifecycle = requireMilestoneLifecycle(context, input.milestoneId);
@@ -338,13 +360,10 @@ export function prepareMilestoneValidationAttempt(
   };
 }
 
-export function settleMilestoneValidationAttempt(
+function settleMilestoneValidationAttemptRows(
   context: Readonly<DomainOperationContext>,
   input: SettleMilestoneValidationAttemptInput,
 ): SettleMilestoneValidationAttemptResult {
-  if (requireActiveDomainOperationContext(context) !== "attempt.settle") {
-    throw new Error("Milestone validation settlement requires an attempt.settle Domain Operation");
-  }
   requireNonBlank(input.attemptId, "attemptId");
   requireNonBlank(input.failureClass, "failureClass");
   const endedAt = requireTimestamp(input.endedAt ?? new Date().toISOString(), "endedAt");
@@ -580,13 +599,10 @@ function insertEvidence(
   return evidenceId;
 }
 
-export function insertMilestoneValidationVerdicts(
+function insertMilestoneValidationVerdicts(
   context: Readonly<DomainOperationContext>,
   input: InsertMilestoneValidationVerdictsInput,
 ): InsertMilestoneValidationVerdictsResult {
-  if (requireActiveDomainOperationContext(context) !== "milestone.validate") {
-    throw new Error("Milestone validation recording requires a milestone.validate Domain Operation");
-  }
   requireNonBlank(input.attemptId, "attemptId");
   requireNonBlank(input.testedSourceRevision, "testedSourceRevision");
   requireNonBlank(input.policyId, "policyId");
@@ -681,5 +697,52 @@ export function insertMilestoneValidationVerdicts(
     resultId: scope.result_id,
     verdict: input.verdict,
     verdicts,
+  };
+}
+
+export function writeMilestoneValidation(
+  context: Readonly<DomainOperationContext>,
+  input: ValidateMilestoneWriteInput,
+): ValidateMilestoneWriteResult {
+  if (requireActiveDomainOperationContext(context) !== "milestone.validate") {
+    throw new Error("Combined Milestone validation requires a milestone.validate Domain Operation");
+  }
+  const prepared = prepareMilestoneValidationAttemptRows(context, {
+    milestoneId: input.milestoneId,
+    criteria: input.criteria.map((criterion) => ({
+      criterionKey: criterion.criterionKey,
+      evidenceClass: criterion.evidenceClass,
+      description: criterion.description,
+      required: criterion.required,
+      ...(criterion.requirementId ? { requirementId: criterion.requirementId } : {}),
+    })),
+  });
+  const settled = settleMilestoneValidationAttemptRows(context, {
+    attemptId: prepared.attemptId,
+    outcome: input.outcome,
+    failureClass: input.failureClass,
+    summary: input.summary,
+    output: input.output,
+  });
+  const inserted = insertMilestoneValidationVerdicts(context, {
+    attemptId: prepared.attemptId,
+    testedSourceRevision: input.testedSourceRevision,
+    policyId: input.policyId,
+    policyVersion: input.policyVersion,
+    verdict: input.verdict,
+    criterionResults: prepared.criteria.map((criterion, index) => {
+      const result = input.criteria[index]!;
+      return {
+        criterionId: criterion.criterionId,
+        verdict: result.verdict,
+        rationale: result.rationale,
+        evidence: result.evidence,
+      };
+    }),
+  });
+  return {
+    ...prepared,
+    ...settled,
+    ...inserted,
   };
 }

@@ -15,10 +15,8 @@ import {
 } from "../db/writers/lifecycle-commands.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 import {
-  prepareMilestoneValidation,
-  recordMilestoneValidation,
-  settleMilestoneValidation,
-  type RecordMilestoneValidationReceipt,
+  validateMilestone,
+  type ValidateMilestoneReceipt,
 } from "../milestone-validation-domain-operation.ts";
 import {
   _getAdapter,
@@ -59,6 +57,7 @@ function execute(
   operationType: string,
   write: (context: Readonly<DomainOperationContext>) => void = () => {},
   actor: { actorType: string; actorId?: string } = { actorType: "test" },
+  event?: { eventType: string; payload: Record<string, string> },
 ): DomainOperationResult {
   const fence = readDomainOperationFence();
   return executeDomainOperation({
@@ -74,10 +73,10 @@ function execute(
     write(context);
     return {
       events: [{
-        eventType: operationType,
+        eventType: event?.eventType ?? operationType,
         entityType: "milestone",
         entityId: "M001",
-        payload: { operationType },
+        payload: event?.payload ?? { operationType },
         destinations: ["test"],
       }],
       projections: [{
@@ -125,38 +124,27 @@ function makeFixture(): Fixture {
 function recordCanonicalValidation(
   verdict: "pass" | "fail" | "inconclusive" = "pass",
   testedSourceRevision = "source-a",
-): RecordMilestoneValidationReceipt {
+): ValidateMilestoneReceipt {
   const runId = readDomainOperationFence().revision;
-  const prepared = prepareMilestoneValidation({
-    invocation: invocation(`canonical/${runId}/prepare`),
-    milestoneId: "M001",
-    criteria: [{
-      criterionKey: "focused-proof",
-      evidenceClass: "command",
-      description: "Focused proof must pass",
-    }],
-  });
-  settleMilestoneValidation({
-    invocation: invocation(`canonical/${runId}/settle`),
-    attemptId: prepared.attemptId,
-    outcome: "succeeded",
-    failureClass: "none",
-    summary: "Focused proof completed.",
-    output: { testedSourceRevision },
-  });
   let observation: "passed" | "failed" | "inconclusive" = "inconclusive";
   if (verdict === "pass") observation = "passed";
   else if (verdict === "fail") observation = "failed";
-  return recordMilestoneValidation({
-    invocation: invocation(`canonical/${runId}/record`),
-    attemptId: prepared.attemptId,
+  return validateMilestone({
+    invocation: invocation(`canonical/${runId}/validate`),
+    milestoneId: "M001",
     testedSourceRevision,
     policyId: "test-policy",
     policyVersion: "1",
     verdict,
     rationale: `Validation recorded ${verdict}.`,
-    criterionResults: [{
-      criterionId: prepared.criteria[0]!.criterionId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "Focused proof completed.",
+    output: { testedSourceRevision },
+    criteria: [{
+      criterionKey: "focused-proof",
+      evidenceClass: "command",
+      description: "Focused proof must pass",
       verdict,
       rationale: `Focused proof recorded ${verdict}.`,
       evidence: [{
@@ -174,7 +162,7 @@ function recordCanonicalValidation(
   });
 }
 
-function bundleFrom(receipt: RecordMilestoneValidationReceipt): ValidationBundle {
+function bundleFrom(receipt: ValidateMilestoneReceipt): ValidationBundle {
   return {
     criterionIds: receipt.verdicts.map((verdict) => verdict.criterionId),
     verdictIds: receipt.verdicts.map((verdict) => verdict.verdictId),
@@ -186,7 +174,7 @@ function bundleFrom(receipt: RecordMilestoneValidationReceipt): ValidationBundle
 function recordSyntheticValidation(input: {
   operationType?: string;
   overallVerdict?: string;
-  receipt: RecordMilestoneValidationReceipt;
+  receipt: ValidateMilestoneReceipt;
   bundle?: ValidationBundle;
   attemptId?: string;
   resultId?: string;
@@ -194,6 +182,22 @@ function recordSyntheticValidation(input: {
   const operationType = input.operationType ?? "milestone.validate";
   const overallVerdict = input.overallVerdict ?? input.receipt.verdict;
   const bundle = input.bundle ?? bundleFrom(input.receipt);
+  const eventPayload = {
+    milestoneId: "M001",
+    lifecycleId: input.receipt.lifecycleId,
+    attemptId: input.attemptId ?? input.receipt.attemptId,
+    resultId: input.resultId ?? input.receipt.resultId,
+    overallVerdict,
+    testedSourceRevision: input.receipt.testedSourceRevision,
+    policyId: "test-policy",
+    policyVersion: "1",
+    ...bundle,
+  };
+  assert.deepEqual(
+    Object.entries(eventPayload).filter(([, value]) => value === undefined),
+    [],
+    "synthetic validation payload must be complete",
+  );
   const fence = readDomainOperationFence();
   return executeDomainOperation({
     operationType,
@@ -208,17 +212,7 @@ function recordSyntheticValidation(input: {
       eventType: "milestone.validation.recorded",
       entityType: "milestone",
       entityId: "M001",
-      payload: {
-        milestoneId: "M001",
-        lifecycleId: input.receipt.lifecycleId,
-        attemptId: input.attemptId ?? input.receipt.attemptId,
-        resultId: input.resultId ?? input.receipt.resultId,
-        overallVerdict,
-        testedSourceRevision: input.receipt.testedSourceRevision,
-        policyId: "test-policy",
-        policyVersion: "1",
-        ...bundle,
-      },
+      payload: eventPayload,
       destinations: ["test"],
     }],
     projections: [{
@@ -231,15 +225,42 @@ function recordSyntheticValidation(input: {
 
 function prepareNewerAttempt(): string {
   const runId = readDomainOperationFence().revision;
-  return prepareMilestoneValidation({
-    invocation: invocation(`newer/${runId}/prepare`),
-    milestoneId: "M001",
-    criteria: [{
-      criterionKey: "focused-proof",
-      evidenceClass: "command",
-      description: "Focused proof must pass",
-    }],
-  }).attemptId;
+  const attemptId = `attempt-newer-${runId}`;
+  const lifecycleId = String(_getAdapter()!.prepare(`
+    SELECT lifecycle_id FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone' AND milestone_id = 'M001'
+  `).get()?.["lifecycle_id"]);
+  execute("test.validation-attempt.claim", (context) => {
+    const adapter = _getAdapter()!;
+    const prior = adapter.prepare(`
+      SELECT attempt_id, attempt_number
+      FROM workflow_execution_attempts
+      WHERE lifecycle_id = :lifecycle_id
+      ORDER BY attempt_number DESC
+      LIMIT 1
+    `).get({ ":lifecycle_id": lifecycleId });
+    adapter.prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number, retry_of_attempt_id,
+        attempt_state, claimed_at, claim_operation_id,
+        claim_project_revision, claim_authority_epoch
+      ) VALUES (
+        :attempt_id, :project_id, :lifecycle_id, :attempt_number, :retry_of_attempt_id,
+        'claimed', :claimed_at, :operation_id, :project_revision, :authority_epoch
+      )
+    `).run({
+      ":attempt_id": attemptId,
+      ":project_id": context.projectId,
+      ":lifecycle_id": lifecycleId,
+      ":attempt_number": Number(prior?.["attempt_number"] ?? 0) + 1,
+      ":retry_of_attempt_id": prior?.["attempt_id"] ?? null,
+      ":claimed_at": CREATED_AT,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+    });
+  });
+  return attemptId;
 }
 
 afterEach(() => {
@@ -373,13 +394,43 @@ test("readiness blocks a newer settled Milestone Attempt without a later validat
   makeFixture();
   const recorded = recordCanonicalValidation();
   const attemptId = prepareNewerAttempt();
-  const settled = settleMilestoneValidation({
-    invocation: invocation("newer/settle-without-record"),
-    attemptId,
-    outcome: "succeeded",
-    failureClass: "none",
-    summary: "Checks completed without a final validation receipt.",
-    output: {},
+  const settled = execute("attempt.settle", (context) => {
+    const adapter = _getAdapter()!;
+    adapter.prepare(`
+      UPDATE workflow_execution_attempts
+      SET attempt_state = 'settled', settle_outcome = 'succeeded',
+          ended_at = :ended_at, settle_operation_id = :operation_id,
+          settle_project_revision = :project_revision,
+          settle_authority_epoch = :authority_epoch
+      WHERE attempt_id = :attempt_id
+    `).run({
+      ":attempt_id": attemptId,
+      ":ended_at": CREATED_AT,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+    });
+    const lifecycleId = String(adapter.prepare(`
+      SELECT lifecycle_id FROM workflow_execution_attempts WHERE attempt_id = :attempt_id
+    `).get({ ":attempt_id": attemptId })?.["lifecycle_id"]);
+    adapter.prepare(`
+      INSERT INTO workflow_attempt_results (
+        result_id, project_id, lifecycle_id, attempt_id, outcome,
+        created_at, operation_id, project_revision, authority_epoch
+      ) VALUES (
+        :result_id, :project_id, :lifecycle_id, :attempt_id, 'succeeded',
+        :created_at, :operation_id, :project_revision, :authority_epoch
+      )
+    `).run({
+      ":result_id": `result-${attemptId}`,
+      ":project_id": context.projectId,
+      ":lifecycle_id": lifecycleId,
+      ":attempt_id": attemptId,
+      ":created_at": CREATED_AT,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+    });
   });
 
   const readiness = readMilestoneCloseoutReadiness({ milestoneId: "M001" });
@@ -401,7 +452,7 @@ test("readiness and public verdict select the latest exact canonical validation"
     ["fail", "needs-remediation"],
     ["inconclusive", "needs-attention"],
   ] as const;
-  let latest: RecordMilestoneValidationReceipt | undefined;
+  let latest: ValidateMilestoneReceipt | undefined;
   for (const [canonical, expected] of mappings) {
     latest = recordCanonicalValidation(canonical);
     assert.equal(await resolveMilestoneValidationVerdict(".", "M001"), expected);
@@ -489,7 +540,7 @@ test("readiness accepts an earlier genuine human acceptance that is still curren
       WHERE interaction_id = 'interaction-uat'
     `).run();
   });
-  execute("test.subjective.answer", (context) => {
+  execute("milestone.subjective-uat.answer", (context) => {
     db.prepare(`
       INSERT INTO workflow_answers (
         answer_id, project_id, question_id, interaction_id, response_kind,
@@ -542,7 +593,37 @@ test("readiness accepts an earlier genuine human acceptance that is still curren
       ":project_revision": context.resultingRevision,
       ":authority_epoch": context.resultingAuthorityEpoch,
     });
-  }, { actorType: "user", actorId: "developer" });
+  }, { actorType: "user", actorId: "developer" }, {
+    eventType: "milestone.subjective-uat.answered",
+    payload: {
+      humanAcceptanceId: "acceptance-uat",
+      testedSourceRevision: "source-a",
+    },
+  });
+  const answerEvent = db.prepare(`
+    SELECT event_type, payload_json FROM workflow_domain_events
+    WHERE operation_id = (
+      SELECT operation_id FROM workflow_human_acceptances
+      WHERE human_acceptance_id = 'acceptance-uat'
+    )
+  `).get();
+  assert.deepEqual(answerEvent, {
+    event_type: "milestone.subjective-uat.answered",
+    payload_json: JSON.stringify({
+      humanAcceptanceId: "acceptance-uat",
+      testedSourceRevision: "source-a",
+    }),
+  });
+  assert.equal(db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_human_acceptances acceptance
+    JOIN workflow_domain_events answered
+      ON answered.operation_id = acceptance.operation_id
+     AND answered.event_type = 'milestone.subjective-uat.answered'
+     AND json_extract(answered.payload_json, '$.humanAcceptanceId') = acceptance.human_acceptance_id
+     AND json_extract(answered.payload_json, '$.testedSourceRevision') = 'source-a'
+    WHERE acceptance.human_acceptance_id = 'acceptance-uat'
+  `).get()?.["count"], 1, "fixture acceptance must have a source-bound answer event");
 
   let resultId = "";
   execute("attempt.settle", (context) => {
@@ -622,5 +703,9 @@ test("readiness accepts an earlier genuine human acceptance that is still curren
   }));
 
   const readiness = readMilestoneCloseoutReadiness({ milestoneId: "M001" });
-  assert.equal(readiness.ready, true);
+  assert.equal(
+    readiness.ready,
+    true,
+    readiness.ready ? undefined : JSON.stringify(readiness.blockers),
+  );
 });

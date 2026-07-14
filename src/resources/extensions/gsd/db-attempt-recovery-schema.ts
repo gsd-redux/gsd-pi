@@ -17,6 +17,7 @@ function cancellationOperations(
 export function createAttemptSettlementShapeTrigger(
   db: DbAdapter,
   allowedCancellations: boolean | readonly CancellationOperationType[] = [],
+  allowAtomicMilestoneValidation = false,
 ): void {
   const cancellationOperationTypes = cancellationOperations(allowedCancellations);
   const cancellationAuthorization = cancellationOperationTypes.length > 0
@@ -24,6 +25,20 @@ export function createAttemptSettlementShapeTrigger(
         operation.operation_type IN (${cancellationOperationTypes.map((type) => `'${type}'`).join(", ")})
         AND OLD.attempt_state = 'running'
         AND NEW.settle_outcome = 'interrupted'
+      )`
+    : "";
+  const milestoneValidationAuthorization = allowAtomicMilestoneValidation
+    ? `OR (
+        operation.operation_type = 'milestone.validate'
+        AND EXISTS (
+          SELECT 1
+          FROM workflow_item_lifecycles lifecycle
+          WHERE lifecycle.lifecycle_id = NEW.lifecycle_id
+            AND lifecycle.project_id = NEW.project_id
+            AND lifecycle.item_kind = 'milestone'
+            AND lifecycle.slice_id IS NULL
+            AND lifecycle.task_id IS NULL
+        )
       )`
     : "";
   db.exec(`
@@ -39,6 +54,7 @@ export function createAttemptSettlementShapeTrigger(
           AND operation.project_id = NEW.project_id
           AND (
             operation.operation_type = 'attempt.settle'
+            ${milestoneValidationAuthorization}
             ${cancellationAuthorization}
           )
       )) OR

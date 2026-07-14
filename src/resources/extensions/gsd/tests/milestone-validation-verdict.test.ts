@@ -116,8 +116,12 @@ test("resolveMilestoneValidationVerdict prefers DB pass over stale worktree need
   }
 });
 
-test("resolveMilestoneValidationVerdict does not promote a projection when the DB has no validation", async () => {
+test("resolveMilestoneValidationVerdict does not promote a projection when the DB has no validation", async (t) => {
   const base = join(tmpdir(), `validation-verdict-file-only-${Date.now()}`);
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
   const validationDir = join(base, ".gsd", "milestones", "M001");
   mkdirSync(validationDir, { recursive: true });
   writeFileSync(
@@ -125,61 +129,54 @@ test("resolveMilestoneValidationVerdict does not promote a projection when the D
     "---\nverdict: pass\n---\n\n# Validation\nProjection only.\n",
   );
 
-  try {
-    setup(base);
-    insertMilestone({ id: "M001", title: "Test", status: "active" });
+  setup(base);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
 
-    const verdict = await resolveMilestoneValidationVerdict(base, "M001");
-    assert.equal(verdict, undefined);
-  } finally {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  }
+  const verdict = await resolveMilestoneValidationVerdict(base, "M001");
+  assert.equal(verdict, undefined);
 });
 
-test("resolveMilestoneValidationVerdict rejects malformed canonical receipts for adopted milestones", async () => {
+test("resolveMilestoneValidationVerdict rejects malformed canonical receipts for adopted milestones", async (t) => {
   const base = join(tmpdir(), `validation-verdict-adopted-${Date.now()}`);
-  mkdirSync(base, { recursive: true });
-
-  try {
-    setup(base);
-    insertMilestone({ id: "M001", title: "Test", status: "active" });
-    insertAssessment({
-      path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
-      milestoneId: "M001",
-      status: "pass",
-      scope: "milestone-validation",
-      fullContent: "---\nverdict: pass\n---\n",
-    });
-    adoptMilestone("M001");
-
-    recordCanonicalValidation("M001", "pass");
-    assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
-  } finally {
+  t.after(() => {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
-  }
+  });
+  mkdirSync(base, { recursive: true });
+
+  setup(base);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertAssessment({
+    path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\n---\n",
+  });
+  adoptMilestone("M001");
+
+  recordCanonicalValidation("M001", "pass");
+  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
 });
 
-test("resolveMilestoneValidationVerdict does not fall back to legacy assessments after adoption", async () => {
+test("resolveMilestoneValidationVerdict does not fall back to legacy assessments after adoption", async (t) => {
   const base = join(tmpdir(), `validation-verdict-adopted-no-receipt-${Date.now()}`);
-  mkdirSync(base, { recursive: true });
-
-  try {
-    setup(base);
-    insertMilestone({ id: "M001", title: "Test", status: "active" });
-    insertAssessment({
-      path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
-      milestoneId: "M001",
-      status: "pass",
-      scope: "milestone-validation",
-      fullContent: "---\nverdict: pass\n---\n",
-    });
-    adoptMilestone("M001");
-
-    assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
-  } finally {
+  t.after(() => {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
-  }
+  });
+  mkdirSync(base, { recursive: true });
+
+  setup(base);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertAssessment({
+    path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\n---\n",
+  });
+  adoptMilestone("M001");
+
+  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
 });

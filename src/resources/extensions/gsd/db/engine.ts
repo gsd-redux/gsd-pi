@@ -58,6 +58,7 @@ import {
   applyMigrationV39TaskRecoveryCurrentHead,
   applyMigrationV40SliceCancellation,
   applyMigrationV41SliceCompletion,
+  applyMigrationV42MilestoneValidation,
 } from "../db-migration-steps.js";
 import {
   createCanonicalFoundationSchemaV31,
@@ -116,7 +117,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 41;
+export const SCHEMA_VERSION = 42;
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
   const conservativeFilePragmas = fileBacked && _isLikelyWslDrvFsPathForTest(dbPath);
   if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
@@ -165,6 +166,7 @@ function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): 
         applyMigrationV39TaskRecoveryCurrentHead(db);
         applyMigrationV40SliceCancellation(db);
         applyMigrationV41SliceCompletion(db);
+        applyMigrationV42MilestoneValidation(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -476,6 +478,11 @@ function migrateSchema(db: DbAdapter, dbPath: string | null): void {
     if (currentVersion < 41) {
       applyMigrationV41SliceCompletion(db);
       recordSchemaVersion(db, 41);
+    }
+
+    if (currentVersion < 42) {
+      applyMigrationV42MilestoneValidation(db);
+      recordSchemaVersion(db, 42);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");

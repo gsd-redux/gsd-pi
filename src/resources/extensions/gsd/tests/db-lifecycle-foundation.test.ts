@@ -1341,8 +1341,8 @@ test("v40 upgrade authorizes Slice cancellation in both Attempt settlement trigg
       fencingAllowsSliceCancel: /slice\.cancel/.test(fencingSql),
       sliceReadyCanComplete: /OLD\.item_kind = 'slice'.*NEW\.lifecycle_status = 'completed'/s.test(lifecycleSql),
     }, {
-      runtimeSchemaVersion: 41,
-      databaseSchemaVersion: 41,
+      runtimeSchemaVersion: 42,
+      databaseSchemaVersion: 42,
       settlementAllowsSliceCancel: true,
       fencingAllowsSliceCancel: true,
       sliceReadyCanComplete: true,

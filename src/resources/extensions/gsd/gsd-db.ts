@@ -1152,6 +1152,7 @@ export function insertAssessment(entry: {
   status: string;
   scope: string;
   fullContent: string;
+  createdAt?: string;
 }): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   // Idempotent: PRIMARY KEY is `path`, which is deterministic given (milestone_id, scope) per
@@ -1168,7 +1169,7 @@ export function insertAssessment(entry: {
     ":status": entry.status,
     ":scope": entry.scope,
     ":full_content": entry.fullContent,
-    ":created_at": new Date().toISOString(),
+    ":created_at": entry.createdAt ?? new Date().toISOString(),
   });
 }
 

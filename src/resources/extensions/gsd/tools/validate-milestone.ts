@@ -31,15 +31,15 @@ import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import {
   applyBrowserEvidenceGate,
+  browserEvidenceRequired,
   browserEvidenceGateRequiresAttention,
 } from "../milestone-validation-evidence.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
-  prepareMilestoneValidation,
-  recordMilestoneValidation,
-  settleMilestoneValidation,
+  readMilestoneValidationAggregateTimestamp,
+  validateMilestone,
   type MilestoneValidationEvidenceInput,
-  type RecordMilestoneValidationReceipt,
+  type ValidateMilestoneReceipt,
 } from "../milestone-validation-domain-operation.js";
 import {
   captureVerificationSourceSnapshot,
@@ -89,39 +89,36 @@ export interface ValidateMilestoneOptions {
   invocation?: ExecutionInvocation;
 }
 
-function derivedInvocation(
-  invocation: ExecutionInvocation,
-  suffix: "prepare" | "settle",
-): ExecutionInvocation {
-  return {
-    ...invocation,
-    idempotencyKey: `${invocation.idempotencyKey}/${suffix}`,
-  };
-}
-
-function canonicalVerdict(
+function canonicalOutcome(
   verdict: ValidateMilestoneParams["verdict"],
-): "pass" | "fail" | "inconclusive" {
+): {
+  verdict: "pass" | "fail" | "inconclusive";
+  observation: "passed" | "failed" | "inconclusive";
+  outcome: "succeeded" | "failed" | "interrupted";
+  failureClass: string;
+} {
   switch (verdict) {
     case "pass":
-      return "pass";
+      return {
+        verdict: "pass",
+        observation: "passed",
+        outcome: "succeeded",
+        failureClass: "none",
+      };
     case "needs-remediation":
-      return "fail";
+      return {
+        verdict: "fail",
+        observation: "failed",
+        outcome: "failed",
+        failureClass: "validation-fail",
+      };
     case "needs-attention":
-      return "inconclusive";
-  }
-}
-
-function canonicalObservation(
-  verdict: ValidateMilestoneParams["verdict"],
-): "passed" | "failed" | "inconclusive" {
-  switch (verdict) {
-    case "pass":
-      return "passed";
-    case "needs-remediation":
-      return "failed";
-    case "needs-attention":
-      return "inconclusive";
+      return {
+        verdict: "inconclusive",
+        observation: "inconclusive",
+        outcome: "interrupted",
+        failureClass: "validation-inconclusive",
+      };
   }
 }
 
@@ -193,7 +190,7 @@ function recordCanonicalValidation(input: {
   artifactBasePath: string;
   requiredClasses: string[];
   invocation: ExecutionInvocation;
-}): RecordMilestoneValidationReceipt | { error: string } {
+}): ValidateMilestoneReceipt | { error: string } {
   const evidenceByClass = new Map<string, MilestoneVerificationEvidence[]>();
   for (const evidence of input.params.verificationEvidence ?? []) {
     const className = evidence.verificationClass.toLowerCase();
@@ -246,43 +243,38 @@ function recordCanonicalValidation(input: {
     };
   }
 
-  const prepared = prepareMilestoneValidation({
-    invocation: derivedInvocation(input.invocation, "prepare"),
-    milestoneId: input.params.milestoneId,
-    criteria: [
-      {
-        criterionKey: "milestone-validation:aggregate",
-        evidenceClass: "artifact",
-        description: "The complete Milestone validation report must support its aggregate verdict.",
-      },
-      ...input.requiredClasses.map((className) => {
-        const evidence = evidenceByClass.get(className.toLowerCase())!;
-        return {
-          criterionKey: `milestone-validation:${className.toLowerCase()}`,
-          evidenceClass: evidence[0]!.evidenceClass,
-          description: `${className} verification planned for this Milestone must be current and pass.`,
-        };
-      }),
-    ],
+  const confirmed = confirmVerificationSourceSnapshot(targets, source.snapshot);
+  if (!confirmed.ok) return { error: confirmed.error };
+  const canonical = canonicalOutcome(input.params.verdict);
+  const classResults = input.requiredClasses.map((className) => {
+    const evidence = evidenceByClass.get(className.toLowerCase())!;
+    return {
+      criterionKey: `milestone-validation:${className.toLowerCase()}`,
+      evidenceClass: evidence[0]!.evidenceClass,
+      description: `${className} verification planned for this Milestone must be current and pass.`,
+      verdict: evidenceVerdict(evidence),
+      rationale: evidence.map((entry) => entry.rationale).join("\n"),
+      evidence: evidence.map(({
+        verificationClass: _verificationClass,
+        testedSourceRevision: _testedSourceRevision,
+        rationale: _rationale,
+        ...entry
+      }) => entry),
+    };
   });
-  const confirmedBeforeSettlement = confirmVerificationSourceSnapshot(targets, source.snapshot);
-  if (!confirmedBeforeSettlement.ok) {
-    settleMilestoneValidation({
-      invocation: derivedInvocation(input.invocation, "settle"),
-      attemptId: prepared.attemptId,
-      outcome: "interrupted",
-      failureClass: "verification-drift",
-      summary: confirmedBeforeSettlement.error,
-      output: { testedSourceRevision: source.snapshot.aggregateRevision },
-    });
-    return { error: confirmedBeforeSettlement.error };
-  }
-
-  const settled = settleMilestoneValidation({
-    invocation: derivedInvocation(input.invocation, "settle"),
-    attemptId: prepared.attemptId,
-    outcome: "succeeded",
-    failureClass: "none",
+  const observedAt = readMilestoneValidationAggregateTimestamp(
+    input.invocation.idempotencyKey,
+  ) ?? new Date().toISOString();
+  return validateMilestone({
+    invocation: input.invocation,
+    milestoneId: input.params.milestoneId,
+    testedSourceRevision: source.snapshot.aggregateRevision,
+    policyId: "milestone-validation",
+    policyVersion: "1",
+    verdict: canonical.verdict,
+    rationale: input.params.verdictRationale,
+    outcome: canonical.outcome,
+    failureClass: canonical.failureClass,
     summary: `Milestone validation recorded ${input.params.verdict}.`,
     output: {
       validationMarkdown: input.validationMd,
@@ -295,52 +287,21 @@ function recordCanonicalValidation(input: {
         revision: target.revision,
       })),
     },
-  });
-  const confirmedBeforeVerdict = confirmVerificationSourceSnapshot(targets, source.snapshot);
-  if (!confirmedBeforeVerdict.ok) return { error: confirmedBeforeVerdict.error };
-
-  const aggregateCriterion = prepared.criteria[0];
-  if (!aggregateCriterion) return { error: "Milestone validation aggregate criterion is missing" };
-  const verdict = canonicalVerdict(input.params.verdict);
-  const observation = canonicalObservation(input.params.verdict);
-  const classResults = input.requiredClasses.map((className) => {
-    const criterionKey = `milestone-validation:${className.toLowerCase()}`;
-    const criterion = prepared.criteria.find((entry) => entry.criterionKey === criterionKey);
-    if (!criterion) throw new Error(`${className} validation criterion is missing`);
-    const evidence = evidenceByClass.get(className.toLowerCase())!;
-    return {
-      criterionId: criterion.criterionId,
-      verdict: evidenceVerdict(evidence),
-      rationale: evidence.map((entry) => entry.rationale).join("\n"),
-      evidence: evidence.map(({
-        verificationClass: _verificationClass,
-        testedSourceRevision: _testedSourceRevision,
-        rationale: _rationale,
-        ...entry
-      }) => entry),
-    };
-  });
-  return recordMilestoneValidation({
-    invocation: input.invocation,
-    attemptId: prepared.attemptId,
-    testedSourceRevision: source.snapshot.aggregateRevision,
-    policyId: "milestone-validation",
-    policyVersion: "1",
-    verdict,
-    rationale: input.params.verdictRationale,
-    criterionResults: [
+    criteria: [
       {
-        criterionId: aggregateCriterion.criterionId,
-        verdict,
+        criterionKey: "milestone-validation:aggregate",
+        evidenceClass: "artifact",
+        description: "The complete Milestone validation report must support its aggregate verdict.",
+        verdict: canonical.verdict,
         rationale: input.params.verdictRationale,
         evidence: [{
           evidenceClass: "artifact",
           commandOrTool: "gsd_validate_milestone",
           workingDirectory: input.artifactBasePath,
-          startedAt: settled.endedAt,
-          endedAt: settled.endedAt,
-          observation,
-          durableOutputRef: `db://workflow_attempt_results/${settled.resultId}`,
+          startedAt: observedAt,
+          endedAt: observedAt,
+          observation: canonical.observation,
+          durableOutputRef: `db://milestone-validation/${input.invocation.idempotencyKey}`,
           environment: {
             policy: "milestone-validation",
             sourceTargets: source.snapshot.targets.map((target) => ({
@@ -367,6 +328,13 @@ export async function handleValidateMilestone(
     return { error: `verdict must be one of: ${VALIDATION_VERDICTS.join(", ")}` };
   }
   const requiredClasses = getRequiredVerificationClasses(params.milestoneId);
+  if (
+    opts?.invocation &&
+    browserEvidenceRequired(params) &&
+    !requiredClasses.includes("UAT")
+  ) {
+    requiredClasses.push("UAT");
+  }
   if (requiredClasses.length > 0) {
     const verificationClasses = params.verificationClasses ?? "";
     const missingClasses = requiredClasses.filter(
@@ -389,7 +357,9 @@ export async function handleValidateMilestone(
 
   const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
   const shouldApplyBrowserEvidenceGate = !opts?.skipBrowserEvidenceGate &&
-    await browserEvidenceGateRequiresAttention(params, artifactBasePath);
+    await browserEvidenceGateRequiresAttention(params, artifactBasePath, {
+      structuredOnly: Boolean(opts?.invocation),
+    });
   const effectiveParams = shouldApplyBrowserEvidenceGate
     ? applyBrowserEvidenceGate(params)
     : params;
@@ -417,25 +387,13 @@ export async function handleValidateMilestone(
       })
     : undefined;
   if (canonical && "error" in canonical) return canonical;
-  if (canonical?.status === "replayed") {
-    return {
-      milestoneId: effectiveParams.milestoneId,
-      verdict: effectiveParams.verdict,
-      validationPath,
-      operationId: canonical.operationId,
-      resultingRevision: canonical.resultingRevision,
-      attemptId: canonical.attemptId,
-      resultId: canonical.resultId,
-      duplicate: true,
-    };
-  }
 
   // ── DB write first — matches complete-task/complete-slice pattern ───
   // Write DB before disk so a crash between the two leaves a recoverable
   // state: the DB row exists but the file is missing, which projection
   // rendering can regenerate. The inverse (file exists, no DB row) is
   // harder to detect and recover from (#2725).
-  const validatedAt = new Date().toISOString();
+  const validatedAt = canonical?.endedAt ?? new Date().toISOString();
   const slices = getMilestoneSlices(effectiveParams.milestoneId);
   const gateSliceId = slices.length > 0 ? slices[0].id : "_milestone";
 
@@ -448,6 +406,7 @@ export async function handleValidateMilestone(
       status: effectiveParams.verdict,
       scope: 'milestone-validation',
       fullContent: validationMd,
+      createdAt: validatedAt,
     });
 
     // #2945 Bug 4: persist quality_gates records alongside the assessment.
@@ -497,7 +456,7 @@ export async function handleValidateMilestone(
 
   const prefs = loadEffectiveGSDPreferences()?.preferences;
   const gatesEnabled = opts?.uokGatesEnabled ?? resolveUokFlags(prefs).gates;
-  if (gatesEnabled) {
+  if (gatesEnabled && canonical?.status !== "replayed") {
     try {
       const gateRunner = new UokGateRunner();
       const nonPassVerdict = effectiveParams.verdict !== "pass";
@@ -540,6 +499,7 @@ export async function handleValidateMilestone(
           resultingRevision: canonical.resultingRevision,
           attemptId: canonical.attemptId,
           resultId: canonical.resultId,
+          ...(canonical.status === "replayed" ? { duplicate: true } : {}),
         }
       : {}),
     ...(projectionStale ? { stale: true } : {}),

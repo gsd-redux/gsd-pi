@@ -1,5 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: Durable Milestone validation preparation, settlement, and evidence receipt operations.
+// File Purpose: Atomic durable Milestone validation and evidence receipts.
 
 import {
   executeDomainOperation,
@@ -9,16 +9,14 @@ import {
 import { getDb } from "./db/engine.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import {
-  insertMilestoneValidationVerdicts,
-  prepareMilestoneValidationAttempt,
-  settleMilestoneValidationAttempt,
+  writeMilestoneValidation,
   type InsertedMilestoneValidationVerdict,
   type MilestoneValidationEvidenceClass,
   type MilestoneValidationObservation,
   type MilestoneValidationVerdict,
   type PreparedMilestoneValidationCriterion,
-  type PrepareMilestoneValidationAttemptResult,
-  type SettleMilestoneValidationAttemptResult,
+  type ValidateMilestoneWriteInput,
+  type ValidateMilestoneWriteResult,
 } from "./db/writers/milestone-validation.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 
@@ -28,21 +26,6 @@ export interface MilestoneValidationCriterionInput {
   description: string;
   required?: boolean;
   requirementId?: string;
-}
-
-export interface PrepareMilestoneValidationInput {
-  invocation: ExecutionInvocation;
-  milestoneId: string;
-  criteria: MilestoneValidationCriterionInput[];
-}
-
-export interface SettleMilestoneValidationInput {
-  invocation: ExecutionInvocation;
-  attemptId: string;
-  outcome: "succeeded" | "failed" | "interrupted";
-  failureClass: string;
-  summary: string;
-  output: DomainJsonValue;
 }
 
 export interface MilestoneValidationEvidenceInput {
@@ -57,22 +40,25 @@ export interface MilestoneValidationEvidenceInput {
   environment: { [key: string]: DomainJsonValue };
 }
 
-export interface MilestoneValidationCriterionResultInput {
-  criterionId: string;
+export interface ValidateMilestoneCriterionInput extends MilestoneValidationCriterionInput {
   verdict: MilestoneValidationVerdict;
   rationale: string;
   evidence: MilestoneValidationEvidenceInput[];
 }
 
-export interface RecordMilestoneValidationInput {
+export interface ValidateMilestoneInput {
   invocation: ExecutionInvocation;
-  attemptId: string;
+  milestoneId: string;
   testedSourceRevision: string;
   policyId: string;
   policyVersion: string;
   verdict: MilestoneValidationVerdict;
   rationale: string;
-  criterionResults: MilestoneValidationCriterionResultInput[];
+  outcome: "succeeded" | "failed" | "interrupted";
+  failureClass: string;
+  summary: string;
+  output: DomainJsonValue;
+  criteria: ValidateMilestoneCriterionInput[];
 }
 
 interface OperationReceipt {
@@ -85,29 +71,22 @@ interface OperationReceipt {
   projectionWorkIds: string[];
 }
 
-export interface PrepareMilestoneValidationReceipt extends OperationReceipt {
+interface SubjectiveProofRow {
+  criterion_id: string;
+  human_acceptance_id: string | null;
+  disposition: string | null;
+}
+
+export interface ValidateMilestoneReceipt extends OperationReceipt {
   milestoneId: string;
   lifecycleId: string;
   attemptId: string;
   attemptNumber: number;
   retryOfAttemptId: string | null;
   criteria: PreparedMilestoneValidationCriterion[];
-}
-
-export interface SettleMilestoneValidationReceipt extends OperationReceipt {
-  milestoneId: string;
-  lifecycleId: string;
-  attemptId: string;
   resultId: string;
-  outcome: SettleMilestoneValidationInput["outcome"];
+  outcome: ValidateMilestoneInput["outcome"];
   endedAt: string;
-}
-
-export interface RecordMilestoneValidationReceipt extends OperationReceipt {
-  milestoneId: string;
-  lifecycleId: string;
-  attemptId: string;
-  resultId: string;
   testedSourceRevision: string;
   verdict: MilestoneValidationVerdict;
   verdicts: InsertedMilestoneValidationVerdict[];
@@ -148,59 +127,219 @@ function storedEventPayload(operationId: string, eventType: string): Record<stri
   return payload as Record<string, unknown>;
 }
 
-function storedPrepared(operationId: string): PrepareMilestoneValidationAttemptResult {
-  const payload = storedEventPayload(operationId, "milestone.validation.prepared");
-  return {
-    milestoneId: String(payload["milestoneId"]),
-    lifecycleId: String(payload["lifecycleId"]),
-    attemptId: String(payload["attemptId"]),
-    attemptNumber: Number(payload["attemptNumber"]),
-    retryOfAttemptId: payload["retryOfAttemptId"] === null
-      ? null
-      : String(payload["retryOfAttemptId"]),
-    criteria: payload["criteria"] as PreparedMilestoneValidationCriterion[],
-  };
+function invalidStoredReceipt(field: string): never {
+  throw new Error(`Milestone validation stored receipt ${field} is invalid`);
 }
 
-function storedSettlement(operationId: string): SettleMilestoneValidationAttemptResult {
-  const payload = storedEventPayload(operationId, "milestone.validation.settled");
-  return {
-    milestoneId: String(payload["milestoneId"]),
-    lifecycleId: String(payload["lifecycleId"]),
-    attemptId: String(payload["attemptId"]),
-    resultId: String(payload["resultId"]),
-    outcome: String(payload["outcome"]) as SettleMilestoneValidationAttemptResult["outcome"],
-    endedAt: String(payload["endedAt"]),
-  };
+function storedString(payload: Record<string, unknown>, field: string): string {
+  const value = payload[field];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return invalidStoredReceipt(field);
+  }
+  return value;
 }
 
-function storedValidation(operationId: string): Omit<RecordMilestoneValidationReceipt, keyof OperationReceipt> {
+function storedStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) =>
+    typeof item !== "string" || item.trim().length === 0
+  )) {
+    return invalidStoredReceipt(field);
+  }
+  return value;
+}
+
+function storedCriteria(value: unknown): PreparedMilestoneValidationCriterion[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return invalidStoredReceipt("criteria");
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return invalidStoredReceipt(`criteria[${index}]`);
+    }
+    const criterion = item as Record<string, unknown>;
+    const evidenceClass = criterion["evidenceClass"];
+    if (
+      evidenceClass !== "command" && evidenceClass !== "runtime" &&
+      evidenceClass !== "browser" && evidenceClass !== "artifact"
+    ) {
+      return invalidStoredReceipt(`criteria[${index}].evidenceClass`);
+    }
+    if (typeof criterion["required"] !== "boolean") {
+      return invalidStoredReceipt(`criteria[${index}].required`);
+    }
+    const requirementId = criterion["requirementId"];
+    if (requirementId !== undefined && (
+      typeof requirementId !== "string" || requirementId.trim().length === 0
+    )) {
+      return invalidStoredReceipt(`criteria[${index}].requirementId`);
+    }
+    return {
+      criterionId: storedString(criterion, "criterionId"),
+      criterionKey: storedString(criterion, "criterionKey"),
+      evidenceClass,
+      required: criterion["required"],
+      ...(typeof requirementId === "string" ? { requirementId } : {}),
+    };
+  });
+}
+
+function storedVerdicts(value: unknown): InsertedMilestoneValidationVerdict[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    return invalidStoredReceipt("verdicts");
+  }
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return invalidStoredReceipt(`verdicts[${index}]`);
+    }
+    const verdict = item as Record<string, unknown>;
+    const value = verdict["verdict"];
+    if (value !== "pass" && value !== "fail" && value !== "inconclusive") {
+      return invalidStoredReceipt(`verdicts[${index}].verdict`);
+    }
+    return {
+      criterionId: storedString(verdict, "criterionId"),
+      verdictId: storedString(verdict, "verdictId"),
+      verdict: value,
+      evidenceIds: storedStringArray(verdict["evidenceIds"], `verdicts[${index}].evidenceIds`),
+    };
+  });
+}
+
+function storedCombinedValidation(
+  operationId: string,
+): Omit<ValidateMilestoneReceipt, keyof OperationReceipt> {
   const payload = storedEventPayload(operationId, "milestone.validation.recorded");
+  const attemptNumber = payload["attemptNumber"];
+  if (typeof attemptNumber !== "number" || !Number.isInteger(attemptNumber) || attemptNumber < 1) {
+    return invalidStoredReceipt("attemptNumber");
+  }
+  const retryOfAttemptId = payload["retryOfAttemptId"];
+  if (retryOfAttemptId !== null && (
+    typeof retryOfAttemptId !== "string" || retryOfAttemptId.trim().length === 0
+  )) {
+    return invalidStoredReceipt("retryOfAttemptId");
+  }
+  const outcome = payload["outcome"];
+  if (outcome !== "succeeded" && outcome !== "failed" && outcome !== "interrupted") {
+    return invalidStoredReceipt("outcome");
+  }
+  const endedAt = storedString(payload, "endedAt");
+  if (!Number.isFinite(Date.parse(endedAt))) return invalidStoredReceipt("endedAt");
+  const verdict = payload["overallVerdict"];
+  if (verdict !== "pass" && verdict !== "fail" && verdict !== "inconclusive") {
+    return invalidStoredReceipt("overallVerdict");
+  }
   return {
-    milestoneId: String(payload["milestoneId"]),
-    lifecycleId: String(payload["lifecycleId"]),
-    attemptId: String(payload["attemptId"]),
-    resultId: String(payload["resultId"]),
-    testedSourceRevision: String(payload["testedSourceRevision"]),
-    verdict: String(payload["overallVerdict"]) as MilestoneValidationVerdict,
-    verdicts: payload["verdicts"] as InsertedMilestoneValidationVerdict[],
+    milestoneId: storedString(payload, "milestoneId"),
+    lifecycleId: storedString(payload, "lifecycleId"),
+    attemptId: storedString(payload, "attemptId"),
+    attemptNumber,
+    retryOfAttemptId,
+    criteria: storedCriteria(payload["criteria"]),
+    resultId: storedString(payload, "resultId"),
+    outcome,
+    endedAt,
+    testedSourceRevision: storedString(payload, "testedSourceRevision"),
+    verdict,
+    verdicts: storedVerdicts(payload["verdicts"]),
   };
 }
 
-export function prepareMilestoneValidation(
-  input: PrepareMilestoneValidationInput,
-): PrepareMilestoneValidationReceipt {
+export function readMilestoneValidationAggregateTimestamp(
+  idempotencyKey: string,
+): string | null {
+  const row = getDb().prepare(`
+    SELECT evidence.started_at
+    FROM workflow_operations operation
+    JOIN workflow_technical_verdicts verdict
+      ON verdict.operation_id = operation.operation_id
+     AND verdict.project_id = operation.project_id
+    JOIN workflow_acceptance_criteria criterion
+      ON criterion.criterion_id = verdict.criterion_id
+     AND criterion.project_id = verdict.project_id
+    JOIN workflow_verification_evidence evidence
+      ON evidence.verdict_id = verdict.verdict_id
+     AND evidence.project_id = verdict.project_id
+    WHERE operation.idempotency_key = :idempotency_key
+      AND operation.operation_type = 'milestone.validate'
+      AND criterion.criterion_key = 'milestone-validation:aggregate'
+    LIMIT 1
+  `).get({ ":idempotency_key": idempotencyKey }) as Record<string, unknown> | undefined;
+  return row ? String(row["started_at"]) : null;
+}
+
+function currentRequiredSubjectiveProofs(
+  lifecycleId: string,
+  testedSourceRevision: string,
+): SubjectiveProofRow[] {
+  return getDb().prepare(`
+    SELECT criterion.criterion_id,
+           acceptance.human_acceptance_id,
+           acceptance.disposition
+    FROM workflow_acceptance_criteria criterion
+    LEFT JOIN workflow_human_acceptances acceptance
+      ON acceptance.project_id = criterion.project_id
+     AND acceptance.lifecycle_id = criterion.lifecycle_id
+     AND acceptance.criterion_id = criterion.criterion_id
+     AND NOT EXISTS (
+       SELECT 1 FROM workflow_human_acceptances successor
+       WHERE successor.supersedes_human_acceptance_id = acceptance.human_acceptance_id
+     )
+     AND EXISTS (
+       SELECT 1 FROM workflow_domain_events answered
+       WHERE answered.operation_id = acceptance.operation_id
+         AND answered.project_id = acceptance.project_id
+         AND answered.event_type = 'milestone.subjective-uat.answered'
+         AND json_extract(answered.payload_json, '$.humanAcceptanceId') = acceptance.human_acceptance_id
+         AND json_extract(answered.payload_json, '$.testedSourceRevision') = :tested_source_revision
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM workflow_domain_events prepared
+       WHERE prepared.project_id = acceptance.project_id
+         AND prepared.event_type = 'milestone.subjective-uat.prepared'
+         AND json_extract(prepared.payload_json, '$.criterionId') = acceptance.criterion_id
+         AND prepared.project_revision > acceptance.project_revision
+     )
+    WHERE criterion.lifecycle_id = :lifecycle_id
+      AND criterion.criterion_kind = 'subjective_uat'
+      AND criterion.required = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_acceptance_criteria successor
+        WHERE successor.supersedes_criterion_id = criterion.criterion_id
+      )
+    ORDER BY criterion.criterion_id
+  `).all({
+    ":lifecycle_id": lifecycleId,
+    ":tested_source_revision": testedSourceRevision,
+  }) as unknown as SubjectiveProofRow[];
+}
+
+export function validateMilestone(input: ValidateMilestoneInput): ValidateMilestoneReceipt {
   const milestoneId = requireNonBlank(input.milestoneId, "milestoneId");
-  if (input.criteria.length === 0) throw new Error("Milestone validation requires objective criteria");
+  const testedSourceRevision = requireNonBlank(
+    input.testedSourceRevision,
+    "testedSourceRevision",
+  );
+  const policyId = requireNonBlank(input.policyId, "policyId");
+  const policyVersion = requireNonBlank(input.policyVersion, "policyVersion");
+  const rationale = requireNonBlank(input.rationale, "rationale");
+  const failureClass = requireNonBlank(input.failureClass, "failureClass");
+  const summary = requireNonBlank(input.summary, "summary");
+  if (input.criteria.length === 0) {
+    throw new Error("Milestone validation requires objective criteria");
+  }
   const seen = new Set<string>();
   const criteria = input.criteria.map((criterion) => {
     const criterionKey = requireNonBlank(criterion.criterionKey, "criterionKey").toLowerCase();
     const description = requireNonBlank(criterion.description, "criterion description");
+    const criterionRationale = requireNonBlank(criterion.rationale, "criterion rationale");
     const requirementId = criterion.requirementId === undefined
       ? undefined
       : requireNonBlank(criterion.requirementId, "requirementId");
     const identity = `${criterionKey}\u0000${requirementId ?? ""}`;
-    if (seen.has(identity)) throw new Error("Milestone validation criteria must not contain duplicates");
+    if (seen.has(identity)) {
+      throw new Error("Milestone validation criteria must not contain duplicates");
+    }
     seen.add(identity);
     return {
       criterionKey,
@@ -208,137 +347,53 @@ export function prepareMilestoneValidation(
       description,
       required: criterion.required ?? true,
       ...(requirementId ? { requirementId } : {}),
+      verdict: criterion.verdict,
+      rationale: criterionRationale,
+      evidence: criterion.evidence,
     };
   }).sort((left, right) => {
     const leftKey = `${left.criterionKey}\u0000${left.requirementId ?? ""}`;
     const rightKey = `${right.criterionKey}\u0000${right.requirementId ?? ""}`;
     return leftKey.localeCompare(rightKey);
   });
-  const fence = readDomainOperationFence(input.invocation.idempotencyKey);
-  let prepared: PrepareMilestoneValidationAttemptResult | undefined;
-  const operation = executeDomainOperation({
-    operationType: "milestone.validation.prepare",
-    idempotencyKey: input.invocation.idempotencyKey,
-    expectedRevision: fence.revision,
-    expectedAuthorityEpoch: fence.authorityEpoch,
-    actorType: input.invocation.actorType,
-    ...(input.invocation.actorId ? { actorId: input.invocation.actorId } : {}),
-    sourceTransport: input.invocation.sourceTransport,
-    ...(input.invocation.traceId ? { traceId: input.invocation.traceId } : {}),
-    ...(input.invocation.turnId ? { turnId: input.invocation.turnId } : {}),
-    payload: { milestoneId, criteria },
-  }, (context) => {
-    prepared = prepareMilestoneValidationAttempt(context, { milestoneId, criteria });
-    return {
-      events: [{
-        eventType: "milestone.validation.prepared",
-        entityType: "milestone",
-        entityId: milestoneId,
-        payload: {
-          milestoneId,
-          lifecycleId: prepared.lifecycleId,
-          attemptId: prepared.attemptId,
-          attemptNumber: prepared.attemptNumber,
-          retryOfAttemptId: prepared.retryOfAttemptId,
-          criteria: prepared.criteria.map((criterion) => ({ ...criterion })),
-        },
-        destinations: ["projection"],
-      }],
-      projections: [{
-        projectionKey: `validation/${milestoneId}`.toLowerCase(),
-        projectionKind: "milestone-validation",
-        rendererVersion: "1",
-      }],
-    };
-  });
-  const stored = prepared ?? storedPrepared(operation.operationId);
-  return { ...operationReceipt(operation), ...stored };
-}
-
-export function settleMilestoneValidation(
-  input: SettleMilestoneValidationInput,
-): SettleMilestoneValidationReceipt {
-  const attemptId = requireNonBlank(input.attemptId, "attemptId");
-  const failureClass = requireNonBlank(input.failureClass, "failureClass");
-  const fence = readDomainOperationFence(input.invocation.idempotencyKey);
-  let settled: SettleMilestoneValidationAttemptResult | undefined;
-  const operation = executeDomainOperation({
-    operationType: "attempt.settle",
-    idempotencyKey: input.invocation.idempotencyKey,
-    expectedRevision: fence.revision,
-    expectedAuthorityEpoch: fence.authorityEpoch,
-    actorType: input.invocation.actorType,
-    ...(input.invocation.actorId ? { actorId: input.invocation.actorId } : {}),
-    sourceTransport: input.invocation.sourceTransport,
-    ...(input.invocation.traceId ? { traceId: input.invocation.traceId } : {}),
-    ...(input.invocation.turnId ? { turnId: input.invocation.turnId } : {}),
-    payload: {
-      purpose: "milestone-validation",
-      attemptId,
-      outcome: input.outcome,
-      failureClass,
-      summary: input.summary,
-      output: input.output,
-    },
-  }, (context) => {
-    settled = settleMilestoneValidationAttempt(context, {
-      attemptId,
-      outcome: input.outcome,
-      failureClass,
-      summary: input.summary,
-      output: input.output,
-    });
-    return {
-      events: [{
-        eventType: "milestone.validation.settled",
-        entityType: "milestone",
-        entityId: settled.milestoneId,
-        payload: { ...settled },
-        destinations: ["projection"],
-      }],
-      projections: [{
-        projectionKey: `validation/${settled.milestoneId}`.toLowerCase(),
-        projectionKind: "milestone-validation",
-        rendererVersion: "1",
-      }],
-    };
-  });
-  const stored = settled ?? storedSettlement(operation.operationId);
-  return { ...operationReceipt(operation), ...stored };
-}
-
-export function recordMilestoneValidation(
-  input: RecordMilestoneValidationInput,
-): RecordMilestoneValidationReceipt {
-  const attemptId = requireNonBlank(input.attemptId, "attemptId");
-  const testedSourceRevision = requireNonBlank(input.testedSourceRevision, "testedSourceRevision");
-  const policyId = requireNonBlank(input.policyId, "policyId");
-  const policyVersion = requireNonBlank(input.policyVersion, "policyVersion");
-  const rationale = requireNonBlank(input.rationale, "rationale");
-  const criterionResults = input.criterionResults.map((result) => ({
-    criterionId: requireNonBlank(result.criterionId, "criterionId"),
-    verdict: result.verdict,
-    rationale: requireNonBlank(result.rationale, "criterion rationale"),
-    evidence: result.evidence,
-  }));
-  const criterionResultsPayload = criterionResults.map((result) => ({
-    criterionId: result.criterionId,
-    verdict: result.verdict,
-    rationale: result.rationale,
-    evidence: result.evidence.map((evidence) => ({
-      evidenceClass: evidence.evidenceClass,
-      commandOrTool: evidence.commandOrTool,
-      workingDirectory: evidence.workingDirectory,
-      startedAt: evidence.startedAt,
-      endedAt: evidence.endedAt,
-      ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }),
-      observation: evidence.observation,
-      durableOutputRef: evidence.durableOutputRef,
-      environment: evidence.environment,
+  const writeInput: ValidateMilestoneWriteInput = {
+    milestoneId,
+    testedSourceRevision,
+    policyId,
+    policyVersion,
+    verdict: input.verdict,
+    outcome: input.outcome,
+    failureClass,
+    summary,
+    output: input.output,
+    criteria,
+  };
+  const payload: DomainJsonValue = {
+    ...writeInput,
+    rationale,
+    criteria: criteria.map((criterion) => ({
+      criterionKey: criterion.criterionKey,
+      evidenceClass: criterion.evidenceClass,
+      description: criterion.description,
+      required: criterion.required,
+      ...(criterion.requirementId ? { requirementId: criterion.requirementId } : {}),
+      verdict: criterion.verdict,
+      rationale: criterion.rationale,
+      evidence: criterion.evidence.map((evidence) => ({
+        evidenceClass: evidence.evidenceClass,
+        commandOrTool: evidence.commandOrTool,
+        workingDirectory: evidence.workingDirectory,
+        startedAt: evidence.startedAt,
+        endedAt: evidence.endedAt,
+        ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }),
+        observation: evidence.observation,
+        durableOutputRef: evidence.durableOutputRef,
+        environment: evidence.environment,
+      })),
     })),
-  }));
+  };
   const fence = readDomainOperationFence(input.invocation.idempotencyKey);
-  let recorded: Omit<RecordMilestoneValidationReceipt, keyof OperationReceipt> | undefined;
+  let written: ValidateMilestoneWriteResult | undefined;
   const operation = executeDomainOperation({
     operationType: "milestone.validate",
     idempotencyKey: input.invocation.idempotencyKey,
@@ -349,53 +404,57 @@ export function recordMilestoneValidation(
     sourceTransport: input.invocation.sourceTransport,
     ...(input.invocation.traceId ? { traceId: input.invocation.traceId } : {}),
     ...(input.invocation.turnId ? { turnId: input.invocation.turnId } : {}),
-    payload: {
-      attemptId,
-      testedSourceRevision,
-      policyId,
-      policyVersion,
-      verdict: input.verdict,
-      rationale,
-      criterionResults: criterionResultsPayload,
-    },
+    payload,
   }, (context) => {
-    const inserted = insertMilestoneValidationVerdicts(context, {
-      attemptId,
+    written = writeMilestoneValidation(context, writeInput);
+    const subjectiveProofs = currentRequiredSubjectiveProofs(
+      written.lifecycleId,
       testedSourceRevision,
-      policyId,
-      policyVersion,
-      verdict: input.verdict,
-      criterionResults,
-    });
-    recorded = {
-      milestoneId: inserted.milestoneId,
-      lifecycleId: inserted.lifecycleId,
-      attemptId,
-      resultId: inserted.resultId,
-      testedSourceRevision,
-      verdict: inserted.verdict,
-      verdicts: inserted.verdicts,
-    };
+    );
+    if (input.verdict === "pass") {
+      const unsatisfied = subjectiveProofs.find((proof) =>
+        !proof.human_acceptance_id || proof.disposition !== "accepted"
+      );
+      if (unsatisfied) {
+        throw new Error(
+          `Milestone validation pass requires accepted subjective UAT criterion ${unsatisfied.criterion_id}`,
+        );
+      }
+    }
+    const recordedSubjectiveProofs = subjectiveProofs.filter(
+      (proof): proof is SubjectiveProofRow & { human_acceptance_id: string } =>
+        proof.human_acceptance_id !== null,
+    );
     return {
       events: [{
         eventType: "milestone.validation.recorded",
         entityType: "milestone",
-        entityId: inserted.milestoneId,
+        entityId: written.milestoneId,
         payload: {
-          milestoneId: inserted.milestoneId,
-          lifecycleId: inserted.lifecycleId,
-          attemptId,
-          resultId: inserted.resultId,
+          milestoneId: written.milestoneId,
+          lifecycleId: written.lifecycleId,
+          attemptId: written.attemptId,
+          attemptNumber: written.attemptNumber,
+          retryOfAttemptId: written.retryOfAttemptId,
+          criteria: written.criteria.map((criterion) => ({ ...criterion })),
+          resultId: written.resultId,
+          outcome: written.outcome,
+          endedAt: written.endedAt,
           testedSourceRevision,
-          overallVerdict: inserted.verdict,
+          overallVerdict: written.verdict,
           policyId,
           policyVersion,
           rationale,
-          criterionIds: inserted.verdicts.map((verdict) => verdict.criterionId),
-          verdictIds: inserted.verdicts.map((verdict) => verdict.verdictId),
-          evidenceIds: inserted.verdicts.flatMap((verdict) => verdict.evidenceIds),
-          humanAcceptanceIds: [],
-          verdicts: inserted.verdicts.map((verdict) => ({
+          criterionIds: [
+            ...written.verdicts.map((verdict) => verdict.criterionId),
+            ...recordedSubjectiveProofs.map((proof) => proof.criterion_id),
+          ],
+          verdictIds: written.verdicts.map((verdict) => verdict.verdictId),
+          evidenceIds: written.verdicts.flatMap((verdict) => verdict.evidenceIds),
+          humanAcceptanceIds: recordedSubjectiveProofs.map(
+            (proof) => proof.human_acceptance_id,
+          ),
+          verdicts: written.verdicts.map((verdict) => ({
             criterionId: verdict.criterionId,
             verdictId: verdict.verdictId,
             verdict: verdict.verdict,
@@ -405,14 +464,26 @@ export function recordMilestoneValidation(
         destinations: ["projection"],
       }],
       projections: [{
-        projectionKey: `validation/${inserted.milestoneId}`.toLowerCase(),
+        projectionKey: `validation/${written.milestoneId}`.toLowerCase(),
         projectionKind: "milestone-validation",
         rendererVersion: "1",
       }],
     };
   });
+  const stored = written ?? storedCombinedValidation(operation.operationId);
   return {
     ...operationReceipt(operation),
-    ...(recorded ?? storedValidation(operation.operationId)),
+    milestoneId: stored.milestoneId,
+    lifecycleId: stored.lifecycleId,
+    attemptId: stored.attemptId,
+    attemptNumber: stored.attemptNumber,
+    retryOfAttemptId: stored.retryOfAttemptId,
+    criteria: stored.criteria,
+    resultId: stored.resultId,
+    outcome: stored.outcome,
+    endedAt: stored.endedAt,
+    testedSourceRevision,
+    verdict: stored.verdict,
+    verdicts: stored.verdicts,
   };
 }

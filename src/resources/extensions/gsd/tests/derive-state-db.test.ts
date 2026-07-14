@@ -884,58 +884,58 @@ describe('derive-state-db', async () => {
     }
   });
 
-  test('derive-state-db: adopted milestone ignores a legacy passing assessment', async () => {
+  test('derive-state-db: adopted milestone ignores a legacy passing assessment', async (t) => {
     const base = createFixtureBase();
-    try {
-      openDatabase(':memory:');
-      insertMilestone({ id: 'M001', title: 'Canonical Validation', status: 'active' });
-      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Done Slice', status: 'complete', risk: 'low', depends: [] });
-      insertAssessment({
-        path: 'milestones/M001/M001-VALIDATION.md',
-        milestoneId: 'M001',
-        status: 'pass',
-        scope: 'milestone-validation',
-        fullContent: 'verdict: pass',
-      });
-      const fence = readDomainOperationFence();
-      executeDomainOperation({
-        operationType: 'test.milestone.adopt',
-        idempotencyKey: 'test/derive-state/adopt-milestone',
-        expectedRevision: fence.revision,
-        expectedAuthorityEpoch: fence.authorityEpoch,
-        actorType: 'test',
-        sourceTransport: 'test',
-        payload: { milestoneId: 'M001' },
-      }, (context) => {
-        adoptOrTransitionLifecycle(context, {
-          itemKind: 'milestone',
-          milestoneId: 'M001',
-          lifecycleStatus: 'ready',
-        });
-        return {
-          events: [{
-            eventType: 'test.milestone.adopted',
-            entityType: 'milestone',
-            entityId: 'M001',
-            payload: { milestoneId: 'M001' },
-            destinations: ['test'],
-          }],
-          projections: [{
-            projectionKey: 'test/milestone/m001/adopted',
-            projectionKind: 'test',
-            rendererVersion: '1',
-          }],
-        };
-      });
-
-      invalidateStateCache();
-      const dbState = await deriveStateFromDb(base);
-
-      assert.deepStrictEqual(dbState.phase, 'validating-milestone');
-    } finally {
+    t.after(() => {
       closeDatabase();
       cleanup(base);
-    }
+    });
+
+    openDatabase(':memory:');
+    insertMilestone({ id: 'M001', title: 'Canonical Validation', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Done Slice', status: 'complete', risk: 'low', depends: [] });
+    insertAssessment({
+      path: 'milestones/M001/M001-VALIDATION.md',
+      milestoneId: 'M001',
+      status: 'pass',
+      scope: 'milestone-validation',
+      fullContent: 'verdict: pass',
+    });
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: 'test.milestone.adopt',
+      idempotencyKey: 'test/derive-state/adopt-milestone',
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: 'test',
+      sourceTransport: 'test',
+      payload: { milestoneId: 'M001' },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: 'milestone',
+        milestoneId: 'M001',
+        lifecycleStatus: 'ready',
+      });
+      return {
+        events: [{
+          eventType: 'test.milestone.adopted',
+          entityType: 'milestone',
+          entityId: 'M001',
+          payload: { milestoneId: 'M001' },
+          destinations: ['test'],
+        }],
+        projections: [{
+          projectionKey: 'test/milestone/m001/adopted',
+          projectionKind: 'test',
+          rendererVersion: '1',
+        }],
+      };
+    });
+
+    invalidateStateCache();
+    const dbState = await deriveStateFromDb(base);
+
+    assert.deepStrictEqual(dbState.phase, 'validating-milestone');
   });
 
   // ─── Test 14b: needs-remediation + all slices done → blocked (#4506) ──

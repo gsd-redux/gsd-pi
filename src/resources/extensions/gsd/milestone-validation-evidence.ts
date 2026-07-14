@@ -17,6 +17,26 @@ export interface MilestoneValidationEvidenceParams {
   verificationClasses?: string;
   verdictRationale: string;
   remediationPlan?: string;
+  verificationEvidence?: Array<{
+    evidenceClass?: string;
+    commandOrTool?: string;
+    observation?: string;
+  }>;
+}
+
+export function browserEvidenceRequired(
+  params: MilestoneValidationEvidenceParams,
+): boolean {
+  const milestone = getMilestone(params.milestoneId);
+  const slices = getMilestoneSlices(params.milestoneId);
+  return hasBrowserRequiredText(compactTextParts([
+    milestone?.vision,
+    milestone?.success_criteria,
+    milestone?.verification_uat,
+    params.successCriteriaChecklist,
+    params.verificationClasses,
+    ...slices.flatMap((slice) => [slice.demo, slice.goal, slice.success_criteria]),
+  ]));
 }
 
 export function hasRuntimeExecutableUatEvidenceText(text: string): boolean {
@@ -28,24 +48,23 @@ export function hasRuntimeExecutableUatEvidenceText(text: string): boolean {
 export async function browserEvidenceGateRequiresAttention(
   params: MilestoneValidationEvidenceParams,
   basePath: string,
+  options?: { structuredOnly?: boolean },
 ): Promise<boolean> {
   if (params.verdict !== "pass") return false;
+  if (!browserEvidenceRequired(params)) return false;
+  if (options?.structuredOnly) {
+    return !(params.verificationEvidence ?? []).some((evidence) =>
+      evidence.observation === "passed" && (
+        evidence.evidenceClass === "browser" ||
+        (
+          evidence.evidenceClass === "runtime" &&
+          /\bgsd_uat_exec\b/i.test(evidence.commandOrTool ?? "")
+        )
+      )
+    );
+  }
 
-  const milestone = getMilestone(params.milestoneId);
   const slices = getMilestoneSlices(params.milestoneId);
-  const requirementText = compactTextParts([
-    milestone?.vision,
-    milestone?.success_criteria,
-    milestone?.verification_uat,
-    params.successCriteriaChecklist,
-    params.verificationClasses,
-    ...slices.flatMap((slice) => [
-      slice.demo,
-      slice.goal,
-      slice.success_criteria,
-    ]),
-  ]);
-  if (!hasBrowserRequiredText(requirementText)) return false;
 
   const sliceEvidencePairs: Array<{ sliceRequirementText: string; evidenceText: string }> = [];
   for (const slice of slices) {

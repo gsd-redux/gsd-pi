@@ -8,6 +8,7 @@ import { createTaskVerificationRecoverySchemaV38 } from "./db-task-verification-
 import { createTaskRecoveryCurrentHeadSchemaV39 } from "./db-task-recovery-current-head-schema.js";
 import { createSliceCancellationSchemaV40 } from "./db-slice-cancellation-schema.js";
 import { createSliceCompletionSchemaV41 } from "./db-slice-completion-schema.js";
+import { createMilestoneValidationSchemaV42 } from "./db-milestone-validation-schema.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
@@ -548,4 +549,8 @@ export function applyMigrationV40SliceCancellation(db: DbAdapter): void {
 
 export function applyMigrationV41SliceCompletion(db: DbAdapter): void {
   createSliceCompletionSchemaV41(db);
+}
+
+export function applyMigrationV42MilestoneValidation(db: DbAdapter): void {
+  createMilestoneValidationSchemaV42(db);
 }

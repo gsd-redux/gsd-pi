@@ -40,9 +40,13 @@ delivery, and legacy reads unchanged (`.gsd/phases/03-lifecycle-command-integrat
 - Files are one-way projections. Their failure is visible and retryable but
   cannot authorize, roll back, or fabricate lifecycle state
   (`docs/dev/ADR-046-database-authoritative-workflow-lifecycle.md:92-112,192-207`).
-- Schema v41 already supports Milestone lifecycle identities; no new lifecycle
-  table is needed (`src/resources/extensions/gsd/db/engine.ts:119`,
-  `src/resources/extensions/gsd/db-lifecycle-foundation-schema.ts:13-43,47-60`).
+- Schema v41 already supplies the required Milestone lifecycle tables and
+  identities; no new lifecycle table is needed
+  (`src/resources/extensions/gsd/db-lifecycle-foundation-schema.ts:13-43,47-60`).
+  Implementation disproved the stronger no-migration assumption: v36 settlement
+  triggers authorized only `attempt.settle`, so v42 narrowly extends the existing
+  Attempt/Result/verdict/evidence invariants to permit one atomic
+  `milestone.validate` operation without weakening other settlement paths.
 - `executeDomainOperation()` already owns replay detection, revision/Epoch
   validation, the outer transaction, events, outbox, Projection Work, and the
   authority CAS (`src/resources/extensions/gsd/db/domain-operation.ts:382-429,431-518`).
@@ -170,6 +174,20 @@ validation lineage, current-Waiver enforcement, or stale completion/reopen
 projection suppression.
 
 ## Smallest viable S06 cutover
+
+### Implementation clarifications from T01
+
+- Canonical browser-required validation accepts only current structured browser
+  or runtime evidence bound to the tested source revision. Filesystem assessment
+  prose remains an unadopted compatibility input and cannot authorize canonical
+  completion.
+- Subjective UAT questions and answers are durable, source-bound database facts.
+  T05 must expose answers only through a trusted Pi/MCP user-response callback
+  with server-derived user identity; no agent-callable answer tool may claim the
+  user accepted an option.
+- A newer source revision or superseding criterion atomically withdraws its stale
+  open question before creating the replacement. Validation and readiness accept
+  only the current answered question and exact acceptance evidence.
 
 1. **Characterize and RED the contract.** Add a Milestone capstone matrix for
    validate, complete, and reopen: deep hierarchy, terminal aliases, cancelled
