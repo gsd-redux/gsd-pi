@@ -19,6 +19,9 @@ import {
   upsertQualityGate,
 } from "../gsd-db.js";
 import { extractMilestoneSeq } from "../milestone-ids.js";
+import { readMilestoneMergeObservation } from "../db/milestone-closeout-readiness.js";
+import { immediateTransaction } from "../db/engine.js";
+import { isClosedStatus } from "../status-guards.js";
 import { GATE_REGISTRY } from "../gate-registry.js";
 import { generateRequirementsMd, saveArtifactToDb } from "../db-writer.js";
 import { clearPathCache, normalizeRealPath, relMilestoneFile, relSliceFile, relSlicePath, resolveGsdPathContract, resolveMilestoneFile, resolveSliceFile } from "../paths.js";
@@ -201,53 +204,106 @@ export interface SummarySaveParams {
   content: string;
 }
 
-function registerProjectMilestoneSequence(content: string): string[] {
-  const parsed = parseProject(content);
-  const registered: string[] = [];
-  // Reconcile parsed IDs against existing DB milestones before inserting (#807).
-  // Under unique_milestone_ids the planner mints suffixed IDs (e.g. "M001-b1nole"),
-  // while PROJECT.md's template uses bare sequence IDs (e.g. "M001"). Inserting the
-  // bare ID verbatim mints a phantom milestone row that collides with the planner's
-  // canonical one: the bare row gets its own git worktree, and at dispatch time the
-  // worktree/session scope ("M001") disagrees with ctx.mid ("M001-b1nole"), pausing
-  // auto-mode with "Dispatch milestone mismatch". A project DB holds at most one
-  // milestone per sequence number, so map each parsed line onto the existing row
-  // that shares its sequence number instead of minting a duplicate bare-ID row.
-  const existingBySeq = new Map<number, string>();
+function adoptedMilestoneProjectionDone(milestoneId: string): boolean | null {
+  const observation = readMilestoneMergeObservation(milestoneId);
+  if (observation.kind === "mismatch") {
+    throw new Error(
+      `Milestone ${milestoneId} canonical and legacy status mismatch ` +
+      `(canonical=${observation.canonicalStatus}, legacy=${observation.legacyStatus})`,
+    );
+  }
+  if (observation.kind === "completed") return true;
+  if (observation.kind === "not-completed") return false;
+  return null;
+}
+
+function existingMilestonesBySequence(): Map<number, ReturnType<typeof getAllMilestones>[number]> {
+  const existingBySeq = new Map<number, ReturnType<typeof getAllMilestones>[number]>();
   for (const existing of getAllMilestones()) {
     const seq = extractMilestoneSeq(existing.id);
-    if (seq > 0 && !existingBySeq.has(seq)) existingBySeq.set(seq, existing.id);
+    if (seq > 0 && !existingBySeq.has(seq)) existingBySeq.set(seq, existing);
   }
-  for (const milestone of parsed.milestones) {
-    const canonicalId = existingBySeq.get(extractMilestoneSeq(milestone.id));
-    if (canonicalId && canonicalId !== milestone.id) {
-      // An existing milestone already owns this sequence number. Treat the markdown
-      // line as referring to it: refresh the human title, and promote to complete
-      // when the line is checked — but never demote an in-flight milestone back to
-      // "queued" (the planner's row stays the single source of truth).
-      upsertMilestonePlanning(canonicalId, {
-        title: milestone.title,
-        ...(milestone.done ? { status: "complete" } : {}),
-      });
-      registered.push(canonicalId);
-      continue;
+  return existingBySeq;
+}
+
+function projectMilestoneSequenceRepairNeeded(content: string): boolean {
+  const existingBySeq = existingMilestonesBySequence();
+  return parseProject(content).milestones.some((milestone) => {
+    const canonical = existingBySeq.get(extractMilestoneSeq(milestone.id));
+    if (!canonical) return false;
+    const canonicalDone = adoptedMilestoneProjectionDone(canonical.id);
+    return canonicalDone !== null && milestone.done !== canonicalDone;
+  });
+}
+
+function registerProjectMilestoneSequence(content: string): string[] {
+  return immediateTransaction(() => {
+    const parsed = parseProject(content);
+    const registered: string[] = [];
+    // Reconcile parsed IDs against existing DB milestones before inserting (#807).
+    // Under unique_milestone_ids the planner mints suffixed IDs (e.g. "M001-b1nole"),
+    // while PROJECT.md's template uses bare sequence IDs (e.g. "M001"). Inserting the
+    // bare ID verbatim mints a phantom milestone row that collides with the planner's
+    // canonical one: the bare row gets its own git worktree, and at dispatch time the
+    // worktree/session scope ("M001") disagrees with ctx.mid ("M001-b1nole"), pausing
+    // auto-mode with "Dispatch milestone mismatch". A project DB holds at most one
+    // milestone per sequence number, so map each parsed line onto the existing row
+    // that shares its sequence number instead of minting a duplicate bare-ID row.
+    const existingBySeq = existingMilestonesBySequence();
+    const adoptedIds = new Set<string>();
+    for (const milestone of parsed.milestones) {
+      const canonical = existingBySeq.get(extractMilestoneSeq(milestone.id));
+      if (!canonical) continue;
+      const canonicalDone = adoptedMilestoneProjectionDone(canonical.id);
+      if (canonicalDone !== null) adoptedIds.add(canonical.id);
     }
-    insertMilestone({
-      id: milestone.id,
-      title: milestone.title,
-      status: milestone.done ? "complete" : "queued",
-    });
-    registered.push(milestone.id);
-  }
-  return registered;
+
+    for (const milestone of parsed.milestones) {
+      const canonical = existingBySeq.get(extractMilestoneSeq(milestone.id));
+      const canonicalId = canonical?.id;
+      if (canonicalId && adoptedIds.has(canonicalId)) {
+        upsertMilestonePlanning(canonicalId, { title: milestone.title });
+        registered.push(canonicalId);
+        continue;
+      }
+      if (canonicalId && canonicalId !== milestone.id) {
+        // An existing milestone already owns this sequence number. Treat the markdown
+        // line as referring to it: refresh the human title, and promote to complete
+        // when the line is checked — but never demote an in-flight milestone back to
+        // "queued" (the planner's row stays the single source of truth).
+        upsertMilestonePlanning(canonicalId, {
+          title: milestone.title,
+          ...(milestone.done ? { status: "complete" } : {}),
+        });
+        registered.push(canonicalId);
+        continue;
+      }
+      insertMilestone({
+        id: milestone.id,
+        title: milestone.title,
+        status: milestone.done ? "complete" : "queued",
+      });
+      registered.push(milestone.id);
+    }
+    return registered;
+  });
 }
 
 /** Minimal shape of a DB milestone row needed to re-render the sequence section. */
 interface MilestoneSeqRow {
   id: string;
   title: string;
-  status: string;
   vision: string;
+  done: boolean;
+}
+
+function milestoneSequenceRows(): MilestoneSeqRow[] {
+  return getAllMilestones().map((milestone) => ({
+    id: milestone.id,
+    title: milestone.title,
+    vision: milestone.vision,
+    done: adoptedMilestoneProjectionDone(milestone.id) ?? isClosedStatus(milestone.status),
+  }));
 }
 
 /**
@@ -275,7 +331,7 @@ function firstSentence(text: string): string {
 
 /** Render one canonical, parseable milestone line for the given DB row. */
 function renderMilestoneLine(m: MilestoneSeqRow, recoveredTail: string): string {
-  const done = m.status === "complete";
+  const done = m.done;
   let oneLiner = recoveredTail;
   // The recovered tail often still carries the title (e.g. "Foo — bar" or
   // "Foo : bar"). Strip a leading repetition of the title, then any separator.
@@ -311,7 +367,10 @@ function rebuildMilestoneSequenceSection(content: string, milestones: MilestoneS
       body = lines.slice(headerIdx + 1, end).join("\n");
     }
     const tails = recoverMilestoneTails(body);
-    return milestones.map(m => renderMilestoneLine(m, tails.get(m.id) ?? ""));
+    return milestones.map((m) => {
+      const bareId = `M${String(extractMilestoneSeq(m.id)).padStart(3, "0")}`;
+      return renderMilestoneLine(m, tails.get(m.id) ?? tails.get(bareId) ?? "");
+    });
   })();
 
   if (headerIdx === -1) {
@@ -469,13 +528,124 @@ export async function executeSummarySave(
       };
     }
 
-    const contentToSave = params.artifact_type === "REQUIREMENTS"
+    let contentToSave = params.artifact_type === "REQUIREMENTS"
       ? generateRequirementsMd(activeRequirements ?? [])
       : params.content;
     const contentSource = params.artifact_type === "REQUIREMENTS"
       ? "requirements_table"
       : "provided_content";
     const isRootArtifact = isRootSummaryArtifactType(params.artifact_type);
+    let registeredMilestones: string[] = [];
+    let milestoneSequenceSelfHealed = false;
+    let projectRegistrationContent: string | null = null;
+    if (params.artifact_type === "PROJECT") {
+      const parsedMilestones = parseProject(contentToSave).milestones;
+      projectRegistrationContent = contentToSave;
+      try {
+        const repairNeeded = projectMilestoneSequenceRepairNeeded(contentToSave);
+        if (repairNeeded || parsedMilestones.length === 0) {
+          const existingMilestones = milestoneSequenceRows();
+          if (existingMilestones.length === 0) {
+            // Genuine first-save failure: no milestones parsed AND none in the DB.
+            // /gsd really would report "No Active Milestone" — hard-fail so the
+            // caller rewrites the sequence before proceeding.
+            logError("tool", "gsd_summary_save: PROJECT.md parsed zero milestones and the DB has no rows", {
+              tool: "gsd_summary_save",
+            });
+            return {
+              content: [{
+                type: "text",
+                text:
+                  "Error: PROJECT.md contains zero parseable milestone lines, so no milestones were registered in the DB. " +
+                  "/gsd will report \"No Active Milestone\". Rewrite the \"Milestone Sequence\" section using canonical lines: " +
+                  `\`- [ ] M001: <Title> — <One-liner>\` (em-dash, double-dash \`--\`, or single-dash \`-\` separator), then re-call gsd_summary_save(PROJECT).`,
+              }],
+              details: {
+                operation: "save_summary",
+                path: relativePath,
+                artifact_type: params.artifact_type,
+                error: "milestone_registration_empty_parse",
+              },
+              isError: true,
+            };
+          }
+
+          const repairReason = repairNeeded
+            ? "Milestone Sequence disagrees with adopted DB lifecycle state"
+            : "Milestone Sequence parsed zero milestone lines";
+          logWarning("tool", `gsd_summary_save: PROJECT.md ${repairReason}; DB has ${existingMilestones.length} — rebuilding from DB (projection self-heal)`, {
+            tool: "gsd_summary_save",
+            path: relativePath,
+          });
+          if (parsedMilestones.length === 0) {
+            registeredMilestones = existingMilestones.map((milestone) => milestone.id);
+            projectRegistrationContent = null;
+          }
+          contentToSave = rebuildMilestoneSequenceSection(contentToSave, existingMilestones);
+          milestoneSequenceSelfHealed = true;
+        }
+      } catch (healErr) {
+        const msg = healErr instanceof Error ? healErr.message : String(healErr);
+        logError("tool", `gsd_summary_save: PROJECT preflight or Milestone Sequence repair failed: ${msg}`, {
+          tool: "gsd_summary_save",
+          path: relativePath,
+          error: msg,
+        });
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Error: PROJECT.md was not saved because its Milestone Sequence could not be reconciled with DB lifecycle state: ${msg}. ` +
+              `Rewrite PROJECT.md so the "Milestone Sequence" section uses canonical lines: ` +
+              `\`- [ ] M001: <Title> — <One-liner>\`, then re-call gsd_summary_save(PROJECT).`,
+          }],
+          details: {
+            operation: "save_summary",
+            path: relativePath,
+            artifact_type: params.artifact_type,
+            error: "milestone_sequence_self_heal_failed",
+            self_heal_error: msg,
+          },
+          isError: true,
+        };
+      }
+    }
+
+    if (params.artifact_type === "PROJECT") {
+      try {
+        if (projectRegistrationContent !== null) {
+          registeredMilestones = registerProjectMilestoneSequence(projectRegistrationContent);
+        }
+        if (registeredMilestones.length === 0) {
+          throw new Error("PROJECT.md parsed zero milestone lines after preflight");
+        }
+        invalidateStateCache();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logError("tool", `gsd_summary_save: PROJECT milestone registration failed before persistence: ${msg}`, {
+          tool: "gsd_summary_save",
+          error: String(err),
+          stack: err instanceof Error ? err.stack ?? "" : "",
+        });
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Error: PROJECT.md was not saved because milestone registration failed: ${msg}. ` +
+              `The registration transaction was rolled back; resolve the underlying error and re-call gsd_summary_save(PROJECT). ` +
+              `INSERT OR IGNORE keeps the retry idempotent.`,
+          }],
+          details: {
+            operation: "save_summary",
+            path: relativePath,
+            artifact_type: params.artifact_type,
+            error: "milestone_registration_threw",
+            registration_error: msg,
+          },
+          isError: true,
+        };
+      }
+    }
 
     await saveArtifactToDb(
       {
@@ -489,122 +659,6 @@ export async function executeSummarySave(
       basePath,
     );
     await mirrorArtifactToActiveWorktreeProjection(basePath, relativePath, contentToSave);
-
-    let registeredMilestones: string[] = [];
-    let milestoneSequenceSelfHealed = false;
-    if (params.artifact_type === "PROJECT") {
-      try {
-        registeredMilestones = registerProjectMilestoneSequence(contentToSave);
-        if (registeredMilestones.length > 0) invalidateStateCache();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logError("tool", `gsd_summary_save: PROJECT artifact persisted but milestone registration threw: ${msg}`, {
-          tool: "gsd_summary_save",
-          error: String(err),
-          stack: err instanceof Error ? err.stack ?? "" : "",
-        });
-        // PROJECT.md was persisted by saveArtifactToDb above; the artifacts row
-        // changed even though no milestones registered. Invalidate so subsequent
-        // /gsd reads see the persisted artifact instead of the pre-save cache.
-        invalidateStateCache();
-        return {
-          content: [{
-            type: "text",
-            text:
-              `Error: PROJECT.md was saved to ${relativePath} but milestone registration failed: ${msg}. ` +
-              `The DB has no milestone rows for this project, so /gsd will report "No Active Milestone". ` +
-              `Re-call gsd_summary_save(PROJECT) once the underlying error is resolved — INSERT OR IGNORE makes registration idempotent.`,
-          }],
-          details: {
-            operation: "save_summary",
-            path: relativePath,
-            artifact_type: params.artifact_type,
-            error: "milestone_registration_threw",
-            registration_error: msg,
-          },
-          isError: true,
-        };
-      }
-      if (registeredMilestones.length === 0) {
-        const existingMilestones = getAllMilestones();
-        if (existingMilestones.length === 0) {
-          // Genuine first-save failure: no milestones parsed AND none in the DB.
-          // /gsd really would report "No Active Milestone" — hard-fail so the
-          // caller rewrites the sequence before proceeding.
-          logError("tool", `gsd_summary_save: PROJECT.md saved to ${relativePath} but parsed zero milestones — registration produced no DB rows`, {
-            tool: "gsd_summary_save",
-          });
-          // PROJECT.md was persisted; invalidate so subsequent reads see the new
-          // artifacts row even though no milestones registered.
-          invalidateStateCache();
-          return {
-            content: [{
-              type: "text",
-              text:
-                `Error: PROJECT.md was saved to ${relativePath} but contains zero parseable milestone lines, ` +
-                `so no milestones were registered in the DB. /gsd will report "No Active Milestone". ` +
-                `Rewrite PROJECT.md so the "Milestone Sequence" section uses canonical lines: ` +
-                `\`- [ ] M001: <Title> — <One-liner>\` (em-dash, double-dash \`--\`, or single-dash \`-\` separator), then re-call gsd_summary_save(PROJECT).`,
-            }],
-            details: {
-              operation: "save_summary",
-              path: relativePath,
-              artifact_type: params.artifact_type,
-              error: "milestone_registration_empty_parse",
-            },
-            isError: true,
-          };
-        }
-
-        // Existing DB rows mean this is projection drift, not data loss. Rebuild
-        // the section from DB state and re-persist a parseable projection.
-        logWarning("tool", `gsd_summary_save: PROJECT.md parsed zero milestone lines but DB has ${existingMilestones.length} — rebuilding Milestone Sequence from DB (projection self-heal)`, {
-          tool: "gsd_summary_save",
-          path: relativePath,
-        });
-        try {
-          const healed = rebuildMilestoneSequenceSection(contentToSave, existingMilestones);
-          await saveArtifactToDb(
-            { path: relativePath, artifact_type: params.artifact_type, content: healed },
-            basePath,
-          );
-          await mirrorArtifactToActiveWorktreeProjection(basePath, relativePath, healed);
-          const healedRegisteredMilestones = registerProjectMilestoneSequence(healed);
-          if (healedRegisteredMilestones.length === 0) {
-            throw new Error("self-healed PROJECT.md still parsed zero milestone lines");
-          }
-          registeredMilestones = healedRegisteredMilestones;
-          milestoneSequenceSelfHealed = true;
-        } catch (healErr) {
-          const msg = healErr instanceof Error ? healErr.message : String(healErr);
-          logError("tool", `gsd_summary_save: Milestone Sequence self-heal failed: ${msg}`, {
-            tool: "gsd_summary_save",
-            path: relativePath,
-            error: msg,
-          });
-          invalidateStateCache();
-          return {
-            content: [{
-              type: "text",
-              text:
-                `Error: PROJECT.md was saved to ${relativePath} but contains zero parseable milestone lines, ` +
-                `and automatic DB-backed Milestone Sequence repair failed: ${msg}. ` +
-                `Rewrite PROJECT.md so the "Milestone Sequence" section uses canonical lines: ` +
-                `\`- [ ] M001: <Title> — <One-liner>\`, then re-call gsd_summary_save(PROJECT).`,
-            }],
-            details: {
-              operation: "save_summary",
-              path: relativePath,
-              artifact_type: params.artifact_type,
-              error: "milestone_sequence_self_heal_failed",
-              self_heal_error: msg,
-            },
-            isError: true,
-          };
-        }
-        invalidateStateCache();
-      }
-    }
 
     if (params.artifact_type === "CONTEXT" && !params.task_id) {
       try {

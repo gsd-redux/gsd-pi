@@ -1,7 +1,8 @@
 // Project/App: gsd-pi
 // File Purpose: Deterministic DB-only Milestone closeout readiness query.
 
-import { getDb } from "./engine.js";
+import { getDb, getDbOrNull } from "./engine.js";
+import { compareLifecycleShadow } from "./lifecycle-shadow-comparison.js";
 
 export interface MilestoneCloseoutReadinessInput {
   milestoneId: string;
@@ -122,6 +123,48 @@ export function isMilestoneLifecycleAdopted(milestoneId: string): boolean {
       AND lifecycle.slice_id IS NULL
       AND lifecycle.task_id IS NULL
   `).get({ ":milestone_id": milestoneId }));
+}
+
+export type MilestoneMergeObservation =
+  | { kind: "unavailable" }
+  | { kind: "unadopted" }
+  | { kind: "completed"; legacyStatus: string; canonicalStatus: string }
+  | { kind: "not-completed" | "mismatch"; legacyStatus: string; canonicalStatus: string };
+
+export function readMilestoneMergeObservation(milestoneId: string): MilestoneMergeObservation {
+  const db = getDbOrNull();
+  if (!db) return { kind: "unavailable" };
+  const row = db.prepare(`
+    SELECT milestone.status AS legacy_status, lifecycle.lifecycle_status AS canonical_status
+    FROM milestones milestone
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.milestone_id = milestone.id
+     AND lifecycle.item_kind = 'milestone'
+     AND lifecycle.slice_id IS NULL
+     AND lifecycle.task_id IS NULL
+     AND lifecycle.project_id = (
+       SELECT project_id FROM project_authority WHERE singleton = 1
+     )
+    WHERE milestone.id = :milestone_id
+  `).get({ ":milestone_id": milestoneId });
+  const legacyStatus = typeof row?.["legacy_status"] === "string" ? row["legacy_status"] : null;
+  const canonicalStatus = typeof row?.["canonical_status"] === "string" ? row["canonical_status"] : null;
+  if (!canonicalStatus) return { kind: "unadopted" };
+  if (legacyStatus === null) {
+    return { kind: "mismatch", legacyStatus: "missing", canonicalStatus };
+  }
+  const shadow = compareLifecycleShadow(legacyStatus, canonicalStatus);
+  if (shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta") {
+    return {
+      kind: "mismatch",
+      legacyStatus,
+      canonicalStatus,
+    };
+  }
+  if (shadow.normalizedLegacyStatus === "completed" && canonicalStatus === "completed") {
+    return { kind: "completed", legacyStatus, canonicalStatus };
+  }
+  return { kind: "not-completed", legacyStatus, canonicalStatus };
 }
 
 function stringIdSet(payload: Record<string, unknown>, field: string): Set<string> | null {

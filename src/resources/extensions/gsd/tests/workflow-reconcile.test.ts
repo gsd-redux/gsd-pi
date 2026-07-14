@@ -339,6 +339,34 @@ test("unadopted legacy Milestone completion remains an explicit reconciliation c
   assert.equal(getMilestone("M001")?.status, "complete");
 });
 
+test("stale lifecycle rows from another project do not suppress legacy Milestone reconciliation", () => {
+  const { main, worktree } = makeTmpRepo();
+  seedMilestoneForReconciliation(main, true);
+
+  openDatabase(join(main, ".gsd", "gsd.db"));
+  const db = _getAdapter()!;
+  db.exec("PRAGMA foreign_keys = OFF");
+  db.prepare(`
+    UPDATE project_authority
+    SET project_id = 'current-project'
+    WHERE singleton = 1
+  `).run();
+  db.exec("PRAGMA foreign_keys = ON");
+  closeDatabase();
+
+  appendEvent(worktree, {
+    cmd: "complete-milestone",
+    params: { milestoneId: "M001" },
+    ts: "2026-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  reconcileWorktreeLogs(main, worktree);
+
+  assert.equal(getMilestone("M001")?.status, "complete");
+  assert.equal(milestoneLifecycleStatus(), "ready");
+});
+
 test("resolving a conflict to an adopted legacy Milestone completion is mutation-free", () => {
   const { main, worktree } = makeTmpRepo();
   const adoptedRevision = seedMilestoneForReconciliation(main, true);

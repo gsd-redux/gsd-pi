@@ -77,6 +77,15 @@ interface StoredCompletionPayload {
   closeout: MilestoneCompletionCloseout;
 }
 
+export interface CurrentMilestoneCompletionReceipt extends StoredCompletionPayload {
+  operationId: string;
+}
+
+interface CurrentMilestoneCompletionHead {
+  lifecycleId: string;
+  operationId: string;
+}
+
 type StoredCompletionAudit = { actorName: string | null; triggerReason: string | null };
 
 export interface MilestoneReopenReceipt {
@@ -201,11 +210,17 @@ function stringArrayField(
   return value as string[];
 }
 
-function storedCompletionPayload(operationId: string): StoredCompletionPayload {
+function storedCompletionPayload(
+  operationId: string,
+  milestoneId: string,
+): StoredCompletionPayload {
   const events = getDb().prepare(`
     SELECT payload_json FROM workflow_domain_events
-    WHERE operation_id = :operation_id AND event_type = 'milestone.completed'
-  `).all({ ":operation_id": operationId }) as Array<Record<string, unknown>>;
+    WHERE operation_id = :operation_id
+      AND event_type = 'milestone.completed'
+      AND entity_type = 'milestone'
+      AND entity_id = :milestone_id
+  `).all({ ":operation_id": operationId, ":milestone_id": milestoneId }) as Array<Record<string, unknown>>;
   if (events.length !== 1) throw new Error("Milestone completion receipt requires one durable event");
   const parsed = JSON.parse(String(events[0]!["payload_json"])) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -244,16 +259,52 @@ function storedCompletionPayload(operationId: string): StoredCompletionPayload {
   };
 }
 
+function currentMilestoneCompletionHead(
+  milestoneId: string,
+): CurrentMilestoneCompletionHead | null {
+  const lifecycle = getDb().prepare(`
+    SELECT lifecycle.lifecycle_id, lifecycle.last_operation_id
+    FROM workflow_item_lifecycles lifecycle
+    JOIN project_authority authority
+      ON authority.project_id = lifecycle.project_id
+     AND authority.singleton = 1
+    JOIN workflow_operations operation
+      ON operation.operation_id = lifecycle.last_operation_id
+     AND operation.project_id = lifecycle.project_id
+     AND operation.resulting_revision = lifecycle.last_project_revision
+     AND operation.resulting_authority_epoch = lifecycle.last_authority_epoch
+     AND operation.operation_type = 'milestone.complete'
+    WHERE lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND lifecycle.lifecycle_status = 'completed'
+  `).get({ ":milestone_id": milestoneId });
+  if (!lifecycle) return null;
+  return {
+    lifecycleId: String(lifecycle["lifecycle_id"]),
+    operationId: String(lifecycle["last_operation_id"]),
+  };
+}
+
+export function readCurrentMilestoneCompletionReceipt(
+  milestoneId: string,
+): CurrentMilestoneCompletionReceipt | null {
+  const head = currentMilestoneCompletionHead(milestoneId);
+  if (!head) return null;
+
+  const stored = storedCompletionPayload(head.operationId, milestoneId);
+  if (stored.milestoneLifecycleId !== head.lifecycleId) {
+    throw new Error("Milestone completion receipt lifecycle ownership is corrupt");
+  }
+  return { operationId: head.operationId, ...stored };
+}
+
 export function isCurrentMilestoneCompletionOperation(
   operationId: string,
   milestoneId: string,
 ): boolean {
-  return Boolean(getDb().prepare(`
-    SELECT 1 FROM workflow_item_lifecycles
-    WHERE item_kind = 'milestone' AND milestone_id = :milestone_id
-      AND slice_id IS NULL AND task_id IS NULL
-      AND lifecycle_status = 'completed' AND last_operation_id = :operation_id
-  `).get({ ":milestone_id": milestoneId, ":operation_id": operationId }));
+  return currentMilestoneCompletionHead(milestoneId)?.operationId === operationId;
 }
 
 export function isCurrentMilestoneReopenOperation(
@@ -458,7 +509,7 @@ export function completeMilestone(input: {
       };
     },
   );
-  const stored = storedCompletionPayload(operation.operationId);
+  const stored = storedCompletionPayload(operation.operationId, milestoneId);
   return {
     status: operation.status,
     operationId: operation.operationId,

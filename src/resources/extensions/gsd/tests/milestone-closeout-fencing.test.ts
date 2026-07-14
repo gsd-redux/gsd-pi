@@ -1,7 +1,7 @@
 // gsd-pi — Behavioral coverage for adopted milestone closeout fencing.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -20,6 +20,7 @@ import {
 import {
   _getAdapter,
   closeDatabase,
+  getArtifact,
   getMilestone,
   insertMilestone,
   isDbAvailable,
@@ -189,6 +190,31 @@ test("startup merge-journal reconciliation cannot close an adopted ready milesto
   }
 });
 
+test("startup merge-journal reconciliation preflights every milestone before legacy closure", () => {
+  const base = makeBase("gsd-adopted-startup-atomic-");
+  try {
+    insertMilestone({ id: "M001", title: "Legacy Milestone", status: "active" });
+    adoptMilestone("completed", "active", "M002");
+    emitWorktreeMerged(base, "M001", { reason: "milestone-complete", conflict: false });
+    emitWorktreeMerged(base, "M002", { reason: "milestone-complete", conflict: false });
+    const fenceBefore = readDomainOperationFence();
+    const operationsBefore = operationCount();
+
+    assert.throws(
+      () => reconcileMergedMilestonesFromJournal(base),
+      /M002.*canonical.*legacy.*mismatch/i,
+    );
+    assert.equal(getMilestone("M001")?.status, "active");
+    assert.equal(getMilestone("M001")?.completed_at, null);
+    assert.equal(getMilestone("M002")?.status, "active");
+    assert.equal(lifecycleStatus("M002"), "completed");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("generic status updates cannot close an adopted ready milestone", () => {
   const base = makeBase("gsd-adopted-generic-status-");
   try {
@@ -207,6 +233,87 @@ test("generic status updates cannot close an adopted ready milestone", () => {
   }
 });
 
+test("generic legacy writers preserve canonical completion across terminal aliases", () => {
+  const base = makeBase("gsd-adopted-terminal-alias-");
+  try {
+    adoptMilestone("completed", "done");
+    const fenceBefore = readDomainOperationFence();
+    const operationsBefore = operationCount();
+
+    assert.throws(
+      () => updateMilestoneStatus("M001", "skipped", "2026-07-14T12:00:00.000Z"),
+      /canonical|lifecycle|adopted|completed/i,
+    );
+    assert.equal(getMilestone("M001")?.status, "done");
+    assert.equal(getMilestone("M001")?.completed_at, null);
+    assert.equal(lifecycleStatus(), "completed");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+
+    assert.doesNotThrow(() => updateMilestoneStatus(
+      "M001",
+      "closed",
+      "2026-07-14T12:00:00.000Z",
+      true,
+    ));
+    assert.equal(getMilestone("M001")?.status, "closed");
+    assert.equal(getMilestone("M001")?.completed_at, "2026-07-14T12:00:00.000Z");
+    assert.equal(lifecycleStatus(), "completed");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generic legacy writers preserve adopted ready semantics across nonterminal aliases", () => {
+  const base = makeBase("gsd-adopted-nonterminal-alias-");
+  try {
+    adoptMilestone("ready", "queued");
+    const fenceBefore = readDomainOperationFence();
+    const operationsBefore = operationCount();
+
+    for (const invalidStatus of ["parked", "blocked"]) {
+      assert.throws(
+        () => updateMilestoneStatus("M001", invalidStatus),
+        /canonical|lifecycle|adopted|ready/i,
+      );
+      assert.equal(getMilestone("M001")?.status, "queued");
+    }
+
+    assert.doesNotThrow(() => updateMilestoneStatus("M001", "planned"));
+    assert.equal(getMilestone("M001")?.status, "planned");
+    assert.doesNotThrow(() => updateMilestoneStatus("M001", "active"));
+    assert.equal(getMilestone("M001")?.status, "active");
+    assert.equal(lifecycleStatus(), "ready");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generic legacy writers cannot silently repair an adopted status mismatch", () => {
+  const base = makeBase("gsd-adopted-status-mismatch-");
+  try {
+    adoptMilestone("completed");
+    _getAdapter()!.prepare(
+      "UPDATE milestones SET status = 'skipped' WHERE id = 'M001'",
+    ).run();
+    const fenceBefore = readDomainOperationFence();
+
+    assert.throws(
+      () => updateMilestoneStatus("M001", "complete", "2026-07-14T12:00:00.000Z"),
+      /mismatch|canonical|legacy|adopted/i,
+    );
+    assert.equal(getMilestone("M001")?.status, "skipped");
+    assert.equal(lifecycleStatus(), "completed");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("PROJECT milestone registration cannot close an adopted ready milestone", async () => {
   const base = makeBase("gsd-adopted-project-save-");
   try {
@@ -214,14 +321,111 @@ test("PROJECT milestone registration cannot close an adopted ready milestone", a
     adoptMilestone("ready", "active", milestoneId);
     const operationsBefore = operationCount();
 
-    await executeSummarySave({
+    const result = await executeSummarySave({
       artifact_type: "PROJECT",
       content: "# Project\n\n## Milestone Sequence\n- [x] M001: Milestone - Complete\n",
     }, base);
 
+    assert.notEqual(result.isError, true);
+    assert.equal(result.details.milestoneSequenceSelfHealed, true);
     assert.equal(getMilestone(milestoneId)?.status, "active");
     assert.equal(lifecycleStatus(milestoneId), "ready");
     assert.equal(operationCount(), operationsBefore);
+    const project = getArtifact("PROJECT.md");
+    assert.ok(project);
+    assert.match(project.full_content, /- \[ \] M001-b1nole:/);
+    assert.doesNotMatch(project.full_content, /- \[x\] M001(?:-b1nole)?:/i);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("PROJECT milestone registration repairs an unchecked adopted completed milestone", async () => {
+  const base = makeBase("gsd-adopted-project-completed-");
+  try {
+    adoptMilestone("completed");
+    const operationsBefore = operationCount();
+
+    const result = await executeSummarySave({
+      artifact_type: "PROJECT",
+      content: "# Project\n\n## Milestone Sequence\n- [ ] M001: Milestone - Planned\n",
+    }, base);
+
+    assert.notEqual(result.isError, true);
+    assert.equal(result.details.milestoneSequenceSelfHealed, true);
+    assert.equal(getMilestone("M001")?.status, "complete");
+    assert.equal(lifecycleStatus(), "completed");
+    assert.equal(operationCount(), operationsBefore);
+    const project = getArtifact("PROJECT.md");
+    assert.ok(project);
+    assert.match(project.full_content, /- \[x\] M001:/i);
+    assert.doesNotMatch(project.full_content, /- \[ \] M001:/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("PROJECT save rejects an adopted canonical and legacy status mismatch before persistence", async () => {
+  const base = makeBase("gsd-adopted-project-mismatch-");
+  try {
+    adoptMilestone("ready");
+    const priorContent = "# Project\n\n## Milestone Sequence\n- [ ] M001: Milestone - Planned\n";
+    const initial = await executeSummarySave({
+      artifact_type: "PROJECT",
+      content: priorContent,
+    }, base);
+    assert.notEqual(initial.isError, true);
+
+    _getAdapter()!.prepare(
+      "UPDATE milestones SET status = 'complete' WHERE id = 'M001'",
+    ).run();
+    const fenceBefore = readDomainOperationFence();
+    const operationsBefore = operationCount();
+
+    const result = await executeSummarySave({
+      artifact_type: "PROJECT",
+      content: "# Project\n\n## Milestone Sequence\n- [x] M001: Milestone - Complete\n",
+    }, base);
+
+    assert.equal(result.isError, true);
+    assert.equal(getMilestone("M001")?.status, "complete");
+    assert.equal(lifecycleStatus(), "ready");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+    const storedProject = getArtifact("PROJECT.md");
+    assert.ok(storedProject);
+    assert.equal(storedProject.full_content, priorContent);
+    assert.equal(readFileSync(join(base, ".gsd", "PROJECT.md"), "utf8"), priorContent);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("PROJECT repair renders completed legacy aliases as checked", async () => {
+  const base = makeBase("gsd-adopted-project-alias-");
+  try {
+    adoptMilestone("completed", "done");
+    const fenceBefore = readDomainOperationFence();
+    const operationsBefore = operationCount();
+
+    const result = await executeSummarySave({
+      artifact_type: "PROJECT",
+      content: "# Project\n\n## Milestone Sequence\n- [ ] M001: Milestone - Planned\n",
+    }, base);
+
+    assert.notEqual(result.isError, true);
+    assert.equal(result.details.milestoneSequenceSelfHealed, true);
+    assert.equal(getMilestone("M001")?.status, "done");
+    assert.equal(lifecycleStatus(), "completed");
+    assert.deepEqual(readDomainOperationFence(), fenceBefore);
+    assert.equal(operationCount(), operationsBefore);
+    const storedProject = getArtifact("PROJECT.md");
+    assert.ok(storedProject);
+    assert.match(storedProject.full_content, /- \[x\] M001:/i);
+    assert.doesNotMatch(storedProject.full_content, /- \[ \] M001:/);
+    const mirroredProject = readFileSync(join(base, ".gsd", "PROJECT.md"), "utf8");
+    assert.match(mirroredProject, /- \[x\] M001:/i);
+    assert.doesNotMatch(mirroredProject, /- \[ \] M001:/);
   } finally {
     cleanup(base);
   }

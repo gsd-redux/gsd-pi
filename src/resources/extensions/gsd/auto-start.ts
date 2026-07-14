@@ -77,6 +77,8 @@ import { restoreHookState, resetHookState, reconcileRestoredHookDispatch } from 
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
 import { isDbAvailable, probeDbWritable, getMilestone, getAllMilestones, insertMilestone, updateMilestoneStatus } from "./gsd-db.js";
+import { readMilestoneMergeObservation } from "./db/milestone-closeout-readiness.js";
+import { immediateTransaction } from "./db/engine.js";
 import {
   getWorkflowDatabaseStatus,
   openExistingWorkflowDatabase,
@@ -230,6 +232,8 @@ export function reconcileProjectMilestonesFromDisk(basePath: string): number {
   }
 }
 
+class MilestoneMergeObservationMismatchError extends Error {}
+
 export function reconcileMergedMilestonesFromJournal(basePath: string): number {
   if (!isDbAvailable()) return 0;
 
@@ -246,24 +250,51 @@ export function reconcileMergedMilestonesFromJournal(basePath: string): number {
       if (!previous || endedAt > previous) mergedAtByMilestone.set(milestoneId, endedAt);
     }
 
-    let closed = 0;
-    for (const [milestoneId, completedAt] of mergedAtByMilestone) {
-      const existing = getMilestone(milestoneId);
-      if (!existing) {
-        insertMilestone({ id: milestoneId, title: milestoneId, status: "complete" });
-        updateMilestoneStatus(milestoneId, "complete", completedAt);
-        closed++;
-        continue;
+    const closed = immediateTransaction(() => {
+      const preflight = [...mergedAtByMilestone].map(([milestoneId, completedAt]) => ({
+        milestoneId,
+        completedAt,
+        observation: readMilestoneMergeObservation(milestoneId),
+      }));
+      for (const { milestoneId, observation } of preflight) {
+        if (observation.kind === "mismatch") {
+          throw new MilestoneMergeObservationMismatchError(
+            `Milestone ${milestoneId} canonical and legacy status mismatch ` +
+            `(canonical=${observation.canonicalStatus}, legacy=${observation.legacyStatus})`,
+          );
+        }
       }
-      if (!isClosedStatus(existing.status)) {
-        updateMilestoneStatus(milestoneId, "complete", completedAt);
-        closed++;
+
+      let completed = 0;
+      for (const { milestoneId, completedAt, observation } of preflight) {
+        if (observation.kind === "completed") continue;
+        if (observation.kind === "not-completed") {
+          logWarning(
+            "bootstrap",
+            `Ignoring worktree-merged observation for adopted Milestone ${milestoneId}: ` +
+            `canonical lifecycle is ${observation.canonicalStatus}, not completed.`,
+          );
+          continue;
+        }
+        const existing = getMilestone(milestoneId);
+        if (!existing) {
+          insertMilestone({ id: milestoneId, title: milestoneId, status: "complete" });
+          updateMilestoneStatus(milestoneId, "complete", completedAt);
+          completed++;
+          continue;
+        }
+        if (!isClosedStatus(existing.status)) {
+          updateMilestoneStatus(milestoneId, "complete", completedAt);
+          completed++;
+        }
       }
-    }
+      return completed;
+    });
 
     if (closed > 0) invalidateAllCaches();
     return closed;
   } catch (err) {
+    if (err instanceof MilestoneMergeObservationMismatchError) throw err;
     logWarning(
       "bootstrap",
       `merged-milestone journal reconciliation failed: ${err instanceof Error ? err.message : String(err)}`,

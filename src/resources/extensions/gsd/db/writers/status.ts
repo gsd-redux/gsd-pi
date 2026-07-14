@@ -13,8 +13,8 @@
 //     still move slices to open statuses through the generic face. Generalizing
 //     safely needs a sanctioned reopenSliceStatus face first, mirroring the
 //     existing milestone updateMilestoneStatus/reopenMilestoneStatus split.
-import { getDbOrNull } from "../engine.js";
-import { TERMINAL_STATUS_SQL } from "../sql-constants.js";
+import { getDbOrNull, immediateTransaction } from "../engine.js";
+import { compareLifecycleShadow } from "../lifecycle-shadow-comparison.js";
 import { GSDError, GSD_STALE_STATE } from "../../errors.js";
 import { isClosedStatus } from "../../status-guards.js";
 
@@ -46,7 +46,7 @@ function requireDb() {
  * but may not reopen closed rows; callers must use the corresponding semantic
  * reopen operation. Slices are not yet guarded — see the file header.
  */
-export function applyStatusTransition(t: StatusTransition): void {
+function applyStatusTransitionLocked(t: StatusTransition): void {
   const db = requireDb();
   const completedAt = t.completedAt ?? null;
   const preserve = t.preserveCompletion ? 1 : 0;
@@ -94,59 +94,62 @@ export function applyStatusTransition(t: StatusTransition): void {
       return;
 
     case "milestone": {
-      const row = db.prepare("SELECT status FROM milestones WHERE id = :id").get({ ":id": t.milestoneId });
+      const row = db.prepare(`
+        SELECT milestone.status, lifecycle.lifecycle_status AS canonical_status
+        FROM milestones milestone
+        LEFT JOIN workflow_item_lifecycles lifecycle
+          ON lifecycle.milestone_id = milestone.id
+         AND lifecycle.item_kind = 'milestone'
+         AND lifecycle.slice_id IS NULL
+         AND lifecycle.task_id IS NULL
+         AND lifecycle.project_id = (
+           SELECT project_id FROM project_authority WHERE singleton = 1
+         )
+        WHERE milestone.id = :id
+      `).get({ ":id": t.milestoneId });
       const currentStatus = typeof row?.["status"] === "string" ? (row["status"] as string) : null;
+      const canonicalStatus = typeof row?.["canonical_status"] === "string"
+        ? row["canonical_status"]
+        : null;
+      if (currentStatus && canonicalStatus) {
+        const currentShadow = compareLifecycleShadow(currentStatus, canonicalStatus);
+        if (currentShadow.kind !== "match" && currentShadow.kind !== "semantic_match_exact_delta") {
+          throw new Error(
+            `Cannot update adopted Milestone ${t.milestoneId} while canonical and legacy status mismatch ` +
+            `(canonical=${canonicalStatus}, legacy=${currentStatus}).`,
+          );
+        }
+      }
       const closesMilestone = isClosedStatus(t.status);
       if (currentStatus && isClosedStatus(currentStatus) && !closesMilestone) {
         throw new Error(
           `Cannot update closed milestone ${t.milestoneId} from ${currentStatus} to ${t.status}; use gsd_milestone_reopen for an explicit reopen.`,
         );
       }
-      const closureFence = closesMilestone
-        ? `AND (
-             milestones.status IN (${TERMINAL_STATUS_SQL})
-             OR NOT EXISTS (
-               SELECT 1
-               FROM workflow_item_lifecycles lifecycle
-               JOIN project_authority authority
-                 ON authority.project_id = lifecycle.project_id
-                AND authority.singleton = 1
-               WHERE lifecycle.item_kind = 'milestone'
-                 AND lifecycle.milestone_id = milestones.id
-                 AND lifecycle.slice_id IS NULL
-                 AND lifecycle.task_id IS NULL
-             )
-           )`
-        : "";
-      const updated = db.prepare(
-        `UPDATE milestones SET status = :status,
-           completed_at = CASE WHEN :preserve_completion = 1 AND milestones.completed_at IS NOT NULL
-                               THEN milestones.completed_at ELSE :completed_at END
-         WHERE id = :id ${closureFence}`,
-      ).run({ ":status": t.status, ":completed_at": completedAt, ":preserve_completion": preserve, ":id": t.milestoneId });
-      if (closesMilestone && Number((updated as { changes?: number }).changes ?? 0) === 0) {
-        const blocked = db.prepare(`
-          SELECT 1 AS blocked
-          FROM milestones
-          JOIN workflow_item_lifecycles lifecycle
-            ON lifecycle.item_kind = 'milestone'
-           AND lifecycle.milestone_id = milestones.id
-           AND lifecycle.slice_id IS NULL
-           AND lifecycle.task_id IS NULL
-          JOIN project_authority authority
-            ON authority.project_id = lifecycle.project_id
-           AND authority.singleton = 1
-          WHERE milestones.id = :id
-            AND milestones.status NOT IN (${TERMINAL_STATUS_SQL})
-        `).get({ ":id": t.milestoneId });
-        if (blocked) {
+      if (canonicalStatus) {
+        const shadow = compareLifecycleShadow(t.status, canonicalStatus);
+        if (shadow.kind !== "match" && shadow.kind !== "semantic_match_exact_delta") {
           throw new Error(
-            `Cannot close adopted Milestone ${t.milestoneId} through a legacy status update; ` +
-            "use the canonical milestone.complete operation.",
+            `Cannot change adopted Milestone ${t.milestoneId} legacy status to ${t.status}; ` +
+            `canonical lifecycle is ${canonicalStatus}. Use the canonical lifecycle operation.`,
           );
         }
       }
+      db.prepare(
+        `UPDATE milestones SET status = :status,
+           completed_at = CASE WHEN :preserve_completion = 1 AND milestones.completed_at IS NOT NULL
+                               THEN milestones.completed_at ELSE :completed_at END
+         WHERE id = :id`,
+      ).run({ ":status": t.status, ":completed_at": completedAt, ":preserve_completion": preserve, ":id": t.milestoneId });
       return;
     }
   }
+}
+
+export function applyStatusTransition(t: StatusTransition): void {
+  if (t.entity === "milestone") {
+    immediateTransaction(() => applyStatusTransitionLocked(t));
+    return;
+  }
+  applyStatusTransitionLocked(t);
 }

@@ -12,6 +12,7 @@ import {
   getWorkflowDatabasePath,
   openWorkflowDatabasePath,
 } from "./db-workspace.js";
+import { readMilestoneMergeObservation } from "./db/milestone-closeout-readiness.js";
 import { GSDError, GSD_GIT_ERROR } from "./errors.js";
 import {
   isDbAvailable,
@@ -39,6 +40,7 @@ interface MergeDbReadyDeps {
   logError: typeof logError;
   openWorkflowDatabasePath: typeof openWorkflowDatabasePath;
   proveMilestoneCloseout: typeof proveMilestoneCloseout;
+  readMilestoneMergeObservation: typeof readMilestoneMergeObservation;
   reconcileWorktreeDb: typeof reconcileWorktreeDb;
   resolveGsdPathContract: typeof resolveGsdPathContract;
   shouldReconcileWorktreeDb: typeof _shouldReconcileWorktreeDb;
@@ -52,6 +54,7 @@ const defaultDeps: MergeDbReadyDeps = {
   logError,
   openWorkflowDatabasePath,
   proveMilestoneCloseout,
+  readMilestoneMergeObservation,
   reconcileWorktreeDb,
   resolveGsdPathContract,
   shouldReconcileWorktreeDb: _shouldReconcileWorktreeDb,
@@ -77,9 +80,13 @@ function reconcileWorktreeDatabase(request: MilestoneDbReadyRequest): void {
 
   try {
     const activeDbPath = deps.getWorkflowDatabasePath();
-    if (activeDbPath && deps.shouldReconcileWorktreeDb(activeDbPath, mainDbPath)) {
-      deps.closeWorkflowDatabase();
-      if (!deps.openWorkflowDatabasePath(mainDbPath)) {
+    const dbAvailable = deps.isDbAvailable();
+    const projectDbActive = dbAvailable
+      && activeDbPath !== null
+      && !deps.shouldReconcileWorktreeDb(activeDbPath, mainDbPath);
+    if (!projectDbActive) {
+      if (dbAvailable) deps.closeWorkflowDatabase();
+      if (!deps.openWorkflowDatabasePath(mainDbPath) || !deps.isDbAvailable()) {
         throw new Error(`cannot open project DB at ${mainDbPath}`);
       }
     }
@@ -103,10 +110,33 @@ function assertCloseoutProof(milestoneId: string): void {
   }
 }
 
+function assertAdoptedMilestoneCompleted(milestoneId: string): void {
+  const observation = deps.readMilestoneMergeObservation(milestoneId);
+  if (observation.kind === "unadopted" || observation.kind === "completed") {
+    return;
+  }
+  if (observation.kind === "unavailable") {
+    throw new GSDError(
+      GSD_GIT_ERROR,
+      `Milestone ${milestoneId} merge blocked: project DB verification is unavailable. ` +
+      `Recovery reason: ${CLOSEOUT_CONSISTENCY_BLOCKED_REASON}.`,
+    );
+  }
+  const detail = observation.kind === "mismatch"
+    ? "canonical and legacy status mismatch"
+    : "canonical lifecycle is not completed";
+  throw new GSDError(
+    GSD_GIT_ERROR,
+    `Milestone ${milestoneId} merge blocked: ${detail} ` +
+    `(canonical=${observation.canonicalStatus}, legacy=${observation.legacyStatus}). ` +
+    `Recovery reason: ${CLOSEOUT_CONSISTENCY_BLOCKED_REASON}.`,
+  );
+}
+
 export function assertMilestoneDbReadyForMerge(
   request: MilestoneDbReadyRequest,
 ): void {
-  if (!deps.isDbAvailable()) return;
   reconcileWorktreeDatabase(request);
+  assertAdoptedMilestoneCompleted(request.milestoneId);
   assertCloseoutProof(request.milestoneId);
 }

@@ -22,6 +22,7 @@ import {
   getPendingGatesForTurn,
   insertSlice,
   getMilestone,
+  immediateTransaction,
   updateMilestoneStatus,
   getCompletedMilestoneTaskFileHints,
   getMilestoneCommitAttributionShas,
@@ -74,6 +75,9 @@ import {
   proveMilestoneCloseout,
   type CloseoutProofFailureReason,
 } from "./milestone-closeout-proof.js";
+import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
+import { compareLifecycleShadow } from "./db/lifecycle-shadow-comparison.js";
+import { readCurrentMilestoneCompletionReceipt } from "./milestone-lifecycle-domain-operation.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
@@ -123,6 +127,41 @@ function closeoutProofRecoveryReason(reason: CloseoutProofFailureReason): string
       return "complete-milestone-summary-failed";
     default:
       return `complete-milestone-${reason}`;
+  }
+}
+
+function adoptedMilestoneRecoveryResult(
+  milestoneId: string,
+  legacyStatus: string,
+): ArtifactRecoveryDbRefreshResult {
+  try {
+    const completion = readCurrentMilestoneCompletionReceipt(milestoneId);
+    if (completion) {
+      const shadow = compareLifecycleShadow(legacyStatus, "completed");
+      const matchesCompletedShadow = shadow.normalizedLegacyStatus === "completed" &&
+        shadow.normalizedCanonicalStatus === "completed";
+      if (matchesCompletedShadow) return { ok: true };
+      return {
+        ok: false,
+        fatal: true,
+        reason: "complete-milestone-adopted-state-mismatch",
+        message: `Stuck recovery found a current canonical completion receipt for ${milestoneId}, but legacy status is ${legacyStatus}; refusing to hide the lifecycle mismatch.`,
+      };
+    }
+
+    return {
+      ok: false,
+      fatal: true,
+      reason: "complete-milestone-canonical-command-required",
+      message: `Stuck recovery cannot complete adopted Milestone ${milestoneId} from artifacts; retry the original completion invocation or dispatch the normal completion command.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      fatal: true,
+      reason: "complete-milestone-canonical-receipt-invalid",
+      message: `Stuck recovery could not verify the canonical completion receipt for ${milestoneId}: ${getErrorMessage(error)}`,
+    };
   }
 }
 
@@ -204,16 +243,22 @@ export function refreshRecoveryDbForArtifact(
       };
     }
 
-    const milestone = getMilestone(mid);
-    if (!milestone) {
-      return {
-        ok: false,
-        fatal: true,
-        reason: "complete-milestone-artifact-db-missing",
-        message: `Stuck recovery found complete-milestone ${unitId} artifacts, but no matching DB milestone row exists after refresh.`,
-      };
-    }
-    if (isClosedStatus(milestone.status)) return { ok: true };
+    const observedResult = immediateTransaction<ArtifactRecoveryDbRefreshResult | null>(() => {
+      const milestone = getMilestone(mid);
+      if (!milestone) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "complete-milestone-artifact-db-missing",
+          message: `Stuck recovery found complete-milestone ${unitId} artifacts, but no matching DB milestone row exists after refresh.`,
+        };
+      }
+      if (isMilestoneLifecycleAdopted(mid)) {
+        return adoptedMilestoneRecoveryResult(mid, milestone.status);
+      }
+      return isClosedStatus(milestone.status) ? { ok: true } : null;
+    });
+    if (observedResult) return observedResult;
 
     const artifactBasePath = resolveArtifactVerificationBase(unitId, basePath);
     const closeoutProof = proveMilestoneCloseout(mid, {
@@ -241,7 +286,24 @@ export function refreshRecoveryDbForArtifact(
       };
     }
 
-    updateMilestoneStatus(mid, "complete", new Date().toISOString());
+    const concurrentResult = immediateTransaction<ArtifactRecoveryDbRefreshResult | null>(() => {
+      const currentMilestone = getMilestone(mid);
+      if (!currentMilestone) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "complete-milestone-artifact-db-missing",
+          message: `Stuck recovery found complete-milestone ${unitId} artifacts, but the DB milestone disappeared before compatibility closeout.`,
+        };
+      }
+      if (isMilestoneLifecycleAdopted(mid)) {
+        return adoptedMilestoneRecoveryResult(mid, currentMilestone.status);
+      }
+      if (isClosedStatus(currentMilestone.status)) return { ok: true };
+      updateMilestoneStatus(mid, "complete", new Date().toISOString());
+      return null;
+    });
+    if (concurrentResult) return concurrentResult;
     // Detached GitHub sync — best-effort. Test seam: when
     // _githubFinalizeFn is injected, route through it so the catch
     // (:232) is deterministically reachable (otherwise it needs a real
