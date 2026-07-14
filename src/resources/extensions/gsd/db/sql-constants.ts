@@ -3,7 +3,16 @@
 // Kept out of the barrel surface so they remain database implementation details.
 import { RAW_CLOSED_STATUSES } from "../status-guards.js";
 
-export const CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL = `EXISTS (
+export function currentEvidenceBackedFailureVerdictSqlV39(
+  resultAlias: string,
+  causalAuthorityAlias?: string,
+): string {
+  const causalAuthoritySql = causalAuthorityAlias
+    ? `AND verdict.project_revision < ${causalAuthorityAlias}.project_revision
+    AND verdict.authority_epoch <= ${causalAuthorityAlias}.authority_epoch`
+    : "";
+
+  return `EXISTS (
   SELECT 1
   FROM workflow_technical_verdicts verdict
   JOIN workflow_acceptance_criteria criterion
@@ -14,10 +23,11 @@ export const CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL = `EXISTS (
     ON evidence.verdict_id = verdict.verdict_id
    AND evidence.project_id = verdict.project_id
    AND evidence.attempt_id = verdict.attempt_id
-  WHERE verdict.project_id = result.project_id
-    AND verdict.lifecycle_id = result.lifecycle_id
-    AND verdict.attempt_id = result.attempt_id
+  WHERE verdict.project_id = ${resultAlias}.project_id
+    AND verdict.lifecycle_id = ${resultAlias}.lifecycle_id
+    AND verdict.attempt_id = ${resultAlias}.attempt_id
     AND verdict.verdict IN ('fail', 'inconclusive')
+    ${causalAuthoritySql}
     AND NOT EXISTS (
       SELECT 1 FROM workflow_acceptance_criteria successor
       WHERE successor.supersedes_criterion_id = criterion.criterion_id
@@ -44,6 +54,10 @@ export const CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL = `EXISTS (
         )
     )
 )`;
+}
+
+export const CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL =
+  currentEvidenceBackedFailureVerdictSqlV39("result");
 
 export const CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL = `(
   (observation.boundary_stage = 'execute' AND result.outcome IN ('failed', 'interrupted')) OR
