@@ -26,6 +26,10 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
+import {
+  grantTaskWaiver,
+  recordTaskRequirementDisposition,
+} from "../task-recovery-domain-operation.ts";
 
 const tempDirs = new Set<string>();
 
@@ -200,6 +204,8 @@ function makeBase(): void {
     VALUES
       ('M001', 'S01', 'T01', 'Verified child', 'pending', 1),
       ('M001', 'S01', 'T02', 'Intentionally cancelled child', 'pending', 2);
+    INSERT INTO requirements (id, class, status, description)
+    VALUES ('R-CANCEL-T02', 'quality-attribute', 'active', 'T02 omission is authorized');
     INSERT INTO quality_gates (milestone_id, slice_id, gate_id, scope, task_id, status)
     VALUES ('M001', 'S01', 'Q8', 'slice', '', 'pending');
     INSERT INTO workers (
@@ -241,7 +247,7 @@ function claimTask(taskId = "T01"): string {
   }).attemptId;
 }
 
-function finishTaskWithOptionalEvidence(includeVerdict: boolean): void {
+function finishTaskWithOptionalEvidence(includeVerdict: boolean, authorizeCancellation = true): void {
   const attemptId = claimTask();
   settleTaskAttempt({
     invocation: invocation("fixture/T01/settle"),
@@ -311,6 +317,28 @@ function finishTaskWithOptionalEvidence(includeVerdict: boolean): void {
     entityId: "M001/S01/T01",
     payload: { attemptId },
   });
+  if (authorizeCancellation) {
+    const lifecycleId = String(row(`
+      SELECT lifecycle_id FROM workflow_item_lifecycles
+      WHERE item_kind = 'task' AND milestone_id = 'M001'
+        AND slice_id = 'S01' AND task_id = 'T02'
+    `).lifecycle_id);
+    const waiver = grantTaskWaiver({
+      invocation: invocation("fixture/T02/waiver"),
+      lifecycleId,
+      requirementId: "R-CANCEL-T02",
+      scope: "M001/S01/T02 cancellation",
+      rationale: "T02 is intentionally omitted from this Slice completion.",
+      grantedByActorType: "policy",
+    });
+    recordTaskRequirementDisposition({
+      invocation: invocation("fixture/T02/disposition"),
+      requirementId: "R-CANCEL-T02",
+      disposition: "waived",
+      waiverId: waiver.waiverId,
+      rationale: "The current Task Waiver authorizes the cancelled child.",
+    });
+  }
 }
 
 function taskHistorySnapshot(): Record<string, unknown> {
@@ -347,6 +375,8 @@ function durableSnapshot(): Record<string, unknown> {
     criteria: rows("SELECT * FROM workflow_acceptance_criteria ORDER BY lifecycle_id, created_at"),
     verdicts: rows("SELECT * FROM workflow_technical_verdicts ORDER BY lifecycle_id, created_at"),
     evidence: rows("SELECT * FROM workflow_verification_evidence ORDER BY lifecycle_id, created_at"),
+    waivers: rows("SELECT * FROM workflow_waivers ORDER BY project_revision"),
+    dispositions: rows("SELECT * FROM workflow_requirement_dispositions ORDER BY project_revision"),
     kernelCheckpoints: rows("SELECT * FROM workflow_kernel_checkpoints ORDER BY lifecycle_id, sequence"),
     workCheckpoints: rows("SELECT * FROM workflow_work_checkpoints ORDER BY project_revision"),
     events: rows("SELECT * FROM workflow_domain_events ORDER BY project_revision, event_index"),
@@ -478,6 +508,18 @@ test("Slice completion rejects a completed child without a current PASS Technica
     /technical verdict|verification evidence|verified|evidence/i,
   );
   assert.deepEqual(durableSnapshot(), before, "missing-evidence rejection must leave exact zero residue");
+});
+
+test("Slice completion rejects a cancelled child without a current authorized Waiver disposition", () => {
+  makeBase();
+  finishTaskWithOptionalEvidence(true, false);
+  const before = durableSnapshot();
+
+  assert.throws(
+    () => completeSlice(validInput("slice-complete/unwaived-cancelled-child")),
+    /waiver|authorized|omission/i,
+  );
+  assert.deepEqual(durableSnapshot(), before, "unwaived-child rejection must leave exact zero residue");
 });
 
 test("Slice completion rejects a missing Q8 gate without durable residue", () => {

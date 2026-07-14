@@ -19,6 +19,7 @@ import {
   SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteSlice as handleCompleteSliceWithInvocation } from '../tools/complete-slice.ts';
+import { reopenSlice } from '../slice-lifecycle-domain-operation.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
 import { internalExecutionInvocation, type ExecutionInvocation } from '../execution-invocation.ts';
 import type { CompleteSliceParams } from '../types.ts';
@@ -321,10 +322,10 @@ console.log('\n=== complete-slice: handler happy path ===');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// complete-slice: final slice promotes planned milestone before validation
+// complete-slice: final slice leaves milestone lifecycle to its owning phase
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-slice: final slice promotes planned milestone ===');
+console.log('\n=== complete-slice: final slice leaves planned milestone unchanged ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
@@ -345,7 +346,54 @@ console.log('\n=== complete-slice: final slice promotes planned milestone ===');
   assertTrue(!('error' in result), 'final slice completion should succeed');
   const milestone = getMilestone('M001');
   assertTrue(milestone !== null, 'milestone should exist after completion');
-  assertEq(milestone!.status, 'active', 'final slice should transition a planned milestone to active');
+  assertEq(milestone!.status, 'planned', 'Slice completion must not transition Milestone lifecycle');
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-slice: superseded delivery cannot rebuild completion projections
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-slice: superseded delivery stays removed after reopen ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+  const { basePath } = createTempProject();
+  insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice', status: 'pending' });
+  insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
+  seedSliceCompletionAuthority({
+    milestoneId: 'M001',
+    sliceId: 'S01',
+    completedTaskIds: ['T01'],
+  });
+
+  const completion = handleCompleteSlice(
+    makeValidSliceParams(),
+    basePath,
+    completionInvocation('projection-race'),
+  );
+  assertEq(getSlice('M001', 'S01')?.status, 'complete', 'completion must commit before projection delivery');
+  reopenSlice({
+    invocation: internalExecutionInvocation('test:complete-slice:projection-race:reopen'),
+    slice: { milestoneId: 'M001', sliceId: 'S01' },
+    reason: 'Reopen while the prior completion projection is still being delivered.',
+  });
+
+  const result = await completion;
+  assertTrue(!('error' in result), 'superseded completion should return an outcome');
+  if (!('error' in result)) {
+    assertEq(result.superseded, true, 'completion should expose that its receipt was superseded');
+    assertEq(result.stale, true, 'superseded projection delivery should be stale');
+    assertEq(fs.existsSync(result.summaryPath), false, 'stale completion must not rebuild SUMMARY.md');
+    assertEq(fs.existsSync(result.uatPath), false, 'stale completion must not rebuild UAT.md');
+  }
+  const reopened = getSlice('M001', 'S01');
+  assertEq(reopened?.status, 'in_progress', 'reopen must remain authoritative');
+  assertEq(reopened?.full_summary_md, '', 'reopen must clear the compatibility summary projection');
+  assertEq(reopened?.full_uat_md, '', 'reopen must clear the compatibility UAT projection');
 
   cleanupDir(basePath);
   cleanup(dbPath);

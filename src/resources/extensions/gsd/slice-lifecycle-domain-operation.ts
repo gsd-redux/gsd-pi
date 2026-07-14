@@ -195,8 +195,7 @@ export function cancelSlice(input: {
     cancelledTaskIds: stored.cancelledTaskIds,
     preservedTaskIds: stored.preservedTaskIds,
     interruptions: stored.interruptions,
-    isCurrent: operation.status === "committed"
-      || isCurrentSliceOperation(operation.operationId, slice, "cancelled"),
+    isCurrent: isCurrentSliceOperation(operation.operationId, slice, "cancelled"),
   };
 }
 
@@ -392,6 +391,13 @@ export function isCurrentSliceReopenOperation(
   });
 }
 
+export function isCurrentSliceCompletionOperation(
+  operationId: string,
+  slice: SliceLifecycleIdentity,
+): boolean {
+  return isCurrentSliceOperation(operationId, slice, "completed");
+}
+
 export function completeSlice(input: {
   invocation: ExecutionInvocation;
   slice: SliceLifecycleIdentity;
@@ -454,6 +460,6 @@ export function completeSlice(input: {
     proofs: stored.proofs,
     q8Verdict: stored.q8Verdict,
     closeout: stored.closeout,
-    isCurrent: isCurrentSliceOperation(operation.operationId, slice, "completed"),
+    isCurrent: isCurrentSliceCompletionOperation(operation.operationId, slice),
   };
 }

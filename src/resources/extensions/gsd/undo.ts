@@ -478,11 +478,27 @@ export async function handleResetSlice(
     return;
   }
 
+  const duplicate = result.details["duplicate"] === true;
+  const superseded = result.details["superseded"] === true;
+  const stale = result.details["stale"] === true;
+  if (superseded) {
+    ctx.ui.notify([
+      `Reset receipt for slice ${mid}/${sid} is no longer current.`,
+      `  - ${String(result.details["tasksReset"] ?? tasks.length)} historical task reset(s) recorded`,
+      "  - Slice projections were not refreshed",
+    ].join("\n"), "warning");
+    return;
+  }
+
   ctx.ui.notify([
-    `Reset slice ${mid}/${sid} to "in_progress".`,
+    duplicate
+      ? `Reused the current reset for slice ${mid}/${sid}.`
+      : `Reset slice ${mid}/${sid} to "in_progress".`,
     `  - ${String(result.details["tasksReset"] ?? tasks.length)} task(s) reset to "pending"`,
-    "  - Slice projections refreshed",
-  ].join("\n"), "success");
+    stale
+      ? "  - Slice projection refresh is pending repair"
+      : "  - Slice projections refreshed",
+  ].join("\n"), stale ? "warning" : "success");
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

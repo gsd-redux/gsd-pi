@@ -422,8 +422,14 @@ test("slice.cancel records the dependency-bypass decision in one replay-safe Sli
   }, invocation("slice-cancel/dependency-waiver/reskip"));
   assert.equal(reSkip.error, undefined);
   assert.equal(reSkip.tasksSkipped, 1);
-  assert.equal(reSkip.duplicate, undefined);
-  assert.equal(reSkip.superseded, undefined);
+  assert.equal(reSkip.duplicate, true);
+  assert.equal(reSkip.superseded, true);
+  const replayedReSkip = handleSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Heal any leftover unfinished work without changing the bypass decision.",
+  }, invocation("slice-cancel/dependency-waiver/reskip"));
+  assert.deepEqual(replayedReSkip, reSkip);
   assert.equal(
     row("SELECT COUNT(*) AS count FROM workflow_waivers WHERE waiver_status = 'active'").count,
     1,

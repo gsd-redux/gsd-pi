@@ -9,14 +9,15 @@
  * from the durable receipt. Projection failures never roll back authority.
  */
 
+import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { CompleteSliceParams } from "../types.js";
-import { getDb, setSliceSummaryMd } from "../gsd-db.js";
+import { getDb } from "../gsd-db.js";
 import { clearPathCache, relSliceFile } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
 import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
-import { saveFile, clearParseCache } from "../files.js";
+import { loadFile, saveFile, clearParseCache } from "../files.js";
 import { classifyUatContent, escalatesArtifactUatToBrowser } from "../uat-policy.js";
 import { invalidateStateCache } from "../state.js";
 import { renderMilestoneShellProjections } from "../workflow-projections.js";
@@ -26,6 +27,7 @@ import { logWarning } from "../workflow-logger.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
   completeSlice,
+  isCurrentSliceCompletionOperation,
   SliceLifecycleValidationError,
   type SliceCompletionCloseout,
 } from "../slice-lifecycle-domain-operation.js";
@@ -39,7 +41,7 @@ export interface CompleteSliceResult {
    * True when this exact invocation replayed its durable operation receipt.
    */
   duplicate?: boolean;
-  /** True when a replayed receipt is no longer the current Slice lifecycle head. */
+  /** True when the receipt is no longer the current Slice lifecycle head. */
   superseded?: boolean;
   stale?: boolean;
 }
@@ -50,6 +52,46 @@ function sliceSummaryPath(basePath: string, milestoneId: string, sliceId: string
   // relSliceFile returns a path relative to basePath (e.g. ".gsd/phases/01-test/01-01-SUMMARY.md"),
   // so join with basePath (not gsdProjectionRoot which would double the ".gsd/" segment).
   return join(basePath, relSliceFile(basePath, milestoneId, sliceId, "SUMMARY"));
+}
+
+function setSliceSummaryMdIfCurrent(
+  milestoneId: string,
+  sliceId: string,
+  operationId: string,
+  summaryMd: string,
+  uatMd: string,
+): boolean {
+  const updated = getDb().prepare(`
+    UPDATE slices
+    SET full_summary_md = :summary_md, full_uat_md = :uat_md
+    WHERE milestone_id = :milestone_id
+      AND id = :slice_id
+      AND EXISTS (
+        SELECT 1 FROM workflow_item_lifecycles lifecycle
+        WHERE lifecycle.item_kind = 'slice'
+          AND lifecycle.milestone_id = :milestone_id
+          AND lifecycle.slice_id = :slice_id
+          AND lifecycle.task_id IS NULL
+          AND lifecycle.lifecycle_status = 'completed'
+          AND lifecycle.last_operation_id = :operation_id
+      )
+  `).run({
+    ":milestone_id": milestoneId,
+    ":slice_id": sliceId,
+    ":operation_id": operationId,
+    ":summary_md": summaryMd,
+    ":uat_md": uatMd,
+  });
+  return Number((updated as { changes?: number }).changes ?? 0) === 1;
+}
+
+async function removeOwnedProjection(path: string, content: string): Promise<void> {
+  if (await loadFile(path) !== content) return;
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 /**
@@ -376,7 +418,7 @@ export async function handleCompleteSlice(
       milestoneId: params.milestoneId,
       summaryPath,
       uatPath,
-      duplicate: true,
+      ...(duplicateComplete ? { duplicate: true } : {}),
       superseded: true,
     };
   }
@@ -390,11 +432,34 @@ export async function handleCompleteSlice(
   // Resolve and write summary to disk
   const uatMd = renderUatMarkdown(effectiveParams, completion.completedAt);
   let projectionStale = false;
+  let superseded = false;
+  const slice = { milestoneId: params.milestoneId, sliceId: params.sliceId };
+  function isCurrent(): boolean {
+    return isCurrentSliceCompletionOperation(completion.operationId, slice);
+  }
 
   try {
-    setSliceSummaryMd(params.milestoneId, params.sliceId, summaryMd, uatMd);
-    await saveFile(summaryPath, summaryMd);
-    await saveFile(uatPath, uatMd);
+    if (!setSliceSummaryMdIfCurrent(
+      params.milestoneId,
+      params.sliceId,
+      completion.operationId,
+      summaryMd,
+      uatMd,
+    )) {
+      superseded = true;
+      projectionStale = true;
+    } else {
+      await saveFile(summaryPath, summaryMd);
+      if (isCurrent()) {
+        await saveFile(uatPath, uatMd);
+      }
+      if (!isCurrent()) {
+        superseded = true;
+        projectionStale = true;
+        await removeOwnedProjection(summaryPath, summaryMd);
+        await removeOwnedProjection(uatPath, uatMd);
+      }
+    }
   } catch (renderErr) {
     projectionStale = true;
     logWarning("projection", `complete_slice projection write failed for ${params.milestoneId}/${params.sliceId}; DB completion remains committed`, { error: (renderErr as Error).message });
@@ -409,16 +474,27 @@ export async function handleCompleteSlice(
   // Separate try/catch per step so a projection failure doesn't prevent
   // the event log entry (critical for worktree reconciliation).
   try {
-    const rendered = await renderMilestoneShellProjections(artifactBasePath, params.milestoneId);
-    projectionStale ||= rendered.stale;
+    if (superseded || !isCurrent()) {
+      superseded = true;
+      projectionStale = true;
+    } else {
+      const rendered = await renderMilestoneShellProjections(artifactBasePath, params.milestoneId);
+      projectionStale ||= rendered.stale;
+      if (!isCurrent()) {
+        superseded = true;
+        projectionStale = true;
+      }
+    }
   } catch (projErr) {
     projectionStale = true;
     logWarning("tool", `complete-slice projection warning for ${params.milestoneId}/${params.sliceId}: ${(projErr as Error).message}`);
   }
-  try {
-    writeManifest(artifactBasePath);
-  } catch (mfErr) {
-    logWarning("tool", `complete-slice manifest warning: ${(mfErr as Error).message}`);
+  if (!superseded) {
+    try {
+      writeManifest(artifactBasePath);
+    } catch (mfErr) {
+      logWarning("tool", `complete-slice manifest warning: ${(mfErr as Error).message}`);
+    }
   }
   if (completion.status === "committed") {
     try {
@@ -435,31 +511,44 @@ export async function handleCompleteSlice(
     }
   }
 
+  if (!isCurrent()) {
+    superseded = true;
+    projectionStale = true;
+    try {
+      await removeOwnedProjection(summaryPath, summaryMd);
+      await removeOwnedProjection(uatPath, uatMd);
+    } catch (cleanupErr) {
+      logWarning("projection", `complete_slice stale projection cleanup failed for ${params.milestoneId}/${params.sliceId}`, { error: (cleanupErr as Error).message });
+    }
+  }
+
   // Fire-and-forget graph rebuild — must NOT await, must NOT crash slice completion.
   // Dynamic import of the package name (not a relative path) so it resolves
   // correctly via package.json#exports in both development and production.
   // eslint-disable-next-line @typescript-eslint/no-floating-promises
-  (async () => {
-    try {
-      const graphMod = await import("@opengsd/mcp-server") as unknown as Partial<{
-        buildGraph: (dir: string) => Promise<{ nodes: unknown[]; edges: unknown[]; builtAt: string }>;
-        writeGraph: (gsdRoot: string, graph: unknown) => Promise<void>;
-        resolveGsdRoot: (basePath: string) => string;
-      }>;
-      if (
-        typeof graphMod.buildGraph !== "function"
-        || typeof graphMod.writeGraph !== "function"
-        || typeof graphMod.resolveGsdRoot !== "function"
-      ) {
-        throw new Error("graph helpers unavailable from @opengsd/mcp-server");
+  if (!superseded) {
+    (async () => {
+      try {
+        const graphMod = await import("@opengsd/mcp-server") as unknown as Partial<{
+          buildGraph: (dir: string) => Promise<{ nodes: unknown[]; edges: unknown[]; builtAt: string }>;
+          writeGraph: (gsdRoot: string, graph: unknown) => Promise<void>;
+          resolveGsdRoot: (basePath: string) => string;
+        }>;
+        if (
+          typeof graphMod.buildGraph !== "function"
+          || typeof graphMod.writeGraph !== "function"
+          || typeof graphMod.resolveGsdRoot !== "function"
+        ) {
+          throw new Error("graph helpers unavailable from @opengsd/mcp-server");
+        }
+        const g = await graphMod.buildGraph(artifactBasePath);
+        await graphMod.writeGraph(graphMod.resolveGsdRoot(artifactBasePath), g);
+      } catch (graphErr) {
+        // Graph rebuild is best-effort — log at warning level but never propagate
+        logWarning("tool", `complete-slice graph rebuild failed (non-fatal): ${(graphErr as Error).message ?? String(graphErr)}`);
       }
-      const g = await graphMod.buildGraph(artifactBasePath);
-      await graphMod.writeGraph(graphMod.resolveGsdRoot(artifactBasePath), g);
-    } catch (graphErr) {
-      // Graph rebuild is best-effort — log at warning level but never propagate
-      logWarning("tool", `complete-slice graph rebuild failed (non-fatal): ${(graphErr as Error).message ?? String(graphErr)}`);
-    }
-  })();
+    })();
+  }
 
   return {
     sliceId: params.sliceId,
@@ -467,6 +556,7 @@ export async function handleCompleteSlice(
     summaryPath,
     uatPath,
     ...(duplicateComplete ? { duplicate: true } : {}),
+    ...(superseded ? { superseded: true } : {}),
     ...(projectionStale ? { stale: true } : {}),
   };
 }

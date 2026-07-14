@@ -373,6 +373,28 @@ function currentCompletionProof(lifecycleId: string, taskId: string): SliceCompl
   };
 }
 
+function hasCurrentCancellationAuthorization(lifecycleId: string, completedAt: string): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1
+    FROM workflow_waivers waiver
+    JOIN workflow_requirement_dispositions disposition
+      ON disposition.waiver_id = waiver.waiver_id
+     AND disposition.requirement_id = waiver.requirement_id
+     AND disposition.disposition = 'waived'
+    WHERE waiver.lifecycle_id = :lifecycle_id
+      AND waiver.waiver_status = 'active'
+      AND (waiver.expires_at IS NULL OR waiver.expires_at > :completed_at)
+      AND NOT EXISTS (
+        SELECT 1 FROM workflow_requirement_dispositions successor
+        WHERE successor.supersedes_disposition_id = disposition.disposition_id
+      )
+    LIMIT 1
+  `).get({
+    ":lifecycle_id": lifecycleId,
+    ":completed_at": completedAt,
+  }));
+}
+
 export function completeSliceHierarchy(
   context: Readonly<DomainOperationContext>,
   input: SliceIdentity & { operationalReadiness: string },
@@ -476,6 +498,11 @@ export function completeSliceHierarchy(
       completedTaskIds.push(taskId);
       proofs.push(proof);
     } else if (legacyStatus === "cancelled" && state.lifecycleStatus === "cancelled") {
+      if (!hasCurrentCancellationAuthorization(lifecycleId, completedAt)) {
+        throw new SliceLifecycleValidationError(
+          `Task ${taskId} cancellation lacks a current authorized Waiver disposition`,
+        );
+      }
       cancelledTaskIds.push(taskId);
     } else {
       throw new SliceLifecycleValidationError(`Task ${taskId} is not terminal with canonical and legacy parity`);
@@ -549,21 +576,6 @@ export function completeSliceHierarchy(
     ":findings": readiness,
     ":evaluated_at": completedAt,
   });
-
-  const allSlicesClosed = (getDb().prepare(`
-    SELECT status FROM slices WHERE milestone_id = :milestone_id
-  `).all({ ":milestone_id": slice.milestoneId }) as Array<Record<string, unknown>>)
-    .every((row) => {
-      const status = normalizeLegacyLifecycleStatus(String(row["status"]));
-      return status === "completed" || status === "cancelled";
-    });
-  if (String(milestone["legacy_status"]) === "planned" && allSlicesClosed) {
-    adoptOrTransitionLifecycle(context, {
-      itemKind: "milestone", milestoneId: slice.milestoneId, lifecycleStatus: "in_progress",
-    });
-    getDb().prepare(`UPDATE milestones SET status = 'active' WHERE id = :milestone_id`)
-      .run({ ":milestone_id": slice.milestoneId });
-  }
 
   const shadows = [
     readLifecycleShadowComparison(context, { itemKind: "slice", ...slice }),
@@ -934,7 +946,9 @@ export function reopenSliceHierarchy(
     `slice:${slice.milestoneId}/${slice.sliceId}`,
   );
   const updated = getDb().prepare(`
-    UPDATE slices SET status = 'in_progress', completed_at = NULL
+    UPDATE slices
+    SET status = 'in_progress', completed_at = NULL,
+        full_summary_md = '', full_uat_md = ''
     WHERE milestone_id = :milestone_id AND id = :slice_id
   `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId });
   if (Number((updated as { changes?: number }).changes ?? 0) !== 1) throw new Error("Slice reopen must update one Slice");

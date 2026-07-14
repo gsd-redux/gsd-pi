@@ -696,6 +696,31 @@ test("handleResetSlice with --force resets slice and all tasks", async () => {
     // Success notification
     assert.equal(notifications[0]?.level, "success");
     assert.match(notifications[0]?.message ?? "", /Reset slice M001\/S01/);
+
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+    assert.equal(notifications[1]?.level, "success");
+    assert.match(notifications[1]?.message ?? "", /reused|replayed|already current|duplicate/i);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("handleResetSlice warns when readable projections remain stale", async () => {
+  const base = makeTempDir("gsd-reset-slice-stale-projection");
+  try {
+    setupSliceFixture(base);
+    adoptCompletedLifecycle({ itemKind: "slice", milestoneId: "M001", sliceId: "S01" });
+    const summaryPath = join(base, ".gsd", "phases", "01-test", "01-01-SUMMARY.md");
+    rmSync(summaryPath, { force: true });
+    mkdirSync(summaryPath);
+
+    const { notifications, ctx } = makeCtx();
+    await handleResetSlice("M001/S01 --force", ctx, {} as any, base);
+
+    assert.equal(notifications.at(-1)?.level, "warning");
+    assert.match(notifications.at(-1)?.message ?? "", /pending repair|stale/i);
+    assert.doesNotMatch(notifications.at(-1)?.message ?? "", /projections refreshed/i);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
