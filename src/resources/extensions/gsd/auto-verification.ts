@@ -17,6 +17,7 @@ import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { gsdProjectionRoot, legacyMilestonesDir, relMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "./paths.js";
 import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
+import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices } from "./gsd-db.js";
@@ -498,6 +499,7 @@ async function runValidateMilestonePostCheck(
     );
   }
   if (verdict === "needs-attention") {
+    const canonicalValidation = isMilestoneLifecycleAdopted(mid);
     ctx.ui.notify(
       `Milestone ${mid} validation returned verdict=needs-attention. Pausing for human review.`,
       "error",
@@ -507,8 +509,10 @@ async function runValidateMilestonePostCheck(
         `validate-milestone: pausing — verdict=needs-attention for ${mid}.`,
         `Review details with /gsd status.`,
         `After fixing the issue, run /gsd validate-milestone.`,
-        `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
-        `To defer it, run /gsd park ${mid}.`,
+        canonicalValidation
+          ? `Canonical validation requires current structured evidence and cannot be manually overridden.`
+          : `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
+        ...(canonicalValidation ? [] : [`To defer it, run /gsd park ${mid}.`]),
         "",
       ].join("\n"),
     );

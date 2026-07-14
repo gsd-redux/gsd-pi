@@ -1,0 +1,573 @@
+// Project/App: gsd-pi
+// File Purpose: Deterministic DB-only Milestone closeout readiness query.
+
+import { getDb } from "./engine.js";
+
+export interface MilestoneCloseoutReadinessInput {
+  milestoneId: string;
+  sourceRevision?: string;
+}
+
+export type MilestoneCloseoutBlocker =
+  | { kind: "validation-missing" }
+  | { kind: "validation-receipt-invalid"; fields: string[] }
+  | { kind: "validation-not-pass"; overallVerdict: string }
+  | {
+    kind: "validation-source-revision-mismatch";
+    expectedSourceRevision: string;
+    testedSourceRevision: string;
+  }
+  | { kind: "criterion-unsatisfied"; criterionId: string; criterionKey: string }
+  | {
+    kind: "source-revision-mismatch";
+    criterionId: string;
+    criterionKey: string;
+    expectedSourceRevision: string;
+    testedSourceRevision: string | null;
+  }
+  | {
+    kind: "validation-stale";
+    validationRevision: number;
+    descendantRevision: number;
+  }
+  | {
+    kind: "validation-attempt-newer";
+    attemptId: string;
+    attemptState: string;
+    attemptRevision: number;
+  };
+
+export type MilestoneCloseoutReadiness =
+  | {
+    ready: true;
+    validationEventId: string;
+    validationRevision: number;
+  }
+  | {
+    ready: false;
+    validationEventId?: string;
+    validationRevision?: number;
+    blockers: MilestoneCloseoutBlocker[];
+  };
+
+interface ValidationRow {
+  event_id: string;
+  operation_id: string;
+  project_id: string;
+  project_revision: number;
+  payload_json: string;
+}
+
+interface ValidationBundle {
+  milestoneId: string;
+  lifecycleId: string;
+  attemptId: string;
+  resultId: string;
+  overallVerdict: string;
+  testedSourceRevision: string;
+  policyId: string;
+  policyVersion: string;
+  criterionIds: Set<string>;
+  verdictIds: Set<string>;
+  evidenceIds: Set<string>;
+  humanAcceptanceIds: Set<string>;
+}
+
+interface CriterionRow {
+  criterion_id: string;
+  criterion_key: string;
+  criterion_kind: "technical" | "subjective_uat";
+  technical_verdict: string | null;
+  technical_observation: string | null;
+  tested_source_revision: string | null;
+  human_disposition: string | null;
+}
+
+interface TechnicalProofRow {
+  verdict_id: string;
+  criterion_id: string;
+  policy_id: string;
+  policy_version: string;
+}
+
+interface EvidenceProofRow {
+  evidence_id: string;
+}
+
+interface HumanProofRow {
+  human_acceptance_id: string;
+  criterion_id: string;
+}
+
+interface AttemptRow {
+  result_id: string;
+  outcome: string;
+}
+
+interface NewerAttemptRow {
+  attempt_id: string;
+  attempt_state: string;
+  attempt_revision: number;
+}
+
+export function isMilestoneLifecycleAdopted(milestoneId: string): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1 AS adopted
+    FROM workflow_item_lifecycles lifecycle
+    JOIN project_authority authority
+      ON authority.project_id = lifecycle.project_id
+     AND authority.singleton = 1
+    WHERE lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+  `).get({ ":milestone_id": milestoneId }));
+}
+
+function stringIdSet(payload: Record<string, unknown>, field: string): Set<string> | null {
+  const value = payload[field];
+  if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || id.length === 0)) {
+    return null;
+  }
+  const ids = new Set(value as string[]);
+  return ids.size === value.length ? ids : null;
+}
+
+function validationBundle(payloadJson: string): {
+  bundle?: ValidationBundle;
+  invalidFields: string[];
+} {
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(payloadJson) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { invalidFields: ["payload"] };
+    }
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    return { invalidFields: ["payload"] };
+  }
+
+  const idFields = ["criterionIds", "verdictIds", "evidenceIds", "humanAcceptanceIds"];
+  const idSets = idFields.map((field) => stringIdSet(payload, field));
+  const invalidFields = idFields.filter((_, index) => idSets[index] === null);
+  const stringFields = [
+    "milestoneId",
+    "lifecycleId",
+    "attemptId",
+    "resultId",
+    "testedSourceRevision",
+    "policyId",
+    "policyVersion",
+  ];
+  for (const field of stringFields) {
+    if (typeof payload[field] !== "string" || payload[field].trim().length === 0) {
+      invalidFields.push(field);
+    }
+  }
+  if (!new Set(["pass", "fail", "inconclusive"]).has(payload["overallVerdict"] as string)) {
+    invalidFields.push("overallVerdict");
+  }
+  if (invalidFields.length > 0) return { invalidFields };
+  return {
+    bundle: {
+      milestoneId: payload["milestoneId"] as string,
+      lifecycleId: payload["lifecycleId"] as string,
+      attemptId: payload["attemptId"] as string,
+      resultId: payload["resultId"] as string,
+      overallVerdict: payload["overallVerdict"] as string,
+      testedSourceRevision: payload["testedSourceRevision"] as string,
+      policyId: payload["policyId"] as string,
+      policyVersion: payload["policyVersion"] as string,
+      criterionIds: idSets[0]!,
+      verdictIds: idSets[1]!,
+      evidenceIds: idSets[2]!,
+      humanAcceptanceIds: idSets[3]!,
+    },
+    invalidFields: [],
+  };
+}
+
+function sameIds(expected: Set<string>, actual: Set<string>): boolean {
+  return expected.size === actual.size && [...expected].every((id) => actual.has(id));
+}
+
+function receiptBindingInvalidFields(
+  validation: ValidationRow,
+  bundle: ValidationBundle,
+  milestoneId: string,
+): string[] {
+  const invalidFields: string[] = [];
+  if (bundle.milestoneId !== milestoneId) invalidFields.push("milestoneId");
+
+  const attempt = getDb().prepare(`
+    SELECT result.result_id, result.outcome
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    JOIN workflow_attempt_results result
+      ON result.attempt_id = attempt.attempt_id
+     AND result.lifecycle_id = attempt.lifecycle_id
+     AND result.project_id = attempt.project_id
+    WHERE attempt.project_id = :project_id
+      AND attempt.lifecycle_id = :lifecycle_id
+      AND attempt.attempt_id = :attempt_id
+      AND attempt.attempt_state = 'settled'
+      AND lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND result.project_revision < :validation_revision
+  `).get({
+    ":project_id": validation.project_id,
+    ":lifecycle_id": bundle.lifecycleId,
+    ":attempt_id": bundle.attemptId,
+    ":milestone_id": milestoneId,
+    ":validation_revision": validation.project_revision,
+  }) as unknown as AttemptRow | undefined;
+  if (!attempt) invalidFields.push("attemptId");
+  if (!attempt || attempt.result_id !== bundle.resultId) invalidFields.push("resultId");
+  if (bundle.overallVerdict === "pass" && attempt?.outcome !== "succeeded") {
+    if (!invalidFields.includes("resultId")) invalidFields.push("resultId");
+  }
+
+  const technicalProofs = getDb().prepare(`
+    SELECT verdict_id, criterion_id, policy_id, policy_version
+    FROM workflow_technical_verdicts
+    WHERE project_id = :project_id
+      AND operation_id = :operation_id
+      AND lifecycle_id = :lifecycle_id
+      AND attempt_id = :attempt_id
+      AND tested_source_revision = :source_revision
+  `).all({
+    ":project_id": validation.project_id,
+    ":operation_id": validation.operation_id,
+    ":lifecycle_id": bundle.lifecycleId,
+    ":attempt_id": bundle.attemptId,
+    ":source_revision": bundle.testedSourceRevision,
+  }) as unknown as TechnicalProofRow[];
+  const verdictIds = new Set(technicalProofs.map((proof) => proof.verdict_id));
+  if (!sameIds(bundle.verdictIds, verdictIds)) invalidFields.push("verdictIds");
+  if (technicalProofs.some((proof) => proof.policy_id !== bundle.policyId)) {
+    invalidFields.push("policyId");
+  }
+  if (technicalProofs.some((proof) => proof.policy_version !== bundle.policyVersion)) {
+    invalidFields.push("policyVersion");
+  }
+
+  const evidence = getDb().prepare(`
+    SELECT evidence_id
+    FROM workflow_verification_evidence
+    WHERE project_id = :project_id
+      AND operation_id = :operation_id
+      AND lifecycle_id = :lifecycle_id
+      AND attempt_id = :attempt_id
+      AND source_revision = :source_revision
+  `).all({
+    ":project_id": validation.project_id,
+    ":operation_id": validation.operation_id,
+    ":lifecycle_id": bundle.lifecycleId,
+    ":attempt_id": bundle.attemptId,
+    ":source_revision": bundle.testedSourceRevision,
+  }) as unknown as EvidenceProofRow[];
+  const evidenceIds = new Set(evidence.map((proof) => proof.evidence_id));
+  if (!sameIds(bundle.evidenceIds, evidenceIds)) invalidFields.push("evidenceIds");
+
+  const humanProofs = bundle.humanAcceptanceIds.size === 0
+    ? []
+    : getDb().prepare(`
+      SELECT acceptance.human_acceptance_id, acceptance.criterion_id
+      FROM workflow_human_acceptances acceptance
+      WHERE acceptance.project_id = :project_id
+        AND acceptance.lifecycle_id = :lifecycle_id
+        AND acceptance.project_revision < :validation_revision
+        AND acceptance.human_acceptance_id IN (
+          SELECT value FROM json_each(:acceptance_ids)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_human_acceptances successor
+          WHERE successor.supersedes_human_acceptance_id = acceptance.human_acceptance_id
+        )
+    `).all({
+      ":project_id": validation.project_id,
+      ":lifecycle_id": bundle.lifecycleId,
+      ":validation_revision": validation.project_revision,
+      ":acceptance_ids": JSON.stringify([...bundle.humanAcceptanceIds]),
+    }) as unknown as HumanProofRow[];
+  const humanAcceptanceIds = new Set(humanProofs.map((proof) => proof.human_acceptance_id));
+  if (!sameIds(bundle.humanAcceptanceIds, humanAcceptanceIds)) {
+    invalidFields.push("humanAcceptanceIds");
+  }
+
+  const criterionIds = new Set([
+    ...technicalProofs.map((proof) => proof.criterion_id),
+    ...humanProofs.map((proof) => proof.criterion_id),
+  ]);
+  if (!sameIds(bundle.criterionIds, criterionIds)) invalidFields.unshift("criterionIds");
+  return invalidFields;
+}
+
+function currentCriteria(
+  milestoneId: string,
+  payloadJson: string,
+  validation: ValidationRow,
+  bundle: ValidationBundle,
+): CriterionRow[] {
+  return getDb().prepare(`
+    WITH current_criteria AS (
+      SELECT criterion.criterion_id, criterion.criterion_key, criterion.criterion_kind
+      FROM workflow_acceptance_criteria criterion
+      JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.lifecycle_id = criterion.lifecycle_id
+       AND lifecycle.project_id = criterion.project_id
+      JOIN project_authority authority
+        ON authority.project_id = criterion.project_id
+       AND authority.singleton = 1
+      WHERE lifecycle.milestone_id = :milestone_id
+        AND lifecycle.item_kind = 'milestone'
+        AND lifecycle.slice_id IS NULL
+        AND lifecycle.task_id IS NULL
+        AND criterion.required = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_acceptance_criteria successor
+          WHERE successor.supersedes_criterion_id = criterion.criterion_id
+        )
+    ),
+    technical_proofs AS (
+      SELECT verdict.criterion_id, verdict.verdict, evidence.observation,
+             verdict.tested_source_revision,
+             ROW_NUMBER() OVER (
+               PARTITION BY verdict.criterion_id
+               ORDER BY verdict.project_revision DESC, verdict.verdict_id DESC
+             ) AS rank
+      FROM workflow_technical_verdicts verdict
+      JOIN workflow_verification_evidence evidence
+        ON evidence.verdict_id = verdict.verdict_id
+       AND evidence.project_id = verdict.project_id
+       AND evidence.criterion_id = verdict.criterion_id
+      JOIN json_each(:payload_json, '$.verdictIds') listed_verdict
+        ON listed_verdict.value = verdict.verdict_id
+      JOIN json_each(:payload_json, '$.evidenceIds') listed_evidence
+        ON listed_evidence.value = evidence.evidence_id
+      WHERE verdict.operation_id = :operation_id
+        AND verdict.lifecycle_id = :lifecycle_id
+        AND verdict.attempt_id = :attempt_id
+        AND verdict.tested_source_revision = :source_revision
+        AND NOT EXISTS (
+        SELECT 1 FROM workflow_technical_verdicts successor
+        WHERE successor.supersedes_verdict_id = verdict.verdict_id
+      )
+    ),
+    human_proofs AS (
+      SELECT acceptance.criterion_id, acceptance.disposition,
+             ROW_NUMBER() OVER (
+               PARTITION BY acceptance.criterion_id
+               ORDER BY acceptance.project_revision DESC,
+                        acceptance.human_acceptance_id DESC
+             ) AS rank
+      FROM workflow_human_acceptances acceptance
+      JOIN json_each(:payload_json, '$.humanAcceptanceIds') listed_acceptance
+        ON listed_acceptance.value = acceptance.human_acceptance_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM workflow_human_acceptances successor
+        WHERE successor.supersedes_human_acceptance_id = acceptance.human_acceptance_id
+      )
+    )
+    SELECT criterion.criterion_id, criterion.criterion_key, criterion.criterion_kind,
+           technical.verdict AS technical_verdict,
+           technical.observation AS technical_observation,
+           technical.tested_source_revision,
+           human.disposition AS human_disposition
+    FROM current_criteria criterion
+    LEFT JOIN technical_proofs technical
+      ON technical.criterion_id = criterion.criterion_id AND technical.rank = 1
+    LEFT JOIN human_proofs human
+      ON human.criterion_id = criterion.criterion_id AND human.rank = 1
+    ORDER BY criterion.criterion_id
+  `).all({
+    ":milestone_id": milestoneId,
+    ":payload_json": payloadJson,
+    ":operation_id": validation.operation_id,
+    ":lifecycle_id": bundle.lifecycleId,
+    ":attempt_id": bundle.attemptId,
+    ":source_revision": bundle.testedSourceRevision,
+  }) as unknown as CriterionRow[];
+}
+
+function newerAttempts(
+  validation: ValidationRow,
+  bundle: ValidationBundle,
+  milestoneId: string,
+): NewerAttemptRow[] {
+  return getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.attempt_state,
+           COALESCE(attempt.settle_project_revision, attempt.claim_project_revision) AS attempt_revision
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    WHERE attempt.project_id = :project_id
+      AND lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND attempt.attempt_id != :validated_attempt_id
+      AND COALESCE(attempt.settle_project_revision, attempt.claim_project_revision) > :validation_revision
+    ORDER BY attempt_revision, attempt.attempt_number
+  `).all({
+    ":project_id": validation.project_id,
+    ":milestone_id": milestoneId,
+    ":validated_attempt_id": bundle.attemptId,
+    ":validation_revision": validation.project_revision,
+  }) as unknown as NewerAttemptRow[];
+}
+
+function criterionBlocker(
+  criterion: CriterionRow,
+  validation: ValidationBundle,
+): MilestoneCloseoutBlocker | null {
+  if (!validation.criterionIds.has(criterion.criterion_id)) {
+    return {
+      kind: "criterion-unsatisfied",
+      criterionId: criterion.criterion_id,
+      criterionKey: criterion.criterion_key,
+    };
+  }
+  if (criterion.criterion_kind === "subjective_uat") {
+    return criterion.human_disposition === "accepted"
+      ? null
+      : {
+        kind: "criterion-unsatisfied",
+        criterionId: criterion.criterion_id,
+        criterionKey: criterion.criterion_key,
+      };
+  }
+
+  const passed = criterion.technical_verdict === "pass" &&
+    criterion.technical_observation === "passed";
+  if (!passed) {
+    return {
+      kind: "criterion-unsatisfied",
+      criterionId: criterion.criterion_id,
+      criterionKey: criterion.criterion_key,
+    };
+  }
+  if (criterion.tested_source_revision === validation.testedSourceRevision) {
+    return null;
+  }
+  return {
+    kind: "source-revision-mismatch",
+    criterionId: criterion.criterion_id,
+    criterionKey: criterion.criterion_key,
+    expectedSourceRevision: validation.testedSourceRevision,
+    testedSourceRevision: criterion.tested_source_revision,
+  };
+}
+
+export function readMilestoneCloseoutReadiness(
+  input: MilestoneCloseoutReadinessInput,
+): MilestoneCloseoutReadiness {
+  const validation = getDb().prepare(`
+    SELECT event.event_id, event.operation_id, event.project_id,
+           event.project_revision, event.payload_json
+    FROM workflow_domain_events event
+    JOIN workflow_operations operation
+      ON operation.operation_id = event.operation_id
+     AND operation.project_id = event.project_id
+    JOIN project_authority authority
+      ON authority.project_id = event.project_id
+     AND authority.singleton = 1
+    WHERE event.event_type = 'milestone.validation.recorded'
+      AND event.entity_type = 'milestone'
+      AND event.entity_id = :milestone_id
+      AND operation.operation_type = 'milestone.validate'
+    ORDER BY event.project_revision DESC, event.event_index DESC, event.event_id DESC
+    LIMIT 1
+  `).get({ ":milestone_id": input.milestoneId }) as unknown as ValidationRow | undefined;
+  if (!validation) return { ready: false, blockers: [{ kind: "validation-missing" }] };
+
+  const parsed = validationBundle(validation.payload_json);
+  if (!parsed.bundle) {
+    return {
+      ready: false,
+      validationEventId: validation.event_id,
+      validationRevision: validation.project_revision,
+      blockers: [{ kind: "validation-receipt-invalid", fields: parsed.invalidFields }],
+    };
+  }
+  const bundle = parsed.bundle;
+  const invalidFields = receiptBindingInvalidFields(validation, bundle, input.milestoneId);
+  if (invalidFields.length > 0) {
+    return {
+      ready: false,
+      validationEventId: validation.event_id,
+      validationRevision: validation.project_revision,
+      blockers: [{ kind: "validation-receipt-invalid", fields: invalidFields }],
+    };
+  }
+
+  const blockers: MilestoneCloseoutBlocker[] = [];
+  if (bundle.overallVerdict !== "pass") {
+    blockers.push({
+      kind: "validation-not-pass",
+      overallVerdict: bundle.overallVerdict,
+    });
+  }
+  if (input.sourceRevision !== undefined && input.sourceRevision !== bundle.testedSourceRevision) {
+    blockers.push({
+      kind: "validation-source-revision-mismatch",
+      expectedSourceRevision: input.sourceRevision,
+      testedSourceRevision: bundle.testedSourceRevision,
+    });
+  }
+  for (const criterion of currentCriteria(
+    input.milestoneId,
+    validation.payload_json,
+    validation,
+    bundle,
+  )) {
+    const blocker = criterionBlocker(criterion, bundle);
+    if (blocker) blockers.push(blocker);
+  }
+  for (const attempt of newerAttempts(validation, bundle, input.milestoneId)) {
+    blockers.push({
+      kind: "validation-attempt-newer",
+      attemptId: attempt.attempt_id,
+      attemptState: attempt.attempt_state,
+      attemptRevision: attempt.attempt_revision,
+    });
+  }
+
+  const descendant = getDb().prepare(`
+    SELECT COALESCE(MAX(lifecycle.last_project_revision), 0) AS revision
+    FROM workflow_item_lifecycles lifecycle
+    JOIN project_authority authority
+      ON authority.project_id = lifecycle.project_id
+     AND authority.singleton = 1
+    WHERE lifecycle.milestone_id = :milestone_id
+      AND lifecycle.item_kind IN ('slice', 'task')
+  `).get({ ":milestone_id": input.milestoneId });
+  const descendantRevision = Number(descendant?.["revision"] ?? 0);
+  if (descendantRevision >= validation.project_revision) {
+    blockers.push({
+      kind: "validation-stale",
+      validationRevision: validation.project_revision,
+      descendantRevision,
+    });
+  }
+
+  if (blockers.length > 0) {
+    return {
+      ready: false,
+      validationEventId: validation.event_id,
+      validationRevision: validation.project_revision,
+      blockers,
+    };
+  }
+  return {
+    ready: true,
+    validationEventId: validation.event_id,
+    validationRevision: validation.project_revision,
+  };
+}

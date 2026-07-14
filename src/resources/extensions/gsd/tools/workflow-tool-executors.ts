@@ -1367,6 +1367,12 @@ export async function executeValidateMilestone(
         milestoneId: result.milestoneId,
         verdict: result.verdict,
         validationPath: result.validationPath,
+        ...(result.operationId ? { operationId: result.operationId } : {}),
+        ...(result.resultingRevision !== undefined ? { resultingRevision: result.resultingRevision } : {}),
+        ...(result.attemptId ? { attemptId: result.attemptId } : {}),
+        ...(result.resultId ? { resultId: result.resultId } : {}),
+        ...(result.duplicate ? { duplicate: true } : {}),
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {

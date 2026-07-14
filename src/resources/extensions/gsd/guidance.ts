@@ -66,7 +66,19 @@ export function recoveryRemediation(key: RecoveryGuidanceKey): string {
 // matches /milestone validation returned needs-(?:attention|remediation)/i.
 // Keep that phrase intact when editing.
 
-export function needsAttentionBlockerGuidance(milestoneId: string): string {
+export function needsAttentionBlockerGuidance(
+  milestoneId: string,
+  allowLegacyOverride = true,
+): string {
+  if (!allowLegacyOverride) {
+    return [
+      `Milestone ${milestoneId} is blocked because milestone validation returned needs-attention.`,
+      `Fix options:`,
+      `1. Review the validation details: \`/gsd status\``,
+      `2. Fix the issue or gather the missing proof, then re-run milestone validation with current structured evidence: \`/gsd validate-milestone\``,
+      `3. Run \`/gsd auto\` after canonical validation passes.`,
+    ].join("\n");
+  }
   return [
     `Milestone ${milestoneId} is blocked because milestone validation returned needs-attention.`,
     `Fix options:`,
@@ -78,7 +90,19 @@ export function needsAttentionBlockerGuidance(milestoneId: string): string {
   ].join("\n");
 }
 
-export function needsRemediationBlockerGuidance(milestoneId: string): string {
+export function needsRemediationBlockerGuidance(
+  milestoneId: string,
+  allowLegacyOverride = true,
+): string {
+  if (!allowLegacyOverride) {
+    return [
+      `Milestone ${milestoneId} is blocked because milestone validation returned needs-remediation, but all slices are complete.`,
+      `Fix options:`,
+      `1. Run \`/gsd dispatch reassess\` to add remediation slices, then complete the new work.`,
+      `2. Re-run milestone validation with current structured evidence: \`/gsd validate-milestone\``,
+      `3. Run \`/gsd auto\` after canonical validation passes.`,
+    ].join("\n");
+  }
   return [
     `Milestone ${milestoneId} is blocked because milestone validation returned needs-remediation, but all slices are complete.`,
     `Fix options:`,

@@ -4,7 +4,7 @@
 import type { ExecutionInvocation } from "../../execution-invocation.ts";
 
 export interface CapturedSliceLifecycleCall {
-  executor: "complete" | "reopen" | "skip";
+  executor: "complete" | "reopen" | "skip" | "validate";
   params: Record<string, unknown>;
   basePath: string;
   invocation: ExecutionInvocation | undefined;
@@ -55,6 +55,14 @@ export function executeSkipSlice(
   invocation?: ExecutionInvocation,
 ): Promise<Record<string, unknown>> {
   return capture("skip", params, basePath, invocation);
+}
+
+export function executeValidateMilestone(
+  params: Record<string, unknown>,
+  basePath: string,
+  options?: { invocation?: ExecutionInvocation },
+): Promise<Record<string, unknown>> {
+  return capture("validate", params, basePath, options?.invocation);
 }
 
 export function executeSummarySave(): Promise<Record<string, unknown>> {

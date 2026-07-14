@@ -1,78 +1,52 @@
 // Project/App: gsd-pi
-// File Purpose: Resolve the authoritative milestone validation verdict across DB and disk projections.
+// File Purpose: Resolve the authoritative milestone validation verdict from SQLite.
 
-import { existsSync } from "node:fs";
-import { join } from "node:path";
-
-import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
-import { loadFile } from "./files.js";
 import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";
-import { relMilestoneFile } from "./paths.js";
 import {
-  extractVerdict,
+  isMilestoneLifecycleAdopted,
+  readMilestoneCloseoutReadiness,
+} from "./db/milestone-closeout-readiness.js";
+import {
   isValidMilestoneVerdict,
   type ValidationVerdict,
 } from "./verdict-parser.js";
-import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
-import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 
-function verdictFromContent(content: string | null | undefined): ValidationVerdict | undefined {
-  if (!content) return undefined;
-  const verdict = extractVerdict(content);
-  return verdict && isValidMilestoneVerdict(verdict) ? verdict : undefined;
-}
+const CANONICAL_VERDICT_MAP: Readonly<Record<string, ValidationVerdict>> = {
+  pass: "pass",
+  fail: "needs-remediation",
+  inconclusive: "needs-attention",
+};
 
-function verdictFromDb(milestoneId: string): ValidationVerdict | undefined {
-  if (!isDbAvailable()) return undefined;
-  const assessment = getLatestAssessmentByScope(milestoneId, "milestone-validation");
-  const status = typeof assessment?.status === "string" ? assessment.status : undefined;
-  return status && isValidMilestoneVerdict(status) ? status : undefined;
-}
-
-async function verdictFromValidationPath(path: string | null): Promise<ValidationVerdict | undefined> {
-  if (!path || !existsSync(path)) return undefined;
-  return verdictFromContent(await loadFile(path));
+function resolveCanonicalValidationVerdict(
+  milestoneId: string,
+): ValidationVerdict | undefined {
+  const readiness = readMilestoneCloseoutReadiness({ milestoneId });
+  if (readiness.ready) return "pass";
+  if (readiness.blockers.some((blocker) =>
+    blocker.kind === "validation-missing" || blocker.kind === "validation-receipt-invalid"
+  )) return undefined;
+  const verdictBlocker = readiness.blockers.find(
+    (blocker) => blocker.kind === "validation-not-pass",
+  );
+  if (verdictBlocker?.kind === "validation-not-pass") {
+    return CANONICAL_VERDICT_MAP[verdictBlocker.overallVerdict];
+  }
+  return "needs-attention";
 }
 
 /**
- * Resolve the milestone validation verdict using the same authority order as
- * DB-backed state derivation, with filesystem fallbacks that mirror
- * `resolveExpectedArtifactPath` (canonical worktree projection, then project
- * root). Manual `/gsd verdict` overrides persist to the DB first; a stale
- * worktree-local VALIDATION.md must not re-block auto-mode after the override.
+ * Resolve the current database verdict. VALIDATION.md is a projection and can
+ * only enter authority through an explicit import operation.
  */
 export async function resolveMilestoneValidationVerdict(
-  basePath: string,
+  _basePath: string,
   milestoneId: string,
 ): Promise<ValidationVerdict | undefined> {
-  const dbVerdict = verdictFromDb(milestoneId);
-  if (dbVerdict) return dbVerdict;
-
-  const canonicalBase = resolveCanonicalMilestoneRoot(basePath, milestoneId);
-  const canonicalPath = resolveExpectedArtifactPath(
-    "validate-milestone",
-    milestoneId,
-    canonicalBase,
-  );
-  const canonicalVerdict = await verdictFromValidationPath(canonicalPath);
-  if (canonicalVerdict) return canonicalVerdict;
-
-  const projectRoot = resolveWorktreeProjectRoot(basePath);
-  if (projectRoot !== canonicalBase) {
-    const projectPath = resolveExpectedArtifactPath(
-      "validate-milestone",
-      milestoneId,
-      projectRoot,
-    );
-    const projectVerdict = await verdictFromValidationPath(projectPath);
-    if (projectVerdict) return projectVerdict;
+  if (!isDbAvailable()) return undefined;
+  if (isMilestoneLifecycleAdopted(milestoneId)) {
+    return resolveCanonicalValidationVerdict(milestoneId);
   }
-
-  // Last resort: layout-aware fallback path when resolveDir helpers
-  // haven't materialized the milestone directory yet. relMilestoneFile()
-  // builds the canonical NN-VALIDATION.md path for flat-phase and the
-  // legacy MID-VALIDATION.md path for projects that haven't migrated.
-  // See open-gsd/gsd-pi#876.
-  const directPath = join(canonicalBase, relMilestoneFile(canonicalBase, milestoneId, "VALIDATION"));
-  return verdictFromValidationPath(directPath);
+  const assessment = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+  const status = typeof assessment?.status === "string" ? assessment.status : undefined;
+  return status && isValidMilestoneVerdict(status) ? status : undefined;
 }

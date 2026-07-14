@@ -30,6 +30,15 @@ import { flushWorkflowProjections } from "../projection-flush.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
+import {
+  isMilestoneLifecycleAdopted,
+  readMilestoneCloseoutReadiness,
+} from "../db/milestone-closeout-readiness.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import {
+  captureVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
+} from "../verification-source-integrity.js";
 
 export interface CompleteMilestoneParams {
   milestoneId: string;
@@ -146,6 +155,28 @@ export async function handleCompleteMilestone(
     return { error: "verification did not pass — milestone completion blocked. verificationPassed must be explicitly set to true after all verification steps succeed" };
   }
 
+  const adoptedLifecycle = isMilestoneLifecycleAdopted(params.milestoneId);
+  let currentSourceRevision: string | undefined;
+  if (adoptedLifecycle) {
+    const targets = resolveVerificationRepositoryTargets(
+      artifactBasePath,
+      loadEffectiveGSDPreferences()?.preferences,
+      null,
+      null,
+    );
+    if (targets.missingRepositoryIds.length > 0) {
+      return {
+        error: `verification source repositories are missing: ${targets.missingRepositoryIds.join(", ")}`,
+      };
+    }
+    const source = captureVerificationSourceSnapshot(targets.repositories.map((repository) => ({
+      id: repository.id,
+      cwd: repository.root,
+    })));
+    if (!source.ok) return { error: source.error };
+    currentSourceRevision = source.snapshot.aggregateRevision;
+  }
+
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
@@ -163,13 +194,27 @@ export async function handleCompleteMilestone(
       return;
     }
 
-    // Defense-in-depth: only a passing milestone validation permits closeout.
-    const validation = getLatestAssessmentByScope(params.milestoneId, "milestone-validation");
-    if (validation?.status !== "pass") {
-      guardError =
-        `Refusing to complete ${params.milestoneId}: latest milestone-validation verdict is ` +
-        `"${validation?.status ?? "absent"}". Only verdict=pass permits closeout.`;
-      return;
+    // Adopted Milestones require the exact current canonical validation
+    // receipt. Legacy assessments remain an import compatibility path only.
+    if (adoptedLifecycle) {
+      const readiness = readMilestoneCloseoutReadiness({
+        milestoneId: params.milestoneId,
+        sourceRevision: currentSourceRevision,
+      });
+      if (!readiness.ready) {
+        guardError = `Refusing to complete ${params.milestoneId}: canonical validation is not current (${readiness.blockers
+          .map((blocker) => blocker.kind)
+          .join(", ")}).`;
+        return;
+      }
+    } else {
+      const validation = getLatestAssessmentByScope(params.milestoneId, "milestone-validation");
+      if (validation?.status !== "pass") {
+        guardError =
+          `Refusing to complete ${params.milestoneId}: latest milestone-validation verdict is ` +
+          `"${validation?.status ?? "absent"}". Only verdict=pass permits closeout.`;
+        return;
+      }
     }
 
     // Verify all slices are complete

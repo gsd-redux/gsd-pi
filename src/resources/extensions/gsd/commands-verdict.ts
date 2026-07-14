@@ -11,6 +11,7 @@ import { executeValidateMilestone } from "./tools/workflow-tool-executors.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
 import { getLatestAssessmentByScope } from "./gsd-db.js";
 import { checkpointWorkflowDatabase } from "./db-workspace.js";
+import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { formatVerdictRecordedNotice, formatVerdictRejectedNotice } from "./stop-notice.js";
 import {
   VALIDATION_VERDICTS,
@@ -191,6 +192,17 @@ export async function handleVerdict(
       return;
     }
     milestoneId = state.activeMilestone.id;
+  }
+
+  await ensureDbOpen(basePath);
+  if (isMilestoneLifecycleAdopted(milestoneId)) {
+    ctx.ui.notify(
+      formatVerdictRejectedNotice(
+        "Canonical milestone validation cannot be overridden with /gsd verdict. Re-run milestone validation with current structured evidence.",
+      ),
+      "warning",
+    );
+    return;
   }
 
   const existingValidation = await loadExistingValidation(basePath, milestoneId);

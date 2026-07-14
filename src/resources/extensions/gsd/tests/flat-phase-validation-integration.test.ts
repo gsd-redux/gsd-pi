@@ -68,22 +68,11 @@ test("flat-phase integration: auto-verification reader path loads the on-disk VA
   }
 });
 
-test("flat-phase integration: resolveMilestoneValidationVerdict returns 'pass' from disk (#876)", async () => {
-  // Exercises the full verdict-resolution waterfall in
-  // resolveMilestoneValidationVerdict: DB check first (returns undefined
-  // when no DB is open), then canonical/project-root file lookups, then
-  // the last-resort path Task 4 patched. With the fix, at least one of
-  // these branches finds the flat-phase VALIDATION.md and returns "pass".
-  // Pre-fix, the last-resort branch hardcoded milestones/MID/MID-VALIDATION.md
-  // and would miss the flat-phase file.
+test("flat-phase integration: validation projections do not authorize a verdict", async () => {
   const { basePath, cleanup } = makeFlatPhaseFixtureWithPassVerdict();
   try {
     const verdict = await resolveMilestoneValidationVerdict(basePath, "M001");
-    assert.equal(
-      verdict,
-      "pass",
-      "resolveMilestoneValidationVerdict must read the verdict from the flat-phase VALIDATION.md on disk",
-    );
+    assert.equal(verdict, undefined, "VALIDATION.md is readable status, not workflow authority");
   } finally {
     cleanup();
   }

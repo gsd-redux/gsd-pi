@@ -33,6 +33,27 @@ import {
   applyBrowserEvidenceGate,
   browserEvidenceGateRequiresAttention,
 } from "../milestone-validation-evidence.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
+import {
+  prepareMilestoneValidation,
+  recordMilestoneValidation,
+  settleMilestoneValidation,
+  type MilestoneValidationEvidenceInput,
+  type RecordMilestoneValidationReceipt,
+} from "../milestone-validation-domain-operation.js";
+import {
+  captureVerificationSourceSnapshot,
+  confirmVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
+} from "../verification-source-integrity.js";
+
+export type MilestoneVerificationClass = "Contract" | "Integration" | "Operational" | "UAT";
+
+export interface MilestoneVerificationEvidence extends MilestoneValidationEvidenceInput {
+  verificationClass: MilestoneVerificationClass;
+  testedSourceRevision: string;
+  rationale: string;
+}
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -43,6 +64,7 @@ export interface ValidateMilestoneParams {
   crossSliceIntegration: string;
   requirementCoverage: string;
   verificationClasses?: string;
+  verificationEvidence?: MilestoneVerificationEvidence[];
   verdictRationale: string;
   remediationPlan?: string;
 }
@@ -51,6 +73,11 @@ export interface ValidateMilestoneResult {
   milestoneId: string;
   verdict: string;
   validationPath: string;
+  operationId?: string;
+  resultingRevision?: number;
+  attemptId?: string;
+  resultId?: string;
+  duplicate?: boolean;
   stale?: boolean;
 }
 
@@ -59,6 +86,51 @@ export interface ValidateMilestoneOptions {
   traceId?: string;
   turnId?: string;
   skipBrowserEvidenceGate?: boolean;
+  invocation?: ExecutionInvocation;
+}
+
+function derivedInvocation(
+  invocation: ExecutionInvocation,
+  suffix: "prepare" | "settle",
+): ExecutionInvocation {
+  return {
+    ...invocation,
+    idempotencyKey: `${invocation.idempotencyKey}/${suffix}`,
+  };
+}
+
+function canonicalVerdict(
+  verdict: ValidateMilestoneParams["verdict"],
+): "pass" | "fail" | "inconclusive" {
+  switch (verdict) {
+    case "pass":
+      return "pass";
+    case "needs-remediation":
+      return "fail";
+    case "needs-attention":
+      return "inconclusive";
+  }
+}
+
+function canonicalObservation(
+  verdict: ValidateMilestoneParams["verdict"],
+): "passed" | "failed" | "inconclusive" {
+  switch (verdict) {
+    case "pass":
+      return "passed";
+    case "needs-remediation":
+      return "failed";
+    case "needs-attention":
+      return "inconclusive";
+  }
+}
+
+function evidenceVerdict(
+  evidence: MilestoneVerificationEvidence[],
+): "pass" | "fail" | "inconclusive" {
+  if (evidence.some((entry) => entry.observation === "failed")) return "fail";
+  if (evidence.some((entry) => entry.observation === "inconclusive")) return "inconclusive";
+  return "pass";
 }
 
 function isVerificationNotApplicable(value: string): boolean {
@@ -114,6 +186,175 @@ ${params.verdictRationale}
   return md;
 }
 
+function recordCanonicalValidation(input: {
+  params: ValidateMilestoneParams;
+  validationMd: string;
+  validationPath: string;
+  artifactBasePath: string;
+  requiredClasses: string[];
+  invocation: ExecutionInvocation;
+}): RecordMilestoneValidationReceipt | { error: string } {
+  const evidenceByClass = new Map<string, MilestoneVerificationEvidence[]>();
+  for (const evidence of input.params.verificationEvidence ?? []) {
+    const className = evidence.verificationClass.toLowerCase();
+    const group = evidenceByClass.get(className) ?? [];
+    group.push(evidence);
+    evidenceByClass.set(className, group);
+  }
+  const missingEvidence = input.requiredClasses.filter(
+    (className) => (evidenceByClass.get(className.toLowerCase())?.length ?? 0) === 0,
+  );
+  if (missingEvidence.length > 0) {
+    return {
+      error: `planned ${missingEvidence.join(", ")} verification requires current structured database evidence; verificationClasses prose cannot authorize Milestone validation`,
+    };
+  }
+  for (const className of input.requiredClasses) {
+    const evidence = evidenceByClass.get(className.toLowerCase()) ?? [];
+    if (new Set(evidence.map((entry) => entry.evidenceClass)).size > 1) {
+      return { error: `${className} verification evidence must use one evidence class` };
+    }
+  }
+
+  const preferences = loadEffectiveGSDPreferences()?.preferences;
+  const resolvedTargets = resolveVerificationRepositoryTargets(
+    input.artifactBasePath,
+    preferences,
+    null,
+    null,
+  );
+  if (resolvedTargets.missingRepositoryIds.length > 0) {
+    return {
+      error: `verification source repositories are missing: ${resolvedTargets.missingRepositoryIds.join(", ")}`,
+    };
+  }
+  const targets = resolvedTargets.repositories.map((repository) => ({
+    id: repository.id,
+    cwd: repository.root,
+  }));
+  const source = captureVerificationSourceSnapshot(targets);
+  if (!source.ok) return { error: source.error };
+  const staleEvidence = (input.params.verificationEvidence ?? []).find(
+    (evidence) => evidence.testedSourceRevision !== source.snapshot.aggregateRevision,
+  );
+  if (staleEvidence) {
+    return {
+      error:
+        `${staleEvidence.verificationClass} verification evidence was tested against ` +
+        `${staleEvidence.testedSourceRevision}, but the current source revision is ` +
+        `${source.snapshot.aggregateRevision}`,
+    };
+  }
+
+  const prepared = prepareMilestoneValidation({
+    invocation: derivedInvocation(input.invocation, "prepare"),
+    milestoneId: input.params.milestoneId,
+    criteria: [
+      {
+        criterionKey: "milestone-validation:aggregate",
+        evidenceClass: "artifact",
+        description: "The complete Milestone validation report must support its aggregate verdict.",
+      },
+      ...input.requiredClasses.map((className) => {
+        const evidence = evidenceByClass.get(className.toLowerCase())!;
+        return {
+          criterionKey: `milestone-validation:${className.toLowerCase()}`,
+          evidenceClass: evidence[0]!.evidenceClass,
+          description: `${className} verification planned for this Milestone must be current and pass.`,
+        };
+      }),
+    ],
+  });
+  const confirmedBeforeSettlement = confirmVerificationSourceSnapshot(targets, source.snapshot);
+  if (!confirmedBeforeSettlement.ok) {
+    settleMilestoneValidation({
+      invocation: derivedInvocation(input.invocation, "settle"),
+      attemptId: prepared.attemptId,
+      outcome: "interrupted",
+      failureClass: "verification-drift",
+      summary: confirmedBeforeSettlement.error,
+      output: { testedSourceRevision: source.snapshot.aggregateRevision },
+    });
+    return { error: confirmedBeforeSettlement.error };
+  }
+
+  const settled = settleMilestoneValidation({
+    invocation: derivedInvocation(input.invocation, "settle"),
+    attemptId: prepared.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: `Milestone validation recorded ${input.params.verdict}.`,
+    output: {
+      validationMarkdown: input.validationMd,
+      validationPath: input.validationPath,
+      verdict: input.params.verdict,
+      remediationRound: input.params.remediationRound,
+      testedSourceRevision: source.snapshot.aggregateRevision,
+      sourceTargets: source.snapshot.targets.map((target) => ({
+        id: target.targetId,
+        revision: target.revision,
+      })),
+    },
+  });
+  const confirmedBeforeVerdict = confirmVerificationSourceSnapshot(targets, source.snapshot);
+  if (!confirmedBeforeVerdict.ok) return { error: confirmedBeforeVerdict.error };
+
+  const aggregateCriterion = prepared.criteria[0];
+  if (!aggregateCriterion) return { error: "Milestone validation aggregate criterion is missing" };
+  const verdict = canonicalVerdict(input.params.verdict);
+  const observation = canonicalObservation(input.params.verdict);
+  const classResults = input.requiredClasses.map((className) => {
+    const criterionKey = `milestone-validation:${className.toLowerCase()}`;
+    const criterion = prepared.criteria.find((entry) => entry.criterionKey === criterionKey);
+    if (!criterion) throw new Error(`${className} validation criterion is missing`);
+    const evidence = evidenceByClass.get(className.toLowerCase())!;
+    return {
+      criterionId: criterion.criterionId,
+      verdict: evidenceVerdict(evidence),
+      rationale: evidence.map((entry) => entry.rationale).join("\n"),
+      evidence: evidence.map(({
+        verificationClass: _verificationClass,
+        testedSourceRevision: _testedSourceRevision,
+        rationale: _rationale,
+        ...entry
+      }) => entry),
+    };
+  });
+  return recordMilestoneValidation({
+    invocation: input.invocation,
+    attemptId: prepared.attemptId,
+    testedSourceRevision: source.snapshot.aggregateRevision,
+    policyId: "milestone-validation",
+    policyVersion: "1",
+    verdict,
+    rationale: input.params.verdictRationale,
+    criterionResults: [
+      {
+        criterionId: aggregateCriterion.criterionId,
+        verdict,
+        rationale: input.params.verdictRationale,
+        evidence: [{
+          evidenceClass: "artifact",
+          commandOrTool: "gsd_validate_milestone",
+          workingDirectory: input.artifactBasePath,
+          startedAt: settled.endedAt,
+          endedAt: settled.endedAt,
+          observation,
+          durableOutputRef: `db://workflow_attempt_results/${settled.resultId}`,
+          environment: {
+            policy: "milestone-validation",
+            sourceTargets: source.snapshot.targets.map((target) => ({
+              id: target.targetId,
+              revision: target.revision,
+            })),
+          },
+        }],
+      },
+      ...classResults,
+    ],
+  });
+}
+
 export async function handleValidateMilestone(
   params: ValidateMilestoneParams,
   basePath: string,
@@ -164,6 +405,30 @@ export async function handleValidateMilestone(
     "VALIDATION",
     getMilestone(effectiveParams.milestoneId)?.title,
   );
+
+  const canonical = opts?.invocation
+    ? recordCanonicalValidation({
+        params: effectiveParams,
+        validationMd,
+        validationPath,
+        artifactBasePath,
+        requiredClasses,
+        invocation: opts.invocation,
+      })
+    : undefined;
+  if (canonical && "error" in canonical) return canonical;
+  if (canonical?.status === "replayed") {
+    return {
+      milestoneId: effectiveParams.milestoneId,
+      verdict: effectiveParams.verdict,
+      validationPath,
+      operationId: canonical.operationId,
+      resultingRevision: canonical.resultingRevision,
+      attemptId: canonical.attemptId,
+      resultId: canonical.resultId,
+      duplicate: true,
+    };
+  }
 
   // ── DB write first — matches complete-task/complete-slice pattern ───
   // Write DB before disk so a crash between the two leaves a recoverable
@@ -269,6 +534,14 @@ export async function handleValidateMilestone(
     milestoneId: effectiveParams.milestoneId,
     verdict: effectiveParams.verdict,
     validationPath,
+    ...(canonical
+      ? {
+          operationId: canonical.operationId,
+          resultingRevision: canonical.resultingRevision,
+          attemptId: canonical.attemptId,
+          resultId: canonical.resultId,
+        }
+      : {}),
     ...(projectionStale ? { stale: true } : {}),
   };
 }

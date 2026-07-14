@@ -12,7 +12,6 @@ import {
 } from '../../paths.js';
 import {
   getAllMilestones,
-  getLatestAssessmentByScope,
   getPendingGateCountForTurn,
   getReplanHistory,
   getRequirementCounts,
@@ -38,6 +37,8 @@ import {
   ensureExistingWorkflowDbOpen,
   getRequestedMilestoneLock,
 } from './db-open.js';
+import { resolveMilestoneValidationVerdict } from '../../milestone-validation-verdict.js';
+import { isMilestoneLifecycleAdopted } from '../../db/milestone-closeout-readiness.js';
 
 const isStatusDone = isClosedStatus;
 
@@ -286,9 +287,8 @@ async function handleAllSlicesDone(
   milestoneProgress: { done: number, total: number },
   sliceProgress: { done: number, total: number }
 ): Promise<GSDState> {
-  const validation = getLatestAssessmentByScope(activeMilestone.id, "milestone-validation");
-  const verdict = typeof validation?.status === "string" ? validation.status : undefined;
-  const validationTerminal = verdict != null && verdict !== "";
+  const verdict = await resolveMilestoneValidationVerdict(basePath, activeMilestone.id);
+  const validationTerminal = verdict !== undefined;
 
   const context: DerivedStateContext = {
     activeMilestone,
@@ -310,20 +310,22 @@ async function handleAllSlicesDone(
   // needs-remediation — remediation cannot progress without new slices.
   // Return blocked instead of re-dispatching validate-milestone (#4506).
   if (verdict === 'needs-attention') {
+    const allowLegacyOverride = !isMilestoneLifecycleAdopted(activeMilestone.id);
     return buildDerivedState(
       context,
       'blocked',
       `Resolve ${activeMilestone.id} validation attention before proceeding.`,
-      { blockers: [formatNeedsAttentionBlocker(activeMilestone.id)] },
+      { blockers: [formatNeedsAttentionBlocker(activeMilestone.id, allowLegacyOverride)] },
     );
   }
 
   if (verdict === 'needs-remediation') {
+    const allowLegacyOverride = !isMilestoneLifecycleAdopted(activeMilestone.id);
     return buildDerivedState(
       context,
       'blocked',
       `Resolve ${activeMilestone.id} remediation before proceeding.`,
-      { blockers: [formatNeedsRemediationBlocker(activeMilestone.id)] },
+      { blockers: [formatNeedsRemediationBlocker(activeMilestone.id, allowLegacyOverride)] },
     );
   }
 

@@ -1066,9 +1066,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_validate_milestone (gsd_milestone_validate alias) ─────────────
 
-  const milestoneValidateExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const milestoneValidateExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeValidateMilestone } = await loadWorkflowExecutors();
-    return executeValidateMilestone(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeValidateMilestone(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      { invocation: piExecutionInvocation("gsd_validate_milestone", toolCallId) },
+    );
   };
 
   const milestoneValidateTool = {
@@ -1080,7 +1084,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     promptSnippet: "Validate a GSD milestone (DB write + VALIDATION.md render)",
     promptGuidelines: [
       "Use gsd_validate_milestone when all slices are done and the milestone needs validation before completion.",
-      "Parameters: milestoneId, verdict, remediationRound, successCriteriaChecklist, sliceDeliveryAudit, crossSliceIntegration, requirementCoverage, verificationClasses (optional), verdictRationale, remediationPlan (optional).",
+      "Parameters: milestoneId, verdict, remediationRound, successCriteriaChecklist, sliceDeliveryAudit, crossSliceIntegration, requirementCoverage, verificationClasses (optional), verificationEvidence (required for planned classes), verdictRationale, remediationPlan (optional).",
       "If verification classes were planned, verificationClasses must be a complete canonical table with one row for every applicable planned class using the exact class names Contract, Integration, Operational, and UAT. Do not submit a partial table.",
       "Planned verification text marked as none/not required/not applicable/N/A (including suffixed variants such as 'not required - backend-only') is treated as not applicable and does not require a class row.",
       "If verdict is 'needs-remediation', also provide remediationPlan and use gsd_reassess_roadmap to add remediation slices to the roadmap.",
@@ -1095,6 +1099,22 @@ export function registerDbTools(pi: ExtensionAPI): void {
       crossSliceIntegration: Type.String({ description: "Markdown describing any cross-slice boundary mismatches" }),
       requirementCoverage: Type.String({ description: "Markdown describing any unaddressed requirements" }),
       verificationClasses: Type.Optional(Type.String({ description: "Complete markdown table describing verification class compliance and gaps; include one canonical row for every applicable planned class (Contract, Integration, Operational, UAT)" })),
+      verificationEvidence: Type.Optional(Type.Array(Type.Object({
+        verificationClass: StringEnum(["Contract", "Integration", "Operational", "UAT"]),
+        evidenceClass: StringEnum(["command", "runtime", "browser", "artifact"]),
+        rationale: Type.String({ minLength: 1 }),
+        commandOrTool: Type.String({ minLength: 1 }),
+        workingDirectory: Type.String({ minLength: 1 }),
+        startedAt: Type.String({ minLength: 1 }),
+        endedAt: Type.String({ minLength: 1 }),
+        exitCode: Type.Optional(Type.Number()),
+        observation: StringEnum(["passed", "failed", "inconclusive"]),
+        durableOutputRef: Type.String({ minLength: 1 }),
+        testedSourceRevision: Type.String({ minLength: 1 }),
+        environment: Type.Record(Type.String(), Type.Unknown(), { minProperties: 1 }),
+      }, { additionalProperties: false }), {
+        description: "Current source-bound structured evidence for each applicable planned verification class",
+      })),
       verdictRationale: Type.String({ description: "Why this verdict was chosen" }),
       remediationPlan: Type.Optional(Type.String({ description: "Remediation plan (required if verdict is needs-remediation)" })),
     }),

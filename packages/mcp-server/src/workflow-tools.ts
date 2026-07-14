@@ -240,10 +240,25 @@ type WorkflowToolExecutors = {
       crossSliceIntegration: string;
       requirementCoverage: string;
       verificationClasses?: string;
+      verificationEvidence?: Array<{
+        verificationClass: "Contract" | "Integration" | "Operational" | "UAT";
+        evidenceClass: "command" | "runtime" | "browser" | "artifact";
+        rationale: string;
+        commandOrTool: string;
+        workingDirectory: string;
+        startedAt: string;
+        endedAt: string;
+        exitCode?: number;
+        observation: "passed" | "failed" | "inconclusive";
+        durableOutputRef: string;
+        testedSourceRevision: string;
+        environment: Record<string, unknown>;
+      }>;
       verdictRationale: string;
       remediationPlan?: string;
     },
     basePath?: string,
+    opts?: { invocation?: ExecutionInvocation },
   ) => Promise<unknown>;
   executeReassessRoadmap: (
     params: {
@@ -1325,12 +1340,15 @@ async function handleCompleteMilestone(
 async function handleValidateMilestone(
   projectDir: string,
   args: z.infer<typeof validateMilestoneSchema>,
+  invocation: ExecutionInvocation,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_validate_milestone", projectDir, args.milestoneId);
   const { executeValidateMilestone } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
   return adaptExecutorResult(
-    await runSerializedWorkflowOperation(() => executeValidateMilestone(params, projectDir)),
+    await runSerializedWorkflowOperation(() =>
+      executeValidateMilestone(params, projectDir, { invocation })
+    ),
   );
 }
 
@@ -1779,6 +1797,23 @@ const validateMilestoneParams = {
   crossSliceIntegration: z.string().describe("Markdown describing cross-slice issues or closure"),
   requirementCoverage: z.string().describe("Markdown describing requirement coverage and gaps"),
   verificationClasses: z.string().optional().describe("Complete markdown table with one canonical row for every applicable planned verification class: Contract, Integration, Operational, and UAT"),
+  verificationEvidence: z.array(z.object({
+    verificationClass: z.enum(["Contract", "Integration", "Operational", "UAT"]),
+    evidenceClass: z.enum(["command", "runtime", "browser", "artifact"]),
+    rationale: nonEmptyString("rationale"),
+    commandOrTool: nonEmptyString("commandOrTool"),
+    workingDirectory: nonEmptyString("workingDirectory"),
+    startedAt: nonEmptyString("startedAt"),
+    endedAt: nonEmptyString("endedAt"),
+    exitCode: z.number().optional(),
+    observation: z.enum(["passed", "failed", "inconclusive"]),
+    durableOutputRef: nonEmptyString("durableOutputRef"),
+    testedSourceRevision: nonEmptyString("testedSourceRevision"),
+    environment: z.record(z.string(), z.unknown()).refine(
+      (value) => Object.keys(value).length > 0,
+      "environment must contain at least one field",
+    ),
+  }).strict()).optional().describe("Current source-bound structured evidence for each applicable planned verification class"),
   verdictRationale: z.string().describe("Why this verdict was chosen"),
   remediationPlan: z.string().optional(),
 };
@@ -2715,9 +2750,13 @@ export function registerWorkflowTools(
     "gsd_validate_milestone",
     "Validate a milestone, persist validation results to the GSD database, and render VALIDATION.md.",
     validateMilestoneParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       const parsed = parseWorkflowArgs(validateMilestoneSchema, args);
-      return handleValidateMilestone(parsed.projectDir, parsed);
+      return handleValidateMilestone(
+        parsed.projectDir,
+        parsed,
+        mcpWorkflowExecutionInvocation("gsd_validate_milestone", extra),
+      );
     },
   );
 
@@ -2725,10 +2764,14 @@ export function registerWorkflowTools(
     "gsd_milestone_validate",
     "Alias for gsd_validate_milestone. Validate a milestone and render VALIDATION.md.",
     validateMilestoneParams,
-    async (args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
       logAliasUsage("gsd_milestone_validate", "gsd_validate_milestone");
       const parsed = parseWorkflowArgs(validateMilestoneSchema, args);
-      return handleValidateMilestone(parsed.projectDir, parsed);
+      return handleValidateMilestone(
+        parsed.projectDir,
+        parsed,
+        mcpWorkflowExecutionInvocation("gsd_validate_milestone", extra),
+      );
     },
   );
 

@@ -16,7 +16,15 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { handleVerdict, parseValidationFile } from "../commands-verdict.ts";
-import { openDatabase, closeDatabase, _getAdapter, insertAssessment } from "../gsd-db.ts";
+import {
+  adoptOrTransitionLifecycle,
+  openDatabase,
+  closeDatabase,
+  _getAdapter,
+  executeDomainOperation,
+  insertAssessment,
+  readDomainOperationFence,
+} from "../gsd-db.ts";
 import { invalidateStateCache } from "../state.ts";
 import { resolveMilestoneFile } from "../paths.ts";
 
@@ -65,6 +73,39 @@ function seedSlice(milestoneId: string, sliceId: string, status: string): void {
   db.prepare(
     "INSERT OR REPLACE INTO slices (milestone_id, id, title, status, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(milestoneId, sliceId, `Slice ${sliceId}`, status, new Date().toISOString());
+}
+
+function adoptMilestone(milestoneId: string): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.milestone.adopt",
+    idempotencyKey: `test/${milestoneId}/adopt`,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId,
+      lifecycleStatus: "ready",
+    });
+    return {
+      events: [{
+        eventType: "test.milestone.adopted",
+        entityType: "milestone",
+        entityId: milestoneId,
+        payload: { milestoneId },
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: `test/${milestoneId}/adopt`.toLowerCase(),
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
 }
 
 function writeValidation(
@@ -256,6 +297,31 @@ test("handleVerdict rejects when milestone validation is missing", async () => {
       calls.some((c) => /^Verdict rejected:/.test(c.message)),
       `expected terminal rejection prefix, got: ${JSON.stringify(calls)}`,
     );
+  } finally {
+    closeDatabase();
+    invalidateStateCache();
+    cleanup(base);
+  }
+});
+
+test("handleVerdict rejects legacy overrides for adopted milestones", async () => {
+  const base = makeBase();
+  try {
+    openTestDb(base);
+    seedMilestone("M001", "Adopted Milestone");
+    seedSlice("M001", "S01", "complete");
+    const validationPath = writeValidation(base, "M001", "needs-attention");
+    adoptMilestone("M001");
+
+    const { ctx, calls } = makeMockCtx();
+    await handleVerdict('pass --milestone M001 --rationale "reviewed"', ctx, base);
+
+    assert.ok(
+      calls.some((call) => call.kind === "warning" && /canonical.*cannot be overridden/i.test(call.message)),
+      `expected canonical override rejection, got: ${JSON.stringify(calls)}`,
+    );
+    assert.match(readFileSync(validationPath, "utf-8"), /^verdict: needs-attention$/m);
+    assert.ok(!calls.some((call) => call.kind === "success"));
   } finally {
     closeDatabase();
     invalidateStateCache();

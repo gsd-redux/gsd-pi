@@ -112,6 +112,48 @@ test("gsd_summary_save — content has a provider-safe maxLength", () => {
   );
 });
 
+test("gsd_validate_milestone — validates complete structured verification evidence", () => {
+  const tool = getTool("gsd_validate_milestone");
+  assert.ok(tool, "gsd_validate_milestone must be registered");
+  assert.ok(
+    tool.parameters.properties.verificationEvidence,
+    "validation schema must advertise structured verification evidence",
+  );
+
+  const base = {
+    milestoneId: "M001",
+    verdict: "pass",
+    remediationRound: 0,
+    successCriteriaChecklist: "- [x] Complete",
+    sliceDeliveryAudit: "| S01 | pass |",
+    crossSliceIntegration: "Passed",
+    requirementCoverage: "Covered",
+    verdictRationale: "Structured evidence passed.",
+  };
+  const evidence = {
+    verificationClass: "UAT",
+    evidenceClass: "browser",
+    rationale: "The browser journey passed.",
+    commandOrTool: "gsd-browser",
+    workingDirectory: "/workspace",
+    startedAt: "2026-07-14T12:00:00.000Z",
+    endedAt: "2026-07-14T12:01:00.000Z",
+    observation: "passed",
+    durableOutputRef: "artifact://uat/browser-run",
+    testedSourceRevision: "sha256:tested-source",
+    environment: { browser: "chromium" },
+  };
+
+  assert.deepEqual(validateSchema(tool, { ...base, verificationEvidence: [evidence] }), []);
+  assert.ok(
+    validateSchema(tool, {
+      ...base,
+      verificationEvidence: [{ ...evidence, testedSourceRevision: undefined }],
+    }).some((error) => error.includes("testedSourceRevision")),
+    "testedSourceRevision must be required for every evidence item",
+  );
+});
+
 // ─── gsd_slice_complete: enrichment arrays must be optional ──────────────────
 
 test("gsd_slice_complete — enrichment arrays are optional", () => {

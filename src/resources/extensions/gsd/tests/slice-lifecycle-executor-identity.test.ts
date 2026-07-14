@@ -74,6 +74,34 @@ test("Pi canonical and alias Slice lifecycle calls share canonical executor iden
         canonicalName: "gsd_skip_slice",
         params: { milestoneId: "M001", sliceId: "S01", reason: "Descoped." },
       },
+      {
+        names: ["gsd_validate_milestone", "gsd_milestone_validate"],
+        executor: "validate",
+        canonicalName: "gsd_validate_milestone",
+        params: {
+          milestoneId: "M001",
+          verdict: "pass",
+          remediationRound: 0,
+          successCriteriaChecklist: "- [x] Complete",
+          sliceDeliveryAudit: "| S01 | pass |",
+          crossSliceIntegration: "Passed",
+          requirementCoverage: "Covered",
+          verdictRationale: "Current structured evidence passed.",
+          verificationEvidence: [{
+            verificationClass: "UAT",
+            evidenceClass: "browser",
+            rationale: "The browser journey passed.",
+            commandOrTool: "gsd-browser",
+            workingDirectory: basePath,
+            startedAt: "2026-07-14T12:00:00.000Z",
+            endedAt: "2026-07-14T12:01:00.000Z",
+            observation: "passed",
+            durableOutputRef: "artifact://uat/browser-run",
+            testedSourceRevision: "sha256:tested-source",
+            environment: { browser: "chromium" },
+          }],
+        },
+      },
     ] as const;
 
     for (const entry of cases) {
@@ -85,7 +113,7 @@ test("Pi canonical and alias Slice lifecycle calls share canonical executor iden
     }
 
     const calls = readCapturedSliceLifecycleCalls();
-    assert.equal(calls.length, 5, "all canonical and alias calls must reach the shared executors");
+    assert.equal(calls.length, 7, "all canonical and alias calls must reach the shared executors");
     for (const entry of cases) {
       const matching = calls.filter((call) => call.executor === entry.executor);
       assert.equal(matching.length, entry.names.length);
