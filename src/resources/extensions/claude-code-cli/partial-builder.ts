@@ -197,22 +197,35 @@ export class PartialMessageBuilder {
 				if (!block) return null;
 
 				const contentIndex = this.partial.content.length;
-				this.indexMap.set(streamIndex, contentIndex);
 
+				// Record the streamIndex -> content-array mapping ONLY for block
+				// types we actually push below. If indexMap.set ran unconditionally
+				// here, an unhandled block type (e.g. web_search_tool_result,
+				// redacted_thinking) would fall through to `return null` having
+				// pushed nothing, leaving a mapping to an index past the end of
+				// `content`. The paired content_block_stop would then resolve that
+				// mapping (its `=== undefined` guard passes), read
+				// `content[idx] === undefined`, and throw "Cannot read properties of
+				// undefined (reading 'type')" — the exact crash this file guards
+				// against. No mapping means stop/delta no-op via their own guards.
 				if (block.type === "text") {
+					this.indexMap.set(streamIndex, contentIndex);
 					this.partial.content.push({ type: "text", text: "" });
 					return { type: "text_start", contentIndex, partial: this.partial };
 				}
 				if (block.type === "thinking") {
+					this.indexMap.set(streamIndex, contentIndex);
 					this.partial.content.push({ type: "thinking", thinking: "" });
 					return { type: "thinking_start", contentIndex, partial: this.partial };
 				}
 				if (block.type === "tool_use") {
+					this.indexMap.set(streamIndex, contentIndex);
 					this.toolJsonAccum.set(streamIndex, "");
 					this.partial.content.push(toolCallFromBlock(block.id, block.name, {}));
 					return { type: "toolcall_start", contentIndex, partial: this.partial };
 				}
 				if (block.type === "server_tool_use") {
+					this.indexMap.set(streamIndex, contentIndex);
 					this.partial.content.push({
 						type: "serverToolUse",
 						id: block.id,
@@ -254,6 +267,10 @@ export class PartialMessageBuilder {
 				const contentIndex = this.indexMap.get(streamIndex);
 				if (contentIndex === undefined) return null;
 				const block = this.partial.content[contentIndex];
+				// Defense-in-depth: the start-case fix above guarantees this index
+				// resolves to a pushed block, but never dereference `.type` off a
+				// possibly-undefined slot at this trust-boundary read.
+				if (!block) return null;
 
 				if (block.type === "text") {
 					return { type: "text_end", contentIndex, content: block.text, partial: this.partial };

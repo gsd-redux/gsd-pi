@@ -194,6 +194,7 @@ export function attachExternalResultsToToolBlocks(
 	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>,
 ): void {
 	for (const block of toolBlocks) {
+		if (!block || typeof block !== "object") continue;
 		if (block.type !== "toolCall" && block.type !== "serverToolUse") continue;
 		const externalResult = toolResultsById.get(block.id);
 		if (!externalResult) continue;
@@ -271,6 +272,12 @@ export function buildFinalAssistantContent(params: {
 	}
 	if (params.pendingContent && params.pendingContent.length > 0) {
 		for (const block of params.pendingContent) {
+			// Defense-in-depth: pendingContent comes from the push-only partial
+			// builder and is dense today. Guard the hole/undefined case anyway so a
+			// future refactor cannot reintroduce the ".type" crash here.
+			if (!block || typeof block !== "object") {
+				continue;
+			}
 			if (block.type === "text" || block.type === "thinking") {
 				finalContent.push(block);
 			}
@@ -321,9 +328,11 @@ export function mergePendingToolCalls(
 ): AssistantMessage["content"] {
 	const alreadyIncluded = new Set<string>();
 	for (const block of intermediate) {
+		if (!block || typeof block !== "object") continue;
 		if (block.type === "toolCall") alreadyIncluded.add(block.id);
 	}
 	for (const block of pending) {
+		if (!block || typeof block !== "object") continue;
 		if (block.type !== "toolCall") continue;
 		if (alreadyIncluded.has(block.id)) continue;
 		alreadyIncluded.add(block.id);
@@ -337,6 +346,21 @@ export function handleClaudeCodePartialStreamEvent(
 	event: BetaRawMessageStreamEvent,
 	modelId: string,
 ): { builder: PartialMessageBuilder | null; assistantEvent: AssistantMessageEvent | null } {
+	// SDK trust boundary: the Claude Agent SDK subprocess can yield a
+	// `stream_event` frame whose `.event` payload is missing/undefined. Reading
+	// `event.type` on it throws "Cannot read properties of undefined (reading
+	// 'type')" and kills the entire provider stream loop. Drop the malformed
+	// frame and preserve the upstream signal via a warning rather than crashing.
+	if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") {
+		let shape: string;
+		try {
+			shape = JSON.stringify(event);
+		} catch {
+			shape = String(event);
+		}
+		console.warn(`[claude-code] dropped malformed SDK stream event (missing .type): ${shape}`);
+		return { builder, assistantEvent: null };
+	}
 	if (event.type === "message_start") {
 		// Claude Code can emit repeated SDK message_start events inside one
 		// logical assistant response. Keep appending until a synthetic user
