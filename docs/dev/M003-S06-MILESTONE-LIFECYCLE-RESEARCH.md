@@ -160,6 +160,47 @@ dispatch the normal completion operation, or fail closed. None may call
 for unadopted imports, matching the S05 task/slice event-replay fence
 (`workflow-reconcile.ts:124-143`).
 
+### T06 research checkpoint: fence the shared legacy close seam
+
+The pre-implementation T06 audit confirmed those four paths and found two more
+ways Markdown can close an existing Milestone: PROJECT summary registration via
+`upsertMilestonePlanning(...status: "complete")` and full hierarchy import via
+`updateMilestoneStatus(..., "complete")`. Fixing only the four planned callers
+would therefore leave the same authority violation reachable through import.
+
+The lean cutover is one atomic open-to-closed guard at the generic legacy
+Milestone status seam, plus explicit truthful handling at each planned caller.
+An adopted Milestone may be closed only by `milestone.complete`; compatibility
+callers may still close an unadopted import. Closed-to-closed timestamp repair,
+planning metadata updates that do not change status, park/unpark, discard, and
+general database reconciliation remain outside this rule.
+
+The callers must not average canonical and legacy state:
+
+- merge cleanup succeeds for an adopted Milestone only when canonical completion
+  already owns the current head and the legacy row is also closed;
+- startup journal replay cannot turn `worktree-merged` JSONL into adopted
+  completion authority;
+- stuck recovery checks adoption before legacy status or filesystem proof and
+  may observe a current durable completion receipt, but cannot manufacture one
+  from SUMMARY, VALIDATION, Git, or GitHub evidence;
+- legacy reconciliation ignores adopted Milestone completion events just as it
+  already ignores adopted Task and Slice events; and
+- unadopted compatibility rechecks adoption and status inside one immediate
+  transaction before performing the legacy close, preventing an adoption race.
+
+There is no safe generic replay-by-operation-id API: exact replay requires the
+original private idempotency key and request payload. Legacy JSONL and recovery
+artifacts do not contain that identity or the canonical closeout payload, so the
+correct adopted behavior is to observe an already-current durable receipt or
+fail closed and let the normal command be dispatched by its owning workflow.
+
+T06 proof must cover adopted-ready and canonical/legacy sabotage states through
+merge, startup, recovery, reconciliation, PROJECT registration, and Markdown
+import; duplicate delivery must remain mutation-free. Existing unadopted import,
+closed-row repair, canonical complete/reopen, and park/unpark behavior must stay
+green. No new registry, queue, worker protocol, or schema is justified.
+
 ## Test baseline and missing proof
 
 Existing tests cover handler guards/idempotent-looking re-completion and file
