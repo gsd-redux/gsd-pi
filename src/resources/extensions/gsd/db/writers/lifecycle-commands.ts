@@ -822,13 +822,13 @@ export function settleAttemptWithResult(
     }
   }
   if (input.cancellation && (input.outcome !== "interrupted" || input.recovery)) {
-    throw new Error("Task cancellation requires an interrupted non-recovery settlement");
+    throw new Error("Cancellation requires an interrupted non-recovery settlement");
   }
-  let requiredOperationType = "attempt.settle";
-  if (input.cancellation) requiredOperationType = "task.cancel";
-  else if (input.recovery) requiredOperationType = "attempt.interrupt";
-  if (operationType !== requiredOperationType) {
-    throw new Error(`Attempt settlement requires an ${requiredOperationType} Domain Operation`);
+  const allowedOperationTypes = input.cancellation
+    ? ["task.cancel", "slice.cancel"]
+    : [input.recovery ? "attempt.interrupt" : "attempt.settle"];
+  if (!allowedOperationTypes.includes(operationType)) {
+    throw new Error(`Attempt settlement requires a ${allowedOperationTypes.join(" or ")} Domain Operation`);
   }
   requireNonBlank(input.failureClass, "failureClass");
   if (typeof input.summary !== "string") throw new Error("summary must be a string");

@@ -10,10 +10,14 @@
  * bootstrap/db-tools.ts handles state-cache invalidation and STATE.md rebuild.
  */
 
+import { randomUUID } from "node:crypto";
+
+import { isDbAvailable } from "../gsd-db.js";
 import {
-  isDbAvailable,
-  skipSliceCascade,
-} from "../gsd-db.js";
+  cancelSlice,
+  SliceLifecycleValidationError,
+} from "../slice-lifecycle-domain-operation.js";
+import type { ExecutionInvocation } from "../execution-invocation.js";
 
 /**
  * Input parameters for {@link handleSkipSlice}.
@@ -26,13 +30,14 @@ export interface SkipSliceParams {
   milestoneId: string;
   sliceId: string;
   reason?: string;
+  invocation?: ExecutionInvocation;
 }
 
 /**
  * Stable machine-readable error codes for {@link SkipSliceResult.error}.
  * Keep in sync with the wrapper in bootstrap/db-tools.ts.
  */
-export type SkipSliceErrorCode = "slice_not_found" | "already_complete";
+export type SkipSliceErrorCode = "slice_not_found" | "already_complete" | "invalid_state";
 
 /**
  * Result of a {@link handleSkipSlice} call.
@@ -53,6 +58,12 @@ export interface SkipSliceResult {
   reason?: string;
   error?: string;
   errorCode?: SkipSliceErrorCode;
+}
+
+function validationErrorCode(message: string): SkipSliceErrorCode {
+  if (/not found/i.test(message)) return "slice_not_found";
+  if (/already complete/i.test(message)) return "already_complete";
+  return "invalid_state";
 }
 
 /**
@@ -85,23 +96,25 @@ export function handleSkipSlice(params: SkipSliceParams): SkipSliceResult {
     throw new Error("handleSkipSlice: GSD database is not available");
   }
 
-  // ── Atomic skip cascade (guards + writes in one transaction) ────────────
-  const outcome = skipSliceCascade(params.milestoneId, params.sliceId);
-  if (!outcome.ok) {
-    switch (outcome.reason) {
-      case "slice-not-found":
-        return {
-          ...base,
-          error: `Slice ${params.sliceId} not found in milestone ${params.milestoneId}`,
-          errorCode: "slice_not_found" as SkipSliceErrorCode,
-        };
-      case "slice-already-complete":
-        return {
-          ...base,
-          error: `Slice ${params.sliceId} is already complete — cannot skip.`,
-          errorCode: "already_complete" as SkipSliceErrorCode,
-        };
-    }
+  try {
+    const result = cancelSlice({
+      invocation: params.invocation ?? {
+        idempotencyKey: `internal:skip-slice:${randomUUID()}`,
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      slice: { milestoneId: params.milestoneId, sliceId: params.sliceId },
+      reason: params.reason?.trim() || "User-directed skip",
+    });
+    return {
+      ...base,
+      tasksSkipped: result.tasksSkipped,
+      wasAlreadySkipped: result.wasAlreadySkipped,
+    };
+  } catch (error) {
+    if (!(error instanceof SliceLifecycleValidationError)) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    const errorCode = validationErrorCode(message);
+    return { ...base, error: message, errorCode };
   }
-  return { ...base, tasksSkipped: outcome.tasksSkipped, wasAlreadySkipped: outcome.wasAlreadySkipped };
 }

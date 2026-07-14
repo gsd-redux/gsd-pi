@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 
 import { registerDbTools } from "../bootstrap/db-tools.ts";
 import {
+  _getAdapter,
   closeDatabase,
   getSlice,
   insertMilestone,
@@ -52,6 +53,15 @@ test("gsd_skip_slice marks a slice skipped and refreshes STATE.md", async () => 
 
     assert.equal(result.details.operation, "skip_slice");
     assert.equal(getSlice("M001", "S01")?.status, "skipped");
+    assert.deepEqual(_getAdapter()?.prepare(`
+      SELECT operation_type, idempotency_key, source_transport, trace_id
+      FROM workflow_operations WHERE operation_type = 'slice.cancel'
+    `).get(), {
+      operation_type: "slice.cancel",
+      idempotency_key: "pi:gsd_skip_slice:tool-call",
+      source_transport: "pi-tool",
+      trace_id: "tool-call",
+    });
 
     const statePath = join(base, ".gsd", "STATE.md");
     assert.equal(existsSync(statePath), true, "STATE.md should be rebuilt");

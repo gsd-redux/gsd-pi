@@ -6,13 +6,22 @@ import { kernelStageTransitionSql } from "./db/kernel-stage-policy.js";
 import { createKernelCheckpointChainTrigger } from "./db-projection-import-kernel-closeout-foundation-schema.js";
 import { ensureColumn } from "./db-schema-metadata.js";
 
+type CancellationOperationType = "task.cancel" | "slice.cancel";
+
+function cancellationOperations(
+  value: boolean | readonly CancellationOperationType[],
+): readonly CancellationOperationType[] {
+  return value === true ? ["task.cancel"] : value === false ? [] : value;
+}
+
 export function createAttemptSettlementShapeTrigger(
   db: DbAdapter,
-  allowTaskCancellation = false,
+  allowedCancellations: boolean | readonly CancellationOperationType[] = [],
 ): void {
-  const cancellationAuthorization = allowTaskCancellation
+  const cancellationOperationTypes = cancellationOperations(allowedCancellations);
+  const cancellationAuthorization = cancellationOperationTypes.length > 0
     ? `OR (
-        operation.operation_type = 'task.cancel'
+        operation.operation_type IN (${cancellationOperationTypes.map((type) => `'${type}'`).join(", ")})
         AND OLD.attempt_state = 'running'
         AND NEW.settle_outcome = 'interrupted'
       )`
@@ -72,9 +81,10 @@ export function createAttemptSettlementShapeTrigger(
 
 export function createAttemptTransitionFencingTrigger(
   db: DbAdapter,
-  allowTaskCancellation = false,
+  allowedCancellations: boolean | readonly CancellationOperationType[] = [],
 ): void {
-  const cancellationAuthorization = allowTaskCancellation
+  const cancellationOperationTypes = cancellationOperations(allowedCancellations);
+  const cancellationAuthorization = cancellationOperationTypes.length > 0
     ? `OR (
         NEW.attempt_state = 'settled'
         AND NEW.settle_outcome = 'interrupted'
@@ -82,7 +92,7 @@ export function createAttemptTransitionFencingTrigger(
           SELECT 1 FROM workflow_operations operation
           WHERE operation.operation_id = NEW.settle_operation_id
             AND operation.project_id = NEW.project_id
-            AND operation.operation_type = 'task.cancel'
+            AND operation.operation_type IN (${cancellationOperationTypes.map((type) => `'${type}'`).join(", ")})
         )
       )`
     : "";

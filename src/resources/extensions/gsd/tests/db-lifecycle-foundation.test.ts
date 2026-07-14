@@ -264,6 +264,23 @@ function rewindToV36(dbPath: string): void {
   }
 }
 
+function rewindToV39(dbPath: string): void {
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const db = openRawDatabase(dbPath);
+  try {
+    createAttemptSettlementShapeTrigger(db as unknown as DbAdapter, true);
+    createAttemptTransitionFencingTrigger(db as unknown as DbAdapter, true);
+    db.exec(`
+      DELETE FROM schema_version;
+      INSERT INTO schema_version (version, applied_at)
+      VALUES (39, '2026-07-14T00:00:00.000Z');
+    `);
+  } finally {
+    db.close();
+  }
+}
+
 afterEach(() => {
   _setMigrationFaultForTest(false);
   closeDatabase();
@@ -1275,6 +1292,55 @@ test("v37 narrowly authorizes interrupted running Attempt cancellation and retri
       SELECT settle_outcome FROM workflow_execution_attempts
       WHERE attempt_id = 'attempt-v37-cancel'
     `).get()?.settle_outcome, "interrupted");
+  } finally {
+    upgraded.close();
+  }
+});
+
+test("v40 upgrade authorizes Slice cancellation in both Attempt settlement triggers", () => {
+  const dbPath = createDatabasePath();
+  rewindToV39(dbPath);
+
+  const legacy = openRawDatabase(dbPath);
+  try {
+    assert.equal(maxSchemaVersion(legacy), 39);
+    for (const trigger of [
+      "trg_workflow_attempt_settlement_shape_v36",
+      "trg_workflow_attempt_transition_fencing",
+    ]) {
+      const sql = String(legacy.prepare(`
+        SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?
+      `).get(trigger)?.sql);
+      assert.match(sql, /task\.cancel/);
+      assert.doesNotMatch(sql, /slice\.cancel/);
+    }
+  } finally {
+    legacy.close();
+  }
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const upgraded = openRawDatabase(dbPath);
+  try {
+    const settlementSql = String(upgraded.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_settlement_shape_v36'
+    `).get()?.sql);
+    const fencingSql = String(upgraded.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_attempt_transition_fencing'
+    `).get()?.sql);
+    assert.deepEqual({
+      runtimeSchemaVersion: SCHEMA_VERSION,
+      databaseSchemaVersion: maxSchemaVersion(upgraded),
+      settlementAllowsSliceCancel: /slice\.cancel/.test(settlementSql),
+      fencingAllowsSliceCancel: /slice\.cancel/.test(fencingSql),
+    }, {
+      runtimeSchemaVersion: 40,
+      databaseSchemaVersion: 40,
+      settlementAllowsSliceCancel: true,
+      fencingAllowsSliceCancel: true,
+    });
   } finally {
     upgraded.close();
   }

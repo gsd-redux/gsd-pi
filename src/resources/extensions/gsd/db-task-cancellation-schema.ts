@@ -8,6 +8,6 @@ import {
 import type { DbAdapter } from "./db-adapter.js";
 
 export function createTaskCancellationSchemaV37(db: DbAdapter): void {
-  createAttemptTransitionFencingTrigger(db, true);
-  createAttemptSettlementShapeTrigger(db, true);
+  createAttemptTransitionFencingTrigger(db, ["task.cancel"]);
+  createAttemptSettlementShapeTrigger(db, ["task.cancel"]);
 }

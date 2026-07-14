@@ -72,11 +72,11 @@ export function terminalizeTaskExecutionDispatch(
   },
 ): void {
   const operationType = requireActiveDomainOperationContext(context);
-  let requiredOperationType = "attempt.settle";
-  if (input.cancellation) requiredOperationType = "task.cancel";
-  else if (input.outcome === "interrupted") requiredOperationType = "attempt.interrupt";
-  if (operationType !== requiredOperationType) {
-    throw new Error(`Task dispatch terminalization requires an ${requiredOperationType} Domain Operation`);
+  const allowedOperationTypes = input.cancellation
+    ? ["task.cancel", "slice.cancel"]
+    : [input.outcome === "interrupted" ? "attempt.interrupt" : "attempt.settle"];
+  if (!allowedOperationTypes.includes(operationType)) {
+    throw new Error(`Task dispatch terminalization requires a ${allowedOperationTypes.join(" or ")} Domain Operation`);
   }
   let dispatchStatus = "failed";
   if (input.cancellation) dispatchStatus = "canceled";

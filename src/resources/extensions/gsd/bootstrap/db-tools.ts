@@ -985,7 +985,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_skip_slice (#3477 / #3487) ───────────────────────────────────
 
-  const skipSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const skipSliceExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const basePath = resolveCtxCwd(_ctx);
     const dbAvailable = await ensureDbOpen(basePath);
     if (!dbAvailable) {
@@ -1002,6 +1002,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
         milestoneId: params.milestoneId,
         sliceId: params.sliceId,
         reason: params.reason,
+        invocation: piExecutionInvocation("gsd_skip_slice", toolCallId),
       });
 
       if (result.error) {
