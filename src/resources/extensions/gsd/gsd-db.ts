@@ -348,10 +348,17 @@ export function insertMilestone(m: {
 export function upsertMilestonePlanning(milestoneId: string, planning: Partial<MilestonePlanningRecord> & { title?: string; status?: string; depends_on?: string[] }): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   transaction(() => {
+    if (planning.status !== undefined && planning.status !== "") {
+      applyStatusTransition({
+        entity: "milestone",
+        milestoneId,
+        status: planning.status,
+        preserveCompletion: true,
+      });
+    }
     getDbOrNull()!.prepare(
       `UPDATE milestones SET
         title = COALESCE(NULLIF(:title, ''), title),
-        status = COALESCE(NULLIF(:status, ''), status),
         depends_on = COALESCE(:depends_on, depends_on),
         vision = COALESCE(:vision, vision),
         success_criteria = COALESCE(:success_criteria, success_criteria),
@@ -368,7 +375,6 @@ export function upsertMilestonePlanning(milestoneId: string, planning: Partial<M
     ).run({
       ":id": milestoneId,
       ":title": planning.title ?? "",
-      ":status": planning.status ?? "",
       ":depends_on": planning.depends_on ? JSON.stringify(planning.depends_on) : null,
       ":vision": planning.vision ?? null,
       ":success_criteria": planning.successCriteria ? JSON.stringify(planning.successCriteria) : null,
@@ -885,9 +891,10 @@ function writeMilestoneStatus(milestoneId: string, status: string, completedAt?:
 /**
  * Update a milestone's status in the database.
  *
- * Generic status updates may close milestones, park/unpark open milestones, or
- * advance planned milestones. They may not reopen a closed milestone; callers
- * must use reopenMilestoneStatus(), which is reserved for gsd_milestone_reopen.
+ * Generic status updates may close unadopted milestones, park/unpark open
+ * milestones, or advance planned milestones. Adopted milestones close through
+ * the canonical operation. Closed milestones reopen through
+ * reopenMilestoneStatus(), which is reserved for gsd_milestone_reopen.
  */
 export function updateMilestoneStatus(milestoneId: string, status: string, completedAt?: string | null, preserveCompletion?: boolean): void {
   applyStatusTransition({ entity: "milestone", milestoneId, status, completedAt, preserveCompletion });

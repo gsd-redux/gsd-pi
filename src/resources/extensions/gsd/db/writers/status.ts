@@ -4,8 +4,7 @@
 // closed→open guard and is the one place future row-level status policy lands.
 // The update*Status faces in gsd-db.ts delegate here.
 //
-// Behavior this pass is intentionally identical to the prior per-face writes.
-// Two ADR-030 responsibilities are deferred for safety and documented inline:
+// Two ADR-030 responsibilities remain deferred for safety:
 //   - Write-normalization via toStatus(): workflow-reconcile replays journal
 //     events that write raw "done"/"in-progress" and tests assert those exact
 //     stored values, so converging on write is a separate, behavior-sensitive
@@ -15,6 +14,7 @@
 //     safely needs a sanctioned reopenSliceStatus face first, mirroring the
 //     existing milestone updateMilestoneStatus/reopenMilestoneStatus split.
 import { getDbOrNull } from "../engine.js";
+import { TERMINAL_STATUS_SQL } from "../sql-constants.js";
 import { GSDError, GSD_STALE_STATE } from "../../errors.js";
 import { isClosedStatus } from "../../status-guards.js";
 
@@ -96,17 +96,56 @@ export function applyStatusTransition(t: StatusTransition): void {
     case "milestone": {
       const row = db.prepare("SELECT status FROM milestones WHERE id = :id").get({ ":id": t.milestoneId });
       const currentStatus = typeof row?.["status"] === "string" ? (row["status"] as string) : null;
-      if (currentStatus && isClosedStatus(currentStatus) && !isClosedStatus(t.status)) {
+      const closesMilestone = isClosedStatus(t.status);
+      if (currentStatus && isClosedStatus(currentStatus) && !closesMilestone) {
         throw new Error(
           `Cannot update closed milestone ${t.milestoneId} from ${currentStatus} to ${t.status}; use gsd_milestone_reopen for an explicit reopen.`,
         );
       }
-      db.prepare(
+      const closureFence = closesMilestone
+        ? `AND (
+             milestones.status IN (${TERMINAL_STATUS_SQL})
+             OR NOT EXISTS (
+               SELECT 1
+               FROM workflow_item_lifecycles lifecycle
+               JOIN project_authority authority
+                 ON authority.project_id = lifecycle.project_id
+                AND authority.singleton = 1
+               WHERE lifecycle.item_kind = 'milestone'
+                 AND lifecycle.milestone_id = milestones.id
+                 AND lifecycle.slice_id IS NULL
+                 AND lifecycle.task_id IS NULL
+             )
+           )`
+        : "";
+      const updated = db.prepare(
         `UPDATE milestones SET status = :status,
            completed_at = CASE WHEN :preserve_completion = 1 AND milestones.completed_at IS NOT NULL
                                THEN milestones.completed_at ELSE :completed_at END
-         WHERE id = :id`,
+         WHERE id = :id ${closureFence}`,
       ).run({ ":status": t.status, ":completed_at": completedAt, ":preserve_completion": preserve, ":id": t.milestoneId });
+      if (closesMilestone && Number((updated as { changes?: number }).changes ?? 0) === 0) {
+        const blocked = db.prepare(`
+          SELECT 1 AS blocked
+          FROM milestones
+          JOIN workflow_item_lifecycles lifecycle
+            ON lifecycle.item_kind = 'milestone'
+           AND lifecycle.milestone_id = milestones.id
+           AND lifecycle.slice_id IS NULL
+           AND lifecycle.task_id IS NULL
+          JOIN project_authority authority
+            ON authority.project_id = lifecycle.project_id
+           AND authority.singleton = 1
+          WHERE milestones.id = :id
+            AND milestones.status NOT IN (${TERMINAL_STATUS_SQL})
+        `).get({ ":id": t.milestoneId });
+        if (blocked) {
+          throw new Error(
+            `Cannot close adopted Milestone ${t.milestoneId} through a legacy status update; ` +
+            "use the canonical milestone.complete operation.",
+          );
+        }
+      }
       return;
     }
   }
