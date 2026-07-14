@@ -286,7 +286,7 @@ test("custom execute-task routes an unproven pause as an agent-fixable durable f
   assert.equal(row("SELECT action FROM workflow_recovery_actions").action, "remediate");
 });
 
-test("custom execute-task durably pauses for human review and publishes after blocker resolution", async () => {
+test("custom execute-task routes resolved human review through a fresh verified Attempt", async () => {
   const { basePath, attemptId } = createFixture();
   await stage(basePath);
 
@@ -349,10 +349,14 @@ test("custom execute-task durably pauses for human review and publishes after bl
     unitId: "M001/S01/T01",
     humanReviewPolicy: true,
     verifyPolicy: async () => { throw new Error("resolved durable blocker must replay without policy execution"); },
-  }), "continue");
-  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "pass");
-  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_technical_verdicts").count), 2);
+  }), "retry");
+  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "inconclusive");
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_technical_verdicts").count), 1);
   assert.equal(row("SELECT blocker_status FROM workflow_blockers").blocker_status, "resolved");
+  assert.deepEqual(
+    db().prepare("SELECT action FROM workflow_recovery_actions ORDER BY project_revision").all(),
+    [{ action: "clarify" }, { action: "remediate" }],
+  );
   assert.deepEqual(row(`
     SELECT actor_id, trace_id, turn_id
     FROM workflow_operations
@@ -372,8 +376,24 @@ test("custom execute-task durably pauses for human review and publishes after bl
   );
   assert.deepEqual(
     db().prepare("SELECT checkpoint_kind FROM workflow_work_checkpoints ORDER BY sequence").all(),
-    [{ checkpoint_kind: "pause" }, { checkpoint_kind: "answer" }],
+    [{ checkpoint_kind: "pause" }, { checkpoint_kind: "answer" }, { checkpoint_kind: "correction" }],
   );
+
+  const successorAttemptId = claimRetry(attemptId, 2);
+  await stage(basePath, "custom/stage/2");
+  assert.equal(await runCustomEngineHostVerification({
+    unitType: "execute-task",
+    basePath,
+    unitId: "M001/S01/T01",
+    verifyPolicy: async () => "continue",
+  }), "continue");
+  assert.equal(readTaskTechnicalVerdict(successorAttemptId)?.verdict, "pass");
+  assert.equal(row(`
+    SELECT retry_of_attempt_id
+    FROM workflow_execution_attempts
+    ORDER BY attempt_number DESC
+    LIMIT 1
+  `).retry_of_attempt_id, attemptId);
 
   await publishVerifiedTaskExecution({
     unitType: "execute-task",
@@ -388,7 +408,7 @@ test("custom execute-task durably pauses for human review and publishes after bl
   assert.equal(readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" })?.nextStage, "settled");
 });
 
-test("resolved human-review pass replays across restart before publication", async () => {
+test("resolved human-review reroute replays across restart before successor claim", async () => {
   const { basePath, attemptId } = createFixture();
   await stage(basePath);
   assert.equal(await runCustomEngineHostVerification({
@@ -409,18 +429,19 @@ test("resolved human-review pass replays across restart before publication", asy
     unitId: "M001/S01/T01",
     humanReviewPolicy: true,
     verifyPolicy: async () => { throw new Error("resolved review must not rerun policy"); },
-  }), "continue");
+  }), "retry");
 
   closeDatabase();
   assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
-  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "pass");
+  assert.equal(readTaskTechnicalVerdict(attemptId)?.verdict, "inconclusive");
   assert.equal(await runCustomEngineHostVerification({
     unitType: "execute-task",
     basePath,
     unitId: "M001/S01/T01",
     humanReviewPolicy: false,
-    verifyPolicy: async () => { throw new Error("pass replay must not rerun policy"); },
-  }), "continue");
+    verifyPolicy: async () => { throw new Error("reroute replay must not rerun policy"); },
+  }), "retry");
+  assert.equal(Number(row("SELECT COUNT(*) AS count FROM workflow_recovery_actions").count), 2);
 });
 
 test("human-review verdict recreates its subjective blocker after a routing crash", async () => {

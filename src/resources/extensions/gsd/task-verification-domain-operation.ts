@@ -55,15 +55,6 @@ export interface InvalidateTaskTechnicalPassInput {
   evidence: RecordTaskTechnicalVerdictInput["evidence"];
 }
 
-export interface ConfirmResolvedHumanReviewInput {
-  invocation: ExecutionInvocation;
-  attemptId: string;
-  blockerId: string;
-  testedSourceRevision: string;
-  rationale: string;
-  evidence: RecordTaskTechnicalVerdictInput["evidence"];
-}
-
 export interface TaskTechnicalVerdictSnapshot {
   attemptId: string;
   verdictId: string;
@@ -121,65 +112,6 @@ function requireAttemptScope(attemptId: string, allowRoute = false): AttemptScop
     ":allow_route": allowRoute ? 1 : 0,
   }) as unknown as AttemptScope | undefined;
   if (!attempt) throw new Error("Host verification requires a settled succeeded Attempt at the verify stage");
-  return attempt;
-}
-
-function requireResolvedHumanReviewScope(input: ConfirmResolvedHumanReviewInput): AttemptScope & {
-  verdict_id: string;
-} {
-  const attempt = getDb().prepare(`
-    SELECT attempt.project_id, attempt.lifecycle_id, lifecycle.milestone_id,
-           lifecycle.slice_id, lifecycle.task_id, attempt.settle_project_revision,
-           checkpoint.kernel_checkpoint_id, verdict.verdict_id
-    FROM workflow_execution_attempts attempt
-    JOIN workflow_item_lifecycles lifecycle
-      ON lifecycle.lifecycle_id = attempt.lifecycle_id
-     AND lifecycle.project_id = attempt.project_id
-    JOIN workflow_attempt_results result
-      ON result.attempt_id = attempt.attempt_id
-     AND result.project_id = attempt.project_id
-    JOIN workflow_kernel_checkpoints checkpoint
-      ON checkpoint.attempt_id = attempt.attempt_id
-     AND checkpoint.project_id = attempt.project_id
-    JOIN workflow_technical_verdicts verdict
-      ON verdict.attempt_id = attempt.attempt_id
-     AND verdict.project_id = attempt.project_id
-    JOIN workflow_failure_observations observation
-      ON observation.attempt_id = attempt.attempt_id
-     AND observation.result_id = result.result_id
-     AND observation.project_id = attempt.project_id
-    JOIN workflow_recovery_actions action
-      ON action.failure_observation_id = observation.failure_observation_id
-     AND action.project_id = observation.project_id
-    JOIN workflow_blockers blocker
-      ON blocker.blocker_id = action.blocker_id
-     AND blocker.project_id = action.project_id
-    WHERE attempt.attempt_id = :attempt_id
-      AND attempt.attempt_state = 'settled'
-      AND result.outcome = 'succeeded'
-      AND checkpoint.next_stage = 'route'
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_kernel_checkpoints successor
-        WHERE successor.previous_kernel_checkpoint_id = checkpoint.kernel_checkpoint_id
-      )
-      AND verdict.verdict = 'inconclusive'
-      AND verdict.tested_source_revision = :source_revision
-      AND NOT EXISTS (
-        SELECT 1 FROM workflow_technical_verdicts successor
-        WHERE successor.supersedes_verdict_id = verdict.verdict_id
-      )
-      AND blocker.blocker_id = :blocker_id
-      AND blocker.blocker_kind = 'subjective_uat'
-      AND blocker.blocker_status = 'resolved'
-      AND action.action = 'clarify'
-  `).get({
-    ":attempt_id": input.attemptId,
-    ":source_revision": input.testedSourceRevision,
-    ":blocker_id": input.blockerId,
-  }) as unknown as (AttemptScope & { verdict_id: string }) | undefined;
-  if (!attempt) {
-    throw new Error("Human-review confirmation requires its resolved subjective UAT blocker and current route head");
-  }
   return attempt;
 }
 
@@ -417,90 +349,6 @@ export function invalidateTaskTechnicalPass(
       }],
       projections: [{
         projectionKey: `verification/${scope.milestone_id}/${scope.slice_id}/${scope.task_id}`.toLowerCase(),
-        projectionKind: "task-verification",
-        rendererVersion: "1",
-      }],
-    };
-  });
-  const stored = recorded ?? loadStoredVerdict(operation.operationId);
-  return {
-    status: operation.status,
-    operationId: operation.operationId,
-    resultingRevision: operation.resultingRevision,
-    verdictId: stored.verdict_id,
-    evidenceId: stored.evidence_id,
-    nextStage: "route",
-  };
-}
-
-export function confirmResolvedTaskHumanReview(
-  input: ConfirmResolvedHumanReviewInput,
-): TaskTechnicalVerdictReceipt {
-  if (Object.keys(input.evidence.environment).length === 0) {
-    throw new Error("Host verification evidence environment must not be empty");
-  }
-  const fence = readDomainOperationFence(input.invocation.idempotencyKey);
-  let recorded: StoredVerdict | undefined;
-  const operation = executeDomainOperation({
-    operationType: "attempt.verify",
-    idempotencyKey: input.invocation.idempotencyKey,
-    expectedRevision: fence.revision,
-    expectedAuthorityEpoch: fence.authorityEpoch,
-    actorType: input.invocation.actorType,
-    ...(input.invocation.actorId ? { actorId: input.invocation.actorId } : {}),
-    sourceTransport: input.invocation.sourceTransport,
-    ...(input.invocation.traceId ? { traceId: input.invocation.traceId } : {}),
-    ...(input.invocation.turnId ? { turnId: input.invocation.turnId } : {}),
-    payload: {
-      attemptId: input.attemptId,
-      blockerId: input.blockerId,
-      testedSourceRevision: input.testedSourceRevision,
-      verdict: "pass",
-      rationale: input.rationale,
-      evidence: input.evidence,
-    },
-  }, (context) => {
-    const scope = requireResolvedHumanReviewScope(input);
-    const criterionId = currentHostTechnicalCriterionId(scope.project_id, scope.lifecycle_id);
-    if (!criterionId) throw new Error("Host verification criterion is missing from the Task claim");
-    const inserted = insertHostTechnicalVerdict(context, {
-      scope: {
-        projectId: scope.project_id,
-        lifecycleId: scope.lifecycle_id,
-        attemptId: input.attemptId,
-        settleProjectRevision: scope.settle_project_revision,
-      },
-      criterionId,
-      testedSourceRevision: input.testedSourceRevision,
-      verdict: "pass",
-      rationale: input.rationale,
-      evidence: input.evidence,
-      createdAt: new Date().toISOString(),
-      supersedesVerdictId: scope.verdict_id,
-    });
-    recorded = {
-      verdict_id: inserted.verdictId,
-      evidence_id: inserted.evidenceId,
-      verdict: "pass",
-    };
-    const entityId = `${scope.milestone_id}/${scope.slice_id}/${scope.task_id}`;
-    return {
-      events: [{
-        eventType: "task.verification.pass",
-        entityType: "task",
-        entityId,
-        payload: {
-          attemptId: input.attemptId,
-          blockerId: input.blockerId,
-          verdictId: inserted.verdictId,
-          evidenceId: inserted.evidenceId,
-          verdict: "pass",
-          supersedesVerdictId: scope.verdict_id,
-        },
-        destinations: ["projection"],
-      }],
-      projections: [{
-        projectionKey: `verification/${entityId}`.toLowerCase(),
         projectionKind: "task-verification",
         rendererVersion: "1",
       }],
