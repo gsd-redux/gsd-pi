@@ -44,8 +44,8 @@ import {
   insertAssessment,
   insertMilestone,
   insertSlice,
-  updateMilestoneStatus,
 } from "../../gsd-db.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -443,6 +443,7 @@ test("mergeCompletedMilestone — clean merge, session status cleaned up", async
     createMilestoneBranch(repo, "M010", [
       { name: "auth.ts", content: "export const auth = true;\n" },
     ]);
+    seedMergeReadyMilestone(repo, "M010");
 
     // Write session status to verify cleanup
     writeSessionStatus(repo, {
@@ -510,6 +511,7 @@ test("mergeCompletedMilestone — conflict returns structured error with file li
     writeFileSync(join(repo, "README.md"), "# main version (diverged)\n");
     run("git add .", repo);
     run('git commit -m "main changes README"', repo);
+    seedMergeReadyMilestone(repo, "M020");
 
     process.chdir(repo);
     const result = await mergeCompletedMilestone(repo, "M020");
@@ -551,6 +553,8 @@ test("mergeAllCompleted — merges in sequential order", async () => {
     createMilestoneBranch(repo, "M002", [
       { name: "dashboard.ts", content: "export const dash = true;\n" },
     ]);
+    seedMergeReadyMilestone(repo, "M001");
+    seedMergeReadyMilestone(repo, "M002");
 
     const workers = [
       makeWorker({ milestoneId: "M002", startedAt: 100 }),
@@ -603,6 +607,8 @@ test("mergeAllCompleted — stops on first conflict, skips later milestones", as
     writeFileSync(join(repo, "README.md"), "# main diverged version\n");
     run("git add .", repo);
     run('git commit -m "main diverges README"', repo);
+    seedMergeReadyMilestone(repo, "M001");
+    seedMergeReadyMilestone(repo, "M002");
 
     const workers = [
       makeWorker({ milestoneId: "M001" }),
@@ -649,6 +655,8 @@ test("mergeAllCompleted — by-completion order respects startedAt", async () =>
     createMilestoneBranch(repo, "M002", [
       { name: "feature.ts", content: "export const feature = true;\n" },
     ]);
+    seedMergeReadyMilestone(repo, "M001");
+    seedMergeReadyMilestone(repo, "M002");
 
     const workers = [
       makeWorker({ milestoneId: "M001", startedAt: 2000 }),
@@ -661,7 +669,9 @@ test("mergeAllCompleted — by-completion order respects startedAt", async () =>
     // M002 should be merged first (earlier startedAt)
     assert.equal(results.length, 2);
     assert.equal(results[0]!.milestoneId, "M002", "M002 merged first (earlier startedAt)");
+    assert.equal(results[0]!.success, true, `M002 should succeed: ${results[0]!.error}`);
     assert.equal(results[1]!.milestoneId, "M001", "M001 merged second");
+    assert.equal(results[1]!.success, true, `M001 should succeed: ${results[1]!.error}`);
   } finally {
     process.chdir(savedCwd);
     cleanup(repo);
@@ -675,20 +685,7 @@ test("mergeAllCompleted — by-completion order respects startedAt", async () =>
 /** Set up canonical DB with a milestone marked complete and a worktree marker dir */
 function setupCanonicalDbWithWorktree(basePath: string, mid: string): void {
   mkdirSync(join(basePath, ".gsd", "worktrees", mid), { recursive: true });
-  mkdirSync(join(basePath, ".gsd"), { recursive: true });
-  const dbPath = join(basePath, ".gsd", "gsd.db");
-  openDatabase(dbPath);
-  insertMilestone({ id: mid, title: `Milestone ${mid}`, status: "complete" });
-  insertSlice({ id: "S01", milestoneId: mid, title: "Done Slice", status: "complete" });
-  insertAssessment({
-    path: `milestones/${mid}/${mid}-VALIDATION.md`,
-    milestoneId: mid,
-    status: "pass",
-    scope: "milestone-validation",
-    fullContent: "verdict: pass",
-  });
-  updateMilestoneStatus(mid, "complete", new Date().toISOString());
-  closeDatabase();
+  seedMergeReadyMilestone(basePath, mid);
 }
 
 test("determineMergeOrder — finds milestones completed in canonical DB even when worker state is 'error' (#2812)", () => {
