@@ -25,6 +25,8 @@ The accepted contract is:
 - The artifact content is persisted in the DB artifacts table before projection writes are attempted.
 - The disk file `.gsd/PROJECT.md` is a human-readable projection of the DB-backed artifact content.
 - Milestone registration side effects are owned by the PROJECT tool path. A valid PROJECT save may parse the submitted project content to register milestone rows, but that parsing is part of the DB-backed tool surface, not a direct markdown import.
+- Registration and lifecycle preflight run before artifact persistence. A registration failure or adopted canonical/legacy mismatch leaves no new PROJECT artifact; retry follows repair of the database-side cause.
+- For an adopted Milestone, the checkbox is projection state. The PROJECT tool preserves the canonical lifecycle, repairs checked/unchecked drift from the database, and cannot complete or reopen the Milestone. Unadopted first-save registration remains the explicit compatibility path.
 - Normal runtime, dispatch, reconciliation, and guided startup must not treat hand-edited `PROJECT.md` as authoritative DB state.
 - Direct `PROJECT.md` edits are only valid as explicit recovery/migration input, or as operator-authored draft material before it is persisted through the DB-backed tool.
 - When disk and DB disagree, runtime keeps DB authority and should either regenerate the projection or surface explicit recovery guidance. It must not silently import the disk file.

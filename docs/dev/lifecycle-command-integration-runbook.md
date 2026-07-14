@@ -9,9 +9,10 @@ Result, and Kernel checkpoint facts only inside an active Domain Operation.
 Milestone, slice, and task planning, task and slice replanning, and roadmap
 reassessment now use the lifecycle and replay-fence subset. Task execution,
 Task recovery, verified Task completion, and Slice complete/cancel/reopen/reset
-also use command-specific Domain Operations. Legacy hierarchy reads and public
-responses remain the compatibility contract until a later, separately proven
-read-authority cutover.
+also use command-specific Domain Operations. Milestone validation, verified
+completion, and full-redo reopen use the same boundary. Legacy hierarchy reads
+and public responses remain the compatibility contract until a later,
+separately proven read-authority cutover.
 
 ## Command boundary
 
@@ -60,8 +61,8 @@ commands, or orchestration modules.
 - S04 makes terminal Task reopen ordering explicit. Canonical
   `completed/cancelled -> ready` commits with legacy `pending`; the later claim
   owns a separate `ready -> in_progress` revision.
-- S05 owns Slice complete/cancel/reopen/reset. Milestone lifecycle commands
-  remain deferred to S06; do not infer milestone convergence from Slice proof.
+- S05 owns Slice complete/cancel/reopen/reset. S06 adds Milestone validation,
+  completion, and full-redo reopen without changing production read authority.
 
 ## S05 Slice lifecycle boundary
 
@@ -91,20 +92,45 @@ commands, or orchestration modules.
   revision or Authority Epoch, deep mismatch, active descendant, or writer
   failure leaves the hierarchy and operation ledger unchanged.
 
-### Deferred boundaries
+## S06 Milestone lifecycle boundary
 
-- `gsd_complete_milestone` and `gsd_milestone_reopen` still lack the Slice
-  operation's revision/Authority-Epoch fence, durable receipt, and descendant
-  convergence proof. S06 owns that cutover; park/unpark follows later.
+- `milestone.validate` records one immutable, source-bound validation receipt
+  with its Attempt, Result, criteria, verdicts, evidence, and any genuine
+  subjective acceptance. Filesystem assessment prose cannot authorize adopted
+  Milestone completion.
+- `milestone.complete` revalidates that receipt, descendant terminality and
+  semantic parity, current cancellation Waivers, and the absence of active
+  Attempts in one transaction. It changes only the Milestone heads and emits
+  one `milestone.completed` receipt plus Projection Work.
+- `milestone.reopen` performs the established full redo in one transaction:
+  Milestone, Slices, and terminal Tasks return to canonical `ready` with their
+  legacy compatibility statuses; current cancellation Waivers are revoked and
+  immutable execution and evidence history remains intact.
+- Pi, workflow MCP names and aliases, auto, and recovery callers use shared
+  executors with stable private identity. Exact retry returns the stored
+  receipt; changed reuse conflicts. `stale`, `current`, and `superseded` report
+  projection delivery and operation ownership separately from mutation success.
+- Merge cleanup, startup journal replay, stuck artifact recovery, legacy event
+  reconciliation, PROJECT registration, and Markdown hierarchy import cannot
+  close an adopted Milestone. They may observe a current durable completion
+  receipt or retain explicit unadopted-import compatibility; SUMMARY,
+  VALIDATION, Git, and checked boxes never manufacture completion.
+
+### S07 and later boundaries
+
 - Slice completion proves each completed Task's tested source revision, but it
   does not yet record one integrated Slice source snapshot. Automated UAT runs
   after completion, and its structured result/source identity is not part of
   the `slice.completed` receipt.
-- Legacy Slice cascade helpers remain for compatibility tests and later
-  cleanup. Canonical read cutover and elimination of unexplained shadow drift
-  remain separate work. Until that read cutover, active-Slice selection still
-  recognizes legacy `skipped` directly; S07 must consume the current Waiver
-  explicitly when canonical dependency eligibility replaces that adapter.
+- S07 compares exact legacy responses with normalized canonical state across
+  every runtime mode and produces the cutover dossier. It does not switch
+  production reads or dependency eligibility to canonical authority.
+- Production read cutover, canonical dependency eligibility, prepared/settled
+  closeout effects, merge/publication settlement, park/unpark/discard,
+  projection-worker redesign, legacy cascade deletion, and compatibility
+  retirement remain later work. Until then active-Slice selection may still
+  recognize legacy `skipped`; the later cutover must consume its current Waiver
+  rather than infer satisfaction from that alias.
 
 ## Resume after an agent-owned abort
 
@@ -129,6 +155,27 @@ Do not cancel/reopen the Task, delete the abort, reset its budget, or edit the
 database directly. A stale action, duplicate resume, open blocker, running or
 later Attempt, mismatched Result, or missing repair evidence must fail without
 partial checkpoint or event residue.
+
+## Recover a Milestone lifecycle operation
+
+Milestone command failures remain agent-owned unless authority, access, or a
+genuinely subjective choice is unavailable. Interpret the structured result
+before choosing a repair:
+
+| Observation | Recovery |
+| --- | --- |
+| Validation, source, UAT, or evidence is missing or stale | Rerun the required automated verification against the current source, then retry completion through the normal command. |
+| A descendant is nonterminal, an Attempt is active, or a Waiver is missing | Settle or remediate that descendant through its own lifecycle operation, then retry. |
+| `stale: true` and `current: true` | Authority committed. Repair filesystem access or the projection obstruction and replay the exact invocation to deliver readable status. |
+| `superseded: true` | The receipt is historical. Do not repair its projection; inspect and follow the current lifecycle head. |
+| Canonical/legacy mismatch or corrupt receipt | Treat this as an invariant failure. Do not edit Markdown or use a generic status writer; forward-repair the database through an authorized remediation or restore verified database authority. |
+| Merge, journal, SUMMARY, or VALIDATION evidence claims an adopted ready Milestone is complete | Treat the legacy signal as non-authoritative and dispatch normal validation/completion. |
+| Database unavailable | Restore database access before any mutation. Files are not a fallback authority. |
+| PROJECT registration fails | Repair the database-side cause and retry. The failed save leaves no new PROJECT artifact; adopted checkbox state is rebuilt from the database. |
+
+An exact replay uses the original private idempotency key and unchanged request.
+If intent changed, issue a new command identity; do not reuse a key with a
+different payload.
 
 ## S04 recovery convergence matrix
 
@@ -186,6 +233,41 @@ merely because the database state is current.
 Use these read-only diagnostics against the authoritative database:
 
 ```sql
+-- Current Milestone legacy/canonical pair and the operation that owns it.
+SELECT milestone.id, milestone.status AS legacy_status,
+       lifecycle.lifecycle_status AS canonical_status,
+       lifecycle.lifecycle_id, lifecycle.last_operation_id,
+       lifecycle.last_project_revision,
+       operation.operation_type, operation.source_transport
+FROM milestones milestone
+LEFT JOIN workflow_item_lifecycles lifecycle
+  ON lifecycle.item_kind = 'milestone'
+ AND lifecycle.milestone_id = milestone.id
+ AND lifecycle.slice_id IS NULL
+ AND lifecycle.task_id IS NULL
+ AND lifecycle.project_id = (
+   SELECT project_id FROM project_authority WHERE singleton = 1
+ )
+LEFT JOIN workflow_operations operation
+  ON operation.operation_id = lifecycle.last_operation_id
+WHERE milestone.id = :milestone_id;
+
+-- Immutable validation/completion/reopen lineage for that Milestone.
+SELECT event.project_revision, operation.operation_type,
+       event.event_type, event.operation_id, event.event_id
+FROM workflow_domain_events event
+JOIN workflow_operations operation
+  ON operation.operation_id = event.operation_id
+ AND operation.project_id = event.project_id
+WHERE event.entity_type = 'milestone'
+  AND event.entity_id = :milestone_id
+  AND event.event_type IN (
+    'milestone.validation.recorded',
+    'milestone.completed',
+    'milestone.reopened'
+  )
+ORDER BY event.project_revision, event.event_index;
+
 -- Current Task lifecycle plus immutable Attempt/Result lineage.
 SELECT lifecycle.lifecycle_status, attempt.attempt_number,
        attempt.retry_of_attempt_id, attempt.attempt_state,
@@ -308,16 +390,15 @@ ORDER BY resumed.project_revision DESC;
 
 ## Automated UAT and closeout
 
-Run the capstone plus the adjacent recovery, auto/custom verification, MCP, UOK,
-projection, and compatibility suites. UAT should execute the live runtime or
-browser path whenever automation can observe it; a human decision is reserved
-for subjective acceptance or unavailable authority/access. Close S05 only when
-the DB contains the Slice operation/event, descendant publication proof, Q8
-gate run, current Projection Work state, hosted-CI evidence, and passing UAT for
-the exact merged source. Slice completion currently proves each completed
-Task's tested source revision; one integrated Slice source snapshot and UAT
-identity are deferred rather than implied. Markdown status alone never
-satisfies closeout.
+Run the Milestone capstone plus adjacent validation, recovery, transport,
+projection, worktree, and compatibility suites. UAT should execute the live
+runtime or browser path whenever automation can observe it; a human decision is
+reserved for subjective acceptance or unavailable authority/access. Close S06
+only when the database contains the exact operation/event/evidence lineage,
+current Projection Work state, hosted-CI evidence, and passing UAT for the exact
+merged source. Record that post-merge run through the normal
+Attempt/Result/Verdict/Evidence path. Markdown status alone never satisfies
+closeout.
 
 ## Verification loop
 
@@ -326,29 +407,27 @@ Run the smallest focused gate while editing, then the adjacent contract matrix:
 ```sh
 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --experimental-strip-types --test \
-  src/resources/extensions/gsd/tests/slice-completion-domain-operation.test.ts \
-  src/resources/extensions/gsd/tests/slice-lifecycle-domain-operations.test.ts \
-  src/resources/extensions/gsd/tests/slice-reopen-domain-operation.test.ts \
-  src/resources/extensions/gsd/tests/slice-lifecycle-convergence.test.ts \
-  src/resources/extensions/gsd/tests/slice-lifecycle-multiprocess-contention.test.ts \
-  src/resources/extensions/gsd/tests/slice-lifecycle-executor-identity.test.ts \
+  src/resources/extensions/gsd/tests/milestone-lifecycle-capstone.test.ts \
+  src/resources/extensions/gsd/tests/milestone-validation-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/milestone-subjective-uat-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/milestone-closeout-readiness.test.ts \
+  src/resources/extensions/gsd/tests/milestone-completion-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/milestone-reopen-domain-operation.test.ts \
+  src/resources/extensions/gsd/tests/milestone-reopen-projection-fencing.test.ts \
+  src/resources/extensions/gsd/tests/milestone-lifecycle-rebuild.test.ts \
+  src/resources/extensions/gsd/tests/milestone-closeout-fencing.test.ts \
+  src/resources/extensions/gsd/tests/auto-worktree-merge-db-ready.test.ts \
+  src/resources/extensions/gsd/tests/auto-recovery.test.ts \
+  src/resources/extensions/gsd/tests/workflow-reconcile.test.ts \
   src/resources/extensions/gsd/tests/workflow-authority-faults.test.ts
 pnpm exec tsx --test \
   src/resources/extensions/gsd/tests/workflow-tool-executors.test.ts \
-  src/resources/extensions/gsd/tests/task-recovery-convergence.test.ts \
-  src/resources/extensions/gsd/tests/recovery-policy.test.ts \
-  src/resources/extensions/gsd/tests/task-recovery-writers.test.ts \
-  src/resources/extensions/gsd/tests/task-recovery-domain-operation.test.ts \
-  src/resources/extensions/gsd/tests/auto-task-execution-cutover.test.ts \
-  src/resources/extensions/gsd/tests/custom-task-host-verification.test.ts \
-  src/resources/extensions/gsd/tests/task-completion-executor-identity.test.ts \
   packages/mcp-server/src/workflow-tools.test.ts \
-  src/resources/extensions/gsd/tests/uok-gate-runner.test.ts \
-  src/resources/extensions/gsd/tests/uok-loop-adapter-writer.test.ts \
-  src/resources/extensions/gsd/tests/projection-no-plan-overwrite.test.ts \
-  src/resources/extensions/gsd/tests/lifecycle-command-writers.test.ts \
+  packages/daemon/src/local-tool-executor.test.ts \
+  packages/gsd-cloud/src/cloud-runtime.test.ts \
+  packages/gsd-cloud/src/executors/gsd-pi-executor.test.ts \
+  packages/gsd-cloud/src/executors/mcp-stdio-client.test.ts \
   src/resources/extensions/gsd/tests/db-lifecycle-foundation.test.ts \
-  src/resources/extensions/gsd/tests/db-projection-closeout-foundation.test.ts \
   src/resources/extensions/gsd/tests/domain-operation.test.ts \
   src/resources/extensions/gsd/tests/single-writer-invariant.test.ts
 pnpm run test:compile
@@ -359,8 +438,11 @@ pnpm run typecheck:extensions
 pnpm run baseline:workflow-authority
 pnpm run baseline:refactor:gate
 pnpm run test:changed:src
+pnpm run verify:fast
 ```
 
-Before merging, also run `pnpm run verify:merge`. For every new invariant, prove
-the corresponding test fails under a temporary sabotage, restore the source,
-and rerun the focused gate.
+Before merging, also run `pnpm run verify:merge`; it includes the required build
+and full local merge-gate parity. For every new invariant, prove the
+corresponding test fails under a temporary sabotage, restore the source, and
+rerun the focused gate. After merge, rerun the capstone against the merged
+source revision and persist that exact evidence before closeout.
