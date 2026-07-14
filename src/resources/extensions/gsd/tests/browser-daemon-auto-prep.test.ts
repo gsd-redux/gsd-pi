@@ -8,9 +8,11 @@ import {
   teardownWarmedBrowserDaemons,
 } from "../browser-daemon-auto-prep.ts";
 import { commitBrowserEngineResolution } from "../../browser-tools/engine/selection.ts";
-import { resolveGsdBrowserCliAvailability } from "../../shared/gsd-browser-cli.ts";
 
-const GSD_BROWSER_ENGINE = { GSD_BROWSER_ENGINE: "gsd-browser" } as const;
+const GSD_BROWSER_ENGINE = {
+  GSD_BROWSER_ENGINE: "gsd-browser",
+  GSD_BROWSER_MCP_COMMAND: "/fixture/gsd-browser",
+} as const;
 
 test("shouldWarmBrowserDaemonForUat skips artifact-driven UAT", () => {
   assert.equal(
@@ -23,12 +25,7 @@ test("shouldWarmBrowserDaemonForUat skips artifact-driven UAT", () => {
   );
 });
 
-test("shouldWarmBrowserDaemonForUat enables Claude Code browser UAT when gsd-browser is available", (t) => {
-  const availability = resolveGsdBrowserCliAvailability();
-  if (!availability.available) {
-    t.skip("bundled gsd-browser CLI unavailable");
-  }
-
+test("shouldWarmBrowserDaemonForUat enables Claude Code browser UAT when gsd-browser is configured", () => {
   assert.equal(
     shouldWarmBrowserDaemonForUat({
       uatType: "browser-executable",
@@ -41,12 +38,7 @@ test("shouldWarmBrowserDaemonForUat enables Claude Code browser UAT when gsd-bro
   );
 });
 
-test("shouldWarmBrowserDaemonForUat enables warm-up for Claude Code oauth/apiKey when engine is gsd-browser", (t) => {
-  const availability = resolveGsdBrowserCliAvailability();
-  if (!availability.available) {
-    t.skip("bundled gsd-browser CLI unavailable");
-  }
-
+test("shouldWarmBrowserDaemonForUat enables warm-up for Claude Code oauth/apiKey when engine is gsd-browser", () => {
   for (const sessionAuthMode of ["oauth", "apiKey"] as const) {
     assert.equal(
       shouldWarmBrowserDaemonForUat({

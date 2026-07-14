@@ -10,6 +10,7 @@ import {
   ensureProjectWorkflowMcpConfig,
   GSD_BROWSER_MCP_SERVER_NAME,
   GSD_WORKFLOW_MCP_SERVER_NAME,
+  resolveBundledGsdBrowserCliPath,
 } from "../mcp-project-config.ts";
 
 test("ensureProjectWorkflowMcpConfig creates .mcp.json with workflow and browser servers", () => {
@@ -184,7 +185,7 @@ test("buildProjectBrowserMcpServerConfig prefers newer gsd-browser on PATH", () 
   }
 });
 
-test("buildProjectBrowserMcpServerConfig keeps bundled browser when PATH version is older", () => {
+test("buildProjectBrowserMcpServerConfig selects the runnable browser when PATH version is older", () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-mcp-browser-"));
 
   try {
@@ -192,9 +193,15 @@ test("buildProjectBrowserMcpServerConfig keeps bundled browser when PATH version
       GSD_BROWSER_PATH_VERSION: "0.0.1",
     });
 
-    assert.equal(config?.command, process.execPath);
-    assert.match(config?.args?.[0] ?? "", /@opengsd[\/\\]gsd-browser[\/\\]bin[\/\\]gsd-browser/);
-    assert.equal(config?.args?.[1], "mcp");
+    const bundledBrowser = resolveBundledGsdBrowserCliPath();
+    if (bundledBrowser) {
+      assert.equal(config?.command, process.execPath);
+      assert.equal(config?.args?.[0], bundledBrowser);
+      assert.equal(config?.args?.[1], "mcp");
+    } else {
+      assert.equal(config?.command, "gsd-browser");
+      assert.equal(config?.args?.[0], "mcp");
+    }
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }

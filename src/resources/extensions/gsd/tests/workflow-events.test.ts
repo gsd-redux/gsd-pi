@@ -51,7 +51,7 @@ test('workflow-events: appendEvent from canonical worktree writes project ledger
     const worktreeLog = path.join(worktree, '.gsd', 'event-log.jsonl');
     assert.ok(fs.existsSync(projectLog), 'project event ledger should exist');
     assert.equal(fs.existsSync(worktreeLog), false, 'worktree-local event log should not be the append target');
-    assert.equal(workflowEventLogPath(worktree), projectLog);
+    assert.equal(fs.realpathSync(workflowEventLogPath(worktree)), fs.realpathSync(projectLog));
   } finally {
     cleanupDir(base);
   }

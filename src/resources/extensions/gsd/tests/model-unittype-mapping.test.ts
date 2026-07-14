@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { resolveExpectedArtifactPath } from "../auto-artifact-paths.ts";
@@ -141,7 +141,11 @@ test("discuss-slice resolves to the slice context artifact path", () => {
   try {
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
     const path = resolveExpectedArtifactPath("discuss-slice", "M001/S01", base);
-    assert.equal(path, join(realpathSync(base), ".gsd", "milestones", "M001", "slices", "S01", "S01-CONTEXT.md"));
+    assert.ok(path);
+    assert.equal(
+      join(realpathSync(dirname(path)), basename(path)),
+      join(realpathSync(base), ".gsd", "milestones", "M001", "slices", "S01", "S01-CONTEXT.md"),
+    );
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

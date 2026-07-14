@@ -86,16 +86,24 @@ remediation_round: 1
 Test fixture
 `;
   writeFileSync(path, content, "utf-8");
+  insertAssessment({
+    path,
+    milestoneId: "M001",
+    sliceId: null,
+    taskId: null,
+    status: verdict,
+    scope: "milestone-validation",
+    fullContent: content,
+  });
   invalidateAllCaches();
 }
 
 function writeWorktreeValidationFile(verdict: string): void {
   const worktreeRoot = join(tempDir, ".gsd", "worktrees", "M001");
+  const path = join(worktreeRoot, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
   mkdirSync(join(worktreeRoot, ".gsd", "milestones", "M001"), { recursive: true });
   writeFileSync(join(worktreeRoot, ".git"), "gitdir: ../.git/worktrees/M001\n", "utf-8");
-  writeFileSync(
-    join(worktreeRoot, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
-    `---
+  const content = `---
 verdict: ${verdict}
 remediation_round: 1
 ---
@@ -104,9 +112,17 @@ remediation_round: 1
 
 ## Verdict Rationale
 Worktree fixture
-`,
-    "utf-8",
-  );
+`;
+  writeFileSync(path, content, "utf-8");
+  insertAssessment({
+    path,
+    milestoneId: "M001",
+    sliceId: null,
+    taskId: null,
+    status: verdict,
+    scope: "milestone-validation",
+    fullContent: content,
+  });
   invalidateAllCaches();
   clearPathCache();
 }
@@ -206,7 +222,7 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     assert.equal(pauseAutoMock.mock.callCount(), 0);
   });
 
-  test("continues when pass validation exists under canonical worktree projection", async () => {
+  test("continues when DB pass references the canonical worktree projection", async () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
     writeWorktreeValidationFile("pass");
