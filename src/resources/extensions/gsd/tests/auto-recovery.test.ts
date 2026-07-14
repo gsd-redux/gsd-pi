@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, diagnoseWorktreeIntegrityFailure, buildLoopRemediationSteps, writeBlockerPlaceholder, refreshRecoveryDbForArtifact, writeReactiveExecuteBlocker } from "../auto-recovery.ts";
 import { resolveMilestoneFile } from "../paths.ts";
-import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult } from "../gsd-db.ts";
+import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult, updateMilestoneStatus } from "../gsd-db.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
 import { internalExecutionInvocation } from "../execution-invocation.ts";
 import { readEvents } from "../workflow-events.ts";
@@ -116,6 +116,119 @@ function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
 
 function runGit(base: string, args: string[]): void {
   execFileSync("git", args, { cwd: base, stdio: ["ignore", "pipe", "pipe"] });
+}
+
+function makeCompleteMilestoneRecoveryProject(): string {
+  const base = mkdtempSync(join(tmpdir(), "auto-recovery-adopted-complete-ms-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  tmpDirs.push(base);
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Done Slice",
+    status: "complete",
+    risk: "low",
+    depends: [],
+  });
+  insertTask({
+    milestoneId: "M001",
+    sliceId: "S01",
+    id: "T01",
+    title: "Done Task",
+    status: "complete",
+  });
+  insertAssessment({
+    path: ".gsd/milestones/M001/M001-VALIDATION.md",
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\n---\n",
+  });
+  writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Complete-looking projection\n");
+  writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"), "---\nverdict: pass\n---\n");
+  runGit(base, ["init", "-b", "main"]);
+  runGit(base, ["config", "user.email", "test@example.com"]);
+  runGit(base, ["config", "user.name", "Test User"]);
+  writeFileSync(join(base, "README.md"), "# base\n");
+  runGit(base, ["add", "README.md"]);
+  runGit(base, ["commit", "-m", "init"]);
+  runGit(base, ["checkout", "-b", "milestone/M001"]);
+  writeFileSync(join(base, "feature.ts"), "export const shipped = true;\n");
+  runGit(base, ["add", "feature.ts"]);
+  runGit(base, ["commit", "-m", "feat: implementation evidence"]);
+  return base;
+}
+
+function completeAdoptedMilestoneWithReceipt(): string {
+  const completedAt = "2026-07-14T12:00:00.000Z";
+  const fence = readDomainOperationFence();
+  const operation = executeDomainOperation({
+    operationType: "milestone.complete",
+    idempotencyKey: "test:auto-recovery:milestone-complete",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId: "M001" },
+  }, (context) => {
+    updateMilestoneStatus("M001", "complete", completedAt);
+    const lifecycle = adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId: "M001",
+      lifecycleStatus: "completed",
+      adoptedFromStatus: "completed",
+    });
+    return {
+      events: [{
+        eventType: "milestone.completed",
+        entityType: "milestone",
+        entityId: "M001",
+        payload: {
+          milestoneLifecycleId: lifecycle.lifecycleId,
+          completedAt,
+          closeout: {
+            title: "Milestone",
+            oneLiner: "Complete",
+            narrative: "Completed through a durable receipt.",
+            successCriteriaResults: "Passed.",
+            definitionOfDoneResults: "Passed.",
+            requirementOutcomes: "Passed.",
+            keyDecisions: [],
+            keyFiles: [],
+            lessonsLearned: [],
+            followUps: "",
+            deviations: "",
+          },
+        },
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: "lifecycle/m001",
+        projectionKind: "milestone-lifecycle",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  return operation.operationId;
+}
+
+function milestoneLifecycleHead(): {
+  lifecycleStatus: string;
+  lastOperationId: string;
+} {
+  const row = _getAdapter()!.prepare(`
+    SELECT lifecycle_status, last_operation_id
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone' AND milestone_id = 'M001'
+      AND slice_id IS NULL AND task_id IS NULL
+  `).get();
+  assert.ok(row, "canonical Milestone lifecycle fixture must exist");
+  return {
+    lifecycleStatus: String(row["lifecycle_status"]),
+    lastOperationId: String(row["last_operation_id"]),
+  };
 }
 
 afterEach(() => {
@@ -555,6 +668,54 @@ test("refreshRecoveryDbForArtifact closes complete-milestone DB row when artifac
   _setGhRateLimitOkForTest(null);
   _resetGhCache();
   _resetConfigCache();
+});
+
+test("adopted Milestone recovery cannot promote complete-looking artifacts into authority", () => {
+  const base = makeCompleteMilestoneRecoveryProject();
+  adoptCanonicalHistory({ itemKind: "milestone", milestoneId: "M001" }, "ready");
+  const revisionBefore = readDomainOperationFence().revision;
+
+  const result = refreshRecoveryDbForArtifact("complete-milestone", "M001", base);
+
+  assert.equal(result.ok, false, "artifact-only recovery must fail closed after canonical adoption");
+  if (!result.ok) {
+    assert.equal(result.fatal, true);
+    assert.match(`${result.reason} ${result.message}`, /adopt|canonical|receipt/i);
+  }
+  assert.equal(getMilestone("M001")?.status, "active");
+  assert.equal(milestoneLifecycleHead().lifecycleStatus, "ready");
+  assert.equal(readDomainOperationFence().revision, revisionBefore, "failed recovery must not advance authority");
+});
+
+test("adopted Milestone recovery fails loudly when legacy completion sabotages a ready canonical head", () => {
+  const base = makeCompleteMilestoneRecoveryProject();
+  adoptCanonicalHistory({ itemKind: "milestone", milestoneId: "M001" }, "ready");
+  updateMilestoneStatus("M001", "complete", "2026-07-14T12:00:00.000Z");
+  const revisionBefore = readDomainOperationFence().revision;
+
+  const result = refreshRecoveryDbForArtifact("complete-milestone", "M001", base);
+
+  assert.equal(result.ok, false, "legacy closed state cannot hide a nonterminal canonical head");
+  if (!result.ok) {
+    assert.equal(result.fatal, true);
+    assert.match(`${result.reason} ${result.message}`, /canonical|receipt|mismatch/i);
+  }
+  assert.equal(getMilestone("M001")?.status, "complete", "failed recovery must not rewrite the sabotaged legacy head");
+  assert.equal(readDomainOperationFence().revision, revisionBefore);
+  assert.equal(milestoneLifecycleHead().lifecycleStatus, "ready");
+});
+
+test("adopted Milestone recovery accepts a matching current completion receipt without new authority", () => {
+  const base = makeCompleteMilestoneRecoveryProject();
+  const completionOperationId = completeAdoptedMilestoneWithReceipt();
+  const revisionBefore = readDomainOperationFence().revision;
+
+  const result = refreshRecoveryDbForArtifact("complete-milestone", "M001", base);
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal(getMilestone("M001")?.status, "complete");
+  assert.equal(readDomainOperationFence().revision, revisionBefore, "receipt observation must not create another operation");
+  assert.equal(milestoneLifecycleHead().lastOperationId, completionOperationId);
 });
 
 test("refreshRecoveryDbForArtifact fails closed for complete-milestone without implementation evidence", () => {

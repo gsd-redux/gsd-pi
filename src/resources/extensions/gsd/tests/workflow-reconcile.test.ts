@@ -9,6 +9,7 @@ import { listConflicts, reconcileWorktreeLogs, resolveConflict } from "../workfl
 import {
   _getAdapter,
   closeDatabase,
+  getMilestone,
   getSlice,
   getTask,
   insertMilestone,
@@ -32,6 +33,59 @@ function makeTmpRepo(): { main: string; worktree: string } {
   mkdirSync(worktree, { recursive: true });
   tmpDirs.push(root);
   return { main, worktree };
+}
+
+function adoptMilestoneReady(): number {
+  const fence = readDomainOperationFence();
+  const operation = executeDomainOperation({
+    operationType: "test.milestone.ready",
+    idempotencyKey: `test:workflow-reconcile:milestone-ready:${fence.revision}`,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId: "M001" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId: "M001",
+      lifecycleStatus: "ready",
+      adoptedFromStatus: "ready",
+    });
+    return {
+      events: [{
+        eventType: "test.milestone.ready",
+        entityType: "milestone",
+        entityId: "M001",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/milestone/ready",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  return operation.resultingRevision;
+}
+
+function seedMilestoneForReconciliation(main: string, adopted: boolean): number | null {
+  mkdirSync(join(main, ".gsd"), { recursive: true });
+  openDatabase(join(main, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "complete" });
+  const revision = adopted ? adoptMilestoneReady() : null;
+  closeDatabase();
+  return revision;
+}
+
+function milestoneLifecycleStatus(): string | undefined {
+  return _getAdapter()?.prepare(`
+    SELECT lifecycle_status FROM workflow_item_lifecycles
+    WHERE item_kind = 'milestone' AND milestone_id = 'M001'
+      AND slice_id IS NULL AND task_id IS NULL
+  `).get()?.["lifecycle_status"] as string | undefined;
 }
 
 afterEach(() => {
@@ -239,4 +293,84 @@ test("legacy Slice completion cannot overwrite adopted canonical lifecycle histo
     `).get()?.lifecycle_status,
     "ready",
   );
+});
+
+test("legacy Milestone completion spellings and repeat reconciliation cannot overwrite adopted authority", () => {
+  const { main, worktree } = makeTmpRepo();
+  const adoptedRevision = seedMilestoneForReconciliation(main, true);
+  assert.notEqual(adoptedRevision, null);
+
+  appendEvent(worktree, {
+    cmd: "complete-milestone",
+    params: { milestoneId: "M001" },
+    ts: "2026-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+  appendEvent(worktree, {
+    cmd: "complete_milestone",
+    params: { milestoneId: "M001" },
+    ts: "2026-01-01T00:01:00.000Z",
+    actor: "agent",
+  });
+
+  const first = reconcileWorktreeLogs(main, worktree);
+  const second = reconcileWorktreeLogs(main, worktree);
+
+  assert.equal(first.autoMerged, 2);
+  assert.equal(second.autoMerged, 0, "the converged ledger must not redeliver the legacy events");
+  assert.equal(getMilestone("M001")?.status, "active");
+  assert.equal(readDomainOperationFence().revision, adoptedRevision);
+  assert.equal(milestoneLifecycleStatus(), "ready");
+});
+
+test("unadopted legacy Milestone completion remains an explicit reconciliation compatibility path", () => {
+  const { main, worktree } = makeTmpRepo();
+  seedMilestoneForReconciliation(main, false);
+
+  appendEvent(worktree, {
+    cmd: "complete-milestone",
+    params: { milestoneId: "M001" },
+    ts: "2026-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  reconcileWorktreeLogs(main, worktree);
+
+  assert.equal(getMilestone("M001")?.status, "complete");
+});
+
+test("resolving a conflict to an adopted legacy Milestone completion is mutation-free", () => {
+  const { main, worktree } = makeTmpRepo();
+  const adoptedRevision = seedMilestoneForReconciliation(main, true);
+  assert.notEqual(adoptedRevision, null);
+
+  for (const base of [main, worktree]) {
+    appendEvent(base, {
+      cmd: "plan-milestone",
+      params: { milestoneId: "M001", title: "Base Milestone" },
+      ts: "2026-01-01T00:00:00.000Z",
+      actor: "agent",
+    });
+  }
+  appendEvent(main, {
+    cmd: "plan-milestone",
+    params: { milestoneId: "M001", title: "Main edit" },
+    ts: "2026-01-01T00:01:00.000Z",
+    actor: "agent",
+  });
+  appendEvent(worktree, {
+    cmd: "complete-milestone",
+    params: { milestoneId: "M001" },
+    ts: "2026-01-01T00:01:00.000Z",
+    actor: "agent",
+  });
+
+  const conflict = reconcileWorktreeLogs(main, worktree);
+  assert.equal(conflict.conflicts.length, 1);
+
+  resolveConflict(main, worktree, "milestone:M001", "worktree");
+
+  assert.equal(getMilestone("M001")?.status, "active");
+  assert.equal(readDomainOperationFence().revision, adoptedRevision);
+  assert.equal(milestoneLifecycleStatus(), "ready");
 });
