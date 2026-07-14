@@ -28,6 +28,7 @@ import {
   PlanningGuardError,
   planningOperationPayload,
 } from "../planning-domain-operation.js";
+import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
 
 export interface ReplanSliceTaskInput {
   taskId: string;
@@ -235,6 +236,14 @@ export async function handleReplanSlice(
           }
           if (completedTaskIds.has(taskId)) {
             throw new PlanningGuardError(`cannot remove completed task ${taskId}`);
+          }
+          const latestAttempt = readLatestTaskAttempt({
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId,
+          });
+          if (latestAttempt?.state === "running") {
+            throw new PlanningGuardError(`cannot remove task ${taskId} while it has a running Attempt`);
           }
           const legacyLifecycleStatus = normalizeLegacyLifecycleStatus(task.status);
           const observedLifecycleStatus = legacyLifecycleStatus ?? "ready";

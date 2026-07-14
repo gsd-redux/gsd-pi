@@ -21,8 +21,22 @@ import {
   insertSlice,
   insertTask,
 } from '../gsd-db.ts';
-import { handleCompleteSlice } from '../tools/complete-slice.ts';
+import {
+  handleCompleteSlice as handleCompleteSliceWithInvocation,
+} from '../tools/complete-slice.ts';
+import { internalExecutionInvocation } from '../execution-invocation.ts';
 import type { CompleteSliceParams } from '../types.ts';
+
+let completeSliceInvocationSequence = 0;
+function handleCompleteSlice(
+  params: Parameters<typeof handleCompleteSliceWithInvocation>[0],
+  basePath: string,
+  invocation = internalExecutionInvocation(
+    `test/complete-slice-verification-gate/${++completeSliceInvocationSequence}`,
+  ),
+) {
+  return handleCompleteSliceWithInvocation(params, basePath, invocation);
+}
 
 function tempDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-blocked-gate-'));

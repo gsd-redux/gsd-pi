@@ -25,8 +25,22 @@ import {
   updateSliceStatus,
   updateTaskStatus,
 } from "../gsd-db.ts";
-import { handleSkipSlice } from "../tools/skip-slice.ts";
+import { internalExecutionInvocation } from "../execution-invocation.ts";
+import {
+  handleSkipSlice as handleSkipSliceWithInvocation,
+  type SkipSliceParams,
+} from "../tools/skip-slice.ts";
 import { skipSliceCascade } from "../db/writers/cascades.ts";
+
+let invocationSequence = 0;
+
+function handleSkipSlice(params: SkipSliceParams) {
+  invocationSequence += 1;
+  return handleSkipSliceWithInvocation(
+    params,
+    internalExecutionInvocation(`test/skip-slice/${invocationSequence}`),
+  );
+}
 
 describe("handleSkipSlice cascades skip to tasks (#4375)", () => {
   let dir: string;

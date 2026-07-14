@@ -12,15 +12,16 @@ import { atomicWriteSync } from "./atomic-write.js";
 import { parseUnitId } from "./unit-id.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
-import { gsdRoot, resolveTasksDir, resolveSlicePath, resolveSliceFile, resolveTaskFile, buildTaskFileName, buildSliceFileName } from "./paths.js";
+import { gsdRoot, resolveTasksDir, resolveSlicePath, resolveTaskFile, buildTaskFileName } from "./paths.js";
 import { sendDesktopNotification } from "./notifications.js";
 import { getDb, getTask, getSlice, getSliceTasks } from "./gsd-db.js";
-import { renderPlanCheckboxes, renderRoadmapCheckboxes } from "./markdown-renderer.js";
+import { renderPlanCheckboxes } from "./markdown-renderer.js";
 import { UNIT_REGISTRY } from "./unit-registry.js";
 import { reopenTask } from "./task-lifecycle-domain-operation.js";
-import { reopenSlice } from "./slice-lifecycle-domain-operation.js";
 import { internalExecutionInvocation } from "./execution-invocation.js";
 import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
+import { executeSliceReopen } from "./tools/workflow-tool-executors.js";
+import { isCurrentSliceReopenOperation } from "./slice-lifecycle-domain-operation.js";
 
 const UNDO_TASK_REOPEN_REASON = "Task reopened by an explicit undo command";
 const RESET_SLICE_REOPEN_REASON = "Slice reopened by an explicit full-redo reset command";
@@ -83,8 +84,39 @@ function undoTaskIdempotencyKey(mid: string, sid: string, tid: string, state: Un
   return `internal:undo:task.reopen:${taskStateDigest(mid, sid, tid, state)}`;
 }
 
-function resetSliceIdempotencyKey(mid: string, sid: string, status: string, completedAt: string | null): string {
-  const digest = createHash("sha256").update(`${mid}/${sid}\n${status}\n${completedAt ?? ""}`).digest("hex");
+function resolveResetSliceIdempotencyKey(mid: string, sid: string, status: string, completedAt: string | null): string {
+  const lifecycle = getDb().prepare(`
+    SELECT lifecycle.lifecycle_status, lifecycle.last_operation_id,
+           operation.operation_type, operation.idempotency_key, event.payload_json
+    FROM workflow_item_lifecycles lifecycle
+    LEFT JOIN workflow_operations operation
+      ON operation.operation_id = lifecycle.last_operation_id
+    LEFT JOIN workflow_domain_events event
+      ON event.operation_id = operation.operation_id
+     AND event.event_type = 'slice.reopened'
+    WHERE lifecycle.item_kind = 'slice'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id IS NULL
+  `).get({
+    ":milestone_id": mid,
+    ":slice_id": sid,
+  }) as Record<string, unknown> | undefined;
+  if (
+    lifecycle?.["lifecycle_status"] === "ready"
+    && lifecycle["operation_type"] === "slice.reopen"
+    && isCurrentSliceReopenOperation(String(lifecycle["last_operation_id"]), {
+      milestoneId: mid,
+      sliceId: sid,
+    })
+  ) {
+    const payload = JSON.parse(String(lifecycle["payload_json"])) as Record<string, unknown>;
+    if (payload["reason"] === RESET_SLICE_REOPEN_REASON) {
+      return String(lifecycle["idempotency_key"]);
+    }
+  }
+  const terminalIdentity = lifecycle?.["last_operation_id"] ?? completedAt ?? `legacy:${status}`;
+  const digest = createHash("sha256").update(`${mid}/${sid}\n${terminalIdentity}`).digest("hex");
   return `internal:undo:slice.reopen:${digest}`;
 }
 
@@ -436,58 +468,21 @@ export async function handleResetSlice(
     return;
   }
 
-  try {
-    reopenSlice({
-      invocation: internalExecutionInvocation(
-        resetSliceIdempotencyKey(mid, sid, slice.status, slice.completed_at),
-      ),
-      slice: { milestoneId: mid, sliceId: sid },
-      reason: RESET_SLICE_REOPEN_REASON,
-    });
-  } catch (error) {
-    ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+  const result = await executeSliceReopen(
+    { milestoneId: mid, sliceId: sid, reason: RESET_SLICE_REOPEN_REASON },
+    basePath,
+    internalExecutionInvocation(resolveResetSliceIdempotencyKey(mid, sid, slice.status, slice.completed_at)),
+  );
+  if (result.isError) {
+    ctx.ui.notify(String(result.details["error"] ?? result.content[0]?.text ?? "Slice reset failed"), "error");
     return;
   }
 
-  // Delete task summary files — projection cleanup, separate from the DB reset.
-  const tasksReset = tasks.length;
-  let summariesDeleted = 0;
-  for (const t of tasks) {
-    const summaryPath = resolveTaskFile(basePath, mid, sid, t.id, "SUMMARY");
-    if (summaryPath && existsSync(summaryPath)) {
-      unlinkSync(summaryPath);
-      summariesDeleted++;
-    }
-  }
-
-  // Delete slice summary and UAT files
-  // Use resolveSliceFile so the legacy S01-SUMMARY.md filename is found even
-  // when buildSliceFileName now returns the flat-phase 01-SUMMARY.md format.
-  let sliceFilesDeleted = 0;
-  for (const suffix of ["SUMMARY", "UAT"] as const) {
-    const filePath = resolveSliceFile(basePath, mid, sid, suffix);
-    if (filePath && existsSync(filePath)) {
-      unlinkSync(filePath);
-      sliceFilesDeleted++;
-    }
-  }
-
-  // Re-render plan + roadmap checkboxes
-  await renderPlanCheckboxes(basePath, mid, sid);
-  await renderRoadmapCheckboxes(basePath, mid);
-
-  // Invalidate caches
-  invalidateAllCaches();
-
-  const results: string[] = [
-    `Reset slice ${mid}/${sid} to "active".`,
-    `  - ${tasksReset} task(s) reset to "pending"`,
-  ];
-  if (summariesDeleted > 0) results.push(`  - ${summariesDeleted} task summary file(s) deleted`);
-  if (sliceFilesDeleted > 0) results.push(`  - ${sliceFilesDeleted} slice file(s) deleted (summary/UAT)`);
-  results.push("  - Plan + roadmap checkboxes re-rendered");
-
-  ctx.ui.notify(results.join("\n"), "success");
+  ctx.ui.notify([
+    `Reset slice ${mid}/${sid} to "in_progress".`,
+    `  - ${String(result.details["tasksReset"] ?? tasks.length)} task(s) reset to "pending"`,
+    "  - Slice projections refreshed",
+  ].join("\n"), "success");
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

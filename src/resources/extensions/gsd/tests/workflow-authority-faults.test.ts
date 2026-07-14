@@ -15,7 +15,10 @@ import {
   updateTaskStatus,
 } from "../gsd-db.js";
 import { relSliceFile } from "../paths.js";
-import { handleCompleteSlice } from "../tools/complete-slice.js";
+import {
+  handleCompleteSlice as handleCompleteSliceWithInvocation,
+} from "../tools/complete-slice.js";
+import { internalExecutionInvocation } from "../execution-invocation.js";
 import { seedSliceCompletionAuthority } from "./slice-completion-fixture.js";
 import { createWorkflowAuthorityFixture } from "./workflow-authority-fixture.js";
 import {
@@ -53,6 +56,17 @@ const COMPLETE_SLICE_PARAMS: CompleteSliceParams = {
   verification: "The focused authority matrix passed.",
   uatContent: "## UAT Type\n\n- UAT mode: runtime-executable\n\n## Result\n\nPassed.",
 };
+
+let completeSliceInvocationSequence = 0;
+function handleCompleteSlice(
+  params: Parameters<typeof handleCompleteSliceWithInvocation>[0],
+  basePath: string,
+  invocation = internalExecutionInvocation(
+    `test/workflow-authority-faults/complete-slice/${++completeSliceInvocationSequence}`,
+  ),
+) {
+  return handleCompleteSliceWithInvocation(params, basePath, invocation);
+}
 
 function seedCompletionBoundary(): void {
   updateTaskStatus("M001", "S02", "T01", "complete", "2026-07-11T00:00:00.000Z");

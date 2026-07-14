@@ -46,10 +46,14 @@ import {
 
 // ── Tool handlers ─────────────────────────────────────────────────────────
 import { handleCompleteTask } from "../../tools/complete-task.ts";
-import { handleCompleteSlice } from "../../tools/complete-slice.ts";
+import {
+  handleCompleteSlice as handleCompleteSliceWithInvocation,
+} from "../../tools/complete-slice.ts";
 import { handleCompleteMilestone } from "../../tools/complete-milestone.ts";
 import { handleReopenTask } from "../../tools/reopen-task.ts";
-import { handleReopenSlice } from "../../tools/reopen-slice.ts";
+import {
+  handleReopenSlice as handleReopenSliceWithInvocation,
+} from "../../tools/reopen-slice.ts";
 import { handleReopenMilestone } from "../../tools/reopen-milestone.ts";
 import { internalExecutionInvocation } from "../../execution-invocation.ts";
 import { seedSliceCompletionAuthority } from "../slice-completion-fixture.ts";
@@ -58,6 +62,24 @@ let reopenInvocationSequence = 0;
 function reopenInvocation() {
   reopenInvocationSequence += 1;
   return internalExecutionInvocation(`test/state-machine/reopen/${reopenInvocationSequence}`);
+}
+
+let completeSliceInvocationSequence = 0;
+function handleCompleteSlice(
+  params: Parameters<typeof handleCompleteSliceWithInvocation>[0],
+  basePath: string,
+  invocation = internalExecutionInvocation(
+    `test/state-machine/complete-slice/${++completeSliceInvocationSequence}`,
+  ),
+) {
+  return handleCompleteSliceWithInvocation(params, basePath, invocation);
+}
+
+function handleReopenSlice(
+  params: Parameters<typeof handleReopenSliceWithInvocation>[0],
+  basePath: string,
+) {
+  return handleReopenSliceWithInvocation(params, basePath, reopenInvocation());
 }
 
 // ── State derivation ──────────────────────────────────────────────────────

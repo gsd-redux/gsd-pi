@@ -53,6 +53,8 @@ import type { ReopenMilestoneParams } from "./reopen-milestone.js";
 import { handleReopenMilestone } from "./reopen-milestone.js";
 import type { ReopenSliceParams } from "./reopen-slice.js";
 import { handleReopenSlice } from "./reopen-slice.js";
+import type { SkipSliceParams } from "./skip-slice.js";
+import { handleSkipSlice } from "./skip-slice.js";
 import type { ReopenTaskParams } from "./reopen-task.js";
 import { handleReopenTask } from "./reopen-task.js";
 import type { ReassessRoadmapParams } from "./reassess-roadmap.js";
@@ -717,6 +719,7 @@ export interface TaskRecoveryResumeExecutorParams {
   evidence: Record<string, DomainJsonValue>;
 }
 export type ReopenSliceExecutorParams = ReopenSliceParams;
+export type SkipSliceExecutorParams = SkipSliceParams;
 export type ReopenMilestoneExecutorParams = ReopenMilestoneParams;
 export type ValidateMilestoneExecutorParams = ValidateMilestoneParams;
 export type ReassessRoadmapExecutorParams = ReassessRoadmapParams;
@@ -947,7 +950,8 @@ export async function executeTaskRecoveryResume(
 
 export async function executeSliceReopen(
   params: ReopenSliceExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -958,7 +962,7 @@ export async function executeSliceReopen(
     };
   }
   try {
-    const result = await handleReopenSlice(params, basePath);
+    const result = await handleReopenSlice(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error reopening slice: ${result.error}` }],
@@ -981,6 +985,74 @@ export async function executeSliceReopen(
     return {
       content: [{ type: "text", text: `Error reopening slice: ${msg}` }],
       details: { operation: "reopen_slice", error: msg },
+      isError: true,
+    };
+  }
+}
+
+export async function executeSkipSlice(
+  params: SkipSliceExecutorParams,
+  basePath: string,
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen(basePath);
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot skip slice." }],
+      details: { operation: "skip_slice", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  try {
+    const result = handleSkipSlice(params, invocation);
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: `Error: ${result.error}` }],
+        details: {
+          operation: "skip_slice",
+          error: result.error,
+          errorCode: result.errorCode ?? "skip_failed",
+        },
+        isError: true,
+      };
+    }
+
+    invalidateStateCache();
+    try {
+      const { rebuildState } = await import("../doctor.js");
+      await rebuildState(basePath);
+    } catch (err) {
+      logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+    }
+
+    let suffix = ` Cascaded ${result.tasksSkipped} task(s) to skipped. Auto-mode will advance past this slice.`;
+    if (result.wasAlreadySkipped) {
+      if (result.tasksSkipped > 0) {
+        suffix = ` (already skipped; cascaded ${result.tasksSkipped} leftover task(s) to skipped).`;
+      } else {
+        suffix = " (already skipped; no pending tasks to cascade).";
+      }
+    }
+    return {
+      content: [{
+        type: "text",
+        text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}.${suffix}`,
+      }],
+      details: {
+        operation: "skip_slice",
+        sliceId: params.sliceId,
+        milestoneId: params.milestoneId,
+        reason: params.reason,
+        tasksSkipped: result.tasksSkipped,
+        wasAlreadySkipped: result.wasAlreadySkipped,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `skip_slice tool failed: ${msg}`, { tool: "gsd_skip_slice", error: String(err) });
+    return {
+      content: [{ type: "text", text: `Error skipping slice: ${msg}` }],
+      details: { operation: "skip_slice", error: msg },
       isError: true,
     };
   }
@@ -1029,7 +1101,8 @@ export async function executeMilestoneReopen(
 
 export async function executeSliceComplete(
   params: SliceCompleteExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const unitGuard = blockIfWrongAutoUnit("complete-slice", "complete_slice");
   if (unitGuard) return unitGuard;
@@ -1113,7 +1186,7 @@ export async function executeSliceComplete(
       return r;
     }) as Array<{ id: string; what: string }>;
 
-    const result = await handleCompleteSlice(coerced as CompleteSliceParams, basePath);
+    const result = await handleCompleteSlice(coerced as CompleteSliceParams, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error completing slice: ${result.error}` }],

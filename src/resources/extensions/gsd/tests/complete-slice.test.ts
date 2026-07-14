@@ -18,13 +18,26 @@ import {
   updateMilestoneStatus,
   SCHEMA_VERSION,
 } from '../gsd-db.ts';
-import { handleCompleteSlice } from '../tools/complete-slice.ts';
+import { handleCompleteSlice as handleCompleteSliceWithInvocation } from '../tools/complete-slice.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
-import type { ExecutionInvocation } from '../execution-invocation.ts';
+import { internalExecutionInvocation, type ExecutionInvocation } from '../execution-invocation.ts';
 import type { CompleteSliceParams } from '../types.ts';
 import { seedSliceCompletionAuthority } from './slice-completion-fixture.ts';
 
 const { assertEq, assertTrue, assertMatch, report } = createTestContext();
+let completionCall = 0;
+
+function handleCompleteSlice(
+  params: CompleteSliceParams,
+  basePath: string,
+  invocation?: ExecutionInvocation,
+): ReturnType<typeof handleCompleteSliceWithInvocation> {
+  return handleCompleteSliceWithInvocation(
+    params,
+    basePath,
+    invocation ?? internalExecutionInvocation(`test:complete-slice:call:${++completionCall}`),
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -54,6 +67,17 @@ function cleanupDir(dirPath: string): void {
   } catch {
     // best effort
   }
+}
+
+function compatibilityEventCount(basePath: string, command: string): number {
+  const eventLogPath = path.join(basePath, '.gsd', 'event-log.jsonl');
+  return fs.readFileSync(eventLogPath, 'utf-8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as { cmd?: string })
+    .filter(event => event.cmd === command)
+    .length;
 }
 
 /**
@@ -122,12 +146,10 @@ Run the test suite and verify all assertions pass.
 }
 
 function completionInvocation(id: string): ExecutionInvocation {
-  return {
-    idempotencyKey: `test:complete-slice:${id}`,
-    sourceTransport: 'internal',
-    actorType: 'agent',
-    actorId: 'complete-slice-test',
-  };
+  return internalExecutionInvocation(
+    `test:complete-slice:${id}`,
+    { actorId: 'complete-slice-test' },
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -460,6 +482,29 @@ console.log('\n=== complete-slice: handler idempotency ===');
       'healthy duplicate should not rewrite the existing summary',
     );
   }
+  assertEq(
+    compatibilityEventCount(basePath, 'complete-slice'),
+    1,
+    'exact replay must not duplicate compatibility events',
+  );
+
+  let conflictThrown = false;
+  try {
+    await handleCompleteSlice(
+      { ...params, narrative: 'changed under the same invocation identity' },
+      basePath,
+      invocation,
+    );
+  } catch (error) {
+    conflictThrown = true;
+    assertMatch(String(error), /idempotency conflict/, 'changed payload reuse must conflict');
+  }
+  assertTrue(conflictThrown, 'changed payload reuse must throw an idempotency conflict');
+  assertEq(
+    compatibilityEventCount(basePath, 'complete-slice'),
+    1,
+    'changed payload conflict must not append compatibility events',
+  );
 
   // Verify only 1 slice row (not duplicated)
   const adapter = _getAdapter()!;

@@ -9,6 +9,7 @@ import { listConflicts, reconcileWorktreeLogs, resolveConflict } from "../workfl
 import {
   _getAdapter,
   closeDatabase,
+  getSlice,
   getTask,
   insertMilestone,
   insertSlice,
@@ -177,6 +178,65 @@ test("legacy Task events cannot overwrite adopted canonical lifecycle history", 
   assert.equal(getTask("M001", "S01", "T01")?.status, "pending");
   assert.equal(
     _getAdapter()?.prepare("SELECT lifecycle_status FROM workflow_item_lifecycles WHERE task_id = 'T01'").get()?.lifecycle_status,
+    "ready",
+  );
+});
+
+test("legacy Slice completion cannot overwrite adopted canonical lifecycle history", () => {
+  const { main, worktree } = makeTmpRepo();
+  mkdirSync(join(main, ".gsd"), { recursive: true });
+  openDatabase(join(main, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.slice.ready",
+    idempotencyKey: "test:workflow-reconcile:slice-ready",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { sliceId: "S01" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S01",
+      lifecycleStatus: "ready",
+      adoptedFromStatus: "pending",
+    });
+    return {
+      events: [{
+        eventType: "test.slice.ready",
+        entityType: "slice",
+        entityId: "M001/S01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/slice/ready",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  closeDatabase();
+
+  appendEvent(worktree, {
+    cmd: "complete-slice",
+    params: { milestoneId: "M001", sliceId: "S01" },
+    ts: "2026-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  reconcileWorktreeLogs(main, worktree);
+
+  assert.equal(getSlice("M001", "S01")?.status, "pending");
+  assert.equal(
+    _getAdapter()?.prepare(`
+      SELECT lifecycle_status FROM workflow_item_lifecycles
+      WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S01'
+    `).get()?.lifecycle_status,
     "ready",
   );
 });

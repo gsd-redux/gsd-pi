@@ -44,6 +44,31 @@ const TASK_STATE_EVENT_COMMANDS = new Set([
   "report_blocker",
 ]);
 
+const SLICE_STATE_EVENT_COMMANDS = new Set(["complete_slice"]);
+
+function hasAdoptedLifecycle(
+  itemKind: "task" | "slice",
+  params: Record<string, unknown>,
+): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1 AS present
+    FROM workflow_item_lifecycles
+    WHERE item_kind = :item_kind
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND (
+        (:task_id IS NULL AND task_id IS NULL)
+        OR task_id = :task_id
+      )
+    LIMIT 1
+  `).get({
+    ":item_kind": itemKind,
+    ":milestone_id": params["milestoneId"],
+    ":slice_id": params["sliceId"],
+    ":task_id": itemKind === "task" ? params["taskId"] : null,
+  }));
+}
+
 // ─── Replay Helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -105,24 +130,16 @@ function replayEvents(events: WorkflowEvent[]): void {
       logWarning("reconcile", `Event with non-string cmd skipped: ${JSON.stringify(event.cmd)}`);
       continue;
     }
-    if (TASK_STATE_EVENT_COMMANDS.has(cmd)) {
-      const canonicalLifecycle = getDb().prepare(`
-        SELECT 1 AS present
-        FROM workflow_item_lifecycles
-        WHERE item_kind = 'task'
-          AND milestone_id = :milestone_id
-          AND slice_id = :slice_id
-          AND task_id = :task_id
-        LIMIT 1
-      `).get({
-        ":milestone_id": p["milestoneId"],
-        ":slice_id": p["sliceId"],
-        ":task_id": p["taskId"],
-      });
-      if (canonicalLifecycle) {
-        logWarning("reconcile", `Ignoring legacy ${cmd} replay for canonically adopted Task ${p["milestoneId"]}/${p["sliceId"]}/${p["taskId"]}`);
-        continue;
-      }
+    let itemKind: "task" | "slice" | null = null;
+    if (TASK_STATE_EVENT_COMMANDS.has(cmd)) itemKind = "task";
+    else if (SLICE_STATE_EVENT_COMMANDS.has(cmd)) itemKind = "slice";
+    if (itemKind && hasAdoptedLifecycle(itemKind, p)) {
+      const taskSuffix = itemKind === "task" ? `/${p["taskId"]}` : "";
+      logWarning(
+        "reconcile",
+        `Ignoring legacy ${cmd} replay for canonically adopted ${itemKind} ${p["milestoneId"]}/${p["sliceId"]}${taskSuffix}`,
+      );
+      continue;
     }
     switch (cmd) {
       case "complete_task": {

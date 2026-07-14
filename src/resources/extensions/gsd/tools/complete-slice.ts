@@ -9,11 +9,10 @@
  * from the durable receipt. Projection failures never roll back authority.
  */
 
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import type { CompleteSliceParams } from "../types.js";
-import { setSliceSummaryMd } from "../gsd-db.js";
+import { getDb, setSliceSummaryMd } from "../gsd-db.js";
 import { clearPathCache, relSliceFile } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
 import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
@@ -213,7 +212,37 @@ ${params.uatContent}
 `;
 }
 
-function normalizeCloseout(params: CompleteSliceParams): SliceCompletionCloseout {
+function readPriorCloseout(
+  params: Pick<CompleteSliceParams, "milestoneId" | "sliceId">,
+  invocation: ExecutionInvocation,
+): SliceCompletionCloseout | undefined {
+  const query = (where: string, bindings: Record<string, string>) => getDb().prepare(`
+    SELECT event.payload_json
+    FROM workflow_domain_events event
+    JOIN workflow_operations operation ON operation.operation_id = event.operation_id
+    WHERE event.event_type = 'slice.completed'
+      AND event.entity_type = 'slice'
+      AND event.entity_id = :entity_id
+      AND ${where}
+    ORDER BY event.project_revision DESC
+    LIMIT 1
+  `).get({
+    ":entity_id": `${params.milestoneId}/${params.sliceId}`,
+    ...bindings,
+  }) as Record<string, unknown> | undefined;
+  const row = query(
+    "operation.idempotency_key = :idempotency_key",
+    { ":idempotency_key": invocation.idempotencyKey },
+  ) ?? query("1 = 1", {});
+  if (!row) return undefined;
+  const payload = JSON.parse(String(row["payload_json"])) as { closeout?: SliceCompletionCloseout };
+  return payload.closeout;
+}
+
+function normalizeCloseout(
+  params: CompleteSliceParams,
+  prior?: SliceCompletionCloseout,
+): SliceCompletionCloseout {
   return {
     sliceTitle: params.sliceTitle,
     oneLiner: params.oneLiner,
@@ -224,19 +253,19 @@ function normalizeCloseout(params: CompleteSliceParams): SliceCompletionCloseout
     deviations: params.deviations ?? "None.",
     knownLimitations: params.knownLimitations ?? "None.",
     followUps: params.followUps ?? "None.",
-    provides: params.provides ?? [],
-    requires: params.requires ?? [],
-    affects: params.affects ?? [],
-    keyFiles: params.keyFiles ?? [],
-    keyDecisions: params.keyDecisions ?? [],
-    patternsEstablished: params.patternsEstablished ?? [],
-    observabilitySurfaces: params.observabilitySurfaces ?? [],
-    drillDownPaths: params.drillDownPaths ?? [],
-    requirementsAdvanced: params.requirementsAdvanced ?? [],
-    requirementsValidated: params.requirementsValidated ?? [],
-    requirementsSurfaced: params.requirementsSurfaced ?? [],
-    requirementsInvalidated: params.requirementsInvalidated ?? [],
-    filesModified: params.filesModified ?? [],
+    provides: params.provides ?? prior?.provides ?? [],
+    requires: params.requires ?? prior?.requires ?? [],
+    affects: params.affects ?? prior?.affects ?? [],
+    keyFiles: params.keyFiles ?? prior?.keyFiles ?? [],
+    keyDecisions: params.keyDecisions ?? prior?.keyDecisions ?? [],
+    patternsEstablished: params.patternsEstablished ?? prior?.patternsEstablished ?? [],
+    observabilitySurfaces: params.observabilitySurfaces ?? prior?.observabilitySurfaces ?? [],
+    drillDownPaths: params.drillDownPaths ?? prior?.drillDownPaths ?? [],
+    requirementsAdvanced: params.requirementsAdvanced ?? prior?.requirementsAdvanced ?? [],
+    requirementsValidated: params.requirementsValidated ?? prior?.requirementsValidated ?? [],
+    requirementsSurfaced: params.requirementsSurfaced ?? prior?.requirementsSurfaced ?? [],
+    requirementsInvalidated: params.requirementsInvalidated ?? prior?.requirementsInvalidated ?? [],
+    filesModified: params.filesModified ?? prior?.filesModified ?? [],
   };
 }
 
@@ -251,7 +280,7 @@ function normalizeCloseout(params: CompleteSliceParams): SliceCompletionCloseout
 export async function handleCompleteSlice(
   params: CompleteSliceParams,
   basePath: string,
-  invocation?: ExecutionInvocation,
+  invocation: ExecutionInvocation,
 ): Promise<CompleteSliceResult | { error: string }> {
   // ── Validate required fields ────────────────────────────────────────────
   if (!params.sliceId || typeof params.sliceId !== "string" || params.sliceId.trim() === "") {
@@ -318,17 +347,14 @@ export async function handleCompleteSlice(
     };
   }
 
-  const closeout = normalizeCloseout(params);
+  const closeout = normalizeCloseout(params, readPriorCloseout(params, invocation));
   let completion: ReturnType<typeof completeSlice>;
   try {
     completion = completeSlice({
-      invocation: invocation ?? {
-        idempotencyKey: `internal:complete-slice:${randomUUID()}`,
-        sourceTransport: "internal",
-        actorType: "agent",
-      },
+      invocation,
       slice: { milestoneId: params.milestoneId, sliceId: params.sliceId },
       closeout,
+      audit: { actorName: params.actorName, triggerReason: params.triggerReason },
     });
   } catch (error) {
     if (!(error instanceof SliceLifecycleValidationError)) throw error;

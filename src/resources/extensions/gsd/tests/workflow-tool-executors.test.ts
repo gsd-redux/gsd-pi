@@ -34,12 +34,14 @@ import {
   executeSummarySave,
   executeTaskComplete,
   executeMilestoneStatus,
-  executeSliceComplete,
-  executeSliceReopen,
+  executeSliceComplete as executeSliceCompleteWithInvocation,
+  executeSliceReopen as executeSliceReopenWithInvocation,
   executeValidateMilestone,
   executeUatResultSave,
 } from "../tools/workflow-tool-executors.ts";
+import { internalExecutionInvocation, type ExecutionInvocation } from "../execution-invocation.ts";
 import { internalPlanningInvocation } from "../planning-invocation.ts";
+import { seedSliceCompletionAuthority } from "./slice-completion-fixture.ts";
 import {
   initNotificationStore,
   readNotifications,
@@ -72,6 +74,31 @@ function executeReassessRoadmap(
   basePath: string,
 ) {
   return executeReassessRoadmapWithInvocation(params, basePath, internalPlanningInvocation());
+}
+
+let sliceLifecycleInvocationSequence = 0;
+
+function sliceLifecycleInvocation(operation: "complete" | "reopen"): ExecutionInvocation {
+  sliceLifecycleInvocationSequence += 1;
+  return internalExecutionInvocation(
+    `test/workflow-tool-executors/slice-${operation}/${sliceLifecycleInvocationSequence}`,
+  );
+}
+
+function executeSliceComplete(
+  params: Parameters<typeof executeSliceCompleteWithInvocation>[0],
+  basePath: string,
+  invocation = sliceLifecycleInvocation("complete"),
+) {
+  return executeSliceCompleteWithInvocation(params, basePath, invocation);
+}
+
+function executeSliceReopen(
+  params: Parameters<typeof executeSliceReopenWithInvocation>[0],
+  basePath: string,
+  invocation = sliceLifecycleInvocation("reopen"),
+) {
+  return executeSliceReopenWithInvocation(params, basePath, invocation);
 }
 
 function makeTmpBase(): string {
@@ -162,6 +189,28 @@ function seedSlice(milestoneId: string, sliceId: string, status: string): void {
   db.prepare(
     "INSERT OR REPLACE INTO slices (milestone_id, id, title, status, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(milestoneId, sliceId, `Slice ${sliceId}`, status, new Date().toISOString());
+}
+
+function seedCompletedTaskAuthority(input: {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  runId: string;
+}): void {
+  const db = _getAdapter();
+  if (!db) throw new Error("DB not open");
+  db.prepare(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, completed_at, sequence)
+    VALUES (?, ?, ?, ?, 'pending', NULL, 1)
+    ON CONFLICT(milestone_id, slice_id, id) DO UPDATE SET
+      status = 'pending', completed_at = NULL
+  `).run(input.milestoneId, input.sliceId, input.taskId, `Task ${input.taskId}`);
+  seedSliceCompletionAuthority({
+    milestoneId: input.milestoneId,
+    sliceId: input.sliceId,
+    completedTaskIds: [input.taskId],
+    runId: input.runId,
+  });
 }
 
 function writeRoadmap(base: string, milestoneId: string, sliceIds: string[]): void {
@@ -421,14 +470,12 @@ test("executeSliceComplete preserves omitted optional requirement arrays", async
         },
       ],
     }, base));
-    await inProjectDir(base, () => executeTaskComplete({
+    seedCompletedTaskAuthority({
       milestoneId: "M001",
       sliceId: "S01",
       taskId: "T01",
-      oneLiner: "done",
-      narrative: "done",
-      verification: "ok",
-    }, base));
+      runId: "requirement-preservation-initial",
+    });
 
     const result = await inProjectDir(base, () => executeSliceComplete({
       milestoneId: "M001",
@@ -454,14 +501,12 @@ test("executeSliceComplete preserves omitted optional requirement arrays", async
       reason: "validate idempotent overwrite behavior",
     }, base));
     assert.equal(reopenResult.details.operation, "reopen_slice");
-    await inProjectDir(base, () => executeTaskComplete({
+    seedCompletedTaskAuthority({
       milestoneId: "M001",
       sliceId: "S01",
       taskId: "T01",
-      oneLiner: "done (updated)",
-      narrative: "done (updated)",
-      verification: "ok",
-    }, base));
+      runId: "requirement-preservation-redo",
+    });
 
     const recallResult = await inProjectDir(base, () => executeSliceComplete({
       milestoneId: "M001",
@@ -1571,10 +1616,12 @@ test("executeSliceComplete coerces string enrichment entries and writes summary/
     seedMilestone("M001", "Milestone One");
     seedSlice("M001", "S01", "pending");
     writeRoadmap(base, "M001", ["S01"]);
-    const db = _getAdapter();
-    db!.prepare(
-      "INSERT OR REPLACE INTO tasks (milestone_id, slice_id, id, title, status) VALUES (?, ?, ?, ?, ?)",
-    ).run("M001", "S01", "T01", "Task T01", "complete");
+    seedCompletedTaskAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      runId: "string-enrichment",
+    });
 
     const rawParams = {
       milestoneId: "M001",
@@ -1612,10 +1659,12 @@ test("executeSliceComplete normalizes requirement object aliases (how -> proof/w
     seedMilestone("M001", "Milestone One");
     seedSlice("M001", "S01", "pending");
     writeRoadmap(base, "M001", ["S01"]);
-    const db = _getAdapter();
-    db!.prepare(
-      "INSERT OR REPLACE INTO tasks (milestone_id, slice_id, id, title, status) VALUES (?, ?, ?, ?, ?)",
-    ).run("M001", "S01", "T01", "Task T01", "complete");
+    seedCompletedTaskAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      runId: "requirement-aliases",
+    });
 
     const rawParams = {
       milestoneId: "M001",
@@ -1833,14 +1882,12 @@ test("executeReassessRoadmap writes assessment and updates roadmap projection", 
         },
       ],
     }, base));
-    await inProjectDir(base, () => executeTaskComplete({
+    seedCompletedTaskAuthority({
       milestoneId: "M004",
       sliceId: "S04",
       taskId: "T04",
-      oneLiner: "Completed task",
-      narrative: "Task finished.",
-      verification: "node --test",
-    }, base));
+      runId: "roadmap-reassessment",
+    });
     await inProjectDir(base, () => executeSliceComplete({
       milestoneId: "M004",
       sliceId: "S04",

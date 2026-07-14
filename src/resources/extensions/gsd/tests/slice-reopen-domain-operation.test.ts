@@ -2,7 +2,7 @@
 // File Purpose: Executable contracts for atomic full-redo Slice reopen Domain Operations.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -40,6 +40,18 @@ function rows(sql: string): Array<Record<string, unknown>> {
 
 function row(sql: string): Record<string, unknown> {
   return db().prepare(sql).get() ?? {};
+}
+
+function compatibilityEventCount(base: string, command: string): number {
+  const eventLogPath = join(base, ".gsd", "event-log.jsonl");
+  if (!existsSync(eventLogPath)) return 0;
+  return readFileSync(eventLogPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { cmd?: string })
+    .filter((event) => event.cmd === command)
+    .length;
 }
 
 function invocation(idempotencyKey: string): ExecutionInvocation {
@@ -347,8 +359,7 @@ test("public reopen performs one full-redo Slice Domain Operation and preserves 
     milestoneId: "M001",
     sliceId: "S01",
     reason: "Requirements changed, so the entire Slice must be redone.",
-    invocation: invocation("slice-reopen/public/full-redo"),
-  } as Parameters<typeof handleReopenSlice>[0] & { invocation: ExecutionInvocation }, base);
+  }, base, invocation("slice-reopen/public/full-redo"));
 
   assert.equal("error" in result, false, "public reopen must accept canonical terminal history");
   assert.equal(Number(row("SELECT revision FROM project_authority").revision), revisionBefore + 1);
@@ -369,6 +380,17 @@ test("public reopen performs one full-redo Slice Domain Operation and preserves 
   });
   assertFullRedoState();
   assert.deepEqual(taskEvidenceSnapshot(), historyBefore, "reopen must not rewrite prior evidence history");
+  assert.equal(compatibilityEventCount(base, "reopen-slice"), 1);
+
+  await assert.rejects(
+    handleReopenSlice({
+      milestoneId: "M001",
+      sliceId: "S01",
+      reason: "Changed reason under the same public invocation.",
+    }, base, invocation("slice-reopen/public/full-redo")),
+    /idempotency conflict/i,
+  );
+  assert.equal(compatibilityEventCount(base, "reopen-slice"), 1);
 });
 
 test("public reset is a compatibility adapter to the same atomic Slice reopen operation", async () => {
@@ -395,6 +417,175 @@ test("public reset is a compatibility adapter to the same atomic Slice reopen op
   assert.deepEqual(taskEvidenceSnapshot(), historyBefore, "reset must preserve immutable execution evidence");
 });
 
+test("reset retries the current reopen identity and repairs projections after a lost response", async () => {
+  const base = seedTerminalSlice("skipped");
+  const notifications: Array<{ message: string; level: string }> = [];
+  const ctx = {
+    ui: {
+      notify(message: string, level: string) {
+        notifications.push({ message, level });
+      },
+    },
+  };
+
+  await handleResetSlice("M001/S01 --force", ctx as never, {} as never, base);
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  const staleSummary = join(phaseDir, "01-01-SUMMARY.md");
+  const staleUat = join(phaseDir, "01-01-UAT.md");
+  writeFileSync(staleSummary, "# Stale summary\n");
+  writeFileSync(staleUat, "# Stale UAT\n");
+
+  await handleResetSlice("M001/S01 --force", ctx as never, {} as never, base);
+
+  assert.equal(notifications.at(-1)?.level, "success", notifications.at(-1)?.message);
+  assert.equal(existsSync(staleSummary), false, "retry must repair stale summary projection");
+  assert.equal(existsSync(staleUat), false, "retry must repair stale UAT projection");
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'slice.reopen'
+  `).count), 1, "retry must replay one reopen operation");
+  assert.equal(compatibilityEventCount(base, "reopen-slice"), 1, "retry must not duplicate compatibility events");
+});
+
+test("reset does not replay an old reopen after a descendant Task starts", async () => {
+  const base = seedTerminalSlice("skipped");
+  const notifications: Array<{ message: string; level: string }> = [];
+  const ctx = {
+    ui: {
+      notify(message: string, level: string) {
+        notifications.push({ message, level });
+      },
+    },
+  };
+
+  await handleResetSlice("M001/S01 --force", ctx as never, {} as never, base);
+  const running = claimTaskAttempt({
+    invocation: invocation("slice-reset/descendant-started"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: insertClaimedDispatch("T01"),
+    retryOfAttemptId: String(row(`
+      SELECT attempt_id FROM workflow_execution_attempts
+      WHERE lifecycle_id = (
+        SELECT lifecycle_id FROM workflow_item_lifecycles
+        WHERE item_kind = 'task' AND milestone_id = 'M001'
+          AND slice_id = 'S01' AND task_id = 'T01'
+      )
+      ORDER BY attempt_number DESC LIMIT 1
+    `).attempt_id),
+  });
+
+  await handleResetSlice("M001/S01 --force", ctx as never, {} as never, base);
+
+  assert.equal(notifications.at(-1)?.level, "error");
+  assert.match(notifications.at(-1)?.message ?? "", /running attempt|not terminal/i);
+  assert.equal(row(`
+    SELECT attempt_state FROM workflow_execution_attempts WHERE attempt_id = '${running.attemptId}'
+  `).attempt_state, "running");
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'slice.reopen'
+  `).count), 1, "descendant progress must prevent replaying the original reset operation");
+});
+
+test("a delayed reopen replay cannot delete projections from a newer Slice completion", async () => {
+  const base = seedTerminalSlice("complete");
+  const oldInvocation = invocation("slice-reopen/public/delayed-replay");
+  const reason = "Redo the Slice before a newer completion.";
+  const first = await handleReopenSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason,
+  }, base, oldInvocation);
+  assert.equal("error" in first, false);
+
+  executeAtFence("test.slice-reopen.newer-running", "fixture/slice-reopen/newer-running", (context) => {
+    for (const taskId of ["T01", "T02"]) {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId,
+        lifecycleStatus: "in_progress",
+      });
+    }
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S01",
+      lifecycleStatus: "in_progress",
+    });
+  });
+  executeAtFence("test.slice-reopen.newer-completion", "fixture/slice-reopen/newer-completion", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "completed",
+    });
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T02",
+      lifecycleStatus: "cancelled",
+    });
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId: "M001",
+      sliceId: "S01",
+      lifecycleStatus: "completed",
+    });
+    db().prepare("UPDATE tasks SET status = 'complete' WHERE id = 'T01'").run();
+    db().prepare("UPDATE tasks SET status = 'skipped' WHERE id = 'T02'").run();
+    db().prepare("UPDATE slices SET status = 'complete' WHERE id = 'S01'").run();
+  });
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  const summaryPath = join(phaseDir, "S01-SUMMARY.md");
+  const uatPath = join(phaseDir, "S01-UAT.md");
+  writeFileSync(summaryPath, "# Newer summary\n");
+  writeFileSync(uatPath, "# Newer UAT\n");
+
+  const replay = await handleReopenSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason,
+  }, base, oldInvocation);
+
+  assert.deepEqual(replay, first);
+  assert.equal(readFileSync(summaryPath, "utf8"), "# Newer summary\n");
+  assert.equal(readFileSync(uatPath, "utf8"), "# Newer UAT\n");
+});
+
+test("a delayed reopen replay cannot delete a newer descendant Task summary", async () => {
+  const base = seedTerminalSlice("complete");
+  const oldInvocation = invocation("slice-reopen/public/task-only-replay");
+  const reason = "Redo the Slice before newer Task work starts.";
+  const first = await handleReopenSlice({ milestoneId: "M001", sliceId: "S01", reason }, base, oldInvocation);
+  assert.equal("error" in first, false);
+
+  executeAtFence("test.slice-reopen.newer-task", "fixture/slice-reopen/newer-task", (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "task",
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      lifecycleStatus: "in_progress",
+    });
+    db().prepare(`
+      UPDATE tasks SET status = 'in_progress', completed_at = NULL
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+  });
+  const summaryPath = join(base, ".gsd", "phases", "01-test", "S01-T01-SUMMARY.md");
+  writeFileSync(summaryPath, "# Newer Task summary\n");
+
+  const replay = await handleReopenSlice({ milestoneId: "M001", sliceId: "S01", reason }, base, oldInvocation);
+
+  assert.deepEqual(replay, first);
+  assert.equal(readFileSync(summaryPath, "utf8"), "# Newer Task summary\n");
+});
+
 test("public reopen rejects a running descendant and leaves exact zero durable residue", async () => {
   const base = seedTerminalSlice("complete", { runningChild: true });
   const before = durableSnapshot();
@@ -403,8 +594,7 @@ test("public reopen rejects a running descendant and leaves exact zero durable r
     milestoneId: "M001",
     sliceId: "S01",
     reason: "A running child makes full redo unsafe.",
-    invocation: invocation("slice-reopen/public/running-reject"),
-  } as Parameters<typeof handleReopenSlice>[0] & { invocation: ExecutionInvocation }, base);
+  }, base, invocation("slice-reopen/public/running-reject"));
 
   assert.equal("error" in result, true);
   assert.match("error" in result ? result.error : "", /running attempt|running descendant/i);
@@ -423,8 +613,7 @@ test("public reopen rejects a deep legacy/canonical mismatch with exact zero dur
     milestoneId: "M001",
     sliceId: "S01",
     reason: "Contradictory authority must not be repaired by guessing.",
-    invocation: invocation("slice-reopen/public/mismatch-reject"),
-  } as Parameters<typeof handleReopenSlice>[0] & { invocation: ExecutionInvocation }, base);
+  }, base, invocation("slice-reopen/public/mismatch-reject"));
 
   assert.equal("error" in result, true);
   assert.match("error" in result ? result.error : "", /canonical|legacy|shadow|mismatch/i);
@@ -438,6 +627,7 @@ test("direct Slice reopen replays its durable receipt and rejects changed idempo
       invocation: ExecutionInvocation;
       slice: { milestoneId: string; sliceId: string };
       reason: string;
+      audit?: { actorName?: string; triggerReason?: string };
     }) => Record<string, unknown>;
   }).reopenSlice;
   assert.equal(typeof reopen, "function", "Slice lifecycle module must expose the reopen Domain Operation");
@@ -445,6 +635,7 @@ test("direct Slice reopen replays its durable receipt and rejects changed idempo
     invocation: invocation("slice-reopen/direct/replay"),
     slice: { milestoneId: "M001", sliceId: "S01" },
     reason: "Repeat this exact full-redo request safely.",
+    audit: { actorName: "reopen-test", triggerReason: "verified regression" },
   };
 
   const committed = reopen!(input);
@@ -455,10 +646,22 @@ test("direct Slice reopen replays its durable receipt and rejects changed idempo
   assert.equal(replayed.status, "replayed");
   assert.deepEqual({ ...replayed, status: "committed" }, committed);
   assert.deepEqual(durableSnapshot(), afterCommit, "exact replay must not duplicate durable lineage");
+  const eventPayload = JSON.parse(String(row(`
+    SELECT payload_json FROM workflow_domain_events
+    WHERE operation_id = '${String(committed.operationId)}' AND event_type = 'slice.reopened'
+  `).payload_json)) as Record<string, unknown>;
+  assert.deepEqual(eventPayload.audit, {
+    actorName: "reopen-test",
+    triggerReason: "verified regression",
+  });
 
   assert.throws(() => reopen!({
     ...input,
     reason: "A changed reason under the same invocation identity.",
+  }), /idempotency conflict/i);
+  assert.throws(() => reopen!({
+    ...input,
+    audit: { ...input.audit, triggerReason: "changed audit provenance" },
   }), /idempotency conflict/i);
   assert.deepEqual(durableSnapshot(), afterCommit, "changed idempotency reuse must leave zero residue");
 });

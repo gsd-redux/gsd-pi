@@ -1,13 +1,9 @@
 // gsd-pi — Blocker-placeholder recovery log coverage.
 //
 // writeBlockerPlaceholder (auto-recovery.ts:782) writes a placeholder artifact
-// so the pipeline can advance past a stuck unit, then marks the task/slice
-// complete in the DB and appends a workflow event so reconciliation can replay
-// the recovery. Each of those side-effects is individually best-effort and logs
-// a recovery warning on failure (auto-recovery.ts:837/840/843/844/853/854). No
-// test asserted any of them. We trigger each by breaking the specific sink
-// (drop the relevant DB table, or block the events-file append) and assert the
-// warning lands.
+// so the pipeline can surface a stuck unit. Diagnostic placeholders never
+// fabricate Task or Slice lifecycle authority. The remaining plan-milestone
+// compatibility writes are best-effort and log recovery warnings on failure.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -73,19 +69,18 @@ test("writeBlockerPlaceholder never reads or changes Task authority", () => {
   }
 });
 
-test("writeBlockerPlaceholder logs a recovery warning when updateSliceStatus throws (auto-recovery.ts:843)", () => {
+test("writeBlockerPlaceholder never reads or changes Slice authority", () => {
   const base = makeBase();
   try {
     openDatabase(join(base, ".gsd", "gsd.db"));
-    // Drop slices so updateSliceStatus throws inside the complete-slice DB block.
+    // A diagnostic complete-slice placeholder must not access the slices table.
     _getAdapter()!.exec("DROP TABLE slices");
 
     const { logs } = captureLogs(() =>
       writeBlockerPlaceholder("complete-slice", "M001/S01", base, "exhausted retries"),
     );
 
-    const warn = recoveryWarnings(logs).find((w) => /updateSliceStatus failed during context exhaustion/u.test(w.message));
-    assert.ok(warn, "a recovery warning must be logged when updateSliceStatus throws");
+    assert.equal(recoveryWarnings(logs).length, 0);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
@@ -134,20 +129,19 @@ test("writeBlockerPlaceholder never appends Task lifecycle events", () => {
   }
 });
 
-test("writeBlockerPlaceholder logs a recovery warning when the complete-slice appendEvent throws (auto-recovery.ts:898)", () => {
+test("writeBlockerPlaceholder never appends Slice lifecycle events", () => {
   const base = makeBase("gsd-blocker-logs-cs-");
   try {
     openDatabase(join(base, ".gsd", "gsd.db"));
-    // Slices table intact so updateSliceStatus (:897) succeeds; block the
-    // workflow-event append so the complete-slice appendEvent (:898) throws.
+    // A blocked compatibility event log must not matter because a diagnostic
+    // complete-slice placeholder does not append lifecycle events.
     mkdirSync(join(base, ".gsd", "event-log.jsonl"), { recursive: true });
 
     const { logs } = captureLogs(() =>
       writeBlockerPlaceholder("complete-slice", "M001/S01", base, "exhausted retries"),
     );
 
-    const warn = recoveryWarnings(logs).find((w) => /appendEvent failed for slice recovery/u.test(w.message));
-    assert.ok(warn, "a recovery warning must be logged when the complete-slice appendEvent throws");
+    assert.equal(recoveryWarnings(logs).length, 0);
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

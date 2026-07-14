@@ -254,7 +254,7 @@ test("public skip commits one Slice cancellation operation and selectively settl
     milestoneId: "M001",
     sliceId: "S01",
     reason: "The remaining Slice work is no longer required.",
-  });
+  }, invocation("slice-cancel/public/mixed"));
 
   assert.equal(result.error, undefined, result.error);
   assert.equal(Number(row("SELECT revision FROM project_authority").revision), beforeRevision + 1);
@@ -366,7 +366,7 @@ test("public skip rejects a deep canonical and legacy mismatch with exact zero r
     milestoneId: "M001",
     sliceId: "S01",
     reason: "This must not repair contradictory authority by guessing.",
-  });
+  }, invocation("slice-cancel/public/mismatch"));
 
   assert.match(result.error ?? "", /canonical|legacy|shadow|mismatch/i);
   assert.deepEqual(durableSnapshot(), before, "mismatch rejection must leave exact zero residue");

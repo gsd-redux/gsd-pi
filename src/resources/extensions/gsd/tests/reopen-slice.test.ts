@@ -16,7 +16,22 @@ import {
   getSlice,
   getSliceTasks,
 } from '../gsd-db.ts';
-import { handleReopenSlice } from '../tools/reopen-slice.ts';
+import { internalExecutionInvocation } from '../execution-invocation.ts';
+import {
+  handleReopenSlice as handleReopenSliceWithInvocation,
+  type ReopenSliceParams,
+} from '../tools/reopen-slice.ts';
+
+let invocationSequence = 0;
+
+function handleReopenSlice(params: ReopenSliceParams, basePath: string) {
+  invocationSequence += 1;
+  return handleReopenSliceWithInvocation(
+    params,
+    basePath,
+    internalExecutionInvocation(`test/reopen-slice/${invocationSequence}`),
+  );
+}
 
 function makeTmpBase(): string {
   const base = mkdtempSync(join(tmpdir(), 'gsd-reopen-slice-'));

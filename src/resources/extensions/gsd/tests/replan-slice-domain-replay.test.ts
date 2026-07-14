@@ -21,6 +21,7 @@ import {
   updateTaskStatus,
 } from "../gsd-db.ts";
 import type { PlanningInvocation } from "../planning-invocation.ts";
+import { claimTaskAttempt } from "../task-execution-domain-operation.ts";
 import { handlePlanSlice } from "../tools/plan-slice.ts";
 import { handleReplanSlice, type ReplanSliceParams } from "../tools/replan-slice.ts";
 
@@ -46,6 +47,45 @@ function rows(sql: string): Array<Record<string, unknown>> {
   const adapter = _getAdapter();
   assert.ok(adapter);
   return adapter.prepare(sql).all();
+}
+
+function claimRunningTask(taskId: string): void {
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  adapter.exec(`
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'replan-worker', 'test-host', 1, '2026-07-12T00:00:00.000Z', 'test',
+      '2026-07-12T00:00:00.000Z', 'active', '/tmp/project'
+    );
+    INSERT INTO milestone_leases (
+      milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+    ) VALUES (
+      'M001', 'replan-worker', 7, '2026-07-12T00:00:00.000Z',
+      '2099-07-12T00:00:00.000Z', 'held'
+    );
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-running-replan', 'turn-running-replan', 'replan-worker', 7,
+      'M001', 'S01', '${taskId}', 'execute-task', 'M001/S01/${taskId}',
+      'claimed', 1, '2026-07-12T00:00:00.000Z'
+    );
+  `);
+  const dispatch = adapter.prepare(
+    "SELECT id FROM unit_dispatches WHERE trace_id = 'trace-running-replan'",
+  ).get();
+  claimTaskAttempt({
+    invocation: invocation("replan-slice/running-task-claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId },
+    workerId: "replan-worker",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: Number(dispatch?.["id"]),
+  });
 }
 
 async function seedPlannedSlice(base: string): Promise<void> {
@@ -182,6 +222,36 @@ test("slice replan requires explicit reopen before reusing cancelled task identi
     assert.ok("error" in reuse);
     assert.match(reuse.error, /explicitly reopen/i);
     assert.deepEqual(rows("SELECT id, status, title FROM tasks ORDER BY id"), before);
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("slice replan rejects removal of a Task with a running Attempt without residue", async () => {
+  const base = makeBase();
+  try {
+    await seedPlannedSlice(base);
+    claimRunningTask("T02");
+    const snapshot = () => ({
+      tasks: rows("SELECT id, status FROM tasks ORDER BY id"),
+      history: rows("SELECT * FROM replan_history ORDER BY id"),
+      operations: rows("SELECT * FROM workflow_operations ORDER BY resulting_revision"),
+      lifecycles: rows("SELECT * FROM workflow_item_lifecycles ORDER BY item_kind, task_id"),
+      attempts: rows("SELECT * FROM workflow_execution_attempts ORDER BY attempt_number"),
+      results: rows("SELECT * FROM workflow_attempt_results ORDER BY created_at"),
+    });
+    const before = snapshot();
+
+    const result = await handleReplanSlice(
+      replanParams(),
+      base,
+      invocation("replan-slice/reject-running-removal"),
+    );
+
+    assert.ok("error" in result);
+    assert.match(result.error, /running Attempt/i);
+    assert.deepEqual(snapshot(), before, "rejected replan must leave exact zero residue");
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });

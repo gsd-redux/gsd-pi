@@ -29,6 +29,18 @@ export interface SliceLifecycleIdentity {
   sliceId: string;
 }
 
+export interface SliceLifecycleAudit {
+  actorName?: string;
+  triggerReason?: string;
+}
+
+function auditPayload(audit?: SliceLifecycleAudit): Record<string, DomainJsonValue> {
+  return {
+    actorName: audit?.actorName?.trim() || null,
+    triggerReason: audit?.triggerReason?.trim() || null,
+  };
+}
+
 export interface SliceCancellationReceipt {
   status: DomainOperationResult["status"];
   operationId: string;
@@ -114,13 +126,15 @@ export function cancelSlice(input: {
   invocation: ExecutionInvocation;
   slice: SliceLifecycleIdentity;
   reason: string;
+  audit?: SliceLifecycleAudit;
 }): SliceCancellationReceipt {
   const slice = {
     milestoneId: requireText(input.slice.milestoneId, "milestoneId"),
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
   const reason = requireText(input.reason, "reason");
-  const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, { reason }), (context) => {
+  const audit = auditPayload(input.audit);
+  const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, { reason, audit }), (context) => {
     const result = cancelSliceHierarchy(context, { ...slice, reason });
     return {
       events: [{
@@ -130,6 +144,7 @@ export function cancelSlice(input: {
         payload: {
           sliceLifecycleId: result.sliceLifecycleId,
           reason,
+          audit,
           wasAlreadySkipped: result.wasAlreadySkipped,
           cancelledTaskIds: result.cancelledTaskIds,
           preservedTaskIds: result.preservedTaskIds,
@@ -178,19 +193,22 @@ export interface SliceReopenReceipt {
   legacyStatus: "in_progress";
   tasksReset: number;
   reopenedTaskIds: string[];
+  isCurrent: boolean;
 }
 
 export function reopenSlice(input: {
   invocation: ExecutionInvocation;
   slice: SliceLifecycleIdentity;
   reason: string;
+  audit?: SliceLifecycleAudit;
 }): SliceReopenReceipt {
   const slice = {
     milestoneId: requireText(input.slice.milestoneId, "milestoneId"),
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
   const reason = requireText(input.reason, "reason");
-  const operation = executeDomainOperation(request("slice.reopen", input.invocation, slice, { reason }), (context) => {
+  const audit = auditPayload(input.audit);
+  const operation = executeDomainOperation(request("slice.reopen", input.invocation, slice, { reason, audit }), (context) => {
     const result = reopenSliceHierarchy(context, { ...slice, reason });
     return {
       events: [{
@@ -200,6 +218,7 @@ export function reopenSlice(input: {
         payload: {
           sliceLifecycleId: result.sliceLifecycleId,
           reason,
+          audit,
           reopenedTaskIds: result.reopenedTaskIds,
           lifecycleShadowComparisons: shadowPayload(result),
         },
@@ -234,6 +253,7 @@ export function reopenSlice(input: {
     legacyStatus: "in_progress",
     tasksReset: stored.reopenedTaskIds.length,
     reopenedTaskIds: stored.reopenedTaskIds,
+    isCurrent: isCurrentSliceReopenOperation(operation.operationId, slice),
   };
 }
 
@@ -301,9 +321,10 @@ function storedCompletionPayload(operationId: string): StoredCompletionPayload {
   return JSON.parse(String(event[0]!["payload_json"])) as StoredCompletionPayload;
 }
 
-function isCurrentSliceCompletion(
+function isCurrentSliceOperation(
   operationId: string,
   slice: SliceLifecycleIdentity,
+  lifecycleStatus: "ready" | "completed",
 ): boolean {
   return Boolean(getDb().prepare(`
     SELECT 1
@@ -312,26 +333,58 @@ function isCurrentSliceCompletion(
       AND milestone_id = :milestone_id
       AND slice_id = :slice_id
       AND task_id IS NULL
-      AND lifecycle_status = 'completed'
+      AND lifecycle_status = :lifecycle_status
       AND last_operation_id = :operation_id
   `).get({
     ":milestone_id": slice.milestoneId,
     ":slice_id": slice.sliceId,
     ":operation_id": operationId,
+    ":lifecycle_status": lifecycleStatus,
   }));
+}
+
+export function isCurrentSliceReopenOperation(
+  operationId: string,
+  slice: SliceLifecycleIdentity,
+): boolean {
+  if (!isCurrentSliceOperation(operationId, slice, "ready")) return false;
+  return !getDb().prepare(`
+    SELECT 1
+    FROM tasks task
+    LEFT JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'task'
+     AND lifecycle.milestone_id = task.milestone_id
+     AND lifecycle.slice_id = task.slice_id
+     AND lifecycle.task_id = task.id
+    WHERE task.milestone_id = :milestone_id
+      AND task.slice_id = :slice_id
+      AND (
+        lifecycle.last_operation_id IS NULL
+        OR lifecycle.last_operation_id != :operation_id
+        OR lifecycle.lifecycle_status != 'ready'
+      )
+    LIMIT 1
+  `).get({
+    ":milestone_id": slice.milestoneId,
+    ":slice_id": slice.sliceId,
+    ":operation_id": operationId,
+  });
 }
 
 export function completeSlice(input: {
   invocation: ExecutionInvocation;
   slice: SliceLifecycleIdentity;
   closeout: SliceCompletionCloseout;
+  audit?: SliceLifecycleAudit;
 }): SliceCompletionReceipt {
   const slice = {
     milestoneId: requireText(input.slice.milestoneId, "milestoneId"),
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
+  const audit = auditPayload(input.audit);
   const operation = executeDomainOperation(request("slice.complete", input.invocation, slice, {
     closeout: input.closeout as unknown as DomainJsonValue,
+    audit,
   }), (context) => {
     const result = completeSliceHierarchy(context, {
       ...slice,
@@ -350,6 +403,7 @@ export function completeSlice(input: {
           proofs: result.proofs.map((proof) => ({ ...proof })),
           q8Verdict: result.q8Verdict,
           closeout: input.closeout as unknown as DomainJsonValue,
+          audit,
           lifecycleShadowComparisons: shadowPayload(result),
         },
         destinations: ["projection"],
@@ -379,6 +433,6 @@ export function completeSlice(input: {
     proofs: stored.proofs,
     q8Verdict: stored.q8Verdict,
     closeout: stored.closeout,
-    isCurrent: isCurrentSliceCompletion(operation.operationId, slice),
+    isCurrent: isCurrentSliceOperation(operation.operationId, slice, "completed"),
   };
 }

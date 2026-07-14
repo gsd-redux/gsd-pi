@@ -408,7 +408,7 @@ test('writeBlockerPlaceholder leaves execute-task plan projection and DB authori
   }
 });
 
-test('writeBlockerPlaceholder: updates DB slice status for complete-slice (#2653)', async () => {
+test('writeBlockerPlaceholder: complete-slice diagnostics never fabricate Slice authority', async () => {
   const base = createFixtureBase();
   try {
     const { openDatabase, closeDatabase, insertMilestone, insertSlice, getSlice, isDbAvailable } =
@@ -422,18 +422,14 @@ test('writeBlockerPlaceholder: updates DB slice status for complete-slice (#2653
       insertMilestone({ id: "M001", title: "Test", status: "active" });
       insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
 
-      // complete-slice blocker should update slice DB status to "complete"
       writeBlockerPlaceholder("complete-slice", "M001/S01", base, "context exhaustion recovery");
 
       const slice = getSlice("M001", "S01");
-      assert.equal(slice?.status, "complete",
-        "writeBlockerPlaceholder must update DB slice status to 'complete' for complete-slice so dispatch guard unblocks downstream (#2653)");
-
-      // Verify the full chain works: verifyExpectedArtifact should return true
-      // (requires both UAT file and DB status = complete)
-      // Note: the placeholder writes a SUMMARY file, but complete-slice also needs UAT.
-      // The placeholder itself doesn't write UAT, so artifact verification may still fail
-      // for complete-slice — but the DB status is now correct, breaking the circular dep.
+      assert.equal(
+        slice?.status,
+        "active",
+        "diagnostic recovery must leave Slice authority unchanged",
+      );
     } finally {
       if (isDbAvailable()) closeDatabase();
     }

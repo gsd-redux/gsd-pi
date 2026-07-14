@@ -10,8 +10,6 @@
  * bootstrap/db-tools.ts handles state-cache invalidation and STATE.md rebuild.
  */
 
-import { randomUUID } from "node:crypto";
-
 import { isDbAvailable } from "../gsd-db.js";
 import {
   cancelSlice,
@@ -30,7 +28,8 @@ export interface SkipSliceParams {
   milestoneId: string;
   sliceId: string;
   reason?: string;
-  invocation?: ExecutionInvocation;
+  actorName?: string;
+  triggerReason?: string;
 }
 
 /**
@@ -79,7 +78,10 @@ function validationErrorCode(message: string): SkipSliceErrorCode {
  *   versions before the #4375 cascade fix).
  * - Tasks in closed status (complete/done/skipped) are never downgraded.
  */
-export function handleSkipSlice(params: SkipSliceParams): SkipSliceResult {
+export function handleSkipSlice(
+  params: SkipSliceParams,
+  invocation: ExecutionInvocation,
+): SkipSliceResult {
   const base: SkipSliceResult = {
     milestoneId: params.milestoneId,
     sliceId: params.sliceId,
@@ -98,13 +100,10 @@ export function handleSkipSlice(params: SkipSliceParams): SkipSliceResult {
 
   try {
     const result = cancelSlice({
-      invocation: params.invocation ?? {
-        idempotencyKey: `internal:skip-slice:${randomUUID()}`,
-        sourceTransport: "internal",
-        actorType: "agent",
-      },
+      invocation,
       slice: { milestoneId: params.milestoneId, sliceId: params.sliceId },
       reason: params.reason?.trim() || "User-directed skip",
+      audit: { actorName: params.actorName, triggerReason: params.triggerReason },
     });
     return {
       ...base,

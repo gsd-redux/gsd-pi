@@ -2279,6 +2279,34 @@ test("writeBlockerPlaceholder fails closed instead of fabricating slice completi
   }
 });
 
+test("writeBlockerPlaceholder never fabricates Slice completion from a diagnostic artifact", () => {
+  const base = makeTmpBase();
+  try {
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+
+    const result = writeBlockerPlaceholder(
+      "complete-slice",
+      "M001/S01",
+      base,
+      "verification retries exhausted",
+    );
+
+    assert.ok(result, "diagnostic placeholder path is still returned");
+    assert.equal(getSlice("M001", "S01")?.status, "pending");
+    const events = readEvents(join(base, ".gsd", "event-log.jsonl"));
+    assert.equal(
+      events.some((event) => event.trigger_reason === "blocker-placeholder-recovery"),
+      false,
+      "a recovery diagnostic must never become completion authority",
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("writeBlockerPlaceholder fails closed instead of inserting an S00-blocker slice for an adopted canonical milestone", () => {
   const base = makeTmpBase();
   try {

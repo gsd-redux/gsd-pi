@@ -900,9 +900,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
   // ─── gsd_slice_complete (gsd_complete_slice alias) ─────────────────────
 
-  const sliceCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+  const sliceCompleteExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
     const { executeSliceComplete } = await loadWorkflowExecutors();
-    return executeSliceComplete(params, resolveWorkflowToolBasePath(_ctx, params));
+    return executeSliceComplete(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piExecutionInvocation("gsd_slice_complete", toolCallId),
+    );
   };
 
   const sliceCompleteTool = {
@@ -986,72 +990,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_skip_slice (#3477 / #3487) ───────────────────────────────────
 
   const skipSliceExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
-    const basePath = resolveCtxCwd(_ctx);
-    const dbAvailable = await ensureDbOpen(basePath);
-    if (!dbAvailable) {
-      return {
-        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot skip slice." }],
-        details: { operation: "skip_slice", error: "db_unavailable" } as any,
-      };
-    }
-    try {
-      const { handleSkipSlice } = await import("../tools/skip-slice.js");
-      const { invalidateStateCache } = await import("../state.js");
-
-      const result = handleSkipSlice({
-        milestoneId: params.milestoneId,
-        sliceId: params.sliceId,
-        reason: params.reason,
-        invocation: piExecutionInvocation("gsd_skip_slice", toolCallId),
-      });
-
-      if (result.error) {
-        return {
-          content: [{ type: "text" as const, text: `Error: ${result.error}` }],
-          details: {
-            operation: "skip_slice",
-            error: result.error,
-            errorCode: result.errorCode ?? "skip_failed",
-          } as any,
-        };
-      }
-
-      invalidateStateCache();
-
-      // Rebuild STATE.md so it reflects the skip immediately (#3477).
-      // Without this, /gsd auto reads stale STATE.md and resumes the skipped slice.
-      try {
-        const { rebuildState } = await import("../doctor.js");
-        await rebuildState(basePath);
-      } catch (err) {
-        logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
-      }
-
-      const suffix = result.wasAlreadySkipped
-        ? result.tasksSkipped > 0
-          ? ` (already skipped; cascaded ${result.tasksSkipped} leftover task(s) to skipped).`
-          : " (already skipped; no pending tasks to cascade)."
-        : ` Cascaded ${result.tasksSkipped} task(s) to skipped. Auto-mode will advance past this slice.`;
-
-      return {
-        content: [{ type: "text" as const, text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}.${suffix}` }],
-        details: {
-          operation: "skip_slice",
-          sliceId: params.sliceId,
-          milestoneId: params.milestoneId,
-          reason: params.reason,
-          tasksSkipped: result.tasksSkipped,
-          wasAlreadySkipped: result.wasAlreadySkipped,
-        } as any,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError("tool", `skip_slice tool failed: ${msg}`, { tool: "gsd_skip_slice", error: String(err) });
-      return {
-        content: [{ type: "text" as const, text: `Error skipping slice: ${msg}` }],
-        details: { operation: "skip_slice", error: msg } as any,
-      };
-    }
+    const { executeSkipSlice } = await loadWorkflowExecutors();
+    return executeSkipSlice(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piExecutionInvocation("gsd_skip_slice", toolCallId),
+    );
   };
 
   registerWorkflowTool(pi, {
@@ -1439,43 +1383,12 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_slice_reopen (gsd_reopen_slice alias) ─────────────────────────
 
   const reopenSliceExecute = async (toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
-    const basePath = resolveCtxCwd(_ctx);
-    const dbAvailable = await ensureDbOpen(basePath);
-    if (!dbAvailable) {
-      return {
-        content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot reopen slice." }],
-        details: { operation: "reopen_slice", error: "db_unavailable" } as any,
-      };
-    }
-    try {
-      const { handleReopenSlice } = await import("../tools/reopen-slice.js");
-      const result = await handleReopenSlice({
-        ...params,
-        invocation: piExecutionInvocation("gsd_slice_reopen", toolCallId),
-      }, basePath);
-      if ("error" in result) {
-        return {
-          content: [{ type: "text" as const, text: `Error reopening slice: ${result.error}` }],
-          details: { operation: "reopen_slice", error: result.error } as any,
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: `Reopened slice ${result.sliceId} (${result.milestoneId}); reset ${result.tasksReset} task(s) to pending.` }],
-        details: {
-          operation: "reopen_slice",
-          milestoneId: result.milestoneId,
-          sliceId: result.sliceId,
-          tasksReset: result.tasksReset,
-        } as any,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError("tool", `reopen_slice tool failed: ${msg}`, { tool: "gsd_slice_reopen", error: String(err) });
-      return {
-        content: [{ type: "text" as const, text: `Error reopening slice: ${msg}` }],
-        details: { operation: "reopen_slice", error: msg } as any,
-      };
-    }
+    const { executeSliceReopen } = await loadWorkflowExecutors();
+    return executeSliceReopen(
+      params,
+      resolveWorkflowToolBasePath(_ctx, params),
+      piExecutionInvocation("gsd_slice_reopen", toolCallId),
+    );
   };
 
   const reopenSliceTool = {

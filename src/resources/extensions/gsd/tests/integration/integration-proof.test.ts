@@ -54,7 +54,10 @@ import {
 
 // ── Tool handlers ─────────────────────────────────────────────────────────
 import { handleCompleteTask } from "../../tools/complete-task.ts";
-import { handleCompleteSlice } from "../../tools/complete-slice.ts";
+import {
+  handleCompleteSlice as handleCompleteSliceWithInvocation,
+} from "../../tools/complete-slice.ts";
+import { internalExecutionInvocation } from "../../execution-invocation.ts";
 
 // ── Markdown renderer ─────────────────────────────────────────────────────
 import {
@@ -97,6 +100,17 @@ import { invalidateAllCaches } from "../../cache.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "gsd-integration-proof-"));
+}
+
+let completeSliceInvocationSequence = 0;
+function handleCompleteSlice(
+  params: Parameters<typeof handleCompleteSliceWithInvocation>[0],
+  basePath: string,
+  invocation = internalExecutionInvocation(
+    `test/integration-proof/complete-slice/${++completeSliceInvocationSequence}`,
+  ),
+) {
+  return handleCompleteSliceWithInvocation(params, basePath, invocation);
 }
 
 function makeCtx(): { notifications: Array<{ message: string; level: string }>; ctx: any } {

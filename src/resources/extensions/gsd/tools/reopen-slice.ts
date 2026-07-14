@@ -19,11 +19,11 @@
 import {
   getSliceTasks,
 } from "../gsd-db.js";
-import { randomUUID } from "node:crypto";
 import { reopenSlice, SliceLifecycleValidationError } from "../slice-lifecycle-domain-operation.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import { invalidateStateCache } from "../state.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
+import { renderPlanCheckboxes } from "../markdown-renderer.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
@@ -35,6 +35,7 @@ import {
   legacyMilestonesDir,
   resolveMilestonePath,
   resolveTasksDir,
+  resolveSliceFile,
   resolveSlicePath,
   clearPathCache,
 } from "../paths.js";
@@ -47,7 +48,6 @@ export interface ReopenSliceParams {
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
   triggerReason?: string;
-  invocation?: ExecutionInvocation;
 }
 
 export interface ReopenSliceResult {
@@ -59,6 +59,7 @@ export interface ReopenSliceResult {
 export async function handleReopenSlice(
   params: ReopenSliceParams,
   basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ReopenSliceResult | { error: string }> {
   // ── Validate required fields ────────────────────────────────────────────
   if (!params.sliceId || typeof params.sliceId !== "string" || params.sliceId.trim() === "") {
@@ -69,16 +70,23 @@ export async function handleReopenSlice(
   }
 
   let tasksResetCount: number;
+  let operationStatus: "committed" | "replayed";
   try {
-    tasksResetCount = reopenSlice({
-      invocation: params.invocation ?? {
-        idempotencyKey: `internal:reopen-slice:${randomUUID()}`,
-        sourceTransport: "internal",
-        actorType: "agent",
-      },
+    const receipt = reopenSlice({
+      invocation,
       slice: { milestoneId: params.milestoneId, sliceId: params.sliceId },
       reason: params.reason?.trim() || "User-directed full Slice redo",
-    }).tasksReset;
+      audit: { actorName: params.actorName, triggerReason: params.triggerReason },
+    });
+    tasksResetCount = receipt.tasksReset;
+    operationStatus = receipt.status;
+    if (receipt.status === "replayed" && !receipt.isCurrent) {
+      return {
+        milestoneId: params.milestoneId,
+        sliceId: params.sliceId,
+        tasksReset: tasksResetCount,
+      };
+    }
   } catch (error) {
     if (!(error instanceof SliceLifecycleValidationError)) throw error;
     return { error: error.message };
@@ -113,10 +121,15 @@ export async function handleReopenSlice(
     }
     const sliceDir = resolveSlicePath(basePath, params.milestoneId, params.sliceId);
     if (sliceDir) {
-      const sliceSummary = join(sliceDir, `${params.sliceId}-SUMMARY.md`);
-      if (existsSync(sliceSummary)) unlinkSync(sliceSummary);
-      const sliceUat = join(sliceDir, `${params.sliceId}-UAT.md`);
-      if (existsSync(sliceUat)) unlinkSync(sliceUat);
+      const sliceArtifacts = new Set([
+        resolveSliceFile(basePath, params.milestoneId, params.sliceId, "SUMMARY"),
+        resolveSliceFile(basePath, params.milestoneId, params.sliceId, "UAT"),
+        join(sliceDir, `${params.sliceId}-SUMMARY.md`),
+        join(sliceDir, `${params.sliceId}-UAT.md`),
+      ]);
+      for (const artifactPath of sliceArtifacts) {
+        if (artifactPath && existsSync(artifactPath)) unlinkSync(artifactPath);
+      }
     }
   } catch (cleanupErr) {
     logWarning("tool", `reopen-slice artifact cleanup warning: ${(cleanupErr as Error).message}`);
@@ -125,21 +138,24 @@ export async function handleReopenSlice(
 
   // ── Post-mutation hook ───────────────────────────────────────────────────
   try {
+    await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
     await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
     writeManifest(basePath);
-    appendEvent(basePath, {
-      cmd: "reopen-slice",
-      params: {
-        milestoneId: params.milestoneId,
-        sliceId: params.sliceId,
-        reason: params.reason ?? null,
-        tasksReset: tasksResetCount,
-      },
-      ts: new Date().toISOString(),
-      actor: "agent",
-      actor_name: params.actorName,
-      trigger_reason: params.triggerReason,
-    });
+    if (operationStatus === "committed") {
+      appendEvent(basePath, {
+        cmd: "reopen-slice",
+        params: {
+          milestoneId: params.milestoneId,
+          sliceId: params.sliceId,
+          reason: params.reason ?? null,
+          tasksReset: tasksResetCount,
+        },
+        ts: new Date().toISOString(),
+        actor: "agent",
+        actor_name: params.actorName,
+        trigger_reason: params.triggerReason,
+      });
+    }
   } catch (hookErr) {
     logWarning("tool", `reopen-slice post-mutation hook warning: ${(hookErr as Error).message}`);
   }

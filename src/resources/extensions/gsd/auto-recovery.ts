@@ -20,7 +20,6 @@ import {
   getSlice,
   getSliceTasks,
   getPendingGatesForTurn,
-  updateSliceStatus,
   insertSlice,
   getMilestone,
   updateMilestoneStatus,
@@ -337,22 +336,6 @@ export function writeReactiveExecuteBlocker(
 }
 
 /**
- * Whether a slice already has canonical Domain-Operation lifecycle history.
- * Adopted slices are real recovery/cascade territory owned by S05 — this
- * legacy placeholder must not fabricate their completion (fail-closed).
- */
-function hasAdoptedSliceHistory(milestoneId: string, sliceId: string): boolean {
-  return Boolean(getDb().prepare(`
-    SELECT 1 AS adopted
-    FROM workflow_item_lifecycles
-    WHERE item_kind = 'slice'
-      AND milestone_id = :milestone_id
-      AND slice_id = :slice_id
-      AND task_id IS NULL
-  `).get({ ":milestone_id": milestoneId, ":slice_id": sliceId }));
-}
-
-/**
  * Whether a milestone already has canonical Domain-Operation lifecycle
  * history. Adopted milestones must not have a fabricated blocker slice
  * inserted to paper over a stuck plan-milestone unit (fail-closed).
@@ -409,16 +392,8 @@ export function writeBlockerPlaceholder(
   // Legacy non-Task placeholder handling remains until its owning lifecycle
   // cutover. Task placeholders are diagnostic-only.
   if (isDbAvailable()) {
-    const { milestone: mid, slice: sid } = parseUnitId(unitId);
+    const { milestone: mid } = parseUnitId(unitId);
     const ts = new Date().toISOString();
-    if (unitType === "complete-slice" && mid && sid) {
-      if (hasAdoptedSliceHistory(mid, sid)) {
-        logWarning("recovery", `Skipping fabricated complete-slice recovery for ${mid}/${sid}: adopted canonical slice history exists (fail-closed; see S05 for the real cascade).`);
-      } else {
-        try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
-        try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }
-      }
-    }
     // Insert a placeholder complete slice so deriveState sees activeMilestoneSlices.length > 0
     // and exits the pre-planning phase. Without this, activeMilestoneSlices stays empty
     // after the blocker ROADMAP.md is written, causing deriveState to return phase:'pre-planning'

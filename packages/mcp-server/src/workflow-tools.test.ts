@@ -29,6 +29,7 @@ import { buildReassessRoadmapPrompt } from "../../../src/resources/extensions/gs
 import { invalidateAllCaches } from "../../../src/resources/extensions/gsd/cache.ts";
 import { resolveToolPresentationPlan } from "../../../src/resources/extensions/gsd/tool-presentation-plan.ts";
 import { claimTaskAttempt } from "../../../src/resources/extensions/gsd/task-execution-domain-operation.ts";
+import { seedSliceCompletionAuthority } from "../../../src/resources/extensions/gsd/tests/slice-completion-fixture.ts";
 import {
   _buildBridgeImportCandidates,
   _buildImportCandidates,
@@ -124,19 +125,20 @@ function seedCompletedTaskState(task: {
   taskId: string;
 }): void {
   const db = _getAdapter();
-  assert.ok(db, "DB should be open before seeding completed task state");
+  assert.ok(db, "DB should be open before seeding completed task authority");
   db.prepare(`
     INSERT INTO tasks (
       milestone_id, slice_id, id, title, status, completed_at, sequence
-    ) VALUES (?, ?, ?, 'Completed prerequisite', 'complete', ?, 1)
+    ) VALUES (?, ?, ?, 'Completed prerequisite', 'pending', NULL, 1)
     ON CONFLICT(milestone_id, slice_id, id) DO UPDATE SET
-      status = 'complete', completed_at = excluded.completed_at
-  `).run(
-    task.milestoneId,
-    task.sliceId,
-    task.taskId,
-    "2026-07-12T00:00:00.000Z",
-  );
+      status = 'pending', completed_at = NULL
+  `).run(task.milestoneId, task.sliceId, task.taskId);
+  seedSliceCompletionAuthority({
+    milestoneId: task.milestoneId,
+    sliceId: task.sliceId,
+    completedTaskIds: [task.taskId],
+    runId: `mcp-${task.taskId}`,
+  });
 }
 
 function seedContextModeFixture(base: string): void {
@@ -1588,7 +1590,48 @@ describe("workflow MCP tools", () => {
     }
   });
 
-  it("#4477 gsd_task_complete forwards every schema field to the executor (regression for destructure-rebuild bug class)", async () => {
+  it("Slice lifecycle mutations reject missing replay-stable private execution metadata", async () => {
+    const server = makeMockServer();
+    registerWorkflowTools(server as any);
+    const cases = [
+      {
+        name: "gsd_slice_complete",
+        params: {
+          milestoneId: "M001",
+          sliceId: "S01",
+          sliceTitle: "Must not execute",
+          oneLiner: "Missing identity",
+          narrative: "The request must fail before mutation.",
+          uatContent: "## UAT\n\nPASS",
+        },
+      },
+      {
+        name: "gsd_slice_reopen",
+        params: { milestoneId: "M001", sliceId: "S01", reason: "Must not execute." },
+      },
+      {
+        name: "gsd_skip_slice",
+        params: { milestoneId: "M001", sliceId: "S01", reason: "Must not execute." },
+      },
+    ];
+
+    for (const entry of cases) {
+      const base = makeTmpBase();
+      try {
+        const tool = server.tools.find((candidate) => candidate.name === entry.name);
+        assert.ok(tool, `${entry.name} must be registered`);
+        const result = await tool.handler({ projectDir: base, ...entry.params }, {
+          _meta: { "io.opengsd/idempotency-key": "   " },
+        });
+        assertToolError(result, /replay-stable.*io\.opengsd\/idempotency-key/i);
+        assert.equal(existsSync(join(base, ".gsd", "gsd.db")), false);
+      } finally {
+        cleanup(base);
+      }
+    }
+  });
+
+  it("forwards private execution identity and complete Task fields to shared executors", async () => {
     // Locks in the class-fix from PR #4477 review: handleTaskComplete previously
     // destructured args into a hand-listed set of fields and rebuilt the call
     // payload, which silently dropped ADR-011's `escalation` field (and any
@@ -1601,11 +1644,13 @@ describe("workflow MCP tools", () => {
     const capturePath = join(base, "captured-args.json");
     const reopenCapturePath = join(base, "captured-reopen-args.json");
     const resumeCapturePath = join(base, "captured-recovery-resume-args.json");
+    const sliceCapturePath = join(base, "captured-slice-lifecycle-args.json");
     const mockModulePath = join(base, "mock-executors.mjs");
     const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
     const prevCapture = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
     const prevReopenCapture = process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH;
     const prevResumeCapture = process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH;
+    const prevSliceCapture = process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH;
     try {
       // Mock module: implements the WorkflowToolExecutors shape.
       // executeTaskComplete writes its received args to disk for assertion.
@@ -1615,6 +1660,17 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const noop = async () => ({ content: [{ type: "text", text: "noop" }] });
 
+const captureSliceLifecycle = async (executor, params, projectDir, invocation) => {
+  const capturePath = process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH;
+  if (capturePath) {
+    let captures = [];
+    try { captures = JSON.parse(readFileSync(capturePath, "utf8")); } catch {}
+    captures.push({ executor, params, projectDir, invocation });
+    writeFileSync(capturePath, JSON.stringify(captures, null, 2));
+  }
+  return { content: [{ type: "text", text: "mock slice " + executor }] };
+};
+
 export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = ["SUMMARY", "UAT", "CONTEXT", "PLAN"];
 export const executeMilestoneStatus = noop;
 export const executePlanMilestone = noop;
@@ -1622,14 +1678,18 @@ export const executePlanSlice = noop;
 export const executeReplanSlice = noop;
 export const executeReplanTask = noop;
 export const executeReworkBriefSave = noop;
-export const executeSliceComplete = noop;
+export const executeSliceComplete = (params, projectDir, invocation) =>
+  captureSliceLifecycle("complete", params, projectDir, invocation);
 export const executeCompleteMilestone = noop;
 export const executeValidateMilestone = noop;
 export const executeReassessRoadmap = noop;
 export const executeSaveGateResult = noop;
 export const executeSummarySave = noop;
 export const executeUatResultSave = noop;
-export const executeSliceReopen = noop;
+export const executeSliceReopen = (params, projectDir, invocation) =>
+  captureSliceLifecycle("reopen", params, projectDir, invocation);
+export const executeSkipSlice = (params, projectDir, invocation) =>
+  captureSliceLifecycle("skip", params, projectDir, invocation);
 export const executeMilestoneReopen = noop;
 
 export const executeTaskReopen = async (params, projectDir, invocation) => {
@@ -1667,6 +1727,7 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = capturePath;
       process.env.GSD_TEST_TASK_REOPEN_CAPTURE_PATH = reopenCapturePath;
       process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH = resumeCapturePath;
+      process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH = sliceCapturePath;
 
       // Fresh import bypasses the cached workflowToolExecutorsPromise so the
       // mock module is actually loaded for this test.
@@ -1680,11 +1741,21 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
       const reopenTool = server.tools.find((t) => t.name === "gsd_task_reopen");
       const reopenAlias = server.tools.find((t) => t.name === "gsd_reopen_task");
       const resumeTool = server.tools.find((t) => t.name === "gsd_task_recovery_resume");
+      const sliceCompleteTool = server.tools.find((t) => t.name === "gsd_slice_complete");
+      const sliceCompleteAlias = server.tools.find((t) => t.name === "gsd_complete_slice");
+      const sliceReopenTool = server.tools.find((t) => t.name === "gsd_slice_reopen");
+      const sliceReopenAlias = server.tools.find((t) => t.name === "gsd_reopen_slice");
+      const skipSliceTool = server.tools.find((t) => t.name === "gsd_skip_slice");
       assert.ok(taskTool, "task tool should be registered");
       assert.ok(aliasTool, "task completion alias should be registered");
       assert.ok(reopenTool, "task reopen tool should be registered");
       assert.ok(reopenAlias, "task reopen alias should be registered");
       assert.ok(resumeTool, "task recovery resume tool should be registered");
+      assert.ok(sliceCompleteTool, "slice completion tool should be registered");
+      assert.ok(sliceCompleteAlias, "slice completion alias should be registered");
+      assert.ok(sliceReopenTool, "slice reopen tool should be registered");
+      assert.ok(sliceReopenAlias, "slice reopen alias should be registered");
+      assert.ok(skipSliceTool, "slice skip tool should be registered");
 
       // Mirrors the ADR-011 escalation schema: question + 2-4 options
       // (each with id/label/tradeoffs) + recommendation + rationale +
@@ -1803,6 +1874,69 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         actorType: "agent",
         traceId: "transport:claude-code:toolu_recovery_resume",
       });
+
+      const sliceArgs = {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+      };
+      const sliceCases = [
+        {
+          tools: [sliceCompleteTool!, sliceCompleteAlias!],
+          executor: "complete",
+          canonicalName: "gsd_slice_complete",
+          params: {
+            ...sliceArgs,
+            sliceTitle: "Slice identity",
+            oneLiner: "One completion operation",
+            narrative: "Canonical and alias calls converge.",
+            uatContent: "## UAT\n\nPASS",
+            actorName: "lifecycle-agent",
+            triggerReason: "All automated checks passed.",
+          },
+        },
+        {
+          tools: [sliceReopenTool!, sliceReopenAlias!],
+          executor: "reopen",
+          canonicalName: "gsd_slice_reopen",
+          params: { ...sliceArgs, reason: "Redo the Slice." },
+        },
+        {
+          tools: [skipSliceTool!],
+          executor: "skip",
+          canonicalName: "gsd_skip_slice",
+          params: { ...sliceArgs, reason: "Descoped." },
+        },
+      ] as const;
+      for (const entry of sliceCases) {
+        for (const tool of entry.tools) {
+          await tool.handler(entry.params, {
+            requestId: `request-${entry.executor}`,
+            _meta: { "io.opengsd/idempotency-key": `stable-slice-${entry.executor}` },
+          });
+        }
+      }
+
+      const sliceCaptures = JSON.parse(readFileSync(sliceCapturePath, "utf-8"));
+      assert.equal(sliceCaptures.length, 5);
+      for (const entry of sliceCases) {
+        const matching = sliceCaptures.filter((capture: any) => capture.executor === entry.executor);
+        assert.equal(matching.length, entry.tools.length);
+        for (const capture of matching) {
+          assert.equal(capture.projectDir, realpathSync(base));
+          assert.equal(capture.params.projectDir, undefined);
+          if (entry.executor === "complete") {
+            assert.equal(capture.params.actorName, "lifecycle-agent");
+            assert.equal(capture.params.triggerReason, "All automated checks passed.");
+          }
+          assert.deepEqual(capture.invocation, {
+            idempotencyKey: `mcp:${entry.canonicalName}:stable-slice-${entry.executor}`,
+            sourceTransport: "workflow-mcp",
+            actorType: "agent",
+            traceId: `stable-slice-${entry.executor}`,
+          });
+        }
+      }
     } finally {
       if (prevModule === undefined) {
         delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
@@ -1823,6 +1957,11 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
         delete process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH;
       } else {
         process.env.GSD_TEST_TASK_RECOVERY_RESUME_CAPTURE_PATH = prevResumeCapture;
+      }
+      if (prevSliceCapture === undefined) {
+        delete process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH;
+      } else {
+        process.env.GSD_TEST_SLICE_LIFECYCLE_CAPTURE_PATH = prevSliceCapture;
       }
       cleanup(base);
     }
