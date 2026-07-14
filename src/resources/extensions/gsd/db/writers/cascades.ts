@@ -9,12 +9,6 @@ import { getDbOrNull, transaction } from "../engine.js";
 import { GSDError, GSD_STALE_STATE } from "../../errors.js";
 import { isClosedStatus } from "../../status-guards.js";
 import { getMilestone, getSlice, getSliceTasks, getMilestoneSlices } from "../queries.js";
-// completeSliceCascade reuses the complex hierarchy write primitives (ON CONFLICT
-// upserts with null sentinels) rather than re-inlining their SQL. This is a
-// back-edge to gsd-db.ts, which re-exports this module — safe because the
-// imported bindings are hoisted function declarations only called at runtime.
-// It dissolves when these primitives move to db/writers/hierarchy.ts.
-import { insertMilestone, insertSlice, updateSliceStatus, updateMilestoneStatus } from "../../gsd-db.js";
 
 function requireDb(): void {
   if (!getDbOrNull()!) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
@@ -115,81 +109,6 @@ export function reopenMilestoneCascade(milestoneId: string): ReopenMilestoneOutc
     ).run({ ":mid": milestoneId });
     const tasksReset = (tasksResult as { changes?: number }).changes ?? 0;
     outcome = { ok: true, slicesReset: slices.length, tasksReset };
-  });
-  return outcome;
-}
-
-export type CompleteSliceOutcome =
-  | { ok: true; duplicate: boolean; existingSummaryMd: string }
-  | { ok: false; reason: "milestone-closed"; status: string }
-  | { ok: false; reason: "no-tasks" }
-  | { ok: false; reason: "incomplete-tasks"; incomplete: Array<{ id: string; status: string }> };
-
-/**
- * Complete a slice: verify preconditions, auto-create the milestone/slice rows
- * if absent, mark the slice "complete", and activate a still-"planned"
- * milestone once all its slices are closed — all in one transaction. Folds the
- * hand-rolled cascade previously in tools/complete-slice.ts.
- *
- * Returns a discriminated outcome. The `duplicate: true` success case means the
- * slice was already closed (no writes performed); the caller handles the stale/
- * idempotent path. `existingSummaryMd` carries the slice's prior summary so the
- * caller can backfill omitted requirement fields. Markdown rendering, file
- * writes, and summary persistence stay in the caller.
- */
-export function completeSliceCascade(
-  milestoneId: string,
-  sliceId: string,
-  opts: { sliceTitle?: string; completedAt: string },
-): CompleteSliceOutcome {
-  requireDb();
-  let outcome: CompleteSliceOutcome = { ok: true, duplicate: false, existingSummaryMd: "" };
-  transaction(() => {
-    // Preconditions inside the txn for atomicity. A missing milestone/slice is
-    // fine — they are auto-created below; only a closed one blocks.
-    const milestone = getMilestone(milestoneId);
-    if (milestone && isClosedStatus(milestone.status)) {
-      outcome = { ok: false, reason: "milestone-closed", status: milestone.status };
-      return;
-    }
-
-    const slice = getSlice(milestoneId, sliceId);
-    const existingSummaryMd = slice?.full_summary_md?.trim() ?? "";
-    if (slice && isClosedStatus(slice.status)) {
-      outcome = { ok: true, duplicate: true, existingSummaryMd };
-      return;
-    }
-
-    const tasks = getSliceTasks(milestoneId, sliceId);
-    if (tasks.length === 0) {
-      outcome = { ok: false, reason: "no-tasks" };
-      return;
-    }
-    const incomplete = tasks
-      .filter((t) => !isClosedStatus(t.status))
-      .map((t) => ({ id: t.id, status: t.status }));
-    if (incomplete.length > 0) {
-      outcome = { ok: false, reason: "incomplete-tasks", incomplete };
-      return;
-    }
-
-    // All guards passed — perform writes. Preserve existing planning metadata:
-    // completion must not overwrite title/risk/depends/demo/sequence.
-    insertMilestone({ id: milestoneId, title: milestoneId });
-    if (!slice) {
-      insertSlice({ id: sliceId, milestoneId, title: opts.sliceTitle || sliceId });
-    }
-    updateSliceStatus(milestoneId, sliceId, "complete", opts.completedAt);
-
-    const updatedSlices = getMilestoneSlices(milestoneId);
-    if (
-      milestone?.status === "planned" &&
-      updatedSlices.length > 0 &&
-      updatedSlices.every((s) => isClosedStatus(s.status))
-    ) {
-      updateMilestoneStatus(milestoneId, "active");
-    }
-    outcome = { ok: true, duplicate: false, existingSummaryMd };
   });
   return outcome;
 }

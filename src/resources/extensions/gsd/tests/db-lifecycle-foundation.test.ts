@@ -1330,16 +1330,22 @@ test("v40 upgrade authorizes Slice cancellation in both Attempt settlement trigg
       SELECT sql FROM sqlite_master WHERE type = 'trigger'
         AND name = 'trg_workflow_attempt_transition_fencing'
     `).get()?.sql);
+    const lifecycleSql = String(upgraded.prepare(`
+      SELECT sql FROM sqlite_master WHERE type = 'trigger'
+        AND name = 'trg_workflow_lifecycle_transition'
+    `).get()?.sql);
     assert.deepEqual({
       runtimeSchemaVersion: SCHEMA_VERSION,
       databaseSchemaVersion: maxSchemaVersion(upgraded),
       settlementAllowsSliceCancel: /slice\.cancel/.test(settlementSql),
       fencingAllowsSliceCancel: /slice\.cancel/.test(fencingSql),
+      sliceReadyCanComplete: /OLD\.item_kind = 'slice'.*NEW\.lifecycle_status = 'completed'/s.test(lifecycleSql),
     }, {
-      runtimeSchemaVersion: 40,
-      databaseSchemaVersion: 40,
+      runtimeSchemaVersion: 41,
+      databaseSchemaVersion: 41,
       settlementAllowsSliceCancel: true,
       fencingAllowsSliceCancel: true,
+      sliceReadyCanComplete: true,
     });
   } finally {
     upgraded.close();

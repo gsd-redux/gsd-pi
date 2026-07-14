@@ -16,6 +16,7 @@ import {
 } from "../gsd-db.js";
 import { relSliceFile } from "../paths.js";
 import { handleCompleteSlice } from "../tools/complete-slice.js";
+import { seedSliceCompletionAuthority } from "./slice-completion-fixture.js";
 import { createWorkflowAuthorityFixture } from "./workflow-authority-fixture.js";
 import {
   createWorkflowFaultHarness,
@@ -55,6 +56,11 @@ const COMPLETE_SLICE_PARAMS: CompleteSliceParams = {
 
 function seedCompletionBoundary(): void {
   updateTaskStatus("M001", "S02", "T01", "complete", "2026-07-11T00:00:00.000Z");
+  seedSliceCompletionAuthority({
+    milestoneId: "M001",
+    sliceId: "S02",
+    completedTaskIds: ["T01"],
+  });
   insertSlice({
     id: "S03",
     milestoneId: "M001",
@@ -204,7 +210,11 @@ for (const scenario of SCENARIOS) {
       completionError = error;
     }
 
-    if (scenario.point === "during-projection-write") {
+    if (
+      scenario.point === "after-db-commit-before-render"
+      || scenario.point === "during-projection-write"
+    ) {
+      assert.equal(completionError, undefined, "post-commit projection failures must not undo completion");
       assert.equal(completionStale, true, "the production renderer must surface a stale projection");
     } else if (scenario.point === "after-independent-reopen") {
       assert.equal(completionError, undefined, "completion must succeed before the reopen fault");

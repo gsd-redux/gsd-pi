@@ -23,6 +23,7 @@ import { handleCompleteTask } from "../tools/complete-task.ts";
 import { handleCompleteSlice } from "../tools/complete-slice.ts";
 import { handleCompleteMilestone } from "../tools/complete-milestone.ts";
 import { handleValidateMilestone } from "../tools/validate-milestone.ts";
+import { seedSliceCompletionAuthority } from "./slice-completion-fixture.ts";
 
 const MID = "M001";
 const SID = "S01";
@@ -142,6 +143,11 @@ test("complete-slice writes SUMMARY and UAT under the active worktree projection
   const { projectRoot, worktreeRoot } = makeFixture(t);
   seedMilestoneAndSlice();
   insertTask({ id: "T01", sliceId: SID, milestoneId: MID, status: "complete", title: "Task" });
+  seedSliceCompletionAuthority({
+    milestoneId: MID,
+    sliceId: SID,
+    completedTaskIds: ["T01"],
+  });
 
   const result = await handleCompleteSlice(completeSliceParams(), worktreeRoot);
 

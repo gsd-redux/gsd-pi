@@ -204,12 +204,16 @@ function validateLifecycleIdentity(input: LifecycleCommandInput): void {
 }
 
 function isValidLifecycleTransition(
+  itemKind: LifecycleIdentity["itemKind"],
   from: CanonicalLifecycleStatus,
   to: CanonicalLifecycleStatus,
 ): boolean {
   if (from === to) return true;
   if (from === "pending") return to === "ready" || to === "cancelled";
-  if (from === "ready") return to === "in_progress" || to === "paused" || to === "cancelled";
+  if (from === "ready") {
+    return to === "in_progress" || to === "paused" || to === "cancelled" ||
+      (itemKind === "slice" && to === "completed");
+  }
   if (from === "in_progress") return to === "paused" || to === "completed" || to === "cancelled";
   if (from === "paused") return to === "ready" || to === "in_progress" || to === "cancelled";
   return (from === "completed" || from === "cancelled") && to === "ready";
@@ -415,7 +419,7 @@ export function adoptOrTransitionLifecycle(
 
   if (!existing) {
     const adoptedFromStatus = input.adoptedFromStatus ?? input.lifecycleStatus;
-    if (!isValidLifecycleTransition(adoptedFromStatus, input.lifecycleStatus)) {
+    if (!isValidLifecycleTransition(input.itemKind, adoptedFromStatus, input.lifecycleStatus)) {
       throw new Error("invalid workflow lifecycle transition");
     }
     const stateVersion = adoptedFromStatus === input.lifecycleStatus ? 0 : 1;

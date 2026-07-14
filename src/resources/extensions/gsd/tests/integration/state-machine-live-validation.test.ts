@@ -52,6 +52,7 @@ import { handleReopenTask } from "../../tools/reopen-task.ts";
 import { handleReopenSlice } from "../../tools/reopen-slice.ts";
 import { handleReopenMilestone } from "../../tools/reopen-milestone.ts";
 import { internalExecutionInvocation } from "../../execution-invocation.ts";
+import { seedSliceCompletionAuthority } from "../slice-completion-fixture.ts";
 
 let reopenInvocationSequence = 0;
 function reopenInvocation() {
@@ -386,6 +387,11 @@ describe("state-machine-live-validation", () => {
       insertSlice({ id: "S01", milestoneId: "M001", title: "First Feature", status: "in_progress" });
       insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Impl", status: "complete" });
       insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", title: "Test", status: "complete" });
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01", "T02"],
+      });
 
       const result = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
       assert.ok(!("error" in result), `expected success, got: ${JSON.stringify(result)}`);
@@ -411,6 +417,11 @@ describe("state-machine-live-validation", () => {
       // Complete task
       const taskResult = await handleCompleteTask(makeTaskParams("T01", "S02", "M001") as any, base);
       assert.ok(!("error" in taskResult), `task: ${JSON.stringify(taskResult)}`);
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S02",
+        completedTaskIds: ["T01"],
+      });
 
       // Complete slice
       const sliceResult = await handleCompleteSlice(makeSliceParams("S02", "M001") as any, base);
@@ -501,6 +512,7 @@ describe("state-machine-live-validation", () => {
       insertMilestone({ id: "M001", title: "Active", status: "active" });
       insertSlice({ id: "S01", milestoneId: "M001", status: "in_progress" });
       // No tasks inserted
+      seedSliceCompletionAuthority({ milestoneId: "M001", sliceId: "S01" });
 
       const result = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
       assert.ok("error" in result);
@@ -514,20 +526,35 @@ describe("state-machine-live-validation", () => {
       insertSlice({ id: "S01", milestoneId: "M001", status: "in_progress" });
       insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", status: "complete" });
       insertTask({ id: "T02", sliceId: "S01", milestoneId: "M001", status: "pending" });
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01"],
+      });
 
       const result = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
       assert.ok("error" in result);
-      assert.match((result as any).error, /incomplete tasks/);
+      assert.match((result as any).error, /not terminal/);
     });
 
     test("double slice completion repairs missing artifacts", async () => {
       base = createFullFixture();
       openDatabase(join(base, ".gsd", "gsd.db"));
       insertMilestone({ id: "M001", title: "Active", status: "active" });
-      insertSlice({ id: "S01", milestoneId: "M001", status: "complete" });
+      insertSlice({ id: "S01", milestoneId: "M001", status: "in_progress" });
       insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", status: "complete" });
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01"],
+      });
+      const invocation = internalExecutionInvocation("test/state-machine/slice-exact-replay");
+      const first = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base, invocation);
+      assert.ok(!("error" in first));
+      rmSync(first.summaryPath, { force: true });
+      rmSync(first.uatPath, { force: true });
 
-      const result = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
+      const result = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base, invocation);
       assert.ok(!("error" in result));
       assert.equal(result.duplicate, true);
       assert.equal(existsSync(result.summaryPath), true);
@@ -758,7 +785,7 @@ describe("state-machine-live-validation", () => {
       assert.ok(slice, "phantom slice S99 should exist");
     });
 
-    test("completing slice for non-existent milestone auto-creates it", async () => {
+    test("completing a legacy-only slice fails closed until explicit adoption", async () => {
       base = createFullFixture();
       openDatabase(join(base, ".gsd", "gsd.db"));
       // Insert task to satisfy completion guard
@@ -767,7 +794,9 @@ describe("state-machine-live-validation", () => {
       insertTask({ id: "T01", sliceId: "S99", milestoneId: "M099", status: "complete" });
 
       const result = await handleCompleteSlice(makeSliceParams("S99", "M099") as any, base);
-      assert.ok(!("error" in result), `expected success: ${JSON.stringify(result)}`);
+      assert.ok("error" in result);
+      assert.match(result.error, /canonical Milestone lifecycle authority/);
+      assert.equal(getSlice("M099", "S99")?.status, "pending");
     });
   });
 
@@ -852,6 +881,11 @@ describe("state-machine-live-validation", () => {
       await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
       // Complete T02
       await handleCompleteTask(makeTaskParams("T02", "S01", "M001") as any, base);
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01", "T02"],
+      });
       // Complete S01
       await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
 
@@ -955,7 +989,20 @@ describe("state-machine-live-validation", () => {
       // Complete task + slice
       await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
       await handleCompleteTask(makeTaskParams("T02", "S01", "M001") as any, base);
-      await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01", "T02"],
+      });
+      const originalSliceInvocation = internalExecutionInvocation(
+        "test/state-machine/slice-completion-before-reopen",
+      );
+      const firstSliceCompletion = await handleCompleteSlice(
+        makeSliceParams("S01", "M001") as any,
+        base,
+        originalSliceInvocation,
+      );
+      assert.ok(!("error" in firstSliceCompletion));
       assert.ok(isClosedStatus(getSlice("M001", "S01")!.status));
 
       // Reopen slice — now cleans up all artifacts (M12 fix)
@@ -964,9 +1011,26 @@ describe("state-machine-live-validation", () => {
       assert.equal(getTask("M001", "S01", "T01")!.status, "pending");
       assert.equal(getTask("M001", "S01", "T02")!.status, "pending");
 
+      const delayedReplay = await handleCompleteSlice(
+        makeSliceParams("S01", "M001") as any,
+        base,
+        originalSliceInvocation,
+      );
+      assert.ok(!("error" in delayedReplay));
+      assert.equal(delayedReplay.duplicate, true);
+      assert.equal(getSlice("M001", "S01")!.status, "in_progress");
+      assert.equal(existsSync(firstSliceCompletion.summaryPath), false);
+      assert.equal(existsSync(firstSliceCompletion.uatPath), false);
+
       // Re-complete task + slice succeeds
       await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
       await handleCompleteTask(makeTaskParams("T02", "S01", "M001") as any, base);
+      seedSliceCompletionAuthority({
+        milestoneId: "M001",
+        sliceId: "S01",
+        completedTaskIds: ["T01", "T02"],
+        runId: "redo",
+      });
       const r = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
       assert.ok(!("error" in r), `re-complete slice: ${JSON.stringify(r)}`);
       assert.ok(isClosedStatus(getSlice("M001", "S01")!.status));

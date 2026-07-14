@@ -24,6 +24,7 @@ import {
 } from "../gsd-db.ts";
 import { handleCompleteSlice } from "../tools/complete-slice.ts";
 import type { CompleteSliceParams } from "../types.ts";
+import { seedSliceCompletionAuthority } from "./slice-completion-fixture.ts";
 
 function makeValidSliceParams(overrides: Partial<CompleteSliceParams> = {}): CompleteSliceParams {
   return {
@@ -87,6 +88,11 @@ describe("complete-slice closes complete-slice-owned gates", () => {
     insertTask({
       id: "T01", sliceId: "S01", milestoneId: "M001",
       status: "complete", title: "Task 1",
+    });
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      completedTaskIds: ["T01"],
     });
 
     // Seed Q8 as pending — this is what plan-slice does today.

@@ -7,6 +7,7 @@ import { createTaskCancellationSchemaV37 } from "./db-task-cancellation-schema.j
 import { createTaskVerificationRecoverySchemaV38 } from "./db-task-verification-recovery-schema.js";
 import { createTaskRecoveryCurrentHeadSchemaV39 } from "./db-task-recovery-current-head-schema.js";
 import { createSliceCancellationSchemaV40 } from "./db-slice-cancellation-schema.js";
+import { createSliceCompletionSchemaV41 } from "./db-slice-completion-schema.js";
 import { createCanonicalFoundationSchemaV31 } from "./db-canonical-foundation-schema.js";
 import { createConversationFoundationSchemaV33 } from "./db-conversation-foundation-schema.js";
 import { createLifecycleFoundationSchemaV32 } from "./db-lifecycle-foundation-schema.js";
@@ -543,4 +544,8 @@ export function applyMigrationV39TaskRecoveryCurrentHead(db: DbAdapter): void {
 
 export function applyMigrationV40SliceCancellation(db: DbAdapter): void {
   createSliceCancellationSchemaV40(db);
+}
+
+export function applyMigrationV41SliceCompletion(db: DbAdapter): void {
+  createSliceCompletionSchemaV41(db);
 }

@@ -11,10 +11,13 @@ import { getDb } from "./db/engine.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import {
   cancelSliceHierarchy,
+  completeSliceHierarchy,
   reopenSliceHierarchy,
   SliceLifecycleValidationError,
   type SliceCancellationHierarchyResult,
   type SliceCancellationInterruption,
+  type SliceCompletionHierarchyResult,
+  type SliceCompletionProof,
   type SliceReopenHierarchyResult,
 } from "./db/writers/slice-lifecycle.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
@@ -59,10 +62,10 @@ function requireText(value: string, field: string): string {
 }
 
 function request(
-  operationType: "slice.cancel" | "slice.reopen",
+  operationType: "slice.cancel" | "slice.complete" | "slice.reopen",
   invocation: ExecutionInvocation,
   slice: SliceLifecycleIdentity,
-  reason: string,
+  payload: Record<string, DomainJsonValue>,
 ): DomainOperationRequest {
   const fence = readDomainOperationFence(invocation.idempotencyKey);
   return {
@@ -77,13 +80,13 @@ function request(
     ...(invocation.turnId ? { turnId: invocation.turnId } : {}),
     payload: {
       slice: { milestoneId: slice.milestoneId, sliceId: slice.sliceId },
-      reason,
+      ...payload,
     },
   };
 }
 
 function shadowPayload(
-  result: SliceCancellationHierarchyResult | SliceReopenHierarchyResult,
+  result: SliceCancellationHierarchyResult | SliceCompletionHierarchyResult | SliceReopenHierarchyResult,
 ): DomainJsonValue[] {
   return result.shadows.map((shadow) => ({
     itemKind: shadow.itemKind,
@@ -117,7 +120,7 @@ export function cancelSlice(input: {
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
   const reason = requireText(input.reason, "reason");
-  const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, reason), (context) => {
+  const operation = executeDomainOperation(request("slice.cancel", input.invocation, slice, { reason }), (context) => {
     const result = cancelSliceHierarchy(context, { ...slice, reason });
     return {
       events: [{
@@ -187,7 +190,7 @@ export function reopenSlice(input: {
     sliceId: requireText(input.slice.sliceId, "sliceId"),
   };
   const reason = requireText(input.reason, "reason");
-  const operation = executeDomainOperation(request("slice.reopen", input.invocation, slice, reason), (context) => {
+  const operation = executeDomainOperation(request("slice.reopen", input.invocation, slice, { reason }), (context) => {
     const result = reopenSliceHierarchy(context, { ...slice, reason });
     return {
       events: [{
@@ -231,5 +234,151 @@ export function reopenSlice(input: {
     legacyStatus: "in_progress",
     tasksReset: stored.reopenedTaskIds.length,
     reopenedTaskIds: stored.reopenedTaskIds,
+  };
+}
+
+export interface SliceCompletionCloseout {
+  sliceTitle: string;
+  oneLiner: string;
+  narrative: string;
+  verification: string;
+  uatContent: string;
+  operationalReadiness: string;
+  deviations: string;
+  knownLimitations: string;
+  followUps: string;
+  provides: string[];
+  requires: Array<{ slice: string; provides: string }>;
+  affects: string[];
+  keyFiles: string[];
+  keyDecisions: string[];
+  patternsEstablished: string[];
+  observabilitySurfaces: string[];
+  drillDownPaths: string[];
+  requirementsAdvanced: Array<{ id: string; how: string }>;
+  requirementsValidated: Array<{ id: string; proof: string }>;
+  requirementsSurfaced: string[];
+  requirementsInvalidated: Array<{ id: string; what: string }>;
+  filesModified: Array<{ path: string; description: string }>;
+}
+
+export interface SliceCompletionReceipt {
+  status: DomainOperationResult["status"];
+  operationId: string;
+  resultingRevision: number;
+  resultingAuthorityEpoch: number;
+  eventIds: string[];
+  outboxIds: number[];
+  projectionWorkIds: string[];
+  sliceLifecycleId: string;
+  canonicalStatus: "completed";
+  legacyStatus: "complete";
+  completedAt: string;
+  completedTaskIds: string[];
+  cancelledTaskIds: string[];
+  proofs: SliceCompletionProof[];
+  q8Verdict: "pass" | "omitted";
+  closeout: SliceCompletionCloseout;
+  isCurrent: boolean;
+}
+
+interface StoredCompletionPayload {
+  sliceLifecycleId: string;
+  completedAt: string;
+  completedTaskIds: string[];
+  cancelledTaskIds: string[];
+  proofs: SliceCompletionProof[];
+  q8Verdict: "pass" | "omitted";
+  closeout: SliceCompletionCloseout;
+}
+
+function storedCompletionPayload(operationId: string): StoredCompletionPayload {
+  const event = getDb().prepare(`
+    SELECT payload_json FROM workflow_domain_events
+    WHERE operation_id = :operation_id AND event_type = 'slice.completed'
+  `).all({ ":operation_id": operationId }) as Array<Record<string, unknown>>;
+  if (event.length !== 1) throw new Error("Slice completion receipt requires one durable event");
+  return JSON.parse(String(event[0]!["payload_json"])) as StoredCompletionPayload;
+}
+
+function isCurrentSliceCompletion(
+  operationId: string,
+  slice: SliceLifecycleIdentity,
+): boolean {
+  return Boolean(getDb().prepare(`
+    SELECT 1
+    FROM workflow_item_lifecycles
+    WHERE item_kind = 'slice'
+      AND milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND task_id IS NULL
+      AND lifecycle_status = 'completed'
+      AND last_operation_id = :operation_id
+  `).get({
+    ":milestone_id": slice.milestoneId,
+    ":slice_id": slice.sliceId,
+    ":operation_id": operationId,
+  }));
+}
+
+export function completeSlice(input: {
+  invocation: ExecutionInvocation;
+  slice: SliceLifecycleIdentity;
+  closeout: SliceCompletionCloseout;
+}): SliceCompletionReceipt {
+  const slice = {
+    milestoneId: requireText(input.slice.milestoneId, "milestoneId"),
+    sliceId: requireText(input.slice.sliceId, "sliceId"),
+  };
+  const operation = executeDomainOperation(request("slice.complete", input.invocation, slice, {
+    closeout: input.closeout as unknown as DomainJsonValue,
+  }), (context) => {
+    const result = completeSliceHierarchy(context, {
+      ...slice,
+      operationalReadiness: input.closeout.operationalReadiness,
+    });
+    return {
+      events: [{
+        eventType: "slice.completed",
+        entityType: "slice",
+        entityId: `${slice.milestoneId}/${slice.sliceId}`,
+        payload: {
+          sliceLifecycleId: result.sliceLifecycleId,
+          completedAt: result.completedAt,
+          completedTaskIds: result.completedTaskIds,
+          cancelledTaskIds: result.cancelledTaskIds,
+          proofs: result.proofs.map((proof) => ({ ...proof })),
+          q8Verdict: result.q8Verdict,
+          closeout: input.closeout as unknown as DomainJsonValue,
+          lifecycleShadowComparisons: shadowPayload(result),
+        },
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: `lifecycle/${slice.milestoneId}/${slice.sliceId}`.toLowerCase(),
+        projectionKind: "slice-lifecycle",
+        rendererVersion: "1",
+      }],
+    };
+  });
+  const stored = storedCompletionPayload(operation.operationId);
+  return {
+    status: operation.status,
+    operationId: operation.operationId,
+    resultingRevision: operation.resultingRevision,
+    resultingAuthorityEpoch: operation.resultingAuthorityEpoch,
+    eventIds: operation.eventIds,
+    outboxIds: operation.outboxIds,
+    projectionWorkIds: operation.projectionWorkIds,
+    sliceLifecycleId: stored.sliceLifecycleId,
+    canonicalStatus: "completed",
+    legacyStatus: "complete",
+    completedAt: stored.completedAt,
+    completedTaskIds: stored.completedTaskIds,
+    cancelledTaskIds: stored.cancelledTaskIds,
+    proofs: stored.proofs,
+    q8Verdict: stored.q8Verdict,
+    closeout: stored.closeout,
+    isCurrent: isCurrentSliceCompletion(operation.operationId, slice),
   };
 }

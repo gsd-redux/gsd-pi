@@ -14,6 +14,7 @@ import {
 } from "../gsd-db.ts";
 import { handleCompleteSlice } from "../tools/complete-slice.ts";
 import type { CompleteSliceParams } from "../types.ts";
+import { seedSliceCompletionAuthority } from "./slice-completion-fixture.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -193,6 +194,11 @@ describe("handleCompleteSlice with coerced string arrays (#3565)", () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001" });
     insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", status: "complete", title: "Task 1" });
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S01",
+      completedTaskIds: ["T01"],
+    });
   });
 
   afterEach(() => {

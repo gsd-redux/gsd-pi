@@ -447,27 +447,36 @@ export async function renderStateProjection(basePath: string): Promise<void> {
  * Does not touch slice PLAN.md or task SUMMARY.md — those have authoritative
  * renderers in plan-slice / complete-task.
  */
-export async function renderMilestoneShellProjections(basePath: string, milestoneId: string): Promise<void> {
+export async function renderMilestoneShellProjections(
+  basePath: string,
+  milestoneId: string,
+): Promise<{ stale: boolean }> {
+  let stale = false;
   try {
     await renderRoadmapFromDb(basePath, milestoneId);
   } catch (err) {
+    stale = true;
     logWarning("projection", `renderRoadmapFromDb failed for ${milestoneId}: ${(err as Error).message}`);
   }
   try {
     renderTopLevelRoadmapFromDb(basePath);
   } catch (err) {
+    stale = true;
     logWarning("projection", `renderTopLevelRoadmapFromDb failed: ${(err as Error).message}`);
   }
   try {
     renderTopLevelQueueFromDb(basePath);
   } catch (err) {
+    stale = true;
     logWarning("projection", `renderTopLevelQueueFromDb failed: ${(err as Error).message}`);
   }
   try {
     await renderStateProjection(basePath);
   } catch (err) {
+    stale = true;
     logWarning("projection", `renderStateProjection failed: ${(err as Error).message}`);
   }
+  return { stale };
 }
 
 // ─── renderAllProjections ───────────────────────────────────────────────
