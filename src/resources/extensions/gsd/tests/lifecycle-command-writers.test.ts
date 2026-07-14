@@ -356,8 +356,12 @@ test("adoptLifecycleIfMissing rolls back the outer operation when its hierarchy 
 test("terminal lifecycles reopen only through ready and reject a direct in-progress jump", (t) => {
   openFixture(t);
   adoptTask();
-  const transition = (status: CanonicalLifecycleStatus, key: string) => executeAtFence(
-    `lifecycle.${status}`,
+  const transition = (
+    status: CanonicalLifecycleStatus,
+    key: string,
+    operationType = `lifecycle.${status}`,
+  ) => executeAtFence(
+    operationType,
     key,
     (context) => adoptOrTransitionLifecycle(context, {
       itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01",
@@ -371,10 +375,10 @@ test("terminal lifecycles reopen only through ready and reject a direct in-progr
   const beforeIllegal = snapshot();
   assert.throws(() => transition("in_progress", "chain/illegal-terminal-jump"), /transition|completed|ready/i);
   assert.deepEqual(snapshot(), beforeIllegal);
-  transition("ready", "chain/reopen-completed");
+  transition("ready", "chain/reopen-completed", "task.reopen");
   transition("in_progress", "chain/in-progress-2");
   transition("cancelled", "chain/cancelled");
-  transition("ready", "chain/reopen-cancelled");
+  transition("ready", "chain/reopen-cancelled", "task.reopen");
 
   assert.deepEqual(row("SELECT lifecycle_status, state_version FROM workflow_item_lifecycles"), {
     lifecycle_status: "ready",

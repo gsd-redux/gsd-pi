@@ -180,13 +180,9 @@ function writePlanRows(params: PersistMilestonePlanParams): void {
 
   for (let i = 0; i < params.slices.length; i++) {
     const slice = params.slices[i]!;
-    // Preserve completed/done status on re-plan (#2558).
-    // Without this, a re-plan after milestone transition would reset
-    // already-completed slices back to "pending".
+    // Replanning changes the plan, not the Slice lifecycle projection.
     const existing = getSlice(params.milestoneId, slice.sliceId);
-    const status = existing && (existing.status === "complete" || existing.status === "done")
-      ? existing.status
-      : "pending";
+    const status = existing?.status ?? "pending";
     insertSlice({
       id: slice.sliceId,
       milestoneId: params.milestoneId,

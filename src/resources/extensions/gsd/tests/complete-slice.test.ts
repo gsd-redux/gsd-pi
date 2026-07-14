@@ -15,7 +15,6 @@ import {
   getSliceTasks,
   insertGateRow,
   getGateResults,
-  updateMilestoneStatus,
   SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteSlice as handleCompleteSliceWithInvocation } from '../tools/complete-slice.ts';
@@ -716,7 +715,7 @@ console.log('\n=== complete-slice: rejects completion in a closed milestone ==='
   openDatabase(dbPath);
   const { basePath } = createTempProject();
 
-  insertMilestone({ id: 'M001' });
+  insertMilestone({ id: 'M001', status: 'complete' });
   insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
   insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', status: 'complete', title: 'Task 1' });
   seedSliceCompletionAuthority({
@@ -724,8 +723,6 @@ console.log('\n=== complete-slice: rejects completion in a closed milestone ==='
     sliceId: 'S01',
     completedTaskIds: ['T01'],
   });
-  updateMilestoneStatus('M001', 'complete', new Date().toISOString());
-
   const result = await handleCompleteSlice(makeValidSliceParams(), basePath);
   assertTrue('error' in result, 'should reject slice completion in a closed milestone');
   if ('error' in result) assertMatch(result.error, /closed milestone/i, 'error should mention closed milestone');

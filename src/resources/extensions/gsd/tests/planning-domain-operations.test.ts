@@ -222,8 +222,11 @@ function transitionTestLifecycle(
   key: string,
 ): void {
   const fence = readDomainOperationFence();
+  const operationType = identity.itemKind === "milestone" && lifecycleStatus === "completed"
+    ? "milestone.complete"
+    : `test.lifecycle.${lifecycleStatus}`;
   executeDomainOperation({
-    operationType: `test.lifecycle.${lifecycleStatus}`,
+    operationType,
     idempotencyKey: key,
     expectedRevision: fence.revision,
     expectedAuthorityEpoch: fence.authorityEpoch,

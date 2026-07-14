@@ -19,6 +19,7 @@ import {
   closeDatabase,
   executeDomainOperation,
   getMilestone,
+  getSlice,
   insertMilestone,
   insertSlice,
   openDatabase,
@@ -233,8 +234,8 @@ test("milestone planning adopts fresh roadmap lifecycles with progressive readin
 test("milestone replanning preserves existing lifecycle status and causal provenance", async () => {
   const base = makeBase();
   try {
-    insertMilestone({ id: "M001", title: "Reserved", status: "queued" });
-    insertSlice({ id: "S01", milestoneId: "M001", title: "Reserved slice", status: "pending" });
+    insertMilestone({ id: "M001", title: "Reserved", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Reserved slice", status: "paused" });
     const fence = readDomainOperationFence();
     executeDomainOperation({
       operationType: "test.lifecycle.seed",
@@ -274,6 +275,7 @@ test("milestone replanning preserves existing lifecycle status and causal proven
     assert.equal(result["isError"], undefined);
 
     assert.deepEqual(lifecycleRows(), before);
+    assert.equal(getSlice("M001", "S01")?.status, "paused");
   } finally {
     cleanup(base);
   }

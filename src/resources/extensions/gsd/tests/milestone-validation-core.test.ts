@@ -22,6 +22,7 @@ import {
   insertSlice,
   insertTask,
   openDatabase,
+  SCHEMA_VERSION,
 } from "../gsd-db.ts";
 
 let basePath: string | undefined;
@@ -254,7 +255,7 @@ test("one validation command atomically records criteria, Attempt, Result, evide
   `).get({ ":operation_id": committed.operationId })?.["count"], 1);
 });
 
-test("v42 upgrades the genuine v41 settlement trigger for atomic Milestone validation", () => {
+test("the current schema preserves the v42 validation upgrade from a genuine v41 database", () => {
   setup();
   assert.ok(basePath);
   const databasePath = join(basePath, "gsd.db");
@@ -276,7 +277,7 @@ test("v42 upgrades the genuine v41 settlement trigger for atomic Milestone valid
   assert.equal(openDatabase(databasePath), true);
   assert.equal(db().prepare(
     `SELECT MAX(version) AS version FROM schema_version`,
-  ).get()?.["version"], 42);
+  ).get()?.["version"], SCHEMA_VERSION);
   const receipt = validateMilestone(
     combinedValidationInput("milestone-validation/combined/v42-upgrade"),
   );
