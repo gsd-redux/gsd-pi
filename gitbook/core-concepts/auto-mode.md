@@ -44,17 +44,15 @@ Markdown files in `.gsd/` are rendered projections for review, prompts, and git-
 
 Milestone, slice, and task planning, task and slice replanning, and roadmap reassessment commit through replay-safe domain operations. Retries reuse the original durable result instead of applying hierarchy changes twice. Removed pending slices and tasks retain their identity as cancelled history and are omitted from active roadmap and plan projections; explicitly reopen them before reusing their IDs.
 
-Execute-task units use durable Attempt records. Before the worker starts, auto mode must hold a milestone lease and coordination dispatch, move the canonical task lifecycle to `in_progress`, create a running Attempt, and append an `execute` Kernel checkpoint. If an old worker is replaced by a newer lease, the old Attempt is settled as `interrupted` and the replacement Attempt links back to it as retry history.
+The detailed Attempt, Result, host-verification, recovery, blocker, and one-use
+resume contracts are maintained in the authoritative
+[Auto Mode guide](../../docs/user-docs/auto-mode.md#state-authority).
 
-`gsd_task_complete` stages the executor's result; it does not publish the task as complete by itself. A successful executor result settles the Attempt with an immutable Result and advances the Kernel checkpoint to `verify`. A blocker or executor failure settles the Attempt as failed and routes it for recovery. The task's summary projection is rendered from the staged result; in flat-phase projects, the canonical task summary is `S##-T##-SUMMARY.md` at the phase root, such as `S01-T03-SUMMARY.md`; older flat projects with `T##-SUMMARY.md` are still read as a legacy fallback.
-
-Host-owned verification runs after the executor Result. GSD records a durable Technical Verdict and command evidence for the Attempt, including source-revision snapshots before and after verification. Only a passing verdict for the current source revision publishes the task completion: the canonical lifecycle becomes `completed`, the compatibility task row becomes `complete`, and the summary and plan projections are refreshed. Failed or inconclusive verification stays authoritative and routes to retry or pause; it is not treated as non-blocking just because the executor called `gsd_task_complete`.
-
-Task recovery keeps three intents separate. Reopen returns a terminal task to canonical `ready` plus legacy `pending` without starting work or deleting history; retry creates a lineage-linked Attempt after a failed or interrupted Attempt without resetting task status; cancel moves actionable work to canonical `cancelled` plus legacy `skipped`, interrupting any running Attempt first. Projection and summary rendering failures are retryable delivery work after the database transaction commits. They return a visible error and leave the authoritative lifecycle state intact instead of rolling a committed completion back to pending.
-
-An agent-owned recovery abort remains fail-closed after its retry budget is exhausted. If you repair the underlying defect, call the control-plane-only `gsd_task_recovery_resume` tool with the exact current abort `recoveryActionId`, a nonblank `repairSummary`, and non-empty structured verification `evidence`, then resume auto mode. The operation preserves the failed Attempt, Result, abort Recovery Action, and exhausted budget while authorizing exactly one immediate lineage-linked Attempt. A dispatched worker cannot call this tool, and stale actions, duplicate authorizations, open blockers, or later Attempts are rejected.
-
-In worktree mode, the project-root database and project-root `.gsd/` state remain authoritative. Worktree markdown projections are diagnostics, not state to sync back. Runtime state derivation does not silently rebuild from markdown when the database is unavailable. The legacy markdown fallback is only enabled with `GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK=1` for tests and explicit recovery work.
+In worktree mode, the project-root database remains authoritative. Project-root
+and worktree markdown projections are diagnostics, not state to sync back.
+Runtime state derivation does not silently rebuild from markdown when the
+database is unavailable. The legacy markdown fallback is only enabled with
+`GSD_ALLOW_MARKDOWN_DERIVE_FALLBACK=1` for tests and explicit recovery work.
 
 ## Deep Planning Mode
 

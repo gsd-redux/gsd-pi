@@ -105,7 +105,7 @@ history below explains each migration without duplicating that live value.
 | V29 | slices.target_repositories and tasks.target_repositories for multi-repository planning |
 | V30 | rework_briefs and rework_brief_findings for structured task rework gates |
 | V31 | **Additive canonical foundation**: singleton project authority with revision and Authority Epoch, workflow operation provenance/idempotency receipts, immutable revision-linked domain events, and a durable event outbox |
-| V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, human-only Blockers, authorized Waivers, and immutable Requirement Disposition history |
+| V32 | **Additive lifecycle foundation**: canonical lifecycle state, fenced execution Attempts, immutable Attempt Results, user- or external-owned Blockers, authorized Waivers, and immutable Requirement Disposition history |
 | V33 | **Additive guided-conversation foundation**: milestone context and advisory horizons, focused recommendation-first interactions, immutable verbatim Answers and correction-safe Decisions, dependency-targeted impacts, and restart-safe Work Checkpoints |
 | V34 | **Additive recovery and evidence foundation**: immutable Failure Observations and Recovery Actions, immutable count budgets whose use is derived from linked Actions, versioned acceptance criteria, verdict-owned objective evidence, separate subjective Human Acceptance, and immutable remediation routing |
 | V35 | **Additive projection, import, kernel, and closeout foundation**: durable per-target projection delivery, immutable import application receipts, restart-safe kernel checkpoint chains, versioned closeout plans with ordered effects, and success-only settlement receipts |
@@ -1236,8 +1236,8 @@ before runtime cutover.
 ### 3h. Additive Recovery And Evidence Foundation (V34)
 
 V34 adds eight canonical shadow tables. It deliberately reuses V32 Lifecycles,
-Attempts, Attempt Results, and human-only Blockers instead of creating another
-execution, UAT-run, or blocker model. It does not backfill or reinterpret legacy
+Attempts, Attempt Results, and user- or external-owned Blockers instead of
+creating another execution, UAT-run, or blocker model. It does not backfill or reinterpret legacy
 verification evidence, assessments, quality gates, gate runs, UAT files, rework
 briefs, dispatch retry fields, runtime JSON, or process-local counters. Those
 surfaces retain their existing compatibility meaning until the explicit
@@ -1268,9 +1268,11 @@ authority_epoch         INTEGER NOT NULL
   classifier can persist a new normalized kind without a schema migration.
 - An `execute` observation requires the matching V32 Attempt and its immutable
   `failed` or `interrupted` Attempt Result. Result provenance must be causally
-  older than the observation. Any Result attached at another boundary stage is
-  subject to the same failed/interrupted and causal-scope checks. Updates and
-  deletes fail.
+  older than the observation. A `verify` observation instead requires a
+  `succeeded` Result plus the current non-superseded criterion and latest
+  non-superseded evidence-backed `fail` or `inconclusive` Technical Verdict
+  across tested source revisions. A Result cannot be attached at another
+  boundary stage. Updates and deletes fail.
 - Recovery owner is an explicit `agent | user | external` classification and
   is not inferred from the extensible failure kind. Agent-owned failures cannot
   carry a Blocker. User/external failures must own the exact open V32 Blocker
@@ -1332,8 +1334,8 @@ authority_epoch        INTEGER NOT NULL
   Repair and remediate also require matching unexhausted budgets and a target
   lifecycle; remediation targets actionable Task work. Replan requires a target
   lifecycle without a budget. Clarify and pause require the existing open V32
-  human-only Blocker owned by the Failure Observation. Abort has no budget,
-  target, or blocker.
+  user- or external-owned Blocker owned by the Failure Observation. Abort has
+  no budget, target, or blocker.
 - Budget policy classes constrain the selected Action: retry accepts
   `transient-execution | schema-correction | objective-uat`, repair accepts
   `deterministic-repair | schema-correction`, and remediate accepts only
