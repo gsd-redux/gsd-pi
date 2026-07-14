@@ -832,16 +832,15 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_task_complete",
     label: "Complete Task",
     description:
-      "Record a completed task to the GSD database, render a SUMMARY.md to disk, and toggle the plan checkbox — all in one atomic operation. " +
-      "Writes the task row inside a transaction, then performs filesystem writes outside the transaction.",
-    promptSnippet: "Complete a GSD task (DB write + summary render + checkbox toggle)",
+      "Record a Task execution result and verification input in SQLite. Canonical Tasks advance to host verification or recovery and publish completion only after a current passing Technical Verdict; legacy Tasks complete directly and refresh readable projections.",
+    promptSnippet: "Record a GSD Task result and advance verification or recovery",
     promptGuidelines: [
       "Use gsd_task_complete (or gsd_complete_task) when a task is finished and needs to be recorded.",
       "Include verification whenever possible. If verification is omitted, the executor derives it from verificationEvidence when possible.",
       "verificationEvidence is an array of objects with command, exitCode, verdict, durationMs.",
       "The tool validates required fields and returns an error message if verification cannot be derived.",
-      "On success, returns the summaryPath where the SUMMARY.md was written.",
-      "Idempotent — calling with the same params twice will upsert (INSERT OR REPLACE) without error.",
+      "Canonical success returns attemptId, resultId, nextStage, and summaryPath while completion awaits host verification; a blocker routes to recovery.",
+      "Legacy success returns summaryPath and may report stale projection repair or a duplicate non-mutating retry; matching parameters alone do not make a replay.",
     ],
     parameters: Type.Object({
       // ── Core identification + content (required) ──────────────────────
@@ -913,14 +912,14 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_slice_complete",
     label: "Complete Slice",
     description:
-      "Record a completed slice to the GSD database, render SUMMARY.md + UAT.md to disk, and toggle the roadmap checkbox — all in one atomic operation. " +
-      "Validates all tasks are complete before proceeding. Writes the slice row inside a transaction, then performs filesystem writes outside the transaction.",
-    promptSnippet: "Complete a GSD slice (DB write + summary/UAT render + roadmap checkbox toggle)",
+      "Commit evidence-backed Slice completion and closeout facts to SQLite in one revision- and Authority-Epoch-fenced operation, then refresh readable projections. " +
+      "Projection failure leaves the database completion committed and is reported as stale.",
+    promptSnippet: "Complete a GSD Slice in SQLite, then refresh readable projections",
     promptGuidelines: [
-      "Use gsd_slice_complete (or gsd_complete_slice) when all tasks in a slice are finished and the slice needs to be recorded.",
-      "All tasks in the slice must have status 'complete' — the handler validates this before proceeding.",
-      "On success, returns summaryPath and uatPath where the files were written.",
-      "Idempotent — calling with the same params twice will not crash.",
+      "Use gsd_slice_complete (or gsd_complete_slice) when every Task is terminal with current durable completion proof or a current authorized cancellation Waiver.",
+      "Open Tasks, running Attempts, missing current passing evidence, and unauthorized cancellation block completion.",
+      "On a current success, returns summaryPath and uatPath; stale identifies projection repair, while duplicate and superseded classify an exact receipt replay.",
+      "Exact retries require the host to preserve the private invocation identity; matching parameters alone are not replay identity.",
     ],
     parameters: Type.Object({
       // ── Core identification + content (required) ──────────────────────
@@ -929,7 +928,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       sliceTitle: Type.String({ description: "Title of the slice" }),
       oneLiner: Type.String({ description: "One-line summary of what the slice accomplished" }),
       narrative: Type.String({ description: "Detailed narrative of what happened across all tasks" }),
-      verification: Type.Optional(Type.String({ description: "What was verified across all tasks — if omitted, summary records verification as passed without detail." })),
+      verification: Type.Optional(Type.String({ description: "Optional closeout prose describing verification. Durable Task proof is read from SQLite and cannot be supplied by this field." })),
       uatContent: Type.String({ description: "UAT test content (markdown body)" }),
       // ── Enrichment metadata (optional — defaults to empty) ────────────
       deviations: Type.Optional(Type.String({ description: "Deviations from the slice plan, or 'None.'" })),
@@ -1002,15 +1001,15 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_skip_slice",
     label: "Skip Slice",
     description:
-      "Mark a slice as skipped so auto-mode advances past it without executing. " +
-      "Non-closed tasks within the slice are cascaded to skipped so milestone completion is not blocked by leftover pending tasks. " +
-      "The slice data is preserved for reference. The state machine treats skipped slices like completed ones for dependency satisfaction.",
-    promptSnippet: "Skip a GSD slice (mark as skipped, auto-mode will advance past it)",
+      "Cancel a Slice in one revision- and Authority-Epoch-fenced SQLite operation: preserve completed work, interrupt running Attempts, cancel unfinished Tasks, and record a current Slice-scoped Waiver for dependency satisfaction. " +
+      "Readable projections refresh after commit and may be reported stale.",
+    promptSnippet: "Cancel a GSD Slice durably, then refresh readable projections",
     promptGuidelines: [
       "Use gsd_skip_slice when a slice should be bypassed — descoped, superseded, or no longer relevant.",
       "Cannot skip a slice that is already complete.",
-      "Skipped slices satisfy downstream dependencies just like completed slices.",
-      "All pending/active tasks in the slice are cascaded to skipped; completed tasks are never downgraded.",
+      "A current Slice-scoped Waiver makes the cancelled Slice satisfy downstream dependencies until reopen revokes it.",
+      "Completed and already-cancelled Tasks are preserved; other Tasks are cancelled, and a running Attempt is interrupted and settled first.",
+      "Exact invocation replays report duplicate; a historical replay may also report superseded. stale means the readable projection needs repair.",
     ],
     parameters: Type.Object({
       sliceId: Type.String({ description: "Slice ID (e.g. S02)" }),
@@ -1031,8 +1030,8 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_complete_milestone",
     label: "Complete Milestone",
     description:
-      "Record a completed milestone to the GSD database, render MILESTONE-SUMMARY.md to disk — all in one atomic operation. " +
-      "Validates all slices are complete before proceeding.",
+      "Record Milestone completion in the legacy database path, then render MILESTONE-SUMMARY.md and readable status projections. " +
+      "This path is not yet a revision- and Authority-Epoch-fenced lifecycle receipt; that Milestone cutover is deferred to S06.",
     promptSnippet: "Complete a GSD milestone (DB write + summary render)",
     promptGuidelines: [
       "Use gsd_complete_milestone when all slices in a milestone are finished and the milestone needs to be recorded.",
@@ -1395,14 +1394,15 @@ export function registerDbTools(pi: ExtensionAPI): void {
     name: "gsd_slice_reopen",
     label: "Reopen Slice",
     description:
-      "Reset a completed slice back to 'in_progress' and reset ALL of its tasks back to 'pending'. Cleans up SUMMARY.md / UAT.md and per-task summaries. " +
-      "Reopening a slice means re-doing the work — partial resets create ambiguous state, so all tasks are reset.",
-    promptSnippet: "Reopen a completed GSD slice (resets all tasks to pending, removes summaries)",
+      "Reopen a completed or cancelled Slice and all terminal Tasks in one revision- and Authority-Epoch-fenced SQLite operation while preserving immutable execution history. " +
+      "The operation revokes current cancellation Waivers, blocks progressed transitive downstream Slices, and fences projection cleanup against newer lifecycle operations.",
+    promptSnippet: "Reopen a terminal GSD Slice atomically, then refresh readable projections",
     promptGuidelines: [
-      "Use gsd_slice_reopen when a completed slice needs to be re-done (e.g. integration issue surfaced, requirements changed).",
-      "All tasks within the slice are reset to 'pending' — there is no partial-reopen.",
-      "Will fail if the parent milestone is already closed — reopen the milestone first.",
-      "Will fail if the slice is not currently 'complete' — there is nothing to reopen.",
+      "Use gsd_slice_reopen when a completed or cancelled Slice needs a full redo (e.g. integration issue surfaced, requirements changed).",
+      "All terminal Tasks return to pending together; prior Attempts, results, verification evidence, and dispatch history remain immutable.",
+      "Will fail under a terminal parent Milestone; canonical Milestone lifecycle reopen remains deferred to S06.",
+      "Will fail if the Slice is not terminal or any transitive downstream Slice has progressed — reopen downstream work first.",
+      "Exact invocation replays report duplicate; a historical replay may also report superseded. stale means projection cleanup or refresh needs repair.",
       "Use the canonical name gsd_slice_reopen; gsd_reopen_slice is only an alias.",
     ],
     parameters: Type.Object({

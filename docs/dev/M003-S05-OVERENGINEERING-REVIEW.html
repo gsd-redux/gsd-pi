@@ -284,6 +284,7 @@
     <header>
       <p class="eyebrow">M003 / S05 · Architecture review</p>
       <h1>Slice Lifecycle Overengineering Review</h1>
+      <div class="verdict"><strong>Historical snapshot:</strong> this review describes the pre-S05 baseline at <code>f7dbea8524</code>. S05 has since implemented the Slice lifecycle cutover. See the <a href="architecture.md">architecture overview</a> and <a href="lifecycle-command-integration-runbook.md">lifecycle command integration runbook</a> for current contracts.</div>
       <p class="lede"><strong>Conclusion:</strong> the subsystem is not suffering from too many sophisticated abstractions. Its main cost is the opposite: four slice verbs are spread across parallel legacy and canonical write paths, transport adapters, and projection conventions. The best refactor is a narrow convergence onto the existing Domain Operation and lifecycle primitives, followed by deletion of obsolete adapters and renderers.</p>
       <div class="meta">
         <div><strong>Reviewed baseline</strong><code>origin/main</code> at <code>f7dbea8524</code></div>

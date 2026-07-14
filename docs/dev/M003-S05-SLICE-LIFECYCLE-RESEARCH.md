@@ -1,6 +1,11 @@
 # M003/S05 Slice Lifecycle Command Integration Research
 
-**Status:** implementation input
+**Status:** historical pre-implementation snapshot at `f7dbea8524`; S05 is now implemented
+
+Current lifecycle contracts are owned by the [architecture overview](./architecture.md)
+and [lifecycle command integration runbook](./lifecycle-command-integration-runbook.md).
+The command map and recommendations below describe the reviewed baseline, not
+the post-S05 runtime.
 
 **Scope:** slice lifecycle commands only; milestone lifecycle integration remains S06
 

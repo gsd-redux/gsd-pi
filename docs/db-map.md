@@ -1932,30 +1932,10 @@ that compatibility adapter.
 
 ## 6. DB State → Dispatch Rule Mapping
 
-`auto-dispatch.ts` reads DB state to decide which prompt to run. Here's exactly which tables each dispatch rule queries:
-
-| Dispatch Rule | Tables Queried | Condition |
-|--------------|----------------|-----------|
-| `workflow-preferences` | — | PREFERENCES.md file missing |
-| `discuss-project` | artifacts | PROJECT artifact absent |
-| `discuss-requirements` | artifacts | REQUIREMENTS artifact absent |
-| `research-decision` | runtime_kv | research-decision key absent/unresolved |
-| `research-project` | artifacts, milestones | deep mode ON + RESEARCH absent |
-| `discuss-milestone` | milestones, artifacts | active milestone + CONTEXT absent |
-| `research-milestone` | milestones, artifacts | CONTEXT present + RESEARCH absent (if needed) |
-| `plan-milestone` | milestones, slices | CONTEXT present + no slices exist |
-| `parallel-research-slices` | slices, artifacts | slices exist + RESEARCH artifacts missing |
-| `guided-discuss-slice` | slices, artifacts | slice CONTEXT absent |
-| `plan-slice` | slices, tasks | CONTEXT present + no tasks |
-| `refine-slice` | slices | `is_sketch = 1` |
-| `reactive-execute` | tasks | ≥ 3 tasks WHERE status = 'pending' |
-| `execute-task` | tasks | 1–2 tasks WHERE status = 'pending' |
-| `gate-evaluate` | quality_gates | status = 'pending' |
-| `run-uat` | slices, assessments | tasks all done + UAT absent |
-| `complete-slice` | tasks, slices | all tasks complete + slice status ≠ 'complete' |
-| `reassess-roadmap` | slices, milestones | slice just completed + roadmap needs update |
-| `validate-milestone` | slices, milestones, assessments | all slices complete + VALIDATION absent |
-| `complete-milestone` | milestones, assessments | VALIDATION present + milestone status ≠ 'closed' |
+The authoritative DB-state-to-prompt dispatch conditions are maintained in the
+[prompt/DB combined map](./prompt-db-combined-map.md).
+This database map owns the schema, read/write lineage, and transaction
+invariants rather than duplicating dispatch policy.
 
 ---
 

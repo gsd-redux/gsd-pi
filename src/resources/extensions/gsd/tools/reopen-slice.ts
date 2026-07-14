@@ -1,16 +1,20 @@
 /**
  * reopen-slice handler — the core operation behind gsd_slice_reopen.
  *
- * Resets a completed slice back to "in_progress" and resets ALL of its
- * tasks back to "pending". This is intentional — if you're reopening a
- * slice, you're re-doing the work. Partial resets create ambiguous state.
+ * Reopens a completed or cancelled Slice and all terminal Tasks in one
+ * revision- and Authority-Epoch-fenced Domain Operation. Prior Attempts,
+ * Results, evidence, and dispatch history remain immutable. Reopen revokes
+ * current cancellation Waivers and rejects progressed transitive downstream
+ * Slices before moving the current lifecycle heads back to ready/pending.
  *
- * Also recovers a desynced slice (#1205): when a UAT→planning fallback leaves
- * the slice open (e.g. "pending") but its tasks still "complete", this clears
- * that state so the planner can re-plan without hitting "already complete"
- * rejections.
+ * Also recovers a legacy, unadopted desync (#1205): when a UAT→planning
+ * fallback leaves the Slice open but all Tasks terminal, this clears that
+ * state so the planner can re-plan. An adopted canonical open Slice fails
+ * closed instead of using this compatibility escape.
  *
- * The parent milestone must still be open (not complete).
+ * The parent Milestone must still be open. Projection cleanup happens after
+ * commit and checks the current operation before removing completion output,
+ * so a stale reopen cannot erase projections from a newer completion.
  */
 
 // GSD — reopen-slice tool handler
