@@ -19,6 +19,8 @@ import {
 import { isClosedStatus } from "./status-guards.js";
 import { resolveExpectedArtifactPath } from "./auto-artifact-paths.js";
 import { handleCompleteMilestone } from "./tools/complete-milestone.js";
+import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
+import { renderMilestoneSummary } from "./markdown-renderer.js";
 import { runSafely } from "./auto-utils.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 import { uatSignoffBlockerGuidance } from "./guidance.js";
@@ -83,6 +85,18 @@ export async function repairMissingMilestoneSummaryProjection(
   const summaryPath = resolveExpectedArtifactPath("complete-milestone", milestoneId, artifactBasePath);
   if (summaryPath && existsSync(summaryPath)) {
     return { ok: true };
+  }
+
+  if (isMilestoneLifecycleAdopted(milestoneId)) {
+    try {
+      const rendered = await renderMilestoneSummary(artifactBasePath, milestoneId);
+      const repairedPath = resolveExpectedArtifactPath("complete-milestone", milestoneId, artifactBasePath);
+      return rendered && repairedPath && existsSync(repairedPath)
+        ? { ok: true }
+        : { ok: false, error: "milestone SUMMARY projection write failed" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   const result = await handleCompleteMilestone(

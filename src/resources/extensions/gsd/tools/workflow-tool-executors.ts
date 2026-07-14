@@ -1112,7 +1112,8 @@ export async function executeSkipSlice(
 
 export async function executeMilestoneReopen(
   params: ReopenMilestoneExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const dbAvailable = await ensureDbOpen(basePath);
   if (!dbAvailable) {
@@ -1123,7 +1124,7 @@ export async function executeMilestoneReopen(
     };
   }
   try {
-    const result = await handleReopenMilestone(params, basePath);
+    const result = await handleReopenMilestone(params, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error reopening milestone: ${result.error}` }],
@@ -1138,6 +1139,12 @@ export async function executeMilestoneReopen(
         milestoneId: result.milestoneId,
         slicesReset: result.slicesReset,
         tasksReset: result.tasksReset,
+        ...(result.operationId ? { operationId: result.operationId } : {}),
+        ...(result.resultingRevision !== undefined ? { resultingRevision: result.resultingRevision } : {}),
+        ...(result.duplicate ? { duplicate: true, replayed: true } : {}),
+        ...(result.current !== undefined ? { current: result.current } : {}),
+        ...(result.superseded ? { superseded: true } : {}),
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {
@@ -1286,7 +1293,8 @@ export async function executeSliceComplete(
 
 export async function executeCompleteMilestone(
   params: CompleteMilestoneExecutorParams,
-  basePath: string = process.cwd(),
+  basePath: string,
+  invocation: ExecutionInvocation,
 ): Promise<ToolExecutionResult> {
   const unitGuard = blockIfWrongAutoUnit("complete-milestone", "complete_milestone");
   if (unitGuard) return unitGuard;
@@ -1301,7 +1309,7 @@ export async function executeCompleteMilestone(
   }
   try {
     const sanitized = sanitizeCompleteMilestoneParams(params);
-    const result = await handleCompleteMilestone(sanitized, basePath);
+    const result = await handleCompleteMilestone(sanitized, basePath, invocation);
     if ("error" in result) {
       return {
         content: [{ type: "text", text: `Error completing milestone: ${result.error}` }],
@@ -1321,6 +1329,11 @@ export async function executeCompleteMilestone(
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
         ...(result.alreadyComplete ? { alreadyComplete: true } : {}),
+        ...(result.operationId ? { operationId: result.operationId } : {}),
+        ...(result.resultingRevision !== undefined ? { resultingRevision: result.resultingRevision } : {}),
+        ...(result.replayed ? { replayed: true } : {}),
+        ...(result.current !== undefined ? { current: result.current } : {}),
+        ...(result.superseded ? { superseded: true } : {}),
         ...(result.stale ? { stale: true } : {}),
       },
     };

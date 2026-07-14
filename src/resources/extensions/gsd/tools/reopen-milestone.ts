@@ -1,12 +1,11 @@
 // GSD — reopen-milestone tool handler
 
 /**
- * reopen-milestone handler — the core operation behind gsd_milestone_reopen.
+ * Core operation behind gsd_milestone_reopen.
  *
- * Resets a closed milestone back to "active", all of its slices to
- * "in_progress", and all tasks to "pending". Cleans up stale filesystem
- * artifacts so the DB-filesystem reconciler does not auto-correct
- * entities back to "complete".
+ * Reopens an adopted terminal Milestone hierarchy atomically while preserving
+ * immutable history, then removes readable closeout projections under the
+ * operation fence. Unadopted imports retain the legacy cascade.
  */
 
 import {
@@ -61,7 +60,9 @@ export interface ReopenMilestoneResult {
   slicesReset: number;
   tasksReset: number;
   operationId?: string;
+  resultingRevision?: number;
   duplicate?: boolean;
+  current?: boolean;
   superseded?: boolean;
   stale?: boolean;
 }
@@ -231,7 +232,9 @@ export async function handleReopenMilestone(
         slicesReset: slicesResetCount,
         tasksReset: tasksResetCount,
         operationId: canonicalReceipt?.operationId,
+        resultingRevision: canonicalReceipt?.resultingRevision,
         duplicate: canonicalReceipt?.status === "replayed",
+        current: false,
         superseded: true,
       };
     }
@@ -265,13 +268,19 @@ export async function handleReopenMilestone(
     logWarning("tool", `reopen-milestone post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
+  const current = isCurrent();
+  superseded ||= !current;
+  projectionStale ||= superseded;
+
   return {
     milestoneId: params.milestoneId,
     slicesReset: slicesResetCount,
     tasksReset: tasksResetCount,
     ...(canonicalReceipt ? {
       operationId: canonicalReceipt.operationId,
+      resultingRevision: canonicalReceipt.resultingRevision,
       duplicate: canonicalReceipt.status === "replayed",
+      current,
     } : {}),
     ...(projectionStale ? { stale: true } : {}),
     ...(superseded ? { superseded: true } : {}),

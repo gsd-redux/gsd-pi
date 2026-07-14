@@ -6,7 +6,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { openDatabase, insertAssessment, insertMilestone, insertSlice, closeDatabase } from "../gsd-db.js";
+import { adoptOrTransitionLifecycle } from "../db/writers/lifecycle-commands.js";
+import {
+  _getAdapter,
+  closeDatabase,
+  executeDomainOperation,
+  insertAssessment,
+  insertMilestone,
+  insertSlice,
+  openDatabase,
+  readDomainOperationFence,
+} from "../gsd-db.js";
 import {
   isMilestoneCloseoutSettled,
   evaluateCompleteMilestoneDispatch,
@@ -200,6 +210,84 @@ test("repairMissingMilestoneSummaryProjection succeeds when milestone dir does n
     existsSync(targetMilestoneFile(base, "M042", "SUMMARY", "Done")),
     "repair should write the SUMMARY artifact to the canonical projection path",
   );
+});
+
+test("repairMissingMilestoneSummaryProjection rebuilds an adopted SUMMARY without new authority", async () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-repair-adopted-summary-"));
+  tmpDirs.push(base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M043",
+    title: "Durable Closeout",
+    status: "complete",
+  });
+  _getAdapter()!.prepare("UPDATE milestones SET completed_at = ? WHERE id = ?").run(
+    "2026-07-14T12:34:56.000Z",
+    "M043",
+  );
+
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "milestone.complete",
+    idempotencyKey: "test/milestone-closeout/adopted-completion",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId: "M043" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId: "M043",
+      lifecycleStatus: "completed",
+    });
+    return {
+      events: [{
+        eventType: "milestone.completed",
+        entityType: "milestone",
+        entityId: "M043",
+        payload: {
+          completedAt: "2026-07-14T12:34:56.000Z",
+          closeout: {
+            title: "M043: Durable Closeout",
+            oneLiner: "The durable closeout survived projection loss.",
+            narrative: "Projection repair used the immutable completion event.",
+            successCriteriaResults: "All success criteria passed.",
+            definitionOfDoneResults: "Definition of done satisfied.",
+            requirementOutcomes: "REQ-1 satisfied.",
+            keyDecisions: ["Keep the database authoritative."],
+            keyFiles: ["src/index.ts"],
+            lessonsLearned: ["Repair projections without new authority."],
+            followUps: "None.",
+            deviations: "None.",
+          },
+        },
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: "lifecycle/m043",
+        projectionKind: "milestone-lifecycle",
+        rendererVersion: "1",
+      }],
+    };
+  });
+
+  const beforeFence = readDomainOperationFence();
+  const beforeOperations = Number(_getAdapter()!.prepare(
+    "SELECT COUNT(*) AS count FROM workflow_operations",
+  ).get()!["count"]);
+
+  const repair = await repairMissingMilestoneSummaryProjection(base, "M043");
+
+  assert.deepEqual(repair, { ok: true });
+  const summaryPath = targetMilestoneFile(base, "M043", "SUMMARY", "Durable Closeout");
+  assert.match(readFileSync(summaryPath, "utf8"), /durable closeout survived projection loss/i);
+  assert.deepEqual(readDomainOperationFence(), beforeFence, "projection repair must not advance authority");
+  const afterOperations = Number(_getAdapter()!.prepare(
+    "SELECT COUNT(*) AS count FROM workflow_operations",
+  ).get()!["count"]);
+  assert.equal(afterOperations, beforeOperations, "projection repair must not create a Domain Operation");
 });
 
 test("repairMissingMilestoneSummaryProjection is idempotent when SUMMARY exists", async () => {

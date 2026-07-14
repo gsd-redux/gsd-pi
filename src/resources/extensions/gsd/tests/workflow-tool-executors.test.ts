@@ -25,7 +25,7 @@ import { normalizeRealPath, relSliceFile, targetMilestoneFile } from "../paths.t
 import { recordUnitHarnessAbort } from "../unit-runtime.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
-  executeCompleteMilestone,
+  executeCompleteMilestone as executeCompleteMilestoneWithInvocation,
   executePlanMilestone as executePlanMilestoneWithInvocation,
   executePlanSlice as executePlanSliceWithInvocation,
   executeReplanSlice as executeReplanSliceWithInvocation,
@@ -54,6 +54,17 @@ function executePlanMilestone(
   basePath: string,
 ) {
   return executePlanMilestoneWithInvocation(params, basePath, internalPlanningInvocation());
+}
+
+function executeCompleteMilestone(
+  params: Parameters<typeof executeCompleteMilestoneWithInvocation>[0],
+  basePath: string,
+) {
+  return executeCompleteMilestoneWithInvocation(
+    params,
+    basePath,
+    internalExecutionInvocation("test:complete-milestone"),
+  );
 }
 
 function executePlanSlice(

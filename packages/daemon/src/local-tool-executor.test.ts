@@ -94,6 +94,33 @@ test("local tool executor forwards task recovery resume to the registered workfl
   assert.deepEqual(result, { resumed: true });
 });
 
+test("local tool executor forwards gateway request identity to Milestone lifecycle handlers", async () => {
+  const executor = new LocalToolExecutor({} as SessionManager, async () => []);
+  const handlers = (executor as unknown as {
+    workflowHandlers: Map<string, (args: Record<string, unknown>, extra?: Record<string, unknown>) => Promise<unknown>>;
+  }).workflowHandlers;
+  const calls: Array<{ name: string; extra?: Record<string, unknown> }> = [];
+  const names = [
+    "gsd_complete_milestone",
+    "gsd_milestone_complete",
+    "gsd_milestone_reopen",
+    "gsd_reopen_milestone",
+  ];
+
+  for (const name of names) {
+    handlers.set(name, async (_args, extra) => {
+      calls.push({ name, extra });
+      return { ok: true };
+    });
+    await executor.execute(name, { milestoneId: "M001" }, undefined, `cloud-${name}`);
+  }
+
+  assert.deepEqual(calls, names.map((name) => ({
+    name,
+    extra: { _meta: { "io.opengsd/idempotency-key": `cloud-${name}` } },
+  })));
+});
+
 test("local tool executor returns status payload with progress counters", async () => {
   const startedAt = Date.now() - 1234;
   const executor = new LocalToolExecutor({

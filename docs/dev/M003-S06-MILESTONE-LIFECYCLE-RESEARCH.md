@@ -191,10 +191,11 @@ projection suppression.
 - T02 requires schema v43 because planned Milestones are canonically `ready`,
   while v41 authorized direct `ready -> completed` only for Slices. The new
   exception is limited to a causally matching `milestone.complete` operation.
-- Until T05 supplies private Pi/MCP invocation identity, adopted completion
-  fails closed at the handler. Unadopted compatibility completion remains
-  available; merge, journal, artifact-recovery, and reconciliation bypasses are
-  fenced separately in T06.
+- T05 supplies replay-stable private Pi/MCP invocation identity to the shared
+  completion executor. Canonical and alias tool names share one canonical
+  identity namespace; missing MCP private metadata fails before mutation.
+  Unadopted compatibility completion remains available, while merge, journal,
+  artifact-recovery, and reconciliation bypasses are fenced separately in T06.
 - T03 adds one `milestone.reopen` operation for the full-redo contract. It moves
   the Milestone, every Slice, and every Task head to canonical `ready` while
   preserving the established legacy `active`/`in_progress`/`pending` projection,
@@ -226,9 +227,12 @@ projection suppression.
   durable completion event and refuses to resurrect cached terminal artifacts
   for an active Milestone. Durable `milestone.reopened` history takes precedence
   over the compatibility JSONL ledger, which remains only an import fallback.
-- Until T05 supplies private Pi/MCP invocation identity, adopted reopen also
-  fails closed at the handler. Direct adapter and handler contracts use explicit
-  identity; production transport convergence is intentionally not fabricated.
+- T05 routes Pi and MCP reopen through the same explicit-identity executor as
+  completion. Both transports preserve legacy response fields and add receipt
+  revision, replay, currentness, supersession, and projection-staleness truth.
+  MCP completion now preserves audit attribution, and adopted closeout recovery
+  rebuilds a missing SUMMARY from the immutable completion event without
+  replaying a mutation or advancing database authority.
 
 1. **Characterize and RED the contract.** Add a Milestone capstone matrix for
    validate, complete, and reopen: deep hierarchy, terminal aliases, cancelled

@@ -1,27 +1,33 @@
 // Project/App: gsd-pi
-// File Purpose: Captures private Slice lifecycle executor calls from the Pi tool adapter.
+// File Purpose: Captures private lifecycle executor calls from the Pi tool adapter.
 
 import type { ExecutionInvocation } from "../../execution-invocation.ts";
 
-export interface CapturedSliceLifecycleCall {
-  executor: "complete" | "reopen" | "skip" | "validate";
+export interface CapturedLifecycleCall {
+  executor:
+    | "complete"
+    | "reopen"
+    | "skip"
+    | "validate"
+    | "milestone-complete"
+    | "milestone-reopen";
   params: Record<string, unknown>;
   basePath: string;
   invocation: ExecutionInvocation | undefined;
 }
 
-const calls: CapturedSliceLifecycleCall[] = [];
+const calls: CapturedLifecycleCall[] = [];
 
-export function readCapturedSliceLifecycleCalls(): CapturedSliceLifecycleCall[] {
+export function readCapturedLifecycleCalls(): CapturedLifecycleCall[] {
   return calls.map((call) => ({ ...call, params: { ...call.params } }));
 }
 
-export function resetCapturedSliceLifecycleCalls(): void {
+export function resetCapturedLifecycleCalls(): void {
   calls.length = 0;
 }
 
 function capture(
-  executor: CapturedSliceLifecycleCall["executor"],
+  executor: CapturedLifecycleCall["executor"],
   params: Record<string, unknown>,
   basePath: string,
   invocation?: ExecutionInvocation,
@@ -63,6 +69,22 @@ export function executeValidateMilestone(
   options?: { invocation?: ExecutionInvocation },
 ): Promise<Record<string, unknown>> {
   return capture("validate", params, basePath, options?.invocation);
+}
+
+export function executeCompleteMilestone(
+  params: Record<string, unknown>,
+  basePath: string,
+  invocation?: ExecutionInvocation,
+): Promise<Record<string, unknown>> {
+  return capture("milestone-complete", params, basePath, invocation);
+}
+
+export function executeMilestoneReopen(
+  params: Record<string, unknown>,
+  basePath: string,
+  invocation?: ExecutionInvocation,
+): Promise<Record<string, unknown>> {
+  return capture("milestone-reopen", params, basePath, invocation);
 }
 
 export function executeSummarySave(): Promise<Record<string, unknown>> {

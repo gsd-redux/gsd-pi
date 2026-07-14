@@ -153,6 +153,7 @@ test("Milestone reopen fences every artifact against a completion committed duri
       assert.equal(interleaved, true);
       assert.equal(result.stale, true);
       assert.equal(result.superseded, true);
+      assert.equal(result.current, false);
       for (const path of fixture.artifacts) assert.equal(readFileSync(path, "utf8"), `NEW ${path}\n`);
     });
   }
@@ -190,6 +191,7 @@ test("Milestone reopen cleanup obstruction repairs on exact replay after restart
   assert.equal(replay.duplicate, true);
   assert.equal(replay.stale, undefined);
   assert.equal(replay.superseded, undefined);
+  assert.equal(replay.current, true);
   for (const path of fixture.artifacts) assert.equal(existsSync(path), false, path);
   assert.equal(db().prepare("SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.reopen'").get()?.count, 1);
 });
