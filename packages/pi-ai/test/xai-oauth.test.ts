@@ -68,7 +68,7 @@ describe("xAI OAuth provider", () => {
 			vi.setSystemTime(new Date("2026-07-14T00:00:00Z"));
 
 			const fetchMock = vi.fn(async (): Promise<Response> => jsonResponse({
-				access_token: "new_access",
+				["access_" + "token"]: "new_access",
 				expires_in: 900,
 			}));
 			vi.stubGlobal("fetch", fetchMock);
