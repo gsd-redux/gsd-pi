@@ -112,7 +112,7 @@ history below explains each migration without duplicating that live value.
 | V36 | **Attempt recovery fencing**: explicit settlement outcomes, replacement-worker lease identity, dispatch-scoped transitions, and the Kernel stage/state transition matrix |
 | V37 | **Task cancellation authorization**: permits `task.cancel` to interrupt and settle an active Attempt without weakening ordinary lease fencing |
 | V38 | **Verification-caused recovery**: permits a succeeded Result with a failed or inconclusive host Technical Verdict to cause a verification-stage Failure Observation |
-| V39 | **Verification recovery current-head enforcement**: only the current non-superseded criterion and latest non-superseded evidence-backed failure verdict across tested source revisions may authorize recovery |
+| V39 | **Verification recovery current-head enforcement**: only the current non-superseded criterion and latest non-superseded evidence-backed failure verdict across tested source revisions may authorize recovery or a route-head successor claim, including routes retained from V38 |
 
 ---
 

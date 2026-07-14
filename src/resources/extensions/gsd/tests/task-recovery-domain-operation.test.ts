@@ -1004,6 +1004,104 @@ test("durable budget use survives retries and exhausts to agent abort", async ()
   assert.equal(replayed.status, "replayed");
   assert.equal(replayed.operationId, resumed.operationId);
   assert.equal(resumed.recoveryActionId, third.recoveryActionId);
+
+  const resumeOperation = row(`
+    SELECT project_id, resulting_revision, resulting_authority_epoch
+    FROM workflow_operations WHERE operation_id = :operation_id
+  `, { ":operation_id": resumed.operationId });
+  db().exec(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status)
+    VALUES ('M001', 'S01', 'T02', 'Unrelated recovery', 'pending');
+  `);
+  db().prepare(`
+    INSERT INTO workflow_item_lifecycles (
+      lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id,
+      lifecycle_status, created_at, updated_at,
+      last_operation_id, last_project_revision, last_authority_epoch
+    ) VALUES (
+      'life-unrelated-resume', :project_id, 'task', 'M001', 'S01', 'T02',
+      'ready', '', '', :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":project_id": resumeOperation.project_id,
+    ":operation_id": resumed.operationId,
+    ":project_revision": resumeOperation.resulting_revision,
+    ":authority_epoch": resumeOperation.resulting_authority_epoch,
+  });
+  db().prepare(`
+    INSERT INTO workflow_work_checkpoints (
+      checkpoint_id, project_id, scope_key, lifecycle_id,
+      checkpoint_kind, sequence, confirmed_context, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (
+      'checkpoint-unrelated-resume', :project_id, 'task:m001/s01/t02',
+      'life-unrelated-resume', 'correction', 1, 'Unrelated repair', '',
+      :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":project_id": resumeOperation.project_id,
+    ":operation_id": resumed.operationId,
+    ":project_revision": resumeOperation.resulting_revision,
+    ":authority_epoch": resumeOperation.resulting_authority_epoch,
+  });
+  const resumeEvent = row(`
+    SELECT event_id, payload_json FROM workflow_domain_events
+    WHERE operation_id = :operation_id AND event_type = 'task.recovery.resumed'
+  `, { ":operation_id": resumed.operationId });
+  db().exec("DROP TRIGGER trg_workflow_domain_events_immutable_update");
+  db().prepare(`
+    UPDATE workflow_domain_events
+    SET payload_json = json_set(payload_json, '$.workCheckpointId', 'checkpoint-unrelated-resume')
+    WHERE event_id = :event_id
+  `).run({ ":event_id": resumeEvent.event_id });
+  const crossLifecycleFence = readDomainOperationFence();
+  assert.throws(() => executeDomainOperation({
+    operationType: "attempt.claim",
+    idempotencyKey: "recovery/resume/cross-lifecycle-checkpoint",
+    expectedRevision: crossLifecycleFence.revision,
+    expectedAuthorityEpoch: crossLifecycleFence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { retryOfAttemptId: thirdFailure.attemptId },
+  }, (context) => {
+    db().prepare(`
+      INSERT INTO workflow_execution_attempts (
+        attempt_id, project_id, lifecycle_id, attempt_number,
+        retry_of_attempt_id, attempt_state, claimed_at,
+        claim_operation_id, claim_project_revision, claim_authority_epoch
+      ) VALUES (
+        'attempt-cross-lifecycle-resume', :project_id, :lifecycle_id, 4,
+        :retry_of_attempt_id, 'claimed', '',
+        :operation_id, :project_revision, :authority_epoch
+      )
+    `).run({
+      ":project_id": context.projectId,
+      ":lifecycle_id": resumed.lifecycleId,
+      ":retry_of_attempt_id": thirdFailure.attemptId,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+    });
+    return {
+      events: [{
+        eventType: "test.recovery.cross-lifecycle-claim",
+        entityType: "task",
+        entityId: "M001/S01/T01",
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: "test/recovery/cross-lifecycle-claim",
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  }), /current causal recovery authority/i);
+  assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, false);
+  db().prepare(`
+    UPDATE workflow_domain_events SET payload_json = :payload_json WHERE event_id = :event_id
+  `).run({ ":payload_json": resumeEvent.payload_json, ":event_id": resumeEvent.event_id });
+
   assert.equal(readTaskRecoveryRoute(thirdFailure.attemptId)?.resumeAuthorized, true);
   assert.equal(
     route("recovery/budget/3", thirdFailure, summaries[2]).resumeAuthorized,
@@ -1201,6 +1299,42 @@ test("failed Technical Verdict routes one durable recovery action for a succeede
     WHERE result.result_id = :result_id
     ORDER BY checkpoint.sequence DESC LIMIT 1
   `, { ":result_id": scope.resultId }), { outcome: "succeeded", next_stage: "route" });
+});
+
+test("successor claim revalidates a retained route when its verification authority becomes stale", () => {
+  const scope = seedSucceededVerificationFailure();
+  const routed = recordFailureAndSelectRecovery(recoveryInput(scope, "current-head/claim/route"));
+  assert.equal(routed.action, "remediate");
+  supersedeFailedVerdict(scope);
+  assert.equal(readPendingTaskRecoveryContext({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+  }), null);
+  const dispatchId = insertClaimedDispatch(2);
+  db().exec("DROP TRIGGER IF EXISTS trg_workflow_attempt_route_authority_v39");
+  const revision = Number(row("SELECT revision FROM project_authority WHERE singleton = 1").revision);
+  const operationCount = count("workflow_operations");
+  const eventCount = count("workflow_domain_events");
+  const checkpointCount = count("workflow_kernel_checkpoints");
+
+  assert.throws(() => claimTaskAttempt({
+    invocation: invocation("current-head/claim/stale-route"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: dispatchId,
+    retryOfAttemptId: scope.attemptId,
+  }), /current causal recovery authority/i);
+
+  assert.equal(Number(row("SELECT revision FROM project_authority WHERE singleton = 1").revision), revision);
+  assert.equal(count("workflow_operations"), operationCount);
+  assert.equal(count("workflow_domain_events"), eventCount);
+  assert.equal(count("workflow_kernel_checkpoints"), checkpointCount);
+  assert.equal(count("workflow_execution_attempts"), 1);
+  assert.equal(row(`SELECT status FROM unit_dispatches WHERE id = ${dispatchId}`).status, "claimed");
+  assert.equal(count("workflow_failure_observations"), 1);
+  assert.equal(count("workflow_recovery_actions"), 1);
 });
 
 test("recovery Domain Operation rejects a superseded failed Technical Verdict", () => {

@@ -183,6 +183,56 @@ function insertVerifyFailure(db: RawDb, operationRevision = 5): void {
   `).run(projectId(db), `op-${operationRevision}`, operationRevision);
 }
 
+function insertVerificationRecoveryRoute(db: RawDb): void {
+  db.prepare(`
+    INSERT INTO workflow_kernel_checkpoints (
+      kernel_checkpoint_id, project_id, lifecycle_id, attempt_id,
+      next_stage, sequence, previous_kernel_checkpoint_id, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES
+      ('kernel-execute-1', ?, 'life-task', 'attempt-1',
+       'execute', 1, NULL, '2026-07-13T00:00:00.000Z', 'op-1', 1, 0),
+      ('kernel-verify-1', ?, 'life-task', 'attempt-1',
+       'verify', 2, 'kernel-execute-1', '2026-07-13T00:00:01.000Z', 'op-2', 2, 0),
+      ('kernel-route-1', ?, 'life-task', 'attempt-1',
+       'route', 3, 'kernel-verify-1', '2026-07-13T00:00:02.000Z', 'op-4', 4, 0)
+  `).run(projectId(db), projectId(db), projectId(db));
+  insertVerifyFailure(db);
+  db.prepare(`
+    INSERT INTO workflow_recovery_budgets (
+      recovery_budget_id, project_id, lifecycle_id,
+      failure_kind, failure_fingerprint, policy_class,
+      max_uses, policy_version, created_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES ('budget-1', ?, 'life-task',
+      'verification-failed', 'verification-failed:host', 'remediation',
+      2, '1', '', 'op-5', 5, 0)
+  `).run(projectId(db));
+  db.prepare(`
+    INSERT INTO workflow_recovery_actions (
+      recovery_action_id, project_id, lifecycle_id,
+      failure_observation_id, action, recovery_budget_id,
+      target_lifecycle_id, rationale, policy_version, selected_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES ('recovery-1', ?, 'life-task',
+      'failure-1', 'remediate', 'budget-1',
+      'life-task', 'Repair the failed verification', '1', '',
+      'op-5', 5, 0)
+  `).run(projectId(db));
+}
+
+function insertSuccessorAttempt(db: RawDb): void {
+  insertOperation(db, 8, "attempt.claim");
+  db.prepare(`
+    INSERT INTO workflow_execution_attempts (
+      attempt_id, project_id, lifecycle_id, attempt_number,
+      retry_of_attempt_id, attempt_state, claimed_at,
+      claim_operation_id, claim_project_revision, claim_authority_epoch
+    ) VALUES ('attempt-2', ?, 'life-task', 2,
+      'attempt-1', 'claimed', '', 'op-8', 8, 0)
+  `).run(projectId(db));
+}
+
 function supersedeVerdictWithPass(db: RawDb): void {
   db.prepare(`
     INSERT INTO workflow_technical_verdicts (
@@ -241,6 +291,7 @@ function rewindToV37(db: RawDb): void {
 }
 
 function rewindToV38(db: RawDb): void {
+  db.exec("DROP TRIGGER IF EXISTS trg_workflow_attempt_route_authority_v39");
   createTaskVerificationRecoverySchemaV38(db as unknown as DbAdapter);
   db.exec(`
     DELETE FROM schema_version;
@@ -354,6 +405,95 @@ for (const staleHead of staleHeadCases) {
     );
   });
 }
+
+test("v38 evidence-less verification route cannot authorize a successor after v39 upgrade", (t) => {
+  const { dbPath, db } = createCurrentFixture();
+  let fixtureDb: RawDb | undefined = db;
+  t.after(() => fixtureDb?.close());
+  rewindToV38(db);
+  insertVerdict(db, "fail");
+  insertVerificationRecoveryRoute(db);
+  db.close();
+  fixtureDb = undefined;
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const upgraded = openRawDatabase(dbPath);
+  t.after(() => upgraded.close());
+
+  assert.throws(
+    () => insertSuccessorAttempt(upgraded),
+    /current causal recovery authority/i,
+  );
+  assert.equal(
+    upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.["count"],
+    1,
+  );
+  assert.equal(
+    upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_recovery_actions").get()?.["count"],
+    1,
+  );
+});
+
+for (const staleHead of staleHeadCases) {
+  test(`v38 retained route authorized only by ${staleHead.label} cannot claim after v39 upgrade`, (t) => {
+    const { dbPath, db } = createCurrentFixture();
+    let fixtureDb: RawDb | undefined = db;
+    t.after(() => fixtureDb?.close());
+    rewindToV38(db);
+    insertVerdict(db, "fail");
+    insertEvidence(db);
+    insertVerificationRecoveryRoute(db);
+    staleHead.prepare(db);
+    db.close();
+    fixtureDb = undefined;
+
+    assert.equal(openDatabase(dbPath), true);
+    closeDatabase();
+    const upgraded = openRawDatabase(dbPath);
+    t.after(() => upgraded.close());
+
+    assert.throws(
+      () => insertSuccessorAttempt(upgraded),
+      /current causal recovery authority/i,
+    );
+    assert.equal(
+      upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.["count"],
+      1,
+    );
+    assert.equal(
+      upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_failure_observations").get()?.["count"],
+      1,
+    );
+    assert.equal(
+      upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_recovery_actions").get()?.["count"],
+      1,
+    );
+  });
+}
+
+test("v38 current evidence-backed verification route still authorizes one v39 successor", (t) => {
+  const { dbPath, db } = createCurrentFixture();
+  let fixtureDb: RawDb | undefined = db;
+  t.after(() => fixtureDb?.close());
+  rewindToV38(db);
+  insertVerdict(db, "fail");
+  insertEvidence(db);
+  insertVerificationRecoveryRoute(db);
+  db.close();
+  fixtureDb = undefined;
+
+  assert.equal(openDatabase(dbPath), true);
+  closeDatabase();
+  const upgraded = openRawDatabase(dbPath);
+  t.after(() => upgraded.close());
+
+  assert.doesNotThrow(() => insertSuccessorAttempt(upgraded));
+  assert.equal(
+    upgraded.prepare("SELECT COUNT(*) AS count FROM workflow_execution_attempts").get()?.["count"],
+    2,
+  );
+});
 
 for (const staleHead of staleHeadCases) {
   test(`v38 database upgrades to reject verify recovery authorized only by ${staleHead.label}`, (t) => {

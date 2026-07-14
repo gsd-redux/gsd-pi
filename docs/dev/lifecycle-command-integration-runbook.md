@@ -107,6 +107,9 @@ the same Result through the agent policy with the exact resolved/dismissed
 `blockerId` as `supersedesResolvedBlockerId`; the new retry-capable Recovery
 Action authorizes one fresh lineage successor. The new Attempt must produce its
 own Result and current evidence-backed verdict before publication.
+The successor claim revalidates that causal Result and verdict at consumption
+time, so a retained route or resume cannot outlive superseded, stale, or missing
+verification evidence.
 
 ## Projection obstruction
 

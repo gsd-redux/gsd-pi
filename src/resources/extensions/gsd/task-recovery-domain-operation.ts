@@ -11,7 +11,10 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
-import { CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL } from "./db/sql-constants.js";
+import {
+  CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL,
+  CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL,
+} from "./db/sql-constants.js";
 import {
   appendRecoveryWorkCheckpoint,
   createOrReadRecoveryBudget,
@@ -326,6 +329,11 @@ export function readPendingTaskRecoveryContext(
       ON observation.attempt_id = attempt.attempt_id
      AND observation.lifecycle_id = lifecycle.lifecycle_id
      AND observation.project_id = lifecycle.project_id
+    JOIN workflow_attempt_results result
+      ON result.result_id = observation.result_id
+     AND result.attempt_id = observation.attempt_id
+     AND result.lifecycle_id = observation.lifecycle_id
+     AND result.project_id = observation.project_id
     JOIN workflow_recovery_actions action
       ON action.failure_observation_id = observation.failure_observation_id
      AND action.lifecycle_id = lifecycle.lifecycle_id
@@ -339,6 +347,7 @@ export function readPendingTaskRecoveryContext(
       AND lifecycle.slice_id = :slice_id
       AND lifecycle.task_id = :task_id
       AND action.action IN ('retry', 'repair', 'remediate', 'replan', 'abort')
+      AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
       AND attempt.attempt_number = (
         SELECT MAX(latest.attempt_number)
         FROM workflow_execution_attempts latest

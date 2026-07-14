@@ -45,6 +45,12 @@ export const CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL = `EXISTS (
     )
 )`;
 
+export const CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL = `(
+  (observation.boundary_stage = 'execute' AND result.outcome IN ('failed', 'interrupted')) OR
+  (observation.boundary_stage = 'verify' AND result.outcome = 'succeeded'
+    AND ${CURRENT_EVIDENCE_BACKED_FAILURE_VERDICT_SQL})
+)`;
+
 /** Status values that mean a unit is closed; used in ON CONFLICT guards to
  *  prevent an upsert from reopening a completed slice/task. Derived from the
  *  single source `RAW_CLOSED_STATUSES` (ADR-030) so the SQL fragment cannot

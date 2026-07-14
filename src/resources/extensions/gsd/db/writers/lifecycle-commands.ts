@@ -9,6 +9,7 @@ import {
   type DomainOperationContext,
 } from "../domain-operation.js";
 import { getDb, isInTransaction } from "../engine.js";
+import { CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL } from "../sql-constants.js";
 import {
   isAllowedKernelStageTransition,
   type KernelStage,
@@ -316,6 +317,11 @@ export function isTaskRecoveryResumeAuthorized(
       ON observation.project_id = action.project_id
      AND observation.lifecycle_id = action.lifecycle_id
      AND observation.failure_observation_id = action.failure_observation_id
+    JOIN workflow_attempt_results result
+      ON result.project_id = observation.project_id
+     AND result.lifecycle_id = observation.lifecycle_id
+     AND result.attempt_id = observation.attempt_id
+     AND result.result_id = observation.result_id
     JOIN workflow_execution_attempts attempt
       ON attempt.project_id = observation.project_id
      AND attempt.lifecycle_id = observation.lifecycle_id
@@ -336,6 +342,7 @@ export function isTaskRecoveryResumeAuthorized(
       ON checkpoint.project_id = resumed.project_id
      AND checkpoint.operation_id = resumed.operation_id
      AND checkpoint.checkpoint_id = json_extract(resumed.payload_json, '$.workCheckpointId')
+     AND checkpoint.lifecycle_id = action.lifecycle_id
     WHERE resumed.event_type = 'task.recovery.resumed'
       AND resumed.entity_type = 'task'
       AND resumed.entity_id = lifecycle.milestone_id || '/' || lifecycle.slice_id || '/' || lifecycle.task_id
@@ -344,6 +351,7 @@ export function isTaskRecoveryResumeAuthorized(
       AND json_extract(resumed.payload_json, '$.resultId') = observation.result_id
       AND action.action = 'abort'
       AND observation.recovery_owner = 'agent'
+      AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
       AND attempt.attempt_id = :attempt_id
       AND attempt.attempt_state = 'settled'
       AND resumed.project_revision > action.project_revision
@@ -356,6 +364,43 @@ export function isTaskRecoveryResumeAuthorized(
       )
   `).get({ ":attempt_id": attemptId }) as Record<string, unknown> | undefined;
   return stored?.["authorized"] === 1;
+}
+
+function readCurrentTaskRecoveryAction(
+  projectId: string,
+  lifecycleId: string,
+  attemptId: string,
+  claimRevision: number,
+  claimAuthorityEpoch: number,
+): Record<string, unknown> | undefined {
+  return getDb().prepare(`
+    SELECT action.action, action.recovery_action_id, action.project_revision
+    FROM workflow_recovery_actions action
+    JOIN workflow_failure_observations observation
+      ON observation.failure_observation_id = action.failure_observation_id
+     AND observation.project_id = action.project_id
+     AND observation.lifecycle_id = action.lifecycle_id
+    JOIN workflow_attempt_results result
+      ON result.result_id = observation.result_id
+     AND result.project_id = observation.project_id
+     AND result.lifecycle_id = observation.lifecycle_id
+     AND result.attempt_id = observation.attempt_id
+    WHERE action.project_id = :project_id
+      AND action.lifecycle_id = :lifecycle_id
+      AND action.target_lifecycle_id = :lifecycle_id
+      AND observation.attempt_id = :attempt_id
+      AND observation.recovery_owner = 'agent'
+      AND action.action IN ('retry', 'repair', 'remediate', 'replan')
+      AND action.project_revision < :project_revision
+      AND action.authority_epoch <= :authority_epoch
+      AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
+  `).get({
+    ":project_id": projectId,
+    ":lifecycle_id": lifecycleId,
+    ":attempt_id": attemptId,
+    ":project_revision": claimRevision,
+    ":authority_epoch": claimAuthorityEpoch,
+  }) as Record<string, unknown> | undefined;
 }
 
 export function adoptOrTransitionLifecycle(
@@ -673,29 +718,17 @@ export function claimRunningAttempt(
     throw new Error("retry must reference the immediate predecessor Attempt");
   }
   if (prior?.next_stage === "route") {
-    const recoveryAction = getDb().prepare(`
-      SELECT action.action, action.recovery_action_id, action.project_revision
-      FROM workflow_recovery_actions action
-      JOIN workflow_failure_observations observation
-        ON observation.failure_observation_id = action.failure_observation_id
-       AND observation.project_id = action.project_id
-       AND observation.lifecycle_id = action.lifecycle_id
-      WHERE action.project_id = :project_id
-        AND action.lifecycle_id = :lifecycle_id
-        AND action.target_lifecycle_id = :lifecycle_id
-        AND observation.attempt_id = :attempt_id
-        AND action.action IN ('retry', 'repair', 'remediate', 'replan')
-        AND action.project_revision < :project_revision
-    `).get({
-      ":project_id": context.projectId,
-      ":lifecycle_id": input.lifecycleId,
-      ":attempt_id": prior.attempt_id,
-      ":project_revision": context.resultingRevision,
-    }) as Record<string, unknown> | undefined;
+    const recoveryAction = readCurrentTaskRecoveryAction(
+      context.projectId,
+      input.lifecycleId,
+      prior.attempt_id,
+      context.resultingRevision,
+      context.resultingAuthorityEpoch,
+    );
     const resumeAuthorized = isTaskRecoveryResumeAuthorized(prior.attempt_id);
     if (!recoveryAction && !resumeAuthorized) {
       throw new Error(
-        "retry claim requires the current route head's retry-capable Recovery Action or exact repair resume",
+        "retry claim requires current causal recovery authority for the route head",
       );
     }
     if (recoveryAction?.["action"] === "replan") {
