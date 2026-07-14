@@ -276,6 +276,17 @@ export GROQ_API_KEY="gsk_..."
 
 ### xAI (Grok)
 
+Two auth paths:
+
+**Subscription (SuperGrok / X Premium) — no API key.** Run `/login xai` (or pick
+"Grok (SuperGrok / X Premium)" during onboarding). A browser PKCE flow against
+`auth.x.ai` signs you in with your xAI account; inference is billed to your
+subscription. Tokens are stored in `~/.pi/agent/auth.json`, refreshed
+automatically, and only ever sent to `https://api.x.ai`. On headless machines,
+open the login URL on another device and paste the redirect URL back.
+
+**API key (metered):**
+
 ```bash
 export XAI_API_KEY="xai-..."
 ```

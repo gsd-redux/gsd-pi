@@ -366,6 +366,10 @@ test("boot and onboarding routes expose locked required state plus explicitly sk
 	  const antigravityProvider = bootPayload.onboarding.required.providers.find((provider: any) => provider.id === "google-antigravity");
 	  assert.equal(antigravityProvider.supports.oauth, false);
 	  assert.equal(antigravityProvider.supports.externalCli, true);
+	  const xaiProvider = bootPayload.onboarding.required.providers.find((provider: any) => provider.id === "xai");
+	  assert.equal(xaiProvider.supports.apiKey, true);
+	  assert.equal(xaiProvider.supports.oauth, true);
+	  assert.equal(xaiProvider.supports.oauthAvailable, true);
 
   const onboardingResponse = await onboardingRoute.GET(projectRequest(fixture.projectCwd, "/api/onboarding"));
   assert.equal(onboardingResponse.status, 200);

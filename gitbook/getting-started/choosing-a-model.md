@@ -83,7 +83,7 @@ GSD supports 20+ providers out of the box. See [Provider Setup](../configuration
 | Google Gemini | API key |
 | OpenRouter | API key |
 | Groq | API key |
-| xAI (Grok) | API key |
+| xAI (Grok) | OAuth (SuperGrok / X Premium subscription) or API key |
 | Mistral | API key |
 | Cursor Agent | Local CLI subscription or `CURSOR_API_KEY` |
 | GitHub Copilot | OAuth |
