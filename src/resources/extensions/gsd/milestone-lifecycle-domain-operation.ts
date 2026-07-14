@@ -244,7 +244,10 @@ function storedCompletionPayload(operationId: string): StoredCompletionPayload {
   };
 }
 
-function isCurrentCompletion(operationId: string, milestoneId: string): boolean {
+export function isCurrentMilestoneCompletionOperation(
+  operationId: string,
+  milestoneId: string,
+): boolean {
   return Boolean(getDb().prepare(`
     SELECT 1 FROM workflow_item_lifecycles
     WHERE item_kind = 'milestone' AND milestone_id = :milestone_id
@@ -477,6 +480,6 @@ export function completeMilestone(input: {
     waiverIds: stored.waiverIds,
     dispositionIds: stored.dispositionIds,
     closeout: stored.closeout,
-    isCurrent: isCurrentCompletion(operation.operationId, milestoneId),
+    isCurrent: isCurrentMilestoneCompletionOperation(operation.operationId, milestoneId),
   };
 }

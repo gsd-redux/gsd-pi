@@ -35,8 +35,11 @@ import { renderPlanCheckboxes } from "../markdown-renderer.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
-import { constants, copyFileSync, existsSync, lstatSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import {
+  _setProjectionCleanupInterleaveForTest,
+  removeProjectionIfCurrent,
+} from "../projection-cleanup.js";
 import {
   buildFlatTaskFileName,
   buildTaskFileName,
@@ -68,58 +71,8 @@ export interface ReopenSliceResult {
   stale?: boolean;
 }
 
-let cleanupInterleaveForTest: (() => void) | null = null;
-
 export function _setReopenSliceCleanupInterleaveForTest(hook: (() => void) | null): void {
-  cleanupInterleaveForTest = hook;
-}
-
-function restoreTombstone(tombstonePath: string, artifactPath: string): void {
-  try {
-    copyFileSync(tombstonePath, artifactPath, constants.COPYFILE_EXCL);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-  try {
-    unlinkSync(tombstonePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-function removeReopenProjectionIfCurrent(
-  artifactPath: string,
-  operationId: string,
-  slice: { milestoneId: string; sliceId: string },
-): boolean {
-  const tombstonePath = `${artifactPath}.reopen-${operationId}.pending`;
-  if (existsSync(tombstonePath)) {
-    if (!isCurrentSliceReopenOperation(operationId, slice)) {
-      restoreTombstone(tombstonePath, artifactPath);
-      return false;
-    }
-    unlinkSync(tombstonePath);
-  }
-  if (!isCurrentSliceReopenOperation(operationId, slice)) return false;
-  if (!existsSync(artifactPath)) return true;
-  if (lstatSync(artifactPath).isDirectory()) {
-    throw new Error(`reopen projection cleanup path is a directory: ${artifactPath}`);
-  }
-  cleanupInterleaveForTest?.();
-  try {
-    renameSync(artifactPath, tombstonePath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return isCurrentSliceReopenOperation(operationId, slice);
-    }
-    throw error;
-  }
-  if (!isCurrentSliceReopenOperation(operationId, slice)) {
-    restoreTombstone(tombstonePath, artifactPath);
-    return false;
-  }
-  unlinkSync(tombstonePath);
-  return true;
+  _setProjectionCleanupInterleaveForTest(hook);
 }
 
 export async function handleReopenSlice(
@@ -171,6 +124,7 @@ export async function handleReopenSlice(
   // auto-corrects tasks back to "complete", making reopen a no-op (#3161).
   try {
     const slice = { milestoneId: params.milestoneId, sliceId: params.sliceId };
+    const isCurrent = () => isCurrentSliceReopenOperation(operationId, slice);
     const milestoneDir = resolveMilestonePath(basePath, params.milestoneId);
     const legacyBase = legacyMilestonesDir(basePath);
     const isLegacy = !!milestoneDir && (
@@ -188,7 +142,7 @@ export async function handleReopenSlice(
           ]
           : [];
       for (const summaryPath of summaryPaths) {
-        if (!removeReopenProjectionIfCurrent(summaryPath, operationId, slice)) {
+        if (!removeProjectionIfCurrent({ artifactPath: summaryPath, operationId, isCurrent })) {
           projectionStale = true;
           break cleanup;
         }
@@ -207,7 +161,7 @@ export async function handleReopenSlice(
       if (existingSummary) sliceArtifacts.add(existingSummary);
       if (existingUat) sliceArtifacts.add(existingUat);
       for (const artifactPath of sliceArtifacts) {
-        if (!removeReopenProjectionIfCurrent(artifactPath, operationId, slice)) {
+        if (!removeProjectionIfCurrent({ artifactPath, operationId, isCurrent })) {
           projectionStale = true;
           break;
         }

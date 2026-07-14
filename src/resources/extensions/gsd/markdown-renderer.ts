@@ -56,6 +56,10 @@ import {
   phaseDirName,
   derivePhaseSlug,
 } from "./layout-policy.js";
+import {
+  readMilestoneCompletionProjection,
+  renderMilestoneSummaryMarkdown,
+} from "./milestone-summary-projection.js";
 
 // ─── Compat marker invalidation ───────────────────────────────────────────
 // Every successful projection write pushes its (basePath, projectionPath,
@@ -636,10 +640,12 @@ export async function renderMilestoneArtifactsFromDb(
   if (artifacts.length === 0) return false;
 
   const milestone = getMilestone(milestoneId);
+  const milestoneComplete = toStatus(milestone?.status ?? "") === "complete";
 
   let wrote = false;
   for (const artifact of artifacts) {
     if (artifact.artifact_type === "ROADMAP") continue;
+    if (artifact.artifact_type.toUpperCase() === "SUMMARY" && !milestoneComplete) continue;
     if (!artifact.full_content.trim()) continue;
 
     const absPath = targetMilestoneFile(
@@ -658,6 +664,31 @@ export async function renderMilestoneArtifactsFromDb(
   }
 
   return wrote;
+}
+
+/** Render the canonical Milestone closeout from its immutable completion event. */
+export async function renderMilestoneSummary(
+  basePath: string,
+  milestoneId: string,
+): Promise<boolean> {
+  const milestone = getMilestone(milestoneId);
+  if (!milestone || toStatus(milestone.status) !== "complete") return false;
+
+  const projection = readMilestoneCompletionProjection(milestoneId);
+  if (!projection) return false;
+
+  const absPath = targetMilestoneFile(basePath, milestoneId, "SUMMARY", milestone.title);
+  const artifactPath = toArtifactPath(absPath, basePath);
+  const content = renderMilestoneSummaryMarkdown(
+    milestoneId,
+    projection.completedAt,
+    projection.closeout,
+  );
+  await writeAndStore(absPath, artifactPath, content, {
+    artifact_type: "SUMMARY",
+    milestone_id: milestoneId,
+  }, basePath);
+  return true;
 }
 
 /**
@@ -864,6 +895,14 @@ export async function renderAllFromDb(basePath: string): Promise<RenderAllResult
       else result.skipped++;
     } catch (err) {
       result.errors.push(`milestone artifacts ${milestone.id}: ${(err as Error).message}`);
+    }
+
+    try {
+      const ok = await renderMilestoneSummary(basePath, milestone.id);
+      if (ok) result.rendered++;
+      else result.skipped++;
+    } catch (err) {
+      result.errors.push(`milestone summary ${milestone.id}: ${(err as Error).message}`);
     }
 
     // Iterate slices (pre-fetched above)

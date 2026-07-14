@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,6 +28,9 @@ import {
   handleCompleteMilestone,
   type CompleteMilestoneParams,
 } from "../tools/complete-milestone.ts";
+import { reopenMilestone } from "../milestone-lifecycle-domain-operation.ts";
+import { _setProjectionFlushAfterRenderForTest } from "../projection-flush.ts";
+import { handleReopenMilestone } from "../tools/reopen-milestone.ts";
 import {
   handleValidateMilestone,
   type ValidateMilestoneParams,
@@ -222,4 +225,191 @@ test("adopted complete-milestone commits through projection obstruction and repa
   assert.equal(repaired.stale, undefined);
   assert.equal(statSync(statePath).isFile(), true);
   assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
+});
+
+test("delayed completion replay cannot resurrect its summary after a newer Milestone reopen", async (t) => {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-complete-milestone-replay-fence-"));
+  t.after(() => {
+    clearPathCache();
+    clearParseCache();
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+  await seedAdoptedMilestone(basePath);
+  const stableInvocation = invocation("milestone-complete/delayed-replay");
+  const completed = await handleCompleteMilestone(completionParams(), basePath, stableInvocation);
+  assert.ok(!("error" in completed));
+
+  const reopened = await handleReopenMilestone(
+    { milestoneId: "M001", reason: "A newer reopen supersedes completion delivery." },
+    basePath,
+    invocation("milestone-reopen/newer-than-completion"),
+  );
+  assert.ok(!("error" in reopened));
+  assert.equal(statSync(completed.summaryPath, { throwIfNoEntry: false }), undefined);
+
+  const replay = await handleCompleteMilestone(completionParams(), basePath, stableInvocation);
+
+  assert.ok(!("error" in replay));
+  assert.equal(replay.operationId, completed.operationId);
+  assert.equal(replay.resultingRevision, completed.resultingRevision);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.current, false);
+  assert.equal(replay.stale, true);
+  assert.equal(statSync(completed.summaryPath, { throwIfNoEntry: false }), undefined);
+  assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
+});
+
+test("completion projection cannot publish after a newer Milestone reopen", async (t) => {
+  const completeTool = await import("../tools/complete-milestone.ts");
+  const setInterleave = (completeTool as unknown as {
+    _setCompleteMilestoneProjectionInterleaveForTest?: (hook: (() => Promise<void>) | null) => void;
+  })._setCompleteMilestoneProjectionInterleaveForTest;
+  assert.equal(typeof setInterleave, "function", "Milestone completion must expose a deterministic projection interleave test seam");
+
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-complete-milestone-race-fence-"));
+  t.after(() => {
+    setInterleave?.(null);
+    clearPathCache();
+    clearParseCache();
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+  await seedAdoptedMilestone(basePath);
+  let reopenResult: Awaited<ReturnType<typeof handleReopenMilestone>> | undefined;
+  setInterleave!(async () => {
+    reopenResult = await handleReopenMilestone(
+      { milestoneId: "M001", reason: "Reopen commits before completion can publish." },
+      basePath,
+      invocation("milestone-reopen/completion-interleave"),
+    );
+  });
+
+  const completion = await handleCompleteMilestone(
+    completionParams(),
+    basePath,
+    invocation("milestone-complete/interleaved-by-reopen"),
+  );
+
+  assert.ok(!("error" in completion));
+  assert.ok(reopenResult && !("error" in reopenResult));
+  assert.equal(completion.current, false);
+  assert.equal(completion.stale, true);
+  assert.equal(statSync(completion.summaryPath, { throwIfNoEntry: false }), undefined);
+  assert.equal(getMilestone("M001")?.status, "active");
+});
+
+test("completion removes its summary when ownership is lost during projection flush", async (t) => {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-complete-milestone-late-fence-"));
+  t.after(() => {
+    _setProjectionFlushAfterRenderForTest(null);
+    clearPathCache();
+    clearParseCache();
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+  await seedAdoptedMilestone(basePath);
+
+  _setProjectionFlushAfterRenderForTest(() => {
+    reopenMilestone({
+      milestoneId: "M001",
+      reason: "A newer reopen commits while completion is flushing projections.",
+      invocation: invocation("milestone-reopen/during-completion-flush"),
+    });
+  });
+
+  const completion = await handleCompleteMilestone(
+    completionParams(),
+    basePath,
+    invocation("milestone-complete/loses-fence-during-flush"),
+  );
+
+  assert.ok(!("error" in completion));
+  assert.equal(completion.current, false);
+  assert.equal(completion.stale, true);
+  assert.equal(completion.superseded, true);
+  assert.equal(statSync(completion.summaryPath, { throwIfNoEntry: false }), undefined);
+  assert.equal(getMilestone("M001")?.status, "active");
+});
+
+test("superseded completion preserves a byte-identical summary owned by a newer completion", async (t) => {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-complete-milestone-owned-compensation-"));
+  t.after(() => {
+    _setProjectionFlushAfterRenderForTest(null);
+    clearPathCache();
+    clearParseCache();
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  });
+  await seedAdoptedMilestone(basePath);
+
+  let newerSummary = "";
+  _setProjectionFlushAfterRenderForTest(() => {
+    const summaryPath = join(basePath, ".gsd", "milestones", "M001", "M001-SUMMARY.md");
+    newerSummary = readFileSync(summaryPath, "utf8");
+    reopenMilestone({
+      milestoneId: "M001",
+      reason: "A newer completion supersedes the first completion delivery.",
+      invocation: invocation("milestone-reopen/before-newer-completion"),
+    });
+    executeAtFence("test.milestone-reopen.newer-start", "fixture/newer-completion/start", (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "milestone",
+        milestoneId: "M001",
+        lifecycleStatus: "in_progress",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S01",
+        lifecycleStatus: "in_progress",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: "in_progress",
+      });
+    });
+    executeAtFence("milestone.complete", "fixture/newer-completion/complete", (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus: "completed",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "slice",
+        milestoneId: "M001",
+        sliceId: "S01",
+        lifecycleStatus: "completed",
+      });
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "milestone",
+        milestoneId: "M001",
+        lifecycleStatus: "completed",
+      });
+      db().exec(`
+        UPDATE milestones SET status = 'complete' WHERE id = 'M001';
+        UPDATE slices SET status = 'complete' WHERE milestone_id = 'M001';
+        UPDATE tasks SET status = 'complete' WHERE milestone_id = 'M001';
+      `);
+    });
+    writeFileSync(summaryPath, newerSummary);
+  });
+
+  const completion = await handleCompleteMilestone(
+    completionParams(),
+    basePath,
+    invocation("milestone-complete/superseded-by-newer-completion"),
+  );
+
+  assert.ok(!("error" in completion));
+  assert.equal(completion.current, false);
+  assert.equal(completion.stale, true);
+  assert.equal(completion.superseded, true);
+  assert.equal(readFileSync(completion.summaryPath, "utf8"), newerSummary);
+  assert.equal(getMilestone("M001")?.status, "complete");
 });

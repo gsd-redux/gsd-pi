@@ -1,7 +1,19 @@
+import { getDbOrNull } from "./db/engine.js";
 import { workflowEventArchivePath, workflowEventLogPath } from "./workflow-event-ledger.js";
 import { readEvents } from "./workflow-events.js";
 
 export function latestExplicitReopenAt(basePath: string, milestoneId: string): string | null {
+  const durable = getDbOrNull()?.prepare(`
+    SELECT created_at
+    FROM workflow_domain_events
+    WHERE event_type = 'milestone.reopened'
+      AND entity_type = 'milestone'
+      AND entity_id = :milestone_id
+    ORDER BY project_revision DESC, event_index DESC
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId });
+  if (durable) return String(durable["created_at"]);
+
   const candidates = [
     workflowEventLogPath(basePath),
     workflowEventArchivePath(basePath, milestoneId),

@@ -211,6 +211,21 @@ projection suppression.
 - T04 still owns per-artifact tombstone/current-operation fencing. T03 skips a
   known superseded replay and surfaces projection staleness, but a newer
   operation can still race between a currentness read and legacy file cleanup.
+- T04 reuses the existing lifecycle projection key and current-head lineage;
+  no second queue or worker protocol is required. Completion checks ownership
+  before and after delivery, while reopen removes every supported Milestone,
+  Slice, UAT, and Task closeout path through operation-specific tombstones.
+- A superseded completion removes only its delivered bytes when the current
+  Milestone is reopened. If a newer completion owns the head, compensation
+  regenerates the current summary from the latest immutable
+  `milestone.completed` event so byte-identical output cannot be misattributed.
+- Exact current replay repairs obstructed projection delivery without creating
+  new authority. Historical completion/reopen replay does not touch files, and
+  manifest/compatibility event delivery stops after ownership is lost.
+- Full database rebuild renders adopted Milestone SUMMARY content from the
+  durable completion event and refuses to resurrect cached terminal artifacts
+  for an active Milestone. Durable `milestone.reopened` history takes precedence
+  over the compatibility JSONL ledger, which remains only an import fallback.
 - Until T05 supplies private Pi/MCP invocation identity, adopted reopen also
   fails closed at the handler. Direct adapter and handler contracts use explicit
   identity; production transport convergence is intentionally not fabricated.
