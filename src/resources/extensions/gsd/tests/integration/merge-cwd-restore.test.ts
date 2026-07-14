@@ -30,6 +30,7 @@ import { execSync } from "node:child_process";
 
 import { mergeMilestoneToMain } from "../../auto-worktree-merge.ts";
 import { MergeConflictError } from "../../git-service.ts";
+import { seedMergeReadyMilestone } from "../merge-ready-fixture.ts";
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, {
@@ -95,6 +96,7 @@ describe("merge cwd restore (#2929)", () => {
     writeFileSync(join(repo, "README.md"), "# main version (diverged)\n");
     run("git add .", repo);
     run('git commit -m "main diverges README"', repo);
+    seedMergeReadyMilestone(repo, "M010");
 
     // cwd must be repo root (simulates parallel-merge calling from project root)
     process.chdir(repo);
@@ -142,6 +144,7 @@ describe("merge cwd restore (#2929)", () => {
       join(repo, ".gsd", "milestones", "M010", "M010-ROADMAP.md"),
       makeRoadmap("M010", "First milestone"),
     );
+    seedMergeReadyMilestone(repo, "M010");
 
     process.chdir(repo);
 

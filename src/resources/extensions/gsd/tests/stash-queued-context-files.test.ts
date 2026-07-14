@@ -32,6 +32,7 @@ import { createAutoWorktree } from "../auto-worktree-creation.ts";
 import { mergeMilestoneToMain } from "../auto-worktree-merge.ts";
 import { _resetServiceCache } from "../worktree.ts";
 import { _clearGsdRootCache } from "../paths.ts";
+import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
 
 // Isolate from user's global preferences (which may have git.main_branch set)
 let originalHome: string | undefined;
@@ -182,6 +183,7 @@ test("#2505: mergeMilestoneToMain preserves queued CONTEXT files (not swept into
   const repo = createTempRepo();
   try {
     const wtPath = createAutoWorktree(repo, "M015");
+    seedMergeReadyMilestone(repo, "M015");
     const normalizedPath = wtPath.replaceAll("\\", "/");
     const worktreeName = normalizedPath.split("/").pop() || "M015";
     const sliceBranch = `slice/${worktreeName}/S01`;
@@ -288,6 +290,7 @@ test("#2505: pre-merge stash handles symlinked .gsd without traversing it", () =
   const { repo, stateDir } = createTempRepoWithSymlinkedGsd();
   try {
     const wtPath = createAutoWorktree(repo, "M016");
+    seedMergeReadyMilestone(repo, "M016");
     const normalizedPath = wtPath.replaceAll("\\", "/");
     const worktreeName = normalizedPath.split("/").pop() || "M016";
     const sliceBranch = `slice/${worktreeName}/S01`;
@@ -326,6 +329,7 @@ test("#2505: back-to-back merges preserve queued CONTEXT files", () => {
   try {
     // ── First milestone: M015 ──
     const wt1 = createAutoWorktree(repo, "M015");
+    seedMergeReadyMilestone(repo, "M015");
     const wt1Name = wt1.replaceAll("\\", "/").split("/").pop() || "M015";
     const slice1 = `slice/${wt1Name}/S01`;
     run(`git checkout -b "${slice1}"`, wt1);
@@ -357,6 +361,7 @@ test("#2505: back-to-back merges preserve queued CONTEXT files", () => {
 
     // ── Second milestone: M016 ──
     const wt2 = createAutoWorktree(repo, "M016");
+    seedMergeReadyMilestone(repo, "M016");
     const wt2Name = wt2.replaceAll("\\", "/").split("/").pop() || "M016";
     const slice2 = `slice/${wt2Name}/S01`;
     run(`git checkout -b "${slice2}"`, wt2);
@@ -409,6 +414,7 @@ test("#4573: gitignored .gsd symlink does not break pre-merge stash", () => {
     run("git branch -M main", repo);
 
     const wtPath = createAutoWorktree(repo, "M001");
+    seedMergeReadyMilestone(repo, "M001");
     const worktreeName = wtPath.replaceAll("\\", "/").split("/").pop() || "M001";
     const sliceBranch = `slice/${worktreeName}/S01`;
     run(`git checkout -b "${sliceBranch}"`, wtPath);

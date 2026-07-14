@@ -18,6 +18,7 @@ import { createAutoWorktree } from "../auto-worktree-creation.ts";
 import { mergeMilestoneToMain } from "../auto-worktree-merge.ts";
 import { _resetServiceCache } from "../worktree.ts";
 import { _clearGsdRootCache } from "../paths.ts";
+import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
 
 // Isolate from user's global preferences (which may have git.main_branch set)
 let originalHome: string | undefined;
@@ -71,6 +72,7 @@ test("#2766: stash pop conflict on .gsd/ files is auto-resolved", () => {
   const repo = createTempRepo();
   try {
     const wtPath = createAutoWorktree(repo, "M300");
+    seedMergeReadyMilestone(repo, "M300");
 
     // Add a slice with real code on the milestone branch
     const normalizedPath = wtPath.replaceAll("\\", "/");
@@ -121,6 +123,7 @@ test("#2766: stash pop conflict on non-.gsd files preserves stash for manual res
   const repo = createTempRepo();
   try {
     const wtPath = createAutoWorktree(repo, "M301");
+    seedMergeReadyMilestone(repo, "M301");
 
     // Add a slice that modifies a file also dirty on main
     const normalizedPath = wtPath.replaceAll("\\", "/");
@@ -160,6 +163,7 @@ test("#4766: stash pop untracked already-exists collisions on .gsd files drop st
   const repo = createTempRepo();
   try {
     const wtPath = createAutoWorktree(repo, "M302");
+    seedMergeReadyMilestone(repo, "M302");
 
     const normalizedPath = wtPath.replaceAll("\\", "/");
     const worktreeName = normalizedPath.split("/").pop() || "M302";

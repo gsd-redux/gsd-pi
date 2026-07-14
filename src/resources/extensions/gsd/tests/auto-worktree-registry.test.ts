@@ -16,6 +16,7 @@ import {
   _resetAutoWorktreeOriginalBaseForTests,
 } from "../auto-worktree-session-registry.ts";
 import { teardownAutoWorktree } from "../auto-worktree-teardown.ts";
+import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,7 @@ describe("auto-worktree workspace registry", () => {
 
     process.chdir(tempDir);
     git(["merge", "--no-ff", "milestone/M003", "-m", "merge M003"], tempDir);
+    seedMergeReadyMilestone(tempDir, "M003");
 
     process.chdir(wtDir);
     const result = mergeMilestoneToMain(tempDir, "M003", "# M003\n- [x] **S01: Done**\n");
@@ -226,6 +228,7 @@ describe("auto-worktree workspace registry", () => {
     writeFileSync(join(tempDir, "hotfix.txt"), "later main work\n");
     git(["add", "hotfix.txt"], tempDir);
     git(["commit", "-m", "fix: advance main"], tempDir);
+    seedMergeReadyMilestone(tempDir, "M004");
 
     process.chdir(wtDir);
     const result = mergeMilestoneToMain(tempDir, "M004", "# M004\n- [x] **S01: Done**\n");

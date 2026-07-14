@@ -22,6 +22,7 @@ import { execFileSync } from "node:child_process";
 import { mergeMilestoneToMain } from "../auto-worktree-merge.ts";
 import { _resetServiceCache } from "../worktree.ts";
 import { _clearGsdRootCache } from "../paths.ts";
+import { seedMergeReadyMilestone } from "./merge-ready-fixture.ts";
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -74,6 +75,7 @@ function assertSelfMergeRefRecoversToMain(recordedIntegrationBranch: string): vo
     git(["add", "feature.txt"], tempDir);
     git(["commit", "-m", "feat: milestone work"], tempDir);
     git(["checkout", "main"], tempDir);
+    seedMergeReadyMilestone(tempDir, "M001");
 
     const mainHeadBefore = git(["rev-parse", "main"], tempDir);
     process.chdir(tempDir);
