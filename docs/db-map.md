@@ -28,11 +28,9 @@ gsd-db.ts  ← compatibility barrel over the explicit single-writer allowlist
        ├── db/writers/*.ts  ← the Single Writer Layer (one write subsystem per file)
        ├── db/{milestone-leases,unit-dispatches,auto-workers,runtime-kv,command-queue}.ts
        │                    ← typed coordination/runtime writers
-       ├── db-canonical-foundation-schema.ts, db-lifecycle-foundation-schema.ts,
-       │   db-conversation-foundation-schema.ts, db-recovery-evidence-foundation-schema.ts,
-       │   db-projection-import-kernel-closeout-foundation-schema.ts,
-       │   db-memory-fts-schema.ts, db-schema-metadata.ts, db-verification-evidence-schema.ts
-       │                    ← allowlisted schema/migration helpers
+       ├── schema/migration helper modules
+       │                    ← write-capable helpers are explicitly listed by
+       │                       SCHEMA_DB_WRITER_FILES in single-writer-invariant.test.ts
        ├── memory-backfill.ts
        │                    ← allowlisted ADR migration/backfill helper
        ├── db/queries.ts    ← the Query Module (read-only SELECT wrappers)
@@ -71,7 +69,8 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 
 ## 2. Schema Version History
 
-Current version: **V35**
+The current version is defined by `SCHEMA_VERSION` in `db/engine.ts`; the
+history below explains each migration without duplicating that live value.
 
 | Version | What Changed |
 |---------|-------------|
@@ -110,6 +109,10 @@ Current version: **V35**
 | V33 | **Additive guided-conversation foundation**: milestone context and advisory horizons, focused recommendation-first interactions, immutable verbatim Answers and correction-safe Decisions, dependency-targeted impacts, and restart-safe Work Checkpoints |
 | V34 | **Additive recovery and evidence foundation**: immutable Failure Observations and Recovery Actions, immutable count budgets whose use is derived from linked Actions, versioned acceptance criteria, verdict-owned objective evidence, separate subjective Human Acceptance, and immutable remediation routing |
 | V35 | **Additive projection, import, kernel, and closeout foundation**: durable per-target projection delivery, immutable import application receipts, restart-safe kernel checkpoint chains, versioned closeout plans with ordered effects, and success-only settlement receipts |
+| V36 | **Attempt recovery fencing**: explicit settlement outcomes, replacement-worker lease identity, dispatch-scoped transitions, and the Kernel stage/state transition matrix |
+| V37 | **Task cancellation authorization**: permits `task.cancel` to interrupt and settle an active Attempt without weakening ordinary lease fencing |
+| V38 | **Verification-caused recovery**: permits a succeeded Result with a failed or inconclusive host Technical Verdict to cause a verification-stage Failure Observation |
+| V39 | **Verification recovery current-head enforcement**: only the current non-superseded criterion and latest non-superseded evidence-backed failure verdict across tested source revisions may authorize recovery |
 
 ---
 
@@ -1390,6 +1393,10 @@ authority_epoch        INTEGER NOT NULL
   receive a verdict. PASS additionally requires the Attempt Result to be
   `succeeded`. Supersession must advance the project revision without decreasing
   the Authority Epoch, and forks from a non-head verdict are rejected.
+- Verification-caused recovery additionally selects the current non-superseded
+  criterion and latest non-superseded verdict with Verification Evidence across
+  tested source revisions. Superseded, older-source, and evidence-less verdicts
+  cannot authorize a Failure Observation or Recovery Action.
 
 #### `workflow_verification_evidence`
 ```
@@ -1929,7 +1936,7 @@ active projections omit it, and explicit reopen is required before reuse.
 
 ## 7. Write Path Invariants
 
-1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer* — `db/engine.ts` for schema, migrations, lifecycle, and transaction primitives; `db/domain-operation.ts` for revision-checked authoritative transactions; `db/writers/**` for domain write subsystems; `gsd-db.ts` as the compatibility barrel and remaining mid-migration wrappers; the typed coordination/runtime writer modules `db/milestone-leases.ts`, `db/unit-dispatches.ts`, `db/auto-workers.ts`, `db/runtime-kv.ts`, and `db/command-queue.ts`; the schema/migration helpers `db-canonical-foundation-schema.ts`, `db-lifecycle-foundation-schema.ts`, `db-conversation-foundation-schema.ts`, `db-recovery-evidence-foundation-schema.ts`, `db-projection-import-kernel-closeout-foundation-schema.ts`, `db-memory-fts-schema.ts`, `db-schema-metadata.ts`, and `db-verification-evidence-schema.ts`; and the ADR migration/backfill helper `memory-backfill.ts`. This is an allowlist, not permission for arbitrary raw writes under `db/`. `unit-ownership.ts` remains excluded because it owns a separate `.gsd/unit-claims.db`. `db/queries.ts` is the read-only Query Module and must contain no write SQL. No raw write SQL escapes to the adapter from anywhere else. Enforced by the structural `single-writer-invariant.test.ts`, which checks this allowlist.
+1. **Single-writer rule**: all write SQL lives in the explicit single-writer *layer*. The authoritative allowlists are `TYPED_DB_WRITER_FILES`, `SCHEMA_DB_WRITER_FILES`, and `MIGRATION_BACKFILL_WRITER_FILES` in `single-writer-invariant.test.ts`; `db/engine.ts`, `db/writers/**`, `gsd-db.ts`, and the separate `unit-ownership.ts` database have the named exceptions documented there. This is not permission for arbitrary raw writes under `db/`; `db/queries.ts` remains read-only. The structural test rejects every unlisted write site.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant callers normally increment the shared depth counter with no nested `BEGIN`; `executeDomainOperation()` is the exception and rejects an existing outer transaction so it owns the reserved-writer boundary. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
