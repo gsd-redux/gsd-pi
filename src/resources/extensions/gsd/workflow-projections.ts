@@ -402,19 +402,19 @@ export function renderStateContent(state: GSDState): string {
  * Render STATE.md projection to disk.
  * Derives state from DB, renders content, writes via atomicWriteSync.
  */
-export async function renderStateProjection(basePath: string): Promise<void> {
+export async function renderStateProjection(basePath: string): Promise<{ stale: boolean }> {
   try {
-    if (!isDbAvailable()) return;
+    if (!isDbAvailable()) return { stale: true };
     // Probe DB handle — adapter may be set but underlying handle closed
     const adapter = _getAdapter();
-    if (!adapter) return;
+    if (!adapter) return { stale: true };
     try {
       adapter.prepare("SELECT 1").get();
     } catch (err) {
       logWarning("projection", "renderStateProjection: DB handle probe failed, skipping render", {
         error: (err as Error).message,
       });
-      return;
+      return { stale: true };
     }
     const state = await deriveState(basePath);
     const content = renderStateContent(state);
@@ -427,7 +427,7 @@ export async function renderStateProjection(basePath: string): Promise<void> {
         const existingContent = (await readFile(statePath, "utf-8")).trim();
         if (Array.isArray(manifest?.milestones) && manifest.milestones.length > 0 && existingContent.length > 0) {
           logWarning("projection", "renderStateProjection: refusing to overwrite non-empty STATE.md with empty state while manifest has milestones");
-          return;
+          return { stale: true };
         }
       } catch (err) {
         logWarning("projection", `renderStateProjection: unable to inspect existing STATE.md guard, proceeding with write: ${(err as Error).message}`);
@@ -435,8 +435,10 @@ export async function renderStateProjection(basePath: string): Promise<void> {
     }
     mkdirSync(dir, { recursive: true });
     atomicWriteSync(statePath, content);
+    return { stale: false };
   } catch (err) {
     logWarning("projection", `renderStateProjection failed: ${(err as Error).message}`);
+    return { stale: true };
   }
 }
 
@@ -471,7 +473,8 @@ export async function renderMilestoneShellProjections(
     logWarning("projection", `renderTopLevelQueueFromDb failed: ${(err as Error).message}`);
   }
   try {
-    await renderStateProjection(basePath);
+    const rendered = await renderStateProjection(basePath);
+    stale ||= rendered.stale;
   } catch (err) {
     stale = true;
     logWarning("projection", `renderStateProjection failed: ${(err as Error).message}`);
@@ -485,8 +488,12 @@ export async function renderMilestoneShellProjections(
  * Regenerate all projection files for a milestone from DB state.
  * All calls are wrapped in try/catch — projection failure is non-fatal per D-02.
  */
-export async function renderAllProjections(basePath: string, milestoneId: string): Promise<void> {
-  await renderMilestoneShellProjections(basePath, milestoneId);
+export async function renderAllProjections(
+  basePath: string,
+  milestoneId: string,
+): Promise<{ stale: boolean }> {
+  const shell = await renderMilestoneShellProjections(basePath, milestoneId);
+  let stale = shell.stale;
 
   // Query all slices for this milestone
   const sliceRows = getMilestoneSlices(milestoneId);
@@ -505,10 +512,12 @@ export async function renderAllProjections(basePath: string, milestoneId: string
       try {
         renderSummaryProjection(basePath, milestoneId, slice.id, task.id);
       } catch (err) {
+        stale = true;
         logWarning("projection", `renderSummaryProjection failed for ${milestoneId}/${slice.id}/${task.id}: ${(err as Error).message}`);
       }
     }
   }
+  return { stale };
 }
 
 // ─── regenerateIfMissing ────────────────────────────────────────────────

@@ -9,12 +9,13 @@ export interface ProjectionFlushScope {
 
 export interface ProjectionFlushResult {
   milestoneId: string;
+  stale: boolean;
 }
 
 export async function flushWorkflowProjections(
   basePath: string,
   scope: ProjectionFlushScope,
 ): Promise<ProjectionFlushResult> {
-  await renderAllProjections(basePath, scope.milestoneId);
-  return { milestoneId: scope.milestoneId };
+  const rendered = await renderAllProjections(basePath, scope.milestoneId);
+  return { milestoneId: scope.milestoneId, stale: rendered.stale };
 }

@@ -19,7 +19,11 @@
 import {
   getSliceTasks,
 } from "../gsd-db.js";
-import { reopenSlice, SliceLifecycleValidationError } from "../slice-lifecycle-domain-operation.js";
+import {
+  isCurrentSliceReopenOperation,
+  reopenSlice,
+  SliceLifecycleValidationError,
+} from "../slice-lifecycle-domain-operation.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import { invalidateStateCache } from "../state.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
@@ -27,7 +31,7 @@ import { renderPlanCheckboxes } from "../markdown-renderer.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
-import { existsSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, existsSync, lstatSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildFlatTaskFileName,
@@ -37,6 +41,7 @@ import {
   resolveTasksDir,
   resolveSliceFile,
   resolveSlicePath,
+  targetSliceFile,
   clearPathCache,
 } from "../paths.js";
 
@@ -54,6 +59,61 @@ export interface ReopenSliceResult {
   milestoneId: string;
   sliceId: string;
   tasksReset: number;
+  stale?: boolean;
+}
+
+let cleanupInterleaveForTest: (() => void) | null = null;
+
+export function _setReopenSliceCleanupInterleaveForTest(hook: (() => void) | null): void {
+  cleanupInterleaveForTest = hook;
+}
+
+function restoreTombstone(tombstonePath: string, artifactPath: string): void {
+  try {
+    copyFileSync(tombstonePath, artifactPath, constants.COPYFILE_EXCL);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  try {
+    unlinkSync(tombstonePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function removeReopenProjectionIfCurrent(
+  artifactPath: string,
+  operationId: string,
+  slice: { milestoneId: string; sliceId: string },
+): boolean {
+  const tombstonePath = `${artifactPath}.reopen-${operationId}.pending`;
+  if (existsSync(tombstonePath)) {
+    if (!isCurrentSliceReopenOperation(operationId, slice)) {
+      restoreTombstone(tombstonePath, artifactPath);
+      return false;
+    }
+    unlinkSync(tombstonePath);
+  }
+  if (!isCurrentSliceReopenOperation(operationId, slice)) return false;
+  if (!existsSync(artifactPath)) return true;
+  if (lstatSync(artifactPath).isDirectory()) {
+    throw new Error(`reopen projection cleanup path is a directory: ${artifactPath}`);
+  }
+  cleanupInterleaveForTest?.();
+  try {
+    renameSync(artifactPath, tombstonePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return isCurrentSliceReopenOperation(operationId, slice);
+    }
+    throw error;
+  }
+  if (!isCurrentSliceReopenOperation(operationId, slice)) {
+    restoreTombstone(tombstonePath, artifactPath);
+    return false;
+  }
+  unlinkSync(tombstonePath);
+  return true;
 }
 
 export async function handleReopenSlice(
@@ -71,6 +131,8 @@ export async function handleReopenSlice(
 
   let tasksResetCount: number;
   let operationStatus: "committed" | "replayed";
+  let operationId: string;
+  let projectionStale = false;
   try {
     const receipt = reopenSlice({
       invocation,
@@ -80,6 +142,7 @@ export async function handleReopenSlice(
     });
     tasksResetCount = receipt.tasksReset;
     operationStatus = receipt.status;
+    operationId = receipt.operationId;
     if (receipt.status === "replayed" && !receipt.isCurrent) {
       return {
         milestoneId: params.milestoneId,
@@ -99,6 +162,7 @@ export async function handleReopenSlice(
   // Without this, the DB-filesystem reconciler sees SUMMARY.md files and
   // auto-corrects tasks back to "complete", making reopen a no-op (#3161).
   try {
+    const slice = { milestoneId: params.milestoneId, sliceId: params.sliceId };
     const milestoneDir = resolveMilestonePath(basePath, params.milestoneId);
     const legacyBase = legacyMilestonesDir(basePath);
     const isLegacy = !!milestoneDir && (
@@ -106,7 +170,7 @@ export async function handleReopenSlice(
     );
     const tasksDir = resolveTasksDir(basePath, params.milestoneId, params.sliceId);
     const tasks = getSliceTasks(params.milestoneId, params.sliceId);
-    for (const task of tasks) {
+    cleanup: for (const task of tasks) {
       const summaryPaths = isLegacy
         ? (tasksDir ? [join(tasksDir, buildTaskFileName(task.id, "SUMMARY"))] : [])
         : milestoneDir
@@ -116,31 +180,48 @@ export async function handleReopenSlice(
           ]
           : [];
       for (const summaryPath of summaryPaths) {
-        if (existsSync(summaryPath)) unlinkSync(summaryPath);
+        if (!removeReopenProjectionIfCurrent(summaryPath, operationId, slice)) {
+          projectionStale = true;
+          break cleanup;
+        }
       }
     }
-    const sliceDir = resolveSlicePath(basePath, params.milestoneId, params.sliceId);
+    const sliceDir = projectionStale ? null : resolveSlicePath(basePath, params.milestoneId, params.sliceId);
     if (sliceDir) {
       const sliceArtifacts = new Set([
-        resolveSliceFile(basePath, params.milestoneId, params.sliceId, "SUMMARY"),
-        resolveSliceFile(basePath, params.milestoneId, params.sliceId, "UAT"),
+        targetSliceFile(basePath, params.milestoneId, params.sliceId, "SUMMARY"),
+        targetSliceFile(basePath, params.milestoneId, params.sliceId, "UAT"),
         join(sliceDir, `${params.sliceId}-SUMMARY.md`),
         join(sliceDir, `${params.sliceId}-UAT.md`),
       ]);
+      const existingSummary = resolveSliceFile(basePath, params.milestoneId, params.sliceId, "SUMMARY");
+      const existingUat = resolveSliceFile(basePath, params.milestoneId, params.sliceId, "UAT");
+      if (existingSummary) sliceArtifacts.add(existingSummary);
+      if (existingUat) sliceArtifacts.add(existingUat);
       for (const artifactPath of sliceArtifacts) {
-        if (artifactPath && existsSync(artifactPath)) unlinkSync(artifactPath);
+        if (!removeReopenProjectionIfCurrent(artifactPath, operationId, slice)) {
+          projectionStale = true;
+          break;
+        }
       }
     }
   } catch (cleanupErr) {
+    projectionStale = true;
     logWarning("tool", `reopen-slice artifact cleanup warning: ${(cleanupErr as Error).message}`);
   }
   clearPathCache();
 
   // ── Post-mutation hook ───────────────────────────────────────────────────
   try {
-    await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
-    await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
-    writeManifest(basePath);
+    const slice = { milestoneId: params.milestoneId, sliceId: params.sliceId };
+    if (isCurrentSliceReopenOperation(operationId, slice)) {
+      await renderPlanCheckboxes(basePath, params.milestoneId, params.sliceId);
+      const flushed = await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
+      projectionStale ||= flushed.stale;
+      writeManifest(basePath);
+    } else {
+      projectionStale = true;
+    }
     if (operationStatus === "committed") {
       appendEvent(basePath, {
         cmd: "reopen-slice",
@@ -157,6 +238,7 @@ export async function handleReopenSlice(
       });
     }
   } catch (hookErr) {
+    projectionStale = true;
     logWarning("tool", `reopen-slice post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
@@ -164,5 +246,6 @@ export async function handleReopenSlice(
     milestoneId: params.milestoneId,
     sliceId: params.sliceId,
     tasksReset: tasksResetCount,
+    ...(projectionStale ? { stale: true } : {}),
   };
 }

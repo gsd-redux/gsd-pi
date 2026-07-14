@@ -31,6 +31,8 @@ import {
 } from "../../../src/resources/extensions/gsd/gsd-db.ts";
 import { registerDbTools } from "../../../src/resources/extensions/gsd/bootstrap/db-tools.ts";
 import { claimTaskAttempt } from "../../../src/resources/extensions/gsd/task-execution-domain-operation.ts";
+import { seedSliceCompletionAuthority } from "../../../src/resources/extensions/gsd/tests/slice-completion-fixture.ts";
+import { createWorkflowAuthorityFixture } from "../../../src/resources/extensions/gsd/tests/workflow-authority-fixture.ts";
 import {
   executeSummarySave,
   executeMilestoneStatus,
@@ -475,5 +477,189 @@ describe("ADR-008 parity: shared workflow write tools native vs MCP", () => {
         );
       },
     });
+  });
+});
+
+const SLICE_LIFECYCLE_CASES = [
+  {
+    canonicalName: "gsd_slice_complete",
+    retryName: "gsd_complete_slice",
+    operationType: "slice.complete",
+    eventType: "slice.completed",
+    stableKey: "slice-lifecycle-complete",
+    args: {
+      milestoneId: "M001",
+      sliceId: "S02",
+      sliceTitle: "Ready dependent slice",
+      oneLiner: "Persistent lifecycle parity is complete",
+      narrative: "Pi and MCP preserve one canonical Slice completion across a restart.",
+      verification: "Focused persistent-database parity test passed.",
+      uatContent: "## UAT\n\nPASS",
+    },
+  },
+  {
+    canonicalName: "gsd_slice_reopen",
+    retryName: "gsd_reopen_slice",
+    operationType: "slice.reopen",
+    eventType: "slice.reopened",
+    stableKey: "slice-lifecycle-reopen",
+    args: {
+      milestoneId: "M001",
+      sliceId: "S02",
+      reason: "Reopen the completed Slice for retry parity.",
+    },
+  },
+  {
+    canonicalName: "gsd_skip_slice",
+    retryName: "gsd_skip_slice",
+    operationType: "slice.cancel",
+    eventType: "slice.cancelled",
+    stableKey: "slice-lifecycle-cancel",
+    args: {
+      milestoneId: "M001",
+      sliceId: "S02",
+      reason: "Cancel the reopened Slice for retry parity.",
+    },
+  },
+] as const;
+
+function normalizeLifecycleToolResult(result: unknown, base: string): Record<string, unknown> {
+  const record = JSON.parse(JSON.stringify(result).replaceAll(base, "<PROJECT>")) as Record<string, unknown>;
+  const details = record.structuredContent ?? record.details;
+  return {
+    content: record.content,
+    details,
+    isError: record.isError ?? false,
+  };
+}
+
+function assertSingleSliceLifecycleLineage(
+  operationType: string,
+  eventType: string,
+  expectedIdempotencyKey: string,
+  expectedTransport: "pi-tool" | "workflow-mcp",
+): void {
+  const db = _getAdapter();
+  assert.ok(db, "persistent Slice lifecycle database must be open");
+  const operations = db.prepare(`
+    SELECT idempotency_key, source_transport
+    FROM workflow_operations
+    WHERE operation_type = ?
+  `).all(operationType);
+  assert.deepEqual(operations, [{
+    idempotency_key: expectedIdempotencyKey,
+    source_transport: expectedTransport,
+  }]);
+  assert.equal(Number(db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_domain_events
+    WHERE event_type = ?
+  `).get(eventType)?.count), 1, `${eventType} must have one durable event`);
+}
+
+async function callMcpLifecycleTool(
+  base: string,
+  name: string,
+  args: Record<string, unknown>,
+  stableKey: string,
+): Promise<unknown> {
+  const server = makeMockServer();
+  registerWorkflowTools(server as Parameters<typeof registerWorkflowTools>[0]);
+  const tool = server.tools.find((entry) => entry.name === name);
+  assert.ok(tool, `${name} must be registered on a fresh MCP server`);
+  return tool.handler({ projectDir: base, ...args }, {
+    _meta: { "io.opengsd/idempotency-key": stableKey },
+  });
+}
+
+async function runPersistentSliceLifecycleMatrix(
+  transport: "pi" | "mcp",
+): Promise<Record<string, Record<string, unknown>>> {
+  const fixture = await createWorkflowAuthorityFixture();
+  const responses: Record<string, Record<string, unknown>> = {};
+  try {
+    seedSliceCompletionAuthority({
+      milestoneId: "M001",
+      sliceId: "S02",
+      completedTaskIds: ["T01"],
+      runId: `${transport}-persistent-parity`,
+    });
+
+    for (const lifecycleCase of SLICE_LIFECYCLE_CASES) {
+      const first = transport === "pi"
+        ? await runNativeDbTool(fixture.root, lifecycleCase.canonicalName, lifecycleCase.args)
+        : await callMcpLifecycleTool(
+            fixture.root,
+            lifecycleCase.canonicalName,
+            lifecycleCase.args,
+            lifecycleCase.stableKey,
+          );
+      assert.ok(!(first as { isError?: boolean }).isError, `${transport} canonical call must succeed`);
+
+      closeDatabase();
+
+      const retry = transport === "pi"
+        ? await runNativeDbTool(fixture.root, lifecycleCase.retryName, lifecycleCase.args)
+        : await callMcpLifecycleTool(
+            fixture.root,
+            lifecycleCase.retryName,
+            lifecycleCase.args,
+            lifecycleCase.stableKey,
+          );
+      assert.ok(!(retry as { isError?: boolean }).isError, `${transport} retry must succeed after DB reopen`);
+
+      const firstContract = normalizeLifecycleToolResult(first, fixture.root);
+      const retryContract = normalizeLifecycleToolResult(retry, fixture.root);
+      assert.deepEqual(
+        retryContract,
+        firstContract,
+        `${transport} ${lifecycleCase.retryName} retry must preserve canonical response semantics`,
+      );
+      responses[lifecycleCase.operationType] = firstContract;
+
+      const canonicalName = lifecycleCase.canonicalName;
+      const expectedIdempotencyKey = transport === "pi"
+        ? `pi:${canonicalName}:parity-call`
+        : `mcp:${canonicalName}:${lifecycleCase.stableKey}`;
+      assertSingleSliceLifecycleLineage(
+        lifecycleCase.operationType,
+        lifecycleCase.eventType,
+        expectedIdempotencyKey,
+        transport === "pi" ? "pi-tool" : "workflow-mcp",
+      );
+    }
+
+    const db = _getAdapter();
+    assert.ok(db);
+    assert.equal(Number(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'slice' AND milestone_id = 'M001' AND slice_id = 'S02'
+    `).get()?.count), 1, "retries must not duplicate the canonical Slice lifecycle row");
+    assert.equal(Number(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM workflow_item_lifecycles
+      WHERE item_kind = 'task' AND milestone_id = 'M001' AND slice_id = 'S02' AND task_id = 'T01'
+    `).get()?.count), 1, "retries must not duplicate the canonical Task lifecycle row");
+    return responses;
+  } finally {
+    fixture.cleanup();
+  }
+}
+
+describe("Slice lifecycle persistent retry parity", () => {
+  it("Pi and MCP preserve canonical-first complete, reopen, and cancel across fresh retry registrations", async (t) => {
+    const previousAliasSetting = process.env.GSD_ADVERTISE_TOOL_ALIASES;
+    t.after(() => {
+      if (previousAliasSetting === undefined) {
+        delete process.env.GSD_ADVERTISE_TOOL_ALIASES;
+      } else {
+        process.env.GSD_ADVERTISE_TOOL_ALIASES = previousAliasSetting;
+      }
+    });
+    process.env.GSD_ADVERTISE_TOOL_ALIASES = "1";
+    const piResponses = await runPersistentSliceLifecycleMatrix("pi");
+    const mcpResponses = await runPersistentSliceLifecycleMatrix("mcp");
+    assert.deepEqual(mcpResponses, piResponses, "Pi and MCP lifecycle response contracts must match");
   });
 });

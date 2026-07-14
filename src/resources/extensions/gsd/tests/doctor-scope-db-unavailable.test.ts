@@ -10,8 +10,8 @@ import {
   getTask,
   openDatabase,
 } from "../gsd-db.ts";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { filterDoctorIssues } from "../doctor-format.ts";
 import { checkEngineHealth } from "../doctor-engine-checks.ts";
@@ -187,6 +187,53 @@ test("checkEngineHealth keeps PLAN checkbox divergence after stale projection fl
   );
   assert.ok(fixes.includes("re-rendered stale projections for M001"));
   assert.match(readFileSync(plan.planPath, "utf-8"), /- \[ \] \*\*T01\*\*:/);
+});
+
+test("checkEngineHealth retains ROADMAP divergence when projection repair remains stale", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-doctor-roadmap-repair-stale-"));
+  const gsdDir = join(base, ".gsd");
+  mkdirSync(gsdDir, { recursive: true });
+  openDatabase(join(gsdDir, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Foundation", status: "active" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Slice",
+    status: "pending",
+    risk: "low",
+    depends: [],
+    sequence: 1,
+  });
+  const roadmap = await renderRoadmapFromDb(base, "M001");
+  if ("skipped" in roadmap) assert.fail("planned milestone should render a roadmap");
+  writeFileSync(
+    roadmap.roadmapPath,
+    readFileSync(roadmap.roadmapPath, "utf-8").replace("- [ ] **S01:", "- [x] **S01:"),
+    "utf-8",
+  );
+  appendEvent(base, {
+    cmd: "complete-slice",
+    params: { milestoneId: "M001", sliceId: "S01" },
+    ts: "2999-01-01T00:00:00.000Z",
+    actor: "agent",
+  });
+
+  const roadmapDir = dirname(roadmap.roadmapPath);
+  chmodSync(roadmapDir, 0o555);
+  t.after(() => {
+    chmodSync(roadmapDir, 0o755);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const issues: any[] = [];
+  const fixes: string[] = [];
+  await checkEngineHealth(base, issues, fixes);
+
+  assert.deepEqual(
+    issues.filter((issue) => issue.code === "checkbox_db_status_divergence").map((issue) => issue.unitId),
+    ["M001/S01"],
+  );
+  assert.equal(fixes.includes("re-rendered stale projections for M001"), false);
 });
 
 test("checkEngineHealth ignores stale suffixed flat-phase duplicate when bare milestone exists", async (t) => {

@@ -63,6 +63,7 @@ import type { ValidateMilestoneOptions, ValidateMilestoneParams } from "./valida
 import { handleValidateMilestone } from "./validate-milestone.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
+import { flushWorkflowProjections } from "../projection-flush.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { autoSession, getAutoRuntimeSnapshot, isAutoActive } from "../auto-runtime-state.js";
@@ -830,6 +831,9 @@ export async function executeTaskComplete(
       isError: true,
       };
     }
+    const projectionNotice = result.stale
+      ? "The readable status update is pending repair."
+      : null;
     if (result.escalation) {
       const recommended = result.escalation.options.find((option) => option.id === result.escalation?.recommendation);
       const optionIds = result.escalation.options.map((option) => option.id).join("|");
@@ -840,6 +844,7 @@ export async function executeTaskComplete(
             `Task completed with escalation decision required: ${result.escalation.question}`,
             `Recommendation: ${result.escalation.recommendation}${recommended ? ` (${recommended.label})` : ""} — ${result.escalation.recommendationRationale}`,
             `Resolve with: /gsd escalate resolve ${result.taskId} <${optionIds}|accept|reject-blocker> [rationale...]`,
+            ...(projectionNotice ? [projectionNotice] : []),
           ].join("\n"),
         }],
         details: {
@@ -849,17 +854,24 @@ export async function executeTaskComplete(
           milestoneId: result.milestoneId,
           summaryPath: result.summaryPath,
           escalation: result.escalation,
+          ...(result.stale ? { stale: true } : {}),
+          ...(result.duplicate ? { duplicate: true } : {}),
         },
       };
     }
     return {
-      content: [{ type: "text", text: `Completed task ${result.taskId} (${result.sliceId}/${result.milestoneId})` }],
+      content: [{
+        type: "text",
+        text: `Completed task ${result.taskId} (${result.sliceId}/${result.milestoneId})${projectionNotice ? `. ${projectionNotice}` : ""}`,
+      }],
       details: {
         operation: "complete_task",
         taskId: result.taskId,
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
+        ...(result.stale ? { stale: true } : {}),
+        ...(result.duplicate ? { duplicate: true } : {}),
       },
     };
   } catch (err) {
@@ -970,13 +982,15 @@ export async function executeSliceReopen(
         isError: true,
       };
     }
+    const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
-      content: [{ type: "text", text: `Reopened slice ${result.sliceId} (${result.milestoneId})` }],
+      content: [{ type: "text", text: `Reopened slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
       details: {
         operation: "reopen_slice",
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         tasksReset: result.tasksReset,
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {
@@ -1018,11 +1032,20 @@ export async function executeSkipSlice(
     }
 
     invalidateStateCache();
+    let projectionStale = false;
     try {
       const { rebuildState } = await import("../doctor.js");
       await rebuildState(basePath);
     } catch (err) {
+      projectionStale = true;
       logError("tool", `skip_slice rebuildState failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
+    }
+    try {
+      const flushed = await flushWorkflowProjections(basePath, { milestoneId: params.milestoneId });
+      projectionStale ||= flushed.stale;
+    } catch (err) {
+      projectionStale = true;
+      logError("tool", `skip_slice projection flush failed: ${(err as Error).message}`, { tool: "gsd_skip_slice" });
     }
 
     let suffix = ` Cascaded ${result.tasksSkipped} task(s) to skipped. Auto-mode will advance past this slice.`;
@@ -1033,10 +1056,11 @@ export async function executeSkipSlice(
         suffix = " (already skipped; no pending tasks to cascade).";
       }
     }
+    const projectionNotice = projectionStale ? " The readable status update is pending repair." : "";
     return {
       content: [{
         type: "text",
-        text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}.${suffix}`,
+        text: `Skipped slice ${params.sliceId} (${params.milestoneId}). Reason: ${params.reason ?? "User-directed skip"}.${suffix}${projectionNotice}`,
       }],
       details: {
         operation: "skip_slice",
@@ -1045,6 +1069,7 @@ export async function executeSkipSlice(
         reason: params.reason,
         tasksSkipped: result.tasksSkipped,
         wasAlreadySkipped: result.wasAlreadySkipped,
+        ...(projectionStale ? { stale: true } : {}),
       },
     };
   } catch (err) {
@@ -1194,14 +1219,16 @@ export async function executeSliceComplete(
       isError: true,
       };
     }
+    const projectionNotice = result.stale ? " The readable status update is pending repair." : "";
     return {
-      content: [{ type: "text", text: `Completed slice ${result.sliceId} (${result.milestoneId})` }],
+      content: [{ type: "text", text: `Completed slice ${result.sliceId} (${result.milestoneId}).${projectionNotice}` }],
       details: {
         operation: "complete_slice",
         sliceId: result.sliceId,
         milestoneId: result.milestoneId,
         summaryPath: result.summaryPath,
         uatPath: result.uatPath,
+        ...(result.stale ? { stale: true } : {}),
       },
     };
   } catch (err) {

@@ -23,7 +23,10 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.ts";
 import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
-import { handleReopenSlice } from "../tools/reopen-slice.ts";
+import {
+  _setReopenSliceCleanupInterleaveForTest,
+  handleReopenSlice,
+} from "../tools/reopen-slice.ts";
 import { handleResetSlice } from "../undo.ts";
 
 const tempDirs = new Set<string>();
@@ -342,6 +345,7 @@ function assertFullRedoState(): void {
 }
 
 afterEach(() => {
+  _setReopenSliceCleanupInterleaveForTest(null);
   closeDatabase();
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.clear();
@@ -555,6 +559,94 @@ test("a delayed reopen replay cannot delete projections from a newer Slice compl
   assert.deepEqual(replay, first);
   assert.equal(readFileSync(summaryPath, "utf8"), "# Newer summary\n");
   assert.equal(readFileSync(uatPath, "utf8"), "# Newer UAT\n");
+});
+
+test("reopen cleanup cannot delete a Slice projection that becomes newer after its currentness check", async () => {
+  const base = seedTerminalSlice("complete");
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  const summaryPath = join(phaseDir, "S01-SUMMARY.md");
+  const uatPath = join(phaseDir, "S01-UAT.md");
+  const newerSummary = "# Completion committed during reopen cleanup\n";
+  const newerUat = "# UAT committed during reopen cleanup\n";
+  let interleaveCompleted = false;
+  let interleaveError: unknown;
+  writeFileSync(summaryPath, "# Older summary awaiting cleanup\n");
+  writeFileSync(uatPath, "# Older UAT awaiting cleanup\n");
+
+  _setReopenSliceCleanupInterleaveForTest(() => {
+    try {
+      executeAtFence("test.slice-reopen.cleanup-race-claim", "fixture/slice-reopen/cleanup-race-claim", (context) => {
+        adoptOrTransitionLifecycle(context, {
+          itemKind: "task",
+          milestoneId: "M001",
+          sliceId: "S01",
+          taskId: "T01",
+          lifecycleStatus: "in_progress",
+        });
+      });
+      executeAtFence("test.slice-reopen.cleanup-race", "fixture/slice-reopen/cleanup-race", (context) => {
+        adoptOrTransitionLifecycle(context, {
+          itemKind: "task",
+          milestoneId: "M001",
+          sliceId: "S01",
+          taskId: "T01",
+          lifecycleStatus: "completed",
+        });
+        adoptOrTransitionLifecycle(context, {
+          itemKind: "task",
+          milestoneId: "M001",
+          sliceId: "S01",
+          taskId: "T02",
+          lifecycleStatus: "cancelled",
+        });
+        adoptOrTransitionLifecycle(context, {
+          itemKind: "slice",
+          milestoneId: "M001",
+          sliceId: "S01",
+          lifecycleStatus: "completed",
+        });
+        db().prepare("UPDATE tasks SET status = 'complete' WHERE id = 'T01'").run();
+        db().prepare("UPDATE tasks SET status = 'skipped' WHERE id = 'T02'").run();
+        db().prepare(`
+          UPDATE slices
+          SET status = 'complete', full_summary_md = :summary, full_uat_md = :uat
+          WHERE milestone_id = 'M001' AND id = 'S01'
+        `).run({ ":summary": newerSummary, ":uat": newerUat });
+      });
+      const reopenOperationId = String(row(`
+        SELECT operation_id FROM workflow_operations
+        WHERE operation_type = 'slice.reopen'
+      `).operation_id);
+      assert.equal(sliceLifecycle.isCurrentSliceReopenOperation(reopenOperationId, {
+        milestoneId: "M001",
+        sliceId: "S01",
+      }), false, "the competing completion must supersede the reopen before cleanup resumes");
+      writeFileSync(summaryPath, newerSummary);
+      writeFileSync(uatPath, newerUat);
+      interleaveCompleted = true;
+    } catch (error) {
+      interleaveError = error;
+      throw error;
+    }
+  });
+
+  const result = await handleReopenSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Exercise the cleanup delivery fence.",
+  }, base, invocation("slice-reopen/public/cleanup-race"));
+
+  assert.equal("error" in result, false);
+  assert.ifError(interleaveError);
+  assert.equal(interleaveCompleted, true, "the competing completion fixture must finish before cleanup resumes");
+  assert.equal(existsSync(summaryPath), true, "cleanup must preserve the newer Slice summary");
+  assert.equal(existsSync(uatPath), true, "cleanup must preserve the newer Slice UAT");
+  assert.equal(readFileSync(summaryPath, "utf8"), newerSummary);
+  assert.equal(readFileSync(uatPath, "utf8"), newerUat);
+  assert.equal(Number(row(`
+    SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'slice.reopen'
+  `).count), 1);
+  assert.equal(compatibilityEventCount(base, "reopen-slice"), 1);
 });
 
 test("a delayed reopen replay cannot delete a newer descendant Task summary", async () => {

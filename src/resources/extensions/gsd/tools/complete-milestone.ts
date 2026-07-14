@@ -243,8 +243,10 @@ export async function handleCompleteMilestone(
   // Separate try/catch per step so a projection failure doesn't prevent
   // the event log entry (critical for worktree reconciliation).
   try {
-    await flushWorkflowProjections(artifactBasePath, { milestoneId: params.milestoneId });
+    const flushed = await flushWorkflowProjections(artifactBasePath, { milestoneId: params.milestoneId });
+    projectionStale ||= flushed.stale;
   } catch (projErr) {
+    projectionStale = true;
     logWarning("tool", `complete-milestone projection warning: ${(projErr as Error).message}`);
   }
   try {

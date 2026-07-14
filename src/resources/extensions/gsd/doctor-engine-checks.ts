@@ -724,9 +724,11 @@ export async function checkEngineHealth(
           const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
           if (!roadmapPath || !existsSync(roadmapPath)) {
             try {
-              await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
-              fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
-              reRenderedMilestoneIds.push(milestone.id);
+              const flushed = await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
+              if (!flushed.stale) {
+                fixesApplied.push(`re-rendered missing projections for ${milestone.id}`);
+                reRenderedMilestoneIds.push(milestone.id);
+              }
             } catch {
               // Non-fatal — projection re-render failed
             }
@@ -735,9 +737,11 @@ export async function checkEngineHealth(
           const projectionMtime = statSync(roadmapPath).mtimeMs;
           if (lastEventTs > projectionMtime) {
             try {
-              await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
-              fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
-              reRenderedMilestoneIds.push(milestone.id);
+              const flushed = await flushWorkflowProjections(basePath, { milestoneId: milestone.id });
+              if (!flushed.stale) {
+                fixesApplied.push(`re-rendered stale projections for ${milestone.id}`);
+                reRenderedMilestoneIds.push(milestone.id);
+              }
             } catch {
               // Non-fatal — projection re-render failed
             }

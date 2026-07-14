@@ -155,8 +155,10 @@ async function repairMissingTaskSummaryProjection(
   clearParseCache();
 
   try {
-    await renderMilestoneShellProjections(artifactBasePath, taskRow.milestone_id);
+    const rendered = await renderMilestoneShellProjections(artifactBasePath, taskRow.milestone_id);
+    stale ||= rendered.stale;
   } catch (projErr) {
+    stale = true;
     logWarning("tool", `complete-task repair projection warning: ${(projErr as Error).message}`);
   }
   try {
@@ -650,9 +652,12 @@ export async function handleCompleteTask(
   // ── Post-mutation hook: projections, manifest, event log ───────────────
   // Separate try/catch per step so a projection failure doesn't prevent
   // the event log entry (critical for worktree reconciliation).
+  let projectionStale = false;
   try {
-    await renderMilestoneShellProjections(artifactBasePath, params.milestoneId);
+    const rendered = await renderMilestoneShellProjections(artifactBasePath, params.milestoneId);
+    projectionStale = rendered.stale;
   } catch (projErr) {
+    projectionStale = true;
     logWarning("tool", `complete-task projection warning: ${(projErr as Error).message}`);
   }
   try {
@@ -683,5 +688,6 @@ export async function handleCompleteTask(
     milestoneId: params.milestoneId,
     summaryPath,
     ...(escalationMetadata ? { escalation: escalationMetadata } : {}),
+    ...(projectionStale ? { stale: true } : {}),
   };
 }

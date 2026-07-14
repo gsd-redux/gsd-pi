@@ -21,7 +21,7 @@ import { registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease, getMilestoneLease } from "../db/milestone-leases.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
 import { autoSession } from "../auto-runtime-state.ts";
-import { normalizeRealPath } from "../paths.ts";
+import { normalizeRealPath, relSliceFile } from "../paths.ts";
 import { recordUnitHarnessAbort } from "../unit-runtime.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
@@ -36,6 +36,7 @@ import {
   executeMilestoneStatus,
   executeSliceComplete as executeSliceCompleteWithInvocation,
   executeSliceReopen as executeSliceReopenWithInvocation,
+  executeSkipSlice as executeSkipSliceWithInvocation,
   executeValidateMilestone,
   executeUatResultSave,
 } from "../tools/workflow-tool-executors.ts";
@@ -78,7 +79,7 @@ function executeReassessRoadmap(
 
 let sliceLifecycleInvocationSequence = 0;
 
-function sliceLifecycleInvocation(operation: "complete" | "reopen"): ExecutionInvocation {
+function sliceLifecycleInvocation(operation: "complete" | "reopen" | "skip"): ExecutionInvocation {
   sliceLifecycleInvocationSequence += 1;
   return internalExecutionInvocation(
     `test/workflow-tool-executors/slice-${operation}/${sliceLifecycleInvocationSequence}`,
@@ -99,6 +100,14 @@ function executeSliceReopen(
   invocation = sliceLifecycleInvocation("reopen"),
 ) {
   return executeSliceReopenWithInvocation(params, basePath, invocation);
+}
+
+function executeSkipSlice(
+  params: Parameters<typeof executeSkipSliceWithInvocation>[0],
+  basePath: string,
+  invocation = sliceLifecycleInvocation("skip"),
+) {
+  return executeSkipSliceWithInvocation(params, basePath, invocation);
 }
 
 function makeTmpBase(): string {
@@ -410,6 +419,75 @@ test("executeTaskComplete creates the legacy escalation directory and surfaces i
   }
 });
 
+test("executeTaskComplete surfaces stale readable status and duplicate repair metadata", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+
+  openTestDb(base);
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), [
+    "---",
+    "version: 1",
+    "phases:",
+    "  mid_execution_escalation: true",
+    "---",
+  ].join("\n"));
+  const planDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(planDir, { recursive: true });
+  writeFileSync(
+    join(planDir, "S01-PLAN.md"),
+    "# S01\n\n- [ ] **T01: Ordinary** `est:5m`\n- [ ] **T02: Escalated** `est:5m`\n",
+  );
+
+  const roadmapPath = join(base, ".gsd", "ROADMAP.md");
+  mkdirSync(roadmapPath);
+  const ordinaryParams = {
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    oneLiner: "Completed ordinary task",
+    narrative: "Did the ordinary work.",
+    verification: "Focused test passed.",
+  };
+  const ordinary = await inProjectDir(base, () => executeTaskComplete(ordinaryParams, base));
+
+  assert.equal(ordinary.isError, undefined);
+  assert.equal(ordinary.details.stale, true);
+  assert.match(String(ordinary.content[0]?.text), /readable status update is pending repair/i);
+
+  const escalated = await inProjectDir(base, () => executeTaskComplete({
+    ...ordinaryParams,
+    taskId: "T02",
+    oneLiner: "Completed escalated task",
+    escalation: {
+      question: "Which publication route should be used?",
+      options: [
+        { id: "A", label: "Direct", tradeoffs: "Simple and immediate." },
+        { id: "B", label: "Queued", tradeoffs: "More durable but delayed." },
+      ],
+      recommendation: "A",
+      recommendationRationale: "The direct route is sufficient here.",
+      continueWithDefault: true,
+    },
+  }, base));
+
+  assert.equal(escalated.isError, undefined);
+  assert.equal(escalated.details.stale, true);
+  assert.match(String(escalated.content[0]?.text), /readable status update is pending repair/i);
+
+  rmSync(roadmapPath, { recursive: true });
+  rmSync(String(ordinary.details.summaryPath));
+  const repaired = await inProjectDir(base, () => executeTaskComplete(ordinaryParams, base));
+
+  assert.equal(repaired.isError, undefined);
+  assert.equal(repaired.details.duplicate, true);
+  assert.equal(repaired.details.stale, undefined);
+  assert.doesNotMatch(String(repaired.content[0]?.text), /pending repair/i);
+  assert.equal(existsSync(roadmapPath), true, "same-task retry must repair the readable roadmap");
+});
+
 test("executeTaskComplete returns a tool error when verification cannot be derived", async () => {
   const base = makeTmpBase();
   try {
@@ -535,6 +613,145 @@ test("executeSliceComplete preserves omitted optional requirement arrays", async
     closeDatabase();
     cleanup(base);
   }
+});
+
+test("executeSliceComplete surfaces committed projection obstruction as pending readable status", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M001", "Projection obstruction");
+  seedSlice("M001", "S01", "active");
+  seedCompletedTaskAuthority({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    runId: "slice-complete-projection-obstruction",
+  });
+  const summaryPath = join(base, relSliceFile(base, "M001", "S01", "SUMMARY"));
+  mkdirSync(summaryPath, { recursive: true });
+
+  const result = await inProjectDir(base, () => executeSliceComplete({
+    milestoneId: "M001",
+    sliceId: "S01",
+    sliceTitle: "Projection obstruction",
+    oneLiner: "Completion committed before rendering.",
+    narrative: "The database remains authoritative while readable status is repaired.",
+    verification: "Focused authority tests passed.",
+    uatContent: "## Result\n\nPassed.",
+  }, base));
+
+  assert.equal(result.isError, undefined);
+  assert.equal(result.details.operation, "complete_slice");
+  assert.equal(result.details.stale, true);
+  assert.match(String(result.content[0]?.text), /readable status update.*pending/i);
+});
+
+test("executeSliceReopen surfaces cleanup obstruction and repairs it on the same invocation", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M001", "Reopen projection obstruction");
+  seedSlice("M001", "S01", "active");
+  seedCompletedTaskAuthority({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    runId: "slice-reopen-projection-obstruction",
+  });
+  const completed = await inProjectDir(base, () => executeSliceComplete({
+    milestoneId: "M001",
+    sliceId: "S01",
+    sliceTitle: "Reopen projection obstruction",
+    oneLiner: "Completion committed before reopen.",
+    narrative: "The readable completion will be obstructed during reopen.",
+    verification: "Focused authority tests passed.",
+    uatContent: "## Result\n\nPassed.",
+  }, base));
+  const summaryPath = String(completed.details.summaryPath);
+  rmSync(summaryPath, { force: true });
+  mkdirSync(summaryPath);
+  const invocation = sliceLifecycleInvocation("reopen");
+
+  const obstructed = await inProjectDir(base, () => executeSliceReopen({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Redo the Slice with updated requirements.",
+  }, base, invocation));
+
+  assert.equal(obstructed.isError, undefined);
+  assert.equal(obstructed.details.operation, "reopen_slice");
+  assert.equal(obstructed.details.stale, true);
+  assert.match(String(obstructed.content[0]?.text), /readable status update.*pending/i);
+
+  rmSync(summaryPath, { recursive: true, force: true });
+  const repaired = await inProjectDir(base, () => executeSliceReopen({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "Redo the Slice with updated requirements.",
+  }, base, invocation));
+
+  assert.equal(repaired.details.stale, undefined);
+  assert.equal(
+    Number(_getAdapter()!.prepare(`
+      SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'slice.reopen'
+    `).get()?.["count"] ?? 0),
+    1,
+  );
+});
+
+test("executeSkipSlice surfaces projection obstruction and retries the full readable projection set", async (t) => {
+  const base = makeTmpBase();
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openTestDb(base);
+  seedMilestone("M001", "Skip projection obstruction");
+  seedSlice("M001", "S01", "active");
+  _getAdapter()!.prepare(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, sequence)
+    VALUES ('M001', 'S01', 'T01', 'Pending task', 'pending', 1)
+  `).run();
+  mkdirSync(join(base, ".gsd", "STATE.md"), { recursive: true });
+  const invocation = sliceLifecycleInvocation("skip");
+
+  const obstructed = await inProjectDir(base, () => executeSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "The Slice is no longer required.",
+  }, base, invocation));
+
+  assert.equal(obstructed.isError, undefined);
+  assert.equal(obstructed.details.operation, "skip_slice");
+  assert.equal(obstructed.details.stale, true);
+  assert.match(String(obstructed.content[0]?.text), /readable status update.*pending/i);
+
+  const roadmapPath = join(base, ".gsd", "ROADMAP.md");
+  assert.equal(existsSync(roadmapPath), true, "the full flush must render the top-level roadmap");
+  rmSync(join(base, ".gsd", "STATE.md"), { recursive: true, force: true });
+  rmSync(roadmapPath, { force: true });
+  const repaired = await inProjectDir(base, () => executeSkipSlice({
+    milestoneId: "M001",
+    sliceId: "S01",
+    reason: "The Slice is no longer required.",
+  }, base, invocation));
+
+  assert.equal(repaired.details.stale, undefined);
+  assert.equal(existsSync(join(base, ".gsd", "STATE.md")), true);
+  assert.equal(existsSync(roadmapPath), true, "retry must repair a non-STATE readable projection");
+  assert.match(readFileSync(roadmapPath, "utf8"), /M001: Skip projection obstruction/);
+  assert.equal(
+    Number(_getAdapter()!.prepare(`
+      SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'slice.cancel'
+    `).get()?.["count"] ?? 0),
+    1,
+  );
 });
 
 test("executeMilestoneStatus returns milestone metadata and slice counts", async () => {
