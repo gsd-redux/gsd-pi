@@ -95,7 +95,7 @@ const closeout: MilestoneCompletionCloseout = {
 const WORKER_SCRIPT = `
   import { existsSync, writeFileSync } from "node:fs";
 
-  const [databaseHref, lifecycleHref, dbPath, readyPath, releasePath, requestJson] = process.argv.slice(-6);
+  const [databaseHref, lifecycleHref, dbPath, readyPath, attemptPath, releasePath, requestJson] = process.argv.slice(-7);
   const [{ openDatabase, closeDatabase }, { completeMilestone }] = await Promise.all([
     import(databaseHref),
     import(lifecycleHref),
@@ -103,6 +103,7 @@ const WORKER_SCRIPT = `
   if (!openDatabase(dbPath)) throw new Error("contention worker could not open the workflow database");
   writeFileSync(readyPath, String(process.pid), "utf8");
   while (!existsSync(releasePath)) await new Promise((resolve) => setTimeout(resolve, 2));
+  writeFileSync(attemptPath, String(process.pid), "utf8");
 
   const outcome = {};
   try {
@@ -406,6 +407,7 @@ async function proveFaultAndLostResponse(
 function spawnWorker(
   fixture: CapstoneFixture,
   readyPath: string,
+  attemptPath: string,
   releasePath: string,
   request: ReturnType<typeof completionRequest>,
 ): ContentionWorker {
@@ -429,6 +431,7 @@ function spawnWorker(
     lifecycleHref,
     fixture.dbPath,
     readyPath,
+    attemptPath,
     releasePath,
     JSON.stringify(request),
   ], {
@@ -472,26 +475,33 @@ async function runContention(sameKey: boolean): Promise<WorkerOutcome[]> {
   const fixture = createFixture();
   await validate(fixture.root, `capstone/contention/${sameKey ? "same" : "different"}/validate`);
   const readyPaths = [join(fixture.root, "worker-1-ready"), join(fixture.root, "worker-2-ready")];
+  const attemptPaths = [join(fixture.root, "worker-1-attempt"), join(fixture.root, "worker-2-attempt")];
   const releasePath = join(fixture.root, "workers-release");
   const firstKey = `capstone/contention/${sameKey ? "same" : "different"}/complete`;
   const requests = [
     completionRequest(firstKey, fixture.sourceRevision),
     completionRequest(sameKey ? firstKey : `${firstKey}/competitor`, fixture.sourceRevision),
   ];
-  closeDatabase();
   const children = readyPaths.map((readyPath, index) =>
-    spawnWorker(fixture, readyPath, releasePath, requests[index]!));
+    spawnWorker(fixture, readyPath, attemptPaths[index]!, releasePath, requests[index]!));
   const results = children.map(collectChild);
+  let lockHeld = false;
   try {
     await waitForFiles(readyPaths, children);
+    db().exec("BEGIN IMMEDIATE");
+    lockHeld = true;
     writeFileSync(releasePath, "go\n");
+    await waitForFiles(attemptPaths, children);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    db().exec("COMMIT");
+    lockHeld = false;
     return (await Promise.all(results)).map(parseOutcome);
   } finally {
+    if (lockHeld) db().exec("ROLLBACK");
     for (const child of children) {
       if (child.exitCode === null && child.signalCode === null) child.kill();
     }
     await Promise.allSettled(results);
-    assert.equal(openDatabase(fixture.dbPath), true);
   }
 }
 
