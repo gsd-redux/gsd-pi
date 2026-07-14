@@ -412,9 +412,7 @@ function publishCanonicalCompletion(
     });
 
     let previousCheckpointId = attempt.kernel_checkpoint_id;
-    const remainingStages = attempt.next_stage === "verify"
-      ? ["route", "closeout", "settled"] as const
-      : ["closeout", "settled"] as const;
+    const remainingStages = ["route", "closeout", "settled"] as const;
     for (const nextStage of remainingStages) {
       const checkpoint = appendKernelCheckpoint(context, {
         lifecycleId: attempt.lifecycle_id,
