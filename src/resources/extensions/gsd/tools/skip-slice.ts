@@ -1,13 +1,13 @@
 /**
  * skip-slice handler — the core operation behind gsd_skip_slice.
  *
- * Marks a slice as skipped and cascades the skip to every non-closed task in
- * that slice. Without the task cascade the deep-check in
- * executeCompleteMilestone reports pending tasks inside the skipped slice and
- * blocks milestone completion (see #4375).
+ * Cancels a slice in one durable Domain Operation. Completed and already
+ * cancelled tasks are preserved; other tasks are cancelled, with running
+ * Attempts interrupted before settlement. The operation also records the
+ * dependency-bypass decision in a Slice-scoped Waiver.
  *
- * This function performs DB writes only. The MCP wrapper in
- * bootstrap/db-tools.ts handles state-cache invalidation and STATE.md rebuild.
+ * This handler performs authoritative DB writes only. The shared workflow
+ * executor handles cache invalidation and post-commit projections.
  */
 
 import { isDbAvailable } from "../gsd-db.js";
@@ -41,13 +41,13 @@ export type SkipSliceErrorCode = "slice_not_found" | "already_complete" | "inval
 /**
  * Result of a {@link handleSkipSlice} call.
  *
- * - `tasksSkipped` — count of tasks whose status was cascaded to "skipped".
- *   Zero is a valid success (slice had no non-closed tasks).
+ * - `tasksSkipped` — count of tasks newly moved to cancellation.
+ *   Zero is a valid success.
  * - `wasAlreadySkipped` — true when the slice was in "skipped" status on
  *   entry; callers can use this to distinguish first-skip from re-skip.
- * - `error` / `errorCode` — set together for recoverable validation failures
- *   (unknown slice, slice already complete). Both absent on success. DB
- *   errors propagate as thrown exceptions and should be caught by the caller.
+ * - `error` / `errorCode` — set together for recoverable validation failures.
+ *   Both are absent on success. DB errors propagate as thrown exceptions and
+ *   should be caught by the caller.
  */
 export interface SkipSliceResult {
   milestoneId: string;
@@ -68,9 +68,8 @@ function validationErrorCode(message: string): SkipSliceErrorCode {
 }
 
 /**
- * Mark a slice as "skipped" and cascade the skip to every non-closed task in
- * that slice. Runs as a single transaction so slice status and task statuses
- * are always consistent.
+ * Publish canonical cancellation and the legacy "skipped" projection in one
+ * transaction so Slice, Task, Attempt, dispatch, and Waiver facts agree.
  *
  * Behaviour summary:
  * - Unknown slice → returns {@link SkipSliceResult} with `error`.
@@ -78,7 +77,8 @@ function validationErrorCode(message: string): SkipSliceErrorCode {
  * - Slice already skipped → still cascades leftover non-closed tasks
  *   (heals inconsistent historical state from projects that ran older
  *   versions before the #4375 cascade fix).
- * - Tasks in closed status (complete/done/skipped) are never downgraded.
+ * - Completed and already cancelled tasks are never downgraded.
+ * - A running Task Attempt is interrupted and settled before cancellation.
  */
 export function handleSkipSlice(
   params: SkipSliceParams,

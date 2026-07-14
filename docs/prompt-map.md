@@ -10,7 +10,7 @@
 User / gsd auto
       │
       ▼
- auto.ts  ──── reads STATE.md ──► GSDState
+ auto.ts  ──── derives GSDState from SQLite
       │
       ▼
  auto-dispatch.ts
@@ -31,7 +31,7 @@ User / gsd auto
  Pi SDK session.run(prompt)
       │
       ▼
- LLM executes → calls gsd_* tools → writes artifacts → STATE.md updated
+ LLM executes → calls gsd_* tools → commits SQLite → projections refresh
       │
       ▼
  Loop back to auto.ts
@@ -430,28 +430,10 @@ LLM sees: "load these skill files and follow their rules for this unit"
 
 ## 9. Tool → DB Write Map
 
-| Tool | Persists To |
-|------|------------|
-| `gsd_plan_milestone` | atomic Domain Operation receipt/event/outbox/Projection Work, milestone and slice planning rows, canonical lifecycle heads; existing slices cannot be removed here |
-| `gsd_plan_slice` | atomic Domain Operation records, slice planning and lifecycle head; tasks only when a non-empty `tasks` payload performs full replacement/update, with removed pending tasks retained as `skipped` / `cancelled` |
-| `gsd_plan_task` | atomic Domain Operation records, one task planning row and lifecycle head; embedded task planning in the slice plan projection |
-| `gsd_task_complete` | tasks table, S##-T##-SUMMARY.md (legacy T##-SUMMARY.md readable) |
-| `gsd_slice_complete` | slices table, S##-SUMMARY.md |
-| `gsd_complete_milestone` | milestones table, M##-SUMMARY.md |
-| `gsd_validate_milestone` | milestones table (validation verdict) |
-| `gsd_reassess_roadmap` | atomic Domain Operation records, assessment and slice planning/lifecycle rows; removed pending slices are retained as `skipped` / `cancelled` |
-| `gsd_replan_slice` | atomic Domain Operation records, replan history and task planning/lifecycle rows; removed pending tasks are retained as `skipped` / `cancelled` |
-| `gsd_replan_task` | atomic Domain Operation records, one non-terminal task planning/lifecycle row and replan history row |
-| `gsd_rework_brief_save` | rework_briefs and rework_brief_findings tables |
-| `gsd_skip_slice` | slices table (status = skipped) |
-| `gsd_requirement_save` | requirements table |
-| `gsd_requirement_update` | requirements table |
-| `gsd_summary_save` | artifact files + DB reference |
-| `gsd_decision_save` | memories table (`architecture` rows) + DECISIONS.md projection |
-| `capture_thought` | memories table; KNOWLEDGE.md projection for Patterns/Lessons |
-| `memory_query` | READ — queries memories / memory indexes |
-| `ask_user_questions` | blocks until user responds; no DB write |
-| `subagent` | spins up child Pi session with given prompt |
+The authoritative tool read/write/projection inventory is in the
+[database map](./db-map.md). Lifecycle atomicity, replay, and
+projection-delivery contracts are owned by the
+[lifecycle command integration runbook](./dev/lifecycle-command-integration-runbook.md).
 
 ---
 
