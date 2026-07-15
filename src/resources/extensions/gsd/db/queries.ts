@@ -4,7 +4,9 @@
 // Contains NO write SQL (asserted by tests/single-writer-invariant.test.ts).
 // Read-only callers (forensics, dashboard, doctor) depend on this seam, not on
 // the single-writer surface.
-import { getDbOrNull } from "./engine.js";
+import { createHash } from "node:crypto";
+
+import { getDbOrNull, readTransaction } from "./engine.js";
 import { isClosedStatus } from "../status-guards.js";
 import { getGateIdsForTurn, type OwnerTurn } from "../gate-registry.js";
 import type { Decision, Requirement, GateRow, GateScope } from "../types.js";
@@ -29,6 +31,13 @@ import { rowToGate } from "../db-gate-rows.js";
 import { rowToArtifact, rowToMilestone, type ArtifactRow, type MilestoneRow } from "../db-milestone-artifact-rows.js";
 import { rowToSlice, rowToTask, type SliceRow, type TaskRow } from "../db-task-slice-rows.js";
 import { TERMINAL_STATUS_SQL } from "./sql-constants.js";
+import {
+  compareLifecycleShadow,
+  normalizeCanonicalLifecycleStatus,
+  normalizeLegacyLifecycleStatus,
+  type CanonicalLifecycleStatus,
+  type LifecycleShadowComparison,
+} from "./lifecycle-shadow-comparison.js";
 
 
 function parseStringArrayColumn(raw: unknown): string[] {
@@ -174,6 +183,253 @@ export function getTask(milestoneId: string, sliceId: string, taskId: string): T
   ).get({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
   if (!row) return null;
   return rowToTask(row);
+}
+
+export interface LifecycleShadowRepairIdentity {
+  itemKind: "milestone" | "slice" | "task";
+  milestoneId: string;
+  sliceId?: string;
+  taskId?: string;
+}
+
+export interface LifecycleShadowRepairEvidence {
+  kind: "legacy_completion";
+  legacyStatus: string;
+  completedAt: string;
+  verificationResult: string | null;
+  evidenceDigest: string;
+}
+
+export interface LifecycleShadowRepairCandidate extends LifecycleShadowRepairIdentity {
+  legacyStatus: string | null;
+  canonicalStatus: CanonicalLifecycleStatus | null;
+  canonicalLastOperationId: string | null;
+  comparison: LifecycleShadowComparison;
+  targetStatus: "completed" | null;
+  evidence: LifecycleShadowRepairEvidence | null;
+  reason: string | null;
+}
+
+function validCompletedAt(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  return Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+function repairHierarchyRow(identity: LifecycleShadowRepairIdentity): Record<string, unknown> | undefined {
+  const db = getDbOrNull();
+  if (!db) return undefined;
+  if (identity.itemKind === "milestone") {
+    return db.prepare(`
+      SELECT status, completed_at, NULL AS verification_result, NULL AS full_summary_md
+      FROM milestones WHERE id = :milestone_id
+    `).get({ ":milestone_id": identity.milestoneId });
+  }
+  if (identity.itemKind === "slice") {
+    return db.prepare(`
+      SELECT status, completed_at, NULL AS verification_result, full_summary_md
+      FROM slices WHERE milestone_id = :milestone_id AND id = :slice_id
+    `).get({
+      ":milestone_id": identity.milestoneId,
+      ":slice_id": identity.sliceId ?? null,
+    });
+  }
+  return db.prepare(`
+    SELECT status, completed_at, verification_result, full_summary_md
+    FROM tasks
+    WHERE milestone_id = :milestone_id AND slice_id = :slice_id AND id = :task_id
+  `).get({
+    ":milestone_id": identity.milestoneId,
+    ":slice_id": identity.sliceId ?? null,
+    ":task_id": identity.taskId ?? null,
+  });
+}
+
+interface RepairEvidenceFacts {
+  supported: boolean;
+  digestFacts: unknown;
+}
+
+function taskCompletionFacts(row: Record<string, unknown>): RepairEvidenceFacts {
+  const completedAt = validCompletedAt(row["completed_at"]);
+  const verificationResult = typeof row["verification_result"] === "string"
+    ? row["verification_result"].trim()
+    : "";
+  const summary = typeof row["full_summary_md"] === "string" ? row["full_summary_md"].trim() : "";
+  return {
+    supported:
+      normalizeLegacyLifecycleStatus(typeof row["status"] === "string" ? row["status"] : null) === "completed" &&
+      completedAt !== null &&
+      verificationResult.length > 0 &&
+      summary.length > 0,
+    digestFacts: {
+      status: row["status"] ?? null,
+      completedAt,
+      verificationResult,
+      summaryHash: `sha256:${createHash("sha256").update(summary).digest("hex")}`,
+    },
+  };
+}
+
+function descendantsCompletionFacts(identity: LifecycleShadowRepairIdentity): RepairEvidenceFacts {
+  const db = getDbOrNull()!;
+  const tasks = db.prepare(`
+    SELECT milestone_id, slice_id, id, status, completed_at, verification_result, full_summary_md
+    FROM tasks
+    WHERE milestone_id = :milestone_id
+      AND (:slice_id IS NULL OR slice_id = :slice_id)
+    ORDER BY milestone_id, slice_id, sequence, id
+  `).all({
+    ":milestone_id": identity.milestoneId,
+    ":slice_id": identity.itemKind === "slice" ? identity.sliceId ?? null : null,
+  });
+  const taskFacts = tasks.map((row) => ({
+    identity: {
+      milestoneId: row["milestone_id"],
+      sliceId: row["slice_id"],
+      taskId: row["id"],
+    },
+    ...taskCompletionFacts(row),
+  }));
+  if (identity.itemKind === "slice") {
+    return {
+      supported: taskFacts.length > 0 && taskFacts.every((fact) => fact.supported),
+      digestFacts: taskFacts.map(({ identity: item, digestFacts }) => ({ item, facts: digestFacts })),
+    };
+  }
+
+  const slices = db.prepare(`
+    SELECT milestone_id, id, status, completed_at, full_summary_md
+    FROM slices WHERE milestone_id = :milestone_id
+    ORDER BY milestone_id, sequence, id
+  `).all({ ":milestone_id": identity.milestoneId });
+  const sliceFacts = slices.map((row) => ({
+    identity: { milestoneId: row["milestone_id"], sliceId: row["id"] },
+    status: row["status"],
+    completedAt: validCompletedAt(row["completed_at"]),
+    summaryHash: `sha256:${createHash("sha256")
+      .update(typeof row["full_summary_md"] === "string" ? row["full_summary_md"].trim() : "")
+      .digest("hex")}`,
+    supported:
+      normalizeLegacyLifecycleStatus(typeof row["status"] === "string" ? row["status"] : null) === "completed" &&
+      validCompletedAt(row["completed_at"]) !== null &&
+      typeof row["full_summary_md"] === "string" &&
+      row["full_summary_md"].trim().length > 0,
+  }));
+  return {
+    supported:
+      sliceFacts.length > 0 &&
+      sliceFacts.every((fact) => fact.supported) &&
+      taskFacts.length > 0 &&
+      taskFacts.every((fact) => fact.supported),
+    digestFacts: {
+      slices: sliceFacts.map(({ supported: _supported, ...fact }) => fact),
+      tasks: taskFacts.map(({ identity: item, digestFacts }) => ({ item, facts: digestFacts })),
+    },
+  };
+}
+
+function evidenceDigest(facts: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(facts)).digest("hex")}`;
+}
+
+/**
+ * Returns stable database evidence for a possible forward-only shadow repair.
+ * This seam is deliberately SELECT-only; deciding and recording a disposition
+ * belongs to the lifecycle.shadow.repair Domain Operation.
+ */
+export function getLifecycleShadowRepairCandidate(
+  identity: LifecycleShadowRepairIdentity,
+): LifecycleShadowRepairCandidate | null {
+  if (!getDbOrNull()) return null;
+  return readTransaction(() => {
+    const db = getDbOrNull()!;
+    const lifecycle = db.prepare(`
+      SELECT lifecycle_status, last_operation_id
+      FROM workflow_item_lifecycles
+      WHERE item_kind = :item_kind
+        AND milestone_id = :milestone_id
+        AND slice_id IS :slice_id
+        AND task_id IS :task_id
+    `).get({
+      ":item_kind": identity.itemKind,
+      ":milestone_id": identity.milestoneId,
+      ":slice_id": identity.sliceId ?? null,
+      ":task_id": identity.taskId ?? null,
+    });
+    const hierarchy = repairHierarchyRow(identity);
+    if (!hierarchy && !lifecycle) return null;
+    const canonicalStatus = normalizeCanonicalLifecycleStatus(
+      typeof lifecycle?.["lifecycle_status"] === "string" ? lifecycle["lifecycle_status"] : null,
+    );
+    const canonicalLastOperationId = typeof lifecycle?.["last_operation_id"] === "string"
+      ? lifecycle["last_operation_id"]
+      : null;
+    if (!hierarchy) {
+      return {
+        ...identity,
+        legacyStatus: null,
+        canonicalStatus,
+        canonicalLastOperationId,
+        comparison: compareLifecycleShadow(null, canonicalStatus),
+        targetStatus: null,
+        evidence: null,
+        reason: "legacy hierarchy row is missing; extra canonical shadow remains unresolved",
+      };
+    }
+    const legacyStatus = typeof hierarchy["status"] === "string" ? hierarchy["status"] : null;
+    const completedAt = validCompletedAt(hierarchy["completed_at"]);
+    const verificationResult = typeof hierarchy["verification_result"] === "string"
+      ? hierarchy["verification_result"].trim()
+      : "";
+    const ownFacts = identity.itemKind === "task"
+      ? taskCompletionFacts(hierarchy)
+      : {
+          supported:
+            normalizeLegacyLifecycleStatus(legacyStatus) === "completed" &&
+            completedAt !== null &&
+            (identity.itemKind === "milestone" || (
+              typeof hierarchy["full_summary_md"] === "string" &&
+              hierarchy["full_summary_md"].trim().length > 0
+            )),
+          digestFacts: {
+            status: legacyStatus,
+            completedAt,
+            summaryHash: identity.itemKind === "slice"
+              ? `sha256:${createHash("sha256").update(String(hierarchy["full_summary_md"] ?? "").trim()).digest("hex")}`
+              : null,
+          },
+        };
+    const descendantFacts = identity.itemKind === "task"
+      ? { supported: true, digestFacts: null }
+      : descendantsCompletionFacts(identity);
+    const supportsCompletion = ownFacts.supported && descendantFacts.supported;
+    const digestFacts = {
+      identity,
+      own: ownFacts.digestFacts,
+      descendants: descendantFacts.digestFacts,
+    };
+
+    return {
+      ...identity,
+      legacyStatus,
+      canonicalStatus,
+      canonicalLastOperationId,
+      comparison: compareLifecycleShadow(legacyStatus, canonicalStatus),
+      targetStatus: supportsCompletion ? "completed" : null,
+      evidence: supportsCompletion
+        ? {
+            kind: "legacy_completion",
+            legacyStatus: legacyStatus!,
+            completedAt: completedAt!,
+            verificationResult: identity.itemKind === "task" ? verificationResult : null,
+            evidenceDigest: evidenceDigest(digestFacts),
+          }
+        : null,
+      reason: supportsCompletion
+        ? null
+        : "durable completion evidence does not prove a supported terminal target",
+    };
+  });
 }
 
 export function getSliceTasks(milestoneId: string, sliceId: string): TaskRow[] {

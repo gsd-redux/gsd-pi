@@ -62,6 +62,12 @@ export interface LifecycleCommandResult {
   adopted: boolean;
 }
 
+export interface LifecycleShadowRepairStepInput extends LifecycleIdentity {
+  expectedBeforeStatus: CanonicalLifecycleStatus | null;
+  targetStatus: "in_progress" | "completed";
+  priorRepairOperationId?: string;
+}
+
 export interface ClaimRunningAttemptInput {
   lifecycleId: string;
   retryOfAttemptId?: string;
@@ -123,6 +129,7 @@ interface LifecycleRow {
   lifecycle_status: CanonicalLifecycleStatus;
   state_version: number;
   updated_at: string;
+  last_operation_id: string;
 }
 
 interface AttemptRow {
@@ -246,7 +253,7 @@ function requireHierarchyRow(input: LifecycleCommandInput): void {
 
 function findLifecycle(context: Readonly<DomainOperationContext>, input: LifecycleCommandInput): LifecycleRow | undefined {
   return getDb().prepare(`
-    SELECT lifecycle_id, lifecycle_status, state_version, updated_at
+    SELECT lifecycle_id, lifecycle_status, state_version, updated_at, last_operation_id
     FROM workflow_item_lifecycles
     WHERE project_id = :project_id
       AND item_kind = :item_kind
@@ -505,6 +512,90 @@ export function adoptLifecycleIfMissing(
   return existing
     ? existingLifecycleResult(existing)
     : adoptOrTransitionLifecycle(context, input);
+}
+
+function requirePriorTaskRepairStep(
+  context: Readonly<DomainOperationContext>,
+  input: LifecycleShadowRepairStepInput,
+): void {
+  if (!input.priorRepairOperationId) {
+    throw new Error("in-progress Task shadow repair requires its prior ready-to-in-progress repair receipt");
+  }
+  const prior = getDb().prepare(`
+    SELECT 1 AS present
+    FROM workflow_operations operation
+    JOIN workflow_domain_events event ON event.operation_id = operation.operation_id
+    WHERE operation.operation_id = :operation_id
+      AND operation.project_id = :project_id
+      AND operation.operation_type = 'lifecycle.shadow.repair'
+      AND operation.resulting_revision < :resulting_revision
+      AND event.event_type = 'lifecycle.shadow.advanced'
+      AND event.entity_type = 'task'
+      AND event.entity_id = :entity_id
+      AND json_extract(event.payload_json, '$.afterStatus') = 'in_progress'
+  `).get({
+    ":operation_id": input.priorRepairOperationId,
+    ":project_id": context.projectId,
+    ":resulting_revision": context.resultingRevision,
+    ":entity_id": `${input.milestoneId}/${input.sliceId}/${input.taskId}`,
+  });
+  if (!prior) {
+    throw new Error("in-progress Task shadow repair requires a matching prior repair receipt");
+  }
+}
+
+/**
+ * Apply one evidence-fenced forward repair edge. A ready Task reaches
+ * completion only when its caller composes two separately committed edges.
+ */
+export function repairLifecycleShadowStep(
+  context: Readonly<DomainOperationContext>,
+  input: LifecycleShadowRepairStepInput,
+): LifecycleCommandResult {
+  if (requireActiveDomainOperationContext(context) !== "lifecycle.shadow.repair") {
+    throw new Error("lifecycle shadow repair requires a lifecycle.shadow.repair Domain Operation");
+  }
+  const current = findLifecycle(context, {
+    itemKind: input.itemKind,
+    milestoneId: input.milestoneId,
+    ...(input.sliceId ? { sliceId: input.sliceId } : {}),
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    lifecycleStatus: input.targetStatus,
+  });
+  if ((current?.lifecycle_status ?? null) !== input.expectedBeforeStatus) {
+    throw new Error("lifecycle shadow repair current status does not match expected before status");
+  }
+  const isMissingTerminalAdoption = input.expectedBeforeStatus === null && input.targetStatus === "completed";
+  const isReadyTaskAdvance =
+    input.expectedBeforeStatus === "ready" &&
+    input.itemKind === "task" &&
+    input.targetStatus === "in_progress";
+  const isReadySliceCompletion =
+    input.expectedBeforeStatus === "ready" &&
+    input.itemKind === "slice" &&
+    input.targetStatus === "completed";
+  const isAdvancedTaskCompletion =
+    input.expectedBeforeStatus === "in_progress" &&
+    input.itemKind === "task" &&
+    input.targetStatus === "completed";
+  if (!isMissingTerminalAdoption && !isReadyTaskAdvance && !isReadySliceCompletion && !isAdvancedTaskCompletion) {
+    throw new Error("unsupported lifecycle shadow repair edge");
+  }
+  if (isAdvancedTaskCompletion) {
+    if (current?.last_operation_id !== input.priorRepairOperationId) {
+      throw new Error("in-progress Task shadow repair requires its current head repair receipt");
+    }
+    requirePriorTaskRepairStep(context, input);
+  }
+
+  return adoptOrTransitionLifecycle(context, {
+    itemKind: input.itemKind,
+    milestoneId: input.milestoneId,
+    ...(input.sliceId ? { sliceId: input.sliceId } : {}),
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    lifecycleStatus: input.targetStatus,
+    ...(input.expectedBeforeStatus === null ? { adoptedFromStatus: "completed" as const } : {}),
+  });
 }
 
 export function completeLegacyTaskForVerifiedAttempt(
