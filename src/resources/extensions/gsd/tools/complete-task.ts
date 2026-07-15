@@ -56,6 +56,7 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { isStaleWrite } from "../auto/turn-epoch.js";
+import { resolveTaskCompletionAuthority } from "../task-completion-compatibility-adapter.js";
 import {
   buildEscalationArtifact,
   escalationArtifactPath,
@@ -306,6 +307,18 @@ export async function handleCompleteTask(
   }
   if (!params.verification || typeof params.verification !== "string" || params.verification.trim() === "") {
     return { error: "verification is required and must be a non-empty string" };
+  }
+
+  try {
+    if (resolveTaskCompletionAuthority({
+      milestoneId: params.milestoneId,
+      sliceId: params.sliceId,
+      taskId: params.taskId,
+    }) === "canonical") {
+      return { error: "canonical Task completion requires the durable Attempt completion pipeline" };
+    }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
   }
 
   const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
