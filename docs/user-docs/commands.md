@@ -136,8 +136,10 @@ succeeded but a SUMMARY, UAT, PLAN, ROADMAP, or STATE file could not be
 refreshed. Repair the filesystem obstruction, then run `/gsd doctor fix` or
 `/gsd rebuild markdown`; do not edit Markdown to change status. Hosts that
 preserve the original private invocation identity may instead perform an exact
-retry. Milestone completion and reopen do not yet have
-the same receipt guarantees; that is the next lifecycle cutover.
+retry. Adopted Milestone validation, completion, and full-redo reopen use the
+same atomic receipt contract. An exact retry can repair projection delivery
+only while its operation still owns the current lifecycle head; a historical
+receipt reports `duplicate` and `superseded` and cannot overwrite newer status.
 
 ## Parallel Orchestration
 

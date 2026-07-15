@@ -114,7 +114,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 | Prompt | DB Reads | DB Writes | Disk Artifact Written |
 |--------|----------|-----------|----------------------|
 | `gate-evaluate` | quality_gates | quality_gates (UPDATE), gate_runs (INSERT, same transaction) | gate result per subagent |
-| `validate-milestone` | milestones, slices, tasks, quality_gates | assessments (INSERT VALIDATION) | VALIDATION.md |
+| `validate-milestone` | current Milestone lifecycle, planned verification, and source-bound evidence | invokes the authoritative `gsd_validate_milestone` Domain Operation; see the [database map](./db-map.md) | VALIDATION.md projection after commit |
 | `run-uat` | slices, assessments | assessments (INSERT ASSESSMENT) | S##-ASSESSMENT.md |
 
 ### Completion Phase
@@ -123,7 +123,7 @@ Each row = one prompt file. Columns show which DB tables it touches and how.
 |--------|----------|-----------|----------------------|
 | `complete-slice` | evidence-backed terminal Task state, Slice lifecycle, quality gates | invokes the authoritative `gsd_slice_complete` Domain Operation; see the [database map](./db-map.md) | S##-SUMMARY.md, S##-UAT.md, ROADMAP.md, and STATE.md projections after commit |
 | `reassess-roadmap` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones (UPDATE), slices (INSERT/UPDATE; removed pending rows become `skipped` / `cancelled`), assessments | ROADMAP.md, ASSESSMENT.md |
-| `complete-milestone` | milestones, slices, tasks | milestones (UPDATE status=closed, completed_at) | M##-SUMMARY.md |
+| `complete-milestone` | current validation receipt, terminal descendant parity, Waivers, and active Attempts | invokes the authoritative `gsd_complete_milestone` Domain Operation; see the [database map](./db-map.md) | M##-SUMMARY.md projection after commit |
 
 ### Maintenance Phase
 
@@ -199,10 +199,10 @@ slice just completed AND
   roadmap requires update                          → reassess-roadmap
 
 slices all complete AND
-  VALIDATION artifact missing                      → validate-milestone
+  current DB validation receipt missing or stale   → validate-milestone
 
-VALIDATION present AND
-  milestones.status ≠ 'closed'                     → complete-milestone
+current DB validation passes AND
+  Milestone lifecycle is not complete              → complete-milestone
 
 milestones.status = 'closed' AND
   next milestone in queue                          → loop: next milestone
@@ -334,7 +334,7 @@ complete migration history.
 | Invariant | Where Enforced |
 |-----------|---------------|
 | Single-writer: raw write SQL is limited to the explicit writer-layer allowlists and named exceptions; `db/queries.ts` is read-only | authoritative allowlists and enforcement in `single-writer-invariant.test.ts`; architecture detail in [db-map.md](./db-map.md#7-write-path-invariants) |
-| Cascade on milestone reopen: all slices → in_progress, tasks → pending | `gsd_milestone_reopen` transaction |
+| Milestone full-redo reopen: every hierarchy head → canonical `ready`, legacy Milestone → `active`, Slices → `in_progress`, Tasks → `pending`; current cancellation Waivers are revoked | `gsd_milestone_reopen` Domain Operation |
 | No nested write transactions: `transaction()` and `immediateTransaction()` share one depth counter; `executeDomainOperation()` rejects an existing outer transaction so it owns the reserved-writer boundary; read-then-write claims use `immediateTransaction()` and gate verdict + ledger writes commit atomically | `db-transaction.test.ts`, `domain-operation.test.ts`, `command-queue.test.ts`, `gate-storage.test.ts` |
 | Workspace isolation: one DB per project root, shared across worktrees via WAL | `db-connection-cache.ts` identityKey |
 | Coordination: one active dispatch per unit_id at a time | `idx_unit_dispatches_active_per_unit` unique partial index |

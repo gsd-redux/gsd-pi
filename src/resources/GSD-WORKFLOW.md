@@ -7,6 +7,12 @@
 > **After reading this, always read `.gsd/STATE.md` to find out what's next.**
 > If the milestone has a `NN-CONTEXT.md`, read that too. If the active slice has an `NN-MM-CONTEXT.md`, read that as well — these files contain project-specific decisions, reference paths, and implementation guidance that this generic methodology doc does not.
 
+In a DB-backed gsd-pi project, these files are readable projections and context,
+not workflow authority. Persist lifecycle changes through the GSD tools so the
+database commits first and the projections refresh afterward. Manual edits are
+draft or explicit import input; changing a checkbox does not change runtime
+state.
+
 ---
 
 ## Quick Start: "What's next?"
@@ -48,10 +54,10 @@ All artifacts live in `.gsd/` at the project root:
   CODEBASE.md                               # Generated codebase map cache (auto-refreshed by GSD)
   phases/
     01-foundation/
-      01-ROADMAP.md                         # Milestone plan (checkboxes = state)
+      01-ROADMAP.md                         # Milestone plan (checkboxes project DB state)
       01-CONTEXT.md                         # Optional: user decisions from discuss phase
       01-RESEARCH.md                        # Optional: codebase/tech research
-      01-SUMMARY.md                         # Milestone rollup (updated as slices complete)
+      01-SUMMARY.md                         # Milestone completion projection
       01-01-PLAN.md                         # Task decomposition for the first slice
       01-01-CONTEXT.md                      # Optional: slice-level user decisions
       01-01-RESEARCH.md                     # Optional: slice-level research
@@ -428,19 +434,15 @@ key_decisions: []
 **Purpose:** Mark work done and move to the next thing.
 
 **After a task completes:**
-1. Mark the task done in `<NN>-<MM>-PLAN.md` (checkbox).
+1. Persist completion through the DB-backed Task completion path; it refreshes the `<NN>-<MM>-PLAN.md` checkbox projection.
 2. Check if there's a next task in the slice → execute it.
-3. If slice is complete → write slice summary, mark slice done in `ROADMAP.md`.
+3. If the slice is complete → run the Slice completion path.
 
 **After a slice completes:**
-1. Write slice `S##-SUMMARY.md` (compresses all task summaries).
-2. Write slice `S##-UAT.md` — a human test script derived from the slice's must-haves and demo sentence.
-3. Mark the slice checkbox in `ROADMAP.md` as `[x]`.
-4. Update `STATE.md` with new position.
-5. Update milestone `M###-SUMMARY.md` with the completed slice's contributions.
-6. Continue to next slice immediately. UAT can run after slice completion; automatic milestone closure requires each slice assessment to record `PASS`.
-7. If UAT is missing or non-PASS at milestone closeout, run `/gsd dispatch uat`, request a slice-specific UAT rerun when needed, or create remediation work with `/gsd dispatch reassess`.
-8. If all slices are done and UAT plus milestone validation pass → milestone complete.
+1. Persist Slice completion through `gsd_slice_complete`; it records the authoritative state and renders `S##-SUMMARY.md`, `S##-UAT.md`, ROADMAP, and STATE projections.
+2. Continue to the next slice immediately. UAT can run after Slice completion; automatic Milestone closure requires current source-bound validation and any required UAT evidence.
+3. If UAT is missing or non-PASS at Milestone closeout, run `/gsd dispatch uat`, request a Slice-specific UAT rerun when needed, or create remediation work with `/gsd dispatch reassess`.
+4. When every Slice is terminal, validate through `gsd_validate_milestone` and complete through `gsd_complete_milestone`; the latter commits the Milestone lifecycle and renders `M###-SUMMARY.md`.
 
 ---
 
@@ -491,13 +493,13 @@ The EXACT first thing to do when resuming. Not vague. Specific.
 
 It is NOT the source of truth. It's a convenience dashboard.
 
-**Sources of truth:**
-- `ROADMAP.md` → which slices exist and which are done
-- `<NN>-<MM>-PLAN.md` → which tasks exist within a slice and what each task must do
-- `S##-T##-SUMMARY.md` → what happened during a task in flat-phase projects (legacy `T##-SUMMARY.md` is still readable)
-- `S##-SUMMARY.md` and `M###-SUMMARY.md` → compressed slice and milestone outcomes
+**Authority and review surfaces:**
+- The project database owns runtime hierarchy, lifecycle, validation, and queue state.
+- `ROADMAP.md` and `<NN>-<MM>-PLAN.md` project planned work and current checkbox status for review.
+- `S##-T##-SUMMARY.md` records the readable Task outcome in flat-phase projects (legacy `T##-SUMMARY.md` is still readable).
+- `S##-SUMMARY.md` and `M###-SUMMARY.md` project compressed Slice and Milestone outcomes.
 
-**Update `STATE.md`** after every significant action:
+**Refresh `STATE.md` through the workflow** after every significant action so it projects:
 - Active milestone/slice/task
 - Recent decisions (last 3-5)
 - Blockers
@@ -505,11 +507,16 @@ It is NOT the source of truth. It's a convenience dashboard.
 
 ### Reconciliation
 
-If files disagree, **pause and surface to the user**:
-- Roadmap says slice done but task summaries missing → inconsistency
-- Task marked done but no summary → treat as incomplete
+If files disagree with the database, keep database authority and rebuild the
+Markdown projections. Do not infer lifecycle state from a checked box or a
+missing summary. Use explicit recovery/import only when the database itself is
+lost or invalid and the project satisfies the recovery command's adoption
+guards.
+
+Other stale-file cleanup remains mechanical:
+
 - Continue file exists for completed task → delete continue file
-- State points to nonexistent slice/task → rebuild state from files
+- State points to nonexistent slice/task → rebuild the STATE projection from the database
 
 ---
 

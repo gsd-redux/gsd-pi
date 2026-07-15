@@ -26,7 +26,7 @@ Start with what the excerpts give you. Read full files when the section heads si
 
 The inlined context includes a validation status block.
 
-- If it says a passing validation artifact is present, treat that artifact as authoritative for success criteria, requirement coverage, verification classes, and cross-slice integration. Do not delegate fresh reviewer/security/tester audits unless the validation artifact is internally inconsistent with the inlined summaries.
+- Follow the current DB-backed validation status. A rendered `VALIDATION.md` may supply readable evidence context, but it cannot authorize adopted Milestone completion. Do not delegate fresh reviewer/security/tester audits when the current database receipt passes and remains consistent with the inlined summaries.
 - If validation is missing, stale, non-pass, or internally inconsistent, use `subagent` for review work needing fresh context before drafting LEARNINGS: cross-slice integrations or new public APIs -> **reviewer**; auth, network, parsing, file IO, shell exec, or crypto -> **security**; significant tests added or changed -> **tester**.
 
 Subagents report only; they do not write user source. Fold any findings into Decision Re-evaluation and LEARNINGS before completion.
@@ -41,8 +41,8 @@ Subagents report only; they do not write user source. Fold any findings into Dec
 2. Use the **Milestone Summary** output template from the inlined context above
 3. {{skillActivation}}
 4. **Verify code changes exist.** Compare milestone work against the integration branch (`main`, `master`, or recorded branch), using merge-base as older revision and `HEAD` as newer. If the diff lists non-`.gsd/` files, pass. If `HEAD` equals the integration branch/merge-base, treat it as a self-diff retry: inspect milestone-scoped commit evidence (`GSD-Unit: {{milestoneId}}` or production `GSD-Task: Sxx/Tyy` trailers touching `.gsd/milestones/{{milestoneId}}/`) and verify those commits touched non-`.gsd/` files. Record **verification failure** only when neither source shows implementation files.
-5. Verify every **success criterion** from `{{roadmapPath}}`. If passing validation is present, summarize the validation evidence instead of re-auditing it; otherwise verify with evidence from summaries, tests, or observable behavior. Record unmet criteria as **verification failure**.
-6. Verify **definition of done**: all slices `[x]`, summaries exist, and integrations work. If passing validation is present, trust its integration/verification verdict unless inconsistent with current artifacts. Record unmet items as **verification failure**.
+5. Verify every **success criterion** from `{{roadmapPath}}`. If the current database validation receipt passes, summarize its projected evidence instead of re-auditing it; otherwise verify with evidence from summaries, tests, or observable behavior. Record unmet criteria as **verification failure**.
+6. Verify **definition of done**: all slices `[x]`, summaries exist, and integrations work. If the current database validation receipt passes, trust its integration/verification verdict unless inconsistent with current artifacts. Record unmet items as **verification failure**.
 7. If the roadmap includes a **Horizontal Checklist**, verify each item and note unchecked items in the summary.
 8. Fill the **Decision Re-evaluation** table: compare each key `.gsd/DECISIONS.md` decision from this milestone with what shipped, and flag decisions to revisit.
 9. Validate **requirement status transitions**. For each changed requirement, confirm evidence supports the new status. Requirements may move between Active, Validated, Deferred, Blocked, or Out of Scope only with proof.
