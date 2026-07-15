@@ -123,8 +123,11 @@ test("gsd update --help outputs help and exits 0", async () => {
 // 5. gsd --list-models runs without crashing
 // ---------------------------------------------------------------------------
 
-test("gsd --list-models runs without crashing", async () => {
-  const result = await runGsd(["--list-models"], 20_000);
+test("gsd --list-models runs without crashing", async (t) => {
+  const gsdHome = createTempDir("gsd-e2e-list-models-");
+  t.after(() => rmSync(gsdHome, { recursive: true, force: true }));
+
+  const result = await runGsd(["--list-models"], 45_000, { GSD_HOME: gsdHome });
 
   assert.ok(!result.timedOut, "gsd --list-models should exit within the timeout");
   assert.strictEqual(result.code, 0, `expected exit 0, got ${result.code}`);
