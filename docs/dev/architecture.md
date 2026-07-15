@@ -39,6 +39,37 @@ Historical Slice lifecycle replays additionally surface `superseded` with
 `duplicate`; they never use current-success wording or repair a newer
 projection.
 
+### Semantic Shadow Evidence and Cutover Boundary
+
+Milestone status remains a legacy-response read during M003. The shared status
+executor reads legacy hierarchy and canonical lifecycle state in one read
+transaction, compares them with the frozen lifecycle vocabulary, and emits a
+response-neutral observation after the read. Native Pi captures the exact
+project source revision once per invocation; the Claude workflow-MCP pump
+captures it once per pump and carries it through a private token. Capture or
+sink failure never changes the public response, but it produces explicit,
+durable loss accounting. No public tool argument or environment-provided hash
+can supply source authority.
+
+The S07 cutover dossier is a deterministic projection over two intentionally
+different inputs: disposable `capstone_fixture` coverage and read-only
+`live_project` database history. Random fixture identifiers remain in raw UAT
+evidence but normalize to stable presence facts in the checked report. The
+report includes exact mode/transport/classification counts, public-response and
+capstone hashes, scoped repair lineage, live drift, compatibility witnesses,
+the no-cutover gate, and the 4/4 authority baseline. It cannot authorize a
+transition, repair state, or turn fixture coverage into production telemetry.
+
+Candidate evidence names the exact source tree exercised before the generated
+JSON exists. Post-generation checks and `verify:merge` are persisted through
+database-backed UAT. The final source-bound Technical Verdict is created only
+after rerunning the capstone from the exact merged commit; that database receipt
+binds the merge commit, source-content revision, dossier hash, capstone hash,
+and durable evidence. This two-phase protocol avoids a self-referential source
+hash. S07 therefore proves convergence while remaining `NO_GO` for canonical
+read authority until the explicitly deferred compatibility and lifecycle
+surfaces are implemented and separately approved.
+
 ### Two-File Loader Pattern
 
 `loader.ts` sets all environment variables with zero SDK imports, then dynamically imports `cli.ts` which does static SDK imports. This ensures `PI_PACKAGE_DIR` is set before any SDK code evaluates.

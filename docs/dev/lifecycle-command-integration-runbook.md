@@ -132,6 +132,59 @@ commands, or orchestration modules.
   recognize legacy `skipped`; the later cutover must consume its current Waiver
   rather than infer satisfaction from that alias.
 
+## S07 semantic-shadow dossier
+
+The S07 dossier keeps two evidence planes separate:
+
+- `capstone_fixture` is fresh, disposable canonical-schema evidence. It proves
+  all six modes, both transports, all five frozen classifications, response
+  neutrality, repair dispositions, and durable observation-loss accounting.
+  It is not live production telemetry.
+- `live_project` is a read-only snapshot of the canonical project database. It
+  proves the 33 scoped repair receipts, current M003 semantic drift, T01-T06
+  verification heads, project revision, and Authority Epoch.
+
+Generate the candidate only from local evidence. First emit normalized capstone
+evidence for the current checkout, then collect the canonical input, then write
+the dossier:
+
+```sh
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types \
+  src/resources/extensions/gsd/tests/emit-semantic-shadow-capstone-evidence.ts \
+  --source-root "$PWD" --output <capstone-json>
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types scripts/m003-s07-dossier-input.ts \
+  "$PWD" <canonical-gsd-db> <capstone-json> > <dossier-input-json>
+node scripts/m003-s07-cutover-dossier.mjs --input <dossier-input-json>
+node scripts/m003-s07-cutover-dossier.mjs --check
+```
+
+The generator rejects incomplete matrix cardinality, mixed or unavailable
+source identity, changed public responses, unaccounted loss, corrupt repair
+lineage, missing current verification heads, unexplained live drift, a failed
+no-cutover/authority gate, compatibility removal, non-local metadata, or a GO
+recommendation. GitHub labels, tags, milestones, reviews, and release metadata
+are never inputs.
+
+The checked JSON records observed pre-generation gates and marks dossier check
+and `verify:merge` as required post-generation gates. This is deliberate: a
+file cannot honestly certify its own future validation. Candidate UAT persists
+those later results as database-backed assessment/gate/run receipts. After a
+guarded merge, rerun the capstone from a detached worktree at the exact
+`mergeCommit.oid`, persist the exact source-content revision and evidence
+hashes in the T07 Technical Verdict, then publish T07 and complete S07 through
+canonical operations. The checked JSON is a readable projection; the database
+receipt is final authority.
+
+The dossier remains `NO_GO` for read-authority cutover while production reads,
+dependency eligibility, integrated Slice source/UAT identity, closeout and
+merge settlement, park/unpark/discard, Projection Work redesign, legacy cascade
+deletion, or compatibility retirement remain deferred. Missing evidence or an
+automatable failure returns to agent-owned repair. Work stops for a person only
+when access/authority is unavailable or a genuinely ambiguous product choice
+cannot be resolved from accepted decisions.
+
 ## Resume after an agent-owned abort
 
 Use `gsd_task_recovery_resume` only after the recorded cause has been repaired:
