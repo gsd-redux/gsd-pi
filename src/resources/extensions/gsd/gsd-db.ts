@@ -79,6 +79,7 @@ export type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 
 import { TERMINAL_STATUS_SQL } from "./db/sql-constants.js";
 import { applyStatusTransition } from "./db/writers/status.js";
+export { projectCanonicalStatusToLegacy } from "./db/writers/status.js";
 import {
   LAYOUT_SEGMENTS,
   derivePhaseSlug,
@@ -424,7 +425,17 @@ export function insertSlice(s: {
     )
     ON CONFLICT (milestone_id, id) DO UPDATE SET
       title = CASE WHEN :raw_title IS NOT NULL THEN excluded.title ELSE slices.title END,
-      status = CASE WHEN slices.status IN (${TERMINAL_STATUS_SQL}) THEN slices.status ELSE excluded.status END,
+      status = CASE
+        WHEN slices.status IN (${TERMINAL_STATUS_SQL}) OR EXISTS (
+          SELECT 1 FROM workflow_item_lifecycles lifecycle
+          WHERE lifecycle.project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
+            AND lifecycle.item_kind = 'slice'
+            AND lifecycle.milestone_id = slices.milestone_id
+            AND lifecycle.slice_id = slices.id
+            AND lifecycle.task_id IS NULL
+        ) THEN slices.status
+        ELSE excluded.status
+      END,
       risk = CASE WHEN :raw_risk IS NOT NULL THEN excluded.risk ELSE slices.risk END,
       depends = excluded.depends,
       demo = CASE WHEN :raw_demo IS NOT NULL THEN excluded.demo ELSE slices.demo END,
@@ -555,12 +566,30 @@ export function insertTask(t: {
     )
     ON CONFLICT(milestone_id, slice_id, id) DO UPDATE SET
       title = CASE WHEN NULLIF(:title, '') IS NOT NULL THEN :title ELSE tasks.title END,
-      status = :status,
+      status = CASE WHEN EXISTS (
+        SELECT 1 FROM workflow_item_lifecycles lifecycle
+        WHERE lifecycle.project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
+          AND lifecycle.item_kind = 'task'
+          AND lifecycle.milestone_id = tasks.milestone_id
+          AND lifecycle.slice_id = tasks.slice_id
+          AND lifecycle.task_id = tasks.id
+      ) THEN tasks.status ELSE :status END,
       one_liner = CASE WHEN :preserve_completion = 1 AND NULLIF(:one_liner, '') IS NULL THEN tasks.one_liner ELSE :one_liner END,
       narrative = CASE WHEN :preserve_completion = 1 AND NULLIF(:narrative, '') IS NULL THEN tasks.narrative ELSE :narrative END,
       verification_result = CASE WHEN :preserve_completion = 1 AND NULLIF(:verification_result, '') IS NULL THEN tasks.verification_result ELSE :verification_result END,
       duration = CASE WHEN :preserve_completion = 1 AND NULLIF(:duration, '') IS NULL THEN tasks.duration ELSE :duration END,
-      completed_at = CASE WHEN :preserve_completion = 1 AND tasks.completed_at IS NOT NULL THEN tasks.completed_at ELSE :completed_at END,
+      completed_at = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM workflow_item_lifecycles lifecycle
+          WHERE lifecycle.project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
+            AND lifecycle.item_kind = 'task'
+            AND lifecycle.milestone_id = tasks.milestone_id
+            AND lifecycle.slice_id = tasks.slice_id
+            AND lifecycle.task_id = tasks.id
+        ) THEN tasks.completed_at
+        WHEN :preserve_completion = 1 AND tasks.completed_at IS NOT NULL THEN tasks.completed_at
+        ELSE :completed_at
+      END,
       blocker_discovered = CASE WHEN :preserve_completion = 1 AND :blocker_discovered = 0 THEN tasks.blocker_discovered ELSE :blocker_discovered END,
       deviations = CASE WHEN :preserve_completion = 1 AND NULLIF(:deviations, '') IS NULL THEN tasks.deviations ELSE :deviations END,
       known_issues = CASE WHEN :preserve_completion = 1 AND NULLIF(:known_issues, '') IS NULL THEN tasks.known_issues ELSE :known_issues END,

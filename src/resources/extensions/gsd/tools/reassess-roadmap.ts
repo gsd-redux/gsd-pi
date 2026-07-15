@@ -23,11 +23,10 @@ import {
   getSliceTasks,
   insertSlice,
   normalizeLegacyLifecycleStatus,
+  projectCanonicalStatusToLegacy,
   updateSliceFields,
   insertAssessment,
   deleteAssessmentByScope,
-  updateSliceStatus,
-  updateTaskStatus,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import {
@@ -414,9 +413,6 @@ export async function handleReassessRoadmap(
               lifecycleStatus: legacyLifecycleStatus ?? "ready",
             });
             if (lifecycle.lifecycleStatus === "completed") continue;
-            if (task.status !== "skipped") {
-              updateTaskStatus(params.milestoneId, removedId, task.id, "skipped");
-            }
             if (lifecycle.lifecycleStatus !== "cancelled") {
               adoptOrTransitionLifecycle(context, {
                 itemKind: "task",
@@ -426,8 +422,14 @@ export async function handleReassessRoadmap(
                 lifecycleStatus: "cancelled",
               });
             }
+            projectCanonicalStatusToLegacy(context, {
+              entity: "task",
+              milestoneId: params.milestoneId,
+              sliceId: removedId,
+              taskId: task.id,
+              status: "skipped",
+            });
           }
-          updateSliceStatus(params.milestoneId, removedId, "skipped");
           const lifecycle = adoptLifecycleIfMissing(context, {
             itemKind: "slice",
             milestoneId: params.milestoneId,
@@ -442,6 +444,12 @@ export async function handleReassessRoadmap(
               lifecycleStatus: "cancelled",
             });
           }
+          projectCanonicalStatusToLegacy(context, {
+            entity: "slice",
+            milestoneId: params.milestoneId,
+            sliceId: removedId,
+            status: "skipped",
+          });
         }
 
         if (hasStructuralChanges) {

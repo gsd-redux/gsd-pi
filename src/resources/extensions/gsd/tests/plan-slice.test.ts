@@ -6,7 +6,22 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getSlice, getSliceTasks, getTask, getGateResults, updateTaskStatus } from '../gsd-db.ts';
+import {
+  _getAdapter,
+  adoptOrTransitionLifecycle,
+  closeDatabase,
+  executeDomainOperation,
+  getGateResults,
+  getSlice,
+  getSliceTasks,
+  getTask,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+  projectCanonicalStatusToLegacy,
+  readDomainOperationFence,
+} from '../gsd-db.ts';
 import { handlePlanSlice as handlePlanSliceWithInvocation } from '../tools/plan-slice.ts';
 import { handlePlanTask as handlePlanTaskWithInvocation } from '../tools/plan-task.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
@@ -45,6 +60,44 @@ function cleanup(base: string): void {
 function seedParentSlice(): void {
   insertMilestone({ id: 'M001', title: 'Milestone', status: 'active' });
   insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Planning slice', status: 'pending', demo: 'Rendered plans exist.' });
+}
+
+function completeTask(taskId: string, completedAt: string): void {
+  for (const [lifecycleStatus, legacyStatus] of [
+    ['in_progress', 'active'],
+    ['completed', 'complete'],
+  ] as const) {
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: `test.task.${lifecycleStatus}`,
+      idempotencyKey: `test/task/${taskId}/${lifecycleStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: 'test',
+      sourceTransport: 'test',
+      payload: { taskId, lifecycleStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: 'task',
+        milestoneId: 'M001',
+        sliceId: 'S02',
+        taskId,
+        lifecycleStatus,
+      });
+      projectCanonicalStatusToLegacy(context, {
+        entity: 'task',
+        milestoneId: 'M001',
+        sliceId: 'S02',
+        taskId,
+        status: legacyStatus,
+        ...(lifecycleStatus === 'completed' ? { completedAt } : {}),
+      });
+      return {
+        events: [{ eventType: `test.task.${lifecycleStatus}`, entityType: 'task', entityId: taskId, payload: {}, destinations: ['test'] }],
+        projections: [{ projectionKey: `test/task/${taskId.toLowerCase()}`, projectionKind: 'test', rendererVersion: '1' }],
+      };
+    });
+  }
 }
 
 function validParams() {
@@ -129,7 +182,12 @@ test('handlePlanSlice re-dispatch preserves completed task checkboxes', async ()
     const first = await handlePlanSlice(validParams(), base);
     assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
 
-    updateTaskStatus('M001', 'S02', 'T01', 'complete', '2026-07-11T00:00:00.000Z');
+    const adapter = _getAdapter();
+    assert.ok(adapter);
+    adapter.prepare(`
+      UPDATE tasks SET status = 'complete', completed_at = '2026-07-11T00:00:00.000Z'
+      WHERE milestone_id = 'M001' AND slice_id = 'S02' AND id = 'T01'
+    `).run();
 
     const second = await handlePlanSlice(validParams(), base);
     assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
@@ -1029,7 +1087,7 @@ test('handlePlanSlice rejects omitted completed tasks without changing slice or 
     assert.ok(existsSync(slicePlanPathR), 'initial plan should exist');
     assert.match(readFileSync(slicePlanPathR, 'utf-8'), /T04/, 'initial plan should contain T04');
 
-    updateTaskStatus('M001', 'S02', 'T04', 'complete', '2026-05-12T00:00:00.000Z');
+    completeTask('T04', '2026-05-12T00:00:00.000Z');
     const tasksBefore = getSliceTasks('M001', 'S02');
     const gatesBefore = getGateResults('M001', 'S02', 'task');
 

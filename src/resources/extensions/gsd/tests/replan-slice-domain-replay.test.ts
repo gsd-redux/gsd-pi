@@ -17,8 +17,8 @@ import {
   insertSlice,
   insertTask,
   openDatabase,
+  projectCanonicalStatusToLegacy,
   readDomainOperationFence,
-  updateTaskStatus,
 } from "../gsd-db.ts";
 import type { PlanningInvocation } from "../planning-invocation.ts";
 import { claimTaskAttempt } from "../task-execution-domain-operation.ts";
@@ -88,7 +88,7 @@ function claimRunningTask(taskId: string): void {
   });
 }
 
-async function seedPlannedSlice(base: string): Promise<void> {
+async function seedPlannedSlice(base: string, completeBlocker = true): Promise<void> {
   insertMilestone({ id: "M001", title: "Replan", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
   const task = (taskId: string, title: string) => ({
@@ -108,7 +108,42 @@ async function seedPlannedSlice(base: string): Promise<void> {
     tasks: [task("T01", "Completed blocker"), task("T02", "Cancelled work")],
   }, base, invocation("seed-plan-slice"));
   assert.ok(!("error" in planned), "slice planning fixture must succeed");
-  updateTaskStatus("M001", "S01", "T01", "complete", "2026-07-12T00:00:00.000Z");
+  if (!completeBlocker) return;
+  for (const [lifecycleStatus, legacyStatus] of [
+    ["in_progress", "active"],
+    ["completed", "complete"],
+  ] as const) {
+    const fence = readDomainOperationFence();
+    executeDomainOperation({
+      operationType: `test.blocker.${lifecycleStatus}`,
+      idempotencyKey: `test:blocker:${lifecycleStatus}`,
+      expectedRevision: fence.revision,
+      expectedAuthorityEpoch: fence.authorityEpoch,
+      actorType: "test",
+      sourceTransport: "test",
+      payload: { taskId: "T01", lifecycleStatus },
+    }, (context) => {
+      adoptOrTransitionLifecycle(context, {
+        itemKind: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        lifecycleStatus,
+      });
+      projectCanonicalStatusToLegacy(context, {
+        entity: "task",
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        status: legacyStatus,
+        ...(lifecycleStatus === "completed" ? { completedAt: "2026-07-12T00:00:00.000Z" } : {}),
+      });
+      return {
+        events: [{ eventType: `test.blocker.${lifecycleStatus}`, entityType: "task", entityId: "T01", payload: {}, destinations: ["test"] }],
+        projections: [{ projectionKey: `test:blocker:${lifecycleStatus}`, projectionKind: "test", rendererVersion: "1" }],
+      };
+    });
+  }
 }
 
 function replanParams(): ReplanSliceParams {
@@ -302,35 +337,43 @@ test("slice replan preserves pending lifecycle provenance for existing tasks", a
 test("slice replan rejects canonically cancelled blocker despite legacy complete drift without residue", async () => {
   const base = makeBase();
   try {
-    await seedPlannedSlice(base);
-    const fence = readDomainOperationFence();
-    executeDomainOperation({
-      operationType: "test.cancel-blocker",
-      idempotencyKey: "test:cancel-blocker",
-      expectedRevision: fence.revision,
-      expectedAuthorityEpoch: fence.authorityEpoch,
-      actorType: "test",
-      sourceTransport: "test",
-      payload: { taskId: "T01" },
-    }, (context) => {
-      adoptOrTransitionLifecycle(context, {
-        itemKind: "task",
-        milestoneId: "M001",
-        sliceId: "S01",
-        taskId: "T01",
-        lifecycleStatus: "cancelled",
+    await seedPlannedSlice(base, false);
+    const adapter = _getAdapter();
+    assert.ok(adapter);
+    adapter.prepare(`
+      UPDATE tasks SET status = 'complete', completed_at = '2026-07-12T00:00:00.000Z'
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+    for (const lifecycleStatus of ["ready", "cancelled"] as const) {
+      const fence = readDomainOperationFence();
+      executeDomainOperation({
+        operationType: `test.blocker.${lifecycleStatus}`,
+        idempotencyKey: `test:blocker:${lifecycleStatus}`,
+        expectedRevision: fence.revision,
+        expectedAuthorityEpoch: fence.authorityEpoch,
+        actorType: "test",
+        sourceTransport: "test",
+        payload: { taskId: "T01", lifecycleStatus },
+      }, (context) => {
+        adoptOrTransitionLifecycle(context, {
+          itemKind: "task",
+          milestoneId: "M001",
+          sliceId: "S01",
+          taskId: "T01",
+          lifecycleStatus,
+        });
+        return {
+          events: [{
+            eventType: `test.blocker.${lifecycleStatus}`,
+            entityType: "task",
+            entityId: "M001/S01/T01",
+            payload: { taskId: "T01", lifecycleStatus },
+            destinations: ["test"],
+          }],
+          projections: [{ projectionKey: `test:blocker:${lifecycleStatus}`, projectionKind: "test", rendererVersion: "1" }],
+        };
       });
-      return {
-        events: [{
-          eventType: "test.blocker.cancelled",
-          entityType: "task",
-          entityId: "M001/S01/T01",
-          payload: { taskId: "T01" },
-          destinations: ["test"],
-        }],
-        projections: [{ projectionKey: "test:blocker", projectionKind: "test", rendererVersion: "1" }],
-      };
-    });
+    }
 
     const snapshot = () => ({
       tasks: rows("SELECT id, status, title FROM tasks ORDER BY id"),

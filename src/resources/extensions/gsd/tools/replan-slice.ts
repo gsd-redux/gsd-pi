@@ -10,7 +10,7 @@ import {
   upsertTaskPlanning,
   insertReplanHistory,
   normalizeLegacyLifecycleStatus,
-  updateTaskStatus,
+  projectCanonicalStatusToLegacy,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import { isClosedStatus } from "../status-guards.js";
@@ -310,7 +310,6 @@ export async function handleReplanSlice(
 
         // Retain removed task identities for history and FK-backed lifecycle state.
         for (const removedTask of removedTasks) {
-          updateTaskStatus(params.milestoneId, params.sliceId, removedTask.id, "skipped");
           const lifecycle = adoptLifecycleIfMissing(context, {
             itemKind: "task",
             milestoneId: params.milestoneId,
@@ -327,6 +326,13 @@ export async function handleReplanSlice(
               lifecycleStatus: "cancelled",
             });
           }
+          projectCanonicalStatusToLegacy(context, {
+            entity: "task",
+            milestoneId: params.milestoneId,
+            sliceId: params.sliceId,
+            taskId: removedTask.id,
+            status: "skipped",
+          });
         }
       },
     });

@@ -11,10 +11,10 @@ import {
   getSliceTasks,
   insertTask,
   normalizeLegacyLifecycleStatus,
+  projectCanonicalStatusToLegacy,
   upsertSlicePlanning,
   upsertTaskPlanning,
   insertGateRow,
-  updateTaskStatus,
   setSliceSketchFlag,
 } from "../gsd-db.js";
 import type { GateEvaluationConfig, GateId } from "../types.js";
@@ -497,7 +497,6 @@ export async function handlePlanSlice(
 
         if (hasTaskPayload) {
           for (const task of omittedTasks) {
-            updateTaskStatus(params.milestoneId, params.sliceId, task.id, "skipped");
             const lifecycle = adoptLifecycleIfMissing(context, {
               itemKind: "task",
               milestoneId: params.milestoneId,
@@ -514,6 +513,13 @@ export async function handlePlanSlice(
                 lifecycleStatus: "cancelled",
               });
             }
+            projectCanonicalStatusToLegacy(context, {
+              entity: "task",
+              milestoneId: params.milestoneId,
+              sliceId: params.sliceId,
+              taskId: task.id,
+              status: "skipped",
+            });
           }
 
           const existingTaskById = new Map(existingTasks.map((task) => [task.id, task]));

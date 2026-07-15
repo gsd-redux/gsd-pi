@@ -339,7 +339,10 @@ test("worktree reconcile accepts legacy edits when canonical authority advanced 
   assert.equal(openDatabase(mainDb), true);
   advanceSliceLifecycle();
   advanceTaskLifecycle();
-  updateTaskStatus("M001", "S01", "T01", "active");
+  db().prepare(`
+    UPDATE tasks SET status = 'active'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
   db().exec(`
     UPDATE slices SET
       full_summary_md = '# Main slice summary',

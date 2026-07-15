@@ -20,7 +20,6 @@ import {
   insertSlice,
   openDatabase,
   readDomainOperationFence,
-  updateTaskStatus,
 } from "../gsd-db.ts";
 import type { PlanningInvocation } from "../planning-invocation.ts";
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
@@ -495,7 +494,10 @@ test("removing a slice rejects completed descendants without residue", async () 
   }, base, invocation("plan-slice/completed-descendant"));
   assert.ok(!("error" in planned));
   completeTaskLifecycle("S02", "T01", "test/complete-descendant");
-  updateTaskStatus("M001", "S02", "T01", "complete");
+  db().prepare(`
+    UPDATE tasks SET status = 'complete'
+    WHERE milestone_id = 'M001' AND slice_id = 'S02' AND id = 'T01'
+  `).run();
 
   const before = {
     operations: count("workflow_operations"),

@@ -17,8 +17,6 @@ import {
   insertSlice,
   insertTask,
   openDatabase,
-  updateSliceStatus,
-  updateTaskStatus,
 } from "../gsd-db.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
 import {
@@ -93,6 +91,20 @@ function rows(sql: string): Array<Record<string, unknown>> {
 
 function row(sql: string): Record<string, unknown> {
   return db().prepare(sql).get() ?? {};
+}
+
+function setLegacyTaskStatus(taskId: string, status: string, completedAt: string | null = null): void {
+  db().prepare(`
+    UPDATE tasks SET status = :status, completed_at = :completed_at
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = :task_id
+  `).run({ ":status": status, ":completed_at": completedAt, ":task_id": taskId });
+}
+
+function setLegacySliceStatus(sliceId: string, status: string): void {
+  db().prepare(`
+    UPDATE slices SET status = :status
+    WHERE milestone_id = 'M001' AND id = :slice_id
+  `).run({ ":status": status, ":slice_id": sliceId });
 }
 
 function count(table: string): number {
@@ -403,7 +415,7 @@ test("milestone replanning omits durably cancelled slices without deleting their
     "cancelled",
     "test/slice/cancelled-before-milestone-replan",
   );
-  updateSliceStatus("M001", "S02", "skipped");
+  setLegacySliceStatus("S02", "skipped");
 
   const result = await invoke<PlanMilestoneParams, PlanMilestoneResult>(
     handlePlanMilestone as PlanningHandler<PlanMilestoneParams, PlanMilestoneResult>,
@@ -591,7 +603,7 @@ for (const terminalStatus of ["completed", "cancelled"] as const) {
     const sliceIdentity = { itemKind: "slice" as const, milestoneId: "M001", sliceId: "S01" };
     if (terminalStatus === "completed") completeTestLifecycle(taskIdentity, "test/task");
     else transitionTestLifecycle(taskIdentity, terminalStatus, `test/task/${terminalStatus}`);
-    updateTaskStatus("M001", "S01", "T01", "pending");
+    setLegacyTaskStatus("T01", "pending");
     const taskResult = await invoke<PlanTaskParams, PlanTaskResult>(
       handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
       { ...taskParams(), title: "Must not overwrite terminal task" },
@@ -603,7 +615,7 @@ for (const terminalStatus of ["completed", "cancelled"] as const) {
 
     if (terminalStatus === "completed") completeTestLifecycle(sliceIdentity, "test/slice");
     else transitionTestLifecycle(sliceIdentity, terminalStatus, `test/slice/${terminalStatus}`);
-    updateSliceStatus("M001", "S01", "active");
+    setLegacySliceStatus("S01", "active");
     const parentResult = await invoke<PlanTaskParams, PlanTaskResult>(
       handlePlanTask as PlanningHandler<PlanTaskParams, PlanTaskResult>,
       taskParams("T02"),
@@ -712,7 +724,7 @@ test("slice planning promotes only pending lifecycle state and rejects cancelled
     activeBefore.find((entry) => entry["item_kind"] === "slice"));
 
   transition("cancelled", "test/slice/cancelled");
-  updateSliceStatus("M001", "S01", "pending");
+  setLegacySliceStatus("S01", "pending");
   const beforeRejectedReuse = {
     authority: row("SELECT revision, authority_epoch FROM project_authority"),
     operations: count("workflow_operations"),
@@ -744,7 +756,7 @@ test("slice planning rejects canonically completed slice despite pending legacy 
     invocation("plan-slice/seed-completed"),
   ));
   completeTestLifecycle({ itemKind: "slice", milestoneId: "M001", sliceId: "S01" }, "test/slice/plan");
-  updateSliceStatus("M001", "S01", "pending");
+  setLegacySliceStatus("S01", "pending");
 
   const result = await invoke<PlanSliceParams, PlanSliceResult>(
     handlePlanSlice as PlanningHandler<PlanSliceParams, PlanSliceResult>,
@@ -777,7 +789,7 @@ test("slice planning rejects canonically completed tasks before updating or omit
     sliceId: "S01",
     taskId: "T01",
   }, "test/task/slice-plan");
-  updateTaskStatus("M001", "S01", "T01", "pending");
+  setLegacyTaskStatus("T01", "pending");
 
   for (const tasks of [[taskParams("T01", "Must not update")], [taskParams("T02", "Must not omit T01")]]) {
     const result = await invoke<PlanSliceParams, PlanSliceResult>(
@@ -1027,7 +1039,7 @@ for (const terminalStatus of ["completed", "cancelled"] as const) {
     const taskIdentity = { itemKind: "task" as const, milestoneId: "M001", sliceId: "S01", taskId: "T01" };
     if (terminalStatus === "completed") completeTestLifecycle(taskIdentity, "test/replan-task/completed");
     else transitionTestLifecycle(taskIdentity, terminalStatus, "test/replan-task/cancelled");
-    updateTaskStatus("M001", "S01", "T01", "pending");
+    setLegacyTaskStatus("T01", "pending");
 
     const before = {
       authority: row("SELECT revision, authority_epoch FROM project_authority"),
@@ -1070,7 +1082,7 @@ for (const terminalStatus of ["completed", "cancelled"] as const) {
       base,
       invocation(`plan-task/before-${terminalStatus}-parent-replan`),
     ));
-    updateSliceStatus("M001", "S01", "active");
+    setLegacySliceStatus("S01", "active");
 
     const sliceIdentity = { itemKind: "slice" as const, milestoneId: "M001", sliceId: "S01" };
     if (terminalStatus === "completed") completeTestLifecycle(sliceIdentity, "test/replan-parent/slice");
@@ -1125,7 +1137,12 @@ test("slice replanning cancels removed pending work durably instead of deleting 
   );
   assertSuccess(planned);
   insertTask({ id: "T04", sliceId: "S01", milestoneId: "M001", title: "Legacy-only work to remove", status: "pending" });
-  updateTaskStatus("M001", "S01", "T01", "complete", "2026-07-12T00:00:00.000Z");
+  completeTestLifecycle(
+    { itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    "test/replan-slice/blocker",
+  );
+  setLegacyTaskStatus("T01", "complete", "2026-07-12T00:00:00.000Z");
+  const operationCountBeforeReplan = count("workflow_operations");
 
   const params: ReplanSliceParams = {
     milestoneId: "M001",
@@ -1161,6 +1178,6 @@ test("slice replanning cancels removed pending work durably instead of deleting 
     FROM workflow_item_lifecycles
     WHERE item_kind = 'task' AND task_id = 'T03'
   `), { lifecycle_status: "ready", state_version: 0 });
-  assert.equal(count("workflow_operations"), 2);
+  assert.equal(count("workflow_operations"), operationCountBeforeReplan + 1);
   assertNoInventedExecutionHistory();
 });
