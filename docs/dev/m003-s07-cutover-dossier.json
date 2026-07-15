@@ -7,6 +7,12 @@
     "passed": 4,
     "total": 4
   },
+  "canonicalClosure": {
+    "authorized": false,
+    "canonicalHistoryComplete": false,
+    "exactMergeReceiptPresent": false,
+    "status": "candidate_pending_exact_merge"
+  },
   "canonicalHistoryEvidencePlane": "live_project",
   "commands": [
     {
@@ -30,7 +36,7 @@
       "verdict": "pass"
     },
     {
-      "command": "node scripts/m003-s07-cutover-dossier.mjs --check",
+      "command": "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types scripts/m003-s07-cutover-dossier.mjs --check",
       "id": "dossier-check",
       "stage": "post_generation",
       "verdict": "required"
@@ -156,8 +162,8 @@
   },
   "hashes": {
     "canonicalHistoryHash": "sha256:b345115f08658a281259434803c2d0ea6b34fdfaf75f9e09cb5ee57800478d13",
-    "capstoneEvidenceHash": "sha256:d4e4b7b16700a53f14902c583e9621761197ec8b0e51038c58b3bffe2699bd0a",
-    "dossierHash": "sha256:a1bcaa441288dd4543de8257ae77b608703638742df572a8e9cdc3f942455d96"
+    "capstoneEvidenceHash": "sha256:48db0bf7855314650ce08f5c786a4c077bbac0c4ebd1c072a188224450bcadf8",
+    "dossierHash": "sha256:135bf75fdaa7f7afc3fb0989e2a5f160fe62fef65d1dbdf99a181744d139e9ba"
   },
   "liveDrift": [
     {

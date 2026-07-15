@@ -111,7 +111,7 @@ export const COMMAND_INVENTORY = Object.freeze([
   },
   {
     id: "dossier-check",
-    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    command: "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types scripts/m003-s07-cutover-dossier.mjs --check",
     stage: "post_generation",
     verdict: "required",
   },
@@ -606,18 +606,56 @@ function normalizeLiveDrift(rawRows) {
 function normalizeTaskReceiptHeads(rawHeads) {
   const heads = requireArray(rawHeads, "Task receipt heads");
   const expected = Array.from({ length: 6 }, (_, index) => `T${String(index + 1).padStart(2, "0")}`);
-  const byTask = new Map();
+  if (heads.length === 6 && heads.every(
+    (head) => !Object.hasOwn(requireRecord(head, "Task receipt head"), "lifecycleId"),
+  )) {
+    const legacyHeads = heads.map((rawHead) => {
+      const head = requireRecord(rawHead, "Task receipt head");
+      const taskId = requireString(head.taskId, "Receipt head task ID");
+      if (!expected.includes(taskId) || head.attemptState !== "settled" || head.resultOutcome !== "succeeded"
+        || head.verdict !== "pass" || head.current !== true) {
+        fail(`Legacy receipt head must be current, settled, succeeded, and passing: ${taskId}`);
+      }
+      return {
+        taskId,
+        attemptNumber: requireInteger(head.attemptNumber, "Receipt attempt number"),
+        attemptState: "settled",
+        resultOutcome: "succeeded",
+        verdict: "pass",
+        current: true,
+        testedSourceRevision: requireSha(head.testedSourceRevision, "Receipt tested source revision"),
+        evidenceHash: requireSha(head.evidenceHash, "Receipt evidence hash"),
+      };
+    }).sort((left, right) => left.taskId.localeCompare(right.taskId));
+    if (new Set(legacyHeads.map((head) => head.taskId)).size !== expected.length) {
+      fail("Legacy receipt heads must contain exactly T01-T06");
+    }
+    return legacyHeads;
+  }
+  const attempts = [];
+  const attemptKeys = new Set();
   for (const rawHead of heads) {
     const head = requireRecord(rawHead, "Task receipt head");
     const taskId = requireString(head.taskId, "Receipt head task ID");
-    if (byTask.has(taskId)) fail(`Duplicate receipt head: ${taskId}`);
-    if (head.attemptState !== "settled" || head.resultOutcome !== "succeeded"
+    const attemptNumber = requireInteger(head.attemptNumber, "Receipt attempt number");
+    const attemptKey = `${taskId}/${attemptNumber}`;
+    if (attemptKeys.has(attemptKey)) fail(`Duplicate receipt attempt: ${attemptKey}`);
+    attemptKeys.add(attemptKey);
+    if (!expected.includes(taskId) || head.lifecycleStatus !== "completed"
+      || head.attemptState !== "settled" || head.resultOutcome !== "succeeded"
       || head.verdict !== "pass" || head.current !== true) {
-      fail(`Receipt head must be current, settled, succeeded, and passing: ${taskId}`);
+      fail(`Receipt head history must be completed, current, settled, succeeded, and passing: ${attemptKey}`);
     }
-    byTask.set(taskId, {
+    attempts.push({
       taskId,
-      attemptNumber: requireInteger(head.attemptNumber, "Receipt attempt number"),
+      lifecycleStatus: "completed",
+      lifecycleId: requireString(head.lifecycleId, "Receipt lifecycle ID"),
+      attemptId: requireString(head.attemptId, "Receipt attempt ID"),
+      resultId: requireString(head.resultId, "Receipt result ID"),
+      verdictId: requireString(head.verdictId, "Receipt verdict ID"),
+      evidenceId: requireString(head.evidenceId, "Receipt evidence ID"),
+      verdictRevision: requireInteger(head.verdictRevision, "Receipt verdict revision"),
+      attemptNumber,
       attemptState: "settled",
       resultOutcome: "succeeded",
       verdict: "pass",
@@ -627,10 +665,17 @@ function normalizeTaskReceiptHeads(rawHeads) {
     });
   }
   for (const taskId of expected) {
-    if (!byTask.has(taskId)) fail(`Missing current receipt head: ${taskId}`);
+    if (!attempts.some((attempt) => attempt.taskId === taskId)) fail(`Missing current receipt head: ${taskId}`);
   }
-  if (byTask.size !== expected.length) fail("Receipt heads must contain exactly T01-T06");
-  return expected.map((taskId) => byTask.get(taskId));
+  if (attempts.length !== 7 || attempts.filter((attempt) => attempt.taskId === "T05").length !== 2) {
+    fail("Receipt history must contain seven attempts, including two for T05");
+  }
+  return attempts.sort((left, right) => (
+    left.taskId.localeCompare(right.taskId)
+    || left.attemptNumber - right.attemptNumber
+    || left.verdictRevision - right.verdictRevision
+    || left.evidenceId.localeCompare(right.evidenceId)
+  ));
 }
 
 function normalizeCompatibility(rawInventory) {
@@ -742,6 +787,12 @@ export function buildDossier(rawInput) {
   );
   const authority = requireRecord(input.authority, "Authority snapshot");
   const normalizedAuthority = {
+    ...(authority.projectId === undefined
+      ? {}
+      : { projectId: requireString(authority.projectId, "Authority project ID") }),
+    ...(authority.projectRootRealpath === undefined
+      ? {}
+      : { projectRootRealpath: requireString(authority.projectRootRealpath, "Authority project root") }),
     projectRevision: requireInteger(authority.projectRevision, "Authority project revision"),
     authorityEpoch: requireInteger(authority.authorityEpoch, "Authority epoch"),
   };
@@ -751,6 +802,7 @@ export function buildDossier(rawInput) {
   const repairHistory = normalizeRepairHistory(input.repairHistory);
   const liveDrift = normalizeLiveDrift(input.liveDrift);
   const taskReceiptHeads = normalizeTaskReceiptHeads(input.taskReceiptHeads);
+  const canonicalHistoryComplete = taskReceiptHeads.length === 7;
   const compatibilityInventory = normalizeCompatibility(input.compatibilityInventory);
   const commands = normalizeCommands(input.commands);
   const noCutover = normalizeNoCutover(input.noCutover);
@@ -804,6 +856,12 @@ export function buildDossier(rawInput) {
     commands,
     noCutover,
     authorityBaseline,
+    canonicalClosure: {
+      status: "candidate_pending_exact_merge",
+      authorized: false,
+      exactMergeReceiptPresent: false,
+      canonicalHistoryComplete,
+    },
     deferredCutoverBlockers,
     hashes: {
       capstoneEvidenceHash: hashCanonical(capstoneEvidence),
@@ -957,19 +1015,36 @@ export function parseArgs(argv = process.argv.slice(2)) {
   return { mode: "generate", inputPath, outputPath, json };
 }
 
+async function collectFreshDossierInput() {
+  const sourceRoot = resolve(SCRIPT_DIR, "..");
+  const [collector, capstone] = await Promise.all([
+    import("./m003-s07-dossier-input.ts"),
+    import("../src/resources/extensions/gsd/tests/semantic-shadow-capstone-harness.ts"),
+  ]);
+  const capstoneEvidence = capstone.normalizeSemanticShadowCapstoneEvidence(
+    await capstone.collectSemanticShadowCapstoneEvidence({ sourceRoot }),
+  );
+  return collector.collectM003S07DossierInput({
+    sourceRoot,
+    databasePath: resolve(sourceRoot, ".gsd/gsd.db"),
+  }, { capstoneEvidence });
+}
+
 const defaultIo = {
   readText: (path) => readFileSync(path, "utf8"),
   writeText: (path, text) => writeFileSync(path, text),
   writeStdout: (text) => process.stdout.write(text),
+  collectFreshInput: collectFreshDossierInput,
 };
 
-export function runDossierCli(argv = process.argv.slice(2), io = defaultIo) {
+export async function runDossierCli(argv = process.argv.slice(2), io = defaultIo) {
   const args = parseArgs(argv);
   if (args.mode === "check") {
     const checkedBytes = io.readText(args.outputPath);
-    const dossier = validateDossier(JSON.parse(checkedBytes));
+    validateDossier(JSON.parse(checkedBytes));
+    const dossier = validateDossier(buildDossier(await io.collectFreshInput()));
     if (checkedBytes !== renderDossier(dossier)) {
-      fail("Checked dossier bytes are stale or non-canonical");
+      fail("Checked dossier bytes are stale relative to authoritative evidence");
     }
     io.writeStdout(args.json
       ? renderDossier(dossier)
@@ -989,7 +1064,7 @@ export function runDossierCli(argv = process.argv.slice(2), io = defaultIo) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    runDossierCli();
+    await runDossierCli();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

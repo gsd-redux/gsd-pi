@@ -4,7 +4,7 @@
 // File Purpose: Collect local canonical inputs for the M003/S07 cutover dossier.
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -31,13 +31,14 @@ import { captureMilestoneVerificationSourceRevision } from "../src/resources/ext
 export interface DossierInputPaths {
   sourceRoot: string;
   databasePath: string;
-  capstonePath: string;
+  capstonePath?: string;
 }
 
 interface CollectorDependencies {
   runNoCutover?: () => Record<string, any>;
   runAuthorityBaseline?: () => Record<string, any>;
   captureSourceRevision?: typeof captureMilestoneVerificationSourceRevision;
+  capstoneEvidence?: unknown;
 }
 
 interface DossierInputCliOptions extends DossierInputPaths {
@@ -45,7 +46,12 @@ interface DossierInputCliOptions extends DossierInputPaths {
 }
 
 interface CanonicalSnapshot {
-  authority: { projectRevision: number; authorityEpoch: number };
+  authority: {
+    projectId: string;
+    projectRootRealpath: string;
+    projectRevision: number;
+    authorityEpoch: number;
+  };
   repairHistory: Array<Record<string, unknown>>;
   liveDrift: Array<Record<string, unknown>>;
   taskReceiptHeads: Array<Record<string, unknown>>;
@@ -72,15 +78,25 @@ function localPath(value: string, label: string): string {
   return resolve(value);
 }
 
-function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
+function readCanonicalSnapshot(databasePath: string, sourceRoot: string): CanonicalSnapshot {
   const database = new DatabaseSync(databasePath, { readOnly: true });
   database.exec("PRAGMA query_only = ON; BEGIN");
   try {
     const authorityRow = database.prepare(`
-      SELECT revision AS projectRevision, authority_epoch AS authorityEpoch
+      SELECT project_id AS projectId, project_root_realpath AS projectRootRealpath,
+             revision AS projectRevision, authority_epoch AS authorityEpoch
       FROM project_authority
     `).get() as Record<string, unknown> | undefined;
     if (!authorityRow) throw new Error("Canonical project authority is missing");
+    const projectId = String(authorityRow["projectId"] ?? "");
+    const projectRootRealpath = String(authorityRow["projectRootRealpath"] ?? "");
+    if (
+      !projectId
+      || !projectRootRealpath
+      || realpathSync(projectRootRealpath) !== realpathSync(sourceRoot)
+    ) {
+      throw new Error("Canonical database project identity does not match the source root");
+    }
 
     const repairHistory = database.prepare(`
       SELECT
@@ -162,44 +178,53 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
     });
 
     const receiptRows = database.prepare(`
-      WITH latest_attempt AS (
-        SELECT lifecycle.task_id AS taskId, attempt.*,
-               ROW_NUMBER() OVER (
-                 PARTITION BY lifecycle.lifecycle_id ORDER BY attempt.attempt_number DESC, attempt.attempt_id DESC
-               ) AS rank
-        FROM workflow_item_lifecycles lifecycle
-        JOIN workflow_execution_attempts attempt ON attempt.lifecycle_id = lifecycle.lifecycle_id
-        WHERE lifecycle.milestone_id = 'M003'
-          AND lifecycle.slice_id = 'S07'
-          AND lifecycle.task_id IN ('T01', 'T02', 'T03', 'T04', 'T05', 'T06')
-      )
       SELECT
-        latest.taskId,
-        latest.attempt_number AS attemptNumber,
-        latest.attempt_state AS attemptState,
+        lifecycle.task_id AS taskId,
+        lifecycle.lifecycle_status AS lifecycleStatus,
+        lifecycle.lifecycle_id AS lifecycleId,
+        attempt.attempt_id AS attemptId,
+        result.result_id AS resultId,
+        verdict.verdict_id AS verdictId,
+        evidence.evidence_id AS evidenceId,
+        verdict.project_revision AS verdictRevision,
+        attempt.attempt_number AS attemptNumber,
+        attempt.attempt_state AS attemptState,
         result.outcome AS resultOutcome,
-        MIN(verdict.verdict) AS verdict,
-        MIN(verdict.tested_source_revision) AS testedSourceRevision,
-        MIN(evidence.content_hash) AS evidenceHash,
-        COUNT(DISTINCT verdict.verdict_id) AS verdictCount,
-        COUNT(DISTINCT evidence.evidence_id) AS evidenceCount
-      FROM latest_attempt latest
-      JOIN workflow_attempt_results result ON result.attempt_id = latest.attempt_id
-      JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = latest.attempt_id
+        verdict.verdict AS verdict,
+        verdict.tested_source_revision AS testedSourceRevision,
+        evidence.content_hash AS evidenceHash
+      FROM workflow_item_lifecycles lifecycle
+      JOIN workflow_execution_attempts attempt ON attempt.lifecycle_id = lifecycle.lifecycle_id
+      JOIN workflow_attempt_results result ON result.attempt_id = attempt.attempt_id
+      JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = attempt.attempt_id
       JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
-      WHERE latest.rank = 1
+      WHERE lifecycle.milestone_id = 'M003'
+        AND lifecycle.slice_id = 'S07'
+        AND lifecycle.task_id IN ('T01', 'T02', 'T03', 'T04', 'T05', 'T06')
         AND NOT EXISTS (
           SELECT 1 FROM workflow_technical_verdicts successor
           WHERE successor.supersedes_verdict_id = verdict.verdict_id
         )
-      GROUP BY latest.taskId, latest.attempt_number, latest.attempt_state, result.outcome
-      ORDER BY latest.taskId
+      ORDER BY lifecycle.task_id, attempt.attempt_number, verdict.project_revision, evidence.evidence_id
     `).all() as Array<Record<string, unknown>>;
-    if (receiptRows.length !== 6 || receiptRows.some((row) => row["verdictCount"] !== 1 || row["evidenceCount"] !== 1)) {
-      throw new Error("Canonical T01-T06 receipt heads must each have one current verdict and evidence row");
+    const receiptKeys = new Set(receiptRows.map((row) => `${row["taskId"]}/${row["attemptNumber"]}`));
+    if (receiptRows.length !== 7 || receiptKeys.size !== 7) {
+      throw new Error(
+        "Canonical T01-T06 receipt history must contain seven unique attempts with one current verdict and evidence row",
+      );
+    }
+    if (receiptRows.some((row) => row["lifecycleStatus"] !== "completed")) {
+      throw new Error("Canonical T01-T06 lifecycle status must be completed");
     }
     const taskReceiptHeads = receiptRows.map((row) => ({
       taskId: String(row["taskId"]),
+      lifecycleStatus: String(row["lifecycleStatus"]),
+      lifecycleId: String(row["lifecycleId"]),
+      attemptId: String(row["attemptId"]),
+      resultId: String(row["resultId"]),
+      verdictId: String(row["verdictId"]),
+      evidenceId: String(row["evidenceId"]),
+      verdictRevision: Number(row["verdictRevision"]),
       attemptNumber: Number(row["attemptNumber"]),
       attemptState: String(row["attemptState"]),
       resultOutcome: String(row["resultOutcome"]),
@@ -212,6 +237,8 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
     database.exec("COMMIT");
     return {
       authority: {
+        projectId,
+        projectRootRealpath,
         projectRevision: Number(authorityRow["projectRevision"]),
         authorityEpoch: Number(authorityRow["authorityEpoch"]),
       },
@@ -308,12 +335,15 @@ export async function collectM003S07DossierInput(
 ): Promise<Record<string, any>> {
   const sourceRoot = localPath(paths.sourceRoot, "Source root");
   const databasePath = localPath(paths.databasePath, "Canonical database");
-  const capstonePath = localPath(paths.capstonePath, "Capstone evidence");
+  const capstonePath = paths.capstonePath ? localPath(paths.capstonePath, "Capstone evidence") : undefined;
   if (sourceRoot !== resolve(NO_CUTOVER_ROOT) || sourceRoot !== resolve(AUTHORITY_BASELINE_ROOT)) {
     throw new Error("Source root must be the local repository used by the no-cutover and authority reports");
   }
 
-  const parsedCapstone = JSON.parse(readFileSync(capstonePath, "utf8"));
+  if (!capstonePath && dependencies.capstoneEvidence === undefined) {
+    throw new Error("Capstone evidence is required");
+  }
+  const parsedCapstone = dependencies.capstoneEvidence ?? JSON.parse(readFileSync(capstonePath!, "utf8"));
   const capstone = normalizeSemanticShadowCapstoneEvidence(parsedCapstone);
   const captureSourceRevision = dependencies.captureSourceRevision ?? captureMilestoneVerificationSourceRevision;
   const source = captureSourceRevision(sourceRoot, undefined);
@@ -321,7 +351,7 @@ export async function collectM003S07DossierInput(
   if (capstone.evidence.sourceRevision !== source.sourceRevision) {
     throw new Error("Capstone evidence source revision does not match the current local source");
   }
-  const snapshot = readCanonicalSnapshot(databasePath);
+  const snapshot = readCanonicalSnapshot(databasePath, sourceRoot);
   const noCutover = await (dependencies.runNoCutover ?? runSemanticShadowNoCutoverGate)();
   const authorityBaseline = await (dependencies.runAuthorityBaseline ?? runWorkflowAuthorityBaseline)();
   const input = {

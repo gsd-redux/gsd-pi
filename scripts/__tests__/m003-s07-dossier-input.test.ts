@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -31,11 +31,13 @@ afterEach(() => {
 
 function makeFixtureDatabase(
   path: string,
-  options: { unrelatedRepair?: boolean; duplicateEvidence?: boolean } = {},
+  options: { unrelatedRepair?: boolean; duplicateEvidence?: boolean; projectRoot?: string } = {},
 ): void {
   const database = new DatabaseSync(path);
   database.exec(`
-    CREATE TABLE project_authority (revision INTEGER, authority_epoch INTEGER);
+    CREATE TABLE project_authority (
+      project_id TEXT, project_root_realpath TEXT, revision INTEGER, authority_epoch INTEGER
+    );
     CREATE TABLE milestones (id TEXT, status TEXT);
     CREATE TABLE slices (milestone_id TEXT, id TEXT, status TEXT);
     CREATE TABLE tasks (milestone_id TEXT, slice_id TEXT, id TEXT, status TEXT);
@@ -52,13 +54,13 @@ function makeFixtureDatabase(
     CREATE TABLE workflow_execution_attempts (
       attempt_id TEXT, lifecycle_id TEXT, attempt_number INTEGER, attempt_state TEXT
     );
-    CREATE TABLE workflow_attempt_results (attempt_id TEXT, outcome TEXT);
+    CREATE TABLE workflow_attempt_results (result_id TEXT, attempt_id TEXT, outcome TEXT);
     CREATE TABLE workflow_technical_verdicts (
       verdict_id TEXT, attempt_id TEXT, tested_source_revision TEXT, verdict TEXT,
-      supersedes_verdict_id TEXT
+      supersedes_verdict_id TEXT, project_revision INTEGER
     );
     CREATE TABLE workflow_verification_evidence (evidence_id TEXT, verdict_id TEXT, content_hash TEXT);
-    INSERT INTO project_authority VALUES (195, 0);
+    INSERT INTO project_authority VALUES ('project-fixture', '${(options.projectRoot ?? realpathSync(process.cwd())).replaceAll("'", "''")}', 195, 0);
     INSERT INTO milestones VALUES ('M003', 'active');
     INSERT INTO slices VALUES ('M003', 'S07', 'pending');
     INSERT INTO workflow_item_lifecycles VALUES
@@ -71,8 +73,8 @@ function makeFixtureDatabase(
     "INSERT INTO workflow_item_lifecycles VALUES (?, 'task', 'M003', 'S07', ?, 'completed')",
   );
   const attempt = database.prepare("INSERT INTO workflow_execution_attempts VALUES (?, ?, 1, 'settled')");
-  const result = database.prepare("INSERT INTO workflow_attempt_results VALUES (?, 'succeeded')");
-  const verdict = database.prepare("INSERT INTO workflow_technical_verdicts VALUES (?, ?, ?, 'pass', NULL)");
+  const result = database.prepare("INSERT INTO workflow_attempt_results VALUES (?, ?, 'succeeded')");
+  const verdict = database.prepare("INSERT INTO workflow_technical_verdicts VALUES (?, ?, ?, 'pass', NULL, ?)");
   const evidence = database.prepare("INSERT INTO workflow_verification_evidence VALUES (?, ?, ?)");
   for (let index = 1; index <= 6; index += 1) {
     const taskId = `T${String(index).padStart(2, "0")}`;
@@ -82,14 +84,19 @@ function makeFixtureDatabase(
     task.run(taskId);
     lifecycle.run(lifecycleId, taskId);
     attempt.run(attemptId, lifecycleId);
-    result.run(attemptId);
-    verdict.run(verdictId, attemptId, `sha256:${String(index).repeat(64)}`);
+    result.run(`result-${taskId.toLowerCase()}`, attemptId);
+    verdict.run(verdictId, attemptId, `sha256:${String(index).repeat(64)}`, 170 + index);
     const evidenceHash = `sha256:${String(index + 1).repeat(64)}`;
     evidence.run(`evidence-${taskId.toLowerCase()}`, verdictId, evidenceHash);
     if (options.duplicateEvidence && index === 1) {
       evidence.run("evidence-t01-duplicate", verdictId, evidenceHash);
     }
   }
+  attempt.run("attempt-t05-retry", "life-t05");
+  database.prepare("UPDATE workflow_execution_attempts SET attempt_number = 2 WHERE attempt_id = 'attempt-t05-retry'").run();
+  result.run("result-t05-retry", "attempt-t05-retry");
+  verdict.run("verdict-t05-retry", "attempt-t05-retry", `sha256:${"5".repeat(64)}`, 180);
+  evidence.run("evidence-t05-retry", "verdict-t05-retry", `sha256:${"6".repeat(64)}`);
 
   const operation = database.prepare("INSERT INTO workflow_operations VALUES (?, ?, ?)");
   const event = database.prepare(`
@@ -181,7 +188,19 @@ test("collector emits one canonical read-only snapshot without relabeling fixtur
   assert.equal(input.observations[0].items[0].itemIdentity.milestoneId, "M001");
   assert.equal(input.liveDrift[0].milestoneId, "M003");
   assert.equal(input.repairHistory.length, 33);
-  assert.deepEqual(input.taskReceiptHeads.map((head) => head.taskId), ["T01", "T02", "T03", "T04", "T05", "T06"]);
+  assert.deepEqual(input.authority, {
+    projectId: "project-fixture",
+    projectRootRealpath: realpathSync(process.cwd()),
+    projectRevision: 195,
+    authorityEpoch: 0,
+  });
+  assert.deepEqual(input.taskReceiptHeads.map((head) => `${head.taskId}/${head.attemptNumber}`), [
+    "T01/1", "T02/1", "T03/1", "T04/1", "T05/1", "T05/2", "T06/1",
+  ]);
+  assert.deepEqual(
+    Object.keys(input.taskReceiptHeads[0]).filter((key) => key.endsWith("Id")),
+    ["taskId", "lifecycleId", "attemptId", "resultId", "verdictId", "evidenceId"],
+  );
   assert.deepEqual(input.compatibilityInventory.map(({ id, file, title }) => ({ id, file, title })),
     NO_CUTOVER_BEHAVIORAL_WITNESSES.map(({ id, file, title }) => ({ id, file, title })));
   assert.equal(buildDossier(input).recommendation, "NO_GO");
@@ -299,6 +318,49 @@ test("collector rejects duplicate evidence rows even when their hashes match", a
       passingReports(),
     ),
     /one current verdict and evidence row/i,
+  );
+});
+
+test("collector rejects a database owned by another project", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-project-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  makeFixtureDatabase(databasePath, { projectRoot: root });
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  await assert.rejects(
+    collectM003S07DossierInput(
+      { sourceRoot: process.cwd(), databasePath, capstonePath },
+      passingReports(),
+    ),
+    /project.*identity|project root/i,
+  );
+});
+
+test("collector requires completed canonical prerequisite lifecycles", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-lifecycle-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  makeFixtureDatabase(databasePath);
+  const database = new DatabaseSync(databasePath);
+  database.prepare("UPDATE workflow_item_lifecycles SET lifecycle_status = 'ready' WHERE task_id = 'T01'").run();
+  database.close();
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  await assert.rejects(
+    collectM003S07DossierInput(
+      { sourceRoot: process.cwd(), databasePath, capstonePath },
+      passingReports(),
+    ),
+    /lifecycle.*completed/i,
   );
 });
 

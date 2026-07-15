@@ -107,7 +107,7 @@ const COMMANDS = Object.freeze([
   },
   {
     id: "dossier-check",
-    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    command: "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types scripts/m003-s07-cutover-dossier.mjs --check",
     stage: "post_generation",
     verdict: "required",
   },
@@ -236,7 +236,12 @@ function validInput() {
     evidenceSourceRevision: sourceRevision,
     publicResponseHash,
     sourceCapstoneEvidenceHash: sha("source-capstone-evidence"),
-    authority: { projectRevision: 195, authorityEpoch: 0 },
+    authority: {
+      projectId: "project-fixture",
+      projectRootRealpath: "/tmp/project-fixture",
+      projectRevision: 195,
+      authorityEpoch: 0,
+    },
     observations: MODES.flatMap((mode) => (
       TRANSPORTS.map((transport) => observation(mode, transport, sourceRevision, publicResponseHash))
     )),
@@ -278,9 +283,16 @@ function validInput() {
         classification: "semantic_match_exact_delta",
       },
     ],
-    taskReceiptHeads: Array.from({ length: 6 }, (_, index) => ({
-      taskId: `T${String(index + 1).padStart(2, "0")}`,
-      attemptNumber: 1,
+    taskReceiptHeads: [1, 2, 3, 4, 5, 5, 6].map((task, index) => ({
+      taskId: `T${String(task).padStart(2, "0")}`,
+      lifecycleStatus: "completed",
+      lifecycleId: `lifecycle-t${String(task).padStart(2, "0")}`,
+      attemptId: `attempt-${index + 1}`,
+      resultId: `result-${index + 1}`,
+      verdictId: `verdict-${index + 1}`,
+      evidenceId: `evidence-${index + 1}`,
+      verdictRevision: 180 + index,
+      attemptNumber: task === 5 ? index - 3 : 1,
       attemptState: "settled",
       resultOutcome: "succeeded",
       verdict: "pass",
@@ -343,6 +355,12 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
   assert.equal(first.canonicalHistoryEvidencePlane, "live_project");
   assert.equal(first.publicResponseHash, sha("frozen-public-response"));
   assert.equal(first.sourceCapstoneEvidenceHash, sha("source-capstone-evidence"));
+  assert.deepEqual(first.canonicalClosure, {
+    status: "candidate_pending_exact_merge",
+    authorized: false,
+    exactMergeReceiptPresent: false,
+    canonicalHistoryComplete: true,
+  });
   assert.equal(first.observationCoverage[0].itemIdentity.milestoneId, "M001");
   assert.deepEqual(first.observationCoverage.slice(0, 5).map((row) => row.classification), CLASSIFICATIONS);
   assert.equal(first.observationCoverage[0].itemIdentity.lifecyclePresent, true);
@@ -487,7 +505,7 @@ test("parseArgs exposes check and explicit local generation modes", () => {
   assert.throws(() => parseArgs(["--github-label", "ready"]), /unknown argument/i);
 });
 
-test("bare --check validates and byte-compares the default checked dossier", () => {
+test("--check recollects authoritative evidence before byte comparison", async () => {
   const dossier = buildDossier(validInput());
   const rendered = renderDossier(dossier);
   const output = [];
@@ -502,15 +520,18 @@ test("bare --check validates and byte-compares the default checked dossier", () 
     writeStdout(text) {
       output.push(text);
     },
+    collectFreshInput: async () => validInput(),
   };
 
-  runDossierCli(["--check"], io);
+  await runDossierCli(["--check"], io);
   assert.match(output.join(""), /valid/i);
 
-  assert.throws(() => runDossierCli(["--check"], {
-    ...io,
-    readText: () => `${rendered}\n`,
-  }), /byte|canonical|stale/i);
+  const changed = validInput();
+  changed.authority.projectRevision += 1;
+  await assert.rejects(
+    runDossierCli(["--check"], { ...io, collectFreshInput: async () => changed }),
+    /byte|canonical|stale|authoritative/i,
+  );
 });
 
 test("explicit --output writes a validated generated dossier", () => {

@@ -198,6 +198,9 @@ test("adopted validation skip records a canonical waiver without fabricating PAS
     testedSourceRevision: JSON.parse(projection).testedSourceRevision,
     waiverId: String(row(`SELECT waiver_id FROM workflow_waivers WHERE waiver_status = 'active'`).waiver_id),
   });
+
+  const state = await deriveStateFromDb(basePath);
+  assert.equal(state.phase, "validating-milestone");
 });
 
 test("adopted waiver replay is exact and projection loss cannot block closeout", async () => {
@@ -497,7 +500,7 @@ test("source changes after a waiver keep state validating and leave validation g
   );
 });
 
-test("source changes after a passing validation keep adopted state validating", async () => {
+test("source changes after a passing validation preserve no-cutover phase behavior", async () => {
   const basePath = makeFixture();
   await recordPassingValidation(basePath, "test/milestone.validate/stale-pass");
 
@@ -506,7 +509,7 @@ test("source changes after a passing validation keep adopted state validating", 
   execFileSync("git", ["commit", "-m", "change validated source"], { cwd: basePath, stdio: "ignore" });
 
   const state = await deriveStateFromDb(basePath);
-  assert.equal(state.phase, "validating-milestone");
+  assert.equal(state.phase, "completing-milestone");
 });
 
 test("a newer canonical waiver reconciles completed validation gates from pass to omitted", async () => {

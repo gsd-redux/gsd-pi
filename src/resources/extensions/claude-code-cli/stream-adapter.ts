@@ -2399,12 +2399,6 @@ async function pumpSdkMessages(
 		const projectRoot = resolveWorkflowMcpProjectRoot(cwd);
 		autoInitClaudeCodeWorkflowMcp(cwd);
 		const gsdPhase = resolveGsdPhaseForSdk(context, projectRoot);
-		milestoneStatusObservationRoot = projectRoot;
-		milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
-			projectRoot,
-			claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
-				?? captureMilestoneVerificationSourceRevision,
-		);
 		const canUseToolHandler = createClaudeCodeCanUseToolHandler(uiContext);
 		// When no UI is available (headless / auto-mode), auto-approve all
 		// tool requests. This replaces the old bypassPermissions workaround.
@@ -2428,6 +2422,14 @@ async function pumpSdkMessages(
 			},
 		);
 		const workflowMcpServerName = workflowMcpServerNameFromAllowedTools(sdkOpts.allowedTools);
+		if (workflowMcpServerName && gsdPhase) {
+			milestoneStatusObservationRoot = projectRoot;
+			milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
+				projectRoot,
+				claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
+					?? captureMilestoneVerificationSourceRevision,
+			);
+		}
 		injectMilestoneStatusObservationToken(
 			sdkOpts,
 			workflowMcpServerName,
