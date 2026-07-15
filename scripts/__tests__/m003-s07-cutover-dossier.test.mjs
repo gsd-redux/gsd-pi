@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import {
+  COMMAND_INVENTORY,
   DEFAULT_OUTPUT,
   buildDossier,
   hashCanonical,
@@ -87,9 +88,8 @@ const COMMANDS = Object.freeze([
   {
     id: "semantic-shadow-capstone",
     command: "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
-    stage: "observed",
-    verdict: "pass",
-    exitCode: 0,
+    stage: "post_generation",
+    verdict: "required",
   },
   {
     id: "semantic-shadow-no-cutover",
@@ -317,6 +317,12 @@ function reversedInput() {
   return input;
 }
 
+function inputWithRuntimeCommandContract() {
+  const input = validInput();
+  input.commands = COMMAND_INVENTORY.map((command) => ({ ...command }));
+  return input;
+}
+
 test("buildDossier produces stable ordered JSON and self-verifying hashes", () => {
   const first = buildDossier(validInput());
   const second = buildDossier(reversedInput());
@@ -357,6 +363,32 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
   });
 });
 
+test("capstone suite remains required until DB-backed post-generation UAT", () => {
+  const dossier = buildDossier(validInput());
+  const capstone = dossier.commands.find((command) => command.id === "semantic-shadow-capstone");
+
+  assert.deepEqual(capstone, COMMANDS[0]);
+  assert.equal(Object.hasOwn(capstone, "exitCode"), false);
+});
+
+test("canonical history retains exact live lifecycle identities", () => {
+  const dossier = buildDossier(inputWithRuntimeCommandContract());
+
+  assert.deepEqual(
+    dossier.liveDrift.map((row) => row.lifecycleId),
+    ["lifecycle-m003", "lifecycle-t07"],
+  );
+});
+
+test("canonical history hash binds exact live lifecycle identities", () => {
+  const first = buildDossier(inputWithRuntimeCommandContract());
+  const changedInput = inputWithRuntimeCommandContract();
+  changedInput.liveDrift[0].lifecycleId = "replacement-lifecycle-m003";
+  const changed = buildDossier(changedInput);
+
+  assert.notEqual(changed.hashes.canonicalHistoryHash, first.hashes.canonicalHistoryHash);
+});
+
 const failureCases = [
   ["missing mode/transport cell", (input) => input.observations.pop(), /missing observation cell/i],
   ["duplicate mode/transport cell", (input) => input.observations.push(structuredClone(input.observations[0])), /duplicate observation cell/i],
@@ -395,8 +427,13 @@ const failureCases = [
   ["changed compatibility title", (input) => { input.compatibilityInventory[0].title = "renamed"; }, /compatibility.*title/i],
   ["missing command", (input) => input.commands.pop(), /command inventory/i],
   ["changed command", (input) => { input.commands[0].command = "pnpm test"; }, /command inventory/i],
-  ["failed observed command", (input) => { input.commands[0].exitCode = 1; }, /observed command.*pass/i],
-  ["wrong observed stage", (input) => { input.commands[0].stage = "post_generation"; }, /command inventory.*stage/i],
+  ["failed observed command", (input) => { input.commands[1].exitCode = 1; }, /observed command.*pass/i],
+  ["wrong observed stage", (input) => { input.commands[1].stage = "post_generation"; }, /command inventory.*stage/i],
+  ["pre-certified capstone command", (input) => {
+    input.commands[0].stage = "observed";
+    input.commands[0].verdict = "pass";
+    input.commands[0].exitCode = 0;
+  }, /command inventory.*stage|post-generation command/i],
   ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
   ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
   ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 9; }, /no-cutover.*10\/10/i],
