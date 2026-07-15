@@ -1,0 +1,348 @@
+#!/usr/bin/env node
+
+// Project/App: gsd-pi
+// File Purpose: Collect local canonical inputs for the M003/S07 cutover dossier.
+
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+
+import {
+  COMMAND_INVENTORY,
+  DEFERRED_BLOCKERS,
+} from "./m003-s07-cutover-dossier.mjs";
+import {
+  REPO_ROOT as NO_CUTOVER_ROOT,
+  runSemanticShadowNoCutoverGate,
+} from "./semantic-shadow-no-cutover-gate.mjs";
+import {
+  REPO_ROOT as AUTHORITY_BASELINE_ROOT,
+  runWorkflowAuthorityBaseline,
+} from "./workflow-authority-baseline.mjs";
+import { compareLifecycleShadow } from "../src/resources/extensions/gsd/db/lifecycle-shadow-comparison.ts";
+import {
+  normalizeSemanticShadowCapstoneEvidence,
+  type NormalizedSemanticShadowCapstoneEvidence,
+} from "../src/resources/extensions/gsd/tests/semantic-shadow-capstone-harness.ts";
+import { captureMilestoneVerificationSourceRevision } from "../src/resources/extensions/gsd/verification-source-integrity.ts";
+
+export interface DossierInputPaths {
+  sourceRoot: string;
+  databasePath: string;
+  capstonePath: string;
+}
+
+interface CollectorDependencies {
+  runNoCutover?: () => Record<string, any>;
+  runAuthorityBaseline?: () => Record<string, any>;
+}
+
+interface CanonicalSnapshot {
+  authority: { projectRevision: number; authorityEpoch: number };
+  repairHistory: Array<Record<string, unknown>>;
+  liveDrift: Array<Record<string, unknown>>;
+  taskReceiptHeads: Array<Record<string, unknown>>;
+}
+
+const CAPSTONE_LIFECYCLE_PLACEHOLDER = "capstone-fixture-lifecycle-present";
+const LOCAL_INPUT_PATTERN = /(?:^[a-z]+:\/\/|git@|github\.com)/iu;
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalValue(nested)]),
+  );
+}
+
+function hashCanonical(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex")}`;
+}
+
+function localPath(value: string, label: string): string {
+  if (!value.trim() || LOCAL_INPUT_PATTERN.test(value)) throw new Error(`${label} must be a local filesystem path`);
+  return resolve(value);
+}
+
+function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  database.exec("PRAGMA query_only = ON; BEGIN");
+  try {
+    const authorityRow = database.prepare(`
+      SELECT revision AS projectRevision, authority_epoch AS authorityEpoch
+      FROM project_authority
+    `).get() as Record<string, unknown> | undefined;
+    if (!authorityRow) throw new Error("Canonical project authority is missing");
+
+    const repairHistory = database.prepare(`
+      SELECT
+        event.project_revision AS resultingRevision,
+        event.event_index AS eventIndex,
+        event.event_id AS eventId,
+        event.event_type AS eventType,
+        json_extract(event.payload_json, '$.disposition') AS disposition,
+        json_extract(event.payload_json, '$.comparison.kind') AS comparisonKind,
+        json_extract(event.payload_json, '$.evidence.evidenceDigest') AS evidenceDigest,
+        (SELECT COUNT(*) FROM workflow_domain_events sibling
+          WHERE sibling.operation_id = event.operation_id) AS eventCount,
+        (SELECT COUNT(*) FROM workflow_outbox outbox
+          JOIN workflow_domain_events source_event ON source_event.event_id = outbox.event_id
+          WHERE source_event.operation_id = event.operation_id) AS outboxCount,
+        (SELECT COUNT(*) FROM workflow_projection_work projection
+          WHERE projection.enqueue_operation_id = event.operation_id) AS projectionCount
+      FROM workflow_domain_events event
+      WHERE event.event_type IN ('lifecycle.shadow.advanced', 'lifecycle.shadow.repaired')
+      ORDER BY event.project_revision, event.event_index, event.event_id
+    `).all().map((row) => ({ ...row }));
+    if (repairHistory.length !== 33) {
+      throw new Error(`Canonical repair lineage must contain exactly 33 events; found ${repairHistory.length}`);
+    }
+
+    const hierarchyPairs = database.prepare(`
+      WITH hierarchy AS (
+        SELECT 'milestone' AS itemKind, id AS milestoneId, NULL AS sliceId, NULL AS taskId, status AS legacyStatus
+        FROM milestones WHERE id = 'M003'
+        UNION ALL
+        SELECT 'slice', milestone_id, id, NULL, status
+        FROM slices WHERE milestone_id = 'M003'
+        UNION ALL
+        SELECT 'task', milestone_id, slice_id, id, status
+        FROM tasks WHERE milestone_id = 'M003'
+      ), pairs AS (
+        SELECT hierarchy.*, lifecycle.lifecycle_id AS lifecycleId,
+               lifecycle.lifecycle_status AS canonicalStatus
+        FROM hierarchy
+        LEFT JOIN workflow_item_lifecycles lifecycle
+          ON lifecycle.item_kind = hierarchy.itemKind
+         AND lifecycle.milestone_id = hierarchy.milestoneId
+         AND lifecycle.slice_id IS hierarchy.sliceId
+         AND lifecycle.task_id IS hierarchy.taskId
+        UNION ALL
+        SELECT lifecycle.item_kind, lifecycle.milestone_id, lifecycle.slice_id, lifecycle.task_id,
+               NULL, lifecycle.lifecycle_id, lifecycle.lifecycle_status
+        FROM workflow_item_lifecycles lifecycle
+        WHERE lifecycle.milestone_id = 'M003'
+          AND NOT EXISTS (
+            SELECT 1 FROM hierarchy
+            WHERE hierarchy.itemKind = lifecycle.item_kind
+              AND hierarchy.milestoneId = lifecycle.milestone_id
+              AND hierarchy.sliceId IS lifecycle.slice_id
+              AND hierarchy.taskId IS lifecycle.task_id
+          )
+      )
+      SELECT * FROM pairs
+      ORDER BY CASE itemKind WHEN 'milestone' THEN 0 WHEN 'slice' THEN 1 ELSE 2 END,
+               milestoneId, COALESCE(sliceId, ''), COALESCE(taskId, '')
+    `).all() as Array<Record<string, unknown>>;
+    const liveDrift = hierarchyPairs.map((row) => {
+      const legacyStatus = row["legacyStatus"] === null ? null : String(row["legacyStatus"]);
+      const canonicalStatus = row["canonicalStatus"] === null ? null : String(row["canonicalStatus"]);
+      const comparison = compareLifecycleShadow(legacyStatus, canonicalStatus);
+      return {
+        lifecycleId: row["lifecycleId"] === null ? null : String(row["lifecycleId"]),
+        itemKind: String(row["itemKind"]),
+        milestoneId: String(row["milestoneId"]),
+        sliceId: row["sliceId"] === null ? null : String(row["sliceId"]),
+        taskId: row["taskId"] === null ? null : String(row["taskId"]),
+        legacyStatus,
+        canonicalStatus,
+        classification: comparison.kind,
+      };
+    });
+
+    const receiptRows = database.prepare(`
+      WITH latest_attempt AS (
+        SELECT lifecycle.task_id AS taskId, attempt.*,
+               ROW_NUMBER() OVER (
+                 PARTITION BY lifecycle.lifecycle_id ORDER BY attempt.attempt_number DESC, attempt.attempt_id DESC
+               ) AS rank
+        FROM workflow_item_lifecycles lifecycle
+        JOIN workflow_execution_attempts attempt ON attempt.lifecycle_id = lifecycle.lifecycle_id
+        WHERE lifecycle.milestone_id = 'M003'
+          AND lifecycle.slice_id = 'S07'
+          AND lifecycle.task_id IN ('T01', 'T02', 'T03', 'T04', 'T05', 'T06')
+      )
+      SELECT
+        latest.taskId,
+        latest.attempt_number AS attemptNumber,
+        latest.attempt_state AS attemptState,
+        result.outcome AS resultOutcome,
+        MIN(verdict.verdict) AS verdict,
+        MIN(verdict.tested_source_revision) AS testedSourceRevision,
+        MIN(evidence.content_hash) AS evidenceHash,
+        COUNT(DISTINCT verdict.verdict_id) AS verdictCount,
+        COUNT(DISTINCT evidence.content_hash) AS evidenceCount
+      FROM latest_attempt latest
+      JOIN workflow_attempt_results result ON result.attempt_id = latest.attempt_id
+      JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = latest.attempt_id
+      JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
+      WHERE latest.rank = 1
+        AND NOT EXISTS (
+          SELECT 1 FROM workflow_technical_verdicts successor
+          WHERE successor.supersedes_verdict_id = verdict.verdict_id
+        )
+      GROUP BY latest.taskId, latest.attempt_number, latest.attempt_state, result.outcome
+      ORDER BY latest.taskId
+    `).all() as Array<Record<string, unknown>>;
+    if (receiptRows.length !== 6 || receiptRows.some((row) => row["verdictCount"] !== 1 || row["evidenceCount"] !== 1)) {
+      throw new Error("Canonical T01-T06 receipt heads must each have one current verdict and evidence hash");
+    }
+    const taskReceiptHeads = receiptRows.map((row) => ({
+      taskId: String(row["taskId"]),
+      attemptNumber: Number(row["attemptNumber"]),
+      attemptState: String(row["attemptState"]),
+      resultOutcome: String(row["resultOutcome"]),
+      verdict: String(row["verdict"]),
+      current: true,
+      testedSourceRevision: String(row["testedSourceRevision"]),
+      evidenceHash: String(row["evidenceHash"]),
+    }));
+
+    database.exec("COMMIT");
+    return {
+      authority: {
+        projectRevision: Number(authorityRow["projectRevision"]),
+        authorityEpoch: Number(authorityRow["authorityEpoch"]),
+      },
+      repairHistory,
+      liveDrift,
+      taskReceiptHeads,
+    };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  } finally {
+    database.close();
+  }
+}
+
+function adaptCapstone(capstone: NormalizedSemanticShadowCapstoneEvidence) {
+  const observations = capstone.evidence.observations.map((observation) => ({
+    ...observation,
+    items: observation.items.map((item) => ({
+      ...item,
+      itemIdentity: {
+        itemKind: item.itemIdentity.itemKind,
+        milestoneId: item.itemIdentity.milestoneId,
+        sliceId: item.itemIdentity.sliceId,
+        taskId: item.itemIdentity.taskId,
+        lifecycleId: item.itemIdentity.lifecyclePresent ? CAPSTONE_LIFECYCLE_PLACEHOLDER : null,
+      },
+    })),
+  }));
+  const lossDisposition = capstone.evidence.dispositions.find(
+    (entry) => entry.disposition === "observation_loss",
+  );
+  if (!lossDisposition) throw new Error("Capstone observation-loss proof is missing");
+  const loss = lossDisposition.proof["observationLossAccounting"] as Record<string, unknown>;
+  const causes = Array.isArray(loss["causes"])
+    ? loss["causes"]
+    : [{ reason: loss["reason"], errorHash: loss["errorHash"] }];
+  if (causes.some((cause) => !cause || typeof cause !== "object")) {
+    throw new Error("Capstone observation-loss causes are incomplete");
+  }
+  const lossId = "capstone-observation-loss";
+  return {
+    observations,
+    dispositionProof: capstone.evidence.dispositions.map((entry) => ({
+      outcome: entry.disposition,
+      evidenceHash: hashCanonical(entry),
+      residueFree: entry.disposition === "rejected" && entry.proof["authorityUnchanged"] === true,
+      accounted: entry.disposition === "observation_loss",
+      ...(entry.disposition === "observation_loss" ? { lossRef: lossId } : {}),
+    })),
+    observationLosses: [{
+      id: lossId,
+      lossCount: Number(loss["lossCount"]),
+      persistedCount: Number(loss["persistedCount"]),
+      terminalRecords: 1,
+      accounted: true,
+      causes,
+    }],
+  };
+}
+
+function summarizeReports(noCutover: Record<string, any>, authorityBaseline: Record<string, any>) {
+  if (noCutover.verdict !== "pass" || noCutover.githubMetadataUsed !== false) {
+    throw new Error("Semantic-shadow no-cutover report must pass without GitHub metadata");
+  }
+  if (authorityBaseline.verdict !== "pass") throw new Error("Workflow authority baseline must pass");
+  return {
+    compatibilityInventory: noCutover.behavioralChecks.map((check: Record<string, unknown>) => ({
+      id: check["id"],
+      file: check["file"],
+      title: check["title"],
+      verdict: check["verdict"],
+    })),
+    noCutover: {
+      structural: {
+        passed: noCutover.structuralChecks.filter((check: Record<string, unknown>) => check["verdict"] === "pass").length,
+        total: noCutover.structuralChecks.length,
+      },
+      behavioral: {
+        passed: noCutover.behavioralChecks.filter((check: Record<string, unknown>) => check["verdict"] === "pass").length,
+        total: noCutover.behavioralChecks.length,
+      },
+    },
+    authorityBaseline: {
+      passed: authorityBaseline.invariants.filter((check: Record<string, unknown>) => check["verdict"] === "pass").length,
+      total: authorityBaseline.invariants.length,
+    },
+  };
+}
+
+export async function collectM003S07DossierInput(
+  paths: DossierInputPaths,
+  dependencies: CollectorDependencies = {},
+): Promise<Record<string, any>> {
+  const sourceRoot = localPath(paths.sourceRoot, "Source root");
+  const databasePath = localPath(paths.databasePath, "Canonical database");
+  const capstonePath = localPath(paths.capstonePath, "Capstone evidence");
+  if (sourceRoot !== resolve(NO_CUTOVER_ROOT) || sourceRoot !== resolve(AUTHORITY_BASELINE_ROOT)) {
+    throw new Error("Source root must be the local repository used by the no-cutover and authority reports");
+  }
+
+  const parsedCapstone = JSON.parse(readFileSync(capstonePath, "utf8"));
+  const capstone = normalizeSemanticShadowCapstoneEvidence(parsedCapstone);
+  const source = captureMilestoneVerificationSourceRevision(sourceRoot, undefined);
+  if (!source.ok) throw new Error(`Unable to capture dossier source: ${source.error}`);
+  if (capstone.evidence.sourceRevision !== source.sourceRevision) {
+    throw new Error("Capstone evidence source revision does not match the current local source");
+  }
+  const snapshot = readCanonicalSnapshot(databasePath);
+  const noCutover = await (dependencies.runNoCutover ?? runSemanticShadowNoCutoverGate)();
+  const authorityBaseline = await (dependencies.runAuthorityBaseline ?? runWorkflowAuthorityBaseline)();
+  return {
+    recommendation: "NO_GO",
+    observationEvidencePlane: "capstone_fixture",
+    canonicalHistoryEvidencePlane: "live_project",
+    evidenceSourceRevision: source.sourceRevision,
+    authority: snapshot.authority,
+    ...adaptCapstone(capstone),
+    repairHistory: snapshot.repairHistory,
+    liveDrift: snapshot.liveDrift,
+    taskReceiptHeads: snapshot.taskReceiptHeads,
+    ...summarizeReports(noCutover, authorityBaseline),
+    commands: COMMAND_INVENTORY.map((command) => ({ ...command })),
+    deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
+  };
+}
+
+async function main(): Promise<void> {
+  const [sourceRoot, databasePath, capstonePath, ...extra] = process.argv.slice(2);
+  if (!sourceRoot || !databasePath || !capstonePath || extra.length > 0) {
+    throw new Error("Usage: m003-s07-dossier-input <source-root> <canonical-db> <normalized-capstone-json>");
+  }
+  const input = await collectM003S07DossierInput({ sourceRoot, databasePath, capstonePath });
+  process.stdout.write(`${JSON.stringify(input, null, 2)}\n`);
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
