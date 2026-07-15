@@ -127,17 +127,17 @@ function scavengeStoredTurns(database: ContextDatabase, databasePath: string, no
   for (const row of rows) {
     const key = row["key"];
     const raw = row["value_json"];
-    let remove = typeof key !== "string" || typeof raw !== "string";
-    if (!remove) {
-      try {
-        const turn = JSON.parse(raw);
-        remove = !isStoredTurn(turn)
-          || turnKey(turn.token) !== key
-          || turn.databasePath !== databasePath
-          || Date.parse(turn.expiresAt) <= now;
-      } catch {
-        remove = true;
-      }
+    if (typeof key !== "string" || typeof raw !== "string") continue;
+
+    let remove = false;
+    try {
+      const turn = JSON.parse(raw);
+      remove = !isStoredTurn(turn)
+        || turnKey(turn.token) !== key
+        || turn.databasePath !== databasePath
+        || Date.parse(turn.expiresAt) <= now;
+    } catch {
+      remove = true;
     }
     if (!remove) continue;
 

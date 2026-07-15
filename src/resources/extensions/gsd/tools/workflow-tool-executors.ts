@@ -2056,6 +2056,16 @@ export interface MilestoneStatusParams {
   milestoneId: string;
 }
 
+type MilestoneStatusReadInterleave = () => void;
+
+let milestoneStatusReadInterleaveForTest: MilestoneStatusReadInterleave | null = null;
+
+export function _setMilestoneStatusReadInterleaveForTest(
+  hook: MilestoneStatusReadInterleave | null,
+): void {
+  milestoneStatusReadInterleaveForTest = hook;
+}
+
 export async function executeMilestoneStatus(
   params: MilestoneStatusParams,
   basePath: string = process.cwd(),
@@ -2088,11 +2098,13 @@ export async function executeMilestoneStatus(
     const observedRead = readTransaction(() => {
       const milestone = getMilestone(params.milestoneId);
       if (!milestone) {
+        const response = {
+          content: [{ type: "text" as const, text: `Milestone ${params.milestoneId} not found in database.` }],
+          details: { operation: "milestone_status", milestoneId: params.milestoneId, found: false },
+        };
+        milestoneStatusReadInterleaveForTest?.();
         return {
-          response: {
-            content: [{ type: "text" as const, text: `Milestone ${params.milestoneId} not found in database.` }],
-            details: { operation: "milestone_status", milestoneId: params.milestoneId, found: false },
-          },
+          response,
           shadowSnapshot: getMilestoneLifecycleShadowSnapshot(params.milestoneId),
         };
       }
@@ -2113,6 +2125,8 @@ export async function executeMilestoneStatus(
         sliceCount: slices.length,
         slices,
       };
+
+      milestoneStatusReadInterleaveForTest?.();
 
       return {
         response: {

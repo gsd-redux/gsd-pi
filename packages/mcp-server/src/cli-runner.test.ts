@@ -57,6 +57,48 @@ function spawnMcpServer(projectDir: string, gsdHome: string): ChildProcessWithou
   });
 }
 
+function spawnObservationMcpServer(
+  projectDir: string,
+  gsdHome: string,
+  token: string,
+): { child: ChildProcessWithoutNullStreams; ready: Promise<void> } {
+  const runnerUrl = new URL('./cli-runner.js', import.meta.url).href;
+  const code = `
+    import { runMcpServerCli } from ${JSON.stringify(runnerUrl)};
+    await runMcpServerCli({
+      sweepProjectOrphanMcpServers() {},
+      createMcpServer: async () => ({ server: {
+        connect: async () => { process.stderr.write('EPHEMERAL_READY\\n'); },
+        close: async () => {},
+      } }),
+      importStdioServerTransport: async () => ({ StdioServerTransport: class {} }),
+      warmWorkflowToolBridges() {},
+    });
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', code], {
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      GSD_HOME: gsdHome,
+      GSD_MILESTONE_STATUS_OBSERVATION_TOKEN: token,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const ready = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for ephemeral pid=${child.pid}`)), 5_000);
+    child.stderr.on('data', (chunk) => {
+      if (!String(chunk).includes('EPHEMERAL_READY')) return;
+      clearTimeout(timer);
+      resolve();
+    });
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      reject(new Error(`ephemeral MCP exited before readiness: code=${code} signal=${signal}`));
+    });
+  });
+  return { child, ready };
+}
+
 function spawnBusyLoopingMcpServerParent(projectDir: string, gsdHome: string): ChildProcessWithReadableOutput {
   const runnerUrl = new URL('./cli-runner.js', import.meta.url).href;
   const childCode = `
@@ -914,6 +956,36 @@ describe('runMcpServerCli', () => {
       assert.equal((await secondExit).code, 0);
     } finally {
       for (const child of [first, second]) {
+        if (child && !child.killed && child.exitCode === null) child.kill('SIGKILL');
+      }
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(gsdHome, { recursive: true, force: true });
+    }
+  });
+
+  test('two real pump-scoped MCP sessions for one project remain alive together', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'mcp-observation-overlap-project-'));
+    const gsdHome = mkdtempSync(join(tmpdir(), 'mcp-observation-overlap-home-'));
+    let first: ReturnType<typeof spawnObservationMcpServer> | undefined;
+    let second: ReturnType<typeof spawnObservationMcpServer> | undefined;
+
+    try {
+      first = spawnObservationMcpServer(projectDir, gsdHome, 'observation-token-a');
+      await first.ready;
+      second = spawnObservationMcpServer(projectDir, gsdHome, 'observation-token-b');
+      await second.ready;
+
+      assert.equal(first.child.exitCode, null, 'second pump must not replace the first pump');
+      assert.equal(first.child.signalCode, null, 'first pump must remain unsignalled');
+      assert.equal(second.child.exitCode, null, 'second pump must remain alive');
+
+      const exits = [waitForChildExit(first.child), waitForChildExit(second.child)];
+      first.child.stdin.end();
+      second.child.stdin.end();
+      assert.deepEqual((await Promise.all(exits)).map((entry) => entry.code), [0, 0]);
+    } finally {
+      for (const session of [first, second]) {
+        const child = session?.child;
         if (child && !child.killed && child.exitCode === null) child.kill('SIGKILL');
       }
       rmSync(projectDir, { recursive: true, force: true });
