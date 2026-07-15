@@ -191,11 +191,12 @@ function item(classification, index) {
   }
 }
 
-function observation(mode, transport, sourceRevision) {
+function observation(mode, transport, sourceRevision, responseHash) {
   return {
     mode,
     transport,
     sourceRevision,
+    responseHash,
     projectRevision: 7,
     authorityEpoch: 0,
     traceId: `trace-${mode}-${transport}`,
@@ -227,14 +228,17 @@ function repairHistory() {
 
 function validInput() {
   const sourceRevision = sha("candidate-source");
+  const publicResponseHash = sha("frozen-public-response");
   return {
     recommendation: "NO_GO",
     observationEvidencePlane: "capstone_fixture",
     canonicalHistoryEvidencePlane: "live_project",
     evidenceSourceRevision: sourceRevision,
+    publicResponseHash,
+    sourceCapstoneEvidenceHash: sha("source-capstone-evidence"),
     authority: { projectRevision: 195, authorityEpoch: 0 },
     observations: MODES.flatMap((mode) => (
-      TRANSPORTS.map((transport) => observation(mode, transport, sourceRevision))
+      TRANSPORTS.map((transport) => observation(mode, transport, sourceRevision, publicResponseHash))
     )),
     dispositionProof: PROOF_OUTCOMES.map((outcome) => ({
       outcome,
@@ -331,6 +335,8 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
   assert.equal(first.observationCoverage.length, 60);
   assert.equal(first.observationEvidencePlane, "capstone_fixture");
   assert.equal(first.canonicalHistoryEvidencePlane, "live_project");
+  assert.equal(first.publicResponseHash, sha("frozen-public-response"));
+  assert.equal(first.sourceCapstoneEvidenceHash, sha("source-capstone-evidence"));
   assert.equal(first.observationCoverage[0].itemIdentity.milestoneId, "M001");
   assert.deepEqual(first.observationCoverage.slice(0, 5).map((row) => row.classification), CLASSIFICATIONS);
   assert.equal(first.observationCoverage[0].itemIdentity.lifecyclePresent, true);
@@ -363,6 +369,13 @@ const failureCases = [
   ["wrong history evidence plane", (input) => { input.canonicalHistoryEvidencePlane = "capstone_fixture"; }, /canonical history evidence plane.*live_project/i],
   ["incomplete tuple identity", (input) => { input.observations[0].items[0].itemIdentity.taskId = null; }, /task identity/i],
   ["forged normalized status", (input) => { input.observations[0].items[1].normalizedLegacyStatus = "ready"; }, /frozen semantic relation/i],
+  ["missing public response hash", (input) => { delete input.publicResponseHash; }, /public response hash/i],
+  ["corrupt public response hash", (input) => { input.publicResponseHash = "sha256:bad"; }, /public response hash/i],
+  ["missing source capstone hash", (input) => { delete input.sourceCapstoneEvidenceHash; }, /source capstone evidence hash/i],
+  ["corrupt source capstone hash", (input) => { input.sourceCapstoneEvidenceHash = "SHA256:BAD"; }, /source capstone evidence hash/i],
+  ["missing observation response hash", (input) => { delete input.observations[0].responseHash; }, /observation response hash/i],
+  ["mixed exact response hash", (input) => { input.observations[0].responseHash = sha("other-response"); }, /observation response hash.*public/i],
+  ["corrupt observation response hash", (input) => { input.observations[0].responseHash = "sha256:bad"; }, /observation response hash/i],
   ["unavailable source", (input) => { input.observations[0].sourceRevision = "unavailable"; }, /source revision/i],
   ["mixed exact source", (input) => { input.observations[0].sourceRevision = sha("other-source"); }, /source revision/i],
   ["clean matrix loss", (input) => { input.observations[0].observationLossAccounting.lossCount = 1; }, /clean observation.*loss/i],

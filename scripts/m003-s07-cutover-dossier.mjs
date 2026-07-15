@@ -165,6 +165,8 @@ const TOP_LEVEL_KEYS = new Set([
   "observationEvidencePlane",
   "canonicalHistoryEvidencePlane",
   "evidenceSourceRevision",
+  "publicResponseHash",
+  "sourceCapstoneEvidenceHash",
   "authority",
   "observations",
   "dispositionProof",
@@ -354,7 +356,7 @@ function normalizeItem(rawItem) {
   return normalized;
 }
 
-function normalizeObservations(rawObservations, sourceRevision) {
+function normalizeObservations(rawObservations, sourceRevision, publicResponseHash) {
   const observations = requireArray(rawObservations, "Observations");
   const cells = new Map();
   for (const rawObservation of observations) {
@@ -368,6 +370,8 @@ function normalizeObservations(rawObservations, sourceRevision) {
 
     const observedSource = requireSha(observation.sourceRevision, "Observation source revision");
     if (observedSource !== sourceRevision) fail(`Observation source revision does not match dossier source: ${cell}`);
+    const responseHash = requireSha(observation.responseHash, "Observation response hash");
+    if (responseHash !== publicResponseHash) fail(`Observation response hash does not match public response: ${cell}`);
     if (observation.repairDisposition !== "not_attempted") {
       fail(`Clean observation repair disposition must be not_attempted: ${cell}`);
     }
@@ -732,12 +736,17 @@ export function buildDossier(rawInput) {
     fail("Canonical history evidence plane must be live_project");
   }
   const evidenceSourceRevision = requireSha(input.evidenceSourceRevision, "Evidence source revision");
+  const publicResponseHash = requireSha(input.publicResponseHash, "Public response hash");
+  const sourceCapstoneEvidenceHash = requireSha(
+    input.sourceCapstoneEvidenceHash,
+    "Source capstone evidence hash",
+  );
   const authority = requireRecord(input.authority, "Authority snapshot");
   const normalizedAuthority = {
     projectRevision: requireInteger(authority.projectRevision, "Authority project revision"),
     authorityEpoch: requireInteger(authority.authorityEpoch, "Authority epoch"),
   };
-  const observationCoverage = normalizeObservations(input.observations, evidenceSourceRevision);
+  const observationCoverage = normalizeObservations(input.observations, evidenceSourceRevision, publicResponseHash);
   const observationLosses = normalizeLosses(input.observationLosses);
   const dispositionProof = normalizeDispositionProof(input.dispositionProof, observationLosses);
   const repairHistory = normalizeRepairHistory(input.repairHistory);
@@ -754,6 +763,8 @@ export function buildDossier(rawInput) {
   const capstoneEvidence = {
     observationEvidencePlane: "capstone_fixture",
     evidenceSourceRevision,
+    publicResponseHash,
+    sourceCapstoneEvidenceHash,
     expectedCoverage,
     observedCounts: counts,
     observationCoverage,
@@ -779,6 +790,8 @@ export function buildDossier(rawInput) {
     observationEvidencePlane: "capstone_fixture",
     canonicalHistoryEvidencePlane: "live_project",
     evidenceSourceRevision,
+    publicResponseHash,
+    sourceCapstoneEvidenceHash,
     authority: normalizedAuthority,
     expectedCoverage,
     observedCounts: counts,
@@ -828,6 +841,7 @@ function inputFromDossier(rawDossier) {
         mode: row.mode,
         transport: row.transport,
         sourceRevision: row.sourceRevision,
+        responseHash: dossier.publicResponseHash,
         projectRevision: row.projectRevision,
         authorityEpoch: row.authorityEpoch,
         traceId: row.traceId,
@@ -860,6 +874,8 @@ function inputFromDossier(rawDossier) {
     observationEvidencePlane: dossier.observationEvidencePlane,
     canonicalHistoryEvidencePlane: dossier.canonicalHistoryEvidencePlane,
     evidenceSourceRevision: dossier.evidenceSourceRevision,
+    publicResponseHash: dossier.publicResponseHash,
+    sourceCapstoneEvidenceHash: dossier.sourceCapstoneEvidenceHash,
     authority: dossier.authority,
     observations: [...groupedObservations.values()],
     dispositionProof: dossier.dispositionProof,
