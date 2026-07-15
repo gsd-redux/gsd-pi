@@ -64,6 +64,12 @@ import type { ReassessRoadmapParams } from "./reassess-roadmap.js";
 import { handleReassessRoadmap } from "./reassess-roadmap.js";
 import type { ValidateMilestoneOptions, ValidateMilestoneParams } from "./validate-milestone.js";
 import { handleValidateMilestone } from "./validate-milestone.js";
+import {
+  answerMilestoneSubjectiveUat,
+  prepareMilestoneSubjectiveUat,
+  type AnswerMilestoneSubjectiveUatInput,
+  type PrepareMilestoneSubjectiveUatInput,
+} from "../milestone-subjective-uat-domain-operation.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
@@ -777,6 +783,14 @@ export type ReopenSliceExecutorParams = ReopenSliceParams;
 export type SkipSliceExecutorParams = SkipSliceParams;
 export type ReopenMilestoneExecutorParams = ReopenMilestoneParams;
 export type ValidateMilestoneExecutorParams = ValidateMilestoneParams;
+export type PrepareMilestoneSubjectiveUatExecutorParams = Omit<
+  PrepareMilestoneSubjectiveUatInput,
+  "invocation"
+>;
+export type AnswerMilestoneSubjectiveUatExecutorParams = Omit<
+  AnswerMilestoneSubjectiveUatInput,
+  "invocation"
+>;
 export type ReassessRoadmapExecutorParams = ReassessRoadmapParams;
 
 export interface SaveGateResultParams {
@@ -1436,8 +1450,14 @@ export async function executeValidateMilestone(
       isError: true,
       };
     }
+    const historical = result.superseded || result.current === false;
     return {
-      content: [{ type: "text", text: `Validated milestone ${result.milestoneId} — verdict: ${result.verdict}. Written to ${result.validationPath}` }],
+      content: [{
+        type: "text",
+        text: historical
+          ? `Milestone validation receipt for ${result.milestoneId} has been superseded; current state was not changed.`
+          : `Validated milestone ${result.milestoneId} — verdict: ${result.verdict}. Written to ${result.validationPath}`,
+      }],
       details: {
         operation: "validate_milestone",
         milestoneId: result.milestoneId,
@@ -1448,6 +1468,8 @@ export async function executeValidateMilestone(
         ...(result.attemptId ? { attemptId: result.attemptId } : {}),
         ...(result.resultId ? { resultId: result.resultId } : {}),
         ...(result.duplicate ? { duplicate: true } : {}),
+        ...(result.current !== undefined ? { current: result.current } : {}),
+        ...(result.superseded ? { superseded: true } : {}),
         ...(result.stale ? { stale: true } : {}),
       },
     };
@@ -1459,6 +1481,74 @@ export async function executeValidateMilestone(
       details: { operation: "validate_milestone", error: msg },
     isError: true,
       };
+  }
+}
+
+export async function executePrepareMilestoneSubjectiveUat(
+  params: PrepareMilestoneSubjectiveUatExecutorParams,
+  basePath: string,
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  if (!await ensureDbOpen(basePath)) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot prepare subjective UAT." }],
+      details: { operation: "prepare_milestone_subjective_uat", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  try {
+    const result = prepareMilestoneSubjectiveUat({ ...params, invocation });
+    return {
+      content: [{
+        type: "text",
+        text: `Prepared subjective UAT for ${result.milestoneId}: ${params.focusedPrompt}`,
+      }],
+      details: {
+        operation: "prepare_milestone_subjective_uat",
+        ...result,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text: `Error preparing subjective UAT: ${message}` }],
+      details: { operation: "prepare_milestone_subjective_uat", error: message },
+      isError: true,
+    };
+  }
+}
+
+export async function executeAnswerMilestoneSubjectiveUat(
+  params: AnswerMilestoneSubjectiveUatExecutorParams,
+  basePath: string,
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  if (!await ensureDbOpen(basePath)) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot answer subjective UAT." }],
+      details: { operation: "answer_milestone_subjective_uat", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  try {
+    const result = answerMilestoneSubjectiveUat({ ...params, invocation });
+    return {
+      content: [{
+        type: "text",
+        text: `Recorded the authenticated subjective UAT response as ${result.disposition}.`,
+      }],
+      details: {
+        operation: "answer_milestone_subjective_uat",
+        ...result,
+      },
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: "text", text: `Error answering subjective UAT: ${message}` }],
+      details: { operation: "answer_milestone_subjective_uat", error: message },
+      isError: true,
+    };
   }
 }
 

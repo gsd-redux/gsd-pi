@@ -96,7 +96,7 @@ function executeAtFence(
   });
 }
 
-function makeBase(plannedUat = ""): string {
+function makeBase(plannedUat = "", adopted = true): string {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-milestone-validation-domain-"));
   tempDirs.add(basePath);
   const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
@@ -118,7 +118,7 @@ function makeBase(plannedUat = ""): string {
   });
   insertSlice({ id: "S01", milestoneId: "M001", status: "complete" });
   insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", status: "complete" });
-  executeAtFence("test.milestone.fixture", "fixture/milestone/adopt", (context) => {
+  if (adopted) executeAtFence("test.milestone.fixture", "fixture/milestone/adopt", (context) => {
     adoptOrTransitionLifecycle(context, {
       itemKind: "milestone",
       milestoneId: "M001",
@@ -223,6 +223,7 @@ test("Milestone validation commits one immutable receipt and exact replay adds n
     gateRuns: row("SELECT COUNT(*) AS count FROM gate_runs").count,
   };
   writeFileSync(committed.validationPath, "projection repair sentinel\n");
+  writeFileSync(join(basePath, "source.ts"), "export const source = 'drifted after validation';\n");
   const replayed = await handleValidateMilestone(
     validValidation,
     basePath,
@@ -265,6 +266,51 @@ test("Milestone validation commits one immutable receipt and exact replay adds n
     Number(operationsBefore) + 1,
     "one accepted public command must create exactly one Domain Operation",
   );
+});
+
+test("unadopted validation keeps legacy compatibility even with transport identity", async () => {
+  const basePath = makeBase("", false);
+  const result = await handleValidateMilestone(
+    validValidation,
+    basePath,
+    validationOptions("milestone-validate/public/unadopted"),
+  );
+
+  assert.ok(!("error" in result));
+  assert.equal(result.operationId, undefined);
+  assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.validate'`).count, 0);
+  assert.equal(row(`SELECT COUNT(*) AS count FROM assessments WHERE scope = 'milestone-validation'`).count, 1);
+  assert.match(readFileSync(result.validationPath, "utf8"), /verdict: pass/);
+});
+
+test("historical validation replay cannot replace the current compatibility projection", async () => {
+  const basePath = makeBase();
+  const firstKey = "milestone-validate/public/historical-first";
+  const first = await validate(basePath, firstKey);
+  assert.ok(!("error" in first));
+  const second = await validate(basePath, "milestone-validate/public/historical-second", {
+    verdict: "needs-attention",
+    verdictRationale: "The current validation needs more objective evidence.",
+  });
+  assert.ok(!("error" in second));
+  const currentProjection = readFileSync(second.validationPath, "utf8");
+  const currentAssessment = row(`
+    SELECT status, full_content, created_at FROM assessments
+    WHERE scope = 'milestone-validation'
+  `);
+
+  const replay = await validate(basePath, firstKey);
+
+  assert.ok(!("error" in replay));
+  assert.equal(replay.duplicate, true);
+  assert.equal(replay.current, false);
+  assert.equal(replay.superseded, true);
+  assert.equal(replay.stale, true);
+  assert.equal(readFileSync(second.validationPath, "utf8"), currentProjection);
+  assert.deepEqual(row(`
+    SELECT status, full_content, created_at FROM assessments
+    WHERE scope = 'milestone-validation'
+  `), currentAssessment);
 });
 
 test("Milestone validation binds current user acceptance and is immediately closeout-ready", async () => {
@@ -593,6 +639,61 @@ test("planned UAT passes only with source-bound structured browser evidence", as
     verdict: "pass",
     observation: "passed",
   });
+});
+
+test("browser-required Slice rejects unscoped UAT evidence", async () => {
+  const basePath = makeBase();
+  db().prepare(`UPDATE slices SET demo = 'Open the browser and verify the guided journey.' WHERE id = 'S01'`).run();
+  const evidence = {
+    verificationClass: "UAT" as const,
+    evidenceClass: "browser" as const,
+    commandOrTool: "browser acceptance journey",
+    workingDirectory: basePath,
+    startedAt: "2026-07-14T10:00:00.000Z",
+    endedAt: "2026-07-14T10:01:00.000Z",
+    testedSourceRevision: sourceRevision(basePath),
+    observation: "passed" as const,
+    durableOutputRef: "artifact://browser/acceptance-journey",
+    environment: { runner: "browser", route: "/acceptance" },
+    rationale: "The user-visible acceptance journey passed.",
+  };
+  const verificationClasses =
+    "| Class | Evidence | Verdict |\n| --- | --- | --- |\n| UAT | Browser journey | PASS |";
+
+  const unbound = await handleValidateMilestone({
+    ...validValidation,
+    verificationClasses,
+    verificationEvidence: [evidence],
+  }, basePath, { invocation: invocation("milestone-validate/public/unbound-browser") });
+  assert.ok("error" in unbound);
+  assert.match(unbound.error, /UAT|browser|required Slice|bound/i);
+});
+
+test("browser-required Slice accepts source-bound UAT evidence scoped to that Slice", async () => {
+  const boundBasePath = makeBase();
+  db().prepare(`UPDATE slices SET demo = 'Open the browser and verify the guided journey.' WHERE id = 'S01'`).run();
+  const evidence = {
+    verificationClass: "UAT" as const,
+    evidenceClass: "browser" as const,
+    commandOrTool: "browser acceptance journey",
+    workingDirectory: boundBasePath,
+    startedAt: "2026-07-14T10:00:00.000Z",
+    endedAt: "2026-07-14T10:01:00.000Z",
+    testedSourceRevision: sourceRevision(boundBasePath),
+    observation: "passed" as const,
+    durableOutputRef: "artifact://browser/acceptance-journey",
+    environment: { runner: "browser", route: "/acceptance" },
+    rationale: "The user-visible acceptance journey passed.",
+    sliceId: "S01",
+  };
+  const bound = await handleValidateMilestone({
+    ...validValidation,
+    verificationClasses:
+      "| Class | Evidence | Verdict |\n| --- | --- | --- |\n| UAT | Browser journey | PASS |",
+    verificationEvidence: [evidence],
+  }, boundBasePath, { invocation: invocation("milestone-validate/public/bound-browser") });
+  assert.ok(!("error" in bound));
+  assert.equal(bound.verdict, "pass");
 });
 
 test("planned UAT rejects structured evidence from an older source revision", async () => {

@@ -393,8 +393,8 @@ ORDER BY resumed.project_revision DESC;
 Run the Milestone capstone plus adjacent validation, recovery, transport,
 projection, worktree, and compatibility suites. UAT should execute the live
 runtime or browser path whenever automation can observe it; a human decision is
-reserved for subjective acceptance or unavailable authority/access. Close S06
-only when the database contains the exact operation/event/evidence lineage,
+reserved for subjective acceptance or unavailable authority/access. S06 remains
+open until the database contains the exact operation/event/evidence lineage,
 current Projection Work state, hosted-CI evidence, and passing UAT for the exact
 merged source. Record that post-merge run through the normal
 Attempt/Result/Verdict/Evidence path. Markdown status alone never satisfies
@@ -445,4 +445,5 @@ Before merging, also run `pnpm run verify:merge`; it includes the required build
 and full local merge-gate parity. For every new invariant, prove the
 corresponding test fails under a temporary sabotage, restore the source, and
 rerun the focused gate. After merge, rerun the capstone against the merged
-source revision and persist that exact evidence before closeout.
+source revision and persist that exact evidence; only that persisted
+merged-source receipt closes S06.

@@ -154,6 +154,17 @@ test("gsd_validate_milestone — validates complete structured verification evid
   );
 });
 
+test("milestone subjective UAT tools keep user identity out of model arguments", () => {
+  const prepare = getTool("gsd_prepare_milestone_subjective_uat");
+  const answer = getTool("gsd_answer_milestone_subjective_uat");
+  assert.ok(prepare, "subjective UAT preparation must be registered");
+  assert.ok(answer, "subjective UAT answer callback must be registered");
+  assert.equal(answer.parameters.properties.actorId, undefined);
+  assert.equal(answer.parameters.properties.actorType, undefined);
+  assert.ok(answer.parameters.properties.selectedOptionId);
+  assert.ok(answer.parameters.properties.verbatimResponse);
+});
+
 // ─── gsd_slice_complete: enrichment arrays must be optional ──────────────────
 
 test("gsd_slice_complete — enrichment arrays are optional", () => {

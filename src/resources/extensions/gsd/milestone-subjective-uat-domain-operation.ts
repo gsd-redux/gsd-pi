@@ -58,6 +58,27 @@ export interface PrepareMilestoneSubjectiveUatReceipt
 export interface AnswerMilestoneSubjectiveUatReceipt
   extends OperationReceipt, AnsweredMilestoneSubjectiveUat {}
 
+export function hasPendingMilestoneSubjectiveUat(milestoneId: string): boolean {
+  const row = getDb().prepare(`
+    SELECT 1
+    FROM workflow_open_questions question
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = question.lifecycle_id
+     AND lifecycle.project_id = question.project_id
+    JOIN workflow_interactions interaction
+      ON interaction.question_id = question.question_id
+     AND interaction.project_id = question.project_id
+     AND interaction.interaction_kind = 'subjective-uat'
+    WHERE lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND question.question_status = 'open'
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId });
+  return row !== undefined;
+}
+
 function requireNonBlank(value: string, field: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) throw new Error(`${field} must not be blank`);

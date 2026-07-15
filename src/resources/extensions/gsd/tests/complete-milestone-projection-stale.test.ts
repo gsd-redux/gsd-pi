@@ -180,7 +180,7 @@ test("adopted complete-milestone commits through projection obstruction and repa
     clearPathCache();
     clearParseCache();
     closeDatabase();
-    rmSync(basePath, { recursive: true, force: true });
+    rmSync(basePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
   });
   await seedAdoptedMilestone(basePath);
 
@@ -211,6 +211,7 @@ test("adopted complete-milestone commits through projection obstruction and repa
   assert.deepEqual(completionLineage(), { operations: 1, events: 1 });
 
   rmSync(statePath, { recursive: true, force: true });
+  writeFileSync(join(basePath, "source.ts"), "export const source = 'drifted after completion';\n");
   const repaired = await handleCompleteMilestone(
     completionParams(),
     basePath,

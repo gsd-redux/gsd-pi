@@ -255,6 +255,23 @@ test("one validation command atomically records criteria, Attempt, Result, evide
   `).get({ ":operation_id": committed.operationId })?.["count"], 1);
 });
 
+test("command evidence requires an exit code and cannot pass with a failing exit", () => {
+  setup();
+  const missingExitCode = combinedValidationInput("milestone-validation/command/missing-exit");
+  delete missingExitCode.criteria[0]!.evidence[0]!.exitCode;
+  assert.throws(
+    () => validateMilestone(missingExitCode),
+    /command evidence requires an exit code/i,
+  );
+
+  const failedExit = combinedValidationInput("milestone-validation/command/failed-exit");
+  failedExit.criteria[0]!.evidence[0]!.exitCode = 1;
+  assert.throws(
+    () => validateMilestone(failedExit),
+    /passing command evidence requires exit code 0/i,
+  );
+});
+
 test("the current schema preserves the v42 validation upgrade from a genuine v41 database", () => {
   setup();
   assert.ok(basePath);

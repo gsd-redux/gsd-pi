@@ -36,11 +36,14 @@ import {
 } from "../milestone-validation-evidence.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
+  isCurrentMilestoneValidationOperation,
   readMilestoneValidationAggregateTimestamp,
+  readMilestoneValidationReplaySource,
   validateMilestone,
   type MilestoneValidationEvidenceInput,
   type ValidateMilestoneReceipt,
 } from "../milestone-validation-domain-operation.js";
+import { isMilestoneLifecycleAdopted } from "../db/milestone-closeout-readiness.js";
 import {
   captureVerificationSourceSnapshot,
   confirmVerificationSourceSnapshot,
@@ -53,6 +56,7 @@ export interface MilestoneVerificationEvidence extends MilestoneValidationEviden
   verificationClass: MilestoneVerificationClass;
   testedSourceRevision: string;
   rationale: string;
+  sliceId?: string;
 }
 
 export interface ValidateMilestoneParams {
@@ -79,6 +83,8 @@ export interface ValidateMilestoneResult {
   resultId?: string;
   duplicate?: boolean;
   stale?: boolean;
+  current?: boolean;
+  superseded?: boolean;
 }
 
 export interface ValidateMilestoneOptions {
@@ -213,38 +219,51 @@ function recordCanonicalValidation(input: {
     }
   }
 
-  const preferences = loadEffectiveGSDPreferences()?.preferences;
-  const resolvedTargets = resolveVerificationRepositoryTargets(
-    input.artifactBasePath,
-    preferences,
-    null,
-    null,
-  );
-  if (resolvedTargets.missingRepositoryIds.length > 0) {
-    return {
-      error: `verification source repositories are missing: ${resolvedTargets.missingRepositoryIds.join(", ")}`,
-    };
+  const replaySource = readMilestoneValidationReplaySource(input.invocation.idempotencyKey);
+  let sourceRevision: string;
+  let sourceTargets: Array<{ id: string; revision: string }>;
+  if (replaySource) {
+    sourceRevision = replaySource.aggregateRevision;
+    sourceTargets = replaySource.targets;
+  } else {
+    const preferences = loadEffectiveGSDPreferences()?.preferences;
+    const resolvedTargets = resolveVerificationRepositoryTargets(
+      input.artifactBasePath,
+      preferences,
+      null,
+      null,
+    );
+    if (resolvedTargets.missingRepositoryIds.length > 0) {
+      return {
+        error: `verification source repositories are missing: ${resolvedTargets.missingRepositoryIds.join(", ")}`,
+      };
+    }
+    const targets = resolvedTargets.repositories.map((repository) => ({
+      id: repository.id,
+      cwd: repository.root,
+    }));
+    const source = captureVerificationSourceSnapshot(targets);
+    if (!source.ok) return { error: source.error };
+    const confirmed = confirmVerificationSourceSnapshot(targets, source.snapshot);
+    if (!confirmed.ok) return { error: confirmed.error };
+    sourceRevision = source.snapshot.aggregateRevision;
+    sourceTargets = source.snapshot.targets.map((target) => ({
+      id: target.targetId,
+      revision: target.revision,
+    }));
   }
-  const targets = resolvedTargets.repositories.map((repository) => ({
-    id: repository.id,
-    cwd: repository.root,
-  }));
-  const source = captureVerificationSourceSnapshot(targets);
-  if (!source.ok) return { error: source.error };
   const staleEvidence = (input.params.verificationEvidence ?? []).find(
-    (evidence) => evidence.testedSourceRevision !== source.snapshot.aggregateRevision,
+    (evidence) => evidence.testedSourceRevision !== sourceRevision,
   );
   if (staleEvidence) {
     return {
       error:
         `${staleEvidence.verificationClass} verification evidence was tested against ` +
         `${staleEvidence.testedSourceRevision}, but the current source revision is ` +
-        `${source.snapshot.aggregateRevision}`,
+        `${sourceRevision}`,
     };
   }
 
-  const confirmed = confirmVerificationSourceSnapshot(targets, source.snapshot);
-  if (!confirmed.ok) return { error: confirmed.error };
   const canonical = canonicalOutcome(input.params.verdict);
   const classResults = input.requiredClasses.map((className) => {
     const evidence = evidenceByClass.get(className.toLowerCase())!;
@@ -258,8 +277,15 @@ function recordCanonicalValidation(input: {
         verificationClass: _verificationClass,
         testedSourceRevision: _testedSourceRevision,
         rationale: _rationale,
+        sliceId,
         ...entry
-      }) => entry),
+      }) => ({
+        ...entry,
+        environment: {
+          ...entry.environment,
+          ...(sliceId ? { sliceId } : {}),
+        },
+      })),
     };
   });
   const observedAt = readMilestoneValidationAggregateTimestamp(
@@ -268,7 +294,7 @@ function recordCanonicalValidation(input: {
   return validateMilestone({
     invocation: input.invocation,
     milestoneId: input.params.milestoneId,
-    testedSourceRevision: source.snapshot.aggregateRevision,
+    testedSourceRevision: sourceRevision,
     policyId: "milestone-validation",
     policyVersion: "1",
     verdict: canonical.verdict,
@@ -281,11 +307,8 @@ function recordCanonicalValidation(input: {
       validationPath: input.validationPath,
       verdict: input.params.verdict,
       remediationRound: input.params.remediationRound,
-      testedSourceRevision: source.snapshot.aggregateRevision,
-      sourceTargets: source.snapshot.targets.map((target) => ({
-        id: target.targetId,
-        revision: target.revision,
-      })),
+      testedSourceRevision: sourceRevision,
+      sourceTargets,
     },
     criteria: [
       {
@@ -304,10 +327,7 @@ function recordCanonicalValidation(input: {
           durableOutputRef: `db://milestone-validation/${input.invocation.idempotencyKey}`,
           environment: {
             policy: "milestone-validation",
-            sourceTargets: source.snapshot.targets.map((target) => ({
-              id: target.targetId,
-              revision: target.revision,
-            })),
+            sourceTargets,
           },
         }],
       },
@@ -327,9 +347,11 @@ export async function handleValidateMilestone(
   if (!isValidMilestoneVerdict(params.verdict)) {
     return { error: `verdict must be one of: ${VALIDATION_VERDICTS.join(", ")}` };
   }
+  const adoptedLifecycle = isMilestoneLifecycleAdopted(params.milestoneId);
+  const canonicalInvocation = adoptedLifecycle ? opts?.invocation : undefined;
   const requiredClasses = getRequiredVerificationClasses(params.milestoneId);
   if (
-    opts?.invocation &&
+    canonicalInvocation &&
     browserEvidenceRequired(params) &&
     !requiredClasses.includes("UAT")
   ) {
@@ -358,8 +380,13 @@ export async function handleValidateMilestone(
   const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, params.milestoneId);
   const shouldApplyBrowserEvidenceGate = !opts?.skipBrowserEvidenceGate &&
     await browserEvidenceGateRequiresAttention(params, artifactBasePath, {
-      structuredOnly: Boolean(opts?.invocation),
+      structuredOnly: Boolean(canonicalInvocation),
     });
+  if (canonicalInvocation && shouldApplyBrowserEvidenceGate) {
+    return {
+      error: "browser-required acceptance needs passed UAT browser/runtime evidence bound to every browser-required Slice",
+    };
+  }
   const effectiveParams = shouldApplyBrowserEvidenceGate
     ? applyBrowserEvidenceGate(params)
     : params;
@@ -376,17 +403,35 @@ export async function handleValidateMilestone(
     getMilestone(effectiveParams.milestoneId)?.title,
   );
 
-  const canonical = opts?.invocation
+  const canonical = canonicalInvocation
     ? recordCanonicalValidation({
         params: effectiveParams,
         validationMd,
         validationPath,
         artifactBasePath,
         requiredClasses,
-        invocation: opts.invocation,
+        invocation: canonicalInvocation,
       })
     : undefined;
   if (canonical && "error" in canonical) return canonical;
+  const canonicalCurrent = canonical
+    ? isCurrentMilestoneValidationOperation(canonical.operationId, effectiveParams.milestoneId)
+    : true;
+  if (canonical?.status === "replayed" && !canonicalCurrent) {
+    return {
+      milestoneId: effectiveParams.milestoneId,
+      verdict: effectiveParams.verdict,
+      validationPath,
+      operationId: canonical.operationId,
+      resultingRevision: canonical.resultingRevision,
+      attemptId: canonical.attemptId,
+      resultId: canonical.resultId,
+      duplicate: true,
+      stale: true,
+      current: false,
+      superseded: true,
+    };
+  }
 
   // ── DB write first — matches complete-task/complete-slice pattern ───
   // Write DB before disk so a crash between the two leaves a recoverable
@@ -397,28 +442,30 @@ export async function handleValidateMilestone(
   const slices = getMilestoneSlices(effectiveParams.milestoneId);
   const gateSliceId = slices.length > 0 ? slices[0].id : "_milestone";
 
-  transaction(() => {
-    insertAssessment({
-      path: validationPath,
-      milestoneId: effectiveParams.milestoneId,
-      sliceId: null,
-      taskId: null,
-      status: effectiveParams.verdict,
-      scope: 'milestone-validation',
-      fullContent: validationMd,
-      createdAt: validatedAt,
-    });
+  if (canonical?.status !== "replayed") {
+    transaction(() => {
+      insertAssessment({
+        path: validationPath,
+        milestoneId: effectiveParams.milestoneId,
+        sliceId: null,
+        taskId: null,
+        status: effectiveParams.verdict,
+        scope: 'milestone-validation',
+        fullContent: validationMd,
+        createdAt: validatedAt,
+      });
 
-    // #2945 Bug 4: persist quality_gates records alongside the assessment.
-    // Previously only the assessment was written, leaving M002+ milestones
-    // with zero quality_gate records despite passing validation.
-    insertMilestoneValidationGates(
-      effectiveParams.milestoneId,
-      gateSliceId,
-      effectiveParams.verdict,
-      validatedAt,
-    );
-  });
+      // #2945 Bug 4: persist quality_gates records alongside the assessment.
+      // Previously only the assessment was written, leaving M002+ milestones
+      // with zero quality_gate records despite passing validation.
+      insertMilestoneValidationGates(
+        effectiveParams.milestoneId,
+        gateSliceId,
+        effectiveParams.verdict,
+        validatedAt,
+      );
+    });
+  }
 
   // ── Filesystem render (outside transaction) ────────────────────────────
   let projectionStale = false;
@@ -500,6 +547,7 @@ export async function handleValidateMilestone(
           attemptId: canonical.attemptId,
           resultId: canonical.resultId,
           ...(canonical.status === "replayed" ? { duplicate: true } : {}),
+          current: canonicalCurrent,
         }
       : {}),
     ...(projectionStale ? { stale: true } : {}),

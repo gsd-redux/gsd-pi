@@ -18,9 +18,11 @@ export interface MilestoneValidationEvidenceParams {
   verdictRationale: string;
   remediationPlan?: string;
   verificationEvidence?: Array<{
+    verificationClass?: string;
     evidenceClass?: string;
     commandOrTool?: string;
     observation?: string;
+    sliceId?: string;
   }>;
 }
 
@@ -53,7 +55,8 @@ export async function browserEvidenceGateRequiresAttention(
   if (params.verdict !== "pass") return false;
   if (!browserEvidenceRequired(params)) return false;
   if (options?.structuredOnly) {
-    return !(params.verificationEvidence ?? []).some((evidence) =>
+    const qualifyingEvidence = (params.verificationEvidence ?? []).filter((evidence) =>
+      evidence.verificationClass === "UAT" &&
       evidence.observation === "passed" && (
         evidence.evidenceClass === "browser" ||
         (
@@ -61,6 +64,13 @@ export async function browserEvidenceGateRequiresAttention(
           /\bgsd_uat_exec\b/i.test(evidence.commandOrTool ?? "")
         )
       )
+    );
+    const browserRequiringSlices = getMilestoneSlices(params.milestoneId).filter((slice) =>
+      hasBrowserRequiredText(compactTextParts([slice.demo, slice.goal, slice.success_criteria])),
+    );
+    if (browserRequiringSlices.length === 0) return qualifyingEvidence.length === 0;
+    return browserRequiringSlices.some((slice) =>
+      !qualifyingEvidence.some((evidence) => evidence.sliceId === slice.id)
     );
   }
 

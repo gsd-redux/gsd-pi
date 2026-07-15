@@ -37,6 +37,7 @@ import type { ExecutionInvocation } from "../execution-invocation.js";
 import {
   completeMilestone,
   isCurrentMilestoneCompletionOperation,
+  readMilestoneCompletionReplaySourceRevision,
   type MilestoneCompletionCloseout,
   type MilestoneCompletionReceipt,
 } from "../milestone-lifecycle-domain-operation.js";
@@ -210,23 +211,30 @@ export async function handleCompleteMilestone(
 
   let currentSourceRevision: string | undefined;
   if (adoptedLifecycle) {
-    const targets = resolveVerificationRepositoryTargets(
-      artifactBasePath,
-      loadEffectiveGSDPreferences()?.preferences,
-      null,
-      null,
-    );
-    if (targets.missingRepositoryIds.length > 0) {
-      return {
-        error: `verification source repositories are missing: ${targets.missingRepositoryIds.join(", ")}`,
-      };
+    const replaySourceRevision = invocation
+      ? readMilestoneCompletionReplaySourceRevision(invocation.idempotencyKey)
+      : null;
+    if (replaySourceRevision) {
+      currentSourceRevision = replaySourceRevision;
+    } else {
+      const targets = resolveVerificationRepositoryTargets(
+        artifactBasePath,
+        loadEffectiveGSDPreferences()?.preferences,
+        null,
+        null,
+      );
+      if (targets.missingRepositoryIds.length > 0) {
+        return {
+          error: `verification source repositories are missing: ${targets.missingRepositoryIds.join(", ")}`,
+        };
+      }
+      const source = captureVerificationSourceSnapshot(targets.repositories.map((repository) => ({
+        id: repository.id,
+        cwd: repository.root,
+      })));
+      if (!source.ok) return { error: source.error };
+      currentSourceRevision = source.snapshot.aggregateRevision;
     }
-    const source = captureVerificationSourceSnapshot(targets.repositories.map((repository) => ({
-      id: repository.id,
-      cwd: repository.root,
-    })));
-    if (!source.ok) return { error: source.error };
-    currentSourceRevision = source.snapshot.aggregateRevision;
   }
 
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───

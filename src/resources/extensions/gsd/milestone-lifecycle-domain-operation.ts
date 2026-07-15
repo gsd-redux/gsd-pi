@@ -307,6 +307,28 @@ export function isCurrentMilestoneCompletionOperation(
   return currentMilestoneCompletionHead(milestoneId)?.operationId === operationId;
 }
 
+export function readMilestoneCompletionReplaySourceRevision(
+  idempotencyKey: string,
+): string | null {
+  const row = getDb().prepare(`
+    SELECT json_extract(validation.payload_json, '$.testedSourceRevision') AS source_revision
+    FROM workflow_operations operation
+    JOIN workflow_domain_events completed
+      ON completed.operation_id = operation.operation_id
+     AND completed.project_id = operation.project_id
+     AND completed.event_type = 'milestone.completed'
+    JOIN workflow_domain_events validation
+      ON validation.event_id = json_extract(completed.payload_json, '$.validationEventId')
+     AND validation.project_id = completed.project_id
+     AND validation.event_type = 'milestone.validation.recorded'
+    WHERE operation.operation_type = 'milestone.complete'
+      AND operation.idempotency_key = :idempotency_key
+  `).get({ ":idempotency_key": idempotencyKey }) as Record<string, unknown> | undefined;
+  return typeof row?.["source_revision"] === "string"
+    ? row["source_revision"] as string
+    : null;
+}
+
 export function isCurrentMilestoneReopenOperation(
   operationId: string,
   milestoneId: string,

@@ -245,6 +245,7 @@ type WorkflowToolExecutors = {
       verificationClasses?: string;
       verificationEvidence?: Array<{
         verificationClass: "Contract" | "Integration" | "Operational" | "UAT";
+        sliceId?: string;
         evidenceClass: "command" | "runtime" | "browser" | "artifact";
         rationale: string;
         commandOrTool: string;
@@ -262,6 +263,36 @@ type WorkflowToolExecutors = {
     },
     basePath?: string,
     opts?: { invocation?: ExecutionInvocation },
+  ) => Promise<unknown>;
+  executePrepareMilestoneSubjectiveUat: (
+    params: {
+      milestoneId: string;
+      criterionKey: string;
+      description: string;
+      focusedPrompt: string;
+      recommendedDisposition: "accepted" | "rejected";
+      recommendationRationale: string;
+      recommendationEvidence: string;
+      testedSourceRevision: string;
+      recommendationConfidence?: number;
+      requirementId?: string;
+      required?: boolean;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
+  ) => Promise<unknown>;
+  executeAnswerMilestoneSubjectiveUat: (
+    params: {
+      criterionId: string;
+      questionId: string;
+      interactionId: string;
+      selectedOptionId: string;
+      verbatimResponse: string;
+      rationale: string;
+      testedSourceRevision: string;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
   ) => Promise<unknown>;
   executeReassessRoadmap: (
     params: {
@@ -1042,6 +1073,21 @@ function mcpWorkflowExecutionInvocation(
   return mcpInvocation(canonicalToolName, "Workflow execution mutation", extra);
 }
 
+function mcpUserResponseInvocation(
+  canonicalToolName: string,
+  extra?: WorkflowMcpRequestExtra,
+): ExecutionInvocation {
+  const actorId = extra?.sessionId?.trim();
+  if (!actorId) {
+    throw new Error(`${canonicalToolName} requires an authenticated MCP session identity`);
+  }
+  return {
+    ...mcpWorkflowExecutionInvocation(canonicalToolName, extra),
+    actorType: "user",
+    actorId,
+  };
+}
+
 export const WORKFLOW_TOOL_NAMES = CONTRACT_WORKFLOW_TOOL_NAMES;
 export const CANONICAL_WORKFLOW_TOOL_NAMES = CONTRACT_CANONICAL_WORKFLOW_TOOL_NAMES;
 export const WORKFLOW_TOOL_ALIAS_NAMES = CONTRACT_WORKFLOW_TOOL_ALIAS_NAMES;
@@ -1356,6 +1402,35 @@ async function handleValidateMilestone(
       executeValidateMilestone(params, projectDir, { invocation })
     ),
   );
+}
+
+async function handlePrepareMilestoneSubjectiveUat(
+  projectDir: string,
+  args: z.infer<typeof prepareMilestoneSubjectiveUatSchema>,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  await enforceWorkflowWriteGate(
+    "gsd_prepare_milestone_subjective_uat",
+    projectDir,
+    args.milestoneId,
+  );
+  const { executePrepareMilestoneSubjectiveUat } = await getWorkflowToolExecutors();
+  const { projectDir: _projectDir, ...params } = args;
+  return adaptExecutorResult(await runSerializedWorkflowOperation(() =>
+    executePrepareMilestoneSubjectiveUat(params, projectDir, invocation)
+  ));
+}
+
+async function handleAnswerMilestoneSubjectiveUat(
+  projectDir: string,
+  args: z.infer<typeof answerMilestoneSubjectiveUatSchema>,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  const { executeAnswerMilestoneSubjectiveUat } = await getWorkflowToolExecutors();
+  const { projectDir: _projectDir, ...params } = args;
+  return adaptExecutorResult(await runSerializedWorkflowOperation(() =>
+    executeAnswerMilestoneSubjectiveUat(params, projectDir, invocation)
+  ));
 }
 
 async function handleReassessRoadmap(
@@ -1807,6 +1882,7 @@ const validateMilestoneParams = {
   verificationClasses: z.string().optional().describe("Complete markdown table with one canonical row for every applicable planned verification class: Contract, Integration, Operational, and UAT"),
   verificationEvidence: z.array(z.object({
     verificationClass: z.enum(["Contract", "Integration", "Operational", "UAT"]),
+    sliceId: nonEmptyString("sliceId").optional(),
     evidenceClass: z.enum(["command", "runtime", "browser", "artifact"]),
     rationale: nonEmptyString("rationale"),
     commandOrTool: nonEmptyString("commandOrTool"),
@@ -1826,6 +1902,34 @@ const validateMilestoneParams = {
   remediationPlan: z.string().optional(),
 };
 const validateMilestoneSchema = z.object(validateMilestoneParams);
+
+const prepareMilestoneSubjectiveUatParams = {
+  projectDir: projectDirParam,
+  milestoneId: nonEmptyString("milestoneId"),
+  criterionKey: nonEmptyString("criterionKey"),
+  description: nonEmptyString("description"),
+  focusedPrompt: nonEmptyString("focusedPrompt"),
+  recommendedDisposition: z.enum(["accepted", "rejected"]),
+  recommendationRationale: nonEmptyString("recommendationRationale"),
+  recommendationEvidence: nonEmptyString("recommendationEvidence"),
+  testedSourceRevision: nonEmptyString("testedSourceRevision"),
+  recommendationConfidence: z.number().min(0).max(1).optional(),
+  requirementId: nonEmptyString("requirementId").optional(),
+  required: z.boolean().optional(),
+};
+const prepareMilestoneSubjectiveUatSchema = z.object(prepareMilestoneSubjectiveUatParams);
+
+const answerMilestoneSubjectiveUatParams = {
+  projectDir: projectDirParam,
+  criterionId: nonEmptyString("criterionId"),
+  questionId: nonEmptyString("questionId"),
+  interactionId: nonEmptyString("interactionId"),
+  selectedOptionId: nonEmptyString("selectedOptionId"),
+  verbatimResponse: nonEmptyString("verbatimResponse"),
+  rationale: nonEmptyString("rationale"),
+  testedSourceRevision: nonEmptyString("testedSourceRevision"),
+};
+const answerMilestoneSubjectiveUatSchema = z.object(answerMilestoneSubjectiveUatParams);
 
 const roadmapSliceChangeSchema = z.object({
   sliceId: nonEmptyString("sliceId"),
@@ -2787,6 +2891,34 @@ export function registerWorkflowTools(
         parsed.projectDir,
         parsed,
         mcpWorkflowExecutionInvocation("gsd_validate_milestone", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_prepare_milestone_subjective_uat",
+    "Prepare a source-bound subjective Milestone UAT question with a recommendation for a real user decision.",
+    prepareMilestoneSubjectiveUatParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(prepareMilestoneSubjectiveUatSchema, args);
+      return handlePrepareMilestoneSubjectiveUat(
+        parsed.projectDir,
+        parsed,
+        mcpWorkflowExecutionInvocation("gsd_prepare_milestone_subjective_uat", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_answer_milestone_subjective_uat",
+    "Record the user's actual response to a prepared subjective Milestone UAT question using authenticated MCP session identity.",
+    answerMilestoneSubjectiveUatParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(answerMilestoneSubjectiveUatSchema, args);
+      return handleAnswerMilestoneSubjectiveUat(
+        parsed.projectDir,
+        parsed,
+        mcpUserResponseInvocation("gsd_answer_milestone_subjective_uat", extra),
       );
     },
   );

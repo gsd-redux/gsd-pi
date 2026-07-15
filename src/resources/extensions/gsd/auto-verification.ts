@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { gsdProjectionRoot, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "./paths.js";
 import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdict.js";
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
+import { hasPendingMilestoneSubjectiveUat } from "./milestone-subjective-uat-domain-operation.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices } from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
@@ -472,6 +473,20 @@ async function runValidateMilestonePostCheck(
 
   const verdict = await resolveMilestoneValidationVerdict(s.basePath, mid);
   if (!verdict) {
+    if (isMilestoneLifecycleAdopted(mid) && hasPendingMilestoneSubjectiveUat(mid)) {
+      await persistMilestoneValidationGate(
+        "manual-attention",
+        "manual-attention",
+        "subjective UAT requires an authenticated user response",
+        `Milestone ${mid} has an open subjective UAT question`,
+        mid,
+      );
+      await pauseAuto(ctx, pi, {
+        message: `Milestone ${mid} is waiting for a genuine subjective UAT decision.`,
+        category: "unknown",
+      });
+      return "pause";
+    }
     if (await reassessmentInvalidatedValidation()) {
       clearValidationRetry();
       return "continue";
@@ -482,6 +497,18 @@ async function runValidateMilestonePostCheck(
   }
   if (verdict === "needs-attention") {
     const canonicalValidation = isMilestoneLifecycleAdopted(mid);
+    if (canonicalValidation) {
+      await persistMilestoneValidationGate(
+        "retry",
+        "verification",
+        "canonical objective validation needs fresh agent-owned verification",
+        `Milestone ${mid} validation returned needs-attention`,
+        mid,
+      );
+      return setToolFailureRetry(
+        `Milestone ${mid} canonical validation needs fresh objective evidence. Repair or rerun verification, then call gsd_validate_milestone again.`,
+      );
+    }
     ctx.ui.notify(
       `Milestone ${mid} validation returned verdict=needs-attention. Pausing for human review.`,
       "error",
@@ -491,10 +518,8 @@ async function runValidateMilestonePostCheck(
         `validate-milestone: pausing — verdict=needs-attention for ${mid}.`,
         `Review details with /gsd status.`,
         `After fixing the issue, run /gsd validate-milestone.`,
-        canonicalValidation
-          ? `Canonical validation requires current structured evidence and cannot be manually overridden.`
-          : `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
-        ...(canonicalValidation ? [] : [`To defer it, run /gsd park ${mid}.`]),
+        `To accept the finding, run /gsd verdict pass --rationale "why this is okay".`,
+        `To defer it, run /gsd park ${mid}.`,
         "",
       ].join("\n"),
     );
@@ -537,6 +562,19 @@ async function runValidateMilestonePostCheck(
       mid,
     );
     return "continue";
+  }
+
+  if (isMilestoneLifecycleAdopted(mid)) {
+    await persistMilestoneValidationGate(
+      "retry",
+      "verification",
+      "canonical remediation remains agent-owned until remediation work is queued",
+      `No incomplete slices found for ${mid} while verdict=needs-remediation`,
+      mid,
+    );
+    return setToolFailureRetry(
+      `Milestone ${mid} needs remediation. Call gsd_reassess_roadmap to add remediation slices, then re-run validation.`,
+    );
   }
 
   ctx.ui.notify(

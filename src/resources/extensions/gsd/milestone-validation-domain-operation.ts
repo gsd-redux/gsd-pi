@@ -92,6 +92,11 @@ export interface ValidateMilestoneReceipt extends OperationReceipt {
   verdicts: InsertedMilestoneValidationVerdict[];
 }
 
+export interface MilestoneValidationReplaySource {
+  aggregateRevision: string;
+  targets: Array<{ id: string; revision: string }>;
+}
+
 function requireNonBlank(value: string, field: string): string {
   const normalized = value.trim();
   if (normalized.length === 0) throw new Error(`${field} must not be blank`);
@@ -266,6 +271,75 @@ export function readMilestoneValidationAggregateTimestamp(
     LIMIT 1
   `).get({ ":idempotency_key": idempotencyKey }) as Record<string, unknown> | undefined;
   return row ? String(row["started_at"]) : null;
+}
+
+export function readMilestoneValidationReplaySource(
+  idempotencyKey: string,
+): MilestoneValidationReplaySource | null {
+  const row = getDb().prepare(`
+    SELECT event.payload_json, result.output_json
+    FROM workflow_operations operation
+    JOIN workflow_domain_events event
+      ON event.operation_id = operation.operation_id
+     AND event.project_id = operation.project_id
+     AND event.event_type = 'milestone.validation.recorded'
+    JOIN workflow_attempt_results result
+      ON result.result_id = json_extract(event.payload_json, '$.resultId')
+     AND result.project_id = event.project_id
+    WHERE operation.operation_type = 'milestone.validate'
+      AND operation.idempotency_key = :idempotency_key
+  `).get({ ":idempotency_key": idempotencyKey }) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const event = JSON.parse(String(row["payload_json"])) as Record<string, unknown>;
+  const output = JSON.parse(String(row["output_json"])) as Record<string, unknown>;
+  const aggregateRevision = event["testedSourceRevision"];
+  const targets = output["sourceTargets"];
+  if (typeof aggregateRevision !== "string" || !Array.isArray(targets)) {
+    throw new Error("Milestone validation replay source binding is invalid");
+  }
+  const normalizedTargets = targets.map((target) => {
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new Error("Milestone validation replay source target is invalid");
+    }
+    const value = target as Record<string, unknown>;
+    if (typeof value["id"] !== "string" || typeof value["revision"] !== "string") {
+      throw new Error("Milestone validation replay source target is invalid");
+    }
+    return { id: value["id"], revision: value["revision"] };
+  });
+  return { aggregateRevision, targets: normalizedTargets };
+}
+
+export function isCurrentMilestoneValidationOperation(
+  operationId: string,
+  milestoneId: string,
+): boolean {
+  const row = getDb().prepare(`
+    SELECT event.operation_id,
+           EXISTS (
+             SELECT 1
+             FROM workflow_operations superseding_operation
+             JOIN workflow_domain_events superseding_event
+               ON superseding_event.operation_id = superseding_operation.operation_id
+              AND superseding_event.project_id = superseding_operation.project_id
+             WHERE superseding_operation.operation_type = 'milestone.reopen'
+               AND superseding_operation.resulting_revision > event.project_revision
+               AND superseding_event.event_type = 'milestone.reopened'
+               AND superseding_event.entity_type = 'milestone'
+               AND superseding_event.entity_id = event.entity_id
+           ) AS reopened
+    FROM workflow_domain_events event
+    JOIN workflow_operations operation
+      ON operation.operation_id = event.operation_id
+     AND operation.project_id = event.project_id
+    WHERE event.event_type = 'milestone.validation.recorded'
+      AND event.entity_type = 'milestone'
+      AND event.entity_id = :milestone_id
+      AND operation.operation_type = 'milestone.validate'
+    ORDER BY event.project_revision DESC, event.event_index DESC, event.event_id DESC
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId }) as Record<string, unknown> | undefined;
+  return row?.["operation_id"] === operationId && row["reopened"] === 0;
 }
 
 function currentRequiredSubjectiveProofs(

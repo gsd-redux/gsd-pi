@@ -521,6 +521,14 @@ function validateEvidence(
     if (Object.keys(evidence.environment).length === 0) {
       throw new Error("evidence environment must not be empty");
     }
+    if (evidence.evidenceClass === "command") {
+      if (evidence.exitCode === undefined) {
+        throw new Error("command evidence requires an exit code");
+      }
+      if (evidence.observation === "passed" && evidence.exitCode !== 0) {
+        throw new Error("passing command evidence requires exit code 0");
+      }
+    }
   }
   const observations = result.evidence.map((evidence) => evidence.observation);
   if (result.verdict === "pass" && observations.some((observation) => observation !== "passed")) {
