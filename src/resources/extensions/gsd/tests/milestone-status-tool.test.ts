@@ -229,10 +229,10 @@ test("gsd_milestone_status handles missing DB gracefully", async () => {
       .map((line) => JSON.parse(line));
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "lifecycle-shadow-observation-loss");
-    assert.equal(events[0].payload.observationLossAccounting.lossCount, 2);
+    assert.equal(events[0].payload.observationLossAccounting.lossCount, 3);
     assert.deepEqual(
       events[0].payload.observationLossAccounting.causes.map((cause: { reason: string }) => cause.reason),
-      ["shadow_query_failed", "primary_sink_failed"],
+      ["context_resolution_failed", "shadow_query_failed", "primary_sink_failed"],
     );
   } finally {
     closeDatabase();
