@@ -36,7 +36,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "changelog", desc: "Show categorized release notes" },
   { cmd: "triage", desc: "Manually trigger triage of pending captures" },
   { cmd: "dispatch", desc: "Dispatch a specific phase directly" },
-  { cmd: "verdict", desc: "Override the recorded milestone validation verdict (pass|needs-attention|needs-remediation)" },
+  { cmd: "verdict", desc: "Override an unadopted compatibility milestone validation verdict" },
   { cmd: "history", desc: "View execution history" },
   { cmd: "undo", desc: "Revert last completed unit" },
   { cmd: "undo-task", desc: "Reset a specific task's completion state (DB + markdown)" },
@@ -283,9 +283,9 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "replan", desc: "Replan the current slice" },
   ],
   verdict: [
-    { cmd: "pass", desc: "Override the milestone validation verdict to pass" },
-    { cmd: "needs-attention", desc: "Override the verdict to needs-attention (requires --rationale)" },
-    { cmd: "needs-remediation", desc: "Override the verdict to needs-remediation (requires --rationale)" },
+    { cmd: "pass", desc: "Override an unadopted verdict to pass" },
+    { cmd: "needs-attention", desc: "Override an unadopted verdict to needs-attention (requires --rationale)" },
+    { cmd: "needs-remediation", desc: "Override an unadopted verdict to needs-remediation (requires --rationale)" },
   ],
   rate: [
     { cmd: "over", desc: "Model was overqualified for this task" },

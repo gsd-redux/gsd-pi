@@ -247,7 +247,7 @@ export async function evaluateCompleteMilestoneDispatch(
       if (verdict !== "pass") {
         return {
           action: "stop",
-          reason: `Cannot complete milestone ${mid}: VALIDATION verdict is "${verdict}". Address the validation findings and re-run validation, or run \`/gsd verdict pass --rationale "..."\` to override.`,
+          reason: `Cannot complete milestone ${mid}: VALIDATION verdict is "${verdict}". Address the findings and re-run validation. Only an unadopted compatibility milestone can use \`/gsd verdict pass --rationale "..."\` to override.`,
           level: "warning",
         };
       }

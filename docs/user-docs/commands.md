@@ -25,7 +25,7 @@
 | `/gsd debug continue <slug>` | Resume an existing debug session slug |
 | `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> | <issue text>]`) |
 | `/gsd dispatch` | Dispatch a specific phase directly (research, plan, execute, complete, validate, reassess, uat, replan) |
-| `/gsd verdict <pass\|needs-attention\|needs-remediation>` | Override the recorded milestone validation verdict with an explicit rationale |
+| `/gsd verdict <pass\|needs-attention\|needs-remediation>` | Override an unadopted compatibility milestone's recorded validation verdict with an explicit rationale; adopted milestones must rerun canonical validation with current evidence |
 | `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
 | `/gsd usage` | Show current LLM context-window usage and session token totals |
 | `/gsd session-report` | Show session cost, tokens, and work summary (`--json`, `--save`) |

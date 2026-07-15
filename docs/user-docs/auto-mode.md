@@ -26,13 +26,13 @@ When progressive planning is enabled, GSD fully plans the first slice and may le
 
 ### Idempotent Milestone Completion
 
-Milestone completion is safe to retry. If a `complete-milestone` unit is redispatched after the database already marks the milestone as closed, GSD treats the call as successful instead of returning an error. The existing summary projection is left intact, no duplicate completion event is appended, and the tool response includes `alreadyComplete: true` in its details so operators and integrations can distinguish a retry from the first completion.
+Milestone completion is safe to retry with the same private invocation identity and unchanged request. For an adopted Milestone, an exact retry returns the stored database receipt without appending another completion event. A retry of the current receipt may repair its summary projection; a historical receipt reports `superseded: true` and cannot overwrite a newer lifecycle projection. Reusing an identity with a changed request fails closed. Unadopted compatibility Milestones retain the legacy `alreadyComplete: true` redispatch behavior.
 
 The auto loop applies the same idempotency at terminal closeout: if another session is already stopping for completion, or the database already shows the milestone closed, the loop exits as complete without replaying merge, desktop notification, cmux notification, or stop side effects.
 
 If post-merge stash restore fails after a successful milestone merge, auto mode records the merge as complete before stopping for manual stash recovery. Resuming auto mode will not replay the completed merge.
 
-`complete-milestone` now also enforces hard closeout prerequisites: each slice must have a UAT assessment with verdict `PASS`, and the latest `milestone-validation` assessment for that milestone must exist with verdict `pass`. If UAT is missing or non-PASS, auto mode stops with guidance to run `/gsd dispatch uat`, request a slice-specific UAT rerun when needed, inspect `/gsd status`, or add remediation slices with `/gsd dispatch reassess`. If milestone validation is `fail`, `partial`, or absent, closeout is blocked until `validate-milestone` records a fresh passing verdict.
+For an adopted Milestone, `complete-milestone` enforces a current source-bound validation receipt, terminal and semantically matched descendants, current cancellation Waivers, no active Attempts, and any required subjective UAT acceptance. Missing or stale objective evidence remains agent-owned: rerun verification, UAT, or roadmap remediation as directed, then validate again. Only a genuinely subjective UAT decision or unavailable authority/access pauses for the user. Unadopted imports retain the legacy assessment and hierarchy gates.
 
 ### Planning-Only Milestone Closeout
 

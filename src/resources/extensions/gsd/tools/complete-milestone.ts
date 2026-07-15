@@ -5,9 +5,9 @@
 /**
  * complete-milestone handler — the core operation behind gsd_complete_milestone.
  *
- * Validates all slices are complete, updates milestone status in DB,
- * renders MILESTONE-SUMMARY.md to disk, stores rendered markdown in DB
- * for recovery, and invalidates caches.
+ * Adopted Milestones validate canonical closeout evidence and complete through
+ * one Domain Operation before rendering the durable summary projection.
+ * Unadopted imports retain the legacy assessment and hierarchy guards.
  */
 
 import { existsSync } from "node:fs";

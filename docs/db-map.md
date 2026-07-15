@@ -1516,9 +1516,9 @@ safely enforce those circular bundle-completeness rules.
 
 Command-specific writers use the Domain Operation boundary to atomically commit
 each failure/action bundle, each verdict/evidence bundle, and any applicable
-remediation links. Task execution, recovery, publication, and Slice lifecycle
-writers have cut over; S06 owns the remaining Milestone lifecycle boundary.
-Kernel queries require bundle completeness before dispatch or closeout.
+remediation links. Task execution, recovery, publication, Slice lifecycle, and
+Milestone validation/completion/reopen writers have cut over. Kernel queries
+require bundle completeness before dispatch or closeout.
 
 ### 3i. Additive Projection, Import, Kernel, And Closeout Foundation (V35)
 
@@ -1883,6 +1883,8 @@ execution evidence remain authoritative.
 | `gsd_uat_result_save` | slices, artifacts | artifacts, assessments, quality_gates, gate_runs | S##-ASSESSMENT.md; UAT attempt JSON |
 | `gsd_complete_milestone` | project_authority, workflow operations/lifecycles, current validation Attempt/Result/verdict/evidence, Waivers, milestones, slices, tasks | project_authority, workflow operations/events/outbox/Projection Work, Milestone lifecycle, milestones | M##-SUMMARY.md projection after commit |
 | `gsd_validate_milestone` | project_authority, Milestone lifecycle, planned verification classes, current criteria/verdict/evidence, milestones, slices, tasks | project_authority, workflow operations/events/outbox/Projection Work, validation Attempts/Results, acceptance criteria, Technical Verdicts/evidence, assessments, quality_gates, gate_runs | VALIDATION.md projection after commit |
+| `gsd_prepare_milestone_subjective_uat` | project_authority, Milestone lifecycle, current acceptance criteria, open questions, interactions, and validation events | project_authority, workflow operations/events/outbox/Projection Work, acceptance criteria, open questions, interactions, and interaction options | — |
+| `gsd_answer_milestone_subjective_uat` | project_authority, Milestone lifecycle, current subjective criterion, open question, interaction/options, validation events, and Human Acceptance | project_authority, workflow operations/events/outbox/Projection Work, Answers, Human Acceptance, and open-question/interactions status | — |
 | `gsd_reassess_roadmap` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, milestones, slices, assessments; removed pending slices become `skipped`/`cancelled` | ROADMAP.md, ASSESSMENT.md |
 | `gsd_replan_slice` | project_authority, workflow_operations, workflow_item_lifecycles, milestones, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, slices, tasks, replan_history, quality_gates; removed pending tasks become `skipped`/`cancelled` | NN-MM-PLAN.md, NN-MM-REPLAN.md |
 | `gsd_replan_task` | project_authority, workflow_operations, workflow_item_lifecycles, slices, tasks | project_authority, workflow_operations, workflow_domain_events, workflow_outbox, workflow_projection_work, workflow_item_lifecycles, one pending task planning row, replan_history | re-renders the task/slice PLAN projection |
@@ -1959,7 +1961,7 @@ invariants rather than duplicating dispatch policy.
 
 2. **Transaction wrapping**: every multi-table write uses `transaction()` or `immediateTransaction()` when it needs SQLite's reserved writer lock up front. Rollback on any error. Re-entrant callers normally increment the shared depth counter with no nested `BEGIN`; `executeDomainOperation()` is the exception and rejects an existing outer transaction so it owns the reserved-writer boundary. `gsd_save_gate_result` commits the `quality_gates` verdict update and matching `gate_runs` ledger insert together, so recovery never sees a completed gate without its audit row.
 
-3. **Cascade semantics**: production Slice hierarchy changes are transaction-bound leaves in `db/writers/slice-lifecycle.ts`, invoked only inside their owning Domain Operation. Complete validates evidence-backed terminal descendants; cancel preserves completed history and settles running descendants; reopen/reset performs one guarded full redo while preserving immutable execution history. Legacy Slice cascade helpers remain only for compatibility tests and later cleanup. `db/writers/cascades.ts` still owns `reopenMilestoneCascade`, the legacy Milestone boundary deferred to S06.
+3. **Cascade semantics**: production Slice hierarchy changes are transaction-bound leaves in `db/writers/slice-lifecycle.ts`, invoked only inside their owning Domain Operation. Complete validates evidence-backed terminal descendants; cancel preserves completed history and settles running descendants; reopen/reset performs one guarded full redo while preserving immutable execution history. Milestone full-redo reopen is the matching transaction-bound leaf in `db/writers/milestone-lifecycle.ts`. Legacy cascade helpers remain only for explicit unadopted compatibility and later cleanup; `reopenMilestoneCascade` refuses any hierarchy with adopted canonical authority.
 
 4. **Conflict guards**: `insertSlice`, `insertTask` use `ON CONFLICT` to preserve existing completed status and non-empty fields. `insertTask` treats `complete`/`done`/`closed` as complete for `completed_at` stamping and preserves existing completion metadata when `preserveCompletionMetadata` is set; `skipped` stays terminal but does not get a completion timestamp.
 

@@ -16,7 +16,7 @@ You are running the GSD **audit-milestone** workflow — verify a milestone achi
 
 5. **Aggregate debt and deferred items.** Collect tech debt, deferred tasks, and known gaps into a single list with severity and owner-hint.
 
-6. **Produce the verdict.** Report: `PASS` (done-of-definition met), `NEEDS-ATTENTION` (gaps that need a human call), or `NEEDS-REMEDIATION` (gaps that block archival). Recommend the matching gsd-pi next step (`/gsd verdict`, `/gsd dispatch validate`, or scheduling remediation).
+6. **Produce the verdict.** Report: `PASS` (done-of-definition met), `NEEDS-ATTENTION` (gaps that need a human call), or `NEEDS-REMEDIATION` (gaps that block archival). Recommend `/gsd dispatch validate` with current evidence or schedule remediation. Mention `/gsd verdict` only for an explicitly unadopted compatibility milestone; adopted milestones reject manual overrides.
 
 ## Success criteria
 

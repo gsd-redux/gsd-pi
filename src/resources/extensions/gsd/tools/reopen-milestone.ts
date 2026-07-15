@@ -139,8 +139,8 @@ export async function handleReopenMilestone(
     : () => true;
 
   // ── Clean up stale filesystem artifacts (M12 fix) ────────────────────────
-  // Without this, the DB-filesystem reconciler sees SUMMARY.md files and
-  // auto-corrects entities back to "complete", making reopen a no-op (#3161).
+  // Keep readable projections consistent with the reopened database hierarchy.
+  // Legacy imports may still observe these files only through explicit recovery.
   if (shouldProjectReopen) {
     try {
       const slices = getMilestoneSlices(params.milestoneId);

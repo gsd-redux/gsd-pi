@@ -311,7 +311,7 @@ function formatCloseoutReviewInstructions(validationContent: string | null, vali
     return [
       "### Passing Validation Artifact",
       "",
-      `A passing validation artifact is present at \`${validationRel}\`. Treat it as authoritative for success criteria, requirement coverage, verification classes, and cross-slice integration.`,
+      `A passing validation projection is present at \`${validationRel}\`. Use it as readable evidence context for success criteria, requirement coverage, verification classes, and cross-slice integration; the current database receipt remains authoritative.`,
       "",
       "Do not delegate fresh reviewer/security/tester audits and do not redo the validation evidence review unless the artifact is internally inconsistent with the inlined summaries. Focus this unit on final milestone narrative, learnings, PROJECT/requirements updates, and `gsd_complete_milestone`.",
     ].join("\n");

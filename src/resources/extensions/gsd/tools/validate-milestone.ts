@@ -4,8 +4,9 @@
 /**
  * validate-milestone handler — the core operation behind gsd_validate_milestone.
  *
- * Persists milestone validation results to the assessments table and
- * quality_gates table, renders VALIDATION.md to disk, and invalidates caches.
+ * Adopted Milestones persist source-bound validation through one canonical
+ * Domain Operation, then render VALIDATION.md as a readable projection.
+ * Unadopted imports retain the legacy assessment and quality-gate path.
  *
  * #2945 Bug 4: Previously only wrote to assessments — quality_gates records
  * were never persisted, causing M002+ milestones to have zero gate records
