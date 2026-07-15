@@ -202,6 +202,40 @@ test("collector emits one canonical read-only snapshot without relabeling fixtur
   readOnly.close();
 });
 
+test("collector fails closed when source changes during collection", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-source-change-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  makeFixtureDatabase(databasePath);
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  const revisions = [
+    capstone.evidence.sourceRevision,
+    `sha256:${"f".repeat(64)}`,
+  ];
+  let captureCount = 0;
+  const dependencies = {
+    ...passingReports(),
+    captureSourceRevision: () => ({
+      ok: true as const,
+      sourceRevision: revisions[captureCount++]!,
+    }),
+  };
+
+  await assert.rejects(
+    collectM003S07DossierInput(
+      { sourceRoot: process.cwd(), databasePath, capstonePath },
+      dependencies,
+    ),
+    /dossier source changed during collection/i,
+  );
+  assert.equal(captureCount, 2);
+});
+
 test("collector fail-closes when a local report regresses", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-cli-"));
   tempDirs.add(root);

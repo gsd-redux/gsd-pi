@@ -45,6 +45,34 @@ function withoutExactSourceRevision(value: NormalizedSemanticShadowCapstoneEvide
   return normalizeSemanticShadowCapstoneEvidence(evidence);
 }
 
+test("collector fails closed when source changes during collection", async () => {
+  const revisions = [
+    `sha256:${"a".repeat(64)}`,
+    `sha256:${"b".repeat(64)}`,
+  ];
+  let captureCount = 0;
+  const collectWithDependencies = collectSemanticShadowCapstoneEvidence as unknown as (
+    input: { sourceRoot: string },
+    dependencies: {
+      captureSourceRevision: typeof captureMilestoneVerificationSourceRevision;
+    },
+  ) => Promise<SemanticShadowCapstoneEvidence>;
+
+  await assert.rejects(
+    collectWithDependencies(
+      { sourceRoot: process.cwd() },
+      {
+        captureSourceRevision: () => ({
+          ok: true,
+          sourceRevision: revisions[captureCount++]!,
+        }),
+      },
+    ),
+    /semantic-shadow source changed during collection/i,
+  );
+  assert.equal(captureCount, 2);
+});
+
 test("collector binds full raw evidence to the actual source and normalizes deterministically", async () => {
   const sourceRoot = process.cwd();
   const expectedSource = captureMilestoneVerificationSourceRevision(sourceRoot, undefined);
