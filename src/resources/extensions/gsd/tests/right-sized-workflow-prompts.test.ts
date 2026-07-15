@@ -129,7 +129,7 @@ test("prompt templates carry right-sized planning and closeout mode guidance", (
   assert.match(planTemplate, /tiny\/single-file\/static work should usually be one slice/);
   assert.match(planTemplate, /untyped-existing/);
   assert.match(completeTemplate, /Closeout Review Mode/);
-  assert.match(completeTemplate, /passing validation artifact is present/);
+  assert.match(completeTemplate, /Follow the current DB-backed validation status/);
   assert.doesNotMatch(completeTemplate, /^### Delegate Review Work/m);
 });
 
@@ -139,7 +139,7 @@ test("complete-milestone prompt trusts passing validation artifact", async () =>
     writeCompleteMilestoneFiles(base, `---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\n${validationMetadata()}\n\nAll checks passed.`);
     const prompt = await buildCompleteMilestonePrompt("M001", "Polish static page", base, "minimal");
     assert.match(prompt, /Passing Validation Artifact/);
-    assert.match(prompt, /Treat it as authoritative/);
+    assert.match(prompt, /the current database receipt remains authoritative/);
     assert.match(prompt, /Do not delegate fresh reviewer\/security\/tester audits/);
     assert.match(prompt, /All checks passed/);
   } finally {
@@ -153,7 +153,7 @@ test("complete-milestone prompt trusts centralized markdown body pass verdict", 
     writeCompleteMilestoneFiles(base, `# Validation\n\n**Verdict:** PASS\n\n${validationMetadata()}\n\nAll checks passed.`);
     const prompt = await buildCompleteMilestonePrompt("M001", "Polish static page", base, "minimal");
     assert.match(prompt, /Passing Validation Artifact/);
-    assert.match(prompt, /Treat it as authoritative/);
+    assert.match(prompt, /the current database receipt remains authoritative/);
     assert.match(prompt, /Do not delegate fresh reviewer\/security\/tester audits/);
   } finally {
     rmSync(base, { recursive: true, force: true });
