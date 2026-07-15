@@ -23,11 +23,13 @@ import {
   rmSync,
   existsSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ── DB layer ──────────────────────────────────────────────────────────────
 import {
+  _getAdapter,
   openDatabase,
   closeDatabase,
   insertMilestone,
@@ -46,6 +48,7 @@ import {
 
 // ── Tool handlers ─────────────────────────────────────────────────────────
 import { handleCompleteTask } from "../../tools/complete-task.ts";
+import { executeTaskComplete } from "../../tools/workflow-tool-executors.ts";
 import {
   handleCompleteSlice as handleCompleteSliceWithInvocation,
 } from "../../tools/complete-slice.ts";
@@ -57,6 +60,10 @@ import {
 import { handleReopenMilestone } from "../../tools/reopen-milestone.ts";
 import { internalExecutionInvocation } from "../../execution-invocation.ts";
 import { seedSliceCompletionAuthority } from "../slice-completion-fixture.ts";
+import { claimTaskAttempt } from "../../task-execution-domain-operation.ts";
+import { recordTaskTechnicalVerdict } from "../../task-verification-domain-operation.ts";
+import { publishVerifiedTaskCompletion } from "../../task-completion-compatibility-adapter.ts";
+import { captureVerificationSourceSnapshot } from "../../verification-source-integrity.ts";
 
 let reopenInvocationSequence = 0;
 function reopenInvocation() {
@@ -968,6 +975,7 @@ describe("state-machine-live-validation", () => {
       // post-mutation hook runs, preventing the reconciler from auto-correcting
       // the task back to "complete".
       base = createFullFixture();
+      execFileSync("git", ["init", "-q"], { cwd: base });
       openDatabase(join(base, ".gsd", "gsd.db"));
       insertMilestone({ id: "M001", title: "Active", status: "active" });
       insertSlice({ id: "S01", milestoneId: "M001", title: "First", status: "in_progress" });
@@ -992,10 +1000,90 @@ describe("state-machine-live-validation", () => {
       assert.equal(getTask("M001", "S01", "T01")!.status, "pending");
       assert.ok(!existsSync(summaryPath), "M12 fix: SUMMARY.md cleaned up by reopen");
 
-      // Re-complete succeeds
-      const r3 = await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
-      assert.ok(!("error" in r3), `re-complete: ${JSON.stringify(r3)}`);
+      // Once reopen adopts canonical lifecycle authority, the legacy handler
+      // must fail loud instead of reporting a completion it cannot commit.
+      const rejectedLegacyRedo = await handleCompleteTask(
+        makeTaskParams("T01", "S01", "M001") as any,
+        base,
+      );
+      assert.ok("error" in rejectedLegacyRedo, "adopted Task must reject legacy re-completion");
+      assert.match(rejectedLegacyRedo.error, /canonical|durable|attempt/i);
+
+      // Re-complete through the supported canonical execution pipeline.
+      const database = _getAdapter();
+      assert.ok(database);
+      database.exec(`
+        INSERT INTO workers (
+          worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+          project_root_realpath
+        ) VALUES (
+          'redo-worker', 'test-host', 1, '2026-07-14T00:00:00.000Z', 'test',
+          '2026-07-14T00:00:00.000Z', 'active', '${base.replaceAll("'", "''")}'
+        );
+        INSERT INTO milestone_leases (
+          milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
+        ) VALUES (
+          'M001', 'redo-worker', 7, '2026-07-14T00:00:00.000Z',
+          '2099-07-14T00:00:00.000Z', 'held'
+        );
+        INSERT INTO unit_dispatches (
+          trace_id, turn_id, worker_id, milestone_lease_token,
+          milestone_id, slice_id, task_id, unit_type, unit_id,
+          status, attempt_n, started_at
+        ) VALUES (
+          'trace-redo', 'turn-redo', 'redo-worker', 7,
+          'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+          'claimed', 1, '2026-07-14T00:00:00.000Z'
+        );
+      `);
+      const dispatch = database.prepare("SELECT MAX(id) AS id FROM unit_dispatches").get();
+      const claim = claimTaskAttempt({
+        invocation: internalExecutionInvocation("test/state-machine/redo/claim"),
+        task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+        workerId: "redo-worker",
+        milestoneLeaseToken: 7,
+        coordinationDispatchId: Number(dispatch?.["id"]),
+      });
+      const staged = await executeTaskComplete(
+        makeTaskParams("T01", "S01", "M001") as any,
+        base,
+        internalExecutionInvocation("test/state-machine/redo/stage"),
+      );
+      assert.equal(staged.isError, undefined, JSON.stringify(staged));
+      assert.equal(staged.details?.["attemptId"], claim.attemptId);
+      assert.equal(staged.details?.["nextStage"], "verify");
+      assert.equal(getTask("M001", "S01", "T01")!.status, "in_progress");
+      assert.ok(existsSync(summaryPath), "staging regenerates SUMMARY.md");
+
+      const source = captureVerificationSourceSnapshot([{ id: "project", cwd: base }]);
+      assert.equal(source.ok, true, source.ok ? undefined : source.error);
+      recordTaskTechnicalVerdict({
+        invocation: internalExecutionInvocation("test/state-machine/redo/verify"),
+        attemptId: claim.attemptId,
+        testedSourceRevision: source.snapshot.aggregateRevision,
+        verdict: "pass",
+        rationale: "Redo verification passed.",
+        evidence: {
+          evidenceClass: "command",
+          commandOrTool: "node --test",
+          workingDirectory: base,
+          startedAt: "2026-07-14T00:01:00.000Z",
+          endedAt: "2026-07-14T00:01:01.000Z",
+          exitCode: 0,
+          observation: "passed",
+          durableOutputRef: `db://task-attempt/${claim.attemptId}/verification`,
+          environment: { runner: "node-test", scenario: "reopen-redo" },
+        },
+      });
+      await publishVerifiedTaskCompletion({
+        invocation: internalExecutionInvocation("test/state-machine/redo/publish"),
+        basePath: base,
+        task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+        attemptId: claim.attemptId,
+      });
+
       assert.ok(isClosedStatus(getTask("M001", "S01", "T01")!.status));
+      assert.ok(existsSync(summaryPath), "published redo retains SUMMARY.md");
     });
 
     test("complete slice → reopen → re-complete all works end-to-end (M12 fixed)", async () => {
