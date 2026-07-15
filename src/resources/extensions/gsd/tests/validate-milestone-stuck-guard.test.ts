@@ -254,6 +254,7 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
     writeCanonicalValidation("inconclusive");
+    writeValidationFile("needs-attention");
     const ctx = makeMockCtx();
     const pi = makeMockPi();
     const pauseAutoMock = mock.fn(async () => {});
@@ -301,6 +302,7 @@ describe("validate-milestone stuck-loop guard (#4094)", () => {
     insertMilestone({ id: "M001" });
     insertSlice({ id: "S01", milestoneId: "M001", title: "Slice 1", status: "complete" });
     writeCanonicalValidation("fail");
+    writeValidationFile("needs-remediation");
     const ctx = makeMockCtx();
     const pi = makeMockPi();
     const pauseAutoMock = mock.fn(async () => {});

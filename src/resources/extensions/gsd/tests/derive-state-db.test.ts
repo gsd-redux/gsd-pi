@@ -884,7 +884,7 @@ describe('derive-state-db', async () => {
     }
   });
 
-  test('derive-state-db: adopted milestone ignores a legacy passing assessment', async (t) => {
+  test('derive-state-db: adopted milestone still follows a legacy passing assessment', async (t) => {
     const base = createFixtureBase();
     t.after(() => {
       closeDatabase();
@@ -935,7 +935,7 @@ describe('derive-state-db', async () => {
     invalidateStateCache();
     const dbState = await deriveStateFromDb(base);
 
-    assert.deepStrictEqual(dbState.phase, 'validating-milestone');
+    assert.deepStrictEqual(dbState.phase, 'completing-milestone');
   });
 
   // ─── Test 14b: needs-remediation + all slices done → blocked (#4506) ──

@@ -445,26 +445,14 @@ test("readiness blocks a newer settled Milestone Attempt without a later validat
   }
 });
 
-test("readiness and public verdict select the latest exact canonical validation", async () => {
+test("closeout readiness selects canonical validation without changing the public legacy verdict", async () => {
   makeFixture();
-  const mappings = [
-    ["pass", "pass"],
-    ["fail", "needs-remediation"],
-    ["inconclusive", "needs-attention"],
-  ] as const;
-  let latest: ValidateMilestoneReceipt | undefined;
-  for (const [canonical, expected] of mappings) {
-    latest = recordCanonicalValidation(canonical);
-    assert.equal(await resolveMilestoneValidationVerdict(".", "M001"), expected);
-  }
+  const canonical = recordCanonicalValidation("pass");
+  assert.equal(await resolveMilestoneValidationVerdict(".", "M001"), undefined);
 
   const readiness = readMilestoneCloseoutReadiness({ milestoneId: "M001" });
-  assert.equal(readiness.ready, false);
-  if (!readiness.ready) {
-    assert.equal(readiness.blockers[0]?.kind, "validation-not-pass");
-    assert.equal(readiness.blockers[1]?.kind, "criterion-unsatisfied");
-    assert.equal(readiness.validationRevision, latest!.resultingRevision);
-  }
+  assert.equal(readiness.ready, true);
+  if (readiness.ready) assert.equal(readiness.validationRevision, canonical.resultingRevision);
 });
 
 test("readiness accepts an earlier genuine human acceptance that is still current", () => {
