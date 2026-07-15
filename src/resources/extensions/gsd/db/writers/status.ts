@@ -143,7 +143,11 @@ function genericCompletionWrite(t: StatusTransition, row: StatusRow): Completion
       preserveExisting: t.preserveCompletion ?? false,
     };
   }
-  if (row.status === t.status && row.completedAt === null && t.completedAt != null) {
+  if (
+    (row.status === t.status || row.canonicalStatus === "completed") &&
+    row.completedAt === null &&
+    t.completedAt != null
+  ) {
     return { completedAt: t.completedAt, preserveExisting: false };
   }
   return {
