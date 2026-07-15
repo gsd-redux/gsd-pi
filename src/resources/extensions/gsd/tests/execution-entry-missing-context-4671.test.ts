@@ -16,6 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DISPATCH_RULES, type DispatchContext } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 import type { GSDState, Phase } from "../types.ts";
 
 const RULE_NAME_TOKEN = "execution-entry phase (no context)";
@@ -102,6 +103,9 @@ describe("#4671 execution-entry phase missing-context recovery", () => {
   test("phase=executing with slice PLAN.md present → falls through (milestone already passed discuss)", async () => {
     const basePath = makeBasePath("has-plan");
     try {
+      assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
+      insertMilestone({ id: "M001", title: "Test milestone", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "Planned slice", status: "active" });
       writeFileSync(
         join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"),
         "# S01 Plan\n\n- [ ] **T01**: work\n",
@@ -109,6 +113,7 @@ describe("#4671 execution-entry phase missing-context recovery", () => {
       const action = await findRule().match(buildCtx(basePath, buildState("executing")));
       assert.strictEqual(action, null, "rule must fall through when planning artifacts already exist");
     } finally {
+      closeDatabase();
       rmSync(basePath, { recursive: true, force: true });
     }
   });
