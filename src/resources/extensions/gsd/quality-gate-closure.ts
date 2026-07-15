@@ -5,7 +5,13 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { extractSection } from "./files.js";
 import { getGateDefinition } from "./gate-registry.js";
-import { getGateResults, getMilestoneSlices, getPendingGates, saveGateResult } from "./gsd-db.js";
+import {
+  getGateResults,
+  getMilestoneSlices,
+  getPendingGates,
+  getPendingGatesForTurn,
+  saveGateResult,
+} from "./gsd-db.js";
 import { resolveSliceFile, resolveTaskFile } from "./paths.js";
 import type { GateId, GateRow, GateVerdict } from "./types.js";
 
@@ -22,6 +28,12 @@ export interface QualityGateClosureOptions {
 export interface QualityGateClosureResult {
   repaired: Array<{ gateId: GateId; sliceId: string; taskId?: string; verdict: GateVerdict }>;
   unresolved: GateRow[];
+}
+
+export interface TaskQualityGateContent {
+  failureModes?: string;
+  loadProfile?: string;
+  negativeTests?: string;
 }
 
 interface GateEvidence {
@@ -127,6 +139,43 @@ function gateMatchesEvidence(row: GateRow, evidence: GateEvidence): boolean {
     row.verdict === evidence.verdict &&
     row.rationale === evidence.rationale &&
     row.findings === evidence.findings;
+}
+
+export function closeTaskQualityGates(
+  task: { milestoneId: string; sliceId: string; taskId: string },
+  content: TaskQualityGateContent,
+): void {
+  const contentByGate: Partial<Record<GateId, string | undefined>> = {
+    Q5: content.failureModes,
+    Q6: content.loadProfile,
+    Q7: content.negativeTests,
+  };
+
+  for (const row of getPendingGatesForTurn(
+    task.milestoneId,
+    task.sliceId,
+    "execute-task",
+    task.taskId,
+  )) {
+    const definition = getGateDefinition(row.gate_id);
+    if (!definition) continue;
+    if (!(row.gate_id in contentByGate)) {
+      throw new Error(`No task quality-gate content mapping exists for ${row.gate_id}`);
+    }
+    const findings = contentByGate[row.gate_id]?.trim() ?? "";
+    const hasContent = findings.length > 0;
+    saveGateResult({
+      milestoneId: task.milestoneId,
+      sliceId: task.sliceId,
+      taskId: task.taskId,
+      gateId: row.gate_id,
+      verdict: hasContent ? "pass" : "omitted",
+      rationale: hasContent
+        ? `${definition.promptSection} section populated in task summary`
+        : `${definition.promptSection} section left empty — recorded as omitted`,
+      findings,
+    });
+  }
 }
 
 export function closeQualityGatesFromEvidence(

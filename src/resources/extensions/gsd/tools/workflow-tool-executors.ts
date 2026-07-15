@@ -735,6 +735,9 @@ export interface TaskCompleteParams {
   verification?: string;
   deviations?: string;
   knownIssues?: string;
+  failureModes?: string;
+  loadProfile?: string;
+  negativeTests?: string;
   keyFiles?: string[];
   keyDecisions?: string[];
   blockerDiscovered?: boolean;
@@ -875,6 +878,9 @@ export async function executeTaskComplete(
           verification: String(coerced.verification),
           deviations: params.deviations ?? "None.",
           knownIssues: params.knownIssues ?? "None.",
+          failureModes: params.failureModes ?? "",
+          loadProfile: params.loadProfile ?? "",
+          negativeTests: params.negativeTests ?? "",
           keyFiles: params.keyFiles ?? [],
           keyDecisions: params.keyDecisions ?? [],
           blockerDiscovered: params.blockerDiscovered ?? false,

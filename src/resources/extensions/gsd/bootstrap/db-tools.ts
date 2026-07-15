@@ -853,6 +853,9 @@ export function registerDbTools(pi: ExtensionAPI): void {
       // ── Enrichment metadata (optional — defaults to empty) ────────────
       deviations: Type.Optional(Type.String({ description: "Deviations from the task plan, or 'None.'" })),
       knownIssues: Type.Optional(Type.String({ description: "Known issues discovered but not fixed, or 'None.'" })),
+      failureModes: Type.Optional(Type.String({ description: "Q5: what breaks when dependencies fail; leave empty only when genuinely not applicable" })),
+      loadProfile: Type.Optional(Type.String({ description: "Q6: expected load, 10x breakpoint, and protection; leave empty only when genuinely not applicable" })),
+      negativeTests: Type.Optional(Type.String({ description: "Q7: malformed inputs, error paths, and boundary tests; leave empty only when genuinely not applicable" })),
       keyFiles: Type.Optional(Type.Array(Type.String(), { description: "List of key files created or modified" })),
       keyDecisions: Type.Optional(Type.Array(Type.String(), { description: "List of key decisions made during this task" })),
       blockerDiscovered: Type.Optional(Type.Boolean({ description: "Whether a plan-invalidating blocker was discovered" })),

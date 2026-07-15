@@ -56,6 +56,9 @@ interface StageTaskCompletionInput {
     verification: string;
     deviations: string;
     knownIssues: string;
+    failureModes?: string;
+    loadProfile?: string;
+    negativeTests?: string;
     keyFiles: string[];
     keyDecisions: string[];
     blockerDiscovered: boolean;
@@ -264,6 +267,19 @@ function stageInput(basePath: string): StageTaskCompletionInput {
       }],
     },
   };
+}
+
+function seedTaskQualityGates(...taskIds: string[]): void {
+  const insert = db().prepare(`
+    INSERT INTO quality_gates (
+      milestone_id, slice_id, gate_id, scope, task_id, status
+    ) VALUES ('M001', 'S01', :gate_id, 'task', :task_id, 'pending')
+  `);
+  for (const taskId of taskIds) {
+    for (const gateId of ["Q5", "Q6", "Q7"]) {
+      insert.run({ ":gate_id": gateId, ":task_id": taskId });
+    }
+  }
 }
 
 function publishInput(basePath: string, attemptId: string): PublishVerifiedTaskCompletionInput {
@@ -512,6 +528,73 @@ test("verified publication alone completes the legacy Task and checks its projec
   );
 });
 
+test("verified publication atomically closes only its task gates from durable Attempt evidence", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  db().prepare(`
+    INSERT INTO tasks (milestone_id, slice_id, id, title, status, verify, sequence)
+    VALUES ('M001', 'S01', 'T02', 'Sibling task', 'pending', 'npm test', 2)
+  `).run();
+  seedTaskQualityGates("T01", "T02");
+  const completion = stageInput(basePath);
+  completion.completion.failureModes = "  Dependency loss returns a retryable error.  ";
+  completion.completion.loadProfile = "";
+  completion.completion.negativeTests = "Malformed input and timeout paths are covered.";
+
+  await stageTaskCompletion(completion);
+  const durableOutput = JSON.parse(String(
+    row("SELECT output_json FROM workflow_attempt_results").output_json,
+  )) as Record<string, unknown>;
+  assert.equal(durableOutput.failureModes, "  Dependency loss returns a retryable error.  ");
+  assert.equal(durableOutput.loadProfile, "");
+  assert.equal(durableOutput.negativeTests, "Malformed input and timeout paths are covered.");
+  recordPassingHostVerdict(basePath, attemptId);
+
+  const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
+
+  assert.equal(published.status, "committed");
+  assert.deepEqual(rows(`
+    SELECT gate_id, status, verdict, findings
+    FROM quality_gates
+    WHERE task_id = 'T01'
+    ORDER BY gate_id
+  `), [
+    {
+      gate_id: "Q5",
+      status: "complete",
+      verdict: "pass",
+      findings: "Dependency loss returns a retryable error.",
+    },
+    { gate_id: "Q6", status: "complete", verdict: "omitted", findings: "" },
+    {
+      gate_id: "Q7",
+      status: "complete",
+      verdict: "pass",
+      findings: "Malformed input and timeout paths are covered.",
+    },
+  ]);
+  assert.deepEqual(
+    rows(`SELECT gate_id, status FROM quality_gates WHERE task_id = 'T02' ORDER BY gate_id`),
+    [
+      { gate_id: "Q5", status: "pending" },
+      { gate_id: "Q6", status: "pending" },
+      { gate_id: "Q7", status: "pending" },
+    ],
+  );
+  assert.equal(count("gate_runs"), 3);
+  const beforeReplay = {
+    gates: rows("SELECT * FROM quality_gates ORDER BY task_id, gate_id"),
+    gateRuns: rows("SELECT * FROM gate_runs ORDER BY id"),
+  };
+
+  const replayed = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
+  assert.equal(replayed.status, "replayed");
+  assert.deepEqual({
+    gates: rows("SELECT * FROM quality_gates ORDER BY task_id, gate_id"),
+    gateRuns: rows("SELECT * FROM gate_runs ORDER BY id"),
+  }, beforeReplay);
+});
+
 for (const mutation of ["tracked", "untracked"] as const) {
   test(`verified publication rejects ${mutation} source mutation after host verification`, async () => {
     const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
@@ -672,6 +755,7 @@ test("superseding the host criterion invalidates its old passing verdict for pub
 test("a publish fault rolls canonical closeout and legacy completion back together", async () => {
   const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
   const { basePath, attemptId } = createFixture();
+  seedTaskQualityGates("T01");
   await stageTaskCompletion(stageInput(basePath));
   recordPassingHostVerdict(basePath, attemptId);
   _setDomainOperationFaultForTest("after-mutation");
@@ -695,11 +779,21 @@ test("a publish fault rolls canonical closeout and legacy completion back togeth
       { sequence: 2, next_stage: "verify" },
     ],
   );
+  assert.deepEqual(
+    rows("SELECT gate_id, status FROM quality_gates ORDER BY gate_id"),
+    [
+      { gate_id: "Q5", status: "pending" },
+      { gate_id: "Q6", status: "pending" },
+      { gate_id: "Q7", status: "pending" },
+    ],
+  );
+  assert.equal(count("gate_runs"), 0);
 
   _setDomainOperationFaultForTest(null);
   const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
   assert.equal(published.status, "committed");
   assert.equal(taskState().status, "complete");
+  assert.equal(count("gate_runs"), 3);
 });
 
 test("exact stage and publication replay repair projections without duplicate facts", async () => {

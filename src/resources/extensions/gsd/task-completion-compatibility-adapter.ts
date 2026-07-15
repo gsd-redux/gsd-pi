@@ -18,6 +18,10 @@ import {
 import { renderPlanCheckboxes, renderTaskSummary } from "./markdown-renderer.js";
 import { clearPathCache, resolveTaskFile } from "./paths.js";
 import {
+  closeTaskQualityGates,
+  type TaskQualityGateContent,
+} from "./quality-gate-closure.js";
+import {
   settleTaskAttempt,
   type StagedTaskCompletionMutation,
 } from "./task-execution-domain-operation.js";
@@ -52,6 +56,9 @@ export interface StageTaskCompletionInput {
     verification: string;
     deviations: string;
     knownIssues: string;
+    failureModes?: string;
+    loadProfile?: string;
+    negativeTests?: string;
     keyFiles: string[];
     keyDecisions: string[];
     blockerDiscovered: boolean;
@@ -85,6 +92,7 @@ interface AttemptRow {
   lifecycle_id: string;
   kernel_checkpoint_id: string;
   next_stage: "verify" | "route";
+  output_json: string;
 }
 
 export type TaskCompletionAuthority = "canonical" | "legacy";
@@ -301,6 +309,9 @@ export async function stageTaskCompletion(
       blockerDiscovered: input.completion.blockerDiscovered,
       deviations: input.completion.deviations,
       knownIssues: input.completion.knownIssues,
+      failureModes: input.completion.failureModes ?? "",
+      loadProfile: input.completion.loadProfile ?? "",
+      negativeTests: input.completion.negativeTests ?? "",
       keyFiles: input.completion.keyFiles,
       keyDecisions: input.completion.keyDecisions,
     },
@@ -320,7 +331,7 @@ export async function stageTaskCompletion(
 function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): AttemptRow {
   const attempt = getDb().prepare(`
     SELECT attempt.attempt_id, attempt.lifecycle_id, checkpoint.kernel_checkpoint_id,
-           checkpoint.next_stage
+           checkpoint.next_stage, result.output_json
     FROM workflow_execution_attempts attempt
     JOIN workflow_attempt_results result
       ON result.attempt_id = attempt.attempt_id
@@ -380,6 +391,32 @@ function loadSucceededAttempt(input: PublishVerifiedTaskCompletionInput): Attemp
   return attempt;
 }
 
+function taskQualityGateContent(attempt: AttemptRow): TaskQualityGateContent {
+  let output: unknown;
+  try {
+    output = JSON.parse(attempt.output_json);
+  } catch {
+    throw new Error("Verified Task publication requires a valid durable Attempt result");
+  }
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    throw new Error("Verified Task publication requires an object-shaped durable Attempt result");
+  }
+  const record = output as Record<string, unknown>;
+  const readField = (key: keyof TaskQualityGateContent): string => {
+    const value = record[key];
+    if (value === undefined) return "";
+    if (typeof value !== "string") {
+      throw new Error(`Verified Task publication found invalid ${key} in durable Attempt result`);
+    }
+    return value;
+  };
+  return {
+    failureModes: readField("failureModes"),
+    loadProfile: readField("loadProfile"),
+    negativeTests: readField("negativeTests"),
+  };
+}
+
 function publishCanonicalCompletion(
   input: PublishVerifiedTaskCompletionInput,
 ): "committed" | "replayed" {
@@ -425,6 +462,7 @@ function publishCanonicalCompletion(
     }
 
     completeLegacyTaskForVerifiedAttempt(context, input.task);
+    closeTaskQualityGates(input.task, taskQualityGateContent(attempt));
 
     const entityId = `${input.task.milestoneId}/${input.task.sliceId}/${input.task.taskId}`;
     return {

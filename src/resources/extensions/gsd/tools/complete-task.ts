@@ -24,15 +24,13 @@ import {
   getMilestone,
   getSlice,
   getTask,
-  saveGateResult,
-  getPendingGatesForTurn,
   getUnresolvedBlockingReworkFindingsForTask,
   applyReworkResolutions,
   setTaskEscalationPending,
   setTaskEscalationAwaitingReview,
 } from "../gsd-db.js";
 import { getWorkflowDatabasePath, ensureWorkflowDbAtPath } from "../db-workspace.js";
-import { getGatesForTurn } from "../gate-registry.js";
+import { closeTaskQualityGates } from "../quality-gate-closure.js";
 import {
   buildFlatTaskFileName,
   buildTaskFileName,
@@ -169,27 +167,6 @@ async function repairMissingTaskSummaryProjection(
   }
 
   return { summaryPath, stale };
-}
-
-/**
- * Map an execute-task-owned gate id to the CompleteTaskParams field whose
- * presence drives `pass` vs. `omitted`. Keep in lockstep with the gates
- * declared in gate-registry.ts under ownerTurn "execute-task".
- */
-function taskGateFieldForId(
-  id: string,
-  params: CompleteTaskParams,
-): string | undefined {
-  switch (id) {
-    case "Q5":
-      return params.failureModes;
-    case "Q6":
-      return params.loadProfile;
-    case "Q7":
-      return params.negativeTests;
-    default:
-      return undefined;
-  }
 }
 
 /**
@@ -513,6 +490,8 @@ export async function handleCompleteTask(
         durationMs: evidence.durationMs,
       });
     }
+
+    closeTaskQualityGates(params, params);
   });
 
   if (guardError === "__stale_duplicate__") {
@@ -586,45 +565,6 @@ export async function handleCompleteTask(
     return {
       error: `complete_task projection write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}; completion remains committed and the disk projection is stale`,
     };
-  }
-
-  // ── Close gates owned by execute-task (Q5/Q6/Q7) for this task ────────
-  // Each gate id maps to a specific params field via taskGateFieldForId.
-  // When the model populates the field, record `pass`; when it's empty,
-  // record `omitted`. Task-scoped rows are filtered by taskId so a single
-  // task's completion doesn't touch sibling tasks' gate rows.
-  try {
-    const pendingGates = getPendingGatesForTurn(
-      params.milestoneId,
-      params.sliceId,
-      "execute-task",
-      params.taskId,
-    );
-    if (pendingGates.length > 0) {
-      const ownedDefs = new Map(getGatesForTurn("execute-task").map((g) => [g.id, g] as const));
-      for (const row of pendingGates) {
-        const def = ownedDefs.get(row.gate_id);
-        if (!def) continue;
-        const field = taskGateFieldForId(def.id, params);
-        const hasContent = typeof field === "string" && field.trim().length > 0;
-        saveGateResult({
-          milestoneId: params.milestoneId,
-          sliceId: params.sliceId,
-          taskId: params.taskId,
-          gateId: def.id,
-          verdict: hasContent ? "pass" : "omitted",
-          rationale: hasContent
-            ? `${def.promptSection} section populated in task summary`
-            : `${def.promptSection} section left empty — recorded as omitted`,
-          findings: hasContent ? (field as string).trim() : "",
-        });
-      }
-    }
-  } catch (gateErr) {
-    logWarning(
-      "tool",
-      `complete-task gate close warning for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(gateErr as Error).message}`,
-    );
   }
 
   // ── ADR-011 Phase 2: write escalation artifact (opt-in) ────────────────
