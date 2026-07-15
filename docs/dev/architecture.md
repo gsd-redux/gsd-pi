@@ -46,10 +46,11 @@ executor reads legacy hierarchy and canonical lifecycle state in one read
 transaction, compares them with the frozen lifecycle vocabulary, and emits a
 response-neutral observation after the read. Native Pi captures the exact
 project source revision at turn start and reuses it for every status call in
-that turn. The Claude workflow-MCP pump captures it once per pump and carries
-it through a private token. Capture or sink failure never changes the public
-response, but it produces explicit, durable loss accounting. No public tool
-argument or environment-provided hash can supply source authority.
+that turn. The Claude workflow-MCP pump carries a private token, captures the
+source revision lazily on its first status call, and reuses that revision for
+later status calls in the pump. Capture or sink failure never changes the
+public response, but it produces explicit, durable loss accounting. No public
+tool argument or environment-provided hash can supply source authority.
 
 The S07 cutover dossier is a deterministic projection over two intentionally
 different inputs: disposable `capstone_fixture` coverage and read-only
