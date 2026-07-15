@@ -117,6 +117,37 @@ function turnKey(token: string): string {
   return `${TURN_CONTEXT_KEY_PREFIX}${token}`;
 }
 
+function scavengeStoredTurns(database: ContextDatabase, databasePath: string, now: number): void {
+  const rows = database.prepare(`
+    SELECT key, value_json
+    FROM runtime_kv
+    WHERE scope = 'global' AND scope_id = '' AND key LIKE :key_prefix
+  `).all({ ":key_prefix": `${TURN_CONTEXT_KEY_PREFIX}%` });
+
+  for (const row of rows) {
+    const key = row["key"];
+    const raw = row["value_json"];
+    let remove = typeof key !== "string" || typeof raw !== "string";
+    if (!remove) {
+      try {
+        const turn = JSON.parse(raw);
+        remove = !isStoredTurn(turn)
+          || turnKey(turn.token) !== key
+          || turn.databasePath !== databasePath
+          || Date.parse(turn.expiresAt) <= now;
+      } catch {
+        remove = true;
+      }
+    }
+    if (!remove) continue;
+
+    database.prepare(`
+      DELETE FROM runtime_kv
+      WHERE scope = 'global' AND scope_id = '' AND key = :key AND value_json = :value_json
+    `).run({ ":key": key, ":value_json": raw });
+  }
+}
+
 function deleteStoredTurn(databasePath: string, token: string, raw?: string): boolean {
   const rawPredicate = raw === undefined ? "" : " AND value_json = :value_json";
   const result = withContextDatabase(databasePath, (database) => database.prepare(`
@@ -188,6 +219,7 @@ export function beginMilestoneStatusObservationTurn(
     expiresAt: new Date(now + (options.ttlMs ?? DEFAULT_TTL_MS)).toISOString(),
   };
   const stored = withContextDatabase(databasePath, (database) => {
+    scavengeStoredTurns(database, databasePath, now);
     database.prepare(`
       INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
       VALUES ('global', '', :key, :value_json, :updated_at)

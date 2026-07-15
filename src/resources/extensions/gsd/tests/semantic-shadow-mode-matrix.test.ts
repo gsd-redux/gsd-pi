@@ -536,6 +536,58 @@ test("runtime classification and turn markers are bounded and token-fenced", () 
   assert.equal(clearMilestoneStatusObservationTurn(basePath, "second-token"), false);
 });
 
+test("starting a turn scavenges expired and corrupt crash residue without removing live turns", () => {
+  const basePath = makeBase("gsd-shadow-matrix-turn-scavenge-");
+  assert.equal(beginMilestoneStatusObservationTurn(
+    basePath,
+    { mode: "guided", sourceRevision: "revision:live" },
+    { now: 2_000, ttlMs: 10_000, token: "live-token" },
+  ), "live-token");
+
+  db().prepare(`
+    INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
+    VALUES ('global', '', :key, :value_json, :updated_at)
+  `).run({
+    ":key": "milestone-status-observation-turn:expired-token",
+    ":value_json": JSON.stringify({
+      token: "expired-token",
+      databasePath: join(basePath, ".gsd", "gsd.db"),
+      mode: "auto",
+      sourceRevision: "revision:expired",
+      startedAt: new Date(0).toISOString(),
+      expiresAt: new Date(1_000).toISOString(),
+    }),
+    ":updated_at": new Date(0).toISOString(),
+  });
+  db().prepare(`
+    INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
+    VALUES ('global', '', :key, '{not json', :updated_at)
+  `).run({
+    ":key": "milestone-status-observation-turn:corrupt-token",
+    ":updated_at": new Date(0).toISOString(),
+  });
+
+  assert.equal(beginMilestoneStatusObservationTurn(
+    basePath,
+    { mode: "uok", sourceRevision: "revision:new" },
+    { now: 5_000, ttlMs: 10_000, token: "new-token" },
+  ), "new-token");
+
+  assert.deepEqual(
+    db().prepare(`
+      SELECT key FROM runtime_kv
+      WHERE scope = 'global'
+        AND scope_id = ''
+        AND key LIKE 'milestone-status-observation-turn:%'
+      ORDER BY key
+    `).all().map((row) => row["key"]),
+    [
+      "milestone-status-observation-turn:live-token",
+      "milestone-status-observation-turn:new-token",
+    ],
+  );
+});
+
 test("overlapping turns resolve only the exact private capability token", () => {
   const basePath = makeBase("gsd-shadow-matrix-overlap-");
   const firstToken = beginMilestoneStatusObservationTurn(basePath, {

@@ -308,6 +308,69 @@ describe('runMcpServerCli', () => {
     ]);
   });
 
+  test('skips singleton PID registration for pump-scoped observation sessions', async () => {
+    const calls: string[] = [];
+    const stderr = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+
+    await assert.rejects(
+      runMcpServerCli({
+        cwd: () => '/workspace/project',
+        env: { GSD_MILESTONE_STATUS_OBSERVATION_TOKEN: 'opaque-pump-token' },
+        exit(code) {
+          throw new ExitError(code);
+        },
+        loadStoredCredentialEnvKeys() {
+          calls.push('load-env');
+        },
+        registerMcpInstance(projectDir) {
+          calls.push(`register:${projectDir}`);
+        },
+        sweepProjectOrphanMcpServers(projectDir) {
+          calls.push(`sweep:${projectDir}`);
+        },
+        unregisterMcpInstance(projectDir) {
+          calls.push(`unregister:${projectDir}`);
+        },
+        createSessionManager() {
+          calls.push('create-session-manager');
+          return {
+            async cleanup() {
+              calls.push('cleanup-session-manager');
+            },
+          };
+        },
+        async createMcpServer() {
+          calls.push('create-server');
+          throw new Error('create failed');
+        },
+        async importStdioServerTransport() {
+          throw new Error('should not import transport');
+        },
+        warmWorkflowToolBridges() {
+          throw new Error('should not warm bridges');
+        },
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr,
+        onSignal() {},
+        now: () => 0,
+        setInterval() {
+          throw new Error('should not start interval');
+        },
+        clearInterval() {},
+        isOrphaned: () => false,
+      }),
+      (error) => error instanceof ExitError && error.code === 1,
+    );
+
+    assert.deepEqual(calls, [
+      'load-env',
+      'create-session-manager',
+      'create-server',
+      'cleanup-session-manager',
+    ]);
+  });
+
   test('fails closed and never connects when workflow bridge warm-up fails', async () => {
     const calls: string[] = [];
     const stderrChunks: string[] = [];
