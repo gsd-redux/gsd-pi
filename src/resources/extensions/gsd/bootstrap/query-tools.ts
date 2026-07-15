@@ -14,7 +14,14 @@ import {
 import type { MilestoneStatusObservationContext } from "../lifecycle-shadow-observation.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { resolveUokFlags } from "../uok/flags.js";
+import { captureMilestoneVerificationSourceRevision } from "../verification-source-integrity.js";
 import { resolveWorkflowMcpProjectRoot } from "../workflow-mcp.js";
+
+type SourceRevisionCapture = typeof captureMilestoneVerificationSourceRevision;
+
+interface QueryToolDependencies {
+  captureMilestoneVerificationSourceRevision?: SourceRevisionCapture;
+}
 
 function contextSessionId(ctx: unknown): string | undefined {
   try {
@@ -32,13 +39,24 @@ function nativeMilestoneStatusContext(
   basePath: string,
   toolCallId: string,
   sessionId: string | undefined,
+  captureSourceRevision: SourceRevisionCapture,
 ): MilestoneStatusObservationContext {
   let uok: ReturnType<typeof resolveUokFlags> | undefined;
+  let preferences: Parameters<SourceRevisionCapture>[1];
   let contextError: "unavailable" | undefined;
   let guidedActive = false;
   try {
-    uok = resolveUokFlags(loadEffectiveGSDPreferences(basePath)?.preferences);
+    preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
+    uok = resolveUokFlags(preferences);
     guidedActive = getGuidedUnitContext(basePath) !== null;
+  } catch {
+    contextError = "unavailable";
+  }
+  let sourceRevision = "unavailable";
+  try {
+    const captured = captureSourceRevision(basePath, preferences);
+    if (captured.ok) sourceRevision = captured.sourceRevision;
+    else contextError = "unavailable";
   } catch {
     contextError = "unavailable";
   }
@@ -55,14 +73,19 @@ function nativeMilestoneStatusContext(
       guidedActive,
     }),
     transport: "native_pi",
-    sourceRevision: "unavailable",
+    sourceRevision,
     traceId: autoActive ? autoSession.currentTraceId ?? toolCallId : toolCallId,
     ...(turnId ? { turnId } : {}),
     ...(contextError ? { contextError } : {}),
   };
 }
 
-export function registerQueryTools(pi: ExtensionAPI): void {
+export function registerQueryTools(
+  pi: ExtensionAPI,
+  dependencies: QueryToolDependencies = {},
+): void {
+  const captureSourceRevision = dependencies.captureMilestoneVerificationSourceRevision
+    ?? captureMilestoneVerificationSourceRevision;
   pi.registerTool({
     name: "gsd_milestone_status",
     label: "Milestone Status",
@@ -84,7 +107,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
       const result = await executeMilestoneStatus(
         params,
         basePath,
-        nativeMilestoneStatusContext(basePath, toolCallId, sessionId),
+        nativeMilestoneStatusContext(basePath, toolCallId, sessionId, captureSourceRevision),
       );
       if (result.details?.error === "db_unavailable") {
         return {

@@ -84,6 +84,7 @@ import {
 	MILESTONE_STATUS_OBSERVATION_TOKEN_ENV,
 } from "../gsd/milestone-status-observation-context.js";
 import { resolveUokFlags } from "../gsd/uok/flags.js";
+import { captureMilestoneVerificationSourceRevision } from "../gsd/verification-source-integrity.js";
 import { hasBrowserContractPrefix } from "../shared/browser-contract.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
@@ -123,6 +124,7 @@ interface ClaudeCodeStreamOptions extends SimpleStreamOptions {
 		options?: Record<string, unknown>;
 	}) => AsyncIterable<SDKMessage>;
 	_skipWorkflowMcpPreflightForTest?: boolean;
+	_captureMilestoneVerificationSourceRevisionForTest?: typeof captureMilestoneVerificationSourceRevision;
 }
 
 export function serverToolUseToToolCallLike(block: {
@@ -2283,16 +2285,29 @@ function createSdkAttemptMessageState(): SdkAttemptMessageState {
 	};
 }
 
-function beginClaudeCodeMilestoneStatusObservation(projectRoot: string): string | null {
+function beginClaudeCodeMilestoneStatusObservation(
+	projectRoot: string,
+	captureSourceRevision: typeof captureMilestoneVerificationSourceRevision,
+): string | null {
 	let contextError: "unavailable" | undefined;
 	let guidedActive = false;
 	let uok: ReturnType<typeof resolveUokFlags> | undefined;
+	let preferences: Parameters<typeof captureMilestoneVerificationSourceRevision>[1];
 	try {
 		const guided = getGuidedUnitContext(projectRoot) ?? getGuidedUnitContext();
 		guidedActive = Boolean(
 			guided && resolveWorkflowMcpProjectRoot(guided.basePath) === projectRoot,
 		);
-		uok = resolveUokFlags(loadEffectiveGSDPreferences(projectRoot)?.preferences);
+		preferences = loadEffectiveGSDPreferences(projectRoot)?.preferences;
+		uok = resolveUokFlags(preferences);
+	} catch {
+		contextError = "unavailable";
+	}
+	let sourceRevision = "unavailable";
+	try {
+		const captured = captureSourceRevision(projectRoot, preferences);
+		if (captured.ok) sourceRevision = captured.sourceRevision;
+		else contextError = "unavailable";
 	} catch {
 		contextError = "unavailable";
 	}
@@ -2307,7 +2322,7 @@ function beginClaudeCodeMilestoneStatusObservation(projectRoot: string): string 
 			uokLegacyFallback: uok?.legacyFallback,
 			guidedActive,
 		}),
-		sourceRevision: "unavailable",
+		sourceRevision,
 		...(autoActive && autoSession.currentTraceId ? { traceId: autoSession.currentTraceId } : {}),
 		...(autoActive && autoSession.currentTurnId ? { turnId: autoSession.currentTurnId } : {}),
 		...(contextError ? { contextError } : {}),
@@ -2385,7 +2400,11 @@ async function pumpSdkMessages(
 		autoInitClaudeCodeWorkflowMcp(cwd);
 		const gsdPhase = resolveGsdPhaseForSdk(context, projectRoot);
 		milestoneStatusObservationRoot = projectRoot;
-		milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(projectRoot);
+		milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
+			projectRoot,
+			claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
+				?? captureMilestoneVerificationSourceRevision,
+		);
 		const canUseToolHandler = createClaudeCodeCanUseToolHandler(uiContext);
 		// When no UI is available (headless / auto-mode), auto-approve all
 		// tool requests. This replaces the old bypassPermissions workaround.

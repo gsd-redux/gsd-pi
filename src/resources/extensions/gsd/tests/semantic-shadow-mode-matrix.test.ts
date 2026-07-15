@@ -2,6 +2,7 @@
 // File Purpose: Cross-mode native Pi/workflow MCP semantic-shadow convergence proof.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +53,10 @@ import {
 } from "../milestone-status-observation-context.ts";
 import { clearGSDPreferencesCache } from "../preferences.ts";
 import { executeMilestoneStatus } from "../tools/workflow-tool-executors.ts";
+import {
+  captureMilestoneVerificationSourceRevision,
+  type MilestoneVerificationSourceRevisionResult,
+} from "../verification-source-integrity.ts";
 
 process.env.GSD_WORKFLOW_EXECUTORS_MODULE ??= fileURLToPath(new URL(
   "../tools/workflow-tool-executors.ts",
@@ -82,6 +87,11 @@ const CLASSIFICATIONS = [
 
 const tempDirs = new Set<string>();
 
+type SourceRevisionCapture = (
+  basePath: string,
+  preferences: Parameters<typeof captureMilestoneVerificationSourceRevision>[1],
+) => MilestoneVerificationSourceRevisionResult;
+
 afterEach(() => {
   _setLifecycleShadowRepairBeforeCommitForTest(null);
   autoSession.reset();
@@ -101,6 +111,9 @@ function db() {
 function makeBase(prefix: string): string {
   const basePath = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.add(basePath);
+  execFileSync("git", ["init", "-q"], { cwd: basePath });
+  writeFileSync(join(basePath, "source.txt"), "tracked source\n", "utf-8");
+  execFileSync("git", ["add", "source.txt"], { cwd: basePath });
   mkdirSync(join(basePath, ".gsd"), { recursive: true });
   assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
   return basePath;
@@ -272,13 +285,15 @@ function configureNativeMode(
   writeUokPreference(basePath, { enabled: false });
 }
 
-function makeNativePiTool() {
+function makeNativePiTool(captureSourceRevision?: SourceRevisionCapture) {
   const tools: Array<Record<string, any>> = [];
   registerQueryTools({
     registerTool(tool: Record<string, any>) {
       tools.push(tool);
     },
-  } as any);
+  } as any, captureSourceRevision ? {
+    captureMilestoneVerificationSourceRevision: captureSourceRevision,
+  } : undefined);
   const tool = tools.find((candidate) => candidate.name === "gsd_milestone_status");
   assert.ok(tool, "native Pi milestone status registration is required");
   return tool;
@@ -336,7 +351,7 @@ function expectedContext(
   const context: MilestoneStatusObservationContext = {
     mode,
     transport,
-    sourceRevision: "unavailable",
+    sourceRevision: "pending_capture",
   };
   if (transport === "native_pi" || !["guided", "interactive"].includes(mode)) {
     context.traceId = `trace:${mode}:${transport}`;
@@ -349,9 +364,10 @@ async function runNativeCell(
   mode: MilestoneStatusRuntimeMode,
   basePath: string,
   context: MilestoneStatusObservationContext,
+  captureSourceRevision?: SourceRevisionCapture,
 ): Promise<any> {
   configureNativeMode(mode, basePath, context);
-  const tool = makeNativePiTool();
+  const tool = makeNativePiTool(captureSourceRevision);
   return tool.execute(
     context.traceId,
     { milestoneId: "M001" },
@@ -368,6 +384,7 @@ async function runMcpCell(
   mode: MilestoneStatusRuntimeMode,
   basePath: string,
   context: MilestoneStatusObservationContext,
+  captureSourceRevision?: SourceRevisionCapture,
 ): Promise<any> {
   configureNativeMode(mode, basePath, context);
   let capturedToken: string | undefined;
@@ -383,6 +400,7 @@ async function runMcpCell(
     {
       cwd: basePath,
       _skipWorkflowMcpPreflightForTest: true,
+      _captureMilestoneVerificationSourceRevisionForTest: captureSourceRevision,
       async *_sdkQueryForTest(args: {
         prompt: string | AsyncIterable<unknown>;
         options?: Record<string, unknown>;
@@ -459,9 +477,20 @@ test("all supported modes and transports preserve the frozen response and exact 
       const basePath = makeBase(`gsd-shadow-matrix-${mode}-${transport}-`);
       seedFiveClassificationFixture(basePath);
       const context = expectedContext(mode, transport);
+      let captureCount = 0;
+      let capturedRevision: string | undefined;
+      const capture: SourceRevisionCapture = (captureBasePath, preferences) => {
+        captureCount += 1;
+        const captured = captureMilestoneVerificationSourceRevision(captureBasePath, preferences);
+        if (captured.ok) capturedRevision = captured.sourceRevision;
+        return captured;
+      };
       const result = transport === "native_pi"
-        ? await runNativeCell(mode, basePath, context)
-        : await runMcpCell(mode, basePath, context);
+        ? await runNativeCell(mode, basePath, context, capture)
+        : await runMcpCell(mode, basePath, context, capture);
+
+      assert.equal(captureCount, 1, `${mode}/${transport} must capture source exactly once`);
+      assert.ok(capturedRevision, `${mode}/${transport} must capture an available source revision`);
 
       assert.deepEqual(result.content, expectedResponse.content, `${mode}/${transport} content changed`);
       assert.equal(
@@ -496,6 +525,7 @@ test("all supported modes and transports preserve the frozen response and exact 
       });
       expectedCells.push({
         ...context,
+        sourceRevision: capturedRevision,
         traceId: context.traceId ?? null,
         turnId: context.turnId ?? null,
         repairDisposition: "not_attempted",
@@ -507,6 +537,75 @@ test("all supported modes and transports preserve the frozen response and exact 
   assert.deepEqual(new Set(observedCells.map((cell) => cell.mode)), new Set(RUNTIME_MODES));
   assert.deepEqual(new Set(observedCells.map((cell) => cell.transport)), new Set(TRANSPORTS));
   assert.deepEqual(observedCells, expectedCells, "registrations must propagate exact private observation identity");
+});
+
+test("native and Claude pump capture the actual project source revision exactly once", async () => {
+  const expectedResponse = expectedFoundResponse();
+
+  for (const transport of TRANSPORTS) {
+    closeDatabase();
+    const basePath = makeBase(`gsd-shadow-source-${transport}-`);
+    seedFiveClassificationFixture(basePath);
+    const context = expectedContext("interactive", transport);
+    let captureCount = 0;
+    let capturedRevision: string | undefined;
+    const capture: SourceRevisionCapture = (captureBasePath, preferences) => {
+      captureCount += 1;
+      const captured = captureMilestoneVerificationSourceRevision(captureBasePath, preferences);
+      if (captured.ok) capturedRevision = captured.sourceRevision;
+      return captured;
+    };
+
+    const result = transport === "native_pi"
+      ? await runNativeCell("interactive", basePath, context, capture)
+      : await runMcpCell("interactive", basePath, context, capture);
+
+    assert.equal(captureCount, 1, `${transport} must capture source once per invocation/pump`);
+    assert.deepEqual(result.content, expectedResponse.content, `${transport} content changed`);
+    const structured = transport === "native_pi" ? result.details : result.structuredContent;
+    assert.deepEqual(structured, expectedResponse.structured, `${transport} structured response changed`);
+    const observation = observationPayload(basePath);
+    assert.ok(capturedRevision, `${transport} must capture an available source revision`);
+    assert.equal(observation.sourceRevision, capturedRevision);
+    assert.equal(observation.contextError, undefined);
+    assert.deepEqual(observation.observationLossAccounting, { lossCount: 0, persistedCount: 1 });
+  }
+});
+
+test("source capture failure stays response-neutral and accounts context loss", async () => {
+  const expectedResponse = expectedFoundResponse();
+  const unavailableCapture: SourceRevisionCapture = () => ({
+    ok: false,
+    error: "deliberate source capture failure",
+  });
+
+  for (const transport of TRANSPORTS) {
+    closeDatabase();
+    const basePath = makeBase(`gsd-shadow-source-failure-${transport}-`);
+    seedFiveClassificationFixture(basePath);
+    const context = expectedContext("interactive", transport);
+    let captureCount = 0;
+    const capture: SourceRevisionCapture = (captureBasePath, preferences) => {
+      captureCount += 1;
+      return unavailableCapture(captureBasePath, preferences);
+    };
+
+    const result = transport === "native_pi"
+      ? await runNativeCell("interactive", basePath, context, capture)
+      : await runMcpCell("interactive", basePath, context, capture);
+
+    assert.equal(captureCount, 1, `${transport} must attempt source capture once`);
+    assert.deepEqual(result.content, expectedResponse.content, `${transport} failure changed content`);
+    const structured = transport === "native_pi" ? result.details : result.structuredContent;
+    assert.deepEqual(structured, expectedResponse.structured, `${transport} failure changed structured response`);
+    const observation = observationPayload(basePath);
+    assert.equal(observation.sourceRevision, "unavailable");
+    assert.equal(observation.contextError, "unavailable");
+    assert.equal(observation.observationLossAccounting.lossCount, 1);
+    assert.equal(observation.observationLossAccounting.persistedCount, 1);
+    assert.equal(observation.observationLossAccounting.reason, "context_resolution_failed");
+    assert.match(observation.observationLossAccounting.errorHash, /^sha256:[0-9a-f]{64}$/u);
+  }
 });
 
 test("runtime classification and turn markers are bounded and token-fenced", () => {
