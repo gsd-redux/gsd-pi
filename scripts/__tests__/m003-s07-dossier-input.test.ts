@@ -2,7 +2,7 @@
 // File Purpose: Executable proof for local, read-only M003/S07 dossier input collection.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,7 +19,7 @@ import {
   collectSemanticShadowCapstoneEvidence,
   normalizeSemanticShadowCapstoneEvidence,
 } from "../../src/resources/extensions/gsd/tests/semantic-shadow-capstone-harness.ts";
-import { collectM003S07DossierInput } from "../m003-s07-dossier-input.ts";
+import { collectM003S07DossierInput, main as runDossierInputCli } from "../m003-s07-dossier-input.ts";
 
 const tempDirs = new Set<string>();
 const loaderPath = fileURLToPath(new URL("../../src/resources/extensions/gsd/tests/resolve-ts.mjs", import.meta.url));
@@ -268,7 +268,7 @@ test("collector rejects duplicate evidence rows even when their hashes match", a
   );
 });
 
-test("CLI runs local reports and emits validator-ready JSON only", async () => {
+test("CLI runs local reports and emits canonical validator-ready JSON", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-cli-"));
   tempDirs.add(root);
   mkdirSync(join(root, ".gsd"), { recursive: true });
@@ -287,8 +287,11 @@ test("CLI runs local reports and emits validator-ready JSON only", async () => {
     loaderPath,
     "--experimental-strip-types",
     collectorPath,
+    "--source-root",
     process.cwd(),
+    "--database",
     databasePath,
+    "--capstone",
     capstonePath,
   ], {
     cwd: process.cwd(),
@@ -306,4 +309,53 @@ test("CLI runs local reports and emits validator-ready JSON only", async () => {
     behavioral: { passed: 10, total: 10 },
   });
   assert.deepEqual(input.authorityBaseline, { passed: 4, total: 4 });
+});
+
+test("CLI writes canonical validator-ready JSON to an explicit local output", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-output-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  const outputPath = join(root, "dossier-input.json");
+  makeFixtureDatabase(databasePath);
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  await runDossierInputCli([
+    "--source-root",
+    process.cwd(),
+    "--database",
+    databasePath,
+    "--capstone",
+    capstonePath,
+    "--output",
+    outputPath,
+  ], passingReports());
+  const written = readFileSync(outputPath, "utf8");
+  const writtenInput = JSON.parse(written);
+  assert.equal(written, `${JSON.stringify(writtenInput, null, 2)}\n`);
+  assert.equal(buildDossier(writtenInput).recommendation, "NO_GO");
+});
+
+test("CLI rejects remote, duplicate, and unknown arguments before collection", () => {
+  const base = [
+    "--import",
+    loaderPath,
+    "--experimental-strip-types",
+    collectorPath,
+  ];
+  const invalidArguments = [
+    ["--source-root", "https://example.com/repo", "--database", "db", "--capstone", "capstone"],
+    ["--source-root", process.cwd(), "--database", "db", "--capstone", "capstone", "--output", "https://example.com/input"],
+    ["--source-root", process.cwd(), "--source-root", process.cwd(), "--database", "db", "--capstone", "capstone"],
+    ["--source-root", process.cwd(), "--database", "db", "--capstone", "capstone", "--extra", "value"],
+  ];
+  for (const args of invalidArguments) {
+    const result = spawnSync(process.execPath, [...base, ...args], { cwd: process.cwd(), encoding: "utf8" });
+    assert.equal(result.status, 1, args.join(" "));
+    assert.equal(result.stdout, "", args.join(" "));
+    assert.notEqual(result.stderr, "", args.join(" "));
+  }
 });

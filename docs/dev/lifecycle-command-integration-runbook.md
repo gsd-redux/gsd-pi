@@ -155,7 +155,8 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --source-root "$PWD" --output <capstone-json>
 node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --experimental-strip-types scripts/m003-s07-dossier-input.ts \
-  "$PWD" <canonical-gsd-db> <capstone-json> > <dossier-input-json>
+  --source-root "$PWD" --database <canonical-gsd-db> \
+  --capstone <capstone-json> --output <dossier-input-json>
 node scripts/m003-s07-cutover-dossier.mjs --input <dossier-input-json>
 node scripts/m003-s07-cutover-dossier.mjs --check
 ```

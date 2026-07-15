@@ -4,7 +4,7 @@
 // File Purpose: Collect local canonical inputs for the M003/S07 cutover dossier.
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -39,6 +39,10 @@ interface CollectorDependencies {
   runAuthorityBaseline?: () => Record<string, any>;
 }
 
+interface DossierInputCliOptions extends DossierInputPaths {
+  outputPath?: string;
+}
+
 interface CanonicalSnapshot {
   authority: { projectRevision: number; authorityEpoch: number };
   repairHistory: Array<Record<string, unknown>>;
@@ -47,7 +51,7 @@ interface CanonicalSnapshot {
 }
 
 const CAPSTONE_LIFECYCLE_PLACEHOLDER = "capstone-fixture-lifecycle-present";
-const LOCAL_INPUT_PATTERN = /(?:^[a-z]+:\/\/|git@|github\.com)/iu;
+const LOCAL_INPUT_PATTERN = /(?:^[a-z][a-z0-9+.-]*:\/\/|^git@|^\\\\|^\/\/|github\.com)/iu;
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -336,13 +340,44 @@ export async function collectM003S07DossierInput(
   };
 }
 
-async function main(): Promise<void> {
-  const [sourceRoot, databasePath, capstonePath, ...extra] = process.argv.slice(2);
-  if (!sourceRoot || !databasePath || !capstonePath || extra.length > 0) {
-    throw new Error("Usage: m003-s07-dossier-input <source-root> <canonical-db> <normalized-capstone-json>");
+export function parseDossierInputArgs(args: string[]): DossierInputCliOptions {
+  const values = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const option = args[index];
+    const value = args[index + 1];
+    if (!option || !["--source-root", "--database", "--capstone", "--output"].includes(option)) {
+      throw new Error(`Unknown argument: ${option ?? ""}`);
+    }
+    if (!value || value.startsWith("--")) throw new Error(`Missing value for ${option}`);
+    if (values.has(option)) throw new Error(`Duplicate argument: ${option}`);
+    values.set(option, value);
   }
-  const input = await collectM003S07DossierInput({ sourceRoot, databasePath, capstonePath });
-  process.stdout.write(`${JSON.stringify(input, null, 2)}\n`);
+  const sourceRoot = values.get("--source-root");
+  const databasePath = values.get("--database");
+  const capstonePath = values.get("--capstone");
+  if (!sourceRoot || !databasePath || !capstonePath) {
+    throw new Error(
+      "Usage: m003-s07-dossier-input --source-root <path> --database <path> --capstone <path> [--output <path>]",
+    );
+  }
+  const outputPath = values.get("--output");
+  return {
+    sourceRoot: localPath(sourceRoot, "Source root"),
+    databasePath: localPath(databasePath, "Canonical database"),
+    capstonePath: localPath(capstonePath, "Capstone evidence"),
+    ...(outputPath ? { outputPath: localPath(outputPath, "Output") } : {}),
+  };
+}
+
+export async function main(
+  args = process.argv.slice(2),
+  dependencies: CollectorDependencies = {},
+): Promise<void> {
+  const { outputPath, ...paths } = parseDossierInputArgs(args);
+  const input = await collectM003S07DossierInput(paths, dependencies);
+  const serialized = `${JSON.stringify(input, null, 2)}\n`;
+  if (outputPath) writeFileSync(outputPath, serialized, "utf8");
+  else process.stdout.write(serialized);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
