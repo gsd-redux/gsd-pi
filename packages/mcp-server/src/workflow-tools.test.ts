@@ -1759,6 +1759,7 @@ const captureMilestoneValidation = async (params, projectDir, options) => {
 };
 
 export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = ["SUMMARY", "UAT", "CONTEXT", "PLAN"];
+export const resolveMilestoneStatusObservationTokenState = () => "malformed";
 export const executeMilestoneStatus = noop;
 export const executePlanMilestone = noop;
 export const executePlanSlice = noop;
@@ -1822,8 +1823,15 @@ export const executeTaskComplete = async (params, projectDir, invocation) => {
 
       // Fresh import bypasses the cached workflowToolExecutorsPromise so the
       // mock module is actually loaded for this test.
-      const { registerWorkflowTools: freshRegisterWorkflowTools } = await import(
+      const {
+        registerWorkflowTools: freshRegisterWorkflowTools,
+        resolveMilestoneStatusObservationTokenState: freshResolveObservationTokenState,
+      } = await import(
         cacheBustedWorkflowToolsImport("escalation-test")
+      );
+      assert.equal(
+        await freshResolveObservationTokenState(base, "opaque-token"),
+        "unavailable",
       );
       const server = makeMockServer();
       freshRegisterWorkflowTools(server as any);

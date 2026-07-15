@@ -9,7 +9,6 @@ import { randomUUID } from "node:crypto";
 
 import {
   clearNativeMilestoneStatusSourceRevisions,
-  prepareNativeMilestoneStatusSourceRevision,
   registerQueryTools,
 } from "../bootstrap/query-tools.ts";
 import {
@@ -128,19 +127,24 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
       ],
     }, null, 2);
 
-    const pi = makeMockPi();
-    registerQueryTools(pi);
-    const tool = pi.tools[0];
     let captures = 0;
-    prepareNativeMilestoneStatusSourceRevision(base, "test-session", () => {
-      captures += 1;
-      return { ok: true, sourceRevision: "sha256:turn-bound-source" };
+    const pi = makeMockPi();
+    registerQueryTools(pi, {
+      captureMilestoneVerificationSourceRevision: () => {
+        captures += 1;
+        return { ok: true, sourceRevision: "sha256:turn-bound-source" };
+      },
     });
+    const tool = pi.tools[0];
+
+    assert.equal(captures, 0, "registering an unused status tool must not capture source");
 
     const result = await executeToolInDir(tool, { milestoneId: "M001" }, base);
+    const repeated = await executeToolInDir(tool, { milestoneId: "M001" }, base);
     const parsed = JSON.parse(result.content[0].text);
 
     assert.equal(result.content[0].text, expectedText, "observation must preserve the byte-level native Pi response");
+    assert.equal(repeated.content[0].text, expectedText, "repeated reads must preserve the native Pi response");
     assert.deepEqual(result.details, { operation: "milestone_status", ...JSON.parse(expectedText) });
 
     assert.equal(parsed.milestoneId, "M001");
@@ -166,7 +170,7 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
     const payload = JSON.parse(String(audit["payload_json"]));
     assert.equal(payload.mode, "interactive");
     assert.equal(payload.transport, "native_pi");
-    assert.equal(captures, 1);
+    assert.equal(captures, 1, "the first status read captures source once and later reads reuse it");
     assert.equal(payload.sourceRevision, "sha256:turn-bound-source");
     assert.equal(payload.traceId, "test-call-id");
     assert.equal(payload.turnId, "test-session");

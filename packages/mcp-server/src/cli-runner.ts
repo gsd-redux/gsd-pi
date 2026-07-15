@@ -5,7 +5,8 @@ import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
 import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
 import {
-  isMilestoneStatusObservationTokenActive,
+  resolveMilestoneStatusObservationTokenState,
+  type MilestoneStatusObservationTokenState,
   warmWorkflowToolBridges,
 } from './workflow-tools.js';
 import { isMcpProbeSession } from './probe-mode.js';
@@ -104,10 +105,10 @@ export interface RunMcpServerCliOptions {
   createMcpServer?: (sessionManager: SessionManagerLike) => Promise<{ server: McpServerLike }>;
   importStdioServerTransport?: () => Promise<{ StdioServerTransport: StdioTransportConstructor }>;
   warmWorkflowToolBridges?: () => Promise<unknown> | unknown;
-  isMilestoneStatusObservationTokenActive?: (
+  resolveMilestoneStatusObservationTokenState?: (
     projectDir: string,
     token: string,
-  ) => Promise<boolean> | boolean;
+  ) => Promise<MilestoneStatusObservationTokenState> | MilestoneStatusObservationTokenState;
   stdin?: Readable;
   stdout?: Writable;
   stderr?: Writable;
@@ -223,17 +224,15 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
   );
   const importTransport = options.importStdioServerTransport ?? importDefaultStdioServerTransport;
   const warmBridges = options.warmWorkflowToolBridges ?? warmWorkflowToolBridges;
-  const observationTokenActive = options.isMilestoneStatusObservationTokenActive
-    ?? isMilestoneStatusObservationTokenActive;
+  const resolveObservationTokenState = options.resolveMilestoneStatusObservationTokenState
+    ?? resolveMilestoneStatusObservationTokenState;
 
   loadEnv();
 
   const projectDir = env.GSD_WORKFLOW_PROJECT_ROOT || cwd();
   const probeSession = isMcpProbeSession(env);
   const observationToken = env.GSD_MILESTONE_STATUS_OBSERVATION_TOKEN?.trim();
-  const pumpScopedObservationSession = Boolean(
-    observationToken && await observationTokenActive(projectDir, observationToken),
-  );
+  let pumpScopedObservationSession = false;
   let registered = false;
   let cleaningUp = false;
   let idleWatchdog: ReturnType<typeof setInterval> | undefined;
@@ -286,6 +285,19 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
   stdin.once('error', () => void cleanup(1));
 
   try {
+    if (stdin.destroyed || stdin.readableEnded || stdin.closed) {
+      await cleanup();
+      return;
+    }
+    if (observationToken) {
+      const tokenState = await resolveObservationTokenState(projectDir, observationToken);
+      if (tokenState === 'unavailable') {
+        throw new Error('refusing to start: milestone-status observation token authority is unavailable');
+      }
+      pumpScopedObservationSession = tokenState === 'active';
+    }
+    if (cleaningUp) return;
+
     if (!probeSession && !pumpScopedObservationSession) {
       sweepOrphans(projectDir);
       if (registerInstance(projectDir) === false) {

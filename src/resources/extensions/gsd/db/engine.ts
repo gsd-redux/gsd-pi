@@ -122,8 +122,8 @@ const providerLoader = createSqliteProviderLoader({
 export const SCHEMA_VERSION = 44;
 function initSchema(db: DbAdapter, fileBacked: boolean, dbPath: string | null): void {
   const conservativeFilePragmas = fileBacked && _isLikelyWslDrvFsPathForTest(dbPath);
-  if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
   if (fileBacked) db.exec("PRAGMA busy_timeout = 5000");
+  if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA journal_mode=DELETE" : "PRAGMA journal_mode=WAL");
   if (fileBacked) db.exec(conservativeFilePragmas ? "PRAGMA synchronous = FULL" : "PRAGMA synchronous = NORMAL");
   if (fileBacked) db.exec("PRAGMA auto_vacuum = INCREMENTAL");
   if (fileBacked) db.exec("PRAGMA cache_size = -8000");   // 8 MB page cache
@@ -844,10 +844,12 @@ export function openIsolatedDatabase(path: string): DbAdapter | null {
     if (!rawDb) return null;
     const adapter = createDbAdapter(rawDb);
     // Minimal pragmas for a short-lived read-only observer connection.
+    // Apply the wait policy before WAL negotiation so concurrent observers do
+    // not fail immediately while another connection is opening the same DB.
+    adapter.exec("PRAGMA busy_timeout = 5000");
     // WAL mode is already set file-wide by the primary connection; repeating
     // it here is a no-op on an existing WAL file and safe to issue.
     adapter.exec("PRAGMA journal_mode=WAL");
-    adapter.exec("PRAGMA busy_timeout = 5000");
     return adapter;
   } catch {
     return null;

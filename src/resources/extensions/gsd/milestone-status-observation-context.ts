@@ -66,6 +66,8 @@ type StoredTurnResult =
   | { status: "found"; turn: MilestoneStatusObservationTurn }
   | { status: "missing" | "invalid" | "unavailable" };
 
+export type MilestoneStatusObservationTokenState = "active" | "inactive" | "unavailable";
+
 export function classifyMilestoneStatusRuntimeMode(
   signals: MilestoneStatusRuntimeSignals,
 ): MilestoneStatusRuntimeMode {
@@ -239,6 +241,17 @@ export function readMilestoneStatusObservationTurn(
   if (!token.trim()) return null;
   const result = readStoredTurn(basePath, token, now);
   return result.status === "found" ? result.turn : null;
+}
+
+export function resolveMilestoneStatusObservationTokenState(
+  basePath: string,
+  token: string,
+  now: number = Date.now(),
+): MilestoneStatusObservationTokenState {
+  if (!token.trim()) return "inactive";
+  const result = readStoredTurn(basePath, token, now);
+  if (result.status === "found") return "active";
+  return result.status === "missing" ? "inactive" : "unavailable";
 }
 
 export function clearMilestoneStatusObservationTurn(basePath: string, token: string): boolean {

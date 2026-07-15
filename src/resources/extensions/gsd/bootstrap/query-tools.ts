@@ -24,6 +24,10 @@ interface NativeSourceRevision {
   contextError?: "unavailable";
 }
 
+interface QueryToolDependencies {
+  captureMilestoneVerificationSourceRevision?: SourceRevisionCapture;
+}
+
 const nativeSourceRevisions = new Map<string, NativeSourceRevision>();
 
 function nativeSourceRevisionKey(basePath: string, sessionId: string): string {
@@ -34,13 +38,17 @@ export function clearNativeMilestoneStatusSourceRevisions(): void {
   nativeSourceRevisions.clear();
 }
 
-export function prepareNativeMilestoneStatusSourceRevision(
+function captureNativeMilestoneStatusSourceRevision(
   basePath: string,
   sessionId: string,
-  captureSourceRevision: SourceRevisionCapture = captureMilestoneVerificationSourceRevision,
-): void {
+  captureSourceRevision: SourceRevisionCapture,
+): NativeSourceRevision | undefined {
   const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) return;
+  if (!normalizedSessionId) return undefined;
+  const key = nativeSourceRevisionKey(basePath, normalizedSessionId);
+  const cached = nativeSourceRevisions.get(key);
+  if (cached) return cached;
+
   let sourceRevision = "unavailable";
   let contextError: "unavailable" | undefined;
   try {
@@ -51,10 +59,12 @@ export function prepareNativeMilestoneStatusSourceRevision(
   } catch {
     contextError = "unavailable";
   }
-  nativeSourceRevisions.set(
-    nativeSourceRevisionKey(basePath, normalizedSessionId),
-    { sourceRevision, ...(contextError ? { contextError } : {}) },
-  );
+  const result: NativeSourceRevision = {
+    sourceRevision,
+    ...(contextError ? { contextError } : {}),
+  };
+  nativeSourceRevisions.set(key, result);
+  return result;
 }
 
 function contextSessionId(ctx: unknown): string | undefined {
@@ -73,6 +83,7 @@ function nativeMilestoneStatusContext(
   basePath: string,
   toolCallId: string,
   sessionId: string | undefined,
+  captureSourceRevision: SourceRevisionCapture,
 ): MilestoneStatusObservationContext {
   let uok: ReturnType<typeof resolveUokFlags> | undefined;
   let contextError: "unavailable" | undefined;
@@ -85,7 +96,7 @@ function nativeMilestoneStatusContext(
     contextError = "unavailable";
   }
   const preparedSource = sessionId
-    ? nativeSourceRevisions.get(nativeSourceRevisionKey(basePath, sessionId))
+    ? captureNativeMilestoneStatusSourceRevision(basePath, sessionId, captureSourceRevision)
     : undefined;
   const sourceRevision = preparedSource?.sourceRevision ?? "unavailable";
   if (!preparedSource || preparedSource.contextError) contextError = "unavailable";
@@ -111,7 +122,10 @@ function nativeMilestoneStatusContext(
 
 export function registerQueryTools(
   pi: ExtensionAPI,
+  dependencies: QueryToolDependencies = {},
 ): void {
+  const captureSourceRevision = dependencies.captureMilestoneVerificationSourceRevision
+    ?? captureMilestoneVerificationSourceRevision;
   pi.registerTool({
     name: "gsd_milestone_status",
     label: "Milestone Status",
@@ -133,7 +147,7 @@ export function registerQueryTools(
       const result = await executeMilestoneStatus(
         params,
         basePath,
-        nativeMilestoneStatusContext(basePath, toolCallId, sessionId),
+        nativeMilestoneStatusContext(basePath, toolCallId, sessionId, captureSourceRevision),
       );
       if (result.details?.error === "db_unavailable") {
         return {

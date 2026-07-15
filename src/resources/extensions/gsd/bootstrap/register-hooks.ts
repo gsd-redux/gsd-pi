@@ -87,10 +87,7 @@ import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 import { flushAllManifests } from "../workflow-manifest.js";
 import { recordUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
-import {
-  clearNativeMilestoneStatusSourceRevisions,
-  prepareNativeMilestoneStatusSourceRevision,
-} from "./query-tools.js";
+import { clearNativeMilestoneStatusSourceRevisions } from "./query-tools.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -1159,14 +1156,6 @@ export function registerHooks(
     }
   });
 
-  pi.on("turn_start", (_event, ctx: ExtensionContext) => {
-    if (!pi.getActiveTools().includes("gsd_milestone_status")) return;
-    prepareNativeMilestoneStatusSourceRevision(
-      contextBasePath(ctx),
-      ctx.sessionManager.getSessionId(),
-    );
-  });
-
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     clearAutoCompletionStopInProgress();
     resetPendingGatePauseGuard();
@@ -1312,6 +1301,7 @@ export function registerHooks(
   // agent turn completes (#2668). cleanupQuickBranch is a no-op when no
   // quick-return state is pending, so this is safe to call on every turn.
   pi.on("turn_end", async () => {
+    clearNativeMilestoneStatusSourceRevisions();
     try {
       const { cleanupQuickBranch } = await import("../quick.js");
       cleanupQuickBranch();

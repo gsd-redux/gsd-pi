@@ -10,14 +10,13 @@ import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  isMilestoneStatusObservationTokenActive,
   registerWorkflowTools,
+  resolveMilestoneStatusObservationTokenState,
 } from "../../../../../packages/mcp-server/src/workflow-tools.ts";
 import { streamViaClaudeCode } from "../../claude-code-cli/stream-adapter.ts";
 import { autoSession } from "../auto-runtime-state.ts";
 import {
   clearNativeMilestoneStatusSourceRevisions,
-  prepareNativeMilestoneStatusSourceRevision,
   registerQueryTools,
 } from "../bootstrap/query-tools.ts";
 import {
@@ -293,13 +292,15 @@ function configureNativeMode(
   writeUokPreference(basePath, { enabled: false });
 }
 
-function makeNativePiTool() {
+function makeNativePiTool(captureSourceRevision?: SourceRevisionCapture) {
   const tools: Array<Record<string, any>> = [];
   registerQueryTools({
     registerTool(tool: Record<string, any>) {
       tools.push(tool);
     },
-  } as any);
+  } as any, captureSourceRevision ? {
+    captureMilestoneVerificationSourceRevision: captureSourceRevision,
+  } : undefined);
   const tool = tools.find((candidate) => candidate.name === "gsd_milestone_status");
   assert.ok(tool, "native Pi milestone status registration is required");
   return tool;
@@ -373,14 +374,7 @@ async function runNativeCell(
   captureSourceRevision?: SourceRevisionCapture,
 ): Promise<any> {
   configureNativeMode(mode, basePath, context);
-  if (captureSourceRevision && context.turnId) {
-    prepareNativeMilestoneStatusSourceRevision(
-      basePath,
-      context.turnId,
-      captureSourceRevision,
-    );
-  }
-  const tool = makeNativePiTool();
+  const tool = makeNativePiTool(captureSourceRevision);
   return tool.execute(
     context.traceId,
     { milestoneId: "M001" },
@@ -756,8 +750,20 @@ test("overlapping turns resolve only the exact private capability token", async 
   });
   assert.ok(firstToken);
   assert.ok(secondToken);
-  assert.equal(await isMilestoneStatusObservationTokenActive(basePath, firstToken), true);
-  assert.equal(await isMilestoneStatusObservationTokenActive(basePath, "unknown-token"), false);
+  assert.equal(await resolveMilestoneStatusObservationTokenState(basePath, firstToken), "active");
+  assert.equal(await resolveMilestoneStatusObservationTokenState(basePath, "unknown-token"), "inactive");
+
+  db().prepare(`
+    INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
+    VALUES ('global', '', :key, 'not-json', :updated_at)
+  `).run({
+    ":key": "milestone-status-observation-turn:corrupt-token",
+    ":updated_at": new Date().toISOString(),
+  });
+  assert.equal(
+    await resolveMilestoneStatusObservationTokenState(basePath, "corrupt-token"),
+    "unavailable",
+  );
 
   assert.deepEqual(
     resolveMilestoneStatusObservationContext(basePath, "workflow_mcp", firstToken),

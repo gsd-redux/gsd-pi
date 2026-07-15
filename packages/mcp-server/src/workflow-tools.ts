@@ -19,6 +19,8 @@ import {
 
 import { logAliasUsage } from "./alias-telemetry.js";
 
+export type MilestoneStatusObservationTokenState = "active" | "inactive" | "unavailable";
+
 /** Local mirror of src/resources/extensions/gsd/mcp-bridge.ts.
  *  Kept here so packages/mcp-server/tsconfig.json rootDir boundary is not crossed.
  */
@@ -63,10 +65,10 @@ async function importBridgeModule(): Promise<GsdMcpBridge> {
 type WorkflowToolExecutors = {
   SUPPORTED_SUMMARY_ARTIFACT_TYPES: readonly string[];
   MILESTONE_STATUS_OBSERVATION_TOKEN_ENV?: string;
-  readMilestoneStatusObservationTurn?: (
+  resolveMilestoneStatusObservationTokenState?: (
     basePath: string,
     token: string,
-  ) => unknown;
+  ) => MilestoneStatusObservationTokenState;
   resolveMilestoneStatusObservationContext?: (
     basePath: string,
     transport: "native_pi" | "workflow_mcp",
@@ -982,16 +984,19 @@ export async function warmWorkflowToolBridges(): Promise<void> {
   await getWorkflowWriteGateModule();
 }
 
-export async function isMilestoneStatusObservationTokenActive(
+export async function resolveMilestoneStatusObservationTokenState(
   projectDir: string,
   token: string,
-): Promise<boolean> {
-  if (!token.trim()) return false;
+): Promise<MilestoneStatusObservationTokenState> {
+  if (!token.trim()) return "inactive";
   try {
     const executors = await getWorkflowToolExecutors();
-    return Boolean(executors.readMilestoneStatusObservationTurn?.(projectDir, token));
+    const state = executors.resolveMilestoneStatusObservationTokenState?.(projectDir, token);
+    return state === "active" || state === "inactive" || state === "unavailable"
+      ? state
+      : "unavailable";
   } catch {
-    return false;
+    return "unavailable";
   }
 }
 
