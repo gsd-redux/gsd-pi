@@ -6,7 +6,61 @@ import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { ensureDbOpen, resolveCtxCwd } from "./dynamic-tools.js";
 import { checkpointWorkflowDatabase } from "../db-workspace.js";
+import { autoSession } from "../auto-runtime-state.js";
+import { getGuidedUnitContext } from "../guided-unit-context.js";
+import {
+  classifyMilestoneStatusRuntimeMode,
+} from "../milestone-status-observation-context.js";
+import type { MilestoneStatusObservationContext } from "../lifecycle-shadow-observation.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import { resolveUokFlags } from "../uok/flags.js";
+import { resolveWorkflowMcpProjectRoot } from "../workflow-mcp.js";
 
+function contextSessionId(ctx: unknown): string | undefined {
+  try {
+    if (!ctx || typeof ctx !== "object") return undefined;
+    const sessionManager = (ctx as { sessionManager?: { getSessionId?: () => unknown } }).sessionManager;
+    if (typeof sessionManager?.getSessionId !== "function") return undefined;
+    const sessionId = sessionManager.getSessionId();
+    return typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function nativeMilestoneStatusContext(
+  basePath: string,
+  toolCallId: string,
+  sessionId: string | undefined,
+): MilestoneStatusObservationContext {
+  let uok: ReturnType<typeof resolveUokFlags> | undefined;
+  let contextError: "unavailable" | undefined;
+  let guidedActive = false;
+  try {
+    uok = resolveUokFlags(loadEffectiveGSDPreferences(basePath)?.preferences);
+    guidedActive = getGuidedUnitContext(basePath) !== null;
+  } catch {
+    contextError = "unavailable";
+  }
+  const projectRoot = resolveWorkflowMcpProjectRoot(basePath);
+  const autoActive = autoSession.active && [autoSession.originalBasePath, autoSession.basePath]
+    .some((candidate) => candidate && resolveWorkflowMcpProjectRoot(candidate) === projectRoot);
+  const turnId = autoActive ? autoSession.currentTurnId ?? sessionId : sessionId;
+  return {
+    mode: classifyMilestoneStatusRuntimeMode({
+      autoActive,
+      activeEngineId: autoActive ? autoSession.activeEngineId : null,
+      uokEnabled: uok?.enabled,
+      uokLegacyFallback: uok?.legacyFallback,
+      guidedActive,
+    }),
+    transport: "native_pi",
+    sourceRevision: "unavailable",
+    traceId: autoActive ? autoSession.currentTraceId ?? toolCallId : toolCallId,
+    ...(turnId ? { turnId } : {}),
+    ...(contextError ? { contextError } : {}),
+  };
+}
 
 export function registerQueryTools(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -23,10 +77,15 @@ export function registerQueryTools(pi: ExtensionAPI): void {
     parameters: Type.Object({
       milestoneId: Type.String({ description: "Milestone ID to query (e.g. M001)" }),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const basePath = resolveCtxCwd(_ctx);
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const basePath = resolveCtxCwd(ctx);
       const { executeMilestoneStatus } = await import("../tools/workflow-tool-executors.js");
-      const result = await executeMilestoneStatus(params, basePath);
+      const sessionId = contextSessionId(ctx);
+      const result = await executeMilestoneStatus(
+        params,
+        basePath,
+        nativeMilestoneStatusContext(basePath, toolCallId, sessionId),
+      );
       if (result.details?.error === "db_unavailable") {
         return {
           content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot read milestone status." }],

@@ -62,6 +62,19 @@ async function importBridgeModule(): Promise<GsdMcpBridge> {
 
 type WorkflowToolExecutors = {
   SUPPORTED_SUMMARY_ARTIFACT_TYPES: readonly string[];
+  MILESTONE_STATUS_OBSERVATION_TOKEN_ENV?: string;
+  resolveMilestoneStatusObservationContext?: (
+    basePath: string,
+    transport: "native_pi" | "workflow_mcp",
+    token?: string,
+  ) => {
+    mode: "auto" | "interactive" | "guided" | "uok" | "custom" | "legacy";
+    transport: "native_pi" | "workflow_mcp";
+    sourceRevision: string;
+    traceId?: string;
+    turnId?: string;
+    contextError?: "unavailable" | "invalid";
+  };
   executeMilestoneStatus: (
     params: { milestoneId: string },
     basePath?: string,
@@ -3194,12 +3207,24 @@ export function registerWorkflowTools(
       // does not apply the write-gate; MCP must match to avoid blocking reads
       // during pending-gate or queue-mode states.
       const { projectDir, milestoneId } = parseWorkflowArgs(milestoneStatusSchema, args);
-      const { executeMilestoneStatus } = await getWorkflowToolExecutors();
+      const executors = await getWorkflowToolExecutors();
+      const tokenEnv = executors.MILESTONE_STATUS_OBSERVATION_TOKEN_ENV
+        ?? "GSD_MILESTONE_STATUS_OBSERVATION_TOKEN";
+      const observationContext = executors.resolveMilestoneStatusObservationContext?.(
+        projectDir,
+        "workflow_mcp",
+        process.env[tokenEnv],
+      ) ?? {
+        mode: "legacy" as const,
+        transport: "workflow_mcp" as const,
+        sourceRevision: "unavailable",
+        contextError: "unavailable" as const,
+      };
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executeMilestoneStatus(
+        await runSerializedWorkflowOperation(() => executors.executeMilestoneStatus(
           { milestoneId },
           projectDir,
-          { mode: "legacy", transport: "workflow_mcp", sourceRevision: "unavailable" },
+          observationContext,
         )),
       );
     },

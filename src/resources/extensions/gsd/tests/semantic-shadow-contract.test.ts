@@ -71,17 +71,6 @@ const REPAIR_RULES = [
   "one_immutable_replay_safe_receipt",
 ] as const;
 
-const COMPATIBILITY_CASES = [
-  "unadopted_markdown_import",
-  "unadopted_worktree_reconcile",
-  "contradictory_projection",
-  "same_status_repair",
-  "park",
-  "unpark",
-  "discard",
-  "legacy_skipped_dependency",
-] as const;
-
 const FORBIDDEN_BOUNDARIES = [
   "canonical_read_authority",
   "canonical_dependency_eligibility",
@@ -285,7 +274,7 @@ test("freezes the exact semantic-shadow classifications without translation alia
   assert.equal(CLASSIFICATIONS.includes("exact_match" as never), false);
 });
 
-test("freezes the complete mode, transport, observation, repair, and compatibility inventory", () => {
+test("freezes the complete mode, transport, observation, and repair inventories", () => {
   assert.deepEqual(RUNTIME_MODES, ["auto", "interactive", "guided", "uok", "custom", "legacy"]);
   assert.deepEqual(TRANSPORTS, ["native_pi", "workflow_mcp"]);
   assert.deepEqual(OBSERVATION_FIELDS, [
@@ -314,16 +303,6 @@ test("freezes the complete mode, transport, observation, repair, and compatibili
     "extra_or_unexplained_shadow_remains_unresolved",
     "one_immutable_replay_safe_receipt",
   ]);
-  assert.deepEqual(COMPATIBILITY_CASES, [
-    "unadopted_markdown_import",
-    "unadopted_worktree_reconcile",
-    "contradictory_projection",
-    "same_status_repair",
-    "park",
-    "unpark",
-    "discard",
-    "legacy_skipped_dependency",
-  ]);
   assert.deepEqual(FORBIDDEN_BOUNDARIES, [
     "canonical_read_authority",
     "canonical_dependency_eligibility",
@@ -336,7 +315,7 @@ test("freezes the complete mode, transport, observation, repair, and compatibili
   ]);
 });
 
-test("keeps milestone status byte/deep-equal across all modes and both transports", async () => {
+test("keeps milestone status byte/deep-equal across native Pi and the shared workflow executor", async () => {
   const base = makeFixture();
   const expectedResult = {
     milestoneId: "M001",
@@ -368,15 +347,13 @@ test("keeps milestone status byte/deep-equal across all modes and both transport
     "fixture must include a contradictory completed projection",
   );
 
-  for (const mode of RUNTIME_MODES) {
-    for (const transport of TRANSPORTS) {
-      const result = transport === "native_pi"
-        ? await runNativePiStatus(base)
-        : await runWorkflowMcpStatus(base);
-      assert.deepEqual(result.content, expectedContent, `${mode}/${transport} content changed`);
-      assert.equal(result.content[0].text, expectedContent[0].text, `${mode}/${transport} text is not byte-equal`);
-      assert.deepEqual(result.details, expectedDetails, `${mode}/${transport} details changed`);
-    }
+  for (const [surface, result] of [
+    ["native_pi", await runNativePiStatus(base)],
+    ["workflow_executor", await runWorkflowMcpStatus(base)],
+  ] as const) {
+    assert.deepEqual(result.content, expectedContent, `${surface} content changed`);
+    assert.equal(result.content[0].text, expectedContent[0].text, `${surface} text is not byte-equal`);
+    assert.deepEqual(result.details, expectedDetails, `${surface} details changed`);
   }
 
   assert.deepEqual(authoritySnapshot(), before, "status reads must not mutate authority or delete compatibility state");

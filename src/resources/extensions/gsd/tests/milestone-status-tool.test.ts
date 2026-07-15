@@ -151,10 +151,10 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
     `).get();
     assert.ok(audit, "native Pi status reads must persist the mandatory observation with honest defaults");
     const payload = JSON.parse(String(audit["payload_json"]));
-    assert.equal(payload.mode, "legacy");
+    assert.equal(payload.mode, "interactive");
     assert.equal(payload.transport, "native_pi");
     assert.equal(payload.sourceRevision, "unavailable");
-    assert.equal(payload.traceId, null);
+    assert.equal(payload.traceId, "test-call-id");
     assert.equal(payload.turnId, null);
   } finally {
     closeDatabase();
@@ -230,6 +230,10 @@ test("gsd_milestone_status handles missing DB gracefully", async () => {
     assert.equal(events.length, 1);
     assert.equal(events[0].type, "lifecycle-shadow-observation-loss");
     assert.equal(events[0].payload.observationLossAccounting.lossCount, 2);
+    assert.deepEqual(
+      events[0].payload.observationLossAccounting.causes.map((cause: { reason: string }) => cause.reason),
+      ["shadow_query_failed", "primary_sink_failed"],
+    );
   } finally {
     closeDatabase();
     cleanup(base);

@@ -1,0 +1,251 @@
+// Project/App: gsd-pi
+// File Purpose: Response-neutral runtime context propagation for milestone-status observations.
+
+import { randomUUID } from "node:crypto";
+
+import { openIsolatedDatabase } from "./db/engine.js";
+import { resolveProjectRootDbPath } from "./db-workspace.js";
+import type {
+  MilestoneStatusObservationContext,
+  MilestoneStatusObservationContextError,
+  MilestoneStatusRuntimeMode,
+  MilestoneStatusTransport,
+} from "./lifecycle-shadow-observation.js";
+
+export const MILESTONE_STATUS_OBSERVATION_TOKEN_ENV = "GSD_MILESTONE_STATUS_OBSERVATION_TOKEN";
+
+const TURN_CONTEXT_KEY_PREFIX = "milestone-status-observation-turn:";
+const DEFAULT_TTL_MS = 60 * 60 * 1_000;
+const RUNTIME_MODES = new Set<MilestoneStatusRuntimeMode>([
+  "auto",
+  "interactive",
+  "guided",
+  "uok",
+  "custom",
+  "legacy",
+]);
+
+export interface MilestoneStatusRuntimeSignals {
+  autoActive: boolean;
+  activeEngineId?: string | null;
+  uokEnabled?: boolean;
+  uokLegacyFallback?: boolean;
+  guidedActive?: boolean;
+}
+
+export interface MilestoneStatusObservationTurn {
+  token: string;
+  databasePath: string;
+  mode: MilestoneStatusRuntimeMode;
+  sourceRevision: string;
+  traceId?: string;
+  turnId?: string;
+  contextError?: MilestoneStatusObservationContextError;
+  startedAt: string;
+  expiresAt: string;
+}
+
+interface TurnTimingOptions {
+  now?: number;
+  ttlMs?: number;
+  token?: string;
+}
+
+type ContextDatabase = NonNullable<ReturnType<typeof openIsolatedDatabase>>;
+
+type StoredTurnResult =
+  | { status: "found"; turn: MilestoneStatusObservationTurn }
+  | { status: "missing" | "invalid" | "unavailable" };
+
+export function classifyMilestoneStatusRuntimeMode(
+  signals: MilestoneStatusRuntimeSignals,
+): MilestoneStatusRuntimeMode {
+  if (signals.autoActive) {
+    if (signals.activeEngineId && signals.activeEngineId !== "dev") return "custom";
+    if (signals.uokLegacyFallback) return "legacy";
+    return signals.uokEnabled ? "uok" : "auto";
+  }
+  return signals.guidedActive ? "guided" : "interactive";
+}
+
+function withContextDatabase<T>(
+  databasePath: string,
+  fn: (database: ContextDatabase) => T,
+): { available: true; value: T } | { available: false } {
+  let database: ReturnType<typeof openIsolatedDatabase>;
+  try {
+    database = openIsolatedDatabase(databasePath);
+  } catch {
+    return { available: false };
+  }
+  if (!database) return { available: false };
+  try {
+    return { available: true, value: fn(database) };
+  } catch {
+    return { available: false };
+  } finally {
+    try {
+      database.close();
+    } catch {
+      // Observation soft state must never break the calling workflow.
+    }
+  }
+}
+
+function isOptionalNonblankString(value: unknown): value is string | undefined {
+  return value === undefined || (typeof value === "string" && Boolean(value.trim()));
+}
+
+function isStoredTurn(value: unknown): value is MilestoneStatusObservationTurn {
+  if (!value || typeof value !== "object") return false;
+  const turn = value as Partial<MilestoneStatusObservationTurn>;
+  if (typeof turn.token !== "string" || !turn.token.trim()) return false;
+  if (typeof turn.databasePath !== "string" || !turn.databasePath.trim()) return false;
+  if (!RUNTIME_MODES.has(turn.mode as MilestoneStatusRuntimeMode)) return false;
+  if (typeof turn.sourceRevision !== "string" || !turn.sourceRevision.trim()) return false;
+  if (typeof turn.startedAt !== "string" || !Number.isFinite(Date.parse(turn.startedAt))) return false;
+  if (typeof turn.expiresAt !== "string" || !Number.isFinite(Date.parse(turn.expiresAt))) return false;
+  if (!isOptionalNonblankString(turn.traceId)) return false;
+  if (!isOptionalNonblankString(turn.turnId)) return false;
+  if (turn.contextError !== undefined && !["unavailable", "invalid"].includes(turn.contextError)) {
+    return false;
+  }
+  return true;
+}
+
+function turnKey(token: string): string {
+  return `${TURN_CONTEXT_KEY_PREFIX}${token}`;
+}
+
+function deleteStoredTurn(databasePath: string, token: string, raw?: string): boolean {
+  const rawPredicate = raw === undefined ? "" : " AND value_json = :value_json";
+  const result = withContextDatabase(databasePath, (database) => database.prepare(`
+    DELETE FROM runtime_kv
+    WHERE scope = 'global' AND scope_id = '' AND key = :key${rawPredicate}
+  `).run({
+    ":key": turnKey(token),
+    ...(raw === undefined ? {} : { ":value_json": raw }),
+  }) as { changes?: unknown });
+  return result.available && Number(result.value.changes ?? 0) > 0;
+}
+
+function readStoredTurn(basePath: string, token: string, now: number): StoredTurnResult {
+  let databasePath: string;
+  try {
+    databasePath = resolveProjectRootDbPath(basePath);
+  } catch {
+    return { status: "unavailable" };
+  }
+  const result = withContextDatabase(databasePath, (database) => database.prepare(`
+    SELECT value_json
+    FROM runtime_kv
+    WHERE scope = 'global' AND scope_id = '' AND key = :key
+  `).get({ ":key": turnKey(token) }));
+  if (!result.available) return { status: "unavailable" };
+
+  const raw = result.value?.["value_json"];
+  if (raw === undefined) return { status: "missing" };
+  if (typeof raw !== "string") return { status: "invalid" };
+
+  try {
+    const turn = JSON.parse(raw);
+    if (!isStoredTurn(turn) || turn.token !== token || turn.databasePath !== databasePath) {
+      return { status: "invalid" };
+    }
+    if (Date.parse(turn.expiresAt) <= now) {
+      deleteStoredTurn(databasePath, token, raw);
+      return { status: "invalid" };
+    }
+    return { status: "found", turn };
+  } catch {
+    return { status: "invalid" };
+  }
+}
+
+export function beginMilestoneStatusObservationTurn(
+  basePath: string,
+  input: Omit<MilestoneStatusObservationTurn, "token" | "databasePath" | "startedAt" | "expiresAt">,
+  options: TurnTimingOptions = {},
+): string | null {
+  const now = options.now ?? Date.now();
+  const token = options.token ?? randomUUID();
+  if (!token.trim()) return null;
+  let databasePath: string;
+  try {
+    databasePath = resolveProjectRootDbPath(basePath);
+  } catch {
+    return null;
+  }
+  const turn: MilestoneStatusObservationTurn = {
+    token,
+    databasePath,
+    mode: input.mode,
+    sourceRevision: input.sourceRevision,
+    ...(input.traceId ? { traceId: input.traceId } : {}),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.contextError ? { contextError: input.contextError } : {}),
+    startedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + (options.ttlMs ?? DEFAULT_TTL_MS)).toISOString(),
+  };
+  const stored = withContextDatabase(databasePath, (database) => {
+    database.prepare(`
+      INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
+      VALUES ('global', '', :key, :value_json, :updated_at)
+      ON CONFLICT (scope, scope_id, key) DO UPDATE SET
+        value_json = excluded.value_json,
+        updated_at = excluded.updated_at
+    `).run({
+      ":key": turnKey(token),
+      ":value_json": JSON.stringify(turn),
+      ":updated_at": turn.startedAt,
+    });
+    return true;
+  });
+  return stored.available && stored.value ? token : null;
+}
+
+export function readMilestoneStatusObservationTurn(
+  basePath: string,
+  token: string,
+  now: number = Date.now(),
+): MilestoneStatusObservationTurn | null {
+  if (!token.trim()) return null;
+  const result = readStoredTurn(basePath, token, now);
+  return result.status === "found" ? result.turn : null;
+}
+
+export function clearMilestoneStatusObservationTurn(basePath: string, token: string): boolean {
+  if (!token.trim()) return false;
+  try {
+    return deleteStoredTurn(resolveProjectRootDbPath(basePath), token);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveMilestoneStatusObservationContext(
+  basePath: string,
+  transport: MilestoneStatusTransport,
+  token?: string,
+): MilestoneStatusObservationContext {
+  const selected = token?.trim()
+    ? readStoredTurn(basePath, token.trim(), Date.now())
+    : { status: "missing" as const };
+  if (selected.status === "found") {
+    return {
+      mode: selected.turn.mode,
+      transport,
+      sourceRevision: selected.turn.sourceRevision,
+      ...(selected.turn.traceId ? { traceId: selected.turn.traceId } : {}),
+      ...(selected.turn.turnId ? { turnId: selected.turn.turnId } : {}),
+      ...(selected.turn.contextError ? { contextError: selected.turn.contextError } : {}),
+    };
+  }
+
+  return {
+    mode: transport === "native_pi" ? "interactive" : "legacy",
+    transport,
+    sourceRevision: "unavailable",
+    contextError: selected.status === "invalid" ? "invalid" : "unavailable",
+  };
+}

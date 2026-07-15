@@ -18,12 +18,15 @@ export type MilestoneStatusRuntimeMode =
 
 export type MilestoneStatusTransport = "native_pi" | "workflow_mcp";
 
+export type MilestoneStatusObservationContextError = "unavailable" | "invalid";
+
 export interface MilestoneStatusObservationContext {
   mode: MilestoneStatusRuntimeMode;
   transport: MilestoneStatusTransport;
   sourceRevision: string;
   traceId?: string;
   turnId?: string;
+  contextError?: MilestoneStatusObservationContextError;
 }
 
 export interface LifecycleShadowObservationItem {
@@ -51,10 +54,10 @@ export interface LifecycleShadowObservationSnapshot {
 export interface LifecycleShadowObservationLossAccounting {
   lossCount: number;
   persistedCount: number;
-  reason?: "shadow_query_failed" | "primary_sink_failed" | "projection_sink_failed";
+  reason?: "context_resolution_failed" | "shadow_query_failed" | "primary_sink_failed" | "projection_sink_failed";
   errorHash?: string;
   causes?: Array<{
-    reason: "shadow_query_failed" | "primary_sink_failed" | "projection_sink_failed";
+    reason: "context_resolution_failed" | "shadow_query_failed" | "primary_sink_failed" | "projection_sink_failed";
     errorHash: string;
   }>;
 }
@@ -71,6 +74,7 @@ export interface LifecycleShadowObservation {
   turnId: string | null;
   repairDisposition: "not_attempted";
   reason?: "shadow_query_failed";
+  contextError?: MilestoneStatusObservationContextError;
   observationLossAccounting: LifecycleShadowObservationLossAccounting;
 }
 
@@ -116,6 +120,12 @@ export function buildLifecycleShadowObservation(
   snapshot: LifecycleShadowObservationSnapshot,
   context: MilestoneStatusObservationContext = defaultMilestoneStatusObservationContext(),
 ): LifecycleShadowObservation {
+  const contextCause = context.contextError
+    ? {
+        reason: "context_resolution_failed" as const,
+        errorHash: lifecycleShadowErrorHash(`milestone status observation context ${context.contextError}`),
+      }
+    : undefined;
   const common = {
     milestoneId,
     mode: context.mode,
@@ -126,18 +136,27 @@ export function buildLifecycleShadowObservation(
     traceId: context.traceId ?? null,
     turnId: context.turnId ?? null,
     repairDisposition: "not_attempted" as const,
+    ...(context.contextError ? { contextError: context.contextError } : {}),
   };
 
   if (snapshot.queryError !== undefined) {
+    const queryCause = {
+      reason: "shadow_query_failed" as const,
+      errorHash: lifecycleShadowErrorHash(snapshot.queryError),
+    };
     return {
       ...common,
       items: [],
       reason: "shadow_query_failed",
       observationLossAccounting: {
-        lossCount: 1,
+        lossCount: contextCause ? 2 : 1,
         persistedCount: 1,
-        reason: "shadow_query_failed",
-        errorHash: lifecycleShadowErrorHash(snapshot.queryError),
+        ...queryCause,
+        ...(contextCause
+          ? {
+              causes: [contextCause, queryCause],
+            }
+          : {}),
       },
     };
   }
@@ -145,6 +164,8 @@ export function buildLifecycleShadowObservation(
   return {
     ...common,
     items: snapshot.items,
-    observationLossAccounting: { lossCount: 0, persistedCount: 1 },
+    observationLossAccounting: contextCause
+      ? { lossCount: 1, persistedCount: 1, ...contextCause }
+      : { lossCount: 0, persistedCount: 1 },
   };
 }
