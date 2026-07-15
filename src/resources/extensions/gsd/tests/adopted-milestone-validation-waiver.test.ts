@@ -434,6 +434,28 @@ test("canonical waiver closes validation-owned gates as omitted, never PASS", as
   assert.deepEqual(gate, { status: "complete", verdict: "omitted" });
 });
 
+test("canonical passing validation omits a pending task gate without durable section evidence", async () => {
+  const basePath = makeFixture();
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    gateId: "Q5",
+    scope: "task",
+    status: "pending",
+  });
+  await recordPassingValidation(basePath, "test/milestone.validate/pending-task-gate");
+
+  assert.deepEqual(checkCloseoutConsistencyGate("M001", {
+    allowOpenMilestone: true,
+    artifactBasePath: basePath,
+  }), { ok: true });
+  assert.deepEqual(
+    row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'Q5'`),
+    { status: "complete", verdict: "omitted" },
+  );
+});
+
 test("source changes after a waiver keep state validating and leave validation gates pending", async () => {
   const basePath = makeFixture();
   insertGateRow({
