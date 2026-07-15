@@ -21,6 +21,62 @@ export const NO_CUTOVER_SOURCE_FILES = Object.freeze({
 });
 const SOURCE_FILES = NO_CUTOVER_SOURCE_FILES;
 
+const DECISION_IMPORT_POLICY = Object.freeze({
+  eligibility: {
+    required: new Set(["./state.js#deriveState"]),
+    approved: new Set([
+      "./state.js#deriveState",
+      "./guided-flow.js#findMilestoneIds",
+      "./gsd-db.js#isDbAvailable",
+      "./gsd-db.js#getMilestoneSlices",
+      "./gsd-db.js#getTasksBySliceIds",
+      "./db-workspace.js#openExistingWorkflowDatabase",
+    ]),
+  },
+  dispatch: {
+    required: new Set([
+      "./gsd-db.js#getMilestone",
+      "./gsd-db.js#getMilestoneSliceSummaries",
+    ]),
+    approved: new Set([
+      "./paths.js#resolveMilestoneFile",
+      "./guided-flow.js#findMilestoneIds",
+      "./unit-id.js#parseUnitId",
+      "./gsd-db.js#isDbAvailable",
+      "./gsd-db.js#getMilestoneSliceSummaries",
+      "./gsd-db.js#getMilestone",
+      "./status-guards.js#isSkippedForDispatch",
+      "./milestone-summary-classifier.js#classifyMilestoneSummaryContent",
+      "node:fs#readFileSync",
+    ]),
+  },
+  retry: {
+    required: new Set(["../db/unit-dispatches.js#getLatestForUnit"]),
+    approved: new Set([
+      "./dispatch-key.js#parseDispatchKey",
+      "../db/unit-dispatches.js#getLatestForUnit",
+    ]),
+  },
+  state: {
+    required: new Set([
+      "../../milestone-validation-verdict.js#resolveMilestoneValidationVerdict",
+    ]),
+    approved: new Set([
+      "../../guidance.js#needsAttentionBlockerGuidance",
+      "../../guidance.js#needsRemediationBlockerGuidance",
+      "../../milestone-validation-verdict.js#resolveMilestoneValidationVerdict",
+    ]),
+  },
+  validation: {
+    required: new Set(["./gsd-db.js#getLatestAssessmentByScope"]),
+    approved: new Set([
+      "./gsd-db.js#getLatestAssessmentByScope",
+      "./gsd-db.js#isDbAvailable",
+      "./verdict-parser.js#isValidMilestoneVerdict",
+    ]),
+  },
+});
+
 const TEST_ROOT = "src/resources/extensions/gsd/tests";
 
 function witness(id, file, title) {
@@ -260,6 +316,10 @@ function isCanonicalImport(binding) {
     || /LifecycleShadow|WorkflowItemLifecycle|get.*Lifecycle/i.test(binding.imported);
 }
 
+function importBindingKey(binding) {
+  return binding ? `${binding.module}#${binding.imported}` : null;
+}
+
 function analyzeStatusBoundary(source) {
   const file = SOURCE_FILES.status;
   const sourceFile = parseSource(file, source);
@@ -313,22 +373,42 @@ function functionClosureFacts(sourceFile, entryNames) {
   return dependencyFacts(roots, new Map());
 }
 
-function analyzeDecisionBoundary(file, source, entryNames, requiredCalls) {
+function analyzeDecisionBoundary(file, source, entryNames, importPolicy) {
   const sourceFile = parseSource(file, source);
   const imports = bindingMap(sourceFile);
   const facts = functionClosureFacts(sourceFile, entryNames);
-  for (const required of requiredCalls) {
-    if (!facts.calls.has(required)) throw new Error(`${entryNames[0]} lost decision witness ${required}`);
+  const reachedImports = new Set();
+  for (const call of facts.calls) {
+    const bindingKey = importBindingKey(imports.get(call));
+    if (bindingKey) reachedImports.add(bindingKey);
+  }
+  for (const call of facts.memberCalls) {
+    const binding = imports.get(call.receiver);
+    const bindingKey = importBindingKey(binding ? { ...binding, imported: call.member } : null);
+    if (bindingKey) reachedImports.add(bindingKey);
+  }
+  for (const required of importPolicy.required) {
+    if (!reachedImports.has(required)) throw new Error(`${entryNames[0]} lost decision witness ${required}`);
   }
   for (const call of facts.calls) {
-    if (isCanonicalImport(imports.get(call))) {
+    const binding = imports.get(call);
+    if (isCanonicalImport(binding)) {
       throw new Error(`${entryNames[0]} calls canonical lifecycle binding ${call}`);
+    }
+    const bindingKey = importBindingKey(binding);
+    if (bindingKey && !importPolicy.approved.has(bindingKey)) {
+      throw new Error(`${entryNames[0]} calls unapproved imported decision binding ${bindingKey}`);
     }
   }
   for (const call of facts.memberCalls) {
     const binding = imports.get(call.receiver);
-    if (binding && isCanonicalImport({ ...binding, imported: call.member })) {
+    const memberBinding = binding ? { ...binding, imported: call.member } : null;
+    if (memberBinding && isCanonicalImport(memberBinding)) {
       throw new Error(`${entryNames[0]} calls canonical lifecycle binding ${call.receiver}.${call.member}`);
+    }
+    const bindingKey = importBindingKey(memberBinding);
+    if (bindingKey && !importPolicy.approved.has(bindingKey)) {
+      throw new Error(`${entryNames[0]} calls unapproved imported decision binding ${bindingKey}`);
     }
   }
   if (facts.sql.length > 0) throw new Error(`${entryNames[0]} queries canonical lifecycle rows`);
@@ -481,31 +561,31 @@ export function analyzeNoCutoverSources(sources) {
       SOURCE_FILES.eligibility,
       sources.eligibility,
       ["analyzeParallelEligibility"],
-      ["deriveState"],
+      DECISION_IMPORT_POLICY.eligibility,
     )],
     ["slice-dispatch-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.dispatch,
       sources.dispatch,
       ["getPriorSliceCompletionBlocker"],
-      ["getMilestone", "getMilestoneSliceSummaries"],
+      DECISION_IMPORT_POLICY.dispatch,
     )],
     ["retry-ledger-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.retry,
       sources.retry,
       ["retryBudgetSuppresses", "rowInsideRetryBudget"],
-      ["getLatestForUnit"],
+      DECISION_IMPORT_POLICY.retry,
     )],
     ["state-derivation-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.state,
       sources.state,
       ["handleAllSlicesDone"],
-      ["resolveMilestoneValidationVerdict"],
+      DECISION_IMPORT_POLICY.state,
     )],
     ["validation-assessment-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.validation,
       sources.validation,
       ["readMilestoneValidationVerdict"],
-      ["getLatestAssessmentByScope"],
+      DECISION_IMPORT_POLICY.validation,
     )],
     ["closed-local-inputs", () => analyzeLocalInputBoundary(sources.gate)],
   ];

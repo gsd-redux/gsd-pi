@@ -330,6 +330,58 @@ test("collector fails closed when source changes during collection", async () =>
   assert.equal(captureCount, 2);
 });
 
+test("collector fails closed when relevant database evidence changes during collection", async (t) => {
+  const mutations = [
+    {
+      name: "legacy lifecycle status",
+      mutate(database: DatabaseSync): void {
+        database.prepare("UPDATE tasks SET status = 'active' WHERE id = 'T01'").run();
+      },
+    },
+    {
+      name: "canonical receipt evidence",
+      mutate(database: DatabaseSync): void {
+        database.prepare(`
+          UPDATE workflow_verification_evidence
+          SET observation = 'changed during collection'
+          WHERE evidence_id = 'evidence-t01'
+        `).run();
+      },
+    },
+  ];
+
+  for (const mutation of mutations) {
+    await t.test(mutation.name, async () => {
+      const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-db-change-"));
+      tempDirs.add(root);
+      const databasePath = join(root, "gsd.db");
+      const capstonePath = join(root, "capstone.json");
+      makeFixtureDatabase(databasePath);
+      const capstone = normalizeSemanticShadowCapstoneEvidence(
+        await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+      );
+      writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+      const dependencies = passingReports(databasePath);
+      const runNoCutover = dependencies.runNoCutover;
+      dependencies.runNoCutover = () => {
+        const database = new DatabaseSync(databasePath);
+        mutation.mutate(database);
+        database.close();
+        return runNoCutover();
+      };
+
+      await assert.rejects(
+        collectM003S07DossierInput(
+          { sourceRoot: process.cwd(), databasePath, capstonePath },
+          dependencies,
+        ),
+        /database evidence changed during collection/i,
+      );
+    });
+  }
+});
+
 test("collector fail-closes when a local report regresses", async () => {
   const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-cli-"));
   tempDirs.add(root);

@@ -415,6 +415,35 @@ test("AST boundaries reject canonical response, decision, and hosted-metadata sa
     "fail",
   );
 
+  const closeoutReadCutover = pristine.validation.replace(
+    'import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";',
+    'import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";\nimport { readMilestoneCloseoutReadiness } from "./db/milestone-closeout-readiness.js";',
+  ).replace(
+    "  const assessment = getLatestAssessmentByScope(milestoneId, \"milestone-validation\");",
+    "  readMilestoneCloseoutReadiness(milestoneId);\n  const assessment = getLatestAssessmentByScope(milestoneId, \"milestone-validation\");",
+  );
+  assert.notEqual(closeoutReadCutover, pristine.validation, "controlled closeout-read sabotage must be applied");
+  const closeoutReadChecks = analyzeNoCutoverSources({ ...pristine, validation: closeoutReadCutover });
+  assert.equal(
+    closeoutReadChecks.find((check) => check.id === "validation-assessment-authority")?.verdict,
+    "fail",
+  );
+
+  const localWitnessImpersonation = pristine.validation.replace(
+    'import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";',
+    'import { isDbAvailable } from "./gsd-db.js";\nfunction getLatestAssessmentByScope() { return undefined; }',
+  );
+  assert.notEqual(
+    localWitnessImpersonation,
+    pristine.validation,
+    "controlled local witness impersonation must be applied",
+  );
+  const localWitnessChecks = analyzeNoCutoverSources({ ...pristine, validation: localWitnessImpersonation });
+  assert.equal(
+    localWitnessChecks.find((check) => check.id === "validation-assessment-authority")?.verdict,
+    "fail",
+  );
+
   const namespaceCutover = pristine.eligibility.replace(
     "const state = await deriveState(basePath);",
     "const state = await deriveState(basePath); const readCanonical = () => lifecycleQueries.getMilestoneLifecycleShadowSnapshot('M001'); readCanonical();",

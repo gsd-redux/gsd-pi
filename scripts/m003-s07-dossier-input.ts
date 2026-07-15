@@ -400,6 +400,10 @@ export async function collectM003S07DossierInput(
   if (confirmedSource.sourceRevision !== source.sourceRevision) {
     throw new Error("Dossier source changed during collection");
   }
+  const confirmedSnapshot = readCanonicalSnapshot(databasePath);
+  if (hashCanonical(confirmedSnapshot) !== hashCanonical(snapshot)) {
+    throw new Error("Dossier database evidence changed during collection");
+  }
   return input;
 }
 
