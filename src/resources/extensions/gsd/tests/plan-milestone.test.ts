@@ -7,7 +7,19 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, getSlice, updateSliceStatus, deleteSlice, insertMilestone } from '../gsd-db.ts';
+import {
+  adoptOrTransitionLifecycle,
+  closeDatabase,
+  deleteSlice,
+  executeDomainOperation,
+  getMilestone,
+  getMilestoneSlices,
+  getSlice,
+  insertMilestone,
+  openDatabase,
+  projectCanonicalStatusToLegacy,
+  readDomainOperationFence,
+} from '../gsd-db.ts';
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
@@ -28,6 +40,46 @@ function makeTmpBase(): string {
 function cleanup(base: string): void {
   try { closeDatabase(); } catch { /* noop */ }
   try { rmSync(base, { recursive: true, force: true }); } catch { /* noop */ }
+}
+
+function startSlice(sliceId: string, idempotencyKey: string): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: 'test.slice.start',
+    idempotencyKey,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: 'test',
+    sourceTransport: 'test',
+    payload: { sliceId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: 'slice',
+      milestoneId: 'M001',
+      sliceId,
+      lifecycleStatus: 'in_progress',
+    });
+    projectCanonicalStatusToLegacy(context, {
+      entity: 'slice',
+      milestoneId: 'M001',
+      sliceId,
+      status: 'in_progress',
+    });
+    return {
+      events: [{
+        eventType: 'test.slice.started',
+        entityType: 'slice',
+        entityId: `M001/${sliceId}`,
+        payload: { sliceId },
+        destinations: ['test'],
+      }],
+      projections: [{
+        projectionKey: `test/m001/${sliceId.toLowerCase()}/started`,
+        projectionKind: 'test',
+        rendererVersion: '1',
+      }],
+    };
+  });
 }
 
 function validParams() {
@@ -237,7 +289,7 @@ test('handlePlanMilestone reruns idempotently and updates existing planning stat
   }
 });
 
-test('handlePlanMilestone preserves completed slice status on re-plan (#2558)', async () => {
+test('handlePlanMilestone preserves in-progress slice status on re-plan (#2558)', async () => {
   const base = makeTmpBase();
   const dbPath = join(base, '.gsd', 'gsd.db');
   openDatabase(dbPath);
@@ -247,18 +299,18 @@ test('handlePlanMilestone preserves completed slice status on re-plan (#2558)', 
     const first = await handlePlanMilestone(validParams(), base);
     assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
 
-    // Mark S01 as complete (simulates work done in a worktree)
-    updateSliceStatus('M001', 'S01', 'complete', new Date().toISOString());
+    // Start S01 through the canonical lifecycle operation.
+    startSlice('S01', 'test/plan-milestone/preserve-status/start-s01');
 
     const s01Before = getSlice('M001', 'S01');
-    assert.equal(s01Before?.status, 'complete', 'S01 should be complete before re-plan');
+    assert.equal(s01Before?.status, 'in_progress', 'S01 should be in progress before re-plan');
 
-    // Re-plan the same milestone — S01 must stay "complete", S02 stays "pending"
+    // Re-plan the same milestone — S01 must stay in progress, S02 stays pending.
     const second = await handlePlanMilestone(validParams(), base);
     assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
 
     const s01After = getSlice('M001', 'S01');
-    assert.equal(s01After?.status, 'complete', 'S01 status must be preserved as complete after re-plan');
+    assert.equal(s01After?.status, 'in_progress', 'S01 status must be preserved after re-plan');
 
     const s02After = getSlice('M001', 'S02');
     assert.equal(s02After?.status, 'pending', 'S02 should remain pending');
@@ -286,7 +338,7 @@ test('handlePlanMilestone requires explicit reopen before planning a legacy defe
   }
 });
 
-test('plan-milestone re-plan preserves completed status and updates slice fields (#2558)', async () => {
+test('plan-milestone re-plan preserves in-progress status and updates slice fields (#2558)', async () => {
   const base = makeTmpBase();
   const dbPath = join(base, '.gsd', 'gsd.db');
   openDatabase(dbPath);
@@ -296,13 +348,13 @@ test('plan-milestone re-plan preserves completed status and updates slice fields
     const first = await handlePlanMilestone(validParams(), base);
     assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
 
-    // Mark S01 as complete (simulates work done in worktree, then reconciled)
-    updateSliceStatus('M001', 'S01', 'complete', new Date().toISOString());
-    assert.equal(getSlice('M001', 'S01')?.status, 'complete');
+    // Start S01 through the canonical lifecycle operation.
+    startSlice('S01', 'test/plan-milestone/update-fields/start-s01');
+    assert.equal(getSlice('M001', 'S01')?.status, 'in_progress');
 
     // Re-plan with updated title for S01.
     // The handler must:
-    //   1. NOT downgrade S01 from "complete" to "pending"
+    //   1. NOT downgrade S01 from "in_progress" to "pending"
     //   2. Update S01's non-status fields (title, risk, depends, demo)
     //   3. Keep S02 as "pending"
     const updatedParams = {
@@ -316,7 +368,7 @@ test('plan-milestone re-plan preserves completed status and updates slice fields
     assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
 
     const s01After = getSlice('M001', 'S01');
-    assert.equal(s01After?.status, 'complete', 'completed slice status must survive re-plan');
+    assert.equal(s01After?.status, 'in_progress', 'in-progress slice status must survive re-plan');
     assert.equal(s01After?.title, 'Updated S01 title', 'title should update on re-plan');
     assert.equal(s01After?.risk, 'high', 'risk should update on re-plan');
 
