@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { GSD_PI_LOGO, GSD_PI_BRAND } from '../../dist/logo.js'
+import { GSD_PI_LOGO, GSD_PI_BRAND } from '../logo.ts'
 
 test('GSD_PI_BRAND is GSD-Pi', () => {
   assert.equal(GSD_PI_BRAND, 'GSD-Pi')

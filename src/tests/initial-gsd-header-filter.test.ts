@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { GSD_PI_LOGO } from "../../dist/logo.js";
+import { GSD_PI_LOGO } from "../logo.ts";
 
 const { filterInitialGsdHeader } = await import("../../web/lib/initial-gsd-header-filter.ts");
 
