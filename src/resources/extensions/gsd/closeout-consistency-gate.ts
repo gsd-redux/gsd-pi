@@ -264,8 +264,6 @@ export function checkCloseoutConsistencyGate(
   if (validationRequired) {
     if (canonicalAuthorization?.authorized) {
       closeQualityGatesFromEvidence(milestoneId, {
-        artifactBasePath: options.artifactBasePath ?? artifactBasePathFromDb(),
-        milestoneValidationPassed: canonicalAuthorization.kind === "validated",
         milestoneValidationAuthorization: canonicalAuthorization,
       });
     } else {

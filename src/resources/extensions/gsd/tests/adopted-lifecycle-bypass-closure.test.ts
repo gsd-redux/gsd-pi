@@ -155,6 +155,16 @@ test("same-status completion timestamp repair remains available when adopted sta
   assert.equal(getTask("M001", "S01", "T01")?.completed_at, completedAt);
 });
 
+test("same-status writes cannot stamp completion time on an adopted in-progress task", () => {
+  fixture();
+  adopt({ itemKind: "task", milestoneId: "M001", sliceId: "S01", taskId: "T01" }, "in_progress");
+
+  updateTaskStatus("M001", "S01", "T01", "active", "2026-07-14T01:00:00.000Z");
+
+  assert.equal(getTask("M001", "S01", "T01")?.status, "active");
+  assert.equal(getTask("M001", "S01", "T01")?.completed_at, null);
+});
+
 test("sanctioned projection requires the active operation to own the canonical transition", () => {
   fixture();
   const identity = { itemKind: "task" as const, milestoneId: "M001", sliceId: "S01", taskId: "T01" };

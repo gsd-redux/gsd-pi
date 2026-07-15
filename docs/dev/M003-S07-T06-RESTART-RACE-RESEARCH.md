@@ -1,6 +1,6 @@
 # M003/S07/T06 restart and race research
 
-**Date:** 2026-07-15  
+**Date:** 2026-07-15
 **Scope:** Research only. This record maps the real process and SQLite seams for
 the S07 restart/race/fault soak. It does not authorize read cutover.
 
@@ -311,4 +311,3 @@ key, and row-count deltas. The soak passes only if:
    authority-baseline suites.
 5. Keep no-cutover enforcement in the separate structural/behavioral gate; this
    soak supplies runtime evidence and must not become an alternate cutover gate.
-

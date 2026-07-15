@@ -144,7 +144,10 @@ function genericCompletionWrite(t: StatusTransition, row: StatusRow): Completion
     };
   }
   if (
-    (row.status === t.status || row.canonicalStatus === "completed") &&
+    (row.canonicalStatus === "completed" || row.canonicalStatus === "cancelled") &&
+    row.status !== null &&
+    isClosedStatus(row.status) &&
+    isClosedStatus(t.status) &&
     row.completedAt === null &&
     t.completedAt != null
   ) {

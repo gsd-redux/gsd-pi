@@ -434,8 +434,14 @@ test("canonical waiver closes validation-owned gates as omitted, never PASS", as
   assert.deepEqual(gate, { status: "complete", verdict: "omitted" });
 });
 
-test("canonical passing validation omits a pending task gate without durable section evidence", async () => {
+test("canonical passing validation cannot settle a pending task gate from Markdown projections", async () => {
   const basePath = makeFixture();
+  const taskDir = join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks");
+  mkdirSync(taskDir, { recursive: true });
+  writeFileSync(
+    join(taskDir, "T01-SUMMARY.md"),
+    "# Task Summary\n\n## Failure Modes\n\nProjected evidence only.\n",
+  );
   insertGateRow({
     milestoneId: "M001",
     sliceId: "S01",
@@ -446,13 +452,15 @@ test("canonical passing validation omits a pending task gate without durable sec
   });
   await recordPassingValidation(basePath, "test/milestone.validate/pending-task-gate");
 
-  assert.deepEqual(checkCloseoutConsistencyGate("M001", {
+  const consistency = checkCloseoutConsistencyGate("M001", {
     allowOpenMilestone: true,
     artifactBasePath: basePath,
-  }), { ok: true });
+  });
+  assert.equal(consistency.ok, false);
+  if (!consistency.ok) assert.equal(consistency.reason, "quality-gate-pending");
   assert.deepEqual(
     row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'Q5'`),
-    { status: "complete", verdict: "omitted" },
+    { status: "pending", verdict: "" },
   );
 });
 
