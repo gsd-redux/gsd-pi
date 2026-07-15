@@ -4,9 +4,9 @@
 // File Purpose: Deterministic validation and normalization core for the M003/S07 cutover dossier.
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const MODES = Object.freeze(["auto", "interactive", "guided", "uok", "custom", "legacy"]);
 export const TRANSPORTS = Object.freeze(["native_pi", "workflow_mcp"]);
@@ -36,6 +36,67 @@ export const COMPATIBILITY_IDS = Object.freeze([
   "skipped-dispatch",
   "db-unavailable-status",
 ]);
+export const COMPATIBILITY_WITNESSES = Object.freeze([
+  {
+    id: "runtime-disagreement",
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+    title: "legacy milestone status remains public when canonical lifecycle disagrees",
+  },
+  {
+    id: "frozen-public-response",
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-contract.test.ts",
+    title: "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor",
+  },
+  {
+    id: "mode-transport-matrix",
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts",
+    title: "all supported modes and transports preserve the frozen response and exact observation identity",
+  },
+  {
+    id: "unadopted-import",
+    file: "src/resources/extensions/gsd/tests/md-importer-adopted-authority.test.ts",
+    title: "unadopted re-import keeps existing checkbox completion behavior",
+  },
+  {
+    id: "unadopted-reconcile",
+    file: "src/resources/extensions/gsd/tests/workflow-reconcile.test.ts",
+    title: "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path",
+  },
+  {
+    id: "same-status-repair",
+    file: "src/resources/extensions/gsd/tests/adopted-lifecycle-bypass-closure.test.ts",
+    title: "same-status completion timestamp repair remains available when adopted state is aligned",
+  },
+  {
+    id: "park-unpark",
+    file: "src/resources/extensions/gsd/tests/park-db-sync.test.ts",
+    title: "unparkMilestone updates DB status to 'active' (#2694)",
+  },
+  {
+    id: "discard",
+    file: "src/resources/extensions/gsd/tests/park-milestone.test.ts",
+    title: "discardMilestone removes DB rows, worktree, and milestone branch",
+  },
+  {
+    id: "skipped-dispatch",
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "skipped prior DB slices do not block later slice dispatch",
+  },
+  {
+    id: "db-unavailable-status",
+    file: "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
+    title: "gsd_milestone_status handles missing DB gracefully",
+  },
+]);
+export const COMMAND_INVENTORY = Object.freeze([
+  {
+    id: "semantic-shadow-capstone",
+    command: "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+  },
+  { id: "dossier-check", command: "node scripts/m003-s07-cutover-dossier.mjs --check" },
+  { id: "authority-baseline", command: "pnpm run baseline:workflow-authority" },
+  { id: "verify-merge", command: "pnpm run verify:merge" },
+]);
 export const DEFERRED_BLOCKERS = Object.freeze([
   "production-read-authority",
   "canonical-dependency-eligibility",
@@ -47,8 +108,26 @@ export const DEFERRED_BLOCKERS = Object.freeze([
   "legacy-cascade-deletion",
   "compatibility-retirement",
 ]);
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+export const DEFAULT_OUTPUT = resolve(SCRIPT_DIR, "../docs/dev/m003-s07-cutover-dossier.json");
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const LEGACY_STATUS_MAP = Object.freeze({
+  pending: "pending",
+  queued: "pending",
+  planned: "pending",
+  active: "in_progress",
+  in_progress: "in_progress",
+  "in-progress": "in_progress",
+  blocked: "paused",
+  parked: "paused",
+  complete: "completed",
+  done: "completed",
+  closed: "completed",
+  skipped: "cancelled",
+  deferred: "cancelled",
+});
+const CANONICAL_STATUSES = new Set(["pending", "ready", "in_progress", "paused", "completed", "cancelled"]);
 const LOSS_REASONS = new Set([
   "context_resolution_failed",
   "shadow_query_failed",
@@ -57,6 +136,8 @@ const LOSS_REASONS = new Set([
 ]);
 const TOP_LEVEL_KEYS = new Set([
   "recommendation",
+  "observationEvidencePlane",
+  "canonicalHistoryEvidencePlane",
   "evidenceSourceRevision",
   "authority",
   "observations",
@@ -68,6 +149,7 @@ const TOP_LEVEL_KEYS = new Set([
   "compatibilityInventory",
   "noCutover",
   "authorityBaseline",
+  "commands",
   "deferredCutoverBlockers",
 ]);
 
@@ -167,35 +249,38 @@ export function hashCanonical(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex")}`;
 }
 
-function validateItemRelation(item) {
-  const legacy = item.rawLegacyStatus;
-  const canonical = item.rawCanonicalStatus;
-  const normalizedLegacy = item.normalizedLegacyStatus;
-  const normalizedCanonical = item.normalizedCanonicalStatus;
-  let valid = false;
-  switch (item.classification) {
-    case "match":
-      valid = legacy !== null && legacy === canonical && normalizedLegacy === normalizedCanonical;
-      break;
-    case "semantic_match_exact_delta":
-      valid = legacy !== null && canonical !== null && legacy !== canonical
-        && normalizedLegacy !== null && normalizedLegacy === normalizedCanonical;
-      break;
-    case "missing_shadow":
-      valid = legacy !== null && canonical === null
-        && normalizedLegacy !== null && normalizedCanonical === null;
-      break;
-    case "extra_shadow":
-      valid = legacy === null && canonical !== null
-        && normalizedLegacy === null && normalizedCanonical !== null;
-      break;
-    case "status_mismatch":
-      valid = legacy !== null && canonical !== null
-        && normalizedLegacy !== null && normalizedCanonical !== null
-        && normalizedLegacy !== normalizedCanonical;
-      break;
+function frozenComparison(rawLegacyStatus, rawCanonicalStatus) {
+  const normalizedLegacyStatus = rawLegacyStatus === null
+    ? null
+    : LEGACY_STATUS_MAP[rawLegacyStatus] ?? null;
+  const normalizedCanonicalStatus = rawCanonicalStatus !== null && CANONICAL_STATUSES.has(rawCanonicalStatus)
+    ? rawCanonicalStatus
+    : null;
+
+  let classification = "status_mismatch";
+  if (rawLegacyStatus !== null && rawCanonicalStatus === null) classification = "missing_shadow";
+  else if (rawLegacyStatus === null && rawCanonicalStatus !== null) classification = "extra_shadow";
+  else if (rawLegacyStatus === rawCanonicalStatus && normalizedLegacyStatus !== null && normalizedCanonicalStatus !== null) {
+    classification = "match";
+  } else if (normalizedLegacyStatus !== null && normalizedCanonicalStatus !== null
+    && (normalizedLegacyStatus === normalizedCanonicalStatus
+      || (normalizedCanonicalStatus === "ready" && ["pending", "in_progress"].includes(normalizedLegacyStatus)))) {
+    classification = "semantic_match_exact_delta";
   }
-  if (!valid) fail(`Classification tuple ${item.classification} has inconsistent raw or normalized statuses`);
+  return { classification, normalizedLegacyStatus, normalizedCanonicalStatus };
+}
+
+function requireOwn(record, key, label) {
+  if (!Object.hasOwn(record, key)) fail(`${label} is required`);
+}
+
+function requireFrozenRelation(item, label) {
+  const comparison = frozenComparison(item.rawLegacyStatus, item.rawCanonicalStatus);
+  if (item.classification !== comparison.classification
+    || item.normalizedLegacyStatus !== comparison.normalizedLegacyStatus
+    || item.normalizedCanonicalStatus !== comparison.normalizedCanonicalStatus) {
+    fail(`${label} does not match the frozen semantic relation`);
+  }
 }
 
 function validateItemIdentity(identity) {
@@ -215,6 +300,8 @@ function normalizeItem(rawItem) {
   const classification = requireString(item.classification, "Observation classification");
   orderBy(CLASSIFICATIONS, classification, "classification");
   const identity = requireRecord(item.itemIdentity, "Observation item identity");
+  requireOwn(identity, "lifecycleId", "Observation lifecycle identity");
+  const lifecycleId = requireNullableString(identity.lifecycleId, "Observation lifecycle identity");
   const normalized = {
     classification,
     itemIdentity: {
@@ -222,6 +309,7 @@ function normalizeItem(rawItem) {
       milestoneId: requireString(identity.milestoneId, "Observation milestone ID"),
       sliceId: requireNullableString(identity.sliceId, "Observation slice ID"),
       taskId: requireNullableString(identity.taskId, "Observation task ID"),
+      lifecyclePresent: lifecycleId !== null,
     },
     rawLegacyStatus: requireNullableString(item.rawLegacyStatus, "Raw legacy status"),
     rawCanonicalStatus: requireNullableString(item.rawCanonicalStatus, "Raw canonical status"),
@@ -231,9 +319,12 @@ function normalizeItem(rawItem) {
   if (!["milestone", "slice", "task"].includes(normalized.itemIdentity.itemKind)) {
     fail(`Unknown observation item kind: ${normalized.itemIdentity.itemKind}`);
   }
-  if (normalized.itemIdentity.milestoneId !== "M003") fail("Observation milestone ID must be M003");
+  if (normalized.itemIdentity.milestoneId !== "M001") fail("Fixture observation milestone ID must be M001");
   validateItemIdentity(normalized.itemIdentity);
-  validateItemRelation(normalized);
+  requireFrozenRelation(normalized, "Observation tuple");
+  if ((normalized.rawCanonicalStatus === null) !== (lifecycleId === null)) {
+    fail("Observation lifecycle identity must be present exactly when canonical status is present");
+  }
   return normalized;
 }
 
@@ -444,21 +535,37 @@ function normalizeLiveDrift(rawRows) {
   const kindOrder = ["milestone", "slice", "task"];
   return rows.map((rawRow) => {
     const row = requireRecord(rawRow, "Live drift row");
+    requireOwn(row, "lifecycleId", "Live drift lifecycle identity");
+    const lifecycleId = requireNullableString(row.lifecycleId, "Live drift lifecycle identity");
     const classification = requireString(row.classification, "Live drift classification");
-    if (!["match", "semantic_match_exact_delta"].includes(classification)) {
-      fail(`Live drift contains unexplained ${classification}`);
-    }
     const itemKind = requireString(row.itemKind, "Live drift item kind");
     orderBy(kindOrder, itemKind, "live item kind");
-    return {
+    const normalized = {
       itemKind,
       milestoneId: requireString(row.milestoneId, "Live drift milestone ID"),
       sliceId: requireNullableString(row.sliceId, "Live drift slice ID"),
       taskId: requireNullableString(row.taskId, "Live drift task ID"),
-      legacyStatus: requireNullableString(row.legacyStatus, "Live legacy status"),
-      canonicalStatus: requireNullableString(row.canonicalStatus, "Live canonical status"),
+      lifecyclePresent: lifecycleId !== null,
+      rawLegacyStatus: requireNullableString(row.legacyStatus, "Live legacy status"),
+      rawCanonicalStatus: requireNullableString(row.canonicalStatus, "Live canonical status"),
       classification,
     };
+    const comparison = frozenComparison(normalized.rawLegacyStatus, normalized.rawCanonicalStatus);
+    if (classification !== comparison.classification) {
+      fail("Live drift classification does not match the frozen semantic relation");
+    }
+    if (!["match", "semantic_match_exact_delta"].includes(comparison.classification)) {
+      fail(`Live drift contains unexplained ${comparison.classification}`);
+    }
+    if (comparison.normalizedLegacyStatus === null || comparison.normalizedCanonicalStatus === null) {
+      fail("Live drift contains an unknown status");
+    }
+    if (normalized.milestoneId !== "M003") fail("Live drift milestone ID must be M003");
+    validateItemIdentity(normalized);
+    if ((normalized.rawCanonicalStatus === null) !== (lifecycleId === null)) {
+      fail("Live drift lifecycle identity must be present exactly when canonical status is present");
+    }
+    return { ...normalized, ...comparison };
   }).sort((left, right) => (
     orderBy(kindOrder, left.itemKind, "live item kind") - orderBy(kindOrder, right.itemKind, "live item kind")
     || left.milestoneId.localeCompare(right.milestoneId)
@@ -504,14 +611,37 @@ function normalizeCompatibility(rawInventory) {
     const entry = requireRecord(rawEntry, "Compatibility entry");
     const id = requireString(entry.id, "Compatibility ID");
     if (byId.has(id)) fail(`Duplicate compatibility inventory entry: ${id}`);
+    const expected = COMPATIBILITY_WITNESSES.find((witness) => witness.id === id);
+    if (!expected) fail(`Compatibility inventory contains an unknown entry: ${id}`);
+    if (entry.file !== expected.file) fail(`Compatibility file does not match frozen witness: ${id}`);
+    if (entry.title !== expected.title) fail(`Compatibility title does not match frozen witness: ${id}`);
     if (entry.verdict !== "pass") fail(`Compatibility inventory entry must pass: ${id}`);
-    byId.set(id, { id, verdict: "pass" });
+    byId.set(id, { ...expected, verdict: "pass" });
   }
   for (const id of COMPATIBILITY_IDS) {
     if (!byId.has(id)) fail(`Compatibility inventory is missing ${id}`);
   }
   if (byId.size !== COMPATIBILITY_IDS.length) fail("Compatibility inventory contains an unknown entry");
   return COMPATIBILITY_IDS.map((id) => byId.get(id));
+}
+
+function normalizeCommands(rawCommands) {
+  const commands = requireArray(rawCommands, "Command inventory");
+  const byId = new Map();
+  for (const rawCommand of commands) {
+    const command = requireRecord(rawCommand, "Command inventory entry");
+    const id = requireString(command.id, "Command inventory ID");
+    if (byId.has(id)) fail(`Duplicate command inventory entry: ${id}`);
+    const expected = COMMAND_INVENTORY.find((candidate) => candidate.id === id);
+    if (!expected || command.command !== expected.command) fail(`Command inventory does not match frozen command: ${id}`);
+    if (command.exitCode !== 0 || command.verdict !== "pass") fail(`Command must pass with exit code zero: ${id}`);
+    byId.set(id, { ...expected, exitCode: 0, verdict: "pass" });
+  }
+  for (const expected of COMMAND_INVENTORY) {
+    if (!byId.has(expected.id)) fail(`Command inventory is missing ${expected.id}`);
+  }
+  if (byId.size !== COMMAND_INVENTORY.length) fail("Command inventory contains an unknown entry");
+  return COMMAND_INVENTORY.map(({ id }) => byId.get(id));
 }
 
 function requireExactGate(rawGate, expected, label) {
@@ -561,6 +691,12 @@ export function buildDossier(rawInput) {
   rejectForbiddenInputs(input);
   rejectUnknownTopLevelKeys(input);
   if (input.recommendation !== "NO_GO") fail("Dossier recommendation must remain NO_GO");
+  if (input.observationEvidencePlane !== "capstone_fixture") {
+    fail("Observation evidence plane must be capstone_fixture");
+  }
+  if (input.canonicalHistoryEvidencePlane !== "live_project") {
+    fail("Canonical history evidence plane must be live_project");
+  }
   const evidenceSourceRevision = requireSha(input.evidenceSourceRevision, "Evidence source revision");
   const authority = requireRecord(input.authority, "Authority snapshot");
   const normalizedAuthority = {
@@ -574,6 +710,7 @@ export function buildDossier(rawInput) {
   const liveDrift = normalizeLiveDrift(input.liveDrift);
   const taskReceiptHeads = normalizeTaskReceiptHeads(input.taskReceiptHeads);
   const compatibilityInventory = normalizeCompatibility(input.compatibilityInventory);
+  const commands = normalizeCommands(input.commands);
   const noCutover = normalizeNoCutover(input.noCutover);
   const authorityBaseline = requireExactGate(input.authorityBaseline, 4, "Authority baseline");
   const deferredCutoverBlockers = normalizeBlockers(input.deferredCutoverBlockers);
@@ -581,16 +718,20 @@ export function buildDossier(rawInput) {
   const counts = observedCounts(observationCoverage);
 
   const capstoneEvidence = {
+    observationEvidencePlane: "capstone_fixture",
     evidenceSourceRevision,
     expectedCoverage,
     observedCounts: counts,
     observationCoverage,
     dispositionProof,
     observationLosses,
+    compatibilityInventory,
+    commands,
     noCutover,
     authorityBaseline,
   };
   const canonicalHistory = {
+    canonicalHistoryEvidencePlane: "live_project",
     authority: normalizedAuthority,
     repairHistory,
     liveDrift,
@@ -601,6 +742,8 @@ export function buildDossier(rawInput) {
     milestoneId: "M003",
     sliceId: "S07",
     recommendation: "NO_GO",
+    observationEvidencePlane: "capstone_fixture",
+    canonicalHistoryEvidencePlane: "live_project",
     evidenceSourceRevision,
     authority: normalizedAuthority,
     expectedCoverage,
@@ -612,6 +755,7 @@ export function buildDossier(rawInput) {
     liveDrift,
     taskReceiptHeads,
     compatibilityInventory,
+    commands,
     noCutover,
     authorityBaseline,
     deferredCutoverBlockers,
@@ -630,8 +774,99 @@ export function renderDossier(dossier) {
   return `${JSON.stringify(canonicalValue(dossier), null, 2)}\n`;
 }
 
+function lifecyclePlaceholder(present, label) {
+  if (typeof present !== "boolean") fail(`${label} lifecyclePresent must be boolean`);
+  return present ? "checked-lifecycle-present" : null;
+}
+
+function inputFromDossier(rawDossier) {
+  const dossier = requireRecord(rawDossier, "Checked dossier");
+  if (dossier.schemaVersion !== 1 || dossier.milestoneId !== "M003" || dossier.sliceId !== "S07") {
+    fail("Checked dossier identity or schema version is invalid");
+  }
+  const groupedObservations = new Map();
+  for (const rawRow of requireArray(dossier.observationCoverage, "Checked observation coverage")) {
+    const row = requireRecord(rawRow, "Checked observation row");
+    const key = `${row.mode}/${row.transport}`;
+    let envelope = groupedObservations.get(key);
+    if (!envelope) {
+      envelope = {
+        mode: row.mode,
+        transport: row.transport,
+        sourceRevision: row.sourceRevision,
+        projectRevision: row.projectRevision,
+        authorityEpoch: row.authorityEpoch,
+        traceId: row.traceId,
+        turnId: row.turnId,
+        repairDisposition: row.repairDisposition,
+        observationLossAccounting: row.observationLossAccounting,
+        items: [],
+      };
+      groupedObservations.set(key, envelope);
+    }
+    const identity = requireRecord(row.itemIdentity, "Checked observation identity");
+    envelope.items.push({
+      classification: row.classification,
+      itemIdentity: {
+        itemKind: identity.itemKind,
+        milestoneId: identity.milestoneId,
+        sliceId: identity.sliceId,
+        taskId: identity.taskId,
+        lifecycleId: lifecyclePlaceholder(identity.lifecyclePresent, "Checked observation"),
+      },
+      rawLegacyStatus: row.rawLegacyStatus,
+      rawCanonicalStatus: row.rawCanonicalStatus,
+      normalizedLegacyStatus: row.normalizedLegacyStatus,
+      normalizedCanonicalStatus: row.normalizedCanonicalStatus,
+    });
+  }
+
+  return {
+    recommendation: dossier.recommendation,
+    observationEvidencePlane: dossier.observationEvidencePlane,
+    canonicalHistoryEvidencePlane: dossier.canonicalHistoryEvidencePlane,
+    evidenceSourceRevision: dossier.evidenceSourceRevision,
+    authority: dossier.authority,
+    observations: [...groupedObservations.values()],
+    dispositionProof: dossier.dispositionProof,
+    observationLosses: dossier.observationLosses,
+    repairHistory: requireRecord(dossier.repairHistory, "Checked repair history").rows,
+    liveDrift: requireArray(dossier.liveDrift, "Checked live drift").map((rawRow) => {
+      const row = requireRecord(rawRow, "Checked live drift row");
+      return {
+        lifecycleId: lifecyclePlaceholder(row.lifecyclePresent, "Checked live drift"),
+        itemKind: row.itemKind,
+        milestoneId: row.milestoneId,
+        sliceId: row.sliceId,
+        taskId: row.taskId,
+        legacyStatus: row.rawLegacyStatus,
+        canonicalStatus: row.rawCanonicalStatus,
+        classification: row.classification,
+      };
+    }),
+    taskReceiptHeads: dossier.taskReceiptHeads,
+    compatibilityInventory: dossier.compatibilityInventory,
+    commands: dossier.commands,
+    noCutover: dossier.noCutover,
+    authorityBaseline: dossier.authorityBaseline,
+    deferredCutoverBlockers: dossier.deferredCutoverBlockers,
+  };
+}
+
+export function validateDossier(rawDossier) {
+  rejectForbiddenInputs(rawDossier, "checked dossier");
+  const rebuilt = buildDossier(inputFromDossier(rawDossier));
+  if (renderDossier(rawDossier) !== renderDossier(rebuilt)) {
+    fail("Checked normalized dossier or hash does not match reconstructed evidence");
+  }
+  return rebuilt;
+}
+
 export function parseArgs(argv = process.argv.slice(2)) {
   let inputPath = null;
+  let outputPath = DEFAULT_OUTPUT;
+  let outputSpecified = false;
+  let check = false;
   let json = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -639,31 +874,73 @@ export function parseArgs(argv = process.argv.slice(2)) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) fail("--input requires a local path");
       if (/:\/\//.test(value) || /^git@/i.test(value)) fail("--input must be a local path");
+      if (inputPath !== null) fail("--input may only be provided once");
       inputPath = value;
       index += 1;
       continue;
     }
+    if (argument === "--output") {
+      const value = argv[index + 1];
+      if (!value || value.startsWith("--")) fail("--output requires a local path");
+      if (/:\/\//.test(value) || /^git@/i.test(value)) fail("--output must be a local path");
+      if (outputSpecified) fail("--output may only be provided once");
+      outputPath = value;
+      outputSpecified = true;
+      index += 1;
+      continue;
+    }
+    if (argument === "--check") {
+      if (check) fail("--check may only be provided once");
+      check = true;
+      continue;
+    }
     if (argument === "--json") {
+      if (json) fail("--json may only be provided once");
       json = true;
       continue;
     }
     fail(`Unknown argument: ${argument}`);
   }
+  if (check && inputPath !== null) fail("--check cannot be combined with --input");
+  if (check && outputSpecified) fail("--output is only valid for generate mode");
+  if (check) return { mode: "check", inputPath: null, outputPath: DEFAULT_OUTPUT, json };
   if (!inputPath) fail("--input requires a local path");
-  return { inputPath, json };
+  return { mode: "generate", inputPath, outputPath, json };
 }
 
-function runCli() {
-  const args = parseArgs();
-  const input = JSON.parse(readFileSync(resolve(args.inputPath), "utf8"));
-  const dossier = buildDossier(input);
-  if (args.json) process.stdout.write(renderDossier(dossier));
-  else process.stdout.write(`M003/S07 dossier valid: ${dossier.hashes.dossierHash}\n`);
+const defaultIo = {
+  readText: (path) => readFileSync(path, "utf8"),
+  writeText: (path, text) => writeFileSync(path, text),
+  writeStdout: (text) => process.stdout.write(text),
+};
+
+export function runDossierCli(argv = process.argv.slice(2), io = defaultIo) {
+  const args = parseArgs(argv);
+  if (args.mode === "check") {
+    const checkedBytes = io.readText(args.outputPath);
+    const dossier = validateDossier(JSON.parse(checkedBytes));
+    if (checkedBytes !== renderDossier(dossier)) {
+      fail("Checked dossier bytes are stale or non-canonical");
+    }
+    io.writeStdout(args.json
+      ? renderDossier(dossier)
+      : `M003/S07 dossier valid: ${dossier.hashes.dossierHash}\n`);
+    return dossier;
+  }
+
+  const input = JSON.parse(io.readText(resolve(args.inputPath)));
+  const dossier = validateDossier(buildDossier(input));
+  const rendered = renderDossier(dossier);
+  const explicitOutput = argv.includes("--output");
+  if (explicitOutput || !args.json) io.writeText(resolve(args.outputPath), rendered);
+  if (args.json) io.writeStdout(rendered);
+  else io.writeStdout(`M003/S07 dossier written: ${args.outputPath}\n`);
+  return dossier;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   try {
-    runCli();
+    runDossierCli();
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
