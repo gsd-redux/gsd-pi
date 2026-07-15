@@ -491,7 +491,7 @@ test("CLI runs local reports and emits canonical validator-ready JSON", async ()
   assert.equal(buildDossier(input).recommendation, "NO_GO");
   assert.deepEqual(input.noCutover, {
     structural: { passed: 8, total: 8 },
-    behavioral: { passed: 12, total: 12 },
+    behavioral: { passed: 15, total: 15 },
   });
   assert.deepEqual(input.authorityBaseline, { passed: 4, total: 4 });
 });

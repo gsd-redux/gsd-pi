@@ -41,6 +41,9 @@ const COMPATIBILITY_IDS = [
   "discard",
   "skipped-dispatch",
   "db-unavailable-dispatch",
+  "db-unavailable-resolver",
+  "db-unavailable-resolver-no-active",
+  "resolve-dispatch-authority",
   "db-unavailable-status",
   "state-derivation-authority",
 ];
@@ -84,6 +87,18 @@ const COMPATIBILITY_DETAILS = Object.freeze({
   "db-unavailable-dispatch": {
     file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
     title: "DB-unavailable dispatch fails closed without trusting milestone SUMMARY",
+  },
+  "db-unavailable-resolver": {
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "resolveDispatch fails closed for a concrete milestone when the DB is unavailable",
+  },
+  "db-unavailable-resolver-no-active": {
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "resolveDispatch fails closed for a concrete milestone without active state",
+  },
+  "resolve-dispatch-authority": {
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+    title: "resolveDispatch keeps legacy milestone status authoritative when canonical lifecycle disagrees",
   },
   "db-unavailable-status": {
     file: "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
@@ -339,7 +354,7 @@ function validInput() {
     commands: COMMANDS.map((command) => ({ ...command })),
     noCutover: {
       structural: { passed: 8, total: 8 },
-      behavioral: { passed: 12, total: 12 },
+      behavioral: { passed: 15, total: 15 },
     },
     authorityBaseline: { passed: 4, total: 4 },
     deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
@@ -495,7 +510,7 @@ const failureCases = [
   }, /command inventory.*stage|post-generation command/i],
   ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
   ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
-  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 11; }, /no-cutover.*12\/12/i],
+  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 14; }, /no-cutover.*15\/15/i],
   ["authority baseline regression", (input) => { input.authorityBaseline.passed = 3; }, /baseline.*4\/4/i],
   ["GO recommendation", (input) => { input.recommendation = "GO"; }, /recommendation.*NO_GO/i],
   ["missing deferred blocker", (input) => input.deferredCutoverBlockers.pop(), /deferred cutover blocker/i],

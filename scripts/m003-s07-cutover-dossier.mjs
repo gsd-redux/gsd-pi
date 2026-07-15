@@ -35,6 +35,9 @@ export const COMPATIBILITY_IDS = Object.freeze([
   "discard",
   "skipped-dispatch",
   "db-unavailable-dispatch",
+  "db-unavailable-resolver",
+  "db-unavailable-resolver-no-active",
+  "resolve-dispatch-authority",
   "db-unavailable-status",
   "state-derivation-authority",
 ]);
@@ -88,6 +91,21 @@ export const COMPATIBILITY_WITNESSES = Object.freeze([
     id: "db-unavailable-dispatch",
     file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
     title: "DB-unavailable dispatch fails closed without trusting milestone SUMMARY",
+  },
+  {
+    id: "db-unavailable-resolver",
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "resolveDispatch fails closed for a concrete milestone when the DB is unavailable",
+  },
+  {
+    id: "db-unavailable-resolver-no-active",
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "resolveDispatch fails closed for a concrete milestone without active state",
+  },
+  {
+    id: "resolve-dispatch-authority",
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+    title: "resolveDispatch keeps legacy milestone status authoritative when canonical lifecycle disagrees",
   },
   {
     id: "db-unavailable-status",
@@ -807,7 +825,11 @@ function normalizeNoCutover(rawNoCutover) {
   const noCutover = requireRecord(rawNoCutover, "No-cutover gate");
   return {
     structural: requireExactGate(noCutover.structural, 8, "No-cutover structural gate"),
-    behavioral: requireExactGate(noCutover.behavioral, 12, "No-cutover behavioral gate"),
+    behavioral: requireExactGate(
+      noCutover.behavioral,
+      COMPATIBILITY_IDS.length,
+      "No-cutover behavioral gate",
+    ),
   };
 }
 
