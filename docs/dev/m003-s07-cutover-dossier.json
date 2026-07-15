@@ -149,37 +149,37 @@
   "dispositionProof": [
     {
       "accounted": false,
-      "evidenceHash": "sha256:e324a544361d538aa450b191014492aa7d6bf814b10da1aec27fa30a92265a8c",
+      "evidenceHash": "sha256:cd5a9955a0f0e2668805774f47d92599416dfe8691e32e8f1a575d92bf87192f",
       "outcome": "advanced",
       "residueFree": false
     },
     {
       "accounted": false,
-      "evidenceHash": "sha256:94f8ad8a346be6fad1225300c8145b2cb2721f1ee5dd023d10fbf719fb7ef3bb",
+      "evidenceHash": "sha256:bd7b3616d9b649a38c4579b2eff1e74ce231819fb7be11c9238df871dc234fe8",
       "outcome": "repaired",
       "residueFree": false
     },
     {
       "accounted": false,
-      "evidenceHash": "sha256:26a1faa2cc9d9a9d28e906d7499a9fa26d6880ad663f66b9014743b80ea96781",
+      "evidenceHash": "sha256:04cdc73647ff2aaf7e1bef061ad6ec50812f12bcbdeb0d072b7fb8bdb1c49ae5",
       "outcome": "unresolved",
       "residueFree": false
     },
     {
       "accounted": false,
-      "evidenceHash": "sha256:083f5194274c362d647904587d281016b4381b275fbdee48be7ff49d64d9a7a6",
+      "evidenceHash": "sha256:69f64c262f1c201d0054dd17b695c1b9b444d7c384fc882d1b3dcd96c78f2444",
       "outcome": "rejected",
       "residueFree": true
     },
     {
       "accounted": true,
-      "evidenceHash": "sha256:1ad9d45d859063736c425ee7aa1f75bd0e3cda8b0e9aa49750d9fa6219abb806",
+      "evidenceHash": "sha256:29f282ec5326676f565632343f9e4a50e42d9522c8cd0dbbb19b64e5c472e22b",
       "lossRef": "capstone-observation-loss",
       "outcome": "observation_loss",
       "residueFree": false
     }
   ],
-  "evidenceSourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+  "evidenceSourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
   "expectedCoverage": {
     "envelopes": 12,
     "items": 60,
@@ -187,8 +187,8 @@
   },
   "hashes": {
     "canonicalHistoryHash": "sha256:d31d5690dd10ca0acf19404718141d40fe5d442d601bff811c19a7b24d4adf7d",
-    "capstoneEvidenceHash": "sha256:246b747c7e53d05e2c3e322c153ce311e0a30928022fbb801a9b7afdca7324bb",
-    "dossierHash": "sha256:6b4ae25e25a241d4f6981a25750c3cf6bd2ade05719ef6c282867f1cc516e81e"
+    "capstoneEvidenceHash": "sha256:2308a2cec87790fd82314061ca0f911ce6fa29da132b12a5cd547b942040c096",
+    "dossierHash": "sha256:3fc20003abf92d4075b89506436ea889438acf39af8650fc51231df3ca168cff"
   },
   "liveDrift": [
     {
@@ -813,7 +813,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:native_pi",
       "transport": "native_pi",
       "turnId": "turn:auto:native_pi"
@@ -839,7 +839,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:native_pi",
       "transport": "native_pi",
       "turnId": "turn:auto:native_pi"
@@ -865,7 +865,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:native_pi",
       "transport": "native_pi",
       "turnId": "turn:auto:native_pi"
@@ -891,7 +891,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:native_pi",
       "transport": "native_pi",
       "turnId": "turn:auto:native_pi"
@@ -917,7 +917,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:native_pi",
       "transport": "native_pi",
       "turnId": "turn:auto:native_pi"
@@ -943,7 +943,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:auto:workflow_mcp"
@@ -969,7 +969,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:auto:workflow_mcp"
@@ -995,7 +995,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:auto:workflow_mcp"
@@ -1021,7 +1021,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:auto:workflow_mcp"
@@ -1047,7 +1047,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:auto:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:auto:workflow_mcp"
@@ -1073,7 +1073,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:native_pi",
       "transport": "native_pi",
       "turnId": "turn:interactive:native_pi"
@@ -1099,7 +1099,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:native_pi",
       "transport": "native_pi",
       "turnId": "turn:interactive:native_pi"
@@ -1125,7 +1125,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:native_pi",
       "transport": "native_pi",
       "turnId": "turn:interactive:native_pi"
@@ -1151,7 +1151,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:native_pi",
       "transport": "native_pi",
       "turnId": "turn:interactive:native_pi"
@@ -1177,7 +1177,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:native_pi",
       "transport": "native_pi",
       "turnId": "turn:interactive:native_pi"
@@ -1203,7 +1203,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:interactive:workflow_mcp"
@@ -1229,7 +1229,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:interactive:workflow_mcp"
@@ -1255,7 +1255,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:interactive:workflow_mcp"
@@ -1281,7 +1281,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:interactive:workflow_mcp"
@@ -1307,7 +1307,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:interactive:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:interactive:workflow_mcp"
@@ -1333,7 +1333,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:native_pi",
       "transport": "native_pi",
       "turnId": "turn:guided:native_pi"
@@ -1359,7 +1359,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:native_pi",
       "transport": "native_pi",
       "turnId": "turn:guided:native_pi"
@@ -1385,7 +1385,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:native_pi",
       "transport": "native_pi",
       "turnId": "turn:guided:native_pi"
@@ -1411,7 +1411,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:native_pi",
       "transport": "native_pi",
       "turnId": "turn:guided:native_pi"
@@ -1437,7 +1437,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:native_pi",
       "transport": "native_pi",
       "turnId": "turn:guided:native_pi"
@@ -1463,7 +1463,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:guided:workflow_mcp"
@@ -1489,7 +1489,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:guided:workflow_mcp"
@@ -1515,7 +1515,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:guided:workflow_mcp"
@@ -1541,7 +1541,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:guided:workflow_mcp"
@@ -1567,7 +1567,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:guided:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:guided:workflow_mcp"
@@ -1593,7 +1593,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:native_pi",
       "transport": "native_pi",
       "turnId": "turn:uok:native_pi"
@@ -1619,7 +1619,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:native_pi",
       "transport": "native_pi",
       "turnId": "turn:uok:native_pi"
@@ -1645,7 +1645,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:native_pi",
       "transport": "native_pi",
       "turnId": "turn:uok:native_pi"
@@ -1671,7 +1671,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:native_pi",
       "transport": "native_pi",
       "turnId": "turn:uok:native_pi"
@@ -1697,7 +1697,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:native_pi",
       "transport": "native_pi",
       "turnId": "turn:uok:native_pi"
@@ -1723,7 +1723,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:uok:workflow_mcp"
@@ -1749,7 +1749,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:uok:workflow_mcp"
@@ -1775,7 +1775,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:uok:workflow_mcp"
@@ -1801,7 +1801,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:uok:workflow_mcp"
@@ -1827,7 +1827,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:uok:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:uok:workflow_mcp"
@@ -1853,7 +1853,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:native_pi",
       "transport": "native_pi",
       "turnId": "turn:custom:native_pi"
@@ -1879,7 +1879,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:native_pi",
       "transport": "native_pi",
       "turnId": "turn:custom:native_pi"
@@ -1905,7 +1905,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:native_pi",
       "transport": "native_pi",
       "turnId": "turn:custom:native_pi"
@@ -1931,7 +1931,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:native_pi",
       "transport": "native_pi",
       "turnId": "turn:custom:native_pi"
@@ -1957,7 +1957,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:native_pi",
       "transport": "native_pi",
       "turnId": "turn:custom:native_pi"
@@ -1983,7 +1983,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:custom:workflow_mcp"
@@ -2009,7 +2009,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:custom:workflow_mcp"
@@ -2035,7 +2035,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:custom:workflow_mcp"
@@ -2061,7 +2061,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:custom:workflow_mcp"
@@ -2087,7 +2087,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:custom:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:custom:workflow_mcp"
@@ -2113,7 +2113,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:native_pi",
       "transport": "native_pi",
       "turnId": "turn:legacy:native_pi"
@@ -2139,7 +2139,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:native_pi",
       "transport": "native_pi",
       "turnId": "turn:legacy:native_pi"
@@ -2165,7 +2165,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:native_pi",
       "transport": "native_pi",
       "turnId": "turn:legacy:native_pi"
@@ -2191,7 +2191,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:native_pi",
       "transport": "native_pi",
       "turnId": "turn:legacy:native_pi"
@@ -2217,7 +2217,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:native_pi",
       "transport": "native_pi",
       "turnId": "turn:legacy:native_pi"
@@ -2243,7 +2243,7 @@
       "rawCanonicalStatus": "pending",
       "rawLegacyStatus": "pending",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:legacy:workflow_mcp"
@@ -2269,7 +2269,7 @@
       "rawCanonicalStatus": "in_progress",
       "rawLegacyStatus": "active",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:legacy:workflow_mcp"
@@ -2295,7 +2295,7 @@
       "rawCanonicalStatus": null,
       "rawLegacyStatus": "queued",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:legacy:workflow_mcp"
@@ -2321,7 +2321,7 @@
       "rawCanonicalStatus": "ready",
       "rawLegacyStatus": null,
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:legacy:workflow_mcp"
@@ -2347,7 +2347,7 @@
       "rawCanonicalStatus": "paused",
       "rawLegacyStatus": "done",
       "repairDisposition": "not_attempted",
-      "sourceRevision": "sha256:03ba880b69a70aae0602a974acba32355ec1b1c3ff3b69ba926e1aaeed7330fe",
+      "sourceRevision": "sha256:d30df87391909a4a5b38836e8f3708e73cceec6864d4e489ef21189afd567608",
       "traceId": "trace:legacy:workflow_mcp",
       "transport": "workflow_mcp",
       "turnId": "turn:legacy:workflow_mcp"
@@ -2804,7 +2804,7 @@
   },
   "schemaVersion": 1,
   "sliceId": "S07",
-  "sourceCapstoneEvidenceHash": "sha256:1c56084b4d8c16422cc9874815bf6140a355b2453e067a5f546f667a2936b4ac",
+  "sourceCapstoneEvidenceHash": "sha256:a089238ef9ccbf995409078e1b8940a9940016e2b042c54b71968dbfb31e739e",
   "taskReceiptHeads": [
     {
       "attemptNumber": 1,
