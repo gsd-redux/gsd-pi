@@ -9,13 +9,16 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { captureMilestoneVerificationSourceRevision } from "../verification-source-integrity.ts";
+import {
+  captureMilestoneVerificationSourceRevision,
+} from "../verification-source-integrity.ts";
 import {
   CAPSTONE_CLASSIFICATIONS,
   CAPSTONE_DISPOSITIONS,
   CAPSTONE_MODES,
   CAPSTONE_TRANSPORTS,
   collectSemanticShadowCapstoneEvidence,
+  M003_S07_DOSSIER_SOURCE_EXCLUSIONS,
   normalizeSemanticShadowCapstoneEvidence,
   type NormalizedSemanticShadowCapstoneEvidence,
   type SemanticShadowCapstoneEvidence,
@@ -75,7 +78,11 @@ test("collector fails closed when source changes during collection", async () =>
 
 test("collector binds full raw evidence to the actual source and normalizes deterministically", async () => {
   const sourceRoot = process.cwd();
-  const expectedSource = captureMilestoneVerificationSourceRevision(sourceRoot, undefined);
+  const expectedSource = captureMilestoneVerificationSourceRevision(
+    sourceRoot,
+    undefined,
+    { excludePaths: M003_S07_DOSSIER_SOURCE_EXCLUSIONS },
+  );
   assert.equal(expectedSource.ok, true);
   if (!expectedSource.ok) return;
 

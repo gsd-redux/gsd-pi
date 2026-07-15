@@ -2288,6 +2288,7 @@ function createSdkAttemptMessageState(): SdkAttemptMessageState {
 function beginClaudeCodeMilestoneStatusObservation(
 	projectRoot: string,
 	captureSourceRevision: typeof captureMilestoneVerificationSourceRevision,
+	captureSource: boolean,
 ): string | null {
 	let contextError: "unavailable" | undefined;
 	let guidedActive = false;
@@ -2304,11 +2305,15 @@ function beginClaudeCodeMilestoneStatusObservation(
 		contextError = "unavailable";
 	}
 	let sourceRevision = "unavailable";
-	try {
-		const captured = captureSourceRevision(projectRoot, preferences);
-		if (captured.ok) sourceRevision = captured.sourceRevision;
-		else contextError = "unavailable";
-	} catch {
+	if (captureSource) {
+		try {
+			const captured = captureSourceRevision(projectRoot, preferences);
+			if (captured.ok) sourceRevision = captured.sourceRevision;
+			else contextError = "unavailable";
+		} catch {
+			contextError = "unavailable";
+		}
+	} else {
 		contextError = "unavailable";
 	}
 	const autoActive = autoSession.active && [autoSession.originalBasePath, autoSession.basePath]
@@ -2399,12 +2404,6 @@ async function pumpSdkMessages(
 		const projectRoot = resolveWorkflowMcpProjectRoot(cwd);
 		autoInitClaudeCodeWorkflowMcp(cwd);
 		const gsdPhase = resolveGsdPhaseForSdk(context, projectRoot);
-		milestoneStatusObservationRoot = projectRoot;
-		milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
-			projectRoot,
-			claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
-				?? captureMilestoneVerificationSourceRevision,
-		);
 		const canUseToolHandler = createClaudeCodeCanUseToolHandler(uiContext);
 		// When no UI is available (headless / auto-mode), auto-approve all
 		// tool requests. This replaces the old bypassPermissions workaround.
@@ -2428,6 +2427,24 @@ async function pumpSdkMessages(
 			},
 		);
 		const workflowMcpServerName = workflowMcpServerNameFromAllowedTools(sdkOpts.allowedTools);
+		const allowedTools = Array.isArray(sdkOpts.allowedTools) ? sdkOpts.allowedTools : [];
+		const milestoneStatusAvailable = workflowMcpServerName && allowedTools.some((tool) =>
+			tool === `mcp__${workflowMcpServerName}__gsd_milestone_status`
+			|| tool === `mcp__${workflowMcpServerName}__*`
+		);
+		if (milestoneStatusAvailable) {
+			const statusIntent = Boolean(gsdPhase) || [
+				context.systemPrompt,
+				...context.messages.map(extractMessageText),
+			].some((text) => /\b(?:gsd[_ -])?milestone[_ -]status\b/i.test(text ?? ""));
+			milestoneStatusObservationRoot = projectRoot;
+			milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
+				projectRoot,
+				claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
+					?? captureMilestoneVerificationSourceRevision,
+				statusIntent,
+			);
+		}
 		injectMilestoneStatusObservationToken(
 			sdkOpts,
 			workflowMcpServerName,

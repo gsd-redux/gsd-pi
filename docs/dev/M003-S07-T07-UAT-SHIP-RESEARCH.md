@@ -181,10 +181,11 @@ Minimum mechanical gates are:
   compatibility witnesses, and deferred surfaces present;
 - recommendation fixed to `NO-GO` while D005 and deferred surfaces remain.
 
-`node scripts/m003-s07-cutover-dossier.mjs --check` must byte-compare canonical
-output after excluding only explicitly documented volatile presentation fields.
-No timestamp, duration, PR number, label, tag, or hosted URL may enter an
-evidence hash.
+The collector's `--check-dossier <path>` mode must recollect the source,
+canonical database, capstone, and local gates in the same process before it
+byte-compares canonical output. Bare dossier `--check` remains an internal
+schema/hash check, not a freshness claim. No timestamp, duration, PR number,
+label, tag, or hosted URL may enter an evidence hash.
 
 ### Stage 2 — candidate UAT receipts
 

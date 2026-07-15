@@ -42,6 +42,10 @@ export type MilestoneVerificationSourceRevisionResult =
   | { ok: true; sourceRevision: string }
   | { ok: false; error: string };
 
+export interface VerificationSourceSnapshotOptions {
+  excludePaths?: readonly string[];
+}
+
 const SOURCE_PATHSPEC = ["--", ".", ":(exclude).gsd/**"];
 
 export function resolveVerificationRepositoryTargets(
@@ -120,7 +124,8 @@ function gitOutput(cwd: string, args: string[]): Buffer {
   return result.stdout;
 }
 
-function sourcePaths(cwd: string): string[] {
+function sourcePaths(cwd: string, options: VerificationSourceSnapshotOptions): string[] {
+  const exclusions = (options.excludePaths ?? []).map((path) => `:(exclude)${path}`);
   const paths = gitOutput(cwd, [
     "ls-files",
     "--cached",
@@ -128,6 +133,7 @@ function sourcePaths(cwd: string): string[] {
     "--exclude-standard",
     "-z",
     ...SOURCE_PATHSPEC,
+    ...exclusions,
   ])
     .toString("utf8")
     .split("\0")
@@ -202,14 +208,18 @@ function addSourceEntry(hash: Hash, cwd: string, path: string): void {
   throw new Error(`unsupported source entry: ${path}`);
 }
 
-function captureTargetRevision(target: VerificationSourceTarget): VerificationTargetRevision {
+function captureTargetRevision(
+  target: VerificationSourceTarget,
+  options: VerificationSourceSnapshotOptions,
+): VerificationTargetRevision {
   const hash = createHash("sha256");
-  for (const path of sourcePaths(target.cwd)) addSourceEntry(hash, target.cwd, path);
+  for (const path of sourcePaths(target.cwd, options)) addSourceEntry(hash, target.cwd, path);
   return { targetId: target.id, revision: `sha256:${hash.digest("hex")}` };
 }
 
 function captureVerificationSourceSnapshotOnce(
   targets: VerificationSourceTarget[],
+  options: VerificationSourceSnapshotOptions = {},
 ): VerificationSourceSnapshotResult {
   if (targets.length === 0) {
     return { ok: false, targetId: "<targets>", error: "Verification source snapshot requires at least one target repository" };
@@ -223,7 +233,7 @@ function captureVerificationSourceSnapshotOnce(
     }
     seen.add(target.id);
     try {
-      revisions.push(captureTargetRevision(target));
+      revisions.push(captureTargetRevision(target, options));
     } catch (error) {
       return {
         ok: false,
@@ -249,8 +259,9 @@ function captureVerificationSourceSnapshotOnce(
 export function confirmVerificationSourceSnapshot(
   targets: VerificationSourceTarget[],
   expected: VerificationSourceSnapshot,
+  options: VerificationSourceSnapshotOptions = {},
 ): VerificationSourceSnapshotResult {
-  const confirmation = captureVerificationSourceSnapshotOnce(targets);
+  const confirmation = captureVerificationSourceSnapshotOnce(targets, options);
   if (!confirmation.ok) return confirmation;
   if (!verificationSourceChanged(expected, confirmation.snapshot)) return confirmation;
   const changedTarget = confirmation.snapshot.targets.find((target, index) =>
@@ -266,15 +277,17 @@ export function confirmVerificationSourceSnapshot(
 
 export function captureVerificationSourceSnapshot(
   targets: VerificationSourceTarget[],
+  options: VerificationSourceSnapshotOptions = {},
 ): VerificationSourceSnapshotResult {
-  const first = captureVerificationSourceSnapshotOnce(targets);
+  const first = captureVerificationSourceSnapshotOnce(targets, options);
   if (!first.ok) return first;
-  return confirmVerificationSourceSnapshot(targets, first.snapshot);
+  return confirmVerificationSourceSnapshot(targets, first.snapshot, options);
 }
 
 export function captureMilestoneVerificationSourceRevision(
   basePath: string,
   preferences: GSDPreferences | undefined,
+  options: VerificationSourceSnapshotOptions = {},
 ): MilestoneVerificationSourceRevisionResult {
   const targets = resolveVerificationRepositoryTargets(basePath, preferences, null, null);
   if (targets.missingRepositoryIds.length > 0) {
@@ -283,10 +296,13 @@ export function captureMilestoneVerificationSourceRevision(
       error: `verification source repositories are missing: ${targets.missingRepositoryIds.join(", ")}`,
     };
   }
-  const source = captureVerificationSourceSnapshot(targets.repositories.map((repository) => ({
-    id: repository.id,
-    cwd: repository.root,
-  })));
+  const source = captureVerificationSourceSnapshot(
+    targets.repositories.map((repository) => ({
+      id: repository.id,
+      cwd: repository.root,
+    })),
+    options,
+  );
   if (!source.ok) return { ok: false, error: source.error };
   return { ok: true, sourceRevision: source.snapshot.aggregateRevision };
 }

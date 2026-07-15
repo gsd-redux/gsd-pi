@@ -136,7 +136,7 @@ test("resolveMilestoneValidationVerdict does not promote a projection when the D
   assert.equal(verdict, undefined);
 });
 
-test("resolveMilestoneValidationVerdict rejects malformed canonical receipts for adopted milestones", async (t) => {
+test("resolveMilestoneValidationVerdict keeps the database assessment authoritative after adoption", async (t) => {
   const base = join(tmpdir(), `validation-verdict-adopted-${Date.now()}`);
   t.after(() => {
     closeDatabase();
@@ -156,10 +156,10 @@ test("resolveMilestoneValidationVerdict rejects malformed canonical receipts for
   adoptMilestone("M001");
 
   recordCanonicalValidation("M001", "pass");
-  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
+  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), "pass");
 });
 
-test("resolveMilestoneValidationVerdict does not fall back to legacy assessments after adoption", async (t) => {
+test("resolveMilestoneValidationVerdict does not let adoption hide a database assessment", async (t) => {
   const base = join(tmpdir(), `validation-verdict-adopted-no-receipt-${Date.now()}`);
   t.after(() => {
     closeDatabase();
@@ -178,5 +178,5 @@ test("resolveMilestoneValidationVerdict does not fall back to legacy assessments
   });
   adoptMilestone("M001");
 
-  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
+  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), "pass");
 });

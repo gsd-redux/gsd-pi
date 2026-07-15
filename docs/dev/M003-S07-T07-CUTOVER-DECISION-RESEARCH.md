@@ -223,12 +223,11 @@ those arrays, compute their canonical hashes, and then validate expected versus
 observed cardinality. Volatile durations and generation timestamps may be
 reported, but they must not enter evidence identity hashes.
 
-`scripts/m003-s07-cutover-dossier.mjs --check` must regenerate the report in
-memory and byte-compare it with the checked-in JSON after excluding only the
-documented generation timestamp. The script must derive the repository root and
-database path locally, accept no external evidence path, access no network, and
-ignore/remove `GITHUB_*` and `GH_*` environment values. GitHub labels and tags
-are never evidence inputs.
+The dossier collector's `--check-dossier <path>` mode must recollect local
+evidence and regenerate the report in memory before byte-comparing it with the
+checked-in JSON. The collector must bind the database to the local source
+project, access no network, and ignore/remove `GITHUB_*` and `GH_*` environment
+values. GitHub labels and tags are never evidence inputs.
 
 ## Attaching exact-source evidence without overstating telemetry
 

@@ -41,6 +41,7 @@ const COMPATIBILITY_IDS = [
   "discard",
   "skipped-dispatch",
   "db-unavailable-status",
+  "state-derivation-authority",
 ];
 const COMPATIBILITY_DETAILS = Object.freeze({
   "runtime-disagreement": {
@@ -83,6 +84,10 @@ const COMPATIBILITY_DETAILS = Object.freeze({
     file: "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
     title: "gsd_milestone_status handles missing DB gracefully",
   },
+  "state-derivation-authority": {
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+    title: "legacy validation assessment steers state when canonical lifecycle disagrees",
+  },
 });
 const COMMANDS = Object.freeze([
   {
@@ -107,7 +112,7 @@ const COMMANDS = Object.freeze([
   },
   {
     id: "dossier-check",
-    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    command: "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types scripts/m003-s07-dossier-input.ts --source-root \"$PWD\" --database <canonical-gsd-db> --capstone <fresh-capstone-json> --check-dossier docs/dev/m003-s07-cutover-dossier.json",
     stage: "post_generation",
     verdict: "required",
   },
@@ -226,9 +231,41 @@ function repairHistory() {
   });
 }
 
+function taskReceiptHistory() {
+  return Array.from({ length: 6 }, (_, index) => {
+    const taskId = `T${String(index + 1).padStart(2, "0")}`;
+    const attempts = taskId === "T05" ? [1, 2] : [1];
+    return attempts.map((attemptNumber) => {
+      const current = attemptNumber === attempts.at(-1);
+      const label = `${taskId.toLowerCase()}-${attemptNumber}`;
+      return {
+        taskId,
+        lifecycleStatus: "completed",
+        attemptNumber,
+        attemptId: `attempt-${label}`,
+        attemptState: "settled",
+        resultId: `result-${label}`,
+        resultOutcome: "succeeded",
+        verdictId: `verdict-${label}`,
+        verdict: current ? "pass" : "inconclusive",
+        evidenceId: `evidence-${label}`,
+        evidenceSourceRevision: sha(`${label}-source`),
+        observation: current ? "passed" : "inconclusive",
+        testedSourceRevision: sha(`${label}-source`),
+        evidenceHash: sha(`${label}-evidence`),
+        durableOutputRef: `db://fixture/${label}`,
+        environment: { attemptNumber, taskId, verificationPolicy: "fixture" },
+        verdictRevision: 100 + index + attemptNumber,
+        current,
+      };
+    });
+  }).flat();
+}
+
 function validInput() {
   const sourceRevision = sha("candidate-source");
   const publicResponseHash = sha("frozen-public-response");
+  const receipts = taskReceiptHistory();
   return {
     recommendation: "NO_GO",
     observationEvidencePlane: "capstone_fixture",
@@ -236,7 +273,7 @@ function validInput() {
     evidenceSourceRevision: sourceRevision,
     publicResponseHash,
     sourceCapstoneEvidenceHash: sha("source-capstone-evidence"),
-    authority: { projectRevision: 195, authorityEpoch: 0 },
+    authority: { projectId: "fixture-project", projectRevision: 195, authorityEpoch: 0 },
     observations: MODES.flatMap((mode) => (
       TRANSPORTS.map((transport) => observation(mode, transport, sourceRevision, publicResponseHash))
     )),
@@ -278,15 +315,16 @@ function validInput() {
         classification: "semantic_match_exact_delta",
       },
     ],
-    taskReceiptHeads: Array.from({ length: 6 }, (_, index) => ({
-      taskId: `T${String(index + 1).padStart(2, "0")}`,
-      attemptNumber: 1,
-      attemptState: "settled",
-      resultOutcome: "succeeded",
-      verdict: "pass",
+    taskReceiptHistory: receipts,
+    taskReceiptHeads: receipts.filter((receipt) => receipt.current).map((receipt) => ({
+      taskId: receipt.taskId,
+      attemptNumber: receipt.attemptNumber,
+      attemptState: receipt.attemptState,
+      resultOutcome: receipt.resultOutcome,
+      verdict: receipt.verdict,
       current: true,
-      testedSourceRevision: sha(`task-${index + 1}-source`),
-      evidenceHash: sha(`task-${index + 1}-evidence`),
+      testedSourceRevision: receipt.testedSourceRevision,
+      evidenceHash: receipt.evidenceHash,
     })),
     compatibilityInventory: COMPATIBILITY_IDS.map((id) => ({
       id,
@@ -295,8 +333,8 @@ function validInput() {
     })),
     commands: COMMANDS.map((command) => ({ ...command })),
     noCutover: {
-      structural: { passed: 5, total: 5 },
-      behavioral: { passed: 10, total: 10 },
+      structural: { passed: 7, total: 7 },
+      behavioral: { passed: 11, total: 11 },
     },
     authorityBaseline: { passed: 4, total: 4 },
     deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
@@ -310,6 +348,7 @@ function reversedInput() {
   input.dispositionProof.reverse();
   input.repairHistory.reverse();
   input.liveDrift.reverse();
+  input.taskReceiptHistory.reverse();
   input.taskReceiptHeads.reverse();
   input.compatibilityInventory.reverse();
   input.commands.reverse();
@@ -361,6 +400,14 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
     statusMismatch: 22,
     distinctEvidenceDigests: 23,
   });
+  assert.equal(first.authority.projectId, "fixture-project");
+  assert.equal(first.taskReceiptHistory.length, 7);
+  assert.deepEqual(
+    first.taskReceiptHistory.filter((receipt) => receipt.taskId === "T05")
+      .map(({ attemptNumber, current }) => ({ attemptNumber, current })),
+    [{ attemptNumber: 1, current: false }, { attemptNumber: 2, current: true }],
+  );
+  assert.equal(first.taskReceiptHeads.find((receipt) => receipt.taskId === "T05").attemptNumber, 2);
 });
 
 test("capstone suite remains required until DB-backed post-generation UAT", () => {
@@ -421,7 +468,14 @@ const failureCases = [
   ["live missing shadow", (input) => { input.liveDrift[0].classification = "missing_shadow"; }, /live drift/i],
   ["forged allowed live classification", (input) => { input.liveDrift[0].classification = "match"; }, /frozen semantic relation/i],
   ["unknown live status", (input) => { input.liveDrift[0].legacyStatus = "mystery"; }, /live drift/i],
+  ["missing receipt history", (input) => input.taskReceiptHistory.pop(), /receipt history.*seven Attempts/i],
+  ["reopened receipt task", (input) => { input.taskReceiptHistory[0].lifecycleStatus = "ready"; }, /lifecycle must be completed/i],
+  ["duplicate receipt result", (input) => { input.taskReceiptHistory[1].resultId = input.taskReceiptHistory[0].resultId; }, /duplicate receipt history Result/i],
+  ["duplicate receipt evidence", (input) => { input.taskReceiptHistory[1].evidenceId = input.taskReceiptHistory[0].evidenceId; }, /duplicate receipt history Evidence/i],
+  ["receipt source mismatch", (input) => { input.taskReceiptHistory[0].evidenceSourceRevision = sha("other-source"); }, /source revisions disagree/i],
+  ["missing durable receipt output", (input) => { input.taskReceiptHistory[0].durableOutputRef = ""; }, /durable output reference/i],
   ["nonpassing receipt head", (input) => { input.taskReceiptHeads[0].verdict = "fail"; }, /receipt head/i],
+  ["declared receipt head drift", (input) => { input.taskReceiptHeads[4].attemptNumber = 1; }, /receipt heads.*complete receipt history/i],
   ["missing compatibility witness", (input) => input.compatibilityInventory.pop(), /compatibility inventory/i],
   ["missing compatibility file", (input) => { delete input.compatibilityInventory[0].file; }, /compatibility.*file/i],
   ["changed compatibility title", (input) => { input.compatibilityInventory[0].title = "renamed"; }, /compatibility.*title/i],
@@ -436,7 +490,7 @@ const failureCases = [
   }, /command inventory.*stage|post-generation command/i],
   ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
   ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
-  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 9; }, /no-cutover.*10\/10/i],
+  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 10; }, /no-cutover.*11\/11/i],
   ["authority baseline regression", (input) => { input.authorityBaseline.passed = 3; }, /baseline.*4\/4/i],
   ["GO recommendation", (input) => { input.recommendation = "GO"; }, /recommendation.*NO_GO/i],
   ["missing deferred blocker", (input) => input.deferredCutoverBlockers.pop(), /deferred cutover blocker/i],

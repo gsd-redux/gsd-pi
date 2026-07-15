@@ -29,7 +29,13 @@ import type {
   LifecycleShadowObservationLossAccounting,
 } from "../lifecycle-shadow-observation.ts";
 import { executeMilestoneStatus } from "../tools/workflow-tool-executors.ts";
-import { captureMilestoneVerificationSourceRevision } from "../verification-source-integrity.ts";
+import {
+  captureMilestoneVerificationSourceRevision,
+} from "../verification-source-integrity.ts";
+
+export const M003_S07_DOSSIER_SOURCE_EXCLUSIONS = [
+  "docs/dev/m003-s07-cutover-dossier.json",
+] as const;
 
 export const CAPSTONE_MODES = [
   "auto",
@@ -283,7 +289,12 @@ export async function collectSemanticShadowCapstoneEvidence(
   dependencies: CapstoneCollectorDependencies = {},
 ): Promise<SemanticShadowCapstoneEvidence> {
   const sourceRoot = resolve(input.sourceRoot);
-  const captureSourceRevision = dependencies.captureSourceRevision ?? captureMilestoneVerificationSourceRevision;
+  const captureSourceRevision = dependencies.captureSourceRevision
+    ?? ((basePath, preferences) => captureMilestoneVerificationSourceRevision(
+      basePath,
+      preferences,
+      { excludePaths: M003_S07_DOSSIER_SOURCE_EXCLUSIONS },
+    ));
   const source = captureSourceRevision(sourceRoot, undefined);
   if (!source.ok) throw new Error(`Unable to capture semantic-shadow source: ${source.error}`);
 

@@ -2442,6 +2442,58 @@ describe("stream-adapter — session persistence (#2859)", () => {
 });
 
 describe("stream-adapter — workflow MCP readiness", () => {
+	test("ordinary Claude SDK turns do not hash the source tree for milestone observations", async () => {
+		const cwd = realpathSync(mkdtempSync(join(tmpdir(), "claude-sdk-no-gsd-observation-")));
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: process.execPath,
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["-e", ""]),
+			GSD_WORKFLOW_MCP_CWD: cwd,
+		});
+		let captures = 0;
+		try {
+			const stream = streamViaClaudeCode(
+				{ id: "claude-sonnet-4-6" } as any,
+				{ messages: [{ role: "user", content: "Explain this file." } as Message] },
+				{
+					cwd,
+					_captureMilestoneVerificationSourceRevisionForTest: () => {
+						captures += 1;
+						return { ok: true, sourceRevision: "sha256:test" };
+					},
+					async *_sdkQueryForTest() {
+						yield {
+							type: "result",
+							subtype: "success",
+							uuid: "result-no-gsd-observation",
+							session_id: "session-no-gsd-observation",
+							duration_ms: 1,
+							duration_api_ms: 1,
+							is_error: false,
+							num_turns: 1,
+							result: "done",
+							stop_reason: "end_turn",
+							total_cost_usd: 0,
+							usage: {
+								input_tokens: 0,
+								output_tokens: 0,
+								cache_read_input_tokens: 0,
+								cache_creation_input_tokens: 0,
+							},
+						};
+					},
+				} as any,
+			);
+
+			await stream.result();
+			assert.equal(captures, 0);
+		} finally {
+			restore();
+			rmSync(cwd, { recursive: true, force: true });
+			clearMcpConfigCache();
+		}
+	});
+
 	test("strict slice phase prompt omits workflow MCP question guidance when allowedTools omit it", async () => {
 		const cwd = realpathSync(mkdtempSync(join(tmpdir(), "claude-sdk-strict-question-prompt-")));
 		const restore = setWorkflowMcpEnv({

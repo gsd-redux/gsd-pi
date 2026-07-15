@@ -20,13 +20,14 @@ import { getPriorSliceCompletionBlocker } from "../dispatch-guard.ts";
 import {
   _getAdapter,
   closeDatabase,
+  insertAssessment,
   insertMilestone,
   insertSlice,
   insertTask,
   openDatabase,
 } from "../gsd-db.ts";
 import { analyzeParallelEligibility } from "../parallel-eligibility.ts";
-import { invalidateStateCache } from "../state.ts";
+import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
 import { executeMilestoneStatus } from "../tools/workflow-tool-executors.ts";
 import type { WindowEntry } from "../auto/types.ts";
 
@@ -299,6 +300,62 @@ test("dispatch retry ledger remains authoritative when canonical lifecycle disag
   ).run({ ":id": claim.dispatchId });
   assert.ok(detectStuck(repeatedWindow(unitKey)), "expired ledger retry re-enables stuck");
   assert.equal(readLifecycleStatus("task"), "completed", "canonical disagreement stayed constant");
+});
+
+test("legacy validation assessment steers state when canonical lifecycle disagrees", async () => {
+  const base = makeProject("gsd-no-cutover-state-");
+  insertMilestone({ id: "M001", title: "State authority", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Done", status: "complete", depends: [] });
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Done",
+    status: "complete",
+  });
+  seedLifecycle(
+    { itemKind: "milestone", milestoneId: "M001", lifecycleStatus: "completed" },
+    "state-completed",
+  );
+  seedLifecycle(
+    { itemKind: "slice", milestoneId: "M001", sliceId: "S01", lifecycleStatus: "completed" },
+    "state-slice",
+  );
+  seedLifecycle({
+    itemKind: "task",
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    lifecycleStatus: "completed",
+  }, "state-task");
+
+  assert.equal((await deriveStateFromDb(base)).phase, "validating-milestone");
+
+  insertAssessment({
+    path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    sliceId: null,
+    taskId: null,
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\n---\n",
+  });
+  invalidateStateCache();
+  assert.equal((await deriveStateFromDb(base)).phase, "completing-milestone");
+
+  insertAssessment({
+    path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    sliceId: null,
+    taskId: null,
+    status: "needs-remediation",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: needs-remediation\n---\n",
+  });
+  invalidateStateCache();
+  const blocked = await deriveStateFromDb(base);
+  assert.equal(blocked.phase, "blocked");
+  assert.match(blocked.blockers[0] ?? "", /needs-remediation/);
 });
 
 test("AST boundaries reject canonical response, decision, and hosted-metadata sabotage", () => {

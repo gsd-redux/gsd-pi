@@ -15,6 +15,8 @@ export const NO_CUTOVER_SOURCE_FILES = Object.freeze({
   eligibility: "src/resources/extensions/gsd/parallel-eligibility.ts",
   dispatch: "src/resources/extensions/gsd/dispatch-guard.ts",
   retry: "src/resources/extensions/gsd/auto/detect-stuck.ts",
+  state: "src/resources/extensions/gsd/state/derive/from-db.ts",
+  validation: "src/resources/extensions/gsd/milestone-validation-verdict.ts",
   gate: "scripts/semantic-shadow-no-cutover-gate.mjs",
 });
 const SOURCE_FILES = NO_CUTOVER_SOURCE_FILES;
@@ -45,6 +47,8 @@ export const NO_CUTOVER_BEHAVIORAL_WITNESSES = Object.freeze([
     "skipped prior DB slices do not block later slice dispatch"),
   witness("db-unavailable-status", "milestone-status-tool.test.ts",
     "gsd_milestone_status handles missing DB gracefully"),
+  witness("state-derivation-authority", "semantic-shadow-no-cutover.test.ts",
+    "legacy validation assessment steers state when canonical lifecycle disagrees"),
 ]);
 
 export function parseArgs(argv = process.argv.slice(2)) {
@@ -490,6 +494,18 @@ export function analyzeNoCutoverSources(sources) {
       sources.retry,
       ["retryBudgetSuppresses", "rowInsideRetryBudget"],
       ["getLatestForUnit"],
+    )],
+    ["state-derivation-authority", () => analyzeDecisionBoundary(
+      SOURCE_FILES.state,
+      sources.state,
+      ["handleAllSlicesDone"],
+      ["resolveMilestoneValidationVerdict"],
+    )],
+    ["validation-assessment-authority", () => analyzeDecisionBoundary(
+      SOURCE_FILES.validation,
+      sources.validation,
+      ["readMilestoneValidationVerdict"],
+      ["getLatestAssessmentByScope"],
     )],
     ["closed-local-inputs", () => analyzeLocalInputBoundary(sources.gate)],
   ];

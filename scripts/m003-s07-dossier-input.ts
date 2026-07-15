@@ -4,14 +4,16 @@
 // File Purpose: Collect local canonical inputs for the M003/S07 cutover dossier.
 
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 import {
   COMMAND_INVENTORY,
+  buildDossier,
   DEFERRED_BLOCKERS,
+  renderDossier,
 } from "./m003-s07-cutover-dossier.mjs";
 import {
   REPO_ROOT as NO_CUTOVER_ROOT,
@@ -24,9 +26,13 @@ import {
 import { compareLifecycleShadow } from "../src/resources/extensions/gsd/db/lifecycle-shadow-comparison.ts";
 import {
   normalizeSemanticShadowCapstoneEvidence,
+  M003_S07_DOSSIER_SOURCE_EXCLUSIONS,
   type NormalizedSemanticShadowCapstoneEvidence,
 } from "../src/resources/extensions/gsd/tests/semantic-shadow-capstone-harness.ts";
-import { captureMilestoneVerificationSourceRevision } from "../src/resources/extensions/gsd/verification-source-integrity.ts";
+import {
+  captureMilestoneVerificationSourceRevision,
+} from "../src/resources/extensions/gsd/verification-source-integrity.ts";
+import { externalGsdRoot } from "../src/resources/extensions/gsd/repo-identity.ts";
 
 export interface DossierInputPaths {
   sourceRoot: string;
@@ -38,16 +44,19 @@ interface CollectorDependencies {
   runNoCutover?: () => Record<string, any>;
   runAuthorityBaseline?: () => Record<string, any>;
   captureSourceRevision?: typeof captureMilestoneVerificationSourceRevision;
+  resolveCanonicalDatabasePath?: (sourceRoot: string) => string;
 }
 
 interface DossierInputCliOptions extends DossierInputPaths {
   outputPath?: string;
+  checkDossierPath?: string;
 }
 
 interface CanonicalSnapshot {
-  authority: { projectRevision: number; authorityEpoch: number };
+  authority: { projectId: string; projectRevision: number; authorityEpoch: number };
   repairHistory: Array<Record<string, unknown>>;
   liveDrift: Array<Record<string, unknown>>;
+  taskReceiptHistory: Array<Record<string, unknown>>;
   taskReceiptHeads: Array<Record<string, unknown>>;
 }
 
@@ -77,7 +86,7 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
   database.exec("PRAGMA query_only = ON; BEGIN");
   try {
     const authorityRow = database.prepare(`
-      SELECT revision AS projectRevision, authority_epoch AS authorityEpoch
+      SELECT project_id AS projectId, revision AS projectRevision, authority_epoch AS authorityEpoch
       FROM project_authority
     `).get() as Record<string, unknown> | undefined;
     if (!authorityRow) throw new Error("Canonical project authority is missing");
@@ -100,9 +109,11 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
           WHERE projection.enqueue_operation_id = event.operation_id) AS projectionCount
       FROM workflow_domain_events event
       JOIN workflow_operations operation ON operation.operation_id = event.operation_id
+        AND operation.project_id = event.project_id
       WHERE event.event_type IN ('lifecycle.shadow.advanced', 'lifecycle.shadow.repaired')
         AND operation.operation_type = 'lifecycle.shadow.repair'
         AND operation.idempotency_key LIKE 'internal:m003:s07:t02:repair:%'
+        AND operation.project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
       ORDER BY event.project_revision, event.event_index, event.event_id
     `).all().map((row) => ({ ...row }));
     if (repairHistory.length !== 33) {
@@ -162,61 +173,93 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
     });
 
     const receiptRows = database.prepare(`
-      WITH latest_attempt AS (
-        SELECT lifecycle.task_id AS taskId, attempt.*,
-               ROW_NUMBER() OVER (
-                 PARTITION BY lifecycle.lifecycle_id ORDER BY attempt.attempt_number DESC, attempt.attempt_id DESC
-               ) AS rank
-        FROM workflow_item_lifecycles lifecycle
-        JOIN workflow_execution_attempts attempt ON attempt.lifecycle_id = lifecycle.lifecycle_id
-        WHERE lifecycle.milestone_id = 'M003'
-          AND lifecycle.slice_id = 'S07'
-          AND lifecycle.task_id IN ('T01', 'T02', 'T03', 'T04', 'T05', 'T06')
-      )
       SELECT
-        latest.taskId,
-        latest.attempt_number AS attemptNumber,
-        latest.attempt_state AS attemptState,
+        lifecycle.task_id AS taskId,
+        lifecycle.lifecycle_status AS lifecycleStatus,
+        attempt.attempt_number AS attemptNumber,
+        attempt.attempt_id AS attemptId,
+        attempt.attempt_state AS attemptState,
+        result.result_id AS resultId,
         result.outcome AS resultOutcome,
-        MIN(verdict.verdict) AS verdict,
-        MIN(verdict.tested_source_revision) AS testedSourceRevision,
-        MIN(evidence.content_hash) AS evidenceHash,
-        COUNT(DISTINCT verdict.verdict_id) AS verdictCount,
-        COUNT(DISTINCT evidence.evidence_id) AS evidenceCount
-      FROM latest_attempt latest
-      JOIN workflow_attempt_results result ON result.attempt_id = latest.attempt_id
-      JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = latest.attempt_id
-      JOIN workflow_verification_evidence evidence ON evidence.verdict_id = verdict.verdict_id
-      WHERE latest.rank = 1
-        AND NOT EXISTS (
-          SELECT 1 FROM workflow_technical_verdicts successor
-          WHERE successor.supersedes_verdict_id = verdict.verdict_id
-        )
-      GROUP BY latest.taskId, latest.attempt_number, latest.attempt_state, result.outcome
-      ORDER BY latest.taskId
+        verdict.verdict_id AS verdictId,
+        verdict.verdict AS verdict,
+        verdict.tested_source_revision AS testedSourceRevision,
+        evidence.evidence_id AS evidenceId,
+        evidence.source_revision AS evidenceSourceRevision,
+        evidence.observation AS observation,
+        evidence.content_hash AS evidenceHash,
+        evidence.durable_output_ref AS durableOutputRef,
+        evidence.environment_json AS environmentJson,
+        verdict.project_revision AS verdictRevision,
+        CASE WHEN attempt.attempt_number = (
+          SELECT MAX(latest.attempt_number)
+          FROM workflow_execution_attempts latest
+          WHERE latest.lifecycle_id = attempt.lifecycle_id
+            AND latest.project_id = attempt.project_id
+        ) THEN 1 ELSE 0 END AS current
+      FROM workflow_item_lifecycles lifecycle
+      JOIN workflow_execution_attempts attempt
+        ON attempt.lifecycle_id = lifecycle.lifecycle_id
+       AND attempt.project_id = lifecycle.project_id
+      JOIN workflow_attempt_results result
+        ON result.attempt_id = attempt.attempt_id
+       AND result.project_id = attempt.project_id
+      JOIN workflow_technical_verdicts verdict
+        ON verdict.attempt_id = attempt.attempt_id
+       AND verdict.project_id = attempt.project_id
+       AND NOT EXISTS (
+         SELECT 1 FROM workflow_technical_verdicts successor
+         WHERE successor.supersedes_verdict_id = verdict.verdict_id
+           AND successor.project_id = verdict.project_id
+       )
+      JOIN workflow_verification_evidence evidence
+        ON evidence.verdict_id = verdict.verdict_id
+       AND evidence.attempt_id = attempt.attempt_id
+       AND evidence.project_id = attempt.project_id
+      WHERE lifecycle.item_kind = 'task'
+        AND lifecycle.milestone_id = 'M003'
+        AND lifecycle.slice_id = 'S07'
+        AND lifecycle.task_id IN ('T01', 'T02', 'T03', 'T04', 'T05', 'T06')
+        AND lifecycle.project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
+      ORDER BY lifecycle.task_id, attempt.attempt_number, verdict.project_revision, evidence.evidence_id
     `).all() as Array<Record<string, unknown>>;
-    if (receiptRows.length !== 6 || receiptRows.some((row) => row["verdictCount"] !== 1 || row["evidenceCount"] !== 1)) {
-      throw new Error("Canonical T01-T06 receipt heads must each have one current verdict and evidence row");
-    }
-    const taskReceiptHeads = receiptRows.map((row) => ({
+    const taskReceiptHistory = receiptRows.map((row) => ({
       taskId: String(row["taskId"]),
+      lifecycleStatus: String(row["lifecycleStatus"]),
       attemptNumber: Number(row["attemptNumber"]),
+      attemptId: String(row["attemptId"]),
       attemptState: String(row["attemptState"]),
+      resultId: String(row["resultId"]),
       resultOutcome: String(row["resultOutcome"]),
+      verdictId: String(row["verdictId"]),
       verdict: String(row["verdict"]),
-      current: true,
+      evidenceId: String(row["evidenceId"]),
+      evidenceSourceRevision: String(row["evidenceSourceRevision"]),
+      observation: String(row["observation"]),
       testedSourceRevision: String(row["testedSourceRevision"]),
       evidenceHash: String(row["evidenceHash"]),
+      durableOutputRef: String(row["durableOutputRef"]),
+      environment: JSON.parse(String(row["environmentJson"])),
+      verdictRevision: Number(row["verdictRevision"]),
+      current: row["current"] === 1,
     }));
+    const taskReceiptHeads = taskReceiptHistory.filter((row) => row["current"] === true);
+    // T01-T06 are closed prerequisites. Their frozen history is six initial
+    // Attempts plus T05's one source-drift retry; any extra row is new drift.
+    if (taskReceiptHistory.length !== 7 || taskReceiptHeads.length !== 6) {
+      throw new Error("Canonical T01-T06 receipt history must contain seven Attempts and six current heads");
+    }
 
     database.exec("COMMIT");
     return {
       authority: {
+        projectId: String(authorityRow["projectId"]),
         projectRevision: Number(authorityRow["projectRevision"]),
         authorityEpoch: Number(authorityRow["authorityEpoch"]),
       },
       repairHistory,
       liveDrift,
+      taskReceiptHistory,
       taskReceiptHeads,
     };
   } catch (error) {
@@ -312,10 +355,21 @@ export async function collectM003S07DossierInput(
   if (sourceRoot !== resolve(NO_CUTOVER_ROOT) || sourceRoot !== resolve(AUTHORITY_BASELINE_ROOT)) {
     throw new Error("Source root must be the local repository used by the no-cutover and authority reports");
   }
+  const resolveCanonicalDatabasePath = dependencies.resolveCanonicalDatabasePath
+    ?? ((root: string) => join(externalGsdRoot(root), "gsd.db"));
+  const canonicalDatabasePath = localPath(resolveCanonicalDatabasePath(sourceRoot), "Resolved canonical database");
+  if (realpathSync(databasePath) !== realpathSync(canonicalDatabasePath)) {
+    throw new Error("Supplied database does not match the source project's canonical database identity");
+  }
 
   const parsedCapstone = JSON.parse(readFileSync(capstonePath, "utf8"));
   const capstone = normalizeSemanticShadowCapstoneEvidence(parsedCapstone);
-  const captureSourceRevision = dependencies.captureSourceRevision ?? captureMilestoneVerificationSourceRevision;
+  const captureSourceRevision = dependencies.captureSourceRevision
+    ?? ((basePath, preferences) => captureMilestoneVerificationSourceRevision(
+      basePath,
+      preferences,
+      { excludePaths: M003_S07_DOSSIER_SOURCE_EXCLUSIONS },
+    ));
   const source = captureSourceRevision(sourceRoot, undefined);
   if (!source.ok) throw new Error(`Unable to capture dossier source: ${source.error}`);
   if (capstone.evidence.sourceRevision !== source.sourceRevision) {
@@ -335,6 +389,7 @@ export async function collectM003S07DossierInput(
     ...adaptCapstone(capstone),
     repairHistory: snapshot.repairHistory,
     liveDrift: snapshot.liveDrift,
+    taskReceiptHistory: snapshot.taskReceiptHistory,
     taskReceiptHeads: snapshot.taskReceiptHeads,
     ...summarizeReports(noCutover, authorityBaseline),
     commands: COMMAND_INVENTORY.map((command) => ({ ...command })),
@@ -353,7 +408,13 @@ export function parseDossierInputArgs(args: string[]): DossierInputCliOptions {
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index];
     const value = args[index + 1];
-    if (!option || !["--source-root", "--database", "--capstone", "--output"].includes(option)) {
+    if (!option || ![
+      "--source-root",
+      "--database",
+      "--capstone",
+      "--output",
+      "--check-dossier",
+    ].includes(option)) {
       throw new Error(`Unknown argument: ${option ?? ""}`);
     }
     if (!value || value.startsWith("--")) throw new Error(`Missing value for ${option}`);
@@ -365,15 +426,22 @@ export function parseDossierInputArgs(args: string[]): DossierInputCliOptions {
   const capstonePath = values.get("--capstone");
   if (!sourceRoot || !databasePath || !capstonePath) {
     throw new Error(
-      "Usage: m003-s07-dossier-input --source-root <path> --database <path> --capstone <path> [--output <path>]",
+      "Usage: m003-s07-dossier-input --source-root <path> --database <path> --capstone <path> [--output <path> | --check-dossier <path>]",
     );
   }
   const outputPath = values.get("--output");
+  const checkDossierPath = values.get("--check-dossier");
+  if (outputPath && checkDossierPath) {
+    throw new Error("--output and --check-dossier are mutually exclusive");
+  }
   return {
     sourceRoot: localPath(sourceRoot, "Source root"),
     databasePath: localPath(databasePath, "Canonical database"),
     capstonePath: localPath(capstonePath, "Capstone evidence"),
     ...(outputPath ? { outputPath: localPath(outputPath, "Output") } : {}),
+    ...(checkDossierPath
+      ? { checkDossierPath: localPath(checkDossierPath, "Checked dossier") }
+      : {}),
   };
 }
 
@@ -381,8 +449,17 @@ export async function main(
   args = process.argv.slice(2),
   dependencies: CollectorDependencies = {},
 ): Promise<void> {
-  const { outputPath, ...paths } = parseDossierInputArgs(args);
+  const { outputPath, checkDossierPath, ...paths } = parseDossierInputArgs(args);
   const input = await collectM003S07DossierInput(paths, dependencies);
+  if (checkDossierPath) {
+    const dossier = buildDossier(input);
+    const expected = renderDossier(dossier);
+    if (readFileSync(checkDossierPath, "utf8") !== expected) {
+      throw new Error("Checked dossier is stale relative to freshly collected local evidence");
+    }
+    process.stdout.write(`M003/S07 live dossier valid: ${dossier.hashes.dossierHash}\n`);
+    return;
+  }
   const serialized = `${JSON.stringify(input, null, 2)}\n`;
   if (outputPath) writeFileSync(outputPath, serialized, "utf8");
   else process.stdout.write(serialized);

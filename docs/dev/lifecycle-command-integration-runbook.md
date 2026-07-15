@@ -158,7 +158,11 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
   --source-root "$PWD" --database <canonical-gsd-db> \
   --capstone <capstone-json> --output <dossier-input-json>
 node scripts/m003-s07-cutover-dossier.mjs --input <dossier-input-json>
-node scripts/m003-s07-cutover-dossier.mjs --check
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
+  --experimental-strip-types scripts/m003-s07-dossier-input.ts \
+  --source-root "$PWD" --database <canonical-gsd-db> \
+  --capstone <capstone-json> \
+  --check-dossier docs/dev/m003-s07-cutover-dossier.json
 ```
 
 The generator rejects incomplete matrix cardinality, mixed or unavailable

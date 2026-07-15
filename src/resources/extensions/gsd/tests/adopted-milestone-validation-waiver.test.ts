@@ -497,7 +497,7 @@ test("source changes after a waiver keep state validating and leave validation g
   );
 });
 
-test("source changes after a passing validation keep adopted state validating", async () => {
+test("source changes after a passing validation do not cut state derivation over to canonical authority", async () => {
   const basePath = makeFixture();
   await recordPassingValidation(basePath, "test/milestone.validate/stale-pass");
 
@@ -506,7 +506,7 @@ test("source changes after a passing validation keep adopted state validating", 
   execFileSync("git", ["commit", "-m", "change validated source"], { cwd: basePath, stdio: "ignore" });
 
   const state = await deriveStateFromDb(basePath);
-  assert.equal(state.phase, "validating-milestone");
+  assert.equal(state.phase, "completing-milestone");
 });
 
 test("a newer canonical waiver reconciles completed validation gates from pass to omitted", async () => {

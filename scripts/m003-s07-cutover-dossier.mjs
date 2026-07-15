@@ -35,6 +35,7 @@ export const COMPATIBILITY_IDS = Object.freeze([
   "discard",
   "skipped-dispatch",
   "db-unavailable-status",
+  "state-derivation-authority",
 ]);
 export const COMPATIBILITY_WITNESSES = Object.freeze([
   {
@@ -87,6 +88,11 @@ export const COMPATIBILITY_WITNESSES = Object.freeze([
     file: "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
     title: "gsd_milestone_status handles missing DB gracefully",
   },
+  {
+    id: "state-derivation-authority",
+    file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+    title: "legacy validation assessment steers state when canonical lifecycle disagrees",
+  },
 ]);
 export const COMMAND_INVENTORY = Object.freeze([
   {
@@ -111,7 +117,7 @@ export const COMMAND_INVENTORY = Object.freeze([
   },
   {
     id: "dossier-check",
-    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    command: "node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types scripts/m003-s07-dossier-input.ts --source-root \"$PWD\" --database <canonical-gsd-db> --capstone <fresh-capstone-json> --check-dossier docs/dev/m003-s07-cutover-dossier.json",
     stage: "post_generation",
     verdict: "required",
   },
@@ -172,6 +178,7 @@ const TOP_LEVEL_KEYS = new Set([
   "observationLosses",
   "repairHistory",
   "liveDrift",
+  "taskReceiptHistory",
   "taskReceiptHeads",
   "compatibilityInventory",
   "noCutover",
@@ -633,6 +640,109 @@ function normalizeTaskReceiptHeads(rawHeads) {
   return expected.map((taskId) => byTask.get(taskId));
 }
 
+function normalizeTaskReceiptHistory(rawHistory) {
+  const history = requireArray(rawHistory, "Task receipt history");
+  const seenAttempts = new Set();
+  const seenResults = new Set();
+  const seenVerdicts = new Set();
+  const seenEvidence = new Set();
+  const normalized = history.map((rawReceipt) => {
+    const receipt = requireRecord(rawReceipt, "Task receipt history row");
+    const taskId = requireString(receipt.taskId, "Receipt history task ID");
+    const attemptId = requireString(receipt.attemptId, "Receipt history Attempt ID");
+    const resultId = requireString(receipt.resultId, "Receipt history Result ID");
+    const verdictId = requireString(receipt.verdictId, "Receipt history Verdict ID");
+    const evidenceId = requireString(receipt.evidenceId, "Receipt history Evidence ID");
+    if (seenAttempts.has(attemptId)) fail(`Duplicate receipt history Attempt: ${attemptId}`);
+    if (seenResults.has(resultId)) fail(`Duplicate receipt history Result: ${resultId}`);
+    if (seenVerdicts.has(verdictId)) fail(`Duplicate receipt history Verdict: ${verdictId}`);
+    if (seenEvidence.has(evidenceId)) fail(`Duplicate receipt history Evidence: ${evidenceId}`);
+    seenAttempts.add(attemptId);
+    seenResults.add(resultId);
+    seenVerdicts.add(verdictId);
+    seenEvidence.add(evidenceId);
+    const testedSourceRevision = requireSha(
+      receipt.testedSourceRevision,
+      "Receipt history tested source revision",
+    );
+    const evidenceSourceRevision = requireSha(
+      receipt.evidenceSourceRevision,
+      "Receipt history evidence source revision",
+    );
+    if (testedSourceRevision !== evidenceSourceRevision) {
+      fail(`Receipt history source revisions disagree: ${taskId}/${attemptId}`);
+    }
+    if (receipt.lifecycleStatus !== "completed") {
+      fail(`Receipt history Task lifecycle must be completed: ${taskId}`);
+    }
+    if (receipt.attemptState !== "settled" || receipt.resultOutcome !== "succeeded") {
+      fail(`Receipt history Attempt must be settled and succeeded: ${taskId}/${attemptId}`);
+    }
+    if (typeof receipt.current !== "boolean") fail("Receipt history current marker must be boolean");
+    const environment = canonicalValue(requireRecord(receipt.environment, "Receipt history environment"));
+    return {
+      taskId,
+      lifecycleStatus: "completed",
+      attemptNumber: requireInteger(receipt.attemptNumber, "Receipt history attempt number"),
+      attemptId,
+      attemptState: "settled",
+      resultId,
+      resultOutcome: "succeeded",
+      verdictId,
+      verdict: requireString(receipt.verdict, "Receipt history verdict"),
+      evidenceId,
+      evidenceSourceRevision,
+      observation: requireString(receipt.observation, "Receipt history observation"),
+      testedSourceRevision,
+      evidenceHash: requireSha(receipt.evidenceHash, "Receipt history evidence hash"),
+      durableOutputRef: requireString(receipt.durableOutputRef, "Receipt history durable output reference"),
+      environment,
+      verdictRevision: requireInteger(receipt.verdictRevision, "Receipt history verdict revision"),
+      current: receipt.current,
+    };
+  }).sort((left, right) => (
+    left.taskId.localeCompare(right.taskId)
+    || left.attemptNumber - right.attemptNumber
+    || left.verdictRevision - right.verdictRevision
+    || left.evidenceId.localeCompare(right.evidenceId)
+  ));
+
+  const expectedTasks = Array.from({ length: 6 }, (_, index) => `T${String(index + 1).padStart(2, "0")}`);
+  // The candidate freezes six initial Attempts plus T05's source-drift retry.
+  // Later retries would be unexpected prerequisite drift, not ignorable history.
+  if (normalized.length !== 7) fail("Task receipt history must contain exactly seven Attempts");
+  for (const taskId of expectedTasks) {
+    const taskHistory = normalized.filter((receipt) => receipt.taskId === taskId);
+    const expectedAttempts = taskId === "T05" ? [1, 2] : [1];
+    if (taskHistory.length !== expectedAttempts.length
+      || taskHistory.some((receipt, index) => receipt.attemptNumber !== expectedAttempts[index])) {
+      fail(`Task receipt history has incomplete Attempt lineage: ${taskId}`);
+    }
+    const current = taskHistory.filter((receipt) => receipt.current);
+    if (current.length !== 1 || current[0].attemptNumber !== expectedAttempts.at(-1)
+      || current[0].verdict !== "pass" || current[0].observation !== "passed") {
+      fail(`Task receipt history has invalid current head: ${taskId}`);
+    }
+  }
+  if (normalized.some((receipt) => !expectedTasks.includes(receipt.taskId))) {
+    fail("Task receipt history must contain only T01-T06");
+  }
+  return normalized;
+}
+
+function deriveTaskReceiptHeads(history) {
+  return history.filter((receipt) => receipt.current).map((receipt) => ({
+    taskId: receipt.taskId,
+    attemptNumber: receipt.attemptNumber,
+    attemptState: receipt.attemptState,
+    resultOutcome: receipt.resultOutcome,
+    verdict: receipt.verdict,
+    current: true,
+    testedSourceRevision: receipt.testedSourceRevision,
+    evidenceHash: receipt.evidenceHash,
+  }));
+}
+
 function normalizeCompatibility(rawInventory) {
   const inventory = requireArray(rawInventory, "Compatibility inventory");
   const byId = new Map();
@@ -690,8 +800,8 @@ function requireExactGate(rawGate, expected, label) {
 function normalizeNoCutover(rawNoCutover) {
   const noCutover = requireRecord(rawNoCutover, "No-cutover gate");
   return {
-    structural: requireExactGate(noCutover.structural, 5, "No-cutover structural gate"),
-    behavioral: requireExactGate(noCutover.behavioral, 10, "No-cutover behavioral gate"),
+    structural: requireExactGate(noCutover.structural, 7, "No-cutover structural gate"),
+    behavioral: requireExactGate(noCutover.behavioral, 11, "No-cutover behavioral gate"),
   };
 }
 
@@ -742,6 +852,7 @@ export function buildDossier(rawInput) {
   );
   const authority = requireRecord(input.authority, "Authority snapshot");
   const normalizedAuthority = {
+    projectId: requireString(authority.projectId, "Authority project ID"),
     projectRevision: requireInteger(authority.projectRevision, "Authority project revision"),
     authorityEpoch: requireInteger(authority.authorityEpoch, "Authority epoch"),
   };
@@ -750,7 +861,12 @@ export function buildDossier(rawInput) {
   const dispositionProof = normalizeDispositionProof(input.dispositionProof, observationLosses);
   const repairHistory = normalizeRepairHistory(input.repairHistory);
   const liveDrift = normalizeLiveDrift(input.liveDrift);
-  const taskReceiptHeads = normalizeTaskReceiptHeads(input.taskReceiptHeads);
+  const taskReceiptHistory = normalizeTaskReceiptHistory(input.taskReceiptHistory);
+  const taskReceiptHeads = normalizeTaskReceiptHeads(deriveTaskReceiptHeads(taskReceiptHistory));
+  const declaredTaskReceiptHeads = normalizeTaskReceiptHeads(input.taskReceiptHeads);
+  if (JSON.stringify(declaredTaskReceiptHeads) !== JSON.stringify(taskReceiptHeads)) {
+    fail("Declared task receipt heads do not match complete receipt history");
+  }
   const compatibilityInventory = normalizeCompatibility(input.compatibilityInventory);
   const commands = normalizeCommands(input.commands);
   const noCutover = normalizeNoCutover(input.noCutover);
@@ -779,6 +895,7 @@ export function buildDossier(rawInput) {
     authority: normalizedAuthority,
     repairHistory,
     liveDrift,
+    taskReceiptHistory,
     taskReceiptHeads,
   };
   const report = {
@@ -799,6 +916,7 @@ export function buildDossier(rawInput) {
     observationLosses,
     repairHistory,
     liveDrift,
+    taskReceiptHistory,
     taskReceiptHeads,
     compatibilityInventory,
     commands,
@@ -893,6 +1011,7 @@ function inputFromDossier(rawDossier) {
         classification: row.classification,
       };
     }),
+    taskReceiptHistory: dossier.taskReceiptHistory,
     taskReceiptHeads: dossier.taskReceiptHeads,
     compatibilityInventory: dossier.compatibilityInventory,
     commands: dossier.commands,

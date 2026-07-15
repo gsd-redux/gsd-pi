@@ -32,8 +32,11 @@ function createRepository(name: string): string {
   return cwd;
 }
 
-function capture(targets: Array<{ id: string; cwd: string }>) {
-  const result = captureVerificationSourceSnapshot(targets);
+function capture(
+  targets: Array<{ id: string; cwd: string }>,
+  options: Parameters<typeof captureVerificationSourceSnapshot>[1] = {},
+) {
+  const result = captureVerificationSourceSnapshot(targets, options);
   assert.equal(result.ok, true, result.ok ? undefined : result.error);
   return result.snapshot;
 }
@@ -74,6 +77,23 @@ test("source revision is stable when the verified working tree is committed unch
 
   assert.equal(staged.aggregateRevision, beforeCommit.aggregateRevision);
   assert.equal(afterCommit.aggregateRevision, beforeCommit.aggregateRevision);
+});
+
+test("candidate snapshots exclude only the generated dossier self-reference", () => {
+  const cwd = createRepository("dossier-exclusion");
+  const dossierDir = join(cwd, "docs", "dev");
+  mkdirSync(dossierDir, { recursive: true });
+  const dossierPath = join(dossierDir, "m003-s07-cutover-dossier.json");
+  writeFileSync(dossierPath, "first dossier\n");
+  const targets = [{ id: "root", cwd }];
+  const options = { excludePaths: ["docs/dev/m003-s07-cutover-dossier.json"] };
+  const firstCandidate = capture(targets, options);
+  const firstDefault = capture(targets);
+
+  writeFileSync(dossierPath, "second dossier\n");
+
+  assert.equal(capture(targets, options).aggregateRevision, firstCandidate.aggregateRevision);
+  assert.notEqual(capture(targets).aggregateRevision, firstDefault.aggregateRevision);
 });
 
 test("staged deletion has the same source revision after commit", () => {
