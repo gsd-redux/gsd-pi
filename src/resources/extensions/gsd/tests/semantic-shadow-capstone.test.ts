@@ -2,7 +2,10 @@
 // File Purpose: Executable proof for reusable, deterministic semantic-shadow capstone evidence.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -145,6 +148,7 @@ test("stdout emitter is local and deterministic except for the exact source revi
     loaderPath,
     "--experimental-strip-types",
     emitterPath,
+    "--source-root",
     process.cwd(),
   ];
   const first = execFileSync(process.execPath, args, { cwd: process.cwd(), encoding: "utf8" });
@@ -156,4 +160,49 @@ test("stdout emitter is local and deterministic except for the exact source revi
   assert.deepEqual(withoutExactSourceRevision(secondParsed), withoutExactSourceRevision(firstParsed));
   assert.match(firstParsed.evidence.sourceRevision, /^sha256:[0-9a-f]{64}$/u);
   assert.doesNotMatch(first, /lifecycleId/u);
+});
+
+test("emitter writes canonical evidence to an explicit local output", () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-capstone-emitter-"));
+  const outputPath = join(root, "capstone.json");
+  try {
+    const stdout = execFileSync(process.execPath, [
+      "--import",
+      loaderPath,
+      "--experimental-strip-types",
+      emitterPath,
+      "--source-root",
+      process.cwd(),
+      "--output",
+      outputPath,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    const written = readFileSync(outputPath, "utf8");
+    const parsed = JSON.parse(written);
+    assert.equal(stdout, "");
+    assert.equal(written, `${JSON.stringify(parsed, null, 2)}\n`);
+    assert.deepEqual(normalizeSemanticShadowCapstoneEvidence(parsed), parsed);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("emitter rejects network, duplicate, and extra arguments", () => {
+  const invalidArguments = [
+    ["--source-root", "https://example.com/repo"],
+    ["--source-root", process.cwd(), "--output", "https://example.com/capstone.json"],
+    ["--source-root", process.cwd(), "--source-root", process.cwd()],
+    ["--source-root", process.cwd(), "unexpected"],
+  ];
+  for (const args of invalidArguments) {
+    const result = spawnSync(process.execPath, [
+      "--import",
+      loaderPath,
+      "--experimental-strip-types",
+      emitterPath,
+      ...args,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.equal(result.status, 1, args.join(" "));
+    assert.equal(result.stdout, "", args.join(" "));
+    assert.notEqual(result.stderr, "", args.join(" "));
+  }
 });
