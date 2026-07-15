@@ -3,6 +3,12 @@
 
 # M003/S07/T07 deterministic cutover dossier research
 
+> **Status:** Historical design snapshot from before exact source-revision
+> propagation landed. Current behavior is owned by
+> [Architecture Overview](architecture.md#semantic-shadow-evidence-and-cutover-boundary),
+> the [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier),
+> and the generated [cutover dossier](m003-s07-cutover-dossier.json).
+
 ## Outcome
 
 T07 should publish a deterministic **NO-GO** dossier from two distinct evidence
@@ -98,9 +104,9 @@ stores before/after state, exact comparison, evidence digest, and disposition in
 the immutable domain event
 ([lifecycle-shadow-repair-domain-operation.ts](../../src/resources/extensions/gsd/lifecycle-shadow-repair-domain-operation.ts)).
 
-### `sourceRevision: "unavailable"` is a T07 RED condition
+### Historical gap: `sourceRevision: "unavailable"`
 
-Production observation attribution currently hard-codes
+At this research stage, production observation attribution hard-coded
 `sourceRevision: "unavailable"` in native Pi and Claude pump context creation
 ([query-tools.ts](../../src/resources/extensions/gsd/bootstrap/query-tools.ts),
 [stream-adapter.ts](../../src/resources/extensions/claude-code-cli/stream-adapter.ts)).
