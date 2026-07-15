@@ -92,9 +92,8 @@ export const COMMAND_INVENTORY = Object.freeze([
   {
     id: "semantic-shadow-capstone",
     command: "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
-    stage: "observed",
-    verdict: "pass",
-    exitCode: 0,
+    stage: "post_generation",
+    verdict: "required",
   },
   {
     id: "semantic-shadow-no-cutover",
@@ -571,11 +570,11 @@ function normalizeLiveDrift(rawRows) {
     const itemKind = requireString(row.itemKind, "Live drift item kind");
     orderBy(kindOrder, itemKind, "live item kind");
     const normalized = {
+      lifecycleId,
       itemKind,
       milestoneId: requireString(row.milestoneId, "Live drift milestone ID"),
       sliceId: requireNullableString(row.sliceId, "Live drift slice ID"),
       taskId: requireNullableString(row.taskId, "Live drift task ID"),
-      lifecyclePresent: lifecycleId !== null,
       rawLegacyStatus: requireNullableString(row.legacyStatus, "Live legacy status"),
       rawCanonicalStatus: requireNullableString(row.canonicalStatus, "Live canonical status"),
       classification,
@@ -884,7 +883,7 @@ function inputFromDossier(rawDossier) {
     liveDrift: requireArray(dossier.liveDrift, "Checked live drift").map((rawRow) => {
       const row = requireRecord(rawRow, "Checked live drift row");
       return {
-        lifecycleId: lifecyclePlaceholder(row.lifecyclePresent, "Checked live drift"),
+        lifecycleId: row.lifecycleId,
         itemKind: row.itemKind,
         milestoneId: row.milestoneId,
         sliceId: row.sliceId,

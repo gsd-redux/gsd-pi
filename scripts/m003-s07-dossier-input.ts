@@ -37,6 +37,7 @@ export interface DossierInputPaths {
 interface CollectorDependencies {
   runNoCutover?: () => Record<string, any>;
   runAuthorityBaseline?: () => Record<string, any>;
+  captureSourceRevision?: typeof captureMilestoneVerificationSourceRevision;
 }
 
 interface DossierInputCliOptions extends DossierInputPaths {
@@ -314,7 +315,8 @@ export async function collectM003S07DossierInput(
 
   const parsedCapstone = JSON.parse(readFileSync(capstonePath, "utf8"));
   const capstone = normalizeSemanticShadowCapstoneEvidence(parsedCapstone);
-  const source = captureMilestoneVerificationSourceRevision(sourceRoot, undefined);
+  const captureSourceRevision = dependencies.captureSourceRevision ?? captureMilestoneVerificationSourceRevision;
+  const source = captureSourceRevision(sourceRoot, undefined);
   if (!source.ok) throw new Error(`Unable to capture dossier source: ${source.error}`);
   if (capstone.evidence.sourceRevision !== source.sourceRevision) {
     throw new Error("Capstone evidence source revision does not match the current local source");
@@ -322,7 +324,7 @@ export async function collectM003S07DossierInput(
   const snapshot = readCanonicalSnapshot(databasePath);
   const noCutover = await (dependencies.runNoCutover ?? runSemanticShadowNoCutoverGate)();
   const authorityBaseline = await (dependencies.runAuthorityBaseline ?? runWorkflowAuthorityBaseline)();
-  return {
+  const input = {
     recommendation: "NO_GO",
     observationEvidencePlane: "capstone_fixture",
     canonicalHistoryEvidencePlane: "live_project",
@@ -338,6 +340,12 @@ export async function collectM003S07DossierInput(
     commands: COMMAND_INVENTORY.map((command) => ({ ...command })),
     deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
   };
+  const confirmedSource = captureSourceRevision(sourceRoot, undefined);
+  if (!confirmedSource.ok) throw new Error(`Unable to confirm dossier source: ${confirmedSource.error}`);
+  if (confirmedSource.sourceRevision !== source.sourceRevision) {
+    throw new Error("Dossier source changed during collection");
+  }
+  return input;
 }
 
 export function parseDossierInputArgs(args: string[]): DossierInputCliOptions {

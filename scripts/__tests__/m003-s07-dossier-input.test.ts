@@ -186,7 +186,7 @@ test("collector emits one canonical read-only snapshot without relabeling fixtur
     NO_CUTOVER_BEHAVIORAL_WITNESSES.map(({ id, file, title }) => ({ id, file, title })));
   assert.equal(buildDossier(input).recommendation, "NO_GO");
   assert.deepEqual(input.commands.map(({ id, stage, verdict }) => ({ id, stage, verdict })), [
-    { id: "semantic-shadow-capstone", stage: "observed", verdict: "pass" },
+    { id: "semantic-shadow-capstone", stage: "post_generation", verdict: "required" },
     { id: "semantic-shadow-no-cutover", stage: "observed", verdict: "pass" },
     { id: "authority-baseline", stage: "observed", verdict: "pass" },
     { id: "dossier-check", stage: "post_generation", verdict: "required" },

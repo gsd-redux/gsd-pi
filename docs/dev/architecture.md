@@ -53,9 +53,11 @@ can supply source authority.
 
 The S07 cutover dossier is a deterministic projection over two intentionally
 different inputs: disposable `capstone_fixture` coverage and read-only
-`live_project` database history. Random fixture identifiers remain in raw UAT
-evidence but normalize to stable presence facts in the checked report. The
-report includes exact mode/transport/classification counts, public-response and
+`live_project` database history. Random fixture identifiers are discarded when
+the collector emits its normalized UAT artifact and appear only as stable
+presence facts in the checked report. Exact live-project lifecycle identifiers
+remain in the canonical-history plane. The report includes exact
+mode/transport/classification counts, public-response and
 capstone hashes, scoped repair lineage, live drift, compatibility witnesses,
 the no-cutover gate, and the 4/4 authority baseline. It cannot authorize a
 transition, repair state, or turn fixture coverage into production telemetry.

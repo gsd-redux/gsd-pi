@@ -107,6 +107,10 @@ export interface NormalizedSemanticShadowCapstoneEvidence {
   evidenceHash: string;
 }
 
+interface CapstoneCollectorDependencies {
+  captureSourceRevision?: typeof captureMilestoneVerificationSourceRevision;
+}
+
 function fail(message: string): never {
   throw new Error(`Invalid semantic-shadow capstone evidence: ${message}`);
 }
@@ -276,9 +280,11 @@ function replayMatches(
 
 export async function collectSemanticShadowCapstoneEvidence(
   input: { sourceRoot: string },
+  dependencies: CapstoneCollectorDependencies = {},
 ): Promise<SemanticShadowCapstoneEvidence> {
   const sourceRoot = resolve(input.sourceRoot);
-  const source = captureMilestoneVerificationSourceRevision(sourceRoot, undefined);
+  const captureSourceRevision = dependencies.captureSourceRevision ?? captureMilestoneVerificationSourceRevision;
+  const source = captureSourceRevision(sourceRoot, undefined);
   if (!source.ok) throw new Error(`Unable to capture semantic-shadow source: ${source.error}`);
 
   const basePath = mkdtempSync(join(tmpdir(), "gsd-shadow-capstone-"));
@@ -365,7 +371,7 @@ export async function collectSemanticShadowCapstoneEvidence(
     const lossObservation = observationPayloads(basePath).at(-1);
     if (!lossObservation) throw new Error("Observation-loss evidence was not persisted");
 
-    return {
+    const evidence: SemanticShadowCapstoneEvidence = {
       schemaVersion: 1,
       sourceRevision: source.sourceRevision,
       responseHash,
@@ -406,6 +412,14 @@ export async function collectSemanticShadowCapstoneEvidence(
         },
       ],
     };
+    const confirmedSource = captureSourceRevision(sourceRoot, undefined);
+    if (!confirmedSource.ok) {
+      throw new Error(`Unable to confirm semantic-shadow source: ${confirmedSource.error}`);
+    }
+    if (confirmedSource.sourceRevision !== source.sourceRevision) {
+      throw new Error("Semantic-shadow source changed during collection");
+    }
+    return evidence;
   } finally {
     _setLifecycleShadowRepairBeforeCommitForTest(null);
     closeDatabase();
