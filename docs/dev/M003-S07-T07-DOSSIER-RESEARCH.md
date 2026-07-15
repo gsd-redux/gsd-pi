@@ -453,7 +453,8 @@ The generator should:
    evidence, or consume the exact local capstone evidence emitted by the
    enclosing `gsd_uat_exec` run;
 4. run/import the no-cutover report and workflow-authority baseline, requiring
-   all five structural checks, all ten behavioral witnesses, and baseline 4/4;
+   every check in the no-cutover gate's closed structural and behavioral
+   inventories, and baseline 4/4;
 5. build one report with fixed enum inventories, expected/observed counts,
    commands, compatibility inventory, source identity, losses, repair history,
    deferred blockers, and `recommendation: "NO_GO"`;
@@ -553,8 +554,8 @@ Generation or `--check` fails for any of the following:
   normalization;
 - a missing/superseded/nonpassing S07 receipt head, except the deliberately
   post-candidate T07 final receipt;
-- no-cutover other than 5/5 structural and 10/10 behavioral, or authority
-  baseline other than exactly 4/4;
+- any structural or behavioral inventory entry in the no-cutover gate failing,
+  or authority baseline other than exactly 4/4;
 - missing named unadopted import/reconcile, same-status repair,
   park/unpark/discard, skipped dependency, or DB-unavailable compatibility;
 - a response expansion, Markdown fallback authority, canonical read/
