@@ -87,10 +87,36 @@ const COMMANDS = Object.freeze([
   {
     id: "semantic-shadow-capstone",
     command: "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
   },
-  { id: "dossier-check", command: "node scripts/m003-s07-cutover-dossier.mjs --check" },
-  { id: "authority-baseline", command: "pnpm run baseline:workflow-authority" },
-  { id: "verify-merge", command: "pnpm run verify:merge" },
+  {
+    id: "semantic-shadow-no-cutover",
+    command: "pnpm run gate:semantic-shadow-no-cutover",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
+  },
+  {
+    id: "authority-baseline",
+    command: "pnpm run baseline:workflow-authority",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
+  },
+  {
+    id: "dossier-check",
+    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    stage: "post_generation",
+    verdict: "required",
+  },
+  {
+    id: "verify-merge",
+    command: "pnpm run verify:merge",
+    stage: "post_generation",
+    verdict: "required",
+  },
 ]);
 const DEFERRED_BLOCKERS = [
   "production-read-authority",
@@ -263,7 +289,7 @@ function validInput() {
       ...COMPATIBILITY_DETAILS[id],
       verdict: "pass",
     })),
-    commands: COMMANDS.map((command) => ({ ...command, exitCode: 0, verdict: "pass" })),
+    commands: COMMANDS.map((command) => ({ ...command })),
     noCutover: {
       structural: { passed: 5, total: 5 },
       behavioral: { passed: 10, total: 10 },
@@ -309,7 +335,7 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
   assert.deepEqual(first.observationCoverage.slice(0, 5).map((row) => row.classification), CLASSIFICATIONS);
   assert.equal(first.observationCoverage[0].itemIdentity.lifecyclePresent, true);
   assert.equal("lifecycleId" in first.observationCoverage[0].itemIdentity, false);
-  assert.deepEqual(first.commands, COMMANDS.map((command) => ({ ...command, exitCode: 0, verdict: "pass" })));
+  assert.deepEqual(first.commands, COMMANDS);
   assert.deepEqual(first.compatibilityInventory[0], {
     id: "runtime-disagreement",
     ...COMPATIBILITY_DETAILS["runtime-disagreement"],
@@ -356,7 +382,10 @@ const failureCases = [
   ["changed compatibility title", (input) => { input.compatibilityInventory[0].title = "renamed"; }, /compatibility.*title/i],
   ["missing command", (input) => input.commands.pop(), /command inventory/i],
   ["changed command", (input) => { input.commands[0].command = "pnpm test"; }, /command inventory/i],
-  ["failed command", (input) => { input.commands[0].exitCode = 1; }, /command.*pass/i],
+  ["failed observed command", (input) => { input.commands[0].exitCode = 1; }, /observed command.*pass/i],
+  ["wrong observed stage", (input) => { input.commands[0].stage = "post_generation"; }, /command inventory.*stage/i],
+  ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
+  ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
   ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 9; }, /no-cutover.*10\/10/i],
   ["authority baseline regression", (input) => { input.authorityBaseline.passed = 3; }, /baseline.*4\/4/i],
   ["GO recommendation", (input) => { input.recommendation = "GO"; }, /recommendation.*NO_GO/i],

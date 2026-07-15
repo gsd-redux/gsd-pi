@@ -92,10 +92,36 @@ export const COMMAND_INVENTORY = Object.freeze([
   {
     id: "semantic-shadow-capstone",
     command: "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
   },
-  { id: "dossier-check", command: "node scripts/m003-s07-cutover-dossier.mjs --check" },
-  { id: "authority-baseline", command: "pnpm run baseline:workflow-authority" },
-  { id: "verify-merge", command: "pnpm run verify:merge" },
+  {
+    id: "semantic-shadow-no-cutover",
+    command: "pnpm run gate:semantic-shadow-no-cutover",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
+  },
+  {
+    id: "authority-baseline",
+    command: "pnpm run baseline:workflow-authority",
+    stage: "observed",
+    verdict: "pass",
+    exitCode: 0,
+  },
+  {
+    id: "dossier-check",
+    command: "node scripts/m003-s07-cutover-dossier.mjs --check",
+    stage: "post_generation",
+    verdict: "required",
+  },
+  {
+    id: "verify-merge",
+    command: "pnpm run verify:merge",
+    stage: "post_generation",
+    verdict: "required",
+  },
 ]);
 export const DEFERRED_BLOCKERS = Object.freeze([
   "production-read-authority",
@@ -634,8 +660,16 @@ function normalizeCommands(rawCommands) {
     if (byId.has(id)) fail(`Duplicate command inventory entry: ${id}`);
     const expected = COMMAND_INVENTORY.find((candidate) => candidate.id === id);
     if (!expected || command.command !== expected.command) fail(`Command inventory does not match frozen command: ${id}`);
-    if (command.exitCode !== 0 || command.verdict !== "pass") fail(`Command must pass with exit code zero: ${id}`);
-    byId.set(id, { ...expected, exitCode: 0, verdict: "pass" });
+    if (command.stage !== expected.stage) fail(`Command inventory stage does not match frozen command: ${id}`);
+    if (expected.stage === "observed") {
+      if (command.exitCode !== 0 || command.verdict !== "pass") {
+        fail(`Observed command must pass with exit code zero: ${id}`);
+      }
+    } else {
+      if (command.verdict !== "required") fail(`Post-generation command must remain required: ${id}`);
+      if (Object.hasOwn(command, "exitCode")) fail(`Post-generation command must not claim an exit code: ${id}`);
+    }
+    byId.set(id, { ...expected });
   }
   for (const expected of COMMAND_INVENTORY) {
     if (!byId.has(expected.id)) fail(`Command inventory is missing ${expected.id}`);
