@@ -14,6 +14,7 @@ export const NO_CUTOVER_SOURCE_FILES = Object.freeze({
   status: "src/resources/extensions/gsd/tools/workflow-tool-executors.ts",
   eligibility: "src/resources/extensions/gsd/parallel-eligibility.ts",
   dispatch: "src/resources/extensions/gsd/dispatch-guard.ts",
+  resolver: "src/resources/extensions/gsd/auto-dispatch.ts",
   retry: "src/resources/extensions/gsd/auto/detect-stuck.ts",
   state: "src/resources/extensions/gsd/state/derive/from-db.ts",
   validation: "src/resources/extensions/gsd/milestone-validation-verdict.ts",
@@ -39,15 +40,25 @@ const DECISION_IMPORT_POLICY = Object.freeze({
       "./gsd-db.js#getMilestoneSliceSummaries",
     ]),
     approved: new Set([
-      "./paths.js#resolveMilestoneFile",
       "./guided-flow.js#findMilestoneIds",
       "./unit-id.js#parseUnitId",
       "./gsd-db.js#isDbAvailable",
       "./gsd-db.js#getMilestoneSliceSummaries",
       "./gsd-db.js#getMilestone",
       "./status-guards.js#isSkippedForDispatch",
-      "./milestone-summary-classifier.js#classifyMilestoneSummaryContent",
-      "node:fs#readFileSync",
+    ]),
+  },
+  resolver: {
+    required: new Set([
+      "./gsd-db.js#isDbAvailable",
+      "./gsd-db.js#getMilestone",
+      "./status-guards.js#isClosedStatus",
+    ]),
+    approved: new Set([
+      "./gsd-db.js#isDbAvailable",
+      "./gsd-db.js#getMilestone",
+      "./status-guards.js#isClosedStatus",
+      "./worktree.js#detectWorktreeName",
     ]),
   },
   retry: {
@@ -101,6 +112,8 @@ export const NO_CUTOVER_BEHAVIORAL_WITNESSES = Object.freeze([
     "discardMilestone removes DB rows, worktree, and milestone branch"),
   witness("skipped-dispatch", "dispatch-guard-closed-status.test.ts",
     "skipped prior DB slices do not block later slice dispatch"),
+  witness("db-unavailable-dispatch", "dispatch-guard-closed-status.test.ts",
+    "DB-unavailable dispatch fails closed without trusting milestone SUMMARY"),
   witness("db-unavailable-status", "milestone-status-tool.test.ts",
     "gsd_milestone_status handles missing DB gracefully"),
   witness("state-derivation-authority", "semantic-shadow-no-cutover.test.ts",
@@ -352,16 +365,16 @@ function analyzeStatusBoundary(source) {
   }
 }
 
-function functionClosureFacts(sourceFile, entryNames) {
+function functionClosureFactsFromRoots(sourceFile, initialRoots) {
   const functions = functionMap(sourceFile);
-  const roots = [];
+  const roots = [...initialRoots];
   const visited = new Set();
 
   function addFunction(name) {
     if (visited.has(name)) return;
     visited.add(name);
     const fn = functions.get(name);
-    if (!fn?.body) throw new Error(`decision function ${name} is missing`);
+    if (!fn?.body) return;
     roots.push(fn.body);
     const direct = dependencyFacts([fn.body], new Map());
     for (const call of direct.calls) {
@@ -369,14 +382,16 @@ function functionClosureFacts(sourceFile, entryNames) {
     }
   }
 
-  for (const name of entryNames) addFunction(name);
+  for (const root of initialRoots) {
+    const direct = dependencyFacts([root], new Map());
+    for (const call of direct.calls) {
+      if (functions.has(call)) addFunction(call);
+    }
+  }
   return dependencyFacts(roots, new Map());
 }
 
-function analyzeDecisionBoundary(file, source, entryNames, importPolicy) {
-  const sourceFile = parseSource(file, source);
-  const imports = bindingMap(sourceFile);
-  const facts = functionClosureFacts(sourceFile, entryNames);
+function assertDecisionBoundary(entryName, imports, facts, importPolicy) {
   const reachedImports = new Set();
   for (const call of facts.calls) {
     const bindingKey = importBindingKey(imports.get(call));
@@ -384,34 +399,75 @@ function analyzeDecisionBoundary(file, source, entryNames, importPolicy) {
   }
   for (const call of facts.memberCalls) {
     const binding = imports.get(call.receiver);
-    const bindingKey = importBindingKey(binding ? { ...binding, imported: call.member } : null);
+    const bindingKey = importBindingKey(
+      binding?.imported === "*" ? { ...binding, imported: call.member } : null,
+    );
     if (bindingKey) reachedImports.add(bindingKey);
   }
   for (const required of importPolicy.required) {
-    if (!reachedImports.has(required)) throw new Error(`${entryNames[0]} lost decision witness ${required}`);
+    if (!reachedImports.has(required)) throw new Error(`${entryName} lost decision witness ${required}`);
   }
   for (const call of facts.calls) {
     const binding = imports.get(call);
     if (isCanonicalImport(binding)) {
-      throw new Error(`${entryNames[0]} calls canonical lifecycle binding ${call}`);
+      throw new Error(`${entryName} calls canonical lifecycle binding ${call}`);
     }
     const bindingKey = importBindingKey(binding);
     if (bindingKey && !importPolicy.approved.has(bindingKey)) {
-      throw new Error(`${entryNames[0]} calls unapproved imported decision binding ${bindingKey}`);
+      throw new Error(`${entryName} calls unapproved imported decision binding ${bindingKey}`);
     }
   }
   for (const call of facts.memberCalls) {
     const binding = imports.get(call.receiver);
-    const memberBinding = binding ? { ...binding, imported: call.member } : null;
+    const memberBinding = binding?.imported === "*"
+      ? { ...binding, imported: call.member }
+      : null;
     if (memberBinding && isCanonicalImport(memberBinding)) {
-      throw new Error(`${entryNames[0]} calls canonical lifecycle binding ${call.receiver}.${call.member}`);
+      throw new Error(`${entryName} calls canonical lifecycle binding ${call.receiver}.${call.member}`);
     }
     const bindingKey = importBindingKey(memberBinding);
     if (bindingKey && !importPolicy.approved.has(bindingKey)) {
-      throw new Error(`${entryNames[0]} calls unapproved imported decision binding ${bindingKey}`);
+      throw new Error(`${entryName} calls unapproved imported decision binding ${bindingKey}`);
     }
   }
-  if (facts.sql.length > 0) throw new Error(`${entryNames[0]} queries canonical lifecycle rows`);
+  if (facts.sql.length > 0) throw new Error(`${entryName} queries canonical lifecycle rows`);
+}
+
+function functionClosureFacts(sourceFile, entryNames) {
+  const functions = functionMap(sourceFile);
+  const roots = entryNames.map((name) => {
+    const fn = functions.get(name);
+    if (!fn?.body) throw new Error(`decision function ${name} is missing`);
+    return fn.body;
+  });
+  return functionClosureFactsFromRoots(sourceFile, roots);
+}
+
+function analyzeDecisionBoundary(file, source, entryNames, importPolicy) {
+  const sourceFile = parseSource(file, source);
+  assertDecisionBoundary(
+    entryNames[0],
+    bindingMap(sourceFile),
+    functionClosureFacts(sourceFile, entryNames),
+    importPolicy,
+  );
+}
+
+function analyzeResolveDispatchBoundary(source) {
+  const sourceFile = parseSource(SOURCE_FILES.resolver, source);
+  const fn = functionMap(sourceFile).get("resolveDispatch");
+  if (!fn?.body) throw new Error("resolveDispatch is missing");
+  const guardStatements = [];
+  for (const statement of fn.body.statements) {
+    if (ts.isTryStatement(statement)) break;
+    guardStatements.push(statement);
+  }
+  assertDecisionBoundary(
+    "resolveDispatch",
+    bindingMap(sourceFile),
+    functionClosureFactsFromRoots(sourceFile, guardStatements),
+    DECISION_IMPORT_POLICY.resolver,
+  );
 }
 
 function propertyChain(node) {
@@ -569,6 +625,7 @@ export function analyzeNoCutoverSources(sources) {
       ["getPriorSliceCompletionBlocker"],
       DECISION_IMPORT_POLICY.dispatch,
     )],
+    ["dispatch-resolver-authority", () => analyzeResolveDispatchBoundary(sources.resolver)],
     ["retry-ledger-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.retry,
       sources.retry,

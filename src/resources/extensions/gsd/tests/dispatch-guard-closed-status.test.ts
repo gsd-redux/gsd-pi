@@ -36,8 +36,21 @@ describe("dispatch-guard isClosedStatus migration (#3653)", () => {
     insertSlice({ id: "S02", milestoneId: "M001", title: "Next Slice", status: "pending", depends: [] });
 
     assert.equal(
-      getPriorSliceCompletionBlocker(base, "main", "execute-task", "M001-S02-T01"),
+      getPriorSliceCompletionBlocker(base, "main", "execute-task", "M001/S02/T01"),
       null,
+    );
+  });
+
+  test("DB-unavailable dispatch fails closed without trusting milestone SUMMARY", () => {
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+      "# Milestone Summary\n\nCompleted.\n",
+    );
+    closeDatabase();
+
+    assert.match(
+      getPriorSliceCompletionBlocker(base, "main", "execute-task", "M001/S02/T01") ?? "",
+      /workflow DB is unavailable/,
     );
   });
 });

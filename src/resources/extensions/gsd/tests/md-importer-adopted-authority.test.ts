@@ -134,6 +134,39 @@ function adoptTask(includeSlice = true): void {
   });
 }
 
+function adoptMilestone(): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.import.adopt-milestone",
+    idempotencyKey: "test/import/adopt/M001",
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "agent",
+    sourceTransport: "test",
+    payload: { milestoneId: "M001" },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "milestone",
+      milestoneId: "M001",
+      lifecycleStatus: "ready",
+    });
+    return {
+      events: [{
+        eventType: "test.import.milestone-adopted",
+        entityType: "milestone",
+        entityId: "M001",
+        payload: {},
+        destinations: ["projection"],
+      }],
+      projections: [{
+        projectionKey: "test/import/m001",
+        projectionKind: "markdown",
+        rendererVersion: "v1",
+      }],
+    };
+  });
+}
+
 function canonicalSnapshot(): unknown {
   return {
     lifecycles: db().prepare(`
@@ -275,6 +308,32 @@ test("adopted task blocks milestone completion inferred from a Markdown SUMMARY"
   assert.equal(milestone()?.completed_at, null);
   assert.equal(getSlice("M001", "S01")?.status, "pending");
   assert.equal(task()?.status, "pending");
+  assert.deepEqual(canonicalSnapshot(), beforeCanonical);
+});
+
+test("milestone-only adoption blocks completion inferred from a Markdown SUMMARY", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  writeHierarchy(base, {
+    sliceTitle: "Original slice",
+    sliceDone: false,
+    taskTitle: "Original task",
+    taskDone: false,
+  });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  migrateHierarchyToDb(base);
+  adoptMilestone();
+  const beforeCanonical = canonicalSnapshot();
+
+  writeFileSync(
+    join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+    "# M001 Summary\n\nDone.\n",
+  );
+  clearPathCache();
+
+  assert.doesNotThrow(() => migrateHierarchyToDb(base));
+  assert.equal(milestone()?.status, "active");
+  assert.equal(milestone()?.completed_at, null);
   assert.deepEqual(canonicalSnapshot(), beforeCanonical);
 });
 

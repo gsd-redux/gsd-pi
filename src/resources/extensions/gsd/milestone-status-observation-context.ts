@@ -6,9 +6,12 @@ import { randomUUID } from "node:crypto";
 import { openIsolatedDatabase } from "./db/engine.js";
 import {
   deleteMilestoneStatusObservationTurn,
+  updateMilestoneStatusObservationTurn,
   writeMilestoneStatusObservationTurn,
 } from "./db/writers/milestone-status-observation-context.js";
 import { resolveProjectRootDbPath } from "./db-workspace.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { captureMilestoneVerificationSourceRevision } from "./verification-source-integrity.js";
 import type {
   MilestoneStatusObservationContext,
   MilestoneStatusObservationContextError,
@@ -17,6 +20,7 @@ import type {
 } from "./lifecycle-shadow-observation.js";
 
 export const MILESTONE_STATUS_OBSERVATION_TOKEN_ENV = "GSD_MILESTONE_STATUS_OBSERVATION_TOKEN";
+export const MILESTONE_STATUS_OBSERVATION_PENDING_SOURCE_REVISION = "pending_capture";
 
 const TURN_CONTEXT_KEY_PREFIX = "milestone-status-observation-turn:";
 const DEFAULT_TTL_MS = 60 * 60 * 1_000;
@@ -56,6 +60,7 @@ interface TurnTimingOptions {
 }
 
 type ContextDatabase = NonNullable<ReturnType<typeof openIsolatedDatabase>>;
+type SourceRevisionCapture = typeof captureMilestoneVerificationSourceRevision;
 
 type StoredTurnResult =
   | { status: "found"; turn: MilestoneStatusObservationTurn }
@@ -245,14 +250,59 @@ export function clearMilestoneStatusObservationTurn(basePath: string, token: str
   }
 }
 
+function materializeSourceRevision(
+  basePath: string,
+  turn: MilestoneStatusObservationTurn,
+  captureSourceRevision: SourceRevisionCapture,
+): MilestoneStatusObservationTurn {
+  let sourceRevision = "unavailable";
+  let contextError: MilestoneStatusObservationContextError | undefined;
+  try {
+    const preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
+    const captured = captureSourceRevision(basePath, preferences);
+    if (captured.ok) sourceRevision = captured.sourceRevision;
+    else contextError = "unavailable";
+  } catch {
+    contextError = "unavailable";
+  }
+
+  const updated: MilestoneStatusObservationTurn = {
+    ...turn,
+    sourceRevision,
+    ...(contextError ? { contextError } : {}),
+  };
+  const updatedAt = new Date().toISOString();
+  const stored = withContextDatabase(turn.databasePath, (database) =>
+    updateMilestoneStatusObservationTurn(database, {
+      key: turnKey(turn.token),
+      expectedValueJson: JSON.stringify(turn),
+      valueJson: JSON.stringify(updated),
+      updatedAt,
+    })
+  );
+  if (stored.available && stored.value) return updated;
+  const current = readStoredTurn(basePath, turn.token, Date.now());
+  return current.status === "found" ? current.turn : updated;
+}
+
 export function resolveMilestoneStatusObservationContext(
   basePath: string,
   transport: MilestoneStatusTransport,
   token?: string,
+  captureSourceRevision: SourceRevisionCapture = captureMilestoneVerificationSourceRevision,
 ): MilestoneStatusObservationContext {
-  const selected = token?.trim()
+  let selected = token?.trim()
     ? readStoredTurn(basePath, token.trim(), Date.now())
     : { status: "missing" as const };
+  if (
+    selected.status === "found"
+    && selected.turn.sourceRevision === MILESTONE_STATUS_OBSERVATION_PENDING_SOURCE_REVISION
+  ) {
+    selected = {
+      status: "found",
+      turn: materializeSourceRevision(basePath, selected.turn, captureSourceRevision),
+    };
+  }
   if (selected.status === "found") {
     return {
       mode: selected.turn.mode,

@@ -35,3 +35,23 @@ export function writeMilestoneStatusObservationTurn(
     ":updated_at": input.updatedAt,
   });
 }
+
+export function updateMilestoneStatusObservationTurn(
+  database: DbAdapter,
+  input: { key: string; expectedValueJson: string; valueJson: string; updatedAt: string },
+): boolean {
+  const result = database.prepare(`
+    UPDATE runtime_kv
+    SET value_json = :value_json, updated_at = :updated_at
+    WHERE scope = 'global'
+      AND scope_id = ''
+      AND key = :key
+      AND value_json = :expected_value_json
+  `).run({
+    ":key": input.key,
+    ":expected_value_json": input.expectedValueJson,
+    ":value_json": input.valueJson,
+    ":updated_at": input.updatedAt,
+  });
+  return Number((result as { changes?: unknown }).changes ?? 0) > 0;
+}

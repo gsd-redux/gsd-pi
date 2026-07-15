@@ -82,6 +82,7 @@ import {
 	classifyMilestoneStatusRuntimeMode,
 	clearMilestoneStatusObservationTurn,
 	MILESTONE_STATUS_OBSERVATION_TOKEN_ENV,
+	MILESTONE_STATUS_OBSERVATION_PENDING_SOURCE_REVISION,
 } from "../gsd/milestone-status-observation-context.js";
 import { resolveUokFlags } from "../gsd/uok/flags.js";
 import { captureMilestoneVerificationSourceRevision } from "../gsd/verification-source-integrity.js";
@@ -2287,33 +2288,18 @@ function createSdkAttemptMessageState(): SdkAttemptMessageState {
 
 function beginClaudeCodeMilestoneStatusObservation(
 	projectRoot: string,
-	captureSourceRevision: typeof captureMilestoneVerificationSourceRevision,
-	captureSource: boolean,
 ): string | null {
 	let contextError: "unavailable" | undefined;
 	let guidedActive = false;
 	let uok: ReturnType<typeof resolveUokFlags> | undefined;
-	let preferences: Parameters<typeof captureMilestoneVerificationSourceRevision>[1];
 	try {
 		const guided = getGuidedUnitContext(projectRoot) ?? getGuidedUnitContext();
 		guidedActive = Boolean(
 			guided && resolveWorkflowMcpProjectRoot(guided.basePath) === projectRoot,
 		);
-		preferences = loadEffectiveGSDPreferences(projectRoot)?.preferences;
+		const preferences = loadEffectiveGSDPreferences(projectRoot)?.preferences;
 		uok = resolveUokFlags(preferences);
 	} catch {
-		contextError = "unavailable";
-	}
-	let sourceRevision = "unavailable";
-	if (captureSource) {
-		try {
-			const captured = captureSourceRevision(projectRoot, preferences);
-			if (captured.ok) sourceRevision = captured.sourceRevision;
-			else contextError = "unavailable";
-		} catch {
-			contextError = "unavailable";
-		}
-	} else {
 		contextError = "unavailable";
 	}
 	const autoActive = autoSession.active && [autoSession.originalBasePath, autoSession.basePath]
@@ -2327,7 +2313,7 @@ function beginClaudeCodeMilestoneStatusObservation(
 			uokLegacyFallback: uok?.legacyFallback,
 			guidedActive,
 		}),
-		sourceRevision,
+		sourceRevision: MILESTONE_STATUS_OBSERVATION_PENDING_SOURCE_REVISION,
 		...(autoActive && autoSession.currentTraceId ? { traceId: autoSession.currentTraceId } : {}),
 		...(autoActive && autoSession.currentTurnId ? { turnId: autoSession.currentTurnId } : {}),
 		...(contextError ? { contextError } : {}),
@@ -2433,16 +2419,9 @@ async function pumpSdkMessages(
 			|| tool === `mcp__${workflowMcpServerName}__*`
 		);
 		if (milestoneStatusAvailable) {
-			const statusIntent = Boolean(gsdPhase) || [
-				context.systemPrompt,
-				...context.messages.map(extractMessageText),
-			].some((text) => /\b(?:gsd[_ -])?milestone[_ -]status\b/i.test(text ?? ""));
 			milestoneStatusObservationRoot = projectRoot;
 			milestoneStatusObservationToken = beginClaudeCodeMilestoneStatusObservation(
 				projectRoot,
-				claudeOptions?._captureMilestoneVerificationSourceRevisionForTest
-					?? captureMilestoneVerificationSourceRevision,
-				statusIntent,
 			);
 		}
 		injectMilestoneStatusObservationToken(

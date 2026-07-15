@@ -54,11 +54,13 @@ function adoptedHierarchyKeys(milestoneId: string): Set<string> {
     FROM workflow_item_lifecycles
     WHERE project_id = (SELECT project_id FROM project_authority WHERE singleton = 1)
       AND milestone_id = :milestone_id
-      AND item_kind IN ('slice', 'task')
+      AND item_kind IN ('milestone', 'slice', 'task')
   `).all({ ":milestone_id": milestoneId }) as Array<Record<string, unknown>>;
   const keys = new Set<string>();
   for (const row of rows) {
-    if (row["item_kind"] === "task") {
+    if (row["item_kind"] === "milestone") {
+      keys.add("milestone");
+    } else if (row["item_kind"] === "task") {
       keys.add(`task:${String(row["slice_id"])}/${String(row["task_id"])}`);
     } else {
       keys.add(`slice:${String(row["slice_id"])}`);
@@ -818,7 +820,8 @@ export function migrateHierarchyToDb(
     // Snapshot existing statuses so scoped imports and adopted rows can echo
     // DB authority back into metadata-only upserts.
     const adoptedKeys = adoptedHierarchyKeys(milestoneId);
-    const milestoneHasAdoptedDescendant = adoptedKeys.size > 0;
+    const milestoneAdopted = adoptedKeys.has("milestone");
+    const milestoneHasAdoptedDescendant = [...adoptedKeys].some((key) => key !== "milestone");
     const existingSliceStatus = new Map<string, string>();
     const existingTaskStatus = new Map<string, string>();
     if (!milestoneStatusAuthoritative || adoptedKeys.size > 0) {
@@ -852,6 +855,7 @@ export function migrateHierarchyToDb(
     // out-of-scope milestone that already existed — its DB status is authoritative.
     if (
       IMPORT_COMPLETE_STATUSES.has(milestoneStatus)
+      && !milestoneAdopted
       && !milestoneHasAdoptedDescendant
       && (milestoneStatusAuthoritative || milestoneInserted)
     ) {

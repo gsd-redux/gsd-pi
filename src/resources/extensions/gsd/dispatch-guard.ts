@@ -1,12 +1,9 @@
 // GSD Dispatch Guard — prevents out-of-order slice dispatch
 
-import { resolveMilestoneFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getMilestoneSliceSummaries, getMilestone } from "./gsd-db.js";
 import { isSkippedForDispatch } from "./status-guards.js";
-import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
-import { readFileSync } from "node:fs";
 import type { LoopState } from "./auto/types.js";
 
 const SLICE_DISPATCH_TYPES = new Set([
@@ -75,6 +72,9 @@ export function getPriorSliceCompletionBlocker(
 
   const { milestone: targetMid, slice: targetSid } = parseUnitId(unitId);
   if (!targetMid || !targetSid) return null;
+  if (!isDbAvailable()) {
+    return `Cannot dispatch ${unitType} ${unitId}: workflow DB is unavailable.`;
+  }
 
   // Parallel worker isolation: when GSD_MILESTONE_LOCK is set, this worker
   // is scoped to a single milestone. Skip the cross-milestone dependency
@@ -95,31 +95,9 @@ export function getPriorSliceCompletionBlocker(
   const milestoneIds = allIds.slice(0, targetIdx + 1);
 
   for (const mid of milestoneIds) {
-    if (resolveMilestoneFile(base, mid, "PARKED")) continue;
+    const milestoneRow = getMilestone(mid);
+    if (milestoneRow && isSkippedForDispatch(milestoneRow.status)) continue;
 
-    // DB/SUMMARY completion check (#4663 sibling to #4658).
-    // Prior behavior treated any SUMMARY file on disk as proof of milestone
-    // completion, which is wrong when the SUMMARY is a failure-path report
-    // (verification FAILED, blocker placeholder, etc.). Resolve as follows:
-    //   1. When DB is available and status is closed → skip (authoritative).
-    //   2. When DB is unavailable, legacy SUMMARY.md fallback may skip.
-    //      DB-backed projects must not treat SUMMARY.md as authoritative.
-    if (isDbAvailable()) {
-      const milestoneRow = getMilestone(mid);
-      if (milestoneRow && isSkippedForDispatch(milestoneRow.status)) continue;
-    } else {
-      const summaryPath = resolveMilestoneFile(base, mid, "SUMMARY");
-      let summaryContent: string | null = null;
-      try { summaryContent = summaryPath ? readFileSync(summaryPath, "utf-8") : null; } catch { /* ignore */ }
-      if (summaryContent && classifyMilestoneSummaryContent(summaryContent) !== "failure") {
-        continue;
-      }
-    }
-
-    // DB-authoritative eligibility list (ADR-017) — markdown projections are
-    // never parsed for dispatch decisions. No DB / no rows → skip this
-    // milestone's check (unknown is not a blocker).
-    if (!isDbAvailable()) continue;
     const slices = getMilestoneSliceSummaries(mid);
     if (slices.length === 0) continue;
 

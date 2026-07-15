@@ -40,6 +40,7 @@ const COMPATIBILITY_IDS = [
   "park-unpark",
   "discard",
   "skipped-dispatch",
+  "db-unavailable-dispatch",
   "db-unavailable-status",
   "state-derivation-authority",
 ];
@@ -79,6 +80,10 @@ const COMPATIBILITY_DETAILS = Object.freeze({
   "skipped-dispatch": {
     file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
     title: "skipped prior DB slices do not block later slice dispatch",
+  },
+  "db-unavailable-dispatch": {
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "DB-unavailable dispatch fails closed without trusting milestone SUMMARY",
   },
   "db-unavailable-status": {
     file: "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
@@ -333,8 +338,8 @@ function validInput() {
     })),
     commands: COMMANDS.map((command) => ({ ...command })),
     noCutover: {
-      structural: { passed: 7, total: 7 },
-      behavioral: { passed: 11, total: 11 },
+      structural: { passed: 8, total: 8 },
+      behavioral: { passed: 12, total: 12 },
     },
     authorityBaseline: { passed: 4, total: 4 },
     deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
@@ -490,7 +495,7 @@ const failureCases = [
   }, /command inventory.*stage|post-generation command/i],
   ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
   ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
-  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 10; }, /no-cutover.*11\/11/i],
+  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 11; }, /no-cutover.*12\/12/i],
   ["authority baseline regression", (input) => { input.authorityBaseline.passed = 3; }, /baseline.*4\/4/i],
   ["GO recommendation", (input) => { input.recommendation = "GO"; }, /recommendation.*NO_GO/i],
   ["missing deferred blocker", (input) => input.deferredCutoverBlockers.pop(), /deferred cutover blocker/i],

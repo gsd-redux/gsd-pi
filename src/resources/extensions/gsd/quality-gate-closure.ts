@@ -42,6 +42,11 @@ interface GateEvidence {
   findings: string;
 }
 
+interface PlannedGateClosure {
+  row: GateRow;
+  evidence: GateEvidence;
+}
+
 const GATE_SECTION_HEADINGS: Partial<Record<GateId, string[]>> = {
   Q3: ["Threat Surface", "Abuse Surface"],
   Q4: ["Requirement Impact", "Broken Promises"],
@@ -178,11 +183,11 @@ export function closeTaskQualityGates(
   }
 }
 
-export function closeQualityGatesFromEvidence(
+function planQualityGateClosure(
   milestoneId: string,
   options: QualityGateClosureOptions = {},
-): QualityGateClosureResult {
-  const repaired: QualityGateClosureResult["repaired"] = [];
+): { closures: PlannedGateClosure[]; unresolved: GateRow[] } {
+  const closures: PlannedGateClosure[] = [];
   const unresolved: GateRow[] = [];
 
   for (const slice of getMilestoneSlices(milestoneId)) {
@@ -203,17 +208,41 @@ export function closeQualityGatesFromEvidence(
         unresolved.push(row);
         continue;
       }
-      if (gateMatchesEvidence(row, evidence)) continue;
-
-      closeGate(row, evidence);
-      repaired.push({
-        gateId: row.gate_id,
-        sliceId: row.slice_id,
-        ...(row.task_id ? { taskId: row.task_id } : {}),
-        verdict: evidence.verdict,
-      });
+      if (!gateMatchesEvidence(row, evidence)) closures.push({ row, evidence });
     }
   }
 
-  return { repaired, unresolved };
+  return { closures, unresolved };
+}
+
+function closureResult(plan: ReturnType<typeof planQualityGateClosure>): QualityGateClosureResult {
+  return {
+    repaired: plan.closures.map(({ row, evidence }) => ({
+      gateId: row.gate_id,
+      sliceId: row.slice_id,
+      ...(row.task_id ? { taskId: row.task_id } : {}),
+      verdict: evidence.verdict,
+    })),
+    unresolved: plan.unresolved,
+  };
+}
+
+export function inspectQualityGatesFromEvidence(
+  milestoneId: string,
+  options: QualityGateClosureOptions = {},
+): QualityGateClosureResult {
+  return closureResult(planQualityGateClosure(milestoneId, options));
+}
+
+export function closeQualityGatesFromEvidence(
+  milestoneId: string,
+  options: QualityGateClosureOptions = {},
+): QualityGateClosureResult {
+  const plan = planQualityGateClosure(milestoneId, options);
+
+  for (const { row, evidence } of plan.closures) {
+    closeGate(row, evidence);
+  }
+
+  return closureResult(plan);
 }

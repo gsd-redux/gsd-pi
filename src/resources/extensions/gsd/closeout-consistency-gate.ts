@@ -19,7 +19,11 @@ import {
   refreshWorkflowDatabaseFromDisk,
 } from "./db-workspace.js";
 import { isClosedStatus, isDeferredStatus } from "./status-guards.js";
-import { closeQualityGatesFromEvidence } from "./quality-gate-closure.js";
+import {
+  closeQualityGatesFromEvidence,
+  inspectQualityGatesFromEvidence,
+  type QualityGateClosureOptions,
+} from "./quality-gate-closure.js";
 import { insertMilestoneValidationGates } from "./milestone-validation-gates.js";
 import { relMilestoneFile, resolveSliceFile } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -261,18 +265,18 @@ export function checkCloseoutConsistencyGate(
     );
   }
 
+  let gateClosureOptions: QualityGateClosureOptions | null = null;
   if (validationRequired) {
-    if (canonicalAuthorization?.authorized) {
-      closeQualityGatesFromEvidence(milestoneId, {
-        milestoneValidationAuthorization: canonicalAuthorization,
-      });
-    } else {
-      closeQualityGatesFromEvidence(milestoneId, {
-        artifactBasePath: options.artifactBasePath ?? artifactBasePathFromDb(),
-        milestoneValidationPassed: validation?.status === "pass",
-      });
-    }
+    gateClosureOptions = canonicalAuthorization?.authorized
+      ? { milestoneValidationAuthorization: canonicalAuthorization }
+      : {
+          artifactBasePath: options.artifactBasePath ?? artifactBasePathFromDb(),
+          milestoneValidationPassed: validation?.status === "pass",
+        };
   }
+  const plannedGateClosure = gateClosureOptions
+    ? inspectQualityGatesFromEvidence(milestoneId, gateClosureOptions)
+    : { repaired: [], unresolved: [] };
 
   for (const slice of slices) {
     if (isDeferredStatus(slice.status)) continue;
@@ -292,7 +296,13 @@ export function checkCloseoutConsistencyGate(
       }
     }
 
-    const pendingGate = getPendingGates(milestoneId, slice.id)[0];
+    const pendingGate = getPendingGates(milestoneId, slice.id).find((gate) =>
+      !plannedGateClosure.repaired.some((repair) =>
+        repair.gateId === gate.gate_id
+        && repair.sliceId === gate.slice_id
+        && (repair.taskId ?? "") === gate.task_id
+      )
+    );
     if (pendingGate) {
       return blocked(
         "quality-gate-pending",
@@ -300,6 +310,8 @@ export function checkCloseoutConsistencyGate(
       );
     }
   }
+
+  if (gateClosureOptions) closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
 
   return { ok: true };
 }

@@ -34,6 +34,7 @@ export const COMPATIBILITY_IDS = Object.freeze([
   "park-unpark",
   "discard",
   "skipped-dispatch",
+  "db-unavailable-dispatch",
   "db-unavailable-status",
   "state-derivation-authority",
 ]);
@@ -82,6 +83,11 @@ export const COMPATIBILITY_WITNESSES = Object.freeze([
     id: "skipped-dispatch",
     file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
     title: "skipped prior DB slices do not block later slice dispatch",
+  },
+  {
+    id: "db-unavailable-dispatch",
+    file: "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+    title: "DB-unavailable dispatch fails closed without trusting milestone SUMMARY",
   },
   {
     id: "db-unavailable-status",
@@ -800,8 +806,8 @@ function requireExactGate(rawGate, expected, label) {
 function normalizeNoCutover(rawNoCutover) {
   const noCutover = requireRecord(rawNoCutover, "No-cutover gate");
   return {
-    structural: requireExactGate(noCutover.structural, 7, "No-cutover structural gate"),
-    behavioral: requireExactGate(noCutover.behavioral, 11, "No-cutover behavioral gate"),
+    structural: requireExactGate(noCutover.structural, 8, "No-cutover structural gate"),
+    behavioral: requireExactGate(noCutover.behavioral, 12, "No-cutover behavioral gate"),
   };
 }
 

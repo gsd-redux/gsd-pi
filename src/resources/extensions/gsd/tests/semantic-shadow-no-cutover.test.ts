@@ -415,6 +415,20 @@ test("AST boundaries reject canonical response, decision, and hosted-metadata sa
     "fail",
   );
 
+  const resolverCutover = pristine.resolver.replace(
+    'import { isClosedStatus } from "./status-guards.js";',
+    'import { isClosedStatus } from "./status-guards.js";\nimport { getMilestoneLifecycleShadowSnapshot } from "./db/queries.js";',
+  ).replace(
+    "const milestone = getMilestone(dispatchCtx.mid);",
+    "const milestone = getMilestone(dispatchCtx.mid); getMilestoneLifecycleShadowSnapshot(dispatchCtx.mid);",
+  );
+  assert.notEqual(resolverCutover, pristine.resolver, "controlled resolver sabotage must be applied");
+  const resolverChecks = analyzeNoCutoverSources({ ...pristine, resolver: resolverCutover });
+  assert.equal(
+    resolverChecks.find((check) => check.id === "dispatch-resolver-authority")?.verdict,
+    "fail",
+  );
+
   const closeoutReadCutover = pristine.validation.replace(
     'import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";',
     'import { getLatestAssessmentByScope, isDbAvailable } from "./gsd-db.js";\nimport { readMilestoneCloseoutReadiness } from "./db/milestone-closeout-readiness.js";',

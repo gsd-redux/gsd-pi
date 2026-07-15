@@ -410,6 +410,14 @@ async function runMcpCell(
         ];
         if (capturedToken) {
           capturedMode = readMilestoneStatusObservationTurn(basePath, capturedToken)?.mode;
+          if (captureSourceRevision) {
+            resolveMilestoneStatusObservationContext(
+              basePath,
+              "workflow_mcp",
+              capturedToken,
+              captureSourceRevision,
+            );
+          }
           const workflowServer = (
             args.options?.mcpServers as Record<string, Record<string, unknown>> | undefined
           )?.["gsd-workflow"];
@@ -685,6 +693,39 @@ test("starting a turn scavenges expired and corrupt crash residue without removi
       "milestone-status-observation-turn:new-token",
     ],
   );
+});
+
+test("pending turn source capture occurs once on first status observation", () => {
+  const basePath = makeBase("gsd-shadow-matrix-lazy-source-");
+  const token = beginMilestoneStatusObservationTurn(basePath, {
+    mode: "auto",
+    sourceRevision: "pending_capture",
+    traceId: "trace:lazy",
+    turnId: "turn:lazy",
+  });
+  assert.ok(token);
+  let captures = 0;
+  const capture = () => {
+    captures += 1;
+    return { ok: true as const, sourceRevision: "sha256:lazy-source" };
+  };
+
+  const first = resolveMilestoneStatusObservationContext(
+    basePath,
+    "workflow_mcp",
+    token,
+    capture,
+  );
+  const second = resolveMilestoneStatusObservationContext(
+    basePath,
+    "workflow_mcp",
+    token,
+    capture,
+  );
+
+  assert.equal(captures, 1);
+  assert.equal(first.sourceRevision, "sha256:lazy-source");
+  assert.equal(second.sourceRevision, "sha256:lazy-source");
 });
 
 test("overlapping turns resolve only the exact private capability token", () => {

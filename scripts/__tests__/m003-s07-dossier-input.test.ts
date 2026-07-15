@@ -204,7 +204,7 @@ function passingReports(databasePath?: string) {
     runNoCutover: () => ({
       verdict: "pass",
       githubMetadataUsed: false,
-      structuralChecks: Array.from({ length: 7 }, (_, index) => ({ id: `structural-${index}`, verdict: "pass" })),
+      structuralChecks: Array.from({ length: 8 }, (_, index) => ({ id: `structural-${index}`, verdict: "pass" })),
       behavioralChecks: NO_CUTOVER_BEHAVIORAL_WITNESSES.map((witness) => ({ ...witness, verdict: "pass" })),
     }),
     runAuthorityBaseline: () => ({
@@ -490,8 +490,8 @@ test("CLI runs local reports and emits canonical validator-ready JSON", async ()
   assert.equal(stdout.endsWith("\n"), true);
   assert.equal(buildDossier(input).recommendation, "NO_GO");
   assert.deepEqual(input.noCutover, {
-    structural: { passed: 7, total: 7 },
-    behavioral: { passed: 11, total: 11 },
+    structural: { passed: 8, total: 8 },
+    behavioral: { passed: 12, total: 12 },
   });
   assert.deepEqual(input.authorityBaseline, { passed: 4, total: 4 });
 });

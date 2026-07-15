@@ -29,6 +29,7 @@ import {
   insertTask,
   openDatabase,
   readDomainOperationFence,
+  upsertQualityGate,
 } from "../gsd-db.ts";
 import { handleCompleteMilestone } from "../tools/complete-milestone.ts";
 import { handleValidateMilestone } from "../tools/validate-milestone.ts";
@@ -178,7 +179,8 @@ test("adopted validation skip records a canonical waiver without fabricating PAS
   const result = await rule.match(dispatchContext(basePath));
 
   assert.deepEqual(result, { action: "skip" });
-  assert.equal(getLatestAssessmentByScope("M001", "milestone-validation"), null);
+  assert.equal(getLatestAssessmentByScope("M001", "milestone-validation")?.status, "omitted");
+  assert.equal((await deriveStateFromDb(basePath)).phase, "completing-milestone");
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_waivers`).count, 1);
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.validation.waive'`).count, 1);
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_domain_events WHERE event_type = 'milestone.validation.waived'`).count, 1);
@@ -451,6 +453,19 @@ test("canonical passing validation cannot settle a pending task gate from Markdo
     status: "pending",
   });
   await recordPassingValidation(basePath, "test/milestone.validate/pending-task-gate");
+  upsertQualityGate({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "MV01",
+    scope: "milestone",
+    taskId: "",
+    status: "pending",
+    verdict: "",
+    rationale: "",
+    findings: "",
+    evaluatedAt: "",
+  });
+  const gateRunsBefore = row(`SELECT COUNT(*) AS count FROM gate_runs`).count;
 
   const consistency = checkCloseoutConsistencyGate("M001", {
     allowOpenMilestone: true,
@@ -462,6 +477,11 @@ test("canonical passing validation cannot settle a pending task gate from Markdo
     row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'Q5'`),
     { status: "pending", verdict: "" },
   );
+  assert.deepEqual(
+    row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`),
+    { status: "pending", verdict: "" },
+  );
+  assert.equal(row(`SELECT COUNT(*) AS count FROM gate_runs`).count, gateRunsBefore);
 });
 
 test("source changes after a waiver keep state validating and leave validation gates pending", async () => {

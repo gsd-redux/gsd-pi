@@ -32,6 +32,7 @@ import {
   transaction,
   getAssessment,
   getSliceRunUatAssessment,
+  getLatestAssessmentByScope,
 } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
@@ -703,6 +704,25 @@ function recordAdoptedMilestoneValidationWaiver(
     `Milestone validation was waived by the ${reason} policy.`,
     "",
   ].join("\n");
+  try {
+    const currentAssessment = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+    if (currentAssessment?.status !== "omitted") {
+      insertAssessment({
+        path: validationPath,
+        milestoneId,
+        sliceId: null,
+        taskId: null,
+        status: "omitted",
+        scope: "milestone-validation",
+        fullContent: content,
+      });
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
   try {
     mkdirSync(dirname(validationPath), { recursive: true });
     writeFileSync(validationPath, content, "utf-8");
