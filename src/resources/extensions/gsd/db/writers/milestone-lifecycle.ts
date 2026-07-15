@@ -3,7 +3,7 @@
 
 import type { DomainOperationContext } from "../domain-operation.js";
 import {
-  readMilestoneCloseoutReadiness,
+  readMilestoneCloseoutAuthorization,
   type MilestoneCloseoutBlocker,
 } from "../milestone-closeout-readiness.js";
 import {
@@ -534,10 +534,10 @@ export function completeMilestoneHierarchy(
     );
   }
 
-  const readiness = readMilestoneCloseoutReadiness({ milestoneId, sourceRevision });
-  if (!readiness.ready) {
+  const authorization = readMilestoneCloseoutAuthorization({ milestoneId, sourceRevision });
+  if (!authorization.authorized) {
     throw new MilestoneLifecycleValidationError(
-      `Milestone ${milestoneId} canonical validation is not current (${blockerSummary(readiness.blockers)})`,
+      `Milestone ${milestoneId} canonical validation is not current (${blockerSummary(authorization.blockers)})`,
     );
   }
 
@@ -616,8 +616,8 @@ export function completeMilestoneHierarchy(
   return {
     milestoneLifecycleId: lifecycle.lifecycleId,
     completedAt,
-    validationEventId: readiness.validationEventId,
-    validationRevision: readiness.validationRevision,
+    validationEventId: authorization.eventId,
+    validationRevision: authorization.revision,
     completedSliceIds,
     cancelledSliceIds,
     completedTaskIds,

@@ -38,6 +38,10 @@ export type VerificationSourceSnapshotResult =
   | { ok: true; snapshot: VerificationSourceSnapshot }
   | { ok: false; targetId: string; error: string };
 
+export type MilestoneVerificationSourceRevisionResult =
+  | { ok: true; sourceRevision: string }
+  | { ok: false; error: string };
+
 const SOURCE_PATHSPEC = ["--", ".", ":(exclude).gsd/**"];
 
 export function resolveVerificationRepositoryTargets(
@@ -266,6 +270,25 @@ export function captureVerificationSourceSnapshot(
   const first = captureVerificationSourceSnapshotOnce(targets);
   if (!first.ok) return first;
   return confirmVerificationSourceSnapshot(targets, first.snapshot);
+}
+
+export function captureMilestoneVerificationSourceRevision(
+  basePath: string,
+  preferences: GSDPreferences | undefined,
+): MilestoneVerificationSourceRevisionResult {
+  const targets = resolveVerificationRepositoryTargets(basePath, preferences, null, null);
+  if (targets.missingRepositoryIds.length > 0) {
+    return {
+      ok: false,
+      error: `verification source repositories are missing: ${targets.missingRepositoryIds.join(", ")}`,
+    };
+  }
+  const source = captureVerificationSourceSnapshot(targets.repositories.map((repository) => ({
+    id: repository.id,
+    cwd: repository.root,
+  })));
+  if (!source.ok) return { ok: false, error: source.error };
+  return { ok: true, sourceRevision: source.snapshot.aggregateRevision };
 }
 
 export function verificationSourceChanged(

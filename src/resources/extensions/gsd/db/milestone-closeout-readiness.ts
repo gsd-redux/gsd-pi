@@ -51,6 +51,20 @@ export type MilestoneCloseoutReadiness =
     blockers: MilestoneCloseoutBlocker[];
   };
 
+export type MilestoneCloseoutAuthorization =
+  | {
+    authorized: true;
+    kind: "validated" | "waived";
+    eventId: string;
+    revision: number;
+    testedSourceRevision: string;
+    waiverId?: string;
+  }
+  | {
+    authorized: false;
+    blockers: MilestoneCloseoutBlocker[];
+  };
+
 interface ValidationRow {
   event_id: string;
   operation_id: string;
@@ -111,9 +125,16 @@ interface NewerAttemptRow {
   attempt_revision: number;
 }
 
-export function isMilestoneLifecycleAdopted(milestoneId: string): boolean {
-  return Boolean(getDb().prepare(`
-    SELECT 1 AS adopted
+interface ValidationWaiverRow {
+  waiver_id: string;
+  event_id: string;
+  project_revision: number;
+  payload_json: string;
+}
+
+export function readMilestoneLifecycleStatus(milestoneId: string): string | null {
+  const row = getDb().prepare(`
+    SELECT lifecycle.lifecycle_status
     FROM workflow_item_lifecycles lifecycle
     JOIN project_authority authority
       ON authority.project_id = lifecycle.project_id
@@ -122,7 +143,14 @@ export function isMilestoneLifecycleAdopted(milestoneId: string): boolean {
       AND lifecycle.milestone_id = :milestone_id
       AND lifecycle.slice_id IS NULL
       AND lifecycle.task_id IS NULL
-  `).get({ ":milestone_id": milestoneId }));
+  `).get({ ":milestone_id": milestoneId });
+  return typeof row?.["lifecycle_status"] === "string"
+    ? row["lifecycle_status"]
+    : null;
+}
+
+export function isMilestoneLifecycleAdopted(milestoneId: string): boolean {
+  return readMilestoneLifecycleStatus(milestoneId) !== null;
 }
 
 export type MilestoneMergeObservation =
@@ -649,5 +677,187 @@ export function readMilestoneCloseoutReadiness(
     ready: true,
     validationEventId: validation.event_id,
     validationRevision: validation.project_revision,
+  };
+}
+
+function readCurrentValidationWaiver(milestoneId: string): ValidationWaiverRow[] {
+  return getDb().prepare(`
+    SELECT waiver.waiver_id, event.event_id, event.project_revision, event.payload_json
+    FROM workflow_waivers waiver
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = waiver.lifecycle_id
+     AND lifecycle.project_id = waiver.project_id
+    JOIN project_authority authority
+      ON authority.project_id = waiver.project_id
+     AND authority.singleton = 1
+    JOIN workflow_operations operation
+      ON operation.operation_id = waiver.operation_id
+     AND operation.project_id = waiver.project_id
+     AND operation.operation_type = 'milestone.validation.waive'
+    JOIN workflow_domain_events event
+      ON event.operation_id = waiver.operation_id
+     AND event.project_id = waiver.project_id
+     AND event.event_type = 'milestone.validation.waived'
+     AND event.entity_type = 'milestone'
+     AND event.entity_id = :milestone_id
+     AND json_extract(event.payload_json, '$.milestoneId') = :milestone_id
+     AND json_extract(event.payload_json, '$.lifecycleId') = waiver.lifecycle_id
+     AND json_extract(event.payload_json, '$.waiverId') = waiver.waiver_id
+    WHERE lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND waiver.waiver_status = 'active'
+      AND waiver.scope = 'milestone-validation'
+      AND waiver.requirement_id IS NULL
+      AND waiver.blocker_id IS NULL
+      AND (waiver.expires_at IS NULL OR waiver.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ORDER BY waiver.project_revision DESC, waiver.waiver_id
+  `).all({ ":milestone_id": milestoneId }) as unknown as ValidationWaiverRow[];
+}
+
+function countActiveValidationWaivers(milestoneId: string): number {
+  const row = getDb().prepare(`
+    SELECT COUNT(*) AS count
+    FROM workflow_waivers waiver
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = waiver.lifecycle_id
+     AND lifecycle.project_id = waiver.project_id
+    JOIN project_authority authority
+      ON authority.project_id = waiver.project_id
+     AND authority.singleton = 1
+    WHERE lifecycle.item_kind = 'milestone'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id IS NULL
+      AND lifecycle.task_id IS NULL
+      AND waiver.waiver_status = 'active'
+      AND waiver.scope = 'milestone-validation'
+      AND waiver.requirement_id IS NULL
+      AND waiver.blocker_id IS NULL
+      AND (waiver.expires_at IS NULL OR waiver.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  `).get({ ":milestone_id": milestoneId });
+  return Number(row?.["count"] ?? 0);
+}
+
+function waiverSourceRevision(payloadJson: string): string | null {
+  try {
+    const payload = JSON.parse(payloadJson) as Record<string, unknown>;
+    const sourceRevision = payload["testedSourceRevision"];
+    const reason = payload["reason"];
+    const policyId = payload["policyId"];
+    const policyVersion = payload["policyVersion"];
+    if (typeof sourceRevision !== "string" || !sourceRevision.trim()) return null;
+    if (reason !== "preference" && reason !== "trivial-scope") return null;
+    if (typeof policyId !== "string" || !policyId.trim()) return null;
+    if (typeof policyVersion !== "string" || !policyVersion.trim()) return null;
+    return sourceRevision;
+  } catch {
+    return null;
+  }
+}
+
+function descendantRevision(milestoneId: string): number {
+  const descendant = getDb().prepare(`
+    SELECT COALESCE(MAX(lifecycle.last_project_revision), 0) AS revision
+    FROM workflow_item_lifecycles lifecycle
+    JOIN project_authority authority
+      ON authority.project_id = lifecycle.project_id
+     AND authority.singleton = 1
+    WHERE lifecycle.milestone_id = :milestone_id
+      AND lifecycle.item_kind IN ('slice', 'task')
+  `).get({ ":milestone_id": milestoneId });
+  return Number(descendant?.["revision"] ?? 0);
+}
+
+function latestValidationEventRevision(milestoneId: string): number {
+  const row = getDb().prepare(`
+    SELECT event.project_revision
+    FROM workflow_domain_events event
+    JOIN workflow_operations operation
+      ON operation.operation_id = event.operation_id
+     AND operation.project_id = event.project_id
+    JOIN project_authority authority
+      ON authority.project_id = event.project_id
+     AND authority.singleton = 1
+    WHERE event.event_type = 'milestone.validation.recorded'
+      AND event.entity_type = 'milestone'
+      AND event.entity_id = :milestone_id
+      AND operation.operation_type = 'milestone.validate'
+    ORDER BY event.project_revision DESC, event.event_index DESC, event.event_id DESC
+    LIMIT 1
+  `).get({ ":milestone_id": milestoneId });
+  return Number(row?.["project_revision"] ?? 0);
+}
+
+export function readMilestoneCloseoutAuthorization(
+  input: MilestoneCloseoutReadinessInput,
+): MilestoneCloseoutAuthorization {
+  const readiness = readMilestoneCloseoutReadiness(input);
+  const waivers = readCurrentValidationWaiver(input.milestoneId);
+  const activeWaiverCount = countActiveValidationWaivers(input.milestoneId);
+  if (activeWaiverCount !== waivers.length || waivers.length > 1) {
+    return {
+      authorized: false,
+      blockers: [{ kind: "validation-receipt-invalid", fields: ["waiverId"] }],
+    };
+  }
+
+  const waiver = waivers[0];
+  const validationRevision = latestValidationEventRevision(input.milestoneId);
+  if (waiver && waiver.project_revision > validationRevision) {
+    const testedSourceRevision = waiverSourceRevision(waiver.payload_json);
+    if (!testedSourceRevision) {
+      return {
+        authorized: false,
+        blockers: [{ kind: "validation-receipt-invalid", fields: ["waiver"] }],
+      };
+    }
+    if (input.sourceRevision !== undefined && input.sourceRevision !== testedSourceRevision) {
+      return {
+        authorized: false,
+        blockers: [{
+          kind: "validation-source-revision-mismatch",
+          expectedSourceRevision: input.sourceRevision,
+          testedSourceRevision,
+        }],
+      };
+    }
+    const currentDescendantRevision = descendantRevision(input.milestoneId);
+    if (currentDescendantRevision >= waiver.project_revision) {
+      return {
+        authorized: false,
+        blockers: [{
+          kind: "validation-stale",
+          validationRevision: waiver.project_revision,
+          descendantRevision: currentDescendantRevision,
+        }],
+      };
+    }
+    return {
+      authorized: true,
+      kind: "waived",
+      eventId: waiver.event_id,
+      revision: waiver.project_revision,
+      testedSourceRevision,
+      waiverId: waiver.waiver_id,
+    };
+  }
+
+  if (!readiness.ready) return { authorized: false, blockers: readiness.blockers };
+  const validation = validationBundle(getDb().prepare(`
+    SELECT payload_json FROM workflow_domain_events WHERE event_id = :event_id
+  `).get({ ":event_id": readiness.validationEventId })?.["payload_json"] as string ?? "");
+  if (!validation.bundle) {
+    return {
+      authorized: false,
+      blockers: [{ kind: "validation-receipt-invalid", fields: validation.invalidFields }],
+    };
+  }
+  return {
+    authorized: true,
+    kind: "validated",
+    eventId: readiness.validationEventId,
+    revision: readiness.validationRevision,
+    testedSourceRevision: validation.bundle.testedSourceRevision,
   };
 }

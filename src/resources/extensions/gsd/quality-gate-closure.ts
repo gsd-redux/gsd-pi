@@ -5,13 +5,18 @@ import { existsSync, readFileSync } from "node:fs";
 
 import { extractSection } from "./files.js";
 import { getGateDefinition } from "./gate-registry.js";
-import { getMilestoneSlices, getPendingGates, saveGateResult } from "./gsd-db.js";
+import { getGateResults, getMilestoneSlices, getPendingGates, saveGateResult } from "./gsd-db.js";
 import { resolveSliceFile, resolveTaskFile } from "./paths.js";
 import type { GateId, GateRow, GateVerdict } from "./types.js";
 
 export interface QualityGateClosureOptions {
   artifactBasePath?: string;
   milestoneValidationPassed?: boolean;
+  milestoneValidationAuthorization?: {
+    kind: "validated" | "waived";
+    eventId: string;
+    revision: number;
+  };
 }
 
 export interface QualityGateClosureResult {
@@ -66,6 +71,18 @@ function closureEvidence(row: GateRow, options: QualityGateClosureOptions): Gate
   const def = getGateDefinition(row.gate_id);
   if (!def) return null;
 
+  if (def.ownerTurn === "validate-milestone" && options.milestoneValidationAuthorization) {
+    const authorization = options.milestoneValidationAuthorization;
+    const waived = authorization.kind === "waived";
+    return {
+      verdict: waived ? "omitted" : "pass",
+      rationale: waived
+        ? `${def.promptSection} omitted by canonical milestone validation waiver ${authorization.eventId} at revision ${authorization.revision}`
+        : `${def.promptSection} covered by passing canonical milestone validation ${authorization.eventId} at revision ${authorization.revision}`,
+      findings: "",
+    };
+  }
+
   if (def.ownerTurn === "validate-milestone" && options.milestoneValidationPassed) {
     return {
       verdict: "pass",
@@ -105,6 +122,13 @@ function closeGate(row: GateRow, evidence: GateEvidence): void {
   });
 }
 
+function gateMatchesEvidence(row: GateRow, evidence: GateEvidence): boolean {
+  return row.status === "complete" &&
+    row.verdict === evidence.verdict &&
+    row.rationale === evidence.rationale &&
+    row.findings === evidence.findings;
+}
+
 export function closeQualityGatesFromEvidence(
   milestoneId: string,
   options: QualityGateClosureOptions = {},
@@ -114,17 +138,23 @@ export function closeQualityGatesFromEvidence(
 
   for (const slice of getMilestoneSlices(milestoneId)) {
     const sliceId = slice.id;
-    for (const row of getPendingGates(milestoneId, sliceId)) {
-      if (!getGateDefinition(row.gate_id)) {
+    const gates = options.milestoneValidationAuthorization
+      ? getGateResults(milestoneId, sliceId)
+      : getPendingGates(milestoneId, sliceId);
+    for (const row of gates) {
+      const definition = getGateDefinition(row.gate_id);
+      if (!definition) {
         unresolved.push(row);
         continue;
       }
+      if (row.status !== "pending" && definition.ownerTurn !== "validate-milestone") continue;
 
       const evidence = closureEvidence(row, options);
       if (!evidence) {
         unresolved.push(row);
         continue;
       }
+      if (gateMatchesEvidence(row, evidence)) continue;
 
       closeGate(row, evidence);
       repaired.push({

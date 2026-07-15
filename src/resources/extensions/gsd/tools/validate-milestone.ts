@@ -349,6 +349,9 @@ export async function handleValidateMilestone(
     return { error: `verdict must be one of: ${VALIDATION_VERDICTS.join(", ")}` };
   }
   const adoptedLifecycle = isMilestoneLifecycleAdopted(params.milestoneId);
+  if (adoptedLifecycle && !opts?.invocation) {
+    return { error: "adopted Milestone validation requires canonical invocation identity" };
+  }
   const canonicalInvocation = adoptedLifecycle ? opts?.invocation : undefined;
   const requiredClasses = getRequiredVerificationClasses(params.milestoneId);
   if (

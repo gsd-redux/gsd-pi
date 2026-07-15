@@ -22,7 +22,11 @@ import {
   handleCompleteMilestone,
   repairAdoptedMilestoneSummaryProjection,
 } from "./tools/complete-milestone.js";
-import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
+import {
+  isMilestoneLifecycleAdopted,
+  readMilestoneCloseoutAuthorization,
+  readMilestoneLifecycleStatus,
+} from "./db/milestone-closeout-readiness.js";
 import { runSafely } from "./auto-utils.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 import { uatSignoffBlockerGuidance } from "./guidance.js";
@@ -32,6 +36,8 @@ import { buildCompleteMilestonePrompt } from "./auto-prompts.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
 import { checkCloseoutConsistencyGate } from "./closeout-consistency-gate.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
+import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { captureMilestoneVerificationSourceRevision } from "./verification-source-integrity.js";
 import type { DispatchAction, DispatchContext } from "./auto-dispatch.js";
 import {
   commitPendingMilestoneCloseoutChanges,
@@ -51,7 +57,7 @@ const COMPLETE_MILESTONE_DB_SETTLE_POLL_MS = 100;
  * up based on parsed projections.
  */
 export async function isCompletedMilestoneTerminal(
-  _basePath: string,
+  basePath: string,
   milestoneId: string,
 ): Promise<boolean> {
   if (!isDbAvailable()) return false;
@@ -59,13 +65,22 @@ export async function isCompletedMilestoneTerminal(
   const milestone = getMilestone(milestoneId);
   if (!milestone) return false;
 
-  if (isClosedStatus(milestone.status)) {
-    return true;
-  }
-
-  const validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
-  if (validation?.status !== "pass") {
-    return false;
+  const lifecycleStatus = readMilestoneLifecycleStatus(milestoneId);
+  if (lifecycleStatus) {
+    if (lifecycleStatus === "completed" || lifecycleStatus === "cancelled") return true;
+    const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, milestoneId);
+    const source = captureMilestoneVerificationSourceRevision(
+      artifactBasePath,
+      loadEffectiveGSDPreferences(artifactBasePath)?.preferences,
+    );
+    if (!source.ok || !readMilestoneCloseoutAuthorization({
+      milestoneId,
+      sourceRevision: source.sourceRevision,
+    }).authorized) return false;
+  } else {
+    if (isClosedStatus(milestone.status)) return true;
+    const validation = getLatestAssessmentByScope(milestoneId, "milestone-validation");
+    if (validation?.status !== "pass") return false;
   }
 
   const slices = getMilestoneSlices(milestoneId);
@@ -173,6 +188,7 @@ export async function evaluateCompleteMilestoneDispatch(
 ): Promise<DispatchAction | null> {
   const { state, mid, midTitle, basePath, prefs } = ctx;
   if (state.phase !== "completing-milestone") return null;
+  const adoptedMilestone = isDbAvailable() && isMilestoneLifecycleAdopted(mid);
 
   if (isDbAvailable()) {
     const milestone = getMilestone(mid);
@@ -232,14 +248,21 @@ export async function evaluateCompleteMilestoneDispatch(
   if (isDbAvailable()) {
     // Repair only the missing-validation closeout case here; existing guards below
     // and post-unit proof remain responsible for blocking incomplete closeouts.
-    checkCloseoutConsistencyGate(mid, {
+    const consistency = checkCloseoutConsistencyGate(mid, {
       allowOpenMilestone: true,
-      allowPassThroughValidation: true,
+      allowPassThroughValidation: !adoptedMilestone,
       artifactBasePath: resolveCanonicalMilestoneRoot(basePath, mid),
     });
+    if (adoptedMilestone && !consistency.ok) {
+      return {
+        action: "stop",
+        reason: consistency.message,
+        level: "warning",
+      };
+    }
   }
 
-  const validationFile = resolveMilestoneFile(basePath, mid, "VALIDATION");
+  const validationFile = adoptedMilestone ? null : resolveMilestoneFile(basePath, mid, "VALIDATION");
   if (validationFile) {
     const validationContent = await loadFile(validationFile);
     if (validationContent) {
@@ -254,7 +277,7 @@ export async function evaluateCompleteMilestoneDispatch(
     }
   }
 
-  const missingSlices = findMissingSummaries(basePath, mid);
+  const missingSlices = adoptedMilestone ? [] : findMissingSummaries(basePath, mid);
   if (missingSlices.length > 0) {
     return {
       action: "stop",
@@ -272,7 +295,7 @@ export async function evaluateCompleteMilestoneDispatch(
   }
 
   try {
-    if (isDbAvailable()) {
+    if (isDbAvailable() && !adoptedMilestone) {
       const milestone = getMilestone(mid);
       if (milestone?.verification_operational &&
           !isVerificationNotApplicable(milestone.verification_operational)) {

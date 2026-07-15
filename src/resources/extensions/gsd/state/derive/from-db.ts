@@ -38,7 +38,13 @@ import {
   getRequestedMilestoneLock,
 } from './db-open.js';
 import { resolveMilestoneValidationVerdict } from '../../milestone-validation-verdict.js';
-import { isMilestoneLifecycleAdopted } from '../../db/milestone-closeout-readiness.js';
+import {
+  isMilestoneLifecycleAdopted,
+  readMilestoneCloseoutAuthorization,
+} from '../../db/milestone-closeout-readiness.js';
+import { loadEffectiveGSDPreferences } from '../../preferences.js';
+import { captureMilestoneVerificationSourceRevision } from '../../verification-source-integrity.js';
+import { resolveCanonicalMilestoneRoot } from '../../worktree-manager.js';
 
 const isStatusDone = isClosedStatus;
 
@@ -287,8 +293,27 @@ async function handleAllSlicesDone(
   milestoneProgress: { done: number, total: number },
   sliceProgress: { done: number, total: number }
 ): Promise<GSDState> {
+  const adopted = isMilestoneLifecycleAdopted(activeMilestone.id);
+  let authorization = null;
+  if (adopted) {
+    const artifactBasePath = resolveCanonicalMilestoneRoot(basePath, activeMilestone.id);
+    const source = captureMilestoneVerificationSourceRevision(
+      artifactBasePath,
+      loadEffectiveGSDPreferences(artifactBasePath)?.preferences,
+    );
+    if (source.ok) {
+      authorization = readMilestoneCloseoutAuthorization({
+        milestoneId: activeMilestone.id,
+        sourceRevision: source.sourceRevision,
+      });
+    }
+  }
   const verdict = await resolveMilestoneValidationVerdict(basePath, activeMilestone.id);
-  const validationTerminal = verdict !== undefined;
+  const canonicalAuthorized = authorization?.authorized === true;
+  const adoptedBlockingVerdict = verdict === 'needs-attention' || verdict === 'needs-remediation';
+  const validationTerminal = adopted
+    ? canonicalAuthorized || adoptedBlockingVerdict
+    : verdict !== undefined;
 
   const context: DerivedStateContext = {
     activeMilestone,
@@ -309,8 +334,8 @@ async function handleAllSlicesDone(
   // All roadmap slices are done (enforced by caller) and verdict is
   // needs-remediation — remediation cannot progress without new slices.
   // Return blocked instead of re-dispatching validate-milestone (#4506).
-  if (verdict === 'needs-attention') {
-    const allowLegacyOverride = !isMilestoneLifecycleAdopted(activeMilestone.id);
+  if (verdict === 'needs-attention' && !canonicalAuthorized) {
+    const allowLegacyOverride = !adopted;
     return buildDerivedState(
       context,
       'blocked',
@@ -319,8 +344,8 @@ async function handleAllSlicesDone(
     );
   }
 
-  if (verdict === 'needs-remediation') {
-    const allowLegacyOverride = !isMilestoneLifecycleAdopted(activeMilestone.id);
+  if (verdict === 'needs-remediation' && !canonicalAuthorized) {
+    const allowLegacyOverride = !adopted;
     return buildDerivedState(
       context,
       'blocked',
