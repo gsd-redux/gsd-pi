@@ -4,6 +4,10 @@
 import { randomUUID } from "node:crypto";
 
 import { openIsolatedDatabase } from "./db/engine.js";
+import {
+  deleteMilestoneStatusObservationTurn,
+  writeMilestoneStatusObservationTurn,
+} from "./db/writers/milestone-status-observation-context.js";
 import { resolveProjectRootDbPath } from "./db-workspace.js";
 import type {
   MilestoneStatusObservationContext,
@@ -141,23 +145,15 @@ function scavengeStoredTurns(database: ContextDatabase, databasePath: string, no
     }
     if (!remove) continue;
 
-    database.prepare(`
-      DELETE FROM runtime_kv
-      WHERE scope = 'global' AND scope_id = '' AND key = :key AND value_json = :value_json
-    `).run({ ":key": key, ":value_json": raw });
+    deleteMilestoneStatusObservationTurn(database, key, raw);
   }
 }
 
 function deleteStoredTurn(databasePath: string, token: string, raw?: string): boolean {
-  const rawPredicate = raw === undefined ? "" : " AND value_json = :value_json";
-  const result = withContextDatabase(databasePath, (database) => database.prepare(`
-    DELETE FROM runtime_kv
-    WHERE scope = 'global' AND scope_id = '' AND key = :key${rawPredicate}
-  `).run({
-    ":key": turnKey(token),
-    ...(raw === undefined ? {} : { ":value_json": raw }),
-  }) as { changes?: unknown });
-  return result.available && Number(result.value.changes ?? 0) > 0;
+  const result = withContextDatabase(databasePath, (database) =>
+    deleteMilestoneStatusObservationTurn(database, turnKey(token), raw)
+  );
+  return result.available && result.value;
 }
 
 function readStoredTurn(basePath: string, token: string, now: number): StoredTurnResult {
@@ -220,16 +216,10 @@ export function beginMilestoneStatusObservationTurn(
   };
   const stored = withContextDatabase(databasePath, (database) => {
     scavengeStoredTurns(database, databasePath, now);
-    database.prepare(`
-      INSERT INTO runtime_kv (scope, scope_id, key, value_json, updated_at)
-      VALUES ('global', '', :key, :value_json, :updated_at)
-      ON CONFLICT (scope, scope_id, key) DO UPDATE SET
-        value_json = excluded.value_json,
-        updated_at = excluded.updated_at
-    `).run({
-      ":key": turnKey(token),
-      ":value_json": JSON.stringify(turn),
-      ":updated_at": turn.startedAt,
+    writeMilestoneStatusObservationTurn(database, {
+      key: turnKey(token),
+      valueJson: JSON.stringify(turn),
+      updatedAt: turn.startedAt,
     });
     return true;
   });

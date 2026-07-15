@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { executeDomainOperation, type DomainJsonValue } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
+import { writeMilestoneValidationWaiver } from "./db/writers/milestone-validation.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 
 export type MilestoneValidationWaiverReason = "preference" | "trivial-scope";
@@ -151,45 +152,14 @@ export function grantMilestoneValidationWaiver(
       throw new Error("Milestone validation found multiple active Waivers");
     }
     const grantedAt = new Date().toISOString();
-    if (active.length === 1) {
-      getDb().prepare(`
-        UPDATE workflow_waivers
-        SET waiver_status = 'revoked', ended_at = :ended_at,
-            ended_operation_id = :operation_id,
-            ended_project_revision = :project_revision,
-            ended_authority_epoch = :authority_epoch
-        WHERE waiver_id = :waiver_id AND waiver_status = 'active'
-      `).run({
-        ":ended_at": grantedAt,
-        ":operation_id": context.operationId,
-        ":project_revision": context.resultingRevision,
-        ":authority_epoch": context.resultingAuthorityEpoch,
-        ":waiver_id": String(active[0]!["waiver_id"]),
-      });
-    }
     const waiverId = randomUUID();
-    getDb().prepare(`
-      INSERT INTO workflow_waivers (
-        waiver_id, project_id, lifecycle_id, requirement_id, blocker_id,
-        waiver_status, scope, rationale, granted_by_actor_type,
-        granted_by_actor_id, granted_at,
-        operation_id, project_revision, authority_epoch
-      ) VALUES (
-        :waiver_id, :project_id, :lifecycle_id, NULL, NULL,
-        'active', 'milestone-validation', :rationale, 'policy',
-        :actor_id, :granted_at,
-        :operation_id, :project_revision, :authority_epoch
-      )
-    `).run({
-      ":waiver_id": waiverId,
-      ":project_id": context.projectId,
-      ":lifecycle_id": lifecycleId,
-      ":rationale": `Milestone validation waived by ${input.reason} policy ${policyId}@${policyVersion}`,
-      ":actor_id": input.invocation.actorId ?? null,
-      ":granted_at": grantedAt,
-      ":operation_id": context.operationId,
-      ":project_revision": context.resultingRevision,
-      ":authority_epoch": context.resultingAuthorityEpoch,
+    writeMilestoneValidationWaiver(context, {
+      waiverId,
+      lifecycleId,
+      ...(active.length === 1 ? { activeWaiverId: String(active[0]!["waiver_id"]) } : {}),
+      rationale: `Milestone validation waived by ${input.reason} policy ${policyId}@${policyVersion}`,
+      actorId: input.invocation.actorId ?? null,
+      grantedAt,
     });
     written = {
       milestoneId,

@@ -20,6 +20,8 @@ import {
 import {
   activateTaskExecutionDispatch,
   terminalizeTaskExecutionDispatch,
+  type StagedTaskCompletionWriteInput,
+  writeStagedTaskCompletion,
 } from "./db/writers/task-execution.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
@@ -67,28 +69,7 @@ export interface SettleTaskAttemptInput {
   stagedTaskCompletion?: StagedTaskCompletionMutation;
 }
 
-export interface StagedTaskCompletionMutation {
-  task: {
-    milestoneId: string;
-    sliceId: string;
-    taskId: string;
-  };
-  oneLiner: string;
-  narrative: string;
-  verificationResult: string;
-  blockerDiscovered: boolean;
-  deviations: string;
-  knownIssues: string;
-  keyFiles: string[];
-  keyDecisions: string[];
-  fullSummaryMd: string;
-  verificationEvidence: Array<{
-    command: string;
-    exitCode: number;
-    verdict: string;
-    durationMs: number;
-  }>;
-}
+export type StagedTaskCompletionMutation = StagedTaskCompletionWriteInput;
 
 export interface SettleTaskAttemptReceipt {
   status: "committed" | "replayed";
@@ -265,77 +246,6 @@ function loadSettledResult(operationId: string): SettledResultRow {
   `).get({ ":operation_id": operationId }) as unknown as SettledResultRow | undefined;
   if (!result) throw new Error("Task execution settlement receipt is missing its Result");
   return result;
-}
-
-function stageTaskCompletion(
-  context: Readonly<DomainOperationContext>,
-  attempt: Readonly<AttemptExecutionRow>,
-  completion: Readonly<StagedTaskCompletionMutation>,
-): void {
-  if (
-    completion.task.milestoneId !== attempt.milestone_id ||
-    completion.task.sliceId !== attempt.slice_id ||
-    completion.task.taskId !== attempt.task_id
-  ) {
-    throw new Error("Staged Task completion does not match the settlement Attempt");
-  }
-
-  const updated = getDb().prepare(`
-    UPDATE tasks
-    SET status = 'in_progress',
-        completed_at = NULL,
-        one_liner = :one_liner,
-        narrative = :narrative,
-        verification_result = :verification_result,
-        blocker_discovered = :blocker_discovered,
-        deviations = :deviations,
-        known_issues = :known_issues,
-        key_files = :key_files,
-        key_decisions = :key_decisions,
-        full_summary_md = :full_summary_md
-    WHERE milestone_id = :milestone_id
-      AND slice_id = :slice_id
-      AND id = :task_id
-      AND status NOT IN ('complete', 'done', 'closed')
-  `).run({
-    ":milestone_id": completion.task.milestoneId,
-    ":slice_id": completion.task.sliceId,
-    ":task_id": completion.task.taskId,
-    ":one_liner": completion.oneLiner,
-    ":narrative": completion.narrative,
-    ":verification_result": completion.verificationResult,
-    ":blocker_discovered": completion.blockerDiscovered ? 1 : 0,
-    ":deviations": completion.deviations,
-    ":known_issues": completion.knownIssues,
-    ":key_files": JSON.stringify(completion.keyFiles),
-    ":key_decisions": JSON.stringify(completion.keyDecisions),
-    ":full_summary_md": completion.fullSummaryMd,
-  }) as { changes: number };
-  if (updated.changes !== 1) {
-    throw new Error("Staged Task completion target is missing or already complete");
-  }
-
-  const insertEvidence = getDb().prepare(`
-    INSERT OR IGNORE INTO verification_evidence (
-      task_id, slice_id, milestone_id, command, exit_code, verdict, duration_ms, created_at
-    )
-    SELECT :task_id, :slice_id, :milestone_id, :command, :exit_code, :verdict,
-           :duration_ms, operation.created_at
-    FROM workflow_operations operation
-    WHERE operation.operation_id = :operation_id
-  `);
-  for (const evidence of completion.verificationEvidence) {
-    insertEvidence.run({
-      ":task_id": completion.task.taskId,
-      ":slice_id": completion.task.sliceId,
-      ":milestone_id": completion.task.milestoneId,
-      ":command": evidence.command,
-      ":exit_code": evidence.exitCode,
-      ":verdict": evidence.verdict,
-      ":duration_ms": evidence.durationMs,
-      ":operation_id": context.operationId,
-    });
-  }
 }
 
 function stagedTaskCompletionPayload(
@@ -529,7 +439,11 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
   }, (context) => {
     const attempt = loadAttemptExecution(input.attemptId);
     if (input.stagedTaskCompletion) {
-      stageTaskCompletion(context, attempt, input.stagedTaskCompletion);
+      writeStagedTaskCompletion(context, {
+        milestoneId: attempt.milestone_id,
+        sliceId: attempt.slice_id,
+        taskId: attempt.task_id,
+      }, input.stagedTaskCompletion);
     }
     const settled = settleAttemptWithResult(context, input);
     terminalizeTaskExecutionDispatch(context, {

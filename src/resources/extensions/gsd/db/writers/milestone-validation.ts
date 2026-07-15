@@ -15,6 +15,63 @@ export type MilestoneValidationEvidenceClass = "command" | "runtime" | "browser"
 export type MilestoneValidationVerdict = "pass" | "fail" | "inconclusive";
 export type MilestoneValidationObservation = "passed" | "failed" | "inconclusive";
 
+export interface MilestoneValidationWaiverWriteInput {
+  waiverId: string;
+  lifecycleId: string;
+  activeWaiverId?: string;
+  rationale: string;
+  actorId: string | null;
+  grantedAt: string;
+}
+
+export function writeMilestoneValidationWaiver(
+  context: Readonly<DomainOperationContext>,
+  input: MilestoneValidationWaiverWriteInput,
+): void {
+  if (requireActiveDomainOperationContext(context) !== "milestone.validation.waive") {
+    throw new Error("Milestone validation Waiver requires a milestone.validation.waive Domain Operation");
+  }
+  if (input.activeWaiverId) {
+    getDb().prepare(`
+      UPDATE workflow_waivers
+      SET waiver_status = 'revoked', ended_at = :ended_at,
+          ended_operation_id = :operation_id,
+          ended_project_revision = :project_revision,
+          ended_authority_epoch = :authority_epoch
+      WHERE waiver_id = :waiver_id AND waiver_status = 'active'
+    `).run({
+      ":ended_at": input.grantedAt,
+      ":operation_id": context.operationId,
+      ":project_revision": context.resultingRevision,
+      ":authority_epoch": context.resultingAuthorityEpoch,
+      ":waiver_id": input.activeWaiverId,
+    });
+  }
+  getDb().prepare(`
+    INSERT INTO workflow_waivers (
+      waiver_id, project_id, lifecycle_id, requirement_id, blocker_id,
+      waiver_status, scope, rationale, granted_by_actor_type,
+      granted_by_actor_id, granted_at,
+      operation_id, project_revision, authority_epoch
+    ) VALUES (
+      :waiver_id, :project_id, :lifecycle_id, NULL, NULL,
+      'active', 'milestone-validation', :rationale, 'policy',
+      :actor_id, :granted_at,
+      :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":waiver_id": input.waiverId,
+    ":project_id": context.projectId,
+    ":lifecycle_id": input.lifecycleId,
+    ":rationale": input.rationale,
+    ":actor_id": input.actorId,
+    ":granted_at": input.grantedAt,
+    ":operation_id": context.operationId,
+    ":project_revision": context.resultingRevision,
+    ":authority_epoch": context.resultingAuthorityEpoch,
+  });
+}
+
 export interface MilestoneValidationCriterionWriteInput {
   criterionKey: string;
   evidenceClass: MilestoneValidationEvidenceClass;
