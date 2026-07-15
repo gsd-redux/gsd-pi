@@ -1,0 +1,2840 @@
+{
+  "authority": {
+    "authorityEpoch": 0,
+    "projectRevision": 195
+  },
+  "authorityBaseline": {
+    "passed": 4,
+    "total": 4
+  },
+  "canonicalHistoryEvidencePlane": "live_project",
+  "commands": [
+    {
+      "command": "pnpm exec tsx --test src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+      "exitCode": 0,
+      "id": "semantic-shadow-capstone",
+      "stage": "observed",
+      "verdict": "pass"
+    },
+    {
+      "command": "pnpm run gate:semantic-shadow-no-cutover",
+      "exitCode": 0,
+      "id": "semantic-shadow-no-cutover",
+      "stage": "observed",
+      "verdict": "pass"
+    },
+    {
+      "command": "pnpm run baseline:workflow-authority",
+      "exitCode": 0,
+      "id": "authority-baseline",
+      "stage": "observed",
+      "verdict": "pass"
+    },
+    {
+      "command": "node scripts/m003-s07-cutover-dossier.mjs --check",
+      "id": "dossier-check",
+      "stage": "post_generation",
+      "verdict": "required"
+    },
+    {
+      "command": "pnpm run verify:merge",
+      "id": "verify-merge",
+      "stage": "post_generation",
+      "verdict": "required"
+    }
+  ],
+  "compatibilityInventory": [
+    {
+      "file": "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
+      "id": "runtime-disagreement",
+      "title": "legacy milestone status remains public when canonical lifecycle disagrees",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/semantic-shadow-contract.test.ts",
+      "id": "frozen-public-response",
+      "title": "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts",
+      "id": "mode-transport-matrix",
+      "title": "all supported modes and transports preserve the frozen response and exact observation identity",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/md-importer-adopted-authority.test.ts",
+      "id": "unadopted-import",
+      "title": "unadopted re-import keeps existing checkbox completion behavior",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/workflow-reconcile.test.ts",
+      "id": "unadopted-reconcile",
+      "title": "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/adopted-lifecycle-bypass-closure.test.ts",
+      "id": "same-status-repair",
+      "title": "same-status completion timestamp repair remains available when adopted state is aligned",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/park-db-sync.test.ts",
+      "id": "park-unpark",
+      "title": "unparkMilestone updates DB status to 'active' (#2694)",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/park-milestone.test.ts",
+      "id": "discard",
+      "title": "discardMilestone removes DB rows, worktree, and milestone branch",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+      "id": "skipped-dispatch",
+      "title": "skipped prior DB slices do not block later slice dispatch",
+      "verdict": "pass"
+    },
+    {
+      "file": "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
+      "id": "db-unavailable-status",
+      "title": "gsd_milestone_status handles missing DB gracefully",
+      "verdict": "pass"
+    }
+  ],
+  "deferredCutoverBlockers": [
+    "production-read-authority",
+    "canonical-dependency-eligibility",
+    "integrated-slice-source-uat-identity",
+    "closeout-effects",
+    "merge-publication-settlement",
+    "park-unpark-discard-adoption",
+    "projection-work-redesign",
+    "legacy-cascade-deletion",
+    "compatibility-retirement"
+  ],
+  "dispositionProof": [
+    {
+      "accounted": false,
+      "evidenceHash": "sha256:c73b01716cec8229e65ccd33e5c09cf79e66f273ffb0332b1a1d61f4ea0c6a3f",
+      "outcome": "advanced",
+      "residueFree": false
+    },
+    {
+      "accounted": false,
+      "evidenceHash": "sha256:de63df75214889447675903457a0e53a8327640843a70bd1cad3af37de23446e",
+      "outcome": "repaired",
+      "residueFree": false
+    },
+    {
+      "accounted": false,
+      "evidenceHash": "sha256:69d58974cf94bf10cb6fd15c658605f77c9133aa575cf063951a7e494436b19b",
+      "outcome": "unresolved",
+      "residueFree": false
+    },
+    {
+      "accounted": false,
+      "evidenceHash": "sha256:cce1a11d42888bc7a980eb5514659ae232271c75184ab9a7aa29c808f20fc8ee",
+      "outcome": "rejected",
+      "residueFree": true
+    },
+    {
+      "accounted": true,
+      "evidenceHash": "sha256:21df14fcfeb2342c53b75f0a91b7aef249e036dc379206771db8d8a112f1f32b",
+      "lossRef": "capstone-observation-loss",
+      "outcome": "observation_loss",
+      "residueFree": false
+    }
+  ],
+  "evidenceSourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+  "expectedCoverage": {
+    "envelopes": 12,
+    "items": 60,
+    "tuples": 60
+  },
+  "hashes": {
+    "canonicalHistoryHash": "sha256:5ded458fc8622a5dfd94b47e1f02ac6a7836bcdebd6563dea482b50fb83bb9cf",
+    "capstoneEvidenceHash": "sha256:2d750229d4b1e0827303fc90680d9d86b7fc4ef164cb796a08a9ae485518a58b",
+    "dossierHash": "sha256:cde0fc9c9cb1c55400b1d8b4530b59e5c560119273a3144c422d566c25c9933d"
+  },
+  "liveDrift": [
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "milestone",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": "in_progress",
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": "active",
+      "sliceId": null,
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S01",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "slice",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": "pending",
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": "pending",
+      "sliceId": "S07",
+      "taskId": null
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S01",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S01",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S01",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S01",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S02",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S03",
+      "taskId": "T06"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S04",
+      "taskId": "T06"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S05",
+      "taskId": "T06"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T06"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S06",
+      "taskId": "T07"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T01"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T02"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T03"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T04"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T05"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "completed",
+      "normalizedLegacyStatus": "completed",
+      "rawCanonicalStatus": "completed",
+      "rawLegacyStatus": "complete",
+      "sliceId": "S07",
+      "taskId": "T06"
+    },
+    {
+      "classification": "semantic_match_exact_delta",
+      "itemKind": "task",
+      "lifecyclePresent": true,
+      "milestoneId": "M003",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": "pending",
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": "pending",
+      "sliceId": "S07",
+      "taskId": "T07"
+    }
+  ],
+  "milestoneId": "M003",
+  "noCutover": {
+    "behavioral": {
+      "passed": 10,
+      "total": 10
+    },
+    "structural": {
+      "passed": 5,
+      "total": 5
+    }
+  },
+  "observationCoverage": [
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:auto:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:auto:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:auto:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:auto:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:auto:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:auto:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:auto:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:auto:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:auto:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "auto",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:auto:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:auto:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:interactive:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:interactive:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:interactive:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:interactive:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:interactive:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:interactive:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:interactive:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:interactive:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:interactive:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "interactive",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:interactive:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:interactive:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:guided:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:guided:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:guided:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:guided:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:guided:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:guided:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:guided:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:guided:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:guided:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "guided",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:guided:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:guided:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:uok:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:uok:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:uok:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:uok:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:uok:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:uok:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:uok:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:uok:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:uok:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "uok",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:uok:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:uok:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:custom:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:custom:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:custom:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:custom:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:custom:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:custom:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:custom:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:custom:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:custom:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "custom",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:custom:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:custom:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:legacy:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:legacy:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:legacy:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:legacy:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:native_pi",
+      "transport": "native_pi",
+      "turnId": "turn:legacy:native_pi"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "match",
+      "itemIdentity": {
+        "itemKind": "milestone",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": null,
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "pending",
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "pending",
+      "rawLegacyStatus": "pending",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:legacy:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "semantic_match_exact_delta",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "in_progress",
+      "normalizedLegacyStatus": "in_progress",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "in_progress",
+      "rawLegacyStatus": "active",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:legacy:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "missing_shadow",
+      "itemIdentity": {
+        "itemKind": "slice",
+        "lifecyclePresent": false,
+        "milestoneId": "M001",
+        "sliceId": "S02",
+        "taskId": null
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": null,
+      "normalizedLegacyStatus": "pending",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": null,
+      "rawLegacyStatus": "queued",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:legacy:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "extra_shadow",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T01"
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "ready",
+      "normalizedLegacyStatus": null,
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "ready",
+      "rawLegacyStatus": null,
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:legacy:workflow_mcp"
+    },
+    {
+      "authorityEpoch": 0,
+      "classification": "status_mismatch",
+      "itemIdentity": {
+        "itemKind": "task",
+        "lifecyclePresent": true,
+        "milestoneId": "M001",
+        "sliceId": "S01",
+        "taskId": "T02"
+      },
+      "mode": "legacy",
+      "normalizedCanonicalStatus": "paused",
+      "normalizedLegacyStatus": "completed",
+      "observationLossAccounting": {
+        "lossCount": 0,
+        "persistedCount": 1
+      },
+      "projectRevision": 5,
+      "rawCanonicalStatus": "paused",
+      "rawLegacyStatus": "done",
+      "repairDisposition": "not_attempted",
+      "sourceRevision": "sha256:9b0dc2a77074ddce7d5238ba1a59965eb212e83e25ca0afdf0a83058f793efd5",
+      "traceId": "trace:legacy:workflow_mcp",
+      "transport": "workflow_mcp",
+      "turnId": "turn:legacy:workflow_mcp"
+    }
+  ],
+  "observationEvidencePlane": "capstone_fixture",
+  "observationLosses": [
+    {
+      "accounted": true,
+      "causes": [
+        {
+          "errorHash": "sha256:55e373f96ac931aa8da3f5221dceca2566383e8033292d15430991331a80b242",
+          "reason": "shadow_query_failed"
+        }
+      ],
+      "id": "capstone-observation-loss",
+      "lossCount": 1,
+      "persistedCount": 1,
+      "terminalRecords": 1
+    }
+  ],
+  "observedCounts": {
+    "byClassification": {
+      "extra_shadow": 12,
+      "match": 12,
+      "missing_shadow": 12,
+      "semantic_match_exact_delta": 12,
+      "status_mismatch": 12
+    },
+    "byMode": {
+      "auto": 10,
+      "custom": 10,
+      "guided": 10,
+      "interactive": 10,
+      "legacy": 10,
+      "uok": 10
+    },
+    "byTransport": {
+      "native_pi": 30,
+      "workflow_mcp": 30
+    },
+    "envelopes": 12,
+    "items": 60
+  },
+  "publicResponseHash": "sha256:e5dab276c8e5fcbe8fd03263819092ae144142c97f57716cc5050f1fec1e53af",
+  "recommendation": "NO_GO",
+  "repairHistory": {
+    "counts": {
+      "advanced": 10,
+      "distinctEvidenceDigests": 23,
+      "missingShadow": 11,
+      "repaired": 23,
+      "statusMismatch": 22,
+      "total": 33
+    },
+    "rows": [
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "c0c5ed1b-4abf-44a1-a362-be610a1e4718",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:2986d53263b4e16d2eaa1daa872956deb80d7d4e3822caa1997c295164bf0038",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 138
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "9cf39c55-56c1-49fa-8ee5-61c4dab7c9d7",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:035b803734858243ebae46fc90b619da88425f04295d2b1d3f4d751adb6d2258",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 139
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "774e3c3a-0bfd-4546-ba70-5841f17ddab4",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:dabd47ea45847f2633e1a411ce7c75f97e4d14f058f5ce08e0812e73a6175b93",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 140
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "5ab72cf2-f590-439a-8d7b-55ac41d76ef4",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:6bb368fe91e726b6c9fae30d17766bde18350828e2b515b20630610ef198bbb8",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 141
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "c47818c5-0693-4310-910c-3b64af3f7993",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:4498e63b19ffc7ccfb0578bf5c5eee7b74b7c1aefc9f65d652db0be62f0c7567",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 142
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "16f5ca79-7209-40ae-8e4b-7cd324db2e9e",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:3e60e4c289ea31046ac11ad7b7814d7eb26561c002c8436caa00f35b86063909",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 143
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "ce8e777d-0311-4ca7-ac7e-f702d7b02f58",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:0979f072f52bde248308a6c327660a73eb5c1fb57c32aa325fa5ed452708f4c8",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 144
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "eaf43261-2fa1-4c75-b566-bcd19d5f1711",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:fb537adb2df6ce052f5f8beb286b7ca761685a45b1797b019d043075bd782c53",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 145
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "f1f6d681-9285-443d-89ae-2cd31e4e6437",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:1f52335f10a737bc6c94dbca8c67b95897ef2a33b8eed890f3a8419815809292",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 146
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "974d6f7f-ef87-40fe-98b4-1d934713a7b3",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:7ef548f8aace3fd9b4e9512a8c3e2a5dd591c5fab183f0452fbc8092976a9d9b",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 147
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "b5ce85ac-481c-406a-8bb8-940e2a65052a",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:7ef548f8aace3fd9b4e9512a8c3e2a5dd591c5fab183f0452fbc8092976a9d9b",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 148
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "ba0b0924-7cac-4423-b0cb-e8b6f0b86faa",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:92d4d1fd7501f30d1d564a10edb2cdb73d2f8690a549a04c9339a7e81d1cd1f2",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 149
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "a8403be3-7762-435e-bf01-5c48734d45e1",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:92d4d1fd7501f30d1d564a10edb2cdb73d2f8690a549a04c9339a7e81d1cd1f2",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 150
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "6a1fa5dc-b5e9-42c5-90dc-a5b519d53cbe",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:22b6744c3345db44bb7d9cc7de0b33c90ee28b7206ee8f6fd7561c74e36f985c",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 151
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "78c95b49-8b53-490b-ab53-30ed03d7da28",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:22b6744c3345db44bb7d9cc7de0b33c90ee28b7206ee8f6fd7561c74e36f985c",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 152
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "ff55d72b-e173-48b3-886f-0518cafc552e",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:c404ca671ca90ab04fc7e664c51093d53b2d63672bc82212385659fd5f71e98e",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 153
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "084ac95b-9513-468f-951d-777a9102976d",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:c404ca671ca90ab04fc7e664c51093d53b2d63672bc82212385659fd5f71e98e",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 154
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "ac047401-ba57-4244-a8c9-8f7f421a0928",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:20ab5f7fd4fb51d279a4516193485773b67824506f2490bd89875e80d687275c",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 155
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "533e9f21-0f8b-4d59-94bd-ea9177cd83ea",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:20ab5f7fd4fb51d279a4516193485773b67824506f2490bd89875e80d687275c",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 156
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "f6f88336-6b5d-4d9a-885f-3145805f2914",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:3445abc1a6b7107c735479873d32cf8f5f7f661ef7170a79175ba5490c69ef2a",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 157
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "a52b15fd-5895-4328-a9ce-8c8e4e707192",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:3445abc1a6b7107c735479873d32cf8f5f7f661ef7170a79175ba5490c69ef2a",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 158
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "46b27d91-57c2-466e-bc18-dc91670342f3",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:b078ffc33a13905da87cc6de1265282dabed029d8e9494affa00b8496a83d9fd",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 159
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "4ec2c24f-f280-48b7-a0b0-8f92135c4bc4",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:b078ffc33a13905da87cc6de1265282dabed029d8e9494affa00b8496a83d9fd",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 160
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "d21d4e54-d467-4545-aa30-1a9626c1ac93",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:2a122b2e8a9ac0a9605b40c6aeebecdd00f2b85d2383117b732018f28a128297",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 161
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "b380b133-cd08-40f8-9b0f-baa275ace00f",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:2a122b2e8a9ac0a9605b40c6aeebecdd00f2b85d2383117b732018f28a128297",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 162
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "d1803d9f-205f-42a7-a513-ed3856bb5929",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:adfd5a04d1b39941813f9ed0fa4c5d048aee2b272689c63d75ef75590ce1ec01",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 163
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "e6f085ac-6179-4bbf-ba8a-62c744d483e4",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:adfd5a04d1b39941813f9ed0fa4c5d048aee2b272689c63d75ef75590ce1ec01",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 164
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "advanced",
+        "eventCount": 1,
+        "eventId": "d441fbd3-ec88-46b1-82fc-3bd4db36842a",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.advanced",
+        "evidenceDigest": "sha256:87071215a8c528772ea166664d52d4f6f3a7b6e3b3885a9e161e5e1e8ebe70c9",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 165
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "8a92a631-8a5d-4b1c-910c-e45403d66f38",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:87071215a8c528772ea166664d52d4f6f3a7b6e3b3885a9e161e5e1e8ebe70c9",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 166
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "36850f6b-3e69-4302-9d35-9a2632f84ad7",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:69453ceb3426cadfba2c9256b529be71e4f9871d8f80529a0f895bd20c84fb31",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 167
+      },
+      {
+        "comparisonKind": "missing_shadow",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "b9366ca0-3c33-4d2d-be40-b54ec05415c4",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:3f7a1d6d0f329bfede46159087c7bb50671b80bed01645d494d2b1695f687c12",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 168
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "a95dc271-3934-4fa9-9100-e8784cf0bcd3",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:5866d272d7672b0ba881297a3f958da3940e5addce287db489ff84f98d1730c4",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 169
+      },
+      {
+        "comparisonKind": "status_mismatch",
+        "disposition": "repaired",
+        "eventCount": 1,
+        "eventId": "46aebc17-5dbd-45a1-86ba-d230bd6b991f",
+        "eventIndex": 0,
+        "eventType": "lifecycle.shadow.repaired",
+        "evidenceDigest": "sha256:15824a3bde94de1897bcd7ca8a5a8c9fa4a01ce17ac800678e0946296801f744",
+        "outboxCount": 1,
+        "projectionCount": 1,
+        "resultingRevision": 170
+      }
+    ]
+  },
+  "schemaVersion": 1,
+  "sliceId": "S07",
+  "sourceCapstoneEvidenceHash": "sha256:c0a57515abaecb23a8cf0ad8e1a4e338c1f4a26098ca0a854ebed8e24e52ed0a",
+  "taskReceiptHeads": [
+    {
+      "attemptNumber": 1,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:c259d71ac9414e5b061e2b5c0f33231b0de563586dec5919eb991ccd0c0858b7",
+      "resultOutcome": "succeeded",
+      "taskId": "T01",
+      "testedSourceRevision": "sha256:da232cf77518ff31f30467b52d67a453806af6ec37c9bec5b99d93b27e2b19bb",
+      "verdict": "pass"
+    },
+    {
+      "attemptNumber": 1,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:88d0da1a14439d5d04722bb5f1410f169ae22e091ac8ab4c3ba100ec077ce4d6",
+      "resultOutcome": "succeeded",
+      "taskId": "T02",
+      "testedSourceRevision": "sha256:ce6135f721f64838e3f030196709ffa5e6a59c910b99e7b826840b546186fd3d",
+      "verdict": "pass"
+    },
+    {
+      "attemptNumber": 1,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:e3ad1cb1f190e924fda7c1232d9911a05e197e009a7353e0eb0847c2b3cdb9dd",
+      "resultOutcome": "succeeded",
+      "taskId": "T03",
+      "testedSourceRevision": "sha256:24b6244d2214e693975575cc556599381ea6f954a773a3592d467c08a7c2b5ee",
+      "verdict": "pass"
+    },
+    {
+      "attemptNumber": 1,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:dfe8054e375605d8cdf0fc4e0fb7e193b3bf4af38a7be4f5134a7e16a9ee5bed",
+      "resultOutcome": "succeeded",
+      "taskId": "T04",
+      "testedSourceRevision": "sha256:c80168e4e61e551678f08d4ac49c5aca46cbcbb37c420079daa0bbb514330f1e",
+      "verdict": "pass"
+    },
+    {
+      "attemptNumber": 2,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:8b11be1b9e20dc37ab83c64fe9afb4b6c906ffaf925d168c29481189b576229a",
+      "resultOutcome": "succeeded",
+      "taskId": "T05",
+      "testedSourceRevision": "sha256:def2f606b42d13fb2b83b2625441906d64f62a78c63c4b1e8c243d11b5cc1de7",
+      "verdict": "pass"
+    },
+    {
+      "attemptNumber": 1,
+      "attemptState": "settled",
+      "current": true,
+      "evidenceHash": "sha256:49d8bd63c48030dba18ff270dc914771fdef93ead6e798fda699fe7322b225bf",
+      "resultOutcome": "succeeded",
+      "taskId": "T06",
+      "testedSourceRevision": "sha256:f299a530a7323955c004a38dcacdb6712d81eb5c14b3a8dab0e16598d9e10d20",
+      "verdict": "pass"
+    }
+  ]
+}
