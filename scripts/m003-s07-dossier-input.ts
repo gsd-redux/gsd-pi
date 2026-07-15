@@ -94,7 +94,10 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
         (SELECT COUNT(*) FROM workflow_projection_work projection
           WHERE projection.enqueue_operation_id = event.operation_id) AS projectionCount
       FROM workflow_domain_events event
+      JOIN workflow_operations operation ON operation.operation_id = event.operation_id
       WHERE event.event_type IN ('lifecycle.shadow.advanced', 'lifecycle.shadow.repaired')
+        AND operation.operation_type = 'lifecycle.shadow.repair'
+        AND operation.idempotency_key LIKE 'internal:m003:s07:t02:repair:%'
       ORDER BY event.project_revision, event.event_index, event.event_id
     `).all().map((row) => ({ ...row }));
     if (repairHistory.length !== 33) {
@@ -174,7 +177,7 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
         MIN(verdict.tested_source_revision) AS testedSourceRevision,
         MIN(evidence.content_hash) AS evidenceHash,
         COUNT(DISTINCT verdict.verdict_id) AS verdictCount,
-        COUNT(DISTINCT evidence.content_hash) AS evidenceCount
+        COUNT(DISTINCT evidence.evidence_id) AS evidenceCount
       FROM latest_attempt latest
       JOIN workflow_attempt_results result ON result.attempt_id = latest.attempt_id
       JOIN workflow_technical_verdicts verdict ON verdict.attempt_id = latest.attempt_id
@@ -188,7 +191,7 @@ function readCanonicalSnapshot(databasePath: string): CanonicalSnapshot {
       ORDER BY latest.taskId
     `).all() as Array<Record<string, unknown>>;
     if (receiptRows.length !== 6 || receiptRows.some((row) => row["verdictCount"] !== 1 || row["evidenceCount"] !== 1)) {
-      throw new Error("Canonical T01-T06 receipt heads must each have one current verdict and evidence hash");
+      throw new Error("Canonical T01-T06 receipt heads must each have one current verdict and evidence row");
     }
     const taskReceiptHeads = receiptRows.map((row) => ({
       taskId: String(row["taskId"]),
@@ -320,6 +323,8 @@ export async function collectM003S07DossierInput(
     observationEvidencePlane: "capstone_fixture",
     canonicalHistoryEvidencePlane: "live_project",
     evidenceSourceRevision: source.sourceRevision,
+    publicResponseHash: capstone.evidence.responseHash,
+    sourceCapstoneEvidenceHash: capstone.evidenceHash,
     authority: snapshot.authority,
     ...adaptCapstone(capstone),
     repairHistory: snapshot.repairHistory,

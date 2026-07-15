@@ -29,7 +29,10 @@ afterEach(() => {
   tempDirs.clear();
 });
 
-function makeFixtureDatabase(path: string): void {
+function makeFixtureDatabase(
+  path: string,
+  options: { unrelatedRepair?: boolean; duplicateEvidence?: boolean } = {},
+): void {
   const database = new DatabaseSync(path);
   database.exec(`
     CREATE TABLE project_authority (revision INTEGER, authority_epoch INTEGER);
@@ -43,6 +46,7 @@ function makeFixtureDatabase(path: string): void {
       event_id TEXT, operation_id TEXT, event_index INTEGER, project_revision INTEGER,
       event_type TEXT, payload_json TEXT
     );
+    CREATE TABLE workflow_operations (operation_id TEXT, operation_type TEXT, idempotency_key TEXT);
     CREATE TABLE workflow_outbox (event_id TEXT);
     CREATE TABLE workflow_projection_work (enqueue_operation_id TEXT);
     CREATE TABLE workflow_execution_attempts (
@@ -53,7 +57,7 @@ function makeFixtureDatabase(path: string): void {
       verdict_id TEXT, attempt_id TEXT, tested_source_revision TEXT, verdict TEXT,
       supersedes_verdict_id TEXT
     );
-    CREATE TABLE workflow_verification_evidence (verdict_id TEXT, content_hash TEXT);
+    CREATE TABLE workflow_verification_evidence (evidence_id TEXT, verdict_id TEXT, content_hash TEXT);
     INSERT INTO project_authority VALUES (195, 0);
     INSERT INTO milestones VALUES ('M003', 'active');
     INSERT INTO slices VALUES ('M003', 'S07', 'pending');
@@ -69,7 +73,7 @@ function makeFixtureDatabase(path: string): void {
   const attempt = database.prepare("INSERT INTO workflow_execution_attempts VALUES (?, ?, 1, 'settled')");
   const result = database.prepare("INSERT INTO workflow_attempt_results VALUES (?, 'succeeded')");
   const verdict = database.prepare("INSERT INTO workflow_technical_verdicts VALUES (?, ?, ?, 'pass', NULL)");
-  const evidence = database.prepare("INSERT INTO workflow_verification_evidence VALUES (?, ?)");
+  const evidence = database.prepare("INSERT INTO workflow_verification_evidence VALUES (?, ?, ?)");
   for (let index = 1; index <= 6; index += 1) {
     const taskId = `T${String(index).padStart(2, "0")}`;
     const lifecycleId = `life-${taskId.toLowerCase()}`;
@@ -80,9 +84,14 @@ function makeFixtureDatabase(path: string): void {
     attempt.run(attemptId, lifecycleId);
     result.run(attemptId);
     verdict.run(verdictId, attemptId, `sha256:${String(index).repeat(64)}`);
-    evidence.run(verdictId, `sha256:${String(index + 1).repeat(64)}`);
+    const evidenceHash = `sha256:${String(index + 1).repeat(64)}`;
+    evidence.run(`evidence-${taskId.toLowerCase()}`, verdictId, evidenceHash);
+    if (options.duplicateEvidence && index === 1) {
+      evidence.run("evidence-t01-duplicate", verdictId, evidenceHash);
+    }
   }
 
+  const operation = database.prepare("INSERT INTO workflow_operations VALUES (?, ?, ?)");
   const event = database.prepare(`
     INSERT INTO workflow_domain_events VALUES (?, ?, 0, ?, ?, ?)
   `);
@@ -94,6 +103,11 @@ function makeFixtureDatabase(path: string): void {
     const eventId = `event-${String(index + 1).padStart(2, "0")}`;
     const operationId = `operation-${String(index + 1).padStart(2, "0")}`;
     const disposition = advanced ? "advanced" : "repaired";
+    operation.run(
+      operationId,
+      "lifecycle.shadow.repair",
+      `internal:m003:s07:t02:repair:${String(index + 1).padStart(2, "0")}`,
+    );
     event.run(
       eventId,
       operationId,
@@ -107,6 +121,22 @@ function makeFixtureDatabase(path: string): void {
     );
     outbox.run(eventId);
     projection.run(operationId);
+  }
+  if (options.unrelatedRepair) {
+    operation.run("operation-unrelated", "lifecycle.shadow.repair", "internal:m002:s01:t01:repair:01");
+    event.run(
+      "event-unrelated",
+      "operation-unrelated",
+      171,
+      "lifecycle.shadow.repaired",
+      JSON.stringify({
+        disposition: "repaired",
+        comparison: { kind: "status_mismatch" },
+        evidence: { evidenceDigest: `sha256:${"f".repeat(64)}` },
+      }),
+    );
+    outbox.run("event-unrelated");
+    projection.run("operation-unrelated");
   }
   database.close();
 }
@@ -146,6 +176,8 @@ test("collector emits one canonical read-only snapshot without relabeling fixtur
 
   assert.equal(input.observationEvidencePlane, "capstone_fixture");
   assert.equal(input.canonicalHistoryEvidencePlane, "live_project");
+  assert.equal(input.publicResponseHash, capstone.evidence.responseHash);
+  assert.equal(input.sourceCapstoneEvidenceHash, capstone.evidenceHash);
   assert.equal(input.observations[0].items[0].itemIdentity.milestoneId, "M001");
   assert.equal(input.liveDrift[0].milestoneId, "M003");
   assert.equal(input.repairHistory.length, 33);
@@ -194,6 +226,45 @@ test("collector fail-closes when a local report regresses", async () => {
       reports,
     ),
     /no-cutover report must pass/i,
+  );
+});
+
+test("collector excludes repair events outside the M003/S07/T02 lineage", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-lineage-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  makeFixtureDatabase(databasePath, { unrelatedRepair: true });
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  const input = await collectM003S07DossierInput(
+    { sourceRoot: process.cwd(), databasePath, capstonePath },
+    passingReports(),
+  );
+  assert.equal(input.repairHistory.length, 33);
+  assert.equal(input.repairHistory.some((row) => row.eventId === "event-unrelated"), false);
+});
+
+test("collector rejects duplicate evidence rows even when their hashes match", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-dossier-input-evidence-"));
+  tempDirs.add(root);
+  const databasePath = join(root, "gsd.db");
+  const capstonePath = join(root, "capstone.json");
+  makeFixtureDatabase(databasePath, { duplicateEvidence: true });
+  const capstone = normalizeSemanticShadowCapstoneEvidence(
+    await collectSemanticShadowCapstoneEvidence({ sourceRoot: process.cwd() }),
+  );
+  writeFileSync(capstonePath, `${JSON.stringify(capstone)}\n`, "utf8");
+
+  await assert.rejects(
+    collectM003S07DossierInput(
+      { sourceRoot: process.cwd(), databasePath, capstonePath },
+      passingReports(),
+    ),
+    /one current verdict and evidence row/i,
   );
 });
 
