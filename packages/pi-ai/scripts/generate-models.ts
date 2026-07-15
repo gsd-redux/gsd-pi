@@ -1934,6 +1934,20 @@ async function generateModels() {
 			contextWindow: 500000,
 			maxTokens: 30000,
 		},
+		// Grok 4.20 multi-agent variant — listed at https://docs.x.ai/developers/models
+		// but absent from models.dev; same pricing/limits as the other 4.20 variants.
+		{
+			id: "grok-4.20-multi-agent-0309",
+			name: "Grok 4.20 (Multi-Agent)",
+			api: "openai-completions",
+			baseUrl: "https://api.x.ai/v1",
+			provider: "xai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 1.25, output: 2.5, cacheRead: 0.2, cacheWrite: 0 },
+			contextWindow: 1000000,
+			maxTokens: 30000,
+		},
 		{
 			id: "grok-3",
 			name: "Grok 3",

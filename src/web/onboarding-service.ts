@@ -182,7 +182,7 @@ const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
   { id: "google-gemini-cli", label: "Google Gemini CLI (deprecated for individuals)", supportsApiKey: false, supportsOAuth: false, supportsExternalCli: true },
   { id: "google", label: "Google (Gemini API)", supportsApiKey: true, supportsOAuth: false },
   { id: "groq", label: "Groq", supportsApiKey: true, supportsOAuth: false },
-  { id: "xai", label: "xAI (Grok)", supportsApiKey: true, supportsOAuth: false },
+  { id: "xai", label: "xAI (Grok)", supportsApiKey: true, supportsOAuth: true },
   { id: "openrouter", label: "OpenRouter", supportsApiKey: true, supportsOAuth: false },
   { id: "mistral", label: "Mistral", supportsApiKey: true, supportsOAuth: false },
   { id: "minimax", label: "MiniMax", supportsApiKey: true, supportsOAuth: false },

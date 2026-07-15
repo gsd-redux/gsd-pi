@@ -16563,6 +16563,23 @@ export const MODELS = {
 			contextWindow: 1000000,
 			maxTokens: 30000,
 		} satisfies Model<"openai-completions">,
+		"grok-4.20-multi-agent-0309": {
+			id: "grok-4.20-multi-agent-0309",
+			name: "Grok 4.20 (Multi-Agent)",
+			api: "openai-completions",
+			provider: "xai",
+			baseUrl: "https://api.x.ai/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 1.25,
+				output: 2.5,
+				cacheRead: 0.2,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 30000,
+		} satisfies Model<"openai-completions">,
 		"grok-4.3": {
 			id: "grok-4.3",
 			name: "Grok 4.3",

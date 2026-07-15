@@ -491,6 +491,7 @@ export async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: Au
       options: [
 	        { value: 'github-copilot', label: 'GitHub Copilot' },
 	        { value: 'openai-codex', label: 'ChatGPT Plus/Pro (Codex)' },
+	        { value: 'xai', label: 'Grok (SuperGrok / X Premium)' },
 	      ],
 	    })
     if (p.isCancel(provider)) return false
