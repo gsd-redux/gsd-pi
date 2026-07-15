@@ -8,15 +8,20 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { readMilestoneCloseoutAuthorization } from "./db/milestone-closeout-readiness.js";
+import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
+import type { LifecycleShadowRecord } from "./db/writers/lifecycle-commands.js";
 import {
   completeMilestoneHierarchy,
   MilestoneLifecycleValidationError,
   reopenMilestoneHierarchy,
   type MilestoneCompletionHierarchyResult,
 } from "./db/writers/milestone-lifecycle.js";
-import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
-import type { LifecycleShadowRecord } from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import {
+  closeQualityGatesFromEvidence,
+  inspectQualityGatesFromEvidence,
+} from "./quality-gate-closure.js";
 
 export { MilestoneLifecycleValidationError };
 
@@ -500,7 +505,22 @@ export function completeMilestone(input: {
       audit,
     }),
     (context) => {
+      const authorization = readMilestoneCloseoutAuthorization({ milestoneId, sourceRevision });
+      if (!authorization.authorized) {
+        throw new MilestoneLifecycleValidationError(
+          `Milestone ${milestoneId} canonical validation is not current`,
+        );
+      }
+      const gateClosureOptions = { milestoneValidationAuthorization: authorization };
+      const gateClosure = inspectQualityGatesFromEvidence(milestoneId, gateClosureOptions);
+      const unresolvedGate = gateClosure.unresolved[0];
+      if (unresolvedGate) {
+        throw new MilestoneLifecycleValidationError(
+          `Milestone ${milestoneId} quality gate ${unresolvedGate.gate_id} is still pending for ${unresolvedGate.slice_id}`,
+        );
+      }
       const result = completeMilestoneHierarchy(context, { milestoneId, sourceRevision });
+      closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
       const { shadow, cancellationAuthorizations, ...storedResult } = result;
       return {
         events: [{

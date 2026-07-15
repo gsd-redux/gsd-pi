@@ -85,12 +85,13 @@ function makeFixture(): string {
   const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
   const sliceDir = join(milestoneDir, "slices", "S01");
   mkdirSync(sliceDir, { recursive: true });
+  writeFileSync(join(basePath, ".gitignore"), ".gsd/\n");
   writeFileSync(join(basePath, "source.ts"), "export const source = 'waiver';\n");
   writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n");
   execFileSync("git", ["init"], { cwd: basePath, stdio: "ignore" });
   execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: basePath });
   execFileSync("git", ["config", "user.name", "Test"], { cwd: basePath });
-  execFileSync("git", ["add", "source.ts"], { cwd: basePath });
+  execFileSync("git", ["add", ".gitignore", "source.ts"], { cwd: basePath });
   execFileSync("git", ["commit", "-m", "fixture"], { cwd: basePath, stdio: "ignore" });
 
   assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
@@ -178,9 +179,12 @@ test("adopted validation skip records a canonical waiver without fabricating PAS
 
   const result = await rule.match(dispatchContext(basePath));
 
-  assert.deepEqual(result, { action: "skip" });
-  assert.equal(getLatestAssessmentByScope("M001", "milestone-validation")?.status, "omitted");
-  assert.equal((await deriveStateFromDb(basePath)).phase, "completing-milestone");
+  assert.equal(result?.action, "dispatch");
+  if (result?.action !== "dispatch") assert.fail("waiver should continue through completion guards");
+  assert.equal(result.unitType, "complete-milestone");
+  assert.equal(result.unitId, "M001");
+  assert.equal(getLatestAssessmentByScope("M001", "milestone-validation"), null);
+  assert.equal((await deriveStateFromDb(basePath)).phase, "validating-milestone");
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_waivers`).count, 1);
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.validation.waive'`).count, 1);
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_domain_events WHERE event_type = 'milestone.validation.waived'`).count, 1);
@@ -210,8 +214,8 @@ test("adopted waiver replay is exact and projection loss cannot block closeout",
   assert.ok(rule);
   const context = dispatchContext(basePath);
 
-  assert.deepEqual(await rule.match(context), { action: "skip" });
-  assert.deepEqual(await rule.match(context), { action: "skip" });
+  assert.equal((await rule.match(context))?.action, "dispatch");
+  assert.equal((await rule.match(context))?.action, "dispatch");
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_waivers`).count, 1);
   assert.equal(row(`SELECT COUNT(*) AS count FROM workflow_operations WHERE operation_type = 'milestone.validation.waive'`).count, 1);
   const validationPath = join(basePath, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
@@ -256,7 +260,7 @@ test("descendant work after a waiver makes the canonical authorization stale", a
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   insertSlice({ id: "S02", milestoneId: "M001", title: "Late work", status: "pending" });
   executeAtFence("test.fixture.descendant-change", (context) => {
@@ -281,7 +285,7 @@ test("waiver authorization is source-bound and rejects unproven active rows", as
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   const wrongSource = readMilestoneCloseoutAuthorization({
     milestoneId: "M001",
@@ -327,7 +331,7 @@ test("a newer failing canonical validation blocks instead of resurrecting an old
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   const validation = await handleValidateMilestone({
     milestoneId: "M001",
@@ -416,7 +420,7 @@ test("canonical cancelled lifecycle is terminal without validation authorization
   assert.equal(await isCompletedMilestoneTerminal(basePath, "M001"), true);
 });
 
-test("canonical waiver closes validation-owned gates as omitted, never PASS", async () => {
+test("canonical waiver closes validation-owned gates only with milestone completion", async () => {
   const basePath = makeFixture();
   insertGateRow({
     milestoneId: "M001",
@@ -429,11 +433,30 @@ test("canonical waiver closes validation-owned gates as omitted, never PASS", as
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   assert.deepEqual(checkCloseoutConsistencyGate("M001", { allowOpenMilestone: true }), { ok: true });
-  const gate = row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`);
-  assert.deepEqual(gate, { status: "complete", verdict: "omitted" });
+  assert.deepEqual(
+    row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`),
+    { status: "pending", verdict: "" },
+  );
+
+  const completed = await handleCompleteMilestone({
+    milestoneId: "M001",
+    title: "Waived validation",
+    oneLiner: "Completed under a canonical waiver.",
+    narrative: "Validation was omitted by recorded policy.",
+    verificationPassed: true,
+  }, basePath, {
+    idempotencyKey: "test/milestone.complete/waived-gates",
+    sourceTransport: "internal",
+    actorType: "agent",
+  });
+  assert.ok(!("error" in completed));
+  assert.deepEqual(
+    row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`),
+    { status: "complete", verdict: "omitted" },
+  );
 });
 
 test("canonical passing validation cannot settle a pending task gate from Markdown projections", async () => {
@@ -497,7 +520,7 @@ test("source changes after a waiver keep state validating and leave validation g
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   writeFileSync(join(basePath, "source.ts"), "export const source = 'changed-after-waiver';\n");
   execFileSync("git", ["add", "source.ts"], { cwd: basePath });
@@ -536,7 +559,7 @@ test("a newer canonical waiver reconciles completed validation gates from pass t
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
 
   assert.deepEqual(checkCloseoutConsistencyGate("M001", {
     allowOpenMilestone: true,
@@ -545,6 +568,23 @@ test("a newer canonical waiver reconciles completed validation gates from pass t
   const authorization = readMilestoneCloseoutAuthorization({ milestoneId: "M001" });
   assert.equal(authorization.authorized, true);
   assert.ok(authorization.authorized);
+  assert.equal(row(`
+    SELECT verdict FROM quality_gates
+    WHERE milestone_id = 'M001' AND gate_id = 'MV01'
+  `).verdict, "pass");
+
+  const completed = await handleCompleteMilestone({
+    milestoneId: "M001",
+    title: "Waived validation",
+    oneLiner: "Completed under a newer canonical waiver.",
+    narrative: "Gate reconciliation committed with milestone completion.",
+    verificationPassed: true,
+  }, basePath, {
+    idempotencyKey: "test/milestone.complete/newer-waiver",
+    sourceTransport: "internal",
+    actorType: "agent",
+  });
+  assert.ok(!("error" in completed));
   const gate = row(`
     SELECT status, verdict, rationale FROM quality_gates
     WHERE milestone_id = 'M001' AND gate_id = 'MV01'
@@ -561,7 +601,7 @@ test("a newer canonical waiver reconciles completed validation gates from pass t
   assert.equal(row(`SELECT COUNT(*) AS count FROM gate_runs`).count, gateRunCount);
 });
 
-test("a newer passing validation reconciles waived gates from omitted to pass", async () => {
+test("a newer passing validation supersedes a waiver without intermediate gate mutation", async () => {
   const basePath = makeFixture();
   insertGateRow({
     milestoneId: "M001",
@@ -574,12 +614,15 @@ test("a newer passing validation reconciles waived gates from omitted to pass", 
     candidate.name === "validating-milestone → validate-milestone"
   );
   assert.ok(rule);
-  assert.deepEqual(await rule.match(dispatchContext(basePath)), { action: "skip" });
+  assert.equal((await rule.match(dispatchContext(basePath)))?.action, "dispatch");
   assert.deepEqual(checkCloseoutConsistencyGate("M001", {
     allowOpenMilestone: true,
     artifactBasePath: basePath,
   }), { ok: true });
-  assert.equal(row(`SELECT verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`).verdict, "omitted");
+  assert.deepEqual(
+    row(`SELECT status, verdict FROM quality_gates WHERE milestone_id = 'M001' AND gate_id = 'MV01'`),
+    { status: "pending", verdict: "" },
+  );
 
   await recordPassingValidation(basePath, "test/milestone.validate/after-waiver");
   assert.deepEqual(checkCloseoutConsistencyGate("M001", {
@@ -589,6 +632,18 @@ test("a newer passing validation reconciles waived gates from omitted to pass", 
   const authorization = readMilestoneCloseoutAuthorization({ milestoneId: "M001" });
   assert.equal(authorization.authorized, true);
   assert.ok(authorization.authorized);
+  const completed = await handleCompleteMilestone({
+    milestoneId: "M001",
+    title: "Validated milestone",
+    oneLiner: "Completed under the newer passing validation.",
+    narrative: "The passing validation superseded the earlier waiver.",
+    verificationPassed: true,
+  }, basePath, {
+    idempotencyKey: "test/milestone.complete/validation-after-waiver",
+    sourceTransport: "internal",
+    actorType: "agent",
+  });
+  assert.ok(!("error" in completed));
   const gate = row(`
     SELECT status, verdict, rationale FROM quality_gates
     WHERE milestone_id = 'M001' AND gate_id = 'MV01'

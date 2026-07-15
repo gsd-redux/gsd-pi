@@ -14,7 +14,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -25,6 +25,7 @@ import {
   initRegistry,
   resetRegistry,
 } from "../rule-registry.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 import {
   drainLogs,
   setStderrLoggingEnabled,
@@ -42,8 +43,8 @@ import {
 function makeMinimalCtx(basePath: string): DispatchContext {
   return {
     basePath,
-    mid: "M001",
-    midTitle: "Test Milestone",
+    mid: "",
+    midTitle: "Project setup",
     prefs: undefined,
     state: {
       activeMilestone: null,
@@ -57,6 +58,39 @@ function makeMinimalCtx(basePath: string): DispatchContext {
     } as unknown as DispatchContext["state"],
   };
 }
+
+test("resolveDispatch does not replay registry evaluation failures through inline rules", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-dispatch-registry-error-"));
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+    resetRegistry();
+  });
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  initRegistry([{
+    name: "throws",
+    when: "dispatch",
+    evaluation: "first-match",
+    where: async () => { throw new Error("registry evaluation failed"); },
+    then: (value: unknown) => value,
+  }]);
+
+  await assert.rejects(
+    resolveDispatch({
+      ...makeMinimalCtx(base),
+      mid: "M001",
+      midTitle: "Milestone",
+      state: {
+        ...makeMinimalCtx(base).state,
+        activeMilestone: { id: "M001", title: "Milestone" },
+        registry: [{ id: "M001", title: "Milestone", status: "active" }],
+      },
+    }),
+    /registry evaluation failed/,
+  );
+});
 
 test("resolveDispatch logs a dispatch warning and falls back to inline rules when the registry is uninitialized", async () => {
   // Snapshot and clear the singleton so getRegistry() throws inside resolveDispatch.

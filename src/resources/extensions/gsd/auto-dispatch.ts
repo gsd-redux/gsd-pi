@@ -32,7 +32,6 @@ import {
   transaction,
   getAssessment,
   getSliceRunUatAssessment,
-  getLatestAssessmentByScope,
 } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
@@ -53,7 +52,7 @@ import {
   gsdProjectionRoot,
 } from "./paths.js";
 import { validateArtifact } from "./schemas/validate.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
 import { dirname, join, sep } from "node:path";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
@@ -506,31 +505,11 @@ function withEffectiveDispatchMilestone(ctx: DispatchContext, effectiveMid: stri
 }
 
 function hasMilestonePassedDiscuss(basePath: string, mid: string): boolean {
-  if (isDbAvailable()) {
-    try {
-      const slices = getMilestoneSlices(mid);
-      for (const slice of slices) {
-        const planPath = resolveSliceFile(basePath, mid, slice.id, "PLAN");
-        if (planPath && existsSync(planPath)) return true;
-      }
-    } catch (err) {
-      // Fall through to filesystem checks when DB access is degraded.
-      logWarning(
-        "dispatch",
-        `discuss-progress DB check failed for ${mid}, falling back to filesystem: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-  }
-  const milestonePath = resolveMilestonePath(basePath, mid);
-  if (milestonePath) {
-    const slicesDir = join(milestonePath, "slices");
-    if (existsSync(slicesDir)) {
-      for (const sliceEntry of readdirSync(slicesDir, { withFileTypes: true })) {
-        if (!sliceEntry.isDirectory()) continue;
-        const planPath = join(slicesDir, sliceEntry.name, `${sliceEntry.name}-PLAN.md`);
-        if (existsSync(planPath)) return true;
-      }
-    }
+  if (!isDbAvailable()) return false;
+  const slices = getMilestoneSlices(mid);
+  for (const slice of slices) {
+    const planPath = resolveSliceFile(basePath, mid, slice.id, "PLAN");
+    if (planPath && existsSync(planPath)) return true;
   }
   return hasImplementationArtifacts(basePath, mid) === "present";
 }
@@ -704,25 +683,6 @@ function recordAdoptedMilestoneValidationWaiver(
     `Milestone validation was waived by the ${reason} policy.`,
     "",
   ].join("\n");
-  try {
-    const currentAssessment = getLatestAssessmentByScope(milestoneId, "milestone-validation");
-    if (currentAssessment?.status !== "omitted") {
-      insertAssessment({
-        path: validationPath,
-        milestoneId,
-        sliceId: null,
-        taskId: null,
-        status: "omitted",
-        scope: "milestone-validation",
-        fullContent: content,
-      });
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
   try {
     mkdirSync(dirname(validationPath), { recursive: true });
     writeFileSync(validationPath, content, "utf-8");
@@ -1899,7 +1859,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "validating-milestone → validate-milestone",
-    match: async ({ state, mid, midTitle, basePath, prefs, session }) => {
+    match: async (ctx) => {
+      const { state, mid, midTitle, basePath, prefs, session } = ctx;
       if (state.phase !== "validating-milestone") return null;
 
       const adoptedMilestone = isMilestoneLifecycleAdopted(mid);
@@ -1946,7 +1907,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
               level: "warning",
             };
           }
-          return { action: "skip" };
+          const { evaluateGuardedCompleteMilestoneDispatch } = await import("./milestone-closeout.js");
+          return evaluateGuardedCompleteMilestoneDispatch(ctx);
         }
         const artifactBasePath = resolveArtifactBasePath(basePath, mid, session);
         const projectRoot = resolveWorktreeProjectRoot(basePath, session?.originalBasePath);
@@ -2109,20 +2071,15 @@ export async function resolveDispatch(
   const effectiveMid = resolveEffectiveDispatchMilestoneId(ctx, scopedMilestone);
   const dispatchCtx = withEffectiveDispatchMilestone(ctx, effectiveMid);
 
-  if (dispatchCtx.mid && isDbAvailable()) {
-    const milestone = getMilestone(dispatchCtx.mid);
-    if (milestone && isClosedStatus(milestone.status)) {
-      return {
-        action: "stop",
-        reason:
-          `Milestone ${dispatchCtx.mid} is closed (status: ${milestone.status}); auto-mode will not reopen or recover it implicitly. ` +
-          "Use an explicit reopen command before planning or executing more work for this milestone.",
-        level: "warning",
-      };
-    }
-  }
-
   const activeMid = dispatchCtx.state.activeMilestone?.id;
+  const isProjectSetupDispatch =
+    dispatchCtx.mid === "PROJECT" &&
+    !activeMid &&
+    (
+      dispatchCtx.state.phase === "pre-planning" ||
+      dispatchCtx.state.phase === "needs-discussion" ||
+      dispatchCtx.state.phase === "planning"
+    );
   if (activeMid && !milestoneIdsDispatchCompatible(dispatchCtx.mid, activeMid)) {
     return {
       action: "stop",
@@ -2133,7 +2090,11 @@ export async function resolveDispatch(
     };
   }
 
-  if (scopedMilestone && !milestoneIdsDispatchCompatible(dispatchCtx.mid, scopedMilestone.id)) {
+  if (
+    !isProjectSetupDispatch &&
+    scopedMilestone &&
+    !milestoneIdsDispatchCompatible(dispatchCtx.mid, scopedMilestone.id)
+  ) {
     return {
       action: "stop",
       reason:
@@ -2143,9 +2104,41 @@ export async function resolveDispatch(
     };
   }
 
-  // Delegate to registry when available
+  if (MILESTONE_ID_RE.test(dispatchCtx.mid)) {
+    if (!isDbAvailable()) {
+      return {
+        action: "stop",
+        reason: `Cannot dispatch milestone ${dispatchCtx.mid}: workflow DB is unavailable.`,
+        level: "error",
+      };
+    }
+    const milestone = getMilestone(dispatchCtx.mid);
+    if (!milestone) {
+      return {
+        action: "stop",
+        reason: `Cannot dispatch milestone ${dispatchCtx.mid}: milestone is missing from the workflow DB.`,
+        level: "error",
+      };
+    }
+    if (isClosedStatus(milestone.status)) {
+      return {
+        action: "stop",
+        reason:
+          `Milestone ${dispatchCtx.mid} is closed (status: ${milestone.status}); auto-mode will not reopen or recover it implicitly. ` +
+          "Use an explicit reopen command before planning or executing more work for this milestone.",
+        level: "warning",
+      };
+    }
+  }
+
+  let registry = null;
   try {
-    const registry = getRegistry();
+    registry = getRegistry();
+  } catch (err) {
+    // Direct tests and pre-registry compatibility callers use inline rules.
+    logWarning("dispatch", `registry dispatch failed, falling back to inline rules: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (registry) {
     const action = annotateBackgroundable(await registry.evaluateDispatch(dispatchCtx));
     if (
       action.action === "dispatch" &&
@@ -2158,9 +2151,6 @@ export async function resolveDispatch(
       };
     }
     return applyLanguageDirectiveToDispatch(action, ctx.prefs);
-  } catch (err) {
-    // Registry not initialized — fall back to inline loop
-    logWarning("dispatch", `registry dispatch failed, falling back to inline rules: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   for (const rule of DISPATCH_RULES) {

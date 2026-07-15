@@ -10,20 +10,22 @@ import { afterEach, test } from "node:test";
 
 import { _setDomainOperationFaultForTest } from "../db/domain-operation.ts";
 import type { DomainOperationContext } from "../db/domain-operation.ts";
-import { grantSliceCancellationWaiver } from "../db/writers/slice-lifecycle.ts";
 import { adoptOrTransitionLifecycle } from "../db/writers/lifecycle-commands.ts";
+import { grantSliceCancellationWaiver } from "../db/writers/slice-lifecycle.ts";
 import type { ExecutionInvocation } from "../execution-invocation.ts";
 import { clearParseCache } from "../files.ts";
 import {
   _getAdapter,
   closeDatabase,
   executeDomainOperation,
+  insertGateRow,
   insertMilestone,
   insertSlice,
   insertTask,
   openDatabase,
   readDomainOperationFence,
 } from "../gsd-db.ts";
+import { proveMilestoneCloseout } from "../milestone-closeout-proof.ts";
 import { completeMilestone } from "../milestone-lifecycle-domain-operation.ts";
 import { clearPathCache } from "../paths.ts";
 import {
@@ -254,7 +256,7 @@ const validation: ValidateMilestoneParams = {
 
 async function prepareFixture(
   mutate?: (basePath: string) => void,
-): Promise<void> {
+): Promise<string> {
   const basePath = makeBase();
   mutate?.(basePath);
   const result = await handleValidateMilestone(validation, basePath, {
@@ -262,6 +264,7 @@ async function prepareFixture(
     skipBrowserEvidenceGate: true,
   });
   assert.ok(!("error" in result), `validation fixture failed: ${"error" in result ? result.error : ""}`);
+  return basePath;
 }
 
 function descendantSnapshot(): Record<string, unknown> {
@@ -298,6 +301,15 @@ function durableSnapshot(): Record<string, unknown> {
     events: rows("SELECT * FROM workflow_domain_events ORDER BY project_revision, event_index"),
     outbox: rows("SELECT * FROM workflow_outbox ORDER BY outbox_id"),
     projections: rows("SELECT * FROM workflow_projection_work ORDER BY source_project_revision, projection_key"),
+    qualityGates: rows("SELECT * FROM quality_gates ORDER BY milestone_id, slice_id, task_id, gate_id"),
+    gateRuns: rows("SELECT * FROM gate_runs ORDER BY id"),
+  };
+}
+
+function qualityGateSnapshot(): Record<string, unknown> {
+  return {
+    qualityGates: rows("SELECT * FROM quality_gates ORDER BY milestone_id, slice_id, task_id, gate_id"),
+    gateRuns: rows("SELECT * FROM gate_runs ORDER BY id"),
   };
 }
 
@@ -492,9 +504,49 @@ function createShadowMismatch(kind: "slice" | "task"): void {
 
 afterEach(cleanupFixtures);
 
+test("adopted closeout proof inspects quality gates without mutating them", async () => {
+  const basePath = await prepareFixture();
+  writeFileSync(
+    join(basePath, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+    "# Milestone Summary\n",
+  );
+  const before = qualityGateSnapshot();
+
+  const result = proveMilestoneCloseout("M001", {
+    allowOpenMilestone: true,
+    summaryArtifactBasePath: basePath,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(qualityGateSnapshot(), before);
+});
+
+test("Milestone completion rejects unresolved pending quality gates without residue", async () => {
+  await prepareFixture();
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    gateId: "Q5",
+    scope: "task",
+    status: "pending",
+  });
+
+  await rejectWithoutResidue(
+    "milestone-complete/pending-quality-gate",
+    /quality gate Q5 is still pending for S01/i,
+  );
+});
+
 test("Milestone completion commits one receipt and preserves every descendant fact", async () => {
   await prepareFixture();
   const descendantsBefore = descendantSnapshot();
+  const validationGatesBefore = rows(`
+    SELECT gate_id, status, verdict, rationale FROM quality_gates
+    WHERE milestone_id = 'M001' AND scope = 'milestone'
+    ORDER BY gate_id
+  `);
+  const gateRunsBefore = Number(row("SELECT COUNT(*) AS count FROM gate_runs").count);
   const beforeRevision = Number(row("SELECT revision FROM project_authority").revision);
   const request = input("milestone-complete/direct/success");
 
@@ -520,6 +572,20 @@ test("Milestone completion commits one receipt and preserves every descendant fa
     completed_at: result.completedAt,
     canonical_status: "completed",
   });
+  assert.ok(validationGatesBefore.length > 0);
+  assert.ok(validationGatesBefore.every((gate) => !String(gate.rationale).includes(result.validationEventId)));
+  const validationGatesAfter = rows(`
+    SELECT gate_id, status, verdict, rationale FROM quality_gates
+    WHERE milestone_id = 'M001' AND scope = 'milestone'
+    ORDER BY gate_id
+  `);
+  assert.equal(validationGatesAfter.length, validationGatesBefore.length);
+  assert.ok(validationGatesAfter.every((gate) => gate.status === "complete" && gate.verdict === "pass"));
+  assert.ok(validationGatesAfter.every((gate) => String(gate.rationale).includes(result.validationEventId)));
+  assert.equal(
+    Number(row("SELECT COUNT(*) AS count FROM gate_runs").count),
+    gateRunsBefore + validationGatesAfter.length,
+  );
   assert.equal(row(`
     SELECT COUNT(*) AS count FROM workflow_operations
     WHERE operation_type = 'milestone.complete' AND operation_id = '${result.operationId}'
@@ -574,7 +640,7 @@ test("Milestone completion replays its receipt and conflicts on changed closeout
   assert.deepEqual(durableSnapshot(), afterCommit, "changed reuse must leave exact zero residue");
 });
 
-test("Milestone completion rolls back authority, lifecycle, event, and delivery writes", async () => {
+test("Milestone completion rolls back hierarchy, gate, ledger, event, and delivery writes", async () => {
   await prepareFixture();
   const before = durableSnapshot();
   _setDomainOperationFaultForTest("after-mutation");

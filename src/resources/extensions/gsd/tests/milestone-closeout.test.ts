@@ -33,6 +33,7 @@ import {
   isCompletedMilestoneTerminal,
   repairMissingMilestoneSummaryProjection,
 } from "../milestone-closeout.js";
+import { _setCompleteMilestoneProjectionInterleaveForTest } from "../tools/complete-milestone.js";
 import { targetMilestoneFile } from "../paths.js";
 import type { DispatchContext } from "../auto-dispatch.js";
 
@@ -408,29 +409,26 @@ test("adopted SUMMARY compensation cannot outlive a reopen after a newer complet
 
   const summaryPath = targetMilestoneFile(base, "M045", "SUMMARY", "Durable Closeout");
   const beforeOperations = operationCount();
-  const originalRename = fsPromises.rename.bind(fsPromises);
-  let destinationRenames = 0;
+  let projectionInterleaves = 0;
   let newerCompletion: ReturnType<typeof supersedeAdoptedCompletion> | undefined;
   let finalReopen: ReturnType<typeof reopenMilestone> | undefined;
 
-  t.mock.method(fsPromises, "rename", async (...args: Parameters<typeof fsPromises.rename>) => {
-    if (String(args[1]) === summaryPath) {
-      destinationRenames += 1;
-      if (destinationRenames === 1) {
-        newerCompletion = supersedeAdoptedCompletion("M045");
-      } else if (destinationRenames === 2) {
-        finalReopen = reopenMilestone({
-          invocation: {
-            idempotencyKey: "test/milestone-closeout/M045/final-reopen",
-            sourceTransport: "internal",
-            actorType: "agent",
-          },
-          milestoneId: "M045",
-          reason: "A final reopen supersedes the compensation write.",
-        });
-      }
+  t.after(() => _setCompleteMilestoneProjectionInterleaveForTest(null));
+  _setCompleteMilestoneProjectionInterleaveForTest(async () => {
+    projectionInterleaves += 1;
+    if (projectionInterleaves === 1) {
+      newerCompletion = supersedeAdoptedCompletion("M045");
+    } else if (projectionInterleaves === 2) {
+      finalReopen = reopenMilestone({
+        invocation: {
+          idempotencyKey: "test/milestone-closeout/M045/final-reopen",
+          sourceTransport: "internal",
+          actorType: "agent",
+        },
+        milestoneId: "M045",
+        reason: "A final reopen supersedes the compensation write.",
+      });
     }
-    return originalRename(...args);
   });
 
   const repair = await repairMissingMilestoneSummaryProjection(base, "M045");
@@ -442,7 +440,7 @@ test("adopted SUMMARY compensation cannot outlive a reopen after a newer complet
     `the original repair must lose to a newer completion (${JSON.stringify(repair)})`,
   );
   assert.ok(reopen, "the newer completion compensation must interleave a final reopen");
-  assert.equal(destinationRenames, 2);
+  assert.equal(projectionInterleaves, 2);
   assert.equal(existsSync(summaryPath), false, "no SUMMARY may survive the final reopen");
   assert.equal(getMilestone("M045")?.status, "active");
   assert.equal(

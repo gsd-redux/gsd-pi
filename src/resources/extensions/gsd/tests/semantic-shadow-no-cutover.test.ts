@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import { detectStuck } from "../auto/detect-stuck.ts";
+import { resolveDispatch } from "../auto-dispatch.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
 import { claimMilestoneLease } from "../db/milestone-leases.ts";
@@ -253,6 +254,58 @@ test("legacy dependency and dispatch decisions win in both disagreement directio
   );
 });
 
+test("resolveDispatch keeps legacy milestone status authoritative when canonical lifecycle disagrees", async () => {
+  const base = makeProject("gsd-no-cutover-resolve-dispatch-");
+  insertMilestone({ id: "M001", title: "Legacy active", status: "active" });
+  seedLifecycle(
+    { itemKind: "milestone", milestoneId: "M001", lifecycleStatus: "completed" },
+    "resolve-dispatch-active",
+  );
+
+  const active = await resolveDispatch({
+    basePath: base,
+    mid: "M001",
+    midTitle: "Legacy active",
+    prefs: undefined,
+    state: {
+      activeMilestone: { id: "M001", title: "Legacy active" },
+      activeSlice: null,
+      activeTask: null,
+      phase: "needs-discussion",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [{ id: "M001", title: "Legacy active", status: "active" }],
+    },
+  });
+  assert.equal(active.action, "dispatch");
+  assert.equal(active.unitType, "discuss-milestone");
+
+  insertMilestone({ id: "M002", title: "Legacy complete", status: "complete" });
+  seedLifecycle(
+    { itemKind: "milestone", milestoneId: "M002", lifecycleStatus: "in_progress" },
+    "resolve-dispatch-complete",
+  );
+  const complete = await resolveDispatch({
+    basePath: base,
+    mid: "M002",
+    midTitle: "Legacy complete",
+    prefs: undefined,
+    state: {
+      activeMilestone: { id: "M002", title: "Legacy complete" },
+      activeSlice: null,
+      activeTask: null,
+      phase: "needs-discussion",
+      recentDecisions: [],
+      blockers: [],
+      nextAction: "",
+      registry: [{ id: "M002", title: "Legacy complete", status: "complete" }],
+    },
+  });
+  assert.equal(complete.action, "stop");
+  assert.match(complete.reason, /Milestone M002 is closed/);
+});
+
 test("dispatch retry ledger remains authoritative when canonical lifecycle disagrees", () => {
   const base = makeProject("gsd-no-cutover-retry-");
   insertMilestone({ id: "M001", title: "Retry", status: "active" });
@@ -425,7 +478,7 @@ test("AST boundaries reject canonical response, decision, and hosted-metadata sa
   assert.notEqual(resolverCutover, pristine.resolver, "controlled resolver sabotage must be applied");
   const resolverChecks = analyzeNoCutoverSources({ ...pristine, resolver: resolverCutover });
   assert.equal(
-    resolverChecks.find((check) => check.id === "dispatch-resolver-authority")?.verdict,
+    resolverChecks.find((check) => check.id === "dispatch-resolver-no-canonical-read")?.verdict,
     "fail",
   );
 
@@ -455,6 +508,24 @@ test("AST boundaries reject canonical response, decision, and hosted-metadata sa
   const localWitnessChecks = analyzeNoCutoverSources({ ...pristine, validation: localWitnessImpersonation });
   assert.equal(
     localWitnessChecks.find((check) => check.id === "validation-assessment-authority")?.verdict,
+    "fail",
+  );
+
+  const omittedValidationCutover = pristine.validation.replace(
+    "  return status && isValidMilestoneVerdict(status) ? status : undefined;",
+    "  if (status === \"omitted\") return status;\n  return status && isValidMilestoneVerdict(status) ? status : undefined;",
+  );
+  assert.notEqual(
+    omittedValidationCutover,
+    pristine.validation,
+    "controlled omitted-validation sabotage must be applied",
+  );
+  const omittedValidationChecks = analyzeNoCutoverSources({
+    ...pristine,
+    validation: omittedValidationCutover,
+  });
+  assert.equal(
+    omittedValidationChecks.find((check) => check.id === "validation-assessment-authority")?.verdict,
     "fail",
   );
 

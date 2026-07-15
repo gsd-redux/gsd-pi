@@ -155,6 +155,7 @@ async function writeMilestoneSummaryProjectionIfCurrent(
     projection.closeout,
   );
   await saveFile(summaryPath, summaryMd);
+  await projectionInterleaveForTest?.();
   if (isCurrent()) return existsSync(summaryPath);
 
   await repairSupersededSummary(basePath, milestoneId, summaryPath, summaryMd);

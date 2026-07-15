@@ -311,7 +311,9 @@ export function checkCloseoutConsistencyGate(
     }
   }
 
-  if (gateClosureOptions) closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
+  if (!adoptedMilestone && gateClosureOptions) {
+    closeQualityGatesFromEvidence(milestoneId, gateClosureOptions);
+  }
 
   return { ok: true };
 }

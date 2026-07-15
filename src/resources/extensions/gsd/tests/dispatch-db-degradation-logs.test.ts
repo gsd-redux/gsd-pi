@@ -46,7 +46,7 @@ function makeExecutingState(): GSDState {
   } as GSDState;
 }
 
-test("hasMilestonePassedDiscuss logs a dispatch warning when the DB slices query throws", async (t) => {
+test("resolveDispatch fails closed when the DB slices query throws", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-dispatch-db-degrade-"));
   mkdirSync(join(base, ".gsd"), { recursive: true });
 
@@ -73,9 +73,7 @@ test("hasMilestonePassedDiscuss logs a dispatch warning when the DB slices query
       prefs: undefined,
     };
 
-    // resolveDispatch must not throw — the rule catches the DB error and falls
-    // back to the filesystem. We assert only that the degradation warning lands.
-    await resolveDispatch(ctx);
+    await assert.rejects(resolveDispatch(ctx), /no such table: slices/i);
     logs = drainLogs();
   } finally {
     _resetLogs();
@@ -88,11 +86,9 @@ test("hasMilestonePassedDiscuss logs a dispatch warning when the DB slices query
     void t;
   }
 
-  const warn = logs.find((e) => e.component === "dispatch" && e.severity === "warn");
-  assert.ok(warn, "a dispatch warning must be logged when the slices query fails");
-  assert.match(
-    warn!.message,
-    /discuss-progress DB check failed for M001, falling back to filesystem/u,
-    "warning must name the milestone and the filesystem fallback",
+  assert.equal(
+    logs.some((entry) => /falling back to filesystem/u.test(entry.message)),
+    false,
+    "DB query failure must not authorize a filesystem routing fallback",
   );
 });

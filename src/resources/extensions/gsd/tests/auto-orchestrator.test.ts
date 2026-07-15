@@ -219,6 +219,23 @@ function makeState(): GSDState {
   };
 }
 
+function openDispatchDecisionDatabase(
+  t: { after(fn: () => void): void },
+  milestones: Array<{ id: string; title: string; status: string }> = [
+    { id: "M001", title: "Milestone", status: "active" },
+  ],
+): void {
+  const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-decision-db-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  closeDatabase();
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  for (const milestone of milestones) insertMilestone(milestone);
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+}
+
 const SESSION_CONTEXT: AutoSessionContext = { basePath: "/tmp/project", trigger: "manual" };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1127,7 +1144,8 @@ test("live orchestrator base resolver keeps a captured active git worktree", (t)
 // tests. These exercise the exported pure decideOrchestratorDispatch helper.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("decideOrchestratorDispatch forwards session-derived dispatch inputs identically to runDispatch", async () => {
+test("decideOrchestratorDispatch forwards session-derived dispatch inputs identically to runDispatch", async (t) => {
+  openDispatchDecisionDatabase(t);
   const stateSnapshot = makeState();
 
   const captured: DispatchContext[] = [];
@@ -1228,7 +1246,8 @@ test("decideOrchestratorDispatch forwards session-derived dispatch inputs identi
   }
 });
 
-test("decideOrchestratorDispatch prefers caller-supplied dispatch inputs over ctx-derived values", async () => {
+test("decideOrchestratorDispatch prefers caller-supplied dispatch inputs over ctx-derived values", async (t) => {
+  openDispatchDecisionDatabase(t);
   const stateSnapshot = makeState();
   const captured: DispatchContext[] = [];
   const captureRule: UnifiedRule = {
@@ -1292,7 +1311,8 @@ test("decideOrchestratorDispatch prefers caller-supplied dispatch inputs over ct
   }
 });
 
-test("decideOrchestratorDispatch forwards constructor session when advance input omits session", async () => {
+test("decideOrchestratorDispatch forwards constructor session when advance input omits session", async (t) => {
+  openDispatchDecisionDatabase(t);
   const stateSnapshot = makeState();
   const captured: DispatchContext[] = [];
   const captureRule: UnifiedRule = {
@@ -1432,6 +1452,10 @@ test("decideOrchestratorDispatch does not replay milestone-scoped verification r
 test("decideOrchestratorDispatch adopts next active milestone after the session milestone is closed", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-milestone-adopt-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
+  openDispatchDecisionDatabase(t, [
+    { id: "M001", title: "First", status: "complete" },
+    { id: "M002", title: "Next", status: "active" },
+  ]);
 
   const stateSnapshot: GSDState = {
     ...makeState(),
@@ -1515,6 +1539,11 @@ test("decideOrchestratorDispatch keeps blocking stale milestone worktree scope",
 
 test("decideOrchestratorDispatch replays pending verification retry dispatch", async () => {
   const stateSnapshot = makeState();
+  const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-retry-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M004", title: "Milestone 4", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M004", title: "Slice", status: "active", depends: [] });
   const ctx = { model: {}, modelRegistry: { getAll: () => [], getAvailable: () => [] } } as never;
   const pi = { getActiveTools: () => [] } as never;
   const session = {
@@ -1531,7 +1560,7 @@ test("decideOrchestratorDispatch replays pending verification retry dispatch", a
     },
   } as never;
 
-  const result = await decideOrchestratorDispatch(ctx, pi, "/tmp/project-fixture", session, { stateSnapshot });
+  const result = await decideOrchestratorDispatch(ctx, pi, base, session, { stateSnapshot });
 
   assert.ok(result);
   if (!result || !("unitType" in result)) assert.fail("expected dispatch decision");
@@ -1545,6 +1574,45 @@ test("decideOrchestratorDispatch replays pending verification retry dispatch", a
   assert.equal(sess.pendingVerificationRetryDispatch, null);
   assert.equal(sess.pendingOrchestrationDispatch?.prompt, "repair slice closeout");
   assert.equal(sess.pendingOrchestrationDispatch?.state, stateSnapshot);
+  closeDatabase();
+  rmSync(base, { recursive: true, force: true });
+});
+
+test("decideOrchestratorDispatch blocks a non-slice verification retry without DB authority", async () => {
+  closeDatabase();
+  const stateSnapshot = makeState();
+  const pendingRetry = {
+    unitType: "validate-milestone",
+    unitId: "M001",
+    prompt: "retry validation",
+    pauseAfterUatDispatch: false,
+    state: stateSnapshot,
+    mid: "M001",
+    midTitle: "Milestone",
+  };
+  const session = {
+    basePath: "/tmp/worktree-fixture",
+    pendingOrchestrationDispatch: null,
+    pendingVerificationRetryDispatch: pendingRetry,
+  } as never;
+
+  const result = await decideOrchestratorDispatch(
+    { model: {}, modelRegistry: { getAll: () => [], getAvailable: () => [] } } as never,
+    { getActiveTools: () => [] } as never,
+    "/tmp/project-fixture",
+    session,
+    { stateSnapshot },
+  );
+
+  assert.deepEqual(result, {
+    kind: "blocked",
+    reason: "Cannot dispatch validate-milestone M001: workflow DB is unavailable.",
+    action: "stop",
+  });
+  assert.equal(
+    (session as unknown as { pendingVerificationRetryDispatch: unknown }).pendingVerificationRetryDispatch,
+    pendingRetry,
+  );
 });
 
 test("decideOrchestratorDispatch clears verification retry state when skipping an already closed retry dispatch", async () => {
@@ -1600,7 +1668,8 @@ test("decideOrchestratorDispatch clears verification retry state when skipping a
   }
 });
 
-test("decideOrchestratorDispatch preserves stop reason as a blocked decision", async () => {
+test("decideOrchestratorDispatch preserves stop reason as a blocked decision", async (t) => {
+  openDispatchDecisionDatabase(t);
   const stateSnapshot = makeState();
   const stopRule: UnifiedRule = {
     name: "test-stop",
@@ -1631,7 +1700,8 @@ test("decideOrchestratorDispatch preserves stop reason as a blocked decision", a
   }
 });
 
-test("decideOrchestratorDispatch preserves dispatch skip instead of collapsing it to no remaining units", async () => {
+test("decideOrchestratorDispatch preserves dispatch skip instead of collapsing it to no remaining units", async (t) => {
+  openDispatchDecisionDatabase(t);
   const stateSnapshot = makeState();
   const skipRule: UnifiedRule = {
     name: "test-skip-gate",

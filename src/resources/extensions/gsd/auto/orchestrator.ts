@@ -46,7 +46,7 @@ import {
   resolveProjectRoot,
   resolveWorktreeProjectRoot,
 } from "../worktree.js";
-import { getPriorSliceCompletionBlocker } from "../dispatch-guard.js";
+import { getDispatchAuthorityBlocker, getPriorSliceCompletionBlocker } from "../dispatch-guard.js";
 import { GitServiceImpl } from "../git-service.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { WorktreeLifecycle } from "../worktree-lifecycle.js";
@@ -233,8 +233,8 @@ export async function decideOrchestratorDispatch(
     activeSession.currentMilestoneId = active.id;
     activeSession.milestoneLeaseToken = null;
   }
-  const dispatchMid = active?.id ?? activeSession?.currentMilestoneId ?? "";
-  const dispatchMidTitle = active?.title ?? "";
+  const dispatchMid = active?.id ?? "PROJECT";
+  const dispatchMidTitle = active?.title ?? "Project setup";
 
   // Derive session-derived dispatch inputs the same way phases.ts:runDispatch does
   // (#5789). Prefer caller-supplied values when present so test harnesses and
@@ -275,7 +275,10 @@ export async function decideOrchestratorDispatch(
   // project-level deep rules like `discuss-project`.
   const pendingRetry = session?.pendingVerificationRetryDispatch;
   if (session && pendingRetry && active) {
-    session.pendingVerificationRetryDispatch = null;
+    const authorityBlocker = getDispatchAuthorityBlocker(pendingRetry.unitType, pendingRetry.unitId);
+    if (authorityBlocker) {
+      return { kind: "blocked", reason: authorityBlocker, action: "stop" };
+    }
     const alreadyClosedReason = getAlreadyClosedDispatchReason(
       pendingRetry.unitType,
       pendingRetry.unitId,
@@ -285,6 +288,7 @@ export async function decideOrchestratorDispatch(
       session.pendingVerificationRetry = null;
       return { kind: "skipped", reason: alreadyClosedReason };
     }
+    session.pendingVerificationRetryDispatch = null;
     session.pendingOrchestrationDispatch = pendingRetry;
     return {
       unitType: pendingRetry.unitType,

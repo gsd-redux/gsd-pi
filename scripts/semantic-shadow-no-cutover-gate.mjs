@@ -36,13 +36,14 @@ const DECISION_IMPORT_POLICY = Object.freeze({
   },
   dispatch: {
     required: new Set([
+      "./gsd-db.js#getAllMilestones",
       "./gsd-db.js#getMilestone",
       "./gsd-db.js#getMilestoneSliceSummaries",
     ]),
     approved: new Set([
-      "./guided-flow.js#findMilestoneIds",
       "./unit-id.js#parseUnitId",
       "./gsd-db.js#isDbAvailable",
+      "./gsd-db.js#getAllMilestones",
       "./gsd-db.js#getMilestoneSliceSummaries",
       "./gsd-db.js#getMilestone",
       "./status-guards.js#isSkippedForDispatch",
@@ -114,6 +115,12 @@ export const NO_CUTOVER_BEHAVIORAL_WITNESSES = Object.freeze([
     "skipped prior DB slices do not block later slice dispatch"),
   witness("db-unavailable-dispatch", "dispatch-guard-closed-status.test.ts",
     "DB-unavailable dispatch fails closed without trusting milestone SUMMARY"),
+  witness("db-unavailable-resolver", "dispatch-guard-closed-status.test.ts",
+    "resolveDispatch fails closed for a concrete milestone when the DB is unavailable"),
+  witness("db-unavailable-resolver-no-active", "dispatch-guard-closed-status.test.ts",
+    "resolveDispatch fails closed for a concrete milestone without active state"),
+  witness("resolve-dispatch-authority", "semantic-shadow-no-cutover.test.ts",
+    "resolveDispatch keeps legacy milestone status authoritative when canonical lifecycle disagrees"),
   witness("db-unavailable-status", "milestone-status-tool.test.ts",
     "gsd_milestone_status handles missing DB gracefully"),
   witness("state-derivation-authority", "semantic-shadow-no-cutover.test.ts",
@@ -610,6 +617,32 @@ export function analyzeLocalInputBoundary(source) {
   visit(sourceFile);
 }
 
+function analyzeValidationAssessmentBoundary(source) {
+  analyzeDecisionBoundary(
+    SOURCE_FILES.validation,
+    source,
+    ["readMilestoneValidationVerdict", "resolveMilestoneValidationVerdict"],
+    DECISION_IMPORT_POLICY.validation,
+  );
+  const sourceFile = parseSource(SOURCE_FILES.validation, source);
+  const functions = functionMap(sourceFile);
+  for (const functionName of ["readMilestoneValidationVerdict", "resolveMilestoneValidationVerdict"]) {
+    const body = functions.get(functionName)?.body;
+    if (!body) throw new Error(`${functionName} is missing`);
+    let readsOmitted = false;
+    function visit(node) {
+      if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === "omitted") {
+        readsOmitted = true;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(body);
+    if (readsOmitted) {
+      throw new Error(`${functionName} cannot promote omitted compatibility state into validation authority`);
+    }
+  }
+}
+
 export function analyzeNoCutoverSources(sources) {
   const checks = [
     ["status-response-authority", () => analyzeStatusBoundary(sources.status)],
@@ -625,7 +658,7 @@ export function analyzeNoCutoverSources(sources) {
       ["getPriorSliceCompletionBlocker"],
       DECISION_IMPORT_POLICY.dispatch,
     )],
-    ["dispatch-resolver-authority", () => analyzeResolveDispatchBoundary(sources.resolver)],
+    ["dispatch-resolver-no-canonical-read", () => analyzeResolveDispatchBoundary(sources.resolver)],
     ["retry-ledger-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.retry,
       sources.retry,
@@ -638,12 +671,7 @@ export function analyzeNoCutoverSources(sources) {
       ["handleAllSlicesDone"],
       DECISION_IMPORT_POLICY.state,
     )],
-    ["validation-assessment-authority", () => analyzeDecisionBoundary(
-      SOURCE_FILES.validation,
-      sources.validation,
-      ["readMilestoneValidationVerdict"],
-      DECISION_IMPORT_POLICY.validation,
-    )],
+    ["validation-assessment-authority", () => analyzeValidationAssessmentBoundary(sources.validation)],
     ["closed-local-inputs", () => analyzeLocalInputBoundary(sources.gate)],
   ];
 

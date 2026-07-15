@@ -34,16 +34,69 @@ test("dispatch guard blocks when prior milestone has incomplete slices", (t) => 
 
   // M003 with two pending slices
   insertMilestone({ id: "M003", title: "Current" });
-  insertSlice({ id: "S01", milestoneId: "M003", title: "First", status: "pending", depends: [], sequence: 1 });
-  insertSlice({ id: "S02", milestoneId: "M003", title: "Second", status: "pending", depends: ["S01"], sequence: 2 });
+  insertSlice({ id: "S01", milestoneId: "M003", title: "First", status: "pending", depends: [] });
+  insertSlice({ id: "S02", milestoneId: "M003", title: "Second", status: "pending", depends: ["S01"] });
 
-  // Need ROADMAP files for milestone discovery (findMilestoneIds reads disk)
+  // Projections may exist, but DB rows determine dispatch order.
   writeFileSync(join(repo, ".gsd", "milestones", "M002", "M002-ROADMAP.md"), "# M002\n");
   writeFileSync(join(repo, ".gsd", "milestones", "M003", "M003-ROADMAP.md"), "# M003\n");
 
   assert.equal(
     getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M003/S01"),
     "Cannot dispatch plan-slice M003/S01: earlier slice M002/S02 is not complete.",
+  );
+});
+
+test("dispatch guard uses legacy DB ordering even when projections omit an earlier milestone", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+  mkdirSync(join(repo, ".gsd", "milestones", "M002"), { recursive: true });
+
+  insertMilestone({ id: "M001", title: "Previous", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Pending", status: "pending", depends: [] });
+  insertMilestone({ id: "M002", title: "Current", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M002", title: "Target", status: "pending", depends: [] });
+  writeFileSync(join(repo, ".gsd", "milestones", "M002", "M002-ROADMAP.md"), "# M002\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M002/S01"),
+    "Cannot dispatch plan-slice M002/S01: earlier slice M001/S01 is not complete.",
+  );
+});
+
+test("dispatch guard fails closed on missing legacy DB routing rows", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+  mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
+  writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# M001\n");
+
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M001/S01") ?? "",
+    /milestone M001 is missing from the workflow DB/i,
+  );
+
+  insertMilestone({ id: "M001", title: "Current", status: "active" });
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M001/S01") ?? "",
+    /has no slice rows in the workflow DB/i,
+  );
+
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Other", status: "pending", depends: [] });
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M001/S01") ?? "",
+    /slice M001\/S01 is missing from the workflow DB/i,
+  );
+});
+
+test("dispatch guard fails closed when a declared dependency row is missing", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+  insertMilestone({ id: "M001", title: "Current", status: "active" });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Target", status: "pending", depends: ["S01"] });
+
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M001/S02/T01") ?? "",
+    /dependency slice M001\/S01 is missing from the workflow DB/i,
   );
 });
 

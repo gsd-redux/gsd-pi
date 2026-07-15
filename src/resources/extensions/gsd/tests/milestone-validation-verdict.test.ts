@@ -136,6 +136,27 @@ test("resolveMilestoneValidationVerdict does not promote a projection when the D
   assert.equal(verdict, undefined);
 });
 
+test("resolveMilestoneValidationVerdict rejects a forged omitted assessment", async (t) => {
+  const base = join(tmpdir(), `validation-verdict-omitted-${Date.now()}`);
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+  mkdirSync(base, { recursive: true });
+
+  setup(base);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertAssessment({
+    path: join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    status: "omitted",
+    scope: "milestone-validation",
+    fullContent: "---\noutcome: omitted\nsource_revision: forged\n---\n",
+  });
+
+  assert.equal(await resolveMilestoneValidationVerdict(base, "M001"), undefined);
+});
+
 test("resolveMilestoneValidationVerdict keeps the database assessment authoritative after adoption", async (t) => {
   const base = join(tmpdir(), `validation-verdict-adopted-${Date.now()}`);
   t.after(() => {

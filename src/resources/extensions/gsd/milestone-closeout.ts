@@ -186,8 +186,15 @@ export async function runMilestoneCloseoutGitHub(basePath: string, mid: string):
 export async function evaluateCompleteMilestoneDispatch(
   ctx: DispatchContext,
 ): Promise<DispatchAction | null> {
-  const { state, mid, midTitle, basePath, prefs } = ctx;
-  if (state.phase !== "completing-milestone") return null;
+  if (ctx.state.phase !== "completing-milestone") return null;
+  return evaluateGuardedCompleteMilestoneDispatch(ctx);
+}
+
+/** Run the complete-milestone guards independently of legacy state derivation. */
+export async function evaluateGuardedCompleteMilestoneDispatch(
+  ctx: DispatchContext,
+): Promise<DispatchAction> {
+  const { mid, midTitle, basePath, prefs } = ctx;
   const adoptedMilestone = isDbAvailable() && isMilestoneLifecycleAdopted(mid);
 
   if (isDbAvailable()) {
