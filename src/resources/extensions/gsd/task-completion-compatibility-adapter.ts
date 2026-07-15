@@ -14,13 +14,13 @@ import type { ExecutionInvocation } from "./execution-invocation.js";
 import {
   getTask,
   getSlice,
-  insertTask,
-  insertVerificationEvidence,
-  transaction,
 } from "./gsd-db.js";
 import { renderPlanCheckboxes, renderTaskSummary } from "./markdown-renderer.js";
 import { clearPathCache, resolveTaskFile } from "./paths.js";
-import { settleTaskAttempt } from "./task-execution-domain-operation.js";
+import {
+  settleTaskAttempt,
+  type StagedTaskCompletionMutation,
+} from "./task-execution-domain-operation.js";
 import { readTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import {
@@ -192,14 +192,26 @@ function runningAttemptId(task: TaskCompletionIdentity): string {
   return String(attempt["attempt_id"]);
 }
 
-function stageLegacyTask(input: StageTaskCompletionInput): void {
-  const existing = requireTask(input.task);
-  const values = {
-    id: input.task.taskId,
-    sliceId: input.task.sliceId,
-    milestoneId: input.task.milestoneId,
-    title: existing.title,
+function buildStagedTaskCompletion(
+  input: StageTaskCompletionInput,
+  existing: TaskRow,
+): StagedTaskCompletionMutation {
+  const staged = {
+    ...existing,
     status: "in_progress",
+    completed_at: null,
+    one_liner: input.completion.oneLiner,
+    narrative: input.completion.narrative,
+    verification_result: input.completion.verification,
+    blocker_discovered: input.completion.blockerDiscovered,
+    deviations: input.completion.deviations,
+    known_issues: input.completion.knownIssues,
+    key_files: input.completion.keyFiles,
+    key_decisions: input.completion.keyDecisions,
+    full_summary_md: "",
+  } satisfies TaskRow;
+  return {
+    task: input.task,
     oneLiner: input.completion.oneLiner,
     narrative: input.completion.narrative,
     verificationResult: input.completion.verification,
@@ -208,23 +220,14 @@ function stageLegacyTask(input: StageTaskCompletionInput): void {
     knownIssues: input.completion.knownIssues,
     keyFiles: input.completion.keyFiles,
     keyDecisions: input.completion.keyDecisions,
-    sequence: existing.sequence,
-  };
-
-  transaction(() => {
-    insertTask(values);
-    const staged = requireTask(input.task);
-    const summary = renderSummaryContent(
+    fullSummaryMd: renderSummaryContent(
       staged,
       input.task.sliceId,
       input.task.milestoneId,
       input.completion.verificationEvidence,
-    );
-    insertTask({ ...values, fullSummaryMd: summary });
-    for (const evidence of input.completion.verificationEvidence) {
-      insertVerificationEvidence({ ...input.task, ...evidence });
-    }
-  });
+    ),
+    verificationEvidence: input.completion.verificationEvidence,
+  };
 }
 
 async function renderTaskSummaryProjection(
@@ -274,15 +277,12 @@ export async function stageTaskCompletion(
 ): Promise<StagedTaskCompletionReceipt> {
   const replayAttempt = replayAttemptId(input.invocation.idempotencyKey, input.task);
   const task = requireTask(input.task);
-  const legacyClosed = task.status === "complete" || task.status === "done";
+  const legacyClosed = ["complete", "done", "closed"].includes(task.status);
   if (legacyClosed && !replayAttempt) {
     throw new Error("A newly committed Task settlement cannot target an already-complete legacy Task");
   }
   const attemptId = replayAttempt ?? runningAttemptId(input.task);
   const blocked = input.completion.blockerDiscovered;
-  if (!legacyClosed) {
-    stageLegacyTask(input);
-  }
   const settlement = settleTaskAttempt({
     invocation: input.invocation,
     attemptId,
@@ -304,6 +304,7 @@ export async function stageTaskCompletion(
       keyFiles: input.completion.keyFiles,
       keyDecisions: input.completion.keyDecisions,
     },
+    stagedTaskCompletion: buildStagedTaskCompletion(input, task),
   });
 
   const summaryPath = await renderTaskSummaryProjection(input.basePath, input.task);

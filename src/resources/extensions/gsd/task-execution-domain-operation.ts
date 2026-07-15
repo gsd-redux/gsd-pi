@@ -64,6 +64,30 @@ export interface SettleTaskAttemptInput {
     workerId: string;
     milestoneLeaseToken: number;
   };
+  stagedTaskCompletion?: StagedTaskCompletionMutation;
+}
+
+export interface StagedTaskCompletionMutation {
+  task: {
+    milestoneId: string;
+    sliceId: string;
+    taskId: string;
+  };
+  oneLiner: string;
+  narrative: string;
+  verificationResult: string;
+  blockerDiscovered: boolean;
+  deviations: string;
+  knownIssues: string;
+  keyFiles: string[];
+  keyDecisions: string[];
+  fullSummaryMd: string;
+  verificationEvidence: Array<{
+    command: string;
+    exitCode: number;
+    verdict: string;
+    durationMs: number;
+  }>;
 }
 
 export interface SettleTaskAttemptReceipt {
@@ -243,6 +267,96 @@ function loadSettledResult(operationId: string): SettledResultRow {
   return result;
 }
 
+function stageTaskCompletion(
+  context: Readonly<DomainOperationContext>,
+  attempt: Readonly<AttemptExecutionRow>,
+  completion: Readonly<StagedTaskCompletionMutation>,
+): void {
+  if (
+    completion.task.milestoneId !== attempt.milestone_id ||
+    completion.task.sliceId !== attempt.slice_id ||
+    completion.task.taskId !== attempt.task_id
+  ) {
+    throw new Error("Staged Task completion does not match the settlement Attempt");
+  }
+
+  const updated = getDb().prepare(`
+    UPDATE tasks
+    SET status = 'in_progress',
+        completed_at = NULL,
+        one_liner = :one_liner,
+        narrative = :narrative,
+        verification_result = :verification_result,
+        blocker_discovered = :blocker_discovered,
+        deviations = :deviations,
+        known_issues = :known_issues,
+        key_files = :key_files,
+        key_decisions = :key_decisions,
+        full_summary_md = :full_summary_md
+    WHERE milestone_id = :milestone_id
+      AND slice_id = :slice_id
+      AND id = :task_id
+      AND status NOT IN ('complete', 'done', 'closed')
+  `).run({
+    ":milestone_id": completion.task.milestoneId,
+    ":slice_id": completion.task.sliceId,
+    ":task_id": completion.task.taskId,
+    ":one_liner": completion.oneLiner,
+    ":narrative": completion.narrative,
+    ":verification_result": completion.verificationResult,
+    ":blocker_discovered": completion.blockerDiscovered ? 1 : 0,
+    ":deviations": completion.deviations,
+    ":known_issues": completion.knownIssues,
+    ":key_files": JSON.stringify(completion.keyFiles),
+    ":key_decisions": JSON.stringify(completion.keyDecisions),
+    ":full_summary_md": completion.fullSummaryMd,
+  }) as { changes: number };
+  if (updated.changes !== 1) {
+    throw new Error("Staged Task completion target is missing or already complete");
+  }
+
+  const insertEvidence = getDb().prepare(`
+    INSERT OR IGNORE INTO verification_evidence (
+      task_id, slice_id, milestone_id, command, exit_code, verdict, duration_ms, created_at
+    )
+    SELECT :task_id, :slice_id, :milestone_id, :command, :exit_code, :verdict,
+           :duration_ms, operation.created_at
+    FROM workflow_operations operation
+    WHERE operation.operation_id = :operation_id
+  `);
+  for (const evidence of completion.verificationEvidence) {
+    insertEvidence.run({
+      ":task_id": completion.task.taskId,
+      ":slice_id": completion.task.sliceId,
+      ":milestone_id": completion.task.milestoneId,
+      ":command": evidence.command,
+      ":exit_code": evidence.exitCode,
+      ":verdict": evidence.verdict,
+      ":duration_ms": evidence.durationMs,
+      ":operation_id": context.operationId,
+    });
+  }
+}
+
+function stagedTaskCompletionPayload(
+  completion: StagedTaskCompletionMutation | undefined,
+): DomainJsonValue {
+  if (!completion) return null;
+  return {
+    task: completion.task,
+    oneLiner: completion.oneLiner,
+    narrative: completion.narrative,
+    verificationResult: completion.verificationResult,
+    blockerDiscovered: completion.blockerDiscovered,
+    deviations: completion.deviations,
+    knownIssues: completion.knownIssues,
+    keyFiles: completion.keyFiles,
+    keyDecisions: completion.keyDecisions,
+    fullSummaryMd: completion.fullSummaryMd,
+    verificationEvidence: completion.verificationEvidence.map((evidence) => ({ ...evidence })),
+  };
+}
+
 function nextStage(outcome: SettleTaskAttemptInput["outcome"]): "verify" | "route" {
   return outcome === "succeeded" ? "verify" : "route";
 }
@@ -386,6 +500,9 @@ export function claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttempt
 }
 
 export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt {
+  if (input.recovery && input.stagedTaskCompletion) {
+    throw new Error("Staged Task completion belongs only to attempt.settle");
+  }
   const fence = readDomainOperationFence(input.invocation.idempotencyKey);
   let settledResultId: string | undefined;
   const operation = executeDomainOperation({
@@ -405,9 +522,15 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
       summary: input.summary,
       output: input.output,
       recovery: input.recovery ?? null,
+      ...(input.stagedTaskCompletion
+        ? { stagedTaskCompletion: stagedTaskCompletionPayload(input.stagedTaskCompletion) }
+        : {}),
     },
   }, (context) => {
     const attempt = loadAttemptExecution(input.attemptId);
+    if (input.stagedTaskCompletion) {
+      stageTaskCompletion(context, attempt, input.stagedTaskCompletion);
+    }
     const settled = settleAttemptWithResult(context, input);
     terminalizeTaskExecutionDispatch(context, {
       dispatchId: attempt.coordination_dispatch_id,

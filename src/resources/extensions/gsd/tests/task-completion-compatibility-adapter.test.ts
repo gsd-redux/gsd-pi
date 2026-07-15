@@ -111,6 +111,10 @@ function row(sql: string): Record<string, unknown> {
   return db().prepare(sql).get() ?? {};
 }
 
+function rows(sql: string): Record<string, unknown>[] {
+  return db().prepare(sql).all().map((entry) => ({ ...entry }));
+}
+
 function count(table: string): number {
   return Number(row(`SELECT COUNT(*) AS count FROM ${table}`).count ?? 0);
 }
@@ -278,6 +282,27 @@ function taskState(): Record<string, unknown> {
   `);
 }
 
+function settlementState(): Record<string, unknown> {
+  return {
+    authority: row("SELECT revision, authority_epoch FROM project_authority"),
+    task: row(`
+      SELECT status, completed_at, one_liner, narrative, verification_result,
+             blocker_discovered, deviations, known_issues, key_files,
+             key_decisions, full_summary_md
+      FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `),
+    evidence: rows("SELECT * FROM verification_evidence ORDER BY id"),
+    attempts: rows("SELECT * FROM workflow_execution_attempts ORDER BY attempt_number"),
+    results: rows("SELECT * FROM workflow_attempt_results ORDER BY created_at"),
+    operations: rows("SELECT * FROM workflow_operations ORDER BY resulting_revision"),
+    events: rows("SELECT * FROM workflow_domain_events ORDER BY project_revision, event_index"),
+    outbox: rows("SELECT * FROM workflow_outbox ORDER BY outbox_id"),
+    projections: rows("SELECT * FROM workflow_projection_work ORDER BY source_project_revision"),
+    dispatches: rows("SELECT * FROM unit_dispatches ORDER BY id"),
+    checkpoints: rows("SELECT * FROM workflow_kernel_checkpoints ORDER BY sequence"),
+  };
+}
+
 afterEach(() => {
   _setDomainOperationFaultForTest(null);
   closeDatabase();
@@ -313,6 +338,73 @@ test("staging settles the canonical Attempt but leaves legacy completion and its
   assert.match(readFileSync(staged.summaryPath, "utf8"), /host verification is still required/i);
   assert.match(readFileSync(planPath, "utf8"), /\[ \][^\n]*\*\*T01/);
   assert.equal(count("verification_evidence"), 1);
+});
+
+test("staging normalizes a pending legacy Task and clears its stale completion timestamp", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  db().prepare(`
+    UPDATE tasks
+    SET status = 'pending', completed_at = '2026-07-12T00:05:00.000Z'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+
+  const staged = await stageTaskCompletion(stageInput(basePath));
+
+  assert.equal(staged.status, "committed");
+  assert.deepEqual(
+    row("SELECT status, completed_at FROM tasks WHERE id = 'T01'"),
+    { status: "in_progress", completed_at: null },
+  );
+  assert.equal(existsSync(staged.summaryPath), true);
+  assert.match(readFileSync(staged.summaryPath, "utf8"), /Implemented the compatibility seam/);
+});
+
+for (const fault of [
+  "after-operation",
+  "after-mutation",
+  "after-events",
+  "after-outbox",
+  "after-projections",
+  "before-cas",
+] as const) {
+  test(`stage ${fault} fault restores the exact pre-settlement snapshot`, async () => {
+    const { stageTaskCompletion } = await subject();
+    const { basePath } = createFixture();
+    db().prepare(`
+      UPDATE tasks
+      SET status = 'pending', completed_at = '2026-07-12T00:05:00.000Z'
+      WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+    `).run();
+    const before = settlementState();
+    _setDomainOperationFaultForTest(fault);
+
+    await assert.rejects(
+      stageTaskCompletion(stageInput(basePath)),
+      new RegExp(`domain operation fault: ${fault}`, "i"),
+    );
+
+    assert.deepEqual(settlementState(), before);
+  });
+}
+
+test("changed stage replay payload conflicts without restaging Task metadata or evidence", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  const before = settlementState();
+  const changed = stageInput(basePath);
+  changed.completion.narrative = "A different candidate narrative must not overwrite committed staging.";
+  changed.completion.verificationEvidence = [{
+    command: "npm run changed-verification",
+    exitCode: 0,
+    verdict: "pass",
+    durationMs: 50,
+  }];
+
+  await assert.rejects(stageTaskCompletion(changed), /idempotency|payload|request|conflict/i);
+
+  assert.deepEqual(settlementState(), before);
 });
 
 test("a summary projection failure leaves the immutable Result and staged legacy state intact for replay repair", async (t) => {
