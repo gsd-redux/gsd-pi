@@ -63,6 +63,10 @@ async function importBridgeModule(): Promise<GsdMcpBridge> {
 type WorkflowToolExecutors = {
   SUPPORTED_SUMMARY_ARTIFACT_TYPES: readonly string[];
   MILESTONE_STATUS_OBSERVATION_TOKEN_ENV?: string;
+  readMilestoneStatusObservationTurn?: (
+    basePath: string,
+    token: string,
+  ) => unknown;
   resolveMilestoneStatusObservationContext?: (
     basePath: string,
     transport: "native_pi" | "workflow_mcp",
@@ -976,6 +980,19 @@ async function getWorkflowToolExecutors(): Promise<WorkflowToolExecutors> {
 export async function warmWorkflowToolBridges(): Promise<void> {
   await getWorkflowToolExecutors();
   await getWorkflowWriteGateModule();
+}
+
+export async function isMilestoneStatusObservationTokenActive(
+  projectDir: string,
+  token: string,
+): Promise<boolean> {
+  if (!token.trim()) return false;
+  try {
+    const executors = await getWorkflowToolExecutors();
+    return Boolean(executors.readMilestoneStatusObservationTurn?.(projectDir, token));
+  } catch {
+    return false;
+  }
 }
 
 async function getWorkflowWriteGateModule(): Promise<WorkflowWriteGateModule> {

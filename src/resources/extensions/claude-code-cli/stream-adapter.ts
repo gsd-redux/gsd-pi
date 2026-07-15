@@ -85,7 +85,6 @@ import {
 	MILESTONE_STATUS_OBSERVATION_PENDING_SOURCE_REVISION,
 } from "../gsd/milestone-status-observation-context.js";
 import { resolveUokFlags } from "../gsd/uok/flags.js";
-import { captureMilestoneVerificationSourceRevision } from "../gsd/verification-source-integrity.js";
 import { hasBrowserContractPrefix } from "../shared/browser-contract.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
@@ -125,7 +124,6 @@ interface ClaudeCodeStreamOptions extends SimpleStreamOptions {
 		options?: Record<string, unknown>;
 	}) => AsyncIterable<SDKMessage>;
 	_skipWorkflowMcpPreflightForTest?: boolean;
-	_captureMilestoneVerificationSourceRevisionForTest?: typeof captureMilestoneVerificationSourceRevision;
 }
 
 export function serverToolUseToToolCallLike(block: {

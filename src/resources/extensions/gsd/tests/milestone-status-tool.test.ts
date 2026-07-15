@@ -7,7 +7,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { registerQueryTools } from "../bootstrap/query-tools.ts";
+import {
+  clearNativeMilestoneStatusSourceRevisions,
+  prepareNativeMilestoneStatusSourceRevision,
+  registerQueryTools,
+} from "../bootstrap/query-tools.ts";
 import {
   openDatabase,
   closeDatabase,
@@ -31,6 +35,7 @@ function makeTmpBase(): string {
 }
 
 function cleanup(base: string): void {
+  clearNativeMilestoneStatusSourceRevisions();
   try { rmSync(base, { recursive: true, force: true }); } catch { /* swallow */ }
 }
 
@@ -42,7 +47,10 @@ async function executeToolInDir(tool: any, params: Record<string, unknown>, dir:
   const originalCwd = process.cwd();
   try {
     process.chdir(dir);
-    return await tool.execute("test-call-id", params, undefined, undefined, undefined);
+    return await tool.execute("test-call-id", params, undefined, undefined, {
+      cwd: dir,
+      sessionManager: { getSessionId: () => "test-session" },
+    });
   } finally {
     process.chdir(originalCwd);
   }
@@ -123,6 +131,11 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
     const pi = makeMockPi();
     registerQueryTools(pi);
     const tool = pi.tools[0];
+    let captures = 0;
+    prepareNativeMilestoneStatusSourceRevision(base, "test-session", () => {
+      captures += 1;
+      return { ok: true, sourceRevision: "sha256:turn-bound-source" };
+    });
 
     const result = await executeToolInDir(tool, { milestoneId: "M001" }, base);
     const parsed = JSON.parse(result.content[0].text);
@@ -153,9 +166,10 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
     const payload = JSON.parse(String(audit["payload_json"]));
     assert.equal(payload.mode, "interactive");
     assert.equal(payload.transport, "native_pi");
-    assert.equal(payload.sourceRevision, "unavailable");
+    assert.equal(captures, 1);
+    assert.equal(payload.sourceRevision, "sha256:turn-bound-source");
     assert.equal(payload.traceId, "test-call-id");
-    assert.equal(payload.turnId, null);
+    assert.equal(payload.turnId, "test-session");
   } finally {
     closeDatabase();
     cleanup(base);

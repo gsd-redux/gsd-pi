@@ -4,7 +4,10 @@ import { Worker } from 'node:worker_threads';
 import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
 import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
-import { warmWorkflowToolBridges } from './workflow-tools.js';
+import {
+  isMilestoneStatusObservationTokenActive,
+  warmWorkflowToolBridges,
+} from './workflow-tools.js';
 import { isMcpProbeSession } from './probe-mode.js';
 import {
   registerMcpInstance,
@@ -101,6 +104,10 @@ export interface RunMcpServerCliOptions {
   createMcpServer?: (sessionManager: SessionManagerLike) => Promise<{ server: McpServerLike }>;
   importStdioServerTransport?: () => Promise<{ StdioServerTransport: StdioTransportConstructor }>;
   warmWorkflowToolBridges?: () => Promise<unknown> | unknown;
+  isMilestoneStatusObservationTokenActive?: (
+    projectDir: string,
+    token: string,
+  ) => Promise<boolean> | boolean;
   stdin?: Readable;
   stdout?: Writable;
   stderr?: Writable;
@@ -216,13 +223,16 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
   );
   const importTransport = options.importStdioServerTransport ?? importDefaultStdioServerTransport;
   const warmBridges = options.warmWorkflowToolBridges ?? warmWorkflowToolBridges;
+  const observationTokenActive = options.isMilestoneStatusObservationTokenActive
+    ?? isMilestoneStatusObservationTokenActive;
 
   loadEnv();
 
   const projectDir = env.GSD_WORKFLOW_PROJECT_ROOT || cwd();
   const probeSession = isMcpProbeSession(env);
+  const observationToken = env.GSD_MILESTONE_STATUS_OBSERVATION_TOKEN?.trim();
   const pumpScopedObservationSession = Boolean(
-    env.GSD_MILESTONE_STATUS_OBSERVATION_TOKEN?.trim(),
+    observationToken && await observationTokenActive(projectDir, observationToken),
   );
   let registered = false;
   let cleaningUp = false;

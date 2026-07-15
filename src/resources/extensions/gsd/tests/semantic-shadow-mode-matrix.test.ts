@@ -9,10 +9,17 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { registerWorkflowTools } from "../../../../../packages/mcp-server/src/workflow-tools.ts";
+import {
+  isMilestoneStatusObservationTokenActive,
+  registerWorkflowTools,
+} from "../../../../../packages/mcp-server/src/workflow-tools.ts";
 import { streamViaClaudeCode } from "../../claude-code-cli/stream-adapter.ts";
 import { autoSession } from "../auto-runtime-state.ts";
-import { registerQueryTools } from "../bootstrap/query-tools.ts";
+import {
+  clearNativeMilestoneStatusSourceRevisions,
+  prepareNativeMilestoneStatusSourceRevision,
+  registerQueryTools,
+} from "../bootstrap/query-tools.ts";
 import {
   executeDomainOperation,
   type DomainJsonValue,
@@ -97,6 +104,7 @@ afterEach(() => {
   autoSession.reset();
   clearGuidedUnitContext();
   clearGSDPreferencesCache();
+  clearNativeMilestoneStatusSourceRevisions();
   closeDatabase();
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.clear();
@@ -285,15 +293,13 @@ function configureNativeMode(
   writeUokPreference(basePath, { enabled: false });
 }
 
-function makeNativePiTool(captureSourceRevision?: SourceRevisionCapture) {
+function makeNativePiTool() {
   const tools: Array<Record<string, any>> = [];
   registerQueryTools({
     registerTool(tool: Record<string, any>) {
       tools.push(tool);
     },
-  } as any, captureSourceRevision ? {
-    captureMilestoneVerificationSourceRevision: captureSourceRevision,
-  } : undefined);
+  } as any);
   const tool = tools.find((candidate) => candidate.name === "gsd_milestone_status");
   assert.ok(tool, "native Pi milestone status registration is required");
   return tool;
@@ -367,7 +373,14 @@ async function runNativeCell(
   captureSourceRevision?: SourceRevisionCapture,
 ): Promise<any> {
   configureNativeMode(mode, basePath, context);
-  const tool = makeNativePiTool(captureSourceRevision);
+  if (captureSourceRevision && context.turnId) {
+    prepareNativeMilestoneStatusSourceRevision(
+      basePath,
+      context.turnId,
+      captureSourceRevision,
+    );
+  }
+  const tool = makeNativePiTool();
   return tool.execute(
     context.traceId,
     { milestoneId: "M001" },
@@ -400,7 +413,6 @@ async function runMcpCell(
     {
       cwd: basePath,
       _skipWorkflowMcpPreflightForTest: true,
-      _captureMilestoneVerificationSourceRevisionForTest: captureSourceRevision,
       async *_sdkQueryForTest(args: {
         prompt: string | AsyncIterable<unknown>;
         options?: Record<string, unknown>;
@@ -728,7 +740,7 @@ test("pending turn source capture occurs once on first status observation", () =
   assert.equal(second.sourceRevision, "sha256:lazy-source");
 });
 
-test("overlapping turns resolve only the exact private capability token", () => {
+test("overlapping turns resolve only the exact private capability token", async () => {
   const basePath = makeBase("gsd-shadow-matrix-overlap-");
   const firstToken = beginMilestoneStatusObservationTurn(basePath, {
     mode: "auto",
@@ -744,6 +756,8 @@ test("overlapping turns resolve only the exact private capability token", () => 
   });
   assert.ok(firstToken);
   assert.ok(secondToken);
+  assert.equal(await isMilestoneStatusObservationTokenActive(basePath, firstToken), true);
+  assert.equal(await isMilestoneStatusObservationTokenActive(basePath, "unknown-token"), false);
 
   assert.deepEqual(
     resolveMilestoneStatusObservationContext(basePath, "workflow_mcp", firstToken),

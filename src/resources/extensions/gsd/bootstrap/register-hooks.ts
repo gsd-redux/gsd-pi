@@ -87,6 +87,10 @@ import { resolveWorkflowToolBasePath } from "./dynamic-tools.js";
 import { getRequiredWorkflowToolsForUnit } from "../unit-tool-contracts.js";
 import { flushAllManifests } from "../workflow-manifest.js";
 import { recordUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
+import {
+  clearNativeMilestoneStatusSourceRevisions,
+  prepareNativeMilestoneStatusSourceRevision,
+} from "./query-tools.js";
 
 let approvalQuestionAbortInFlight = false;
 
@@ -1033,6 +1037,7 @@ export function registerHooks(
     }
     resetWriteGateState(basePath);
     resetToolCallLoopGuard();
+    clearNativeMilestoneStatusSourceRevisions();
     await applyToolCallLoopGuardConfig(basePath);
     approvalQuestionAbortInFlight = false;
     clearDeferredApprovalGate();
@@ -1126,6 +1131,7 @@ export function registerHooks(
     initSessionNotifications(ctx);
     resetWriteGateState(basePath);
     resetToolCallLoopGuard();
+    clearNativeMilestoneStatusSourceRevisions();
     await applyToolCallLoopGuardConfig(basePath);
     clearDeferredApprovalGate();
     clearDeferredDestructiveConfirmationPause();
@@ -1151,6 +1157,14 @@ export function registerHooks(
     } else {
       ctx.ui.setWidget("gsd-health", undefined);
     }
+  });
+
+  pi.on("turn_start", (_event, ctx: ExtensionContext) => {
+    if (!pi.getActiveTools().includes("gsd_milestone_status")) return;
+    prepareNativeMilestoneStatusSourceRevision(
+      contextBasePath(ctx),
+      ctx.sessionManager.getSessionId(),
+    );
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {

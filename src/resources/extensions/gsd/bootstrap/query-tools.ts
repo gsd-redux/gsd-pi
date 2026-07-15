@@ -19,8 +19,42 @@ import { resolveWorkflowMcpProjectRoot } from "../workflow-mcp.js";
 
 type SourceRevisionCapture = typeof captureMilestoneVerificationSourceRevision;
 
-interface QueryToolDependencies {
-  captureMilestoneVerificationSourceRevision?: SourceRevisionCapture;
+interface NativeSourceRevision {
+  sourceRevision: string;
+  contextError?: "unavailable";
+}
+
+const nativeSourceRevisions = new Map<string, NativeSourceRevision>();
+
+function nativeSourceRevisionKey(basePath: string, sessionId: string): string {
+  return `${resolveWorkflowMcpProjectRoot(basePath)}\0${sessionId}`;
+}
+
+export function clearNativeMilestoneStatusSourceRevisions(): void {
+  nativeSourceRevisions.clear();
+}
+
+export function prepareNativeMilestoneStatusSourceRevision(
+  basePath: string,
+  sessionId: string,
+  captureSourceRevision: SourceRevisionCapture = captureMilestoneVerificationSourceRevision,
+): void {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return;
+  let sourceRevision = "unavailable";
+  let contextError: "unavailable" | undefined;
+  try {
+    const preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
+    const captured = captureSourceRevision(basePath, preferences);
+    if (captured.ok) sourceRevision = captured.sourceRevision;
+    else contextError = "unavailable";
+  } catch {
+    contextError = "unavailable";
+  }
+  nativeSourceRevisions.set(
+    nativeSourceRevisionKey(basePath, normalizedSessionId),
+    { sourceRevision, ...(contextError ? { contextError } : {}) },
+  );
 }
 
 function contextSessionId(ctx: unknown): string | undefined {
@@ -39,27 +73,22 @@ function nativeMilestoneStatusContext(
   basePath: string,
   toolCallId: string,
   sessionId: string | undefined,
-  captureSourceRevision: SourceRevisionCapture,
 ): MilestoneStatusObservationContext {
   let uok: ReturnType<typeof resolveUokFlags> | undefined;
-  let preferences: Parameters<SourceRevisionCapture>[1];
   let contextError: "unavailable" | undefined;
   let guidedActive = false;
   try {
-    preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
+    const preferences = loadEffectiveGSDPreferences(basePath)?.preferences;
     uok = resolveUokFlags(preferences);
     guidedActive = getGuidedUnitContext(basePath) !== null;
   } catch {
     contextError = "unavailable";
   }
-  let sourceRevision = "unavailable";
-  try {
-    const captured = captureSourceRevision(basePath, preferences);
-    if (captured.ok) sourceRevision = captured.sourceRevision;
-    else contextError = "unavailable";
-  } catch {
-    contextError = "unavailable";
-  }
+  const preparedSource = sessionId
+    ? nativeSourceRevisions.get(nativeSourceRevisionKey(basePath, sessionId))
+    : undefined;
+  const sourceRevision = preparedSource?.sourceRevision ?? "unavailable";
+  if (!preparedSource || preparedSource.contextError) contextError = "unavailable";
   const projectRoot = resolveWorkflowMcpProjectRoot(basePath);
   const autoActive = autoSession.active && [autoSession.originalBasePath, autoSession.basePath]
     .some((candidate) => candidate && resolveWorkflowMcpProjectRoot(candidate) === projectRoot);
@@ -82,10 +111,7 @@ function nativeMilestoneStatusContext(
 
 export function registerQueryTools(
   pi: ExtensionAPI,
-  dependencies: QueryToolDependencies = {},
 ): void {
-  const captureSourceRevision = dependencies.captureMilestoneVerificationSourceRevision
-    ?? captureMilestoneVerificationSourceRevision;
   pi.registerTool({
     name: "gsd_milestone_status",
     label: "Milestone Status",
@@ -107,7 +133,7 @@ export function registerQueryTools(
       const result = await executeMilestoneStatus(
         params,
         basePath,
-        nativeMilestoneStatusContext(basePath, toolCallId, sessionId, captureSourceRevision),
+        nativeMilestoneStatusContext(basePath, toolCallId, sessionId),
       );
       if (result.details?.error === "db_unavailable") {
         return {

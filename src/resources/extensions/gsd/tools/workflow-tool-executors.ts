@@ -25,6 +25,7 @@ import {
 } from "../lifecycle-shadow-observation.js";
 export {
   MILESTONE_STATUS_OBSERVATION_TOKEN_ENV,
+  readMilestoneStatusObservationTurn,
   resolveMilestoneStatusObservationContext,
 } from "../milestone-status-observation-context.js";
 import { emitLifecycleShadowObservation } from "../uok/audit.js";
