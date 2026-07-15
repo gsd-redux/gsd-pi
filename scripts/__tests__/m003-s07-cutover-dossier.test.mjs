@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -587,8 +587,9 @@ test("bare --check validates and byte-compares the default checked dossier", () 
   }), /byte|canonical|stale/i);
 });
 
-test("explicit --output writes a validated generated dossier", () => {
+test("explicit --output writes a validated generated dossier", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "m003-s07-dossier-output-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const inputPath = join(directory, "input.json");
   const outputPath = join(directory, "dossier.json");
   writeFileSync(inputPath, `${JSON.stringify(validInput())}\n`);
@@ -608,8 +609,9 @@ test("explicit --output writes a validated generated dossier", () => {
   );
 });
 
-test("CLI renders a validated local fixture without writing production JSON", () => {
+test("CLI renders a validated local fixture without writing production JSON", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "m003-s07-dossier-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const inputPath = join(directory, "input.json");
   writeFileSync(inputPath, `${JSON.stringify(validInput())}\n`);
 
