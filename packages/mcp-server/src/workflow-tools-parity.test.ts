@@ -449,6 +449,14 @@ describe("ADR-008 parity: shared workflow write tools native vs MCP", () => {
             ?? {}) as Record<string, unknown>,
         );
         assert.deepEqual(nativeDetails, mcpDetails, "milestone status details must match between transports");
+        const observation = _getAdapter()!.prepare(`
+          SELECT payload_json FROM audit_events
+          WHERE type = 'lifecycle-shadow-observed'
+        `).get();
+        assert.ok(observation, "MCP status reads must persist an observation");
+        const payload = JSON.parse(String(observation["payload_json"]));
+        assert.equal(payload.transport, "workflow_mcp");
+        assert.equal(payload.mode, "legacy");
       },
     });
   });

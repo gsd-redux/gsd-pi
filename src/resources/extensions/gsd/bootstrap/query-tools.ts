@@ -24,15 +24,16 @@ export function registerQueryTools(pi: ExtensionAPI): void {
       milestoneId: Type.String({ description: "Milestone ID to query (e.g. M001)" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const dbAvailable = await ensureDbOpen(resolveCtxCwd(_ctx));
-      if (!dbAvailable) {
+      const basePath = resolveCtxCwd(_ctx);
+      const { executeMilestoneStatus } = await import("../tools/workflow-tool-executors.js");
+      const result = await executeMilestoneStatus(params, basePath);
+      if (result.details?.error === "db_unavailable") {
         return {
-          content: [{ type: "text", text: "Error: GSD database is not available. Cannot read milestone status." }],
+          content: [{ type: "text" as const, text: "Error: GSD database is not available. Cannot read milestone status." }],
           details: { operation: "milestone_status", error: "db_unavailable" },
         };
       }
-      const { executeMilestoneStatus } = await import("../tools/workflow-tool-executors.js");
-      return executeMilestoneStatus(params);
+      return result;
     },
   });
 

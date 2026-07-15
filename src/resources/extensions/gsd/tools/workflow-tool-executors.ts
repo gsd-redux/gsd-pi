@@ -8,6 +8,7 @@ import {
   getActiveRequirements,
   getAllMilestones,
   getMilestone,
+  getMilestoneLifecycleShadowSnapshot,
   getSliceStatusSummary,
   getSliceTaskCounts,
   insertMilestone,
@@ -18,6 +19,11 @@ import {
   upsertMilestonePlanning,
   upsertQualityGate,
 } from "../gsd-db.js";
+import {
+  buildLifecycleShadowObservation,
+  type MilestoneStatusObservationContext,
+} from "../lifecycle-shadow-observation.js";
+import { emitLifecycleShadowObservation } from "../uok/audit.js";
 import { extractMilestoneSeq } from "../milestone-ids.js";
 import { readMilestoneMergeObservation } from "../db/milestone-closeout-readiness.js";
 import { immediateTransaction } from "../db/engine.js";
@@ -2049,23 +2055,41 @@ export interface MilestoneStatusParams {
 export async function executeMilestoneStatus(
   params: MilestoneStatusParams,
   basePath: string = process.cwd(),
+  observationContext?: MilestoneStatusObservationContext,
 ): Promise<ToolExecutionResult> {
   try {
     const dbAvailable = await ensureDbOpen(basePath);
     if (!dbAvailable) {
-      return {
-        content: [{ type: "text", text: "Error: GSD database is not available." }],
+      const response = {
+        content: [{ type: "text" as const, text: "Error: GSD database is not available." }],
         details: { operation: "milestone_status", error: "db_unavailable" },
-      isError: true,
+        isError: true,
       };
+      emitLifecycleShadowObservation(
+        basePath,
+        buildLifecycleShadowObservation(
+          params.milestoneId,
+          {
+            projectRevision: 0,
+            authorityEpoch: 0,
+            items: [],
+            queryError: new Error("GSD database is not available"),
+          },
+          observationContext,
+        ),
+      );
+      return response;
     }
 
-    return readTransaction(() => {
+    const observedRead = readTransaction(() => {
       const milestone = getMilestone(params.milestoneId);
       if (!milestone) {
         return {
-          content: [{ type: "text", text: `Milestone ${params.milestoneId} not found in database.` }],
-          details: { operation: "milestone_status", milestoneId: params.milestoneId, found: false },
+          response: {
+            content: [{ type: "text" as const, text: `Milestone ${params.milestoneId} not found in database.` }],
+            details: { operation: "milestone_status", milestoneId: params.milestoneId, found: false },
+          },
+          shadowSnapshot: getMilestoneLifecycleShadowSnapshot(params.milestoneId),
         };
       }
 
@@ -2087,17 +2111,40 @@ export async function executeMilestoneStatus(
       };
 
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        details: { operation: "milestone_status", ...result },
+        response: {
+          content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }],
+          details: { operation: "milestone_status", ...result },
+        },
+        shadowSnapshot: getMilestoneLifecycleShadowSnapshot(params.milestoneId),
       };
     });
+    const observation = buildLifecycleShadowObservation(
+      params.milestoneId,
+      observedRead.shadowSnapshot,
+      observationContext,
+    );
+    emitLifecycleShadowObservation(basePath, observation);
+    return observedRead.response;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logWarning("tool", `gsd_milestone_status tool failed: ${msg}`);
+    emitLifecycleShadowObservation(
+      basePath,
+      buildLifecycleShadowObservation(
+        params.milestoneId,
+        {
+          projectRevision: 0,
+          authorityEpoch: 0,
+          items: [],
+          queryError: err,
+        },
+        observationContext,
+      ),
+    );
     return {
       content: [{ type: "text", text: `Error querying milestone status: ${msg}` }],
       details: { operation: "milestone_status", error: msg },
-    isError: true,
-      };
+      isError: true,
+    };
   }
 }

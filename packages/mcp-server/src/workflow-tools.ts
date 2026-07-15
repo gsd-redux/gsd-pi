@@ -62,7 +62,17 @@ async function importBridgeModule(): Promise<GsdMcpBridge> {
 
 type WorkflowToolExecutors = {
   SUPPORTED_SUMMARY_ARTIFACT_TYPES: readonly string[];
-  executeMilestoneStatus: (params: { milestoneId: string }, basePath?: string) => Promise<unknown>;
+  executeMilestoneStatus: (
+    params: { milestoneId: string },
+    basePath?: string,
+    observationContext?: {
+      mode: "auto" | "interactive" | "guided" | "uok" | "custom" | "legacy";
+      transport: "native_pi" | "workflow_mcp";
+      sourceRevision: string;
+      traceId?: string;
+      turnId?: string;
+    },
+  ) => Promise<unknown>;
   executePlanMilestone: (
     params: {
       milestoneId: string;
@@ -3186,7 +3196,11 @@ export function registerWorkflowTools(
       const { projectDir, milestoneId } = parseWorkflowArgs(milestoneStatusSchema, args);
       const { executeMilestoneStatus } = await getWorkflowToolExecutors();
       return adaptExecutorResult(
-        await runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir)),
+        await runSerializedWorkflowOperation(() => executeMilestoneStatus(
+          { milestoneId },
+          projectDir,
+          { mode: "legacy", transport: "workflow_mcp", sourceRevision: "unavailable" },
+        )),
       );
     },
   );

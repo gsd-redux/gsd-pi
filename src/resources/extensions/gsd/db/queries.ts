@@ -38,6 +38,10 @@ import {
   type CanonicalLifecycleStatus,
   type LifecycleShadowComparison,
 } from "./lifecycle-shadow-comparison.js";
+import {
+  lifecycleShadowObservationItem,
+  type LifecycleShadowObservationSnapshot,
+} from "../lifecycle-shadow-observation.js";
 
 
 function parseStringArrayColumn(raw: unknown): string[] {
@@ -430,6 +434,106 @@ export function getLifecycleShadowRepairCandidate(
         : "durable completion evidence does not prove a supported terminal target",
     };
   });
+}
+
+/**
+ * Reads the full legacy/canonical Milestone hierarchy comparison. Callers own
+ * the surrounding read transaction so this snapshot can be paired atomically
+ * with the legacy milestone-status response.
+ */
+export function getMilestoneLifecycleShadowSnapshot(
+  milestoneId: string,
+): LifecycleShadowObservationSnapshot {
+  const db = getDbOrNull();
+  if (!db) {
+    return {
+      projectRevision: 0,
+      authorityEpoch: 0,
+      items: [],
+      queryError: new Error("GSD database is not available"),
+    };
+  }
+
+  let projectRevision = 0;
+  let authorityEpoch = 0;
+  try {
+    const authority = db.prepare(`
+      SELECT revision, authority_epoch
+      FROM project_authority WHERE singleton = 1
+    `).get();
+    projectRevision = numberColumn(authority, "revision");
+    authorityEpoch = numberColumn(authority, "authority_epoch");
+    const rows = db.prepare(`
+      WITH hierarchy AS (
+        SELECT
+          'milestone' AS item_kind,
+          id AS milestone_id,
+          NULL AS slice_id,
+          NULL AS task_id,
+          status AS legacy_status
+        FROM milestones
+        WHERE id = :milestone_id
+        UNION ALL
+        SELECT
+          'slice', milestone_id, id, NULL, status
+        FROM slices
+        WHERE milestone_id = :milestone_id
+        UNION ALL
+        SELECT
+          'task', milestone_id, slice_id, id, status
+        FROM tasks
+        WHERE milestone_id = :milestone_id
+      ), identities AS (
+        SELECT item_kind, milestone_id, slice_id, task_id FROM hierarchy
+        UNION
+        SELECT item_kind, milestone_id, slice_id, task_id
+        FROM workflow_item_lifecycles
+        WHERE milestone_id = :milestone_id
+      )
+      SELECT
+        identity.item_kind,
+        identity.milestone_id,
+        identity.slice_id,
+        identity.task_id,
+        hierarchy.legacy_status,
+        lifecycle.lifecycle_id,
+        lifecycle.lifecycle_status AS canonical_status
+      FROM identities identity
+      LEFT JOIN hierarchy
+        ON hierarchy.item_kind = identity.item_kind
+       AND hierarchy.milestone_id = identity.milestone_id
+       AND hierarchy.slice_id IS identity.slice_id
+       AND hierarchy.task_id IS identity.task_id
+      LEFT JOIN workflow_item_lifecycles lifecycle
+        ON lifecycle.item_kind = identity.item_kind
+       AND lifecycle.milestone_id = identity.milestone_id
+       AND lifecycle.slice_id IS identity.slice_id
+       AND lifecycle.task_id IS identity.task_id
+      ORDER BY
+        CASE identity.item_kind WHEN 'milestone' THEN 0 WHEN 'slice' THEN 1 ELSE 2 END,
+        identity.slice_id,
+        identity.task_id
+    `).all({ ":milestone_id": milestoneId });
+
+    return {
+      projectRevision,
+      authorityEpoch,
+      items: rows.map((row) => {
+        const legacyStatus = typeof row["legacy_status"] === "string" ? row["legacy_status"] : null;
+        const canonicalStatus = typeof row["canonical_status"] === "string" ? row["canonical_status"] : null;
+        return lifecycleShadowObservationItem({
+          itemKind: String(row["item_kind"]) as "milestone" | "slice" | "task",
+          milestoneId: String(row["milestone_id"]),
+          sliceId: typeof row["slice_id"] === "string" ? row["slice_id"] : null,
+          taskId: typeof row["task_id"] === "string" ? row["task_id"] : null,
+          lifecycleId: typeof row["lifecycle_id"] === "string" ? row["lifecycle_id"] : null,
+          comparison: compareLifecycleShadow(legacyStatus, canonicalStatus),
+        });
+      }),
+    };
+  } catch (queryError) {
+    return { projectRevision, authorityEpoch, items: [], queryError };
+  }
 }
 
 export function getSliceTasks(milestoneId: string, sliceId: string): TaskRow[] {

@@ -31,13 +31,12 @@ describe('query-tools ensureDbOpen usage (#3672)', () => {
       closeDatabase();
 
       registerQueryTools({ registerTool(tool: any) { tools[tool.name] = tool; } } as any);
-      process.chdir(base);
       const result = await tools.gsd_milestone_status.execute(
         'call-1',
         { milestoneId: 'M001' },
         undefined,
         undefined,
-        undefined,
+        { cwd: base },
       );
 
       assert.notEqual(result.details?.error, 'db_unavailable');
