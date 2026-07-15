@@ -61,16 +61,16 @@ export function validateConfiguredModel(
     // Only fires when the model is genuinely unknown (not just temporarily unavailable).
     //
     // Model-agnostic selection order:
-    //   1. Pi migration default (preserves migration from ~/.pi install)
-    //   2. Any model from the user's previously-chosen provider (provider stickiness)
+    //   1. Any model from the user's previously-chosen provider (provider stickiness)
+    //   2. Pi migration default when there is no GSD provider to preserve
     //   3. First available model in registry order (user-controlled via models.json)
-    const piDefault = getPiDefaultModelAndProvider()
+    const piDefault = configuredProvider ? null : getPiDefaultModelAndProvider()
     const preferred =
-      (piDefault
-        ? availableModels.find((m) => m.provider === piDefault.provider && m.id === piDefault.model)
-        : undefined) ||
       (configuredProvider
         ? availableModels.find((m) => m.provider === configuredProvider)
+        : undefined) ||
+      (piDefault
+        ? availableModels.find((m) => m.provider === piDefault.provider && m.id === piDefault.model)
         : undefined) ||
       availableModels[0]
     if (preferred) {
