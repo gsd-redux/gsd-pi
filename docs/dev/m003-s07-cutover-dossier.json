@@ -99,6 +99,12 @@
       "verdict": "pass"
     },
     {
+      "file": "src/resources/extensions/gsd/tests/dispatch-guard-closed-status.test.ts",
+      "id": "db-unavailable-dispatch",
+      "title": "DB-unavailable dispatch fails closed without trusting milestone SUMMARY",
+      "verdict": "pass"
+    },
+    {
       "file": "src/resources/extensions/gsd/tests/milestone-status-tool.test.ts",
       "id": "db-unavailable-status",
       "title": "gsd_milestone_status handles missing DB gracefully",
@@ -163,8 +169,8 @@
   },
   "hashes": {
     "canonicalHistoryHash": "sha256:d31d5690dd10ca0acf19404718141d40fe5d442d601bff811c19a7b24d4adf7d",
-    "capstoneEvidenceHash": "sha256:79d6a760b40785e40d3b1851be22a79da091e40beda692c8c823545da39ab335",
-    "dossierHash": "sha256:01133b0b51049598f2d1d499bb986368d922b6f4a135a0a64bec31980fdf7551"
+    "capstoneEvidenceHash": "sha256:062c3f42bf5eafddee6aaa65995f15620d2c20f2be567733b1d965e168cb9270",
+    "dossierHash": "sha256:b0a41791209925e236adaab43de0462e7e500b8a37d1004550e683cbe68c8a68"
   },
   "liveDrift": [
     {
@@ -759,12 +765,12 @@
   "milestoneId": "M003",
   "noCutover": {
     "behavioral": {
-      "passed": 11,
-      "total": 11
+      "passed": 12,
+      "total": 12
     },
     "structural": {
-      "passed": 7,
-      "total": 7
+      "passed": 8,
+      "total": 8
     }
   },
   "observationCoverage": [
