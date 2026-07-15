@@ -1,11 +1,25 @@
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 import type { GSDState } from "../types.ts";
+
+function makeTestBase(t: TestContext, prefix: string): string {
+  const base = mkdtempSync(join(tmpdir(), prefix));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Structured Questions", status: "active" });
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+  return base;
+}
 
 function makeState(phase: GSDState["phase"]): GSDState {
   return {
@@ -54,8 +68,7 @@ function unsetGsdHeadless(t: { after: (fn: () => void) => void }): void {
 }
 
 test("auto-dispatch passes structuredQuestionsAvailable=true into discuss-milestone prompt", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-structured-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-structured-");
 
   unsetGsdHeadless(t);
 
@@ -71,8 +84,7 @@ test("auto-dispatch passes structuredQuestionsAvailable=true into discuss-milest
 });
 
 test("auto-dispatch preserves structuredQuestionsAvailable=false for discuss-milestone prompt", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-plain-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-plain-");
 
   unsetGsdHeadless(t);
 
@@ -88,8 +100,7 @@ test("auto-dispatch preserves structuredQuestionsAvailable=false for discuss-mil
 });
 
 test("auto-dispatch uses discuss-headless prompt when GSD_HEADLESS is set", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-headless-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-headless-");
 
   setGsdHeadless(t);
 
@@ -103,8 +114,7 @@ test("auto-dispatch uses discuss-headless prompt when GSD_HEADLESS is set", asyn
 });
 
 test("auto-dispatch uses discuss-headless prompt for needs-discussion when GSD_HEADLESS is set", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-headless-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-headless-");
 
   setGsdHeadless(t);
 
@@ -118,8 +128,7 @@ test("auto-dispatch uses discuss-headless prompt for needs-discussion when GSD_H
 });
 
 test("auto-dispatch pauses after execution-entry discuss-milestone recovery", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-executing-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-executing-");
 
   unsetGsdHeadless(t);
 
@@ -131,8 +140,7 @@ test("auto-dispatch pauses after execution-entry discuss-milestone recovery", as
 });
 
 test("auto-dispatch uses discuss-headless prompt for executing when GSD_HEADLESS is set", async (t) => {
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-discuss-milestone-headless-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const tmp = makeTestBase(t, "gsd-discuss-milestone-headless-");
 
   setGsdHeadless(t);
 

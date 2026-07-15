@@ -797,6 +797,7 @@ describe("dispatch failure modes", () => {
   test("dispatch: summarizing with null activeSlice → stop (error)", async () => {
     base = createFullFixture();
     openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Active", status: "active" });
 
     const ctx = buildDispatchCtx(base, "M001", {
       phase: "summarizing",
@@ -836,6 +837,7 @@ describe("dispatch failure modes", () => {
   test("dispatch: needs-discussion → discuss-milestone dispatch", async () => {
     base = createFullFixture();
     openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Active", status: "active" });
 
     const ctx = buildDispatchCtx(base, "M001", {
       phase: "needs-discussion",
@@ -852,7 +854,8 @@ describe("dispatch failure modes", () => {
     base = createFullFixture();
     openDatabase(join(base, ".gsd", "gsd.db"));
 
-    const ctx = buildDispatchCtx(base, "M001", {
+    const ctx = buildDispatchCtx(base, "PROJECT", {
+      activeMilestone: null,
       phase: "complete",
       activeSlice: null,
       activeTask: null,
@@ -860,7 +863,7 @@ describe("dispatch failure modes", () => {
 
     const result = await resolveDispatch(ctx);
     assert.equal(result.action, "stop");
-    assert.equal((result as any).level, "info");
+    assert.equal((result as any).level, "info", JSON.stringify(result));
     assert.ok((result as any).reason?.includes("complete"), "reason should mention completion");
   });
 

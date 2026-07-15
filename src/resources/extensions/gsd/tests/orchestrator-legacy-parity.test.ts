@@ -19,9 +19,13 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { decideOrchestratorDispatch } from "../auto/orchestrator.ts";
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 import { RuleRegistry, setRegistry, resetRegistry } from "../rule-registry.ts";
 import type { UnifiedRule } from "../rule-types.ts";
 import type { GSDState } from "../types.ts";
@@ -46,7 +50,18 @@ const fakeCtx = {
   modelRegistry: { getAll: () => [], getAvailable: () => [], getProviderAuthMode: (_p: string) => "apiKey" as const },
 } as never;
 const fakePi = { getActiveTools: () => ["read_file", "write_file"] } as never;
-const BASE = "/tmp/orchestrator-legacy-parity";
+
+function setupBase(t: test.TestContext): string {
+  const base = mkdtempSync(join(tmpdir(), "orchestrator-legacy-parity-"));
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+  return base;
+}
 
 function installRule(where: UnifiedRule["where"]): void {
   setRegistry(new RuleRegistry([{
@@ -58,9 +73,9 @@ function installRule(where: UnifiedRule["where"]): void {
   }]));
 }
 
-function directCtx(state: GSDState): DispatchContext {
+function directCtx(state: GSDState, basePath: string): DispatchContext {
   return {
-    basePath: BASE,
+    basePath,
     mid: state.activeMilestone!.id,
     midTitle: state.activeMilestone!.title,
     state,
@@ -74,11 +89,12 @@ function directCtx(state: GSDState): DispatchContext {
 
 test("#442 characterization: dispatch action → orchestrator picks the same unit the legacy path would", async (t) => {
   t.after(() => resetRegistry());
+  const base = setupBase(t);
   const state = makeState();
   installRule(async () => ({ action: "dispatch", unitType: "execute-task", unitId: "T07", prompt: "p" }));
 
-  const legacy = await resolveDispatch(directCtx(state));
-  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, BASE, undefined, { stateSnapshot: state });
+  const legacy = await resolveDispatch(directCtx(state, base));
+  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, base, undefined, { stateSnapshot: state });
 
   assert.equal((legacy as { action: string }).action, "dispatch");
   assert.ok(decision && "unitType" in decision, "orchestrator must produce a unit decision");
@@ -88,11 +104,12 @@ test("#442 characterization: dispatch action → orchestrator picks the same uni
 
 test("#442 characterization: stop action → orchestrator blocks with stop, matching legacy break", async (t) => {
   t.after(() => resetRegistry());
+  const base = setupBase(t);
   const state = makeState();
   installRule(async () => ({ action: "stop", reason: "milestone blocked" }));
 
-  const legacy = await resolveDispatch(directCtx(state));
-  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, BASE, undefined, { stateSnapshot: state });
+  const legacy = await resolveDispatch(directCtx(state, base));
+  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, base, undefined, { stateSnapshot: state });
 
   assert.equal((legacy as { action: string }).action, "stop");
   assert.ok(decision && "kind" in decision && decision.kind === "blocked", "stop must translate to a blocked decision");
@@ -101,11 +118,12 @@ test("#442 characterization: stop action → orchestrator blocks with stop, matc
 
 test("#442 characterization: skip action → orchestrator skips, matching legacy continue", async (t) => {
   t.after(() => resetRegistry());
+  const base = setupBase(t);
   const state = makeState();
   installRule(async () => ({ action: "skip", reason: "nothing to do this pass" }));
 
-  const legacy = await resolveDispatch(directCtx(state));
-  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, BASE, undefined, { stateSnapshot: state });
+  const legacy = await resolveDispatch(directCtx(state, base));
+  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, base, undefined, { stateSnapshot: state });
 
   assert.equal((legacy as { action: string }).action, "skip");
   assert.ok(decision && "kind" in decision && decision.kind === "skipped", "skip must translate to a skipped decision");
@@ -113,11 +131,12 @@ test("#442 characterization: skip action → orchestrator skips, matching legacy
 
 test("#442 characterization: no matching rule → orchestrator yields no unit (legacy 'no remaining units')", async (t) => {
   t.after(() => resetRegistry());
+  const base = setupBase(t);
   const state = makeState();
   installRule(async () => null);
 
-  const legacy = await resolveDispatch(directCtx(state));
-  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, BASE, undefined, { stateSnapshot: state });
+  const legacy = await resolveDispatch(directCtx(state, base));
+  const decision = await decideOrchestratorDispatch(fakeCtx, fakePi, base, undefined, { stateSnapshot: state });
 
   // resolveDispatch with no match yields no dispatch action; the orchestrator
   // surfaces that as a null decision, which advance() turns into a "stopped:

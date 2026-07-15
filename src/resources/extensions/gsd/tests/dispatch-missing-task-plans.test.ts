@@ -19,7 +19,14 @@ import type { DispatchContext } from "../auto-dispatch.ts";
 import type { AutoSession } from "../auto/session.ts";
 import type { GSDState } from "../types.ts";
 import { enableDebug, disableDebug, getDebugLogPath } from "../debug-logger.ts";
-import { closeDatabase, insertMilestone, isDbAvailable, openDatabase } from "../gsd-db.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  isDbAvailable,
+  openDatabase,
+} from "../gsd-db.ts";
 
 function makeState(overrides: Partial<GSDState> = {}): GSDState {
   return {
@@ -136,11 +143,26 @@ function scaffoldTaskPlan(basePath: string, mid: string, sid: string, tid: strin
   // that call it; does nothing in flat-phase.
 }
 
+function scaffoldWorkflowDatabase(basePath: string, mid: string, sid: string, tid: string): void {
+  if (isDbAvailable()) closeDatabase();
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(join(basePath, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: mid, title: "Test Milestone", status: "active" });
+  insertSlice({ id: sid, milestoneId: mid, title: "Test Slice", status: "active" });
+  insertTask({ id: tid, sliceId: sid, milestoneId: mid, title: "Test Task", status: "pending" });
+}
+
+function removeWorkflowTestDirectory(basePath: string): void {
+  if (isDbAvailable()) closeDatabase();
+  rmSync(basePath, { recursive: true, force: true });
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 test("dispatch: missing task plan triggers plan-slice (not stop) — issue #909", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   // Slice plan exists with tasks. In flat-phase, tasks are checkboxes inside
   // the slice plan (no per-task files), so this is the NORMAL state — dispatch
@@ -182,7 +204,8 @@ test("dispatch: closed milestone is not implicitly recovered or reopened", async
 
 test("dispatch: present task plan proceeds to execute-task normally", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-ok-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
@@ -203,7 +226,8 @@ test("dispatch: present task plan proceeds to execute-task normally", async (t) 
 
 test("dispatch: missing legacy task plan recovery increments a per-slice retry counter", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-retry-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldLegacyMilestoneContext(tmp, "M002");
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
@@ -223,7 +247,8 @@ test("dispatch: missing legacy task plan recovery increments a per-slice retry c
 
 test("dispatch: missing legacy task plan recovery stops when retry counter is exhausted", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-stop-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldLegacyMilestoneContext(tmp, "M002");
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
@@ -243,7 +268,8 @@ test("dispatch: missing legacy task plan recovery stops when retry counter is ex
 
 test("dispatch: present legacy task plan clears missing-plan recovery retry counter", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-clear-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldLegacyMilestoneContext(tmp, "M002");
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
@@ -274,7 +300,8 @@ test("dispatch: missing-task-plan recovery loop terminates even when the shared 
   // would never reach the cap. Here we simulate that reset between rounds and
   // assert the dedicated counter still climbs to MAX and stops.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-1087-loop-term-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldLegacyMilestoneContext(tmp, "M002");
   scaffoldLegacySlicePlan(tmp, "M002", "S03");
@@ -332,7 +359,8 @@ test("dispatch: session milestone mismatch stops before missing-task-plan recove
 
 test("dispatch: bare context milestone maps to suffixed active session milestone", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-suffixed-session-milestone-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M003-vaz73w", "S01", "T02");
 
   const worktreeRoot = join(tmp, ".gsd", "worktrees", "M003-vaz73w");
   scaffoldLegacyMilestoneContext(worktreeRoot, "M003-vaz73w");
@@ -359,7 +387,8 @@ test("dispatch: suffixed context milestone keeps suffix when scoped alias is bar
   // must keep the suffixed id so slice/task artifacts resolve under the suffixed
   // worktree layout (milestones/M003-xxxxxx/) rather than the bare milestones/M003/.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-suffixed-context-bare-scope-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M003-vaz73w", "S01", "T02");
 
   const worktreeRoot = join(tmp, ".gsd", "worktrees", "M003-vaz73w");
   scaffoldLegacyMilestoneContext(worktreeRoot, "M003-vaz73w");
@@ -398,7 +427,8 @@ test("dispatch: worktree path mismatch stops before planning a different milesto
 
 test("dispatch: executing recovery checks active milestone worktree task plans before re-dispatching plan-slice", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-6192-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
@@ -422,7 +452,8 @@ test("dispatch: executing recovery checks active milestone worktree task plans b
 
 test("dispatch: active session worktree task plan wins over missing original-root task plan", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-worktree-artifact-root-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
 
   scaffoldMilestoneContext(tmp, "M004");
   scaffoldSlicePlan(tmp, "M004", "S02");
@@ -449,7 +480,8 @@ test("dispatch: active session worktree task plan wins over missing original-roo
 
 test("dispatch: artifact checks trust active session basePath even when originalBasePath matches", async (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-worktree-session-basepath-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
 
   scaffoldMilestoneContext(tmp, "M004");
   scaffoldSlicePlan(tmp, "M004", "S02");
@@ -479,7 +511,8 @@ test("dispatch: plan-slice recovery loop — second call after plan-slice still 
   // per-task plan files to be "missing". Dispatch should go to execute-task
   // (the normal flow), not plan-slice recovery.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-loop-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
@@ -504,7 +537,8 @@ test("dispatch: missing task plan recovery logs root/worktree diagnostic when de
   // This test verifies the normal flat-phase dispatch path doesn't crash
   // with debug enabled.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-6194-"));
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M002", "S03", "T01");
 
   scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");

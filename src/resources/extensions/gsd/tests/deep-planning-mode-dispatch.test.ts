@@ -18,6 +18,7 @@ import {
   setResearchProjectPromptBuilderForTest,
   type DispatchContext,
 } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 import type { GSDState } from "../types.ts";
 import type { GSDPreferences } from "../preferences.ts";
 
@@ -222,11 +223,17 @@ function makeIsolatedBase(): string {
 function makeIsolatedBaseWithCleanup(t: TestContext): string {
   const base = makeIsolatedBase();
   t.after(() => {
+    closeDatabase();
     try {
       rmSync(base, { recursive: true, force: true });
     } catch {}
   });
   return base;
+}
+
+function openMilestoneDatabase(base: string): void {
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
 }
 
 function setGsdHeadless(t: TestContext): void {
@@ -846,6 +853,7 @@ test("Deep mode: research-project DOES dispatch when only 3 of 4 research files 
 
 test("Deep mode: queued milestone without CONTEXT.md routes to milestone research after project setup", async (t) => {
   const base = makeIsolatedBaseWithCleanup(t);
+  openMilestoneDatabase(base);
 
   writeCapturedDeepPrefs(base);
   writeValidProject(base);
@@ -864,6 +872,7 @@ test("Deep mode: queued milestone without CONTEXT.md routes to milestone researc
 
 test("Deep mode: queued milestone without CONTEXT.md can route directly to milestone planning", async (t) => {
   const base = makeIsolatedBaseWithCleanup(t);
+  openMilestoneDatabase(base);
 
   writeCapturedDeepPrefs(base);
   writeValidProject(base);

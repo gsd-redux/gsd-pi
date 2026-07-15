@@ -23,12 +23,19 @@ import {
 } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
 import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
+import { convertDispatchRules, initRegistry, getRegistry, resetRegistry } from "../rule-registry.ts";
+import {
   drainLogs,
   setStderrLoggingEnabled,
   _resetLogs,
   type LogEntry,
 } from "../workflow-logger.ts";
-import { convertDispatchRules, initRegistry, getRegistry, resetRegistry } from "../rule-registry.ts";
 
 function makeExecutingCtx(base: string): DispatchContext {
   return {
@@ -55,6 +62,10 @@ test("reactive rule logs a dispatch error when graph derivation throws (auto-dis
   const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
   mkdirSync(sliceDir, { recursive: true });
   writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n## Tasks\n\n- [ ] **T01: A**\n", "utf-8");
+  assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "pending" });
 
   // Snapshot + initialize the registry so resolveDispatch uses the inline rules.
   let previousExists = false;
@@ -81,6 +92,7 @@ test("reactive rule logs a dispatch error when graph derivation throws (auto-dis
     restoreDerive();
     initRegistry(convertDispatchRules(DISPATCH_RULES));
     if (!previousExists) resetRegistry();
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
     void t;
   }

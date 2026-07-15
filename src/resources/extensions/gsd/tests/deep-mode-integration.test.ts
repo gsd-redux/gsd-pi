@@ -7,7 +7,7 @@
 // state.phase is "needs-discussion" (which previously short-circuited
 // to discuss-milestone before any deep rule could run).
 
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,12 +15,21 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { closeDatabase, insertMilestone, openDatabase } from "../gsd-db.ts";
 import type { GSDState } from "../types.ts";
 import type { GSDPreferences } from "../preferences.ts";
 
-function makeIsolatedBase(): string {
+function makeIsolatedBase(t: TestContext, scope: "milestone" | "project" = "milestone"): string {
   const base = join(tmpdir(), `gsd-deep-integration-${randomUUID()}`);
   mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  if (scope === "milestone") {
+    assert.equal(openDatabase(join(base, ".gsd", "gsd.db")), true);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+  }
+  t.after(() => {
+    if (scope === "milestone") closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
   return base;
 }
 
@@ -28,21 +37,23 @@ function makeCtx(
   basePath: string,
   prefs: GSDPreferences | undefined,
   phase: GSDState["phase"] = "needs-discussion",
+  mid: "M001" | "PROJECT" = "M001",
 ): DispatchContext {
+  const projectSetup = mid === "PROJECT";
   const state: GSDState = {
     phase,
-    activeMilestone: { id: "M001", title: "Test" },
+    activeMilestone: projectSetup ? null : { id: "M001", title: "Test" },
     activeSlice: null,
     activeTask: null,
     recentDecisions: [],
     blockers: [],
     nextAction: "",
-    registry: [{ id: "M001", title: "Test", status: "active" }],
+    registry: projectSetup ? [] : [{ id: "M001", title: "Test", status: "active" }],
   };
   return {
     basePath,
-    mid: "M001",
-    midTitle: "Test",
+    mid,
+    midTitle: projectSetup ? "Project" : "Test",
     state,
     prefs,
     structuredQuestionsAvailable: "false",
@@ -143,11 +154,10 @@ function writeValidRequirements(base: string): void {
 // ─── Regression test for B1: rule ordering bug ────────────────────────────
 
 test("integration: deep mode + needs-discussion + nothing captured → capture prefs then discuss-project", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch", `expected dispatch, got ${result.action}: ${JSON.stringify(result)}`);
   if (result.action === "dispatch") {
     assert.strictEqual(
@@ -162,11 +172,10 @@ test("integration: deep mode + needs-discussion + nothing captured → capture p
 });
 
 test("integration: deep mode + pre-planning + nothing captured → capture prefs then discuss-project", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "pre-planning"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "pre-planning", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "discuss-project");
@@ -176,13 +185,12 @@ test("integration: deep mode + pre-planning + nothing captured → capture prefs
 });
 
 test("integration: deep mode + prefs captured + no PROJECT.md → discuss-project", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "discuss-project");
@@ -190,14 +198,13 @@ test("integration: deep mode + prefs captured + no PROJECT.md → discuss-projec
 });
 
 test("integration: deep mode + invalid PROJECT.md → discuss-project, not discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
   writeFileSync(join(base, ".gsd", "PROJECT.md"), "# Project\n");
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "discuss-project");
@@ -205,14 +212,13 @@ test("integration: deep mode + invalid PROJECT.md → discuss-project, not discu
 });
 
 test("integration: deep mode + PROJECT.md + no REQUIREMENTS.md → discuss-requirements", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
   writeValidProject(base);
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "discuss-requirements");
@@ -220,15 +226,14 @@ test("integration: deep mode + PROJECT.md + no REQUIREMENTS.md → discuss-requi
 });
 
 test("integration: deep mode + invalid REQUIREMENTS.md → discuss-requirements, not discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
   writeValidProject(base);
   writeFileSync(join(base, ".gsd", "REQUIREMENTS.md"), "# Requirements\n");
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "discuss-requirements");
@@ -236,8 +241,7 @@ test("integration: deep mode + invalid REQUIREMENTS.md → discuss-requirements,
 });
 
 test("integration: deep mode + REQUIREMENTS.md + no research-decision → discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   writePreferences(base);
   writeValidProject(base);
@@ -255,8 +259,7 @@ test("integration: deep mode + REQUIREMENTS.md + no research-decision → discus
 });
 
 test("integration: deep mode + decision=research + research files missing → research-project", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
   writeValidProject(base);
@@ -268,7 +271,7 @@ test("integration: deep mode + decision=research + research files missing → re
   );
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "dispatch");
   if (result.action === "dispatch") {
     assert.strictEqual(result.unitType, "research-project");
@@ -276,8 +279,7 @@ test("integration: deep mode + decision=research + research files missing → re
 });
 
 test("integration: deep mode + research-project marker → stop, not discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t, "project");
 
   writePreferences(base);
   writeValidProject(base);
@@ -290,7 +292,7 @@ test("integration: deep mode + research-project marker → stop, not discuss-mil
   writeFileSync(join(base, ".gsd", "runtime", "research-project-inflight"), "{}\n");
 
   const prefs = { planning_depth: "deep" } as GSDPreferences;
-  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
+  const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion", "PROJECT"));
   assert.strictEqual(result.action, "stop");
   if (result.action === "stop") {
     assert.match(result.reason, /research-project-inflight/);
@@ -298,8 +300,7 @@ test("integration: deep mode + research-project marker → stop, not discuss-mil
 });
 
 test("integration: deep mode + decision=research + dimension blocker → discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   writePreferences(base);
   writeValidProject(base);
@@ -328,8 +329,7 @@ test("integration: deep mode + decision=research + dimension blocker → discuss
 });
 
 test("integration: deep mode + decision=skip → falls through to discuss-milestone in needs-discussion", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   writePreferences(base);
   writeValidProject(base);
@@ -353,8 +353,7 @@ test("integration: deep mode + decision=skip → falls through to discuss-milest
 });
 
 test("integration: deep mode + decision=<garbage> repairs to skip and discusses milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   writePreferences(base);
   writeValidProject(base);
@@ -383,8 +382,7 @@ test("integration: deep mode + decision=<garbage> repairs to skip and discusses 
 // ─── Light-mode regression check ──────────────────────────────────────────
 
 test("integration: light mode (no prefs) + needs-discussion → discuss-milestone (unchanged behavior)", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   const result = await resolveDispatch(makeCtx(base, undefined, "needs-discussion"));
   assert.strictEqual(result.action, "dispatch");
@@ -394,8 +392,7 @@ test("integration: light mode (no prefs) + needs-discussion → discuss-mileston
 });
 
 test("integration: light mode + planning_depth=light + needs-discussion → discuss-milestone", async (t) => {
-  const base = makeIsolatedBase();
-  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+  const base = makeIsolatedBase(t);
 
   const prefs = { planning_depth: "light" } as GSDPreferences;
   const result = await resolveDispatch(makeCtx(base, prefs, "needs-discussion"));
