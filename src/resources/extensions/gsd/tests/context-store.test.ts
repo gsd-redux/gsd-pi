@@ -315,7 +315,7 @@ describe("context-store: formatRequirementsForPrompt", () => {
 describe("context-store: sub-5ms query timing", () => {
   afterEach(() => closeDatabase());
 
-  test("queries complete under 5ms for 50+50 rows", () => {
+  test("median CPU time and minimum latency stay under the query threshold for 50+50 rows", () => {
     openDatabase(':memory:');
 
     // Insert 50 decisions
