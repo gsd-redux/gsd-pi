@@ -198,7 +198,9 @@ function planQualityGateClosure(
     for (const row of gates) {
       const definition = getGateDefinition(row.gate_id);
       if (!definition) {
-        unresolved.push(row);
+        if (row.status !== "complete") {
+          unresolved.push(row);
+        }
         continue;
       }
       if (row.status !== "pending" && definition.ownerTurn !== "validate-milestone") continue;

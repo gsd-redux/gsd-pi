@@ -24,6 +24,7 @@ import {
   insertTask,
   openDatabase,
   readDomainOperationFence,
+  saveGateResult,
 } from "../gsd-db.ts";
 import { proveMilestoneCloseout } from "../milestone-closeout-proof.ts";
 import { completeMilestone } from "../milestone-lifecycle-domain-operation.ts";
@@ -36,6 +37,7 @@ import {
   handleValidateMilestone,
   type ValidateMilestoneParams,
 } from "../tools/validate-milestone.ts";
+import type { GateId } from "../types.ts";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
 
 const tempDirs = new Set<string>();
@@ -535,6 +537,75 @@ test("Milestone completion rejects unresolved pending quality gates without resi
   await rejectWithoutResidue(
     "milestone-complete/pending-quality-gate",
     /quality gate Q5 is still pending for S01/i,
+  );
+});
+
+test("Milestone completion ignores completed unregistered legacy quality gates", async () => {
+  await prepareFixture();
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "UAT" as GateId,
+    scope: "slice",
+    status: "pending",
+  });
+  saveGateResult({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "UAT",
+    verdict: "pass",
+    rationale: "Historical UAT passed before the current gate registry was introduced.",
+    findings: "legacy receipt",
+  });
+
+  const result = await completeMilestone(input("milestone-complete/terminal-legacy-gate"));
+
+  assert.equal(result.status, "committed");
+  assert.deepEqual(row(`
+    SELECT status, verdict, rationale, findings
+    FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND gate_id = 'UAT'
+  `), {
+    status: "complete",
+    verdict: "pass",
+    rationale: "Historical UAT passed before the current gate registry was introduced.",
+    findings: "legacy receipt",
+  });
+});
+
+test("Milestone completion rejects pending unregistered legacy quality gates", async () => {
+  await prepareFixture();
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "UAT" as GateId,
+    scope: "slice",
+    status: "pending",
+  });
+
+  await rejectWithoutResidue(
+    "milestone-complete/pending-legacy-gate",
+    /quality gate UAT is still pending for S01/i,
+  );
+});
+
+test("Milestone completion rejects malformed unregistered legacy gate status", async () => {
+  await prepareFixture();
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "UAT" as GateId,
+    scope: "slice",
+    status: "pending",
+  });
+  db().prepare(`
+    UPDATE quality_gates SET status = 'blocked'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND gate_id = 'UAT'
+  `).run();
+
+  await rejectWithoutResidue(
+    "milestone-complete/malformed-legacy-gate",
+    /quality gate UAT is still pending for S01/i,
   );
 });
 
