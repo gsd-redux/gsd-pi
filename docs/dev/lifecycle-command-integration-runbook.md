@@ -101,7 +101,9 @@ commands, or orchestration modules.
 - `milestone.complete` revalidates that receipt, descendant terminality and
   semantic parity, current cancellation Waivers, and the absence of active
   Attempts in one transaction. It changes only the Milestone heads and emits
-  one `milestone.completed` receipt plus Projection Work.
+  one `milestone.completed` receipt plus Projection Work. An unregistered
+  historical quality-gate row is inert only when its persisted status is
+  exactly `complete`; pending or malformed unregistered rows fail closed.
 - `milestone.reopen` performs the established full redo in one transaction:
   Milestone, Slices, and terminal Tasks return to canonical `ready` with their
   legacy compatibility statuses; current cancellation Waivers are revoked and
