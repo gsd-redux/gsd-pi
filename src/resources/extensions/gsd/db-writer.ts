@@ -21,6 +21,8 @@ import { clearPathCache } from './paths.js';
 import { clearParseCache } from './files.js';
 import type { MilestoneScope, GsdWorkspace } from './workspace.js';
 import { createWorkspace, scopeMilestone } from './workspace.js';
+import { createMemory } from './memory-store.js';
+import { synthesizeDecisionMemoryContent } from './memory-backfill.js';
 
 // ─── Freeform Detection ───────────────────────────────────────────────────
 
@@ -568,7 +570,17 @@ export async function saveDecisionToDb(
     // (Stage 2a) and would otherwise miss the just-saved decision. Pass
     // the normalized field set so defaults (revisable, made_by, source)
     // are recorded on the memory row.
-    await mirrorDecisionToMemory(id, normalized);
+    const sliceRef = extractDeferredSliceRef(fields);
+    if (sliceRef) {
+      db.immediateTransaction(() => {
+        if (!persistDecisionToMemory(id, normalized)) {
+          throw new Error('Unable to persist deferral decision');
+        }
+        db.updateSliceStatus(sliceRef.milestoneId, sliceRef.sliceId, 'deferred');
+      });
+    } else {
+      mirrorDecisionToMemory(id, normalized);
+    }
 
     // Fetch all decisions (including superseded for the full register).
     // ADR-013 Stage 2a: source from the `memories` table. The Phase 5
@@ -628,23 +640,6 @@ export async function saveDecisionToDb(
     } catch (diskErr) {
       logWarning('projection', 'DECISIONS.md projection write failed; DB decision remains committed', { fn: 'saveDecisionToDb', id, error: String((diskErr as Error).message) });
     }
-    // #2661: When a decision defers a slice, update the slice status in the DB
-    // so the dispatcher skips it. Without this, STATE.md and DECISIONS.md are
-    // in split-brain: the decision says "deferred" but the state still says
-    // "active", causing auto-mode to keep dispatching the deferred work.
-    try {
-      const sliceRef = extractDeferredSliceRef(fields);
-      if (sliceRef) {
-        db.updateSliceStatus(sliceRef.milestoneId, sliceRef.sliceId, 'deferred');
-      }
-    } catch (deferErr) {
-      // Non-fatal — log but don't fail the decision save
-      logError('manifest', 'failed to update deferred slice status', {
-        fn: 'saveDecisionToDb',
-        error: String((deferErr as Error).message),
-      });
-    }
-
     // Invalidate file-read caches so deriveState() sees the updated markdown.
     // Do NOT clear the artifacts table — we just wrote to it intentionally.
     invalidateStateCache();
@@ -660,54 +655,44 @@ export async function saveDecisionToDb(
   }
 }
 
-/**
- * ADR-013 dual-write — mirror a freshly-saved decision into the `memories`
- * table so the memory store remains the single source of truth for the
- * DECISIONS.md projection (Stage 2a) and for prompt-inline reads (Stage 1).
- *
- * Best-effort mirror: logs failures without throwing to avoid blocking saves.
- * Caller invokes this AFTER the decisions-table write completes and
- * BEFORE the projection regen — the regen sources from memories and would
- * otherwise miss the just-saved decision.
- */
-async function mirrorDecisionToMemory(
+function persistDecisionToMemory(
   id: string,
   normalizedFields: NormalizedSaveDecisionFields,
-): Promise<boolean> {
-  try {
-    const { createMemory } = await import('./memory-store.js');
-    const { synthesizeDecisionMemoryContent } = await import('./memory-backfill.js');
-    const content = synthesizeDecisionMemoryContent(normalizedFields);
-    if (!content) return false;
+): boolean {
+  const content = synthesizeDecisionMemoryContent(normalizedFields);
+  if (!content) return false;
 
-    createMemory({
-      category: 'architecture',
-      content,
-      scope: normalizedFields.scope || 'project',
-      confidence: 0.85,
-      structuredFields: {
-        sourceDecisionId: id,
-        when_context: normalizedFields.when_context,
-        scope: normalizedFields.scope,
-        decision: normalizedFields.decision,
-        choice: normalizedFields.choice,
-        rationale: normalizedFields.rationale,
-        made_by: normalizedFields.made_by,
-        revisable: normalizedFields.revisable,
-        // New decisions are always written as active; md-importer can later
-        // set superseded_by on the source decision row, and the backfill's
-        // drift auto-heal pass propagates that update to this memory.
-        superseded_by: null,
-      },
-    });
-    return true;
+  return createMemory({
+    category: 'architecture',
+    content,
+    scope: normalizedFields.scope || 'project',
+    confidence: 0.85,
+    structuredFields: {
+      sourceDecisionId: id,
+      when_context: normalizedFields.when_context,
+      scope: normalizedFields.scope,
+      decision: normalizedFields.decision,
+      choice: normalizedFields.choice,
+      rationale: normalizedFields.rationale,
+      made_by: normalizedFields.made_by,
+      revisable: normalizedFields.revisable,
+      superseded_by: null,
+    },
+  }) !== null;
+}
+
+function mirrorDecisionToMemory(
+  id: string,
+  normalizedFields: NormalizedSaveDecisionFields,
+): void {
+  try {
+    persistDecisionToMemory(id, normalizedFields);
   } catch (mirrorErr) {
     logError('manifest', 'memory-store mirror write failed', {
       fn: 'saveDecisionToDb',
       decisionId: id,
       error: String((mirrorErr as Error).message),
     });
-    return false;
   }
 }
 

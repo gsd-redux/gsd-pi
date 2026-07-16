@@ -756,7 +756,7 @@ function loadRepositorySources(sourceLoader) {
 
 export function runSemanticShadowNoCutoverGate({
   sourceLoader = (file) => {
-    // allow-source-grep -- production text is parsed as a TypeScript AST for binding-flow checks.
+    // allow-source-grep: production text is parsed as a TypeScript AST for binding-flow checks.
     return readFileSync(join(REPO_ROOT, file), "utf8");
   },
   spawnSyncImpl = spawnSync,

@@ -163,6 +163,16 @@ export const DEFERRED_BLOCKERS = Object.freeze([
   "legacy-cascade-deletion",
   "compatibility-retirement",
 ]);
+const CANONICAL_CLOSURE = Object.freeze({
+  status: "blocked",
+  candidateStage: "pre_closure",
+  blockedEntities: Object.freeze(["M003/S07", "M003/S07/T07"]),
+  requiredEvidence: Object.freeze({
+    sourceBinding: "exact_merged_revision",
+    automatedUatVerdict: "pass",
+    durableVerdictReceipt: "required",
+  }),
+});
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_OUTPUT = resolve(SCRIPT_DIR, "../docs/dev/m003-s07-cutover-dossier.json");
 
@@ -931,6 +941,7 @@ export function buildDossier(rawInput) {
     milestoneId: "M003",
     sliceId: "S07",
     recommendation: "NO_GO",
+    canonicalClosure: CANONICAL_CLOSURE,
     observationEvidencePlane: "capstone_fixture",
     canonicalHistoryEvidencePlane: "live_project",
     evidenceSourceRevision,

@@ -8,6 +8,19 @@
     "passed": 4,
     "total": 4
   },
+  "canonicalClosure": {
+    "blockedEntities": [
+      "M003/S07",
+      "M003/S07/T07"
+    ],
+    "candidateStage": "pre_closure",
+    "requiredEvidence": {
+      "automatedUatVerdict": "pass",
+      "durableVerdictReceipt": "required",
+      "sourceBinding": "exact_merged_revision"
+    },
+    "status": "blocked"
+  },
   "canonicalHistoryEvidencePlane": "live_project",
   "commands": [
     {
@@ -188,7 +201,7 @@
   "hashes": {
     "canonicalHistoryHash": "sha256:d31d5690dd10ca0acf19404718141d40fe5d442d601bff811c19a7b24d4adf7d",
     "capstoneEvidenceHash": "sha256:2308a2cec87790fd82314061ca0f911ce6fa29da132b12a5cd547b942040c096",
-    "dossierHash": "sha256:3fc20003abf92d4075b89506436ea889438acf39af8650fc51231df3ca168cff"
+    "dossierHash": "sha256:87d1c774ef8c9a06c455877465c38c82a3d6e3cb20c1af50f313ecab7c21b059"
   },
   "liveDrift": [
     {

@@ -127,7 +127,7 @@ function repeatedWindow(unitKey: string): WindowEntry[] {
 }
 
 function loadSource(file: string): string {
-  // allow-source-grep -- sources are parsed into a TypeScript AST by the imported gate analyzer.
+  // allow-source-grep: sources are parsed into a TypeScript AST by the imported gate analyzer.
   return readFileSync(join(REPO_ROOT, file), "utf8");
 }
 

@@ -14,9 +14,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
+import { executeDomainOperation } from "../db/domain-operation.ts";
 import {
+  adoptOrTransitionLifecycle,
+  readDomainOperationFence,
+} from "../db/writers/lifecycle-commands.ts";
+import {
+  _getAdapter,
   openDatabase,
   closeDatabase,
+  getSlice,
   isDbAvailable,
   insertMilestone,
   insertSlice,
@@ -42,6 +49,40 @@ function writeFile(base: string, relativePath: string, content: string): void {
 
 function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
+}
+
+function adoptSlice(milestoneId: string, sliceId: string): void {
+  const fence = readDomainOperationFence();
+  executeDomainOperation({
+    operationType: "test.adopt",
+    idempotencyKey: `deferred-slice/${milestoneId}/${sliceId}/adopt`,
+    expectedRevision: fence.revision,
+    expectedAuthorityEpoch: fence.authorityEpoch,
+    actorType: "test",
+    sourceTransport: "test",
+    payload: { milestoneId, sliceId },
+  }, (context) => {
+    adoptOrTransitionLifecycle(context, {
+      itemKind: "slice",
+      milestoneId,
+      sliceId,
+      lifecycleStatus: "in_progress",
+    });
+    return {
+      events: [{
+        eventType: "test.slice.adopted",
+        entityType: "slice",
+        entityId: `${milestoneId}/${sliceId}`,
+        payload: {},
+        destinations: ["test"],
+      }],
+      projections: [{
+        projectionKey: `test/${milestoneId}/${sliceId}`.toLowerCase(),
+        projectionKind: "test",
+        rendererVersion: "1",
+      }],
+    };
+  });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────
@@ -177,7 +218,6 @@ describe("deferred-slice-dispatch (#2661)", () => {
 `);
 
       const { saveDecisionToDb } = await import("../db-writer.ts");
-      const { getSlice } = await import("../gsd-db.ts");
 
       // Save a deferral decision that references M001/S03
       await saveDecisionToDb(
@@ -195,6 +235,37 @@ describe("deferred-slice-dispatch (#2661)", () => {
       assert.equal(slice?.status, "deferred", "slice status should be updated to 'deferred' after deferral decision");
 
       closeDatabase();
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test("saveDecisionToDb rejects adopted deferral without persisting the decision", async () => {
+    const base = createFixtureBase();
+    try {
+      openDatabase(":memory:");
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+      insertSlice({ id: "S03", milestoneId: "M001", title: "Target Slice", status: "active", risk: "low", depends: [] });
+      adoptSlice("M001", "S03");
+
+      const { saveDecisionToDb } = await import("../db-writer.ts");
+
+      await assert.rejects(
+        saveDecisionToDb(
+          {
+            scope: "deferral",
+            decision: "Defer S03 to focus on higher priority work",
+            choice: "defer M001/S03",
+            rationale: "Not ready yet",
+          },
+          base,
+        ),
+        /canonical lifecycle operation/i,
+      );
+
+      assert.equal(getSlice("M001", "S03")?.status, "active");
+      assert.equal(_getAdapter()?.prepare("SELECT COUNT(*) AS count FROM memories").get()?.["count"], 0);
     } finally {
       closeDatabase();
       cleanup(base);

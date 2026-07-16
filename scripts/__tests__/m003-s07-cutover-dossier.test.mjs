@@ -402,6 +402,16 @@ test("buildDossier produces stable ordered JSON and self-verifying hashes", () =
   assert.equal(first.canonicalHistoryEvidencePlane, "live_project");
   assert.equal(first.publicResponseHash, sha("frozen-public-response"));
   assert.equal(first.sourceCapstoneEvidenceHash, sha("source-capstone-evidence"));
+  assert.deepEqual(first.canonicalClosure, {
+    status: "blocked",
+    candidateStage: "pre_closure",
+    blockedEntities: ["M003/S07", "M003/S07/T07"],
+    requiredEvidence: {
+      sourceBinding: "exact_merged_revision",
+      automatedUatVerdict: "pass",
+      durableVerdictReceipt: "required",
+    },
+  });
   assert.equal(first.observationCoverage[0].itemIdentity.milestoneId, "M001");
   assert.deepEqual(first.observationCoverage.slice(0, 5).map((row) => row.classification), CLASSIFICATIONS);
   assert.equal(first.observationCoverage[0].itemIdentity.lifecyclePresent, true);
