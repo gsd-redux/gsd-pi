@@ -36,6 +36,21 @@ export interface UatEvidenceRef {
   executionId?: string;
 }
 
+export interface UatExecEvidenceMetadata {
+  id?: unknown;
+  exit_code?: unknown;
+  signal?: unknown;
+  timed_out?: unknown;
+  aborted?: unknown;
+  metadata?: {
+    kind?: unknown;
+    milestoneId?: unknown;
+    sliceId?: unknown;
+    checkId?: unknown;
+    intent?: unknown;
+  };
+}
+
 export interface UatCheckResultInput {
   id: string;
   description: string;
@@ -214,6 +229,19 @@ function resolveExecMetaPath(basePath: string, ref: string): string | null {
     if (existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+export function readUatExecEvidenceMetadata(
+  basePath: string,
+  ref: string,
+): UatExecEvidenceMetadata | null {
+  const path = resolveExecMetaPath(basePath, ref);
+  if (!path) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as UatExecEvidenceMetadata;
+  } catch {
+    return null;
+  }
 }
 
 function evidencePathIsApproved(basePath: string, ref: string): boolean {

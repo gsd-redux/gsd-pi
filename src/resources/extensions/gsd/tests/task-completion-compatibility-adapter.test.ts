@@ -98,6 +98,8 @@ interface TaskCompletionCompatibilityAdapter {
 }
 
 const TASK: TaskIdentity = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+const DOSSIER_HASH = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const CAPSTONE_HASH = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const tempDirs = new Set<string>();
 
 async function subject(): Promise<TaskCompletionCompatibilityAdapter> {
@@ -173,6 +175,122 @@ function recordFailingHostVerdict(basePath: string, attemptId: string): void {
       observation: "failed",
       durableOutputRef: `db://host-verification/${attemptId}`,
       environment: { runner: "node-test", platform: "test" },
+    },
+  });
+}
+
+function activateExactMergedClosure(basePath: string): string {
+  const dossierDir = join(basePath, "docs", "dev");
+  mkdirSync(dossierDir, { recursive: true });
+  writeFileSync(join(dossierDir, "m003-s07-cutover-dossier.json"), JSON.stringify({
+    milestoneId: TASK.milestoneId,
+    sliceId: TASK.sliceId,
+    canonicalClosure: {
+      blockedEntities: [`${TASK.milestoneId}/${TASK.sliceId}/${TASK.taskId}`],
+      requiredEvidence: {
+        automatedUatVerdict: "pass",
+        durableVerdictReceipt: "required",
+        sourceBinding: "exact_merged_revision",
+      },
+    },
+    hashes: {
+      dossierHash: DOSSIER_HASH,
+      capstoneEvidenceHash: CAPSTONE_HASH,
+    },
+  }, null, 2));
+  execFileSync("git", ["add", "docs/dev/m003-s07-cutover-dossier.json"], { cwd: basePath });
+  execFileSync("git", ["commit", "-qm", "exact merge fixture"], { cwd: basePath });
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: basePath, encoding: "utf8" }).trim();
+}
+
+function recordExactMergedUatVerdict(basePath: string, attemptId: string, mergeCommit: string): void {
+  const evidenceId = "exact-merged-uat";
+  const runId = "uat:M001:S01:attempt-2";
+  const source = captureVerificationSourceSnapshot([{ id: "project", cwd: basePath }]);
+  assert.equal(source.ok, true, source.ok ? undefined : source.error);
+  const environment = {
+    dossierHash: DOSSIER_HASH,
+    capstoneEvidenceHash: CAPSTONE_HASH,
+    authorityBaseline: "4/4",
+    localMergeCommit: mergeCommit,
+    sourceContentRevision: source.snapshot.aggregateRevision,
+  };
+  const assessment = [
+    "---",
+    "sliceId: S01",
+    "uatType: runtime-executable",
+    "verdict: PASS",
+    "attempt: 2",
+    `runId: ${runId}`,
+    "---",
+    "",
+    `gsd_uat_exec:${evidenceId}`,
+    mergeCommit,
+    source.snapshot.aggregateRevision,
+    DOSSIER_HASH,
+    CAPSTONE_HASH,
+    "",
+  ].join("\n");
+  const execDir = join(basePath, ".gsd", "exec");
+  mkdirSync(execDir, { recursive: true });
+  writeFileSync(join(execDir, `${evidenceId}.meta.json`), JSON.stringify({
+    id: evidenceId,
+    exit_code: 0,
+    signal: null,
+    timed_out: false,
+    aborted: false,
+    metadata: {
+      kind: "uat_exec",
+      milestoneId: TASK.milestoneId,
+      sliceId: TASK.sliceId,
+      checkId: "exact-merge-capstone",
+      intent: "uat-runtime-check",
+    },
+  }));
+  db().prepare(`
+    INSERT INTO assessments (
+      path, milestone_id, slice_id, status, scope, full_content, created_at
+    ) VALUES (
+      '.gsd/phases/01-test/01-01-ASSESSMENT.md', 'M001', 'S01',
+      'pass', 'run-uat', :full_content, '2026-07-12T00:03:00.000Z'
+    )
+  `).run({ ":full_content": assessment });
+  db().prepare(`
+    INSERT INTO quality_gates (
+      milestone_id, slice_id, gate_id, scope, task_id,
+      status, verdict, rationale, findings, evaluated_at
+    ) VALUES (
+      'M001', 'S01', 'UAT', 'slice', '', 'complete', 'pass',
+      'Exact-merged UAT passed.', :findings, '2026-07-12T00:03:00.000Z'
+    )
+  `).run({ ":findings": assessment });
+  db().prepare(`
+    INSERT INTO gate_runs (
+      trace_id, turn_id, gate_id, gate_type, unit_type, unit_id,
+      milestone_id, slice_id, outcome, failure_class, rationale,
+      findings, attempt, max_attempts, retryable, evaluated_at
+    ) VALUES (
+      'uat:M001:S01', :run_id, 'UAT', 'uat', 'run-uat', 'run-uat:M001/S01',
+      'M001', 'S01', 'pass', 'none', 'Exact-merged UAT passed.',
+      :findings, 2, 2, 0, '2026-07-12T00:03:00.000Z'
+    )
+  `).run({ ":run_id": runId, ":findings": assessment });
+  recordTaskTechnicalVerdict({
+    invocation: invocation(`pi:exact-merged-verification:${attemptId}`),
+    attemptId,
+    testedSourceRevision: source.snapshot.aggregateRevision,
+    verdict: "pass",
+    rationale: "Exact-merged UAT passed.",
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: "gsd_uat_exec",
+      workingDirectory: basePath,
+      startedAt: "2026-07-12T00:02:00.000Z",
+      endedAt: "2026-07-12T00:02:01.000Z",
+      exitCode: 0,
+      observation: "passed",
+      durableOutputRef: evidenceId,
+      environment,
     },
   });
 }
@@ -526,6 +644,44 @@ test("verified publication alone completes the legacy Task and checks its projec
       { sequence: 5, next_stage: "settled" },
     ],
   );
+});
+
+test("ordinary verification and milestone validation cannot bypass exact-merged UAT closure", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  activateExactMergedClosure(basePath);
+  await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
+  db().prepare(`
+    INSERT INTO assessments (
+      path, milestone_id, status, scope, full_content, created_at
+    ) VALUES (
+      '.gsd/milestones/M001/M001-VALIDATION.md', 'M001', 'pass',
+      'milestone-validation', 'Milestone validation passed.', '2026-07-12T00:03:00.000Z'
+    )
+  `).run();
+
+  await assert.rejects(
+    publishVerifiedTaskCompletion(publishInput(basePath, attemptId)),
+    /exact-merged|gsd_uat_exec|closure dossier/i,
+  );
+
+  assert.equal(taskState().status, "in_progress");
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "in_progress");
+});
+
+test("exact-merged UAT evidence authorizes dossier task publication", async () => {
+  const { publishVerifiedTaskCompletion, stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  const mergeCommit = activateExactMergedClosure(basePath);
+  await stageTaskCompletion(stageInput(basePath));
+  recordExactMergedUatVerdict(basePath, attemptId, mergeCommit);
+
+  const published = await publishVerifiedTaskCompletion(publishInput(basePath, attemptId));
+
+  assert.equal(published.status, "committed");
+  assert.equal(taskState().status, "complete");
+  assert.equal(row("SELECT lifecycle_status FROM workflow_item_lifecycles").lifecycle_status, "completed");
 });
 
 test("verified publication atomically closes only its task gates from durable Attempt evidence", async () => {

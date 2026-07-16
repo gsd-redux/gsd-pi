@@ -11,6 +11,7 @@ import {
   readDomainOperationFence,
 } from "./db/writers/lifecycle-commands.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import { requireExactMergedUatClosureEvidence } from "./exact-merged-uat-closure.js";
 import {
   getTask,
   getSlice,
@@ -505,6 +506,11 @@ function requireCurrentVerifiedSource(input: PublishVerifiedTaskCompletionInput)
   if (source.snapshot.aggregateRevision !== verdict.testedSourceRevision) {
     throw new Error("Verified Task publication source no longer matches its host verification evidence");
   }
+  requireExactMergedUatClosureEvidence({
+    basePath: input.basePath,
+    task: input.task,
+    verdict,
+  });
 }
 
 export async function publishVerifiedTaskCompletion(
