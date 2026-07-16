@@ -241,6 +241,60 @@ describe("deferred-slice-dispatch (#2661)", () => {
     }
   });
 
+  test("saveDecisionToDb rejects a deferral for a missing slice without persisting the decision", async () => {
+    const base = createFixtureBase();
+    try {
+      openDatabase(":memory:");
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+
+      const { saveDecisionToDb } = await import("../db-writer.ts");
+
+      await assert.rejects(
+        saveDecisionToDb(
+          {
+            scope: "deferral",
+            decision: "Defer a slice that does not exist",
+            choice: "defer M001/S99",
+            rationale: "Invalid target",
+          },
+          base,
+        ),
+        /slice M001\/S99 does not exist/i,
+      );
+
+      assert.equal(_getAdapter()?.prepare("SELECT COUNT(*) AS count FROM memories").get()?.["count"], 0);
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  test("saveDecisionToDb normalizes lowercase deferral references", async () => {
+    const base = createFixtureBase();
+    try {
+      openDatabase(":memory:");
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+      insertSlice({ id: "S03", milestoneId: "M001", title: "Target Slice", status: "active", risk: "low", depends: [] });
+
+      const { saveDecisionToDb } = await import("../db-writer.ts");
+      await saveDecisionToDb(
+        {
+          scope: "deferral",
+          decision: "Defer S03 to focus on higher priority work",
+          choice: "defer m001/s03",
+          rationale: "Not ready yet",
+        },
+        base,
+      );
+
+      assert.equal(getSlice("M001", "S03")?.status, "deferred");
+      assert.equal(_getAdapter()?.prepare("SELECT COUNT(*) AS count FROM memories").get()?.["count"], 1);
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
   test("saveDecisionToDb rejects adopted deferral without persisting the decision", async () => {
     const base = createFixtureBase();
     try {

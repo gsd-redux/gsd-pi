@@ -573,6 +573,9 @@ export async function saveDecisionToDb(
     const sliceRef = extractDeferredSliceRef(fields);
     if (sliceRef) {
       db.immediateTransaction(() => {
+        if (!db.getSlice(sliceRef.milestoneId, sliceRef.sliceId)) {
+          throw new Error(`Slice ${sliceRef.milestoneId}/${sliceRef.sliceId} does not exist`);
+        }
         if (!persistDecisionToMemory(id, normalized)) {
           throw new Error('Unable to persist deferral decision');
         }
@@ -714,7 +717,7 @@ export function extractDeferredSliceRef(
   for (const text of [fields.choice, fields.decision, fields.scope]) {
     const match = text.match(defersSlicePattern) ?? text.match(sliceIsDeferredPattern);
     if (match) {
-      return { milestoneId: match[1], sliceId: match[2] };
+      return { milestoneId: match[1].toUpperCase(), sliceId: match[2].toUpperCase() };
     }
   }
 
