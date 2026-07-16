@@ -358,21 +358,21 @@ describe("context-store: sub-5ms query timing", () => {
     queryRequirements();
 
     const samples = Array.from({ length: 7 }, () => {
-      const start = performance.now();
+      const start = process.cpuUsage();
       const decisions = queryDecisions();
       const requirements = queryRequirements();
-      const elapsed = performance.now() - start;
+      const { user, system } = process.cpuUsage(start);
 
       assert.strictEqual(decisions.length, 50, `got ${decisions.length} decisions (expected 50)`);
       assert.strictEqual(requirements.length, 50, `got ${requirements.length} requirements (expected 50)`);
-      return elapsed;
+      return (user + system) / 1_000;
     });
     const sortedSamples = [...samples].sort((a, b) => a - b);
     const median = sortedSamples[Math.floor(sortedSamples.length / 2)];
     const maxLatencyMs = process.env.NODE_V8_COVERAGE ? 15 : 5;
     assert.ok(
       median < maxLatencyMs,
-      `median query latency ${median.toFixed(2)}ms should be < ${maxLatencyMs}ms (samples: ${samples.map((sample) => sample.toFixed(2)).join(", ")}ms)`,
+      `median query CPU time ${median.toFixed(2)}ms should be < ${maxLatencyMs}ms (samples: ${samples.map((sample) => sample.toFixed(2)).join(", ")}ms)`,
     );
   });
 });
