@@ -309,7 +309,7 @@ describe("context-store: formatRequirementsForPrompt", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// context-store: sub-5ms timing assertion
+// context-store: sub-5ms median CPU-time assertion
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("context-store: sub-5ms query timing", () => {
@@ -353,7 +353,7 @@ describe("context-store: sub-5ms query timing", () => {
       });
     }
 
-    // Time the queries — warm up first
+    // Warm first. CPU time excludes scheduler stalls; the median still exposes persistent query regressions.
     queryDecisions();
     queryRequirements();
 
