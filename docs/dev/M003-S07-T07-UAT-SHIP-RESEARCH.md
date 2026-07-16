@@ -3,7 +3,11 @@
 
 # M003/S07/T07 automated UAT and shipping research
 
-**Status:** research-only snapshot at `a4100b234c57c7ec8b82473281921dd1d4668aa9`
+> **Status:** Research-only snapshot at
+> `a4100b234c57c7ec8b82473281921dd1d4668aa9`. Current closure protocol is
+> owned by the
+> [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier)
+> and the generated [cutover dossier](m003-s07-cutover-dossier.json).
 
 **Scope:** the safest automated path from a finished T07 implementation through
 candidate UAT, `verify:merge`, no-mistakes, hosted CI, squash merge, exact-merge

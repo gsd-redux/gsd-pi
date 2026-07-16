@@ -3,6 +3,12 @@
 
 # M003/S07/T07 cutover decision research
 
+> **Status:** Historical decision research snapshot. Current behavior is owned
+> by the
+> [Architecture Overview](architecture.md#semantic-shadow-evidence-and-cutover-boundary),
+> the [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier),
+> and the generated [cutover dossier](m003-s07-cutover-dossier.json).
+
 ## Decision
 
 The T07 dossier must recommend **NO-GO for production read-authority cutover**.

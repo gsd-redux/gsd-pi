@@ -1,5 +1,10 @@
 # M003/S07/T06 no-cutover gate research
 
+> **Status:** Historical pre-implementation design snapshot. Current behavior
+> is owned by the
+> [semantic-shadow contract](M003-S07-SEMANTIC-SHADOW-RESEARCH.md) and the
+> [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier).
+
 ## Question
 
 How should T06 reject an accidental canonical lifecycle read/eligibility/retry

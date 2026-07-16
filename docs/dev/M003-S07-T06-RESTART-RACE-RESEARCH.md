@@ -1,5 +1,10 @@
 # M003/S07/T06 restart and race research
 
+> **Status:** Historical pre-implementation design snapshot. Current behavior
+> is owned by the
+> [semantic-shadow contract](M003-S07-SEMANTIC-SHADOW-RESEARCH.md) and the
+> [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier).
+
 **Date:** 2026-07-15
 **Scope:** Research only. This record maps the real process and SQLite seams for
 the S07 restart/race/fault soak. It does not authorize read cutover.

@@ -3,6 +3,11 @@
 
 # M003/S07 T06 fault research
 
+> **Status:** Historical pre-implementation design snapshot. Current behavior
+> is owned by the
+> [semantic-shadow contract](M003-S07-SEMANTIC-SHADOW-RESEARCH.md) and the
+> [lifecycle integration runbook](lifecycle-command-integration-runbook.md#s07-semantic-shadow-dossier).
+
 ## Outcome
 
 T06 can reuse nearly all of the repository's existing fault machinery. The lean
