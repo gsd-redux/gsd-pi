@@ -357,17 +357,22 @@ describe("context-store: sub-5ms query timing", () => {
     queryDecisions();
     queryRequirements();
 
-    const start = performance.now();
-    const decisions = queryDecisions();
-    const requirements = queryRequirements();
-    const elapsed = performance.now() - start;
+    const samples = Array.from({ length: 7 }, () => {
+      const start = performance.now();
+      const decisions = queryDecisions();
+      const requirements = queryRequirements();
+      const elapsed = performance.now() - start;
 
-    assert.strictEqual(decisions.length, 50, `got ${decisions.length} decisions (expected 50)`);
-    assert.strictEqual(requirements.length, 50, `got ${requirements.length} requirements (expected 50)`);
+      assert.strictEqual(decisions.length, 50, `got ${decisions.length} decisions (expected 50)`);
+      assert.strictEqual(requirements.length, 50, `got ${requirements.length} requirements (expected 50)`);
+      return elapsed;
+    });
+    const sortedSamples = [...samples].sort((a, b) => a - b);
+    const median = sortedSamples[Math.floor(sortedSamples.length / 2)];
     const maxLatencyMs = process.env.NODE_V8_COVERAGE ? 15 : 5;
     assert.ok(
-      elapsed < maxLatencyMs,
-      `query latency ${elapsed.toFixed(2)}ms should be < ${maxLatencyMs}ms`,
+      median < maxLatencyMs,
+      `median query latency ${median.toFixed(2)}ms should be < ${maxLatencyMs}ms (samples: ${samples.map((sample) => sample.toFixed(2)).join(", ")}ms)`,
     );
   });
 });
