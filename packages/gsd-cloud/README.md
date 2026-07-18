@@ -81,6 +81,25 @@ the service supervisor starts the runtime again at the next login. On
 unsupported platforms (e.g. Windows) `service` exits with a clear error; use
 `connect` there instead.
 
+## Live session events
+
+While connected, the runtime also streams `session_event` frames over the same
+WebSocket so the dashboard can render GSD sessions live. For each advertised
+project it polls `gsd_status` every 3 seconds (via that project's
+`gsd --mode mcp` client) and normalizes the deltas into a fixed event
+vocabulary: `session_started`, `turn_started`, `assistant_text`, `tool_call`,
+`tool_result`, `blocker_pending`, `blocker_resolved`, `session_idle`,
+`session_ended`, and `error`, plus a `snapshot` every 30 seconds per active
+session. Each frame carries a per-session monotonically increasing `seq`
+(starts at 1); the last 500 events per session are buffered and a bounded tail
+is re-sent after reconnects — the relay deduplicates on
+`(device, session, seq)`. Events are capped at 8 KB after JSON serialization
+(long strings are truncated; frames that still do not fit are skipped and
+logged), and at most 20 sessions are tracked concurrently per runtime (extras
+are skipped and logged). Tool-call forwarding is unchanged. Set
+`GSD_CLOUD_SESSION_EVENTS=0` (or `false`, or `cloud.session_events: false` in
+`~/.gsd/daemon.yaml`) to disable; it is on by default.
+
 ## Environment
 
 - `GSD_CLOUD_PROJECTS` — path-delimiter separated list of project directories to
@@ -88,6 +107,8 @@ unsupported platforms (e.g. Windows) `service` exits with a clear error; use
 - `GSD_CLI_PATH` — path to the `gsd` binary (default: `gsd` on `PATH`).
 - `GSD_CLOUD_EXECUTOR` — backend adapter: `gsd-pi` (default). `codex` and
   `claude` adapters are stubbed for future use.
+- `GSD_CLOUD_SESSION_EVENTS` — live session-event streaming: `0` or `false`
+  disables it (default: on). See "Live session events" above.
 
 The project directory used by `login` is persisted in `~/.gsd/daemon.yaml`.
 Set `GSD_CLOUD_PROJECTS` before `login` to advertise more than one project. Use

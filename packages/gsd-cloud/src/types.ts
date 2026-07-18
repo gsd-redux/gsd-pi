@@ -37,6 +37,8 @@ export interface DaemonConfig {
     runtime_id?: string;
     runtime_name?: string;
     enabled?: boolean;
+    /** Live session-event streaming (default true; GSD_CLOUD_SESSION_EVENTS overrides). */
+    session_events?: boolean;
   };
   discord?: {
     token: string;
