@@ -64,6 +64,7 @@ export function validateConfig(raw: unknown): DaemonConfig {
       ...(typeof c['runtime_id'] === 'string' ? { runtime_id: c['runtime_id'] } : {}),
       ...(typeof c['runtime_name'] === 'string' ? { runtime_name: c['runtime_name'] } : {}),
       ...(typeof c['enabled'] === 'boolean' ? { enabled: c['enabled'] } : {}),
+      ...(typeof c['session_events'] === 'boolean' ? { session_events: c['session_events'] } : {}),
     };
   }
 
@@ -124,6 +125,13 @@ export function validateConfig(raw: unknown): DaemonConfig {
     } else {
       discord = { ...discord, token: envToken };
     }
+  }
+
+  // --- env override: GSD_CLOUD_SESSION_EVENTS (default on; 0/false disables) ---
+  const envSessionEvents = process.env['GSD_CLOUD_SESSION_EVENTS'];
+  if (envSessionEvents !== undefined && cloud) {
+    const normalized = envSessionEvents.trim().toLowerCase();
+    cloud = { ...cloud, session_events: normalized !== '0' && normalized !== 'false' };
   }
 
   return {

@@ -3,6 +3,7 @@ import type { Logger } from "./logger.js";
 import type { DaemonConfig } from "./types.js";
 import type { AdvertisedProject, Executor } from "./executors/executor.js";
 import { createGatewayLookup, parseCloudGatewayUrl, validateGatewayNetworkTarget } from "./cloud-config.js";
+import { SessionEventProducer } from "./session-events.js";
 import {
   noopRuntimeTelemetry,
   type RuntimeTelemetryReporter,
@@ -50,6 +51,9 @@ export class CloudRuntime {
   private stopped = false;
   private firstConnectDeferred: PromiseWithResolvers<void> | undefined;
   private initialConnectAttempts = 0;
+  // Kept across reconnects so per-session seq counters and replay buffers
+  // survive; polling pauses while the socket is down.
+  private sessionEvents: SessionEventProducer | undefined;
 
   constructor(
     private readonly cloud: NonNullable<DaemonConfig["cloud"]>,
@@ -86,6 +90,7 @@ export class CloudRuntime {
     this.reconnect = undefined;
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
+    this.sessionEvents?.stopPolling();
     this.inFlight.clear();
     this.outbox = [];
     const socket = this.socket;
@@ -181,6 +186,9 @@ export class CloudRuntime {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     this.socket = undefined;
+    // Pause the producer while disconnected; its seq counters and replay
+    // buffers persist so the stream resumes on the next hello.
+    this.sessionEvents?.stopPolling();
     if (this.stopped) return;
     this.telemetry.disconnected();
     if (this.firstConnectDeferred) {
@@ -224,6 +232,27 @@ export class CloudRuntime {
       runtimeName: this.cloud.runtime_name,
       projects,
     });
+    // Only after the hello has been accepted does the live session-event
+    // producer start polling gsd_status and streaming session_event frames.
+    this.startSessionEvents();
+  }
+
+  private startSessionEvents(): void {
+    if (this.cloud.session_events === false) return;
+    if (!this.sessionEvents) {
+      this.sessionEvents = new SessionEventProducer({
+        runtimeId: this.cloud.runtime_id ?? "",
+        projects: () => this.advertisedProjects,
+        poll: (project, sessionId) => this.executor.execute(
+          "gsd_status",
+          sessionId ? { sessionId } : {},
+          project.path,
+        ),
+        send: (frame, projectPath) => this.send(frame, projectPath),
+        logger: this.logger,
+      });
+    }
+    this.sessionEvents.start();
   }
 
   private async handleMessage(text: string): Promise<void> {
