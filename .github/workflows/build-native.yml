@@ -142,7 +142,7 @@ jobs:
       # "Path Validation Error: Path(s) specified for caching do(es) not exist",
       # even though every publish step succeeded. The publish job's single install
       # gains little from caching, so drop it for reliability.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
