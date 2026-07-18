@@ -28,6 +28,7 @@ import {
   writeRuntimeState,
 } from "./runtime-process.js";
 import { clearRuntimeTelemetry, readRuntimeTelemetry, RuntimeTelemetryStore } from "./runtime-telemetry.js";
+import { installService, serviceStatus, uninstallService } from "./service-install.js";
 import type { DaemonConfig } from "./types.js";
 
 export async function handleCloudCommand(argv: string[], opts: {
@@ -39,6 +40,12 @@ export async function handleCloudCommand(argv: string[], opts: {
   }
 
   const command = argv[0];
+
+  if (command === "service") {
+    handleServiceCommand(argv.slice(1), opts.binaryName);
+    return;
+  }
+
   const { values } = parseArgs({
     args: argv.slice(1),
     options: {
@@ -259,6 +266,69 @@ async function startAndReportBackgroundRuntime(
   process.stdout.write(`${binaryName}: logs ${status.log_file}\n`);
 }
 
+function handleServiceCommand(argv: string[], binaryName: string): void {
+  const subcommand = argv[0];
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    process.stdout.write(formatServiceUsage(binaryName));
+    return;
+  }
+  const { values } = parseArgs({
+    args: argv.slice(1),
+    options: {
+      config: { type: "string", short: "c" },
+      help: { type: "boolean", short: "h", default: false },
+    },
+    strict: true,
+  });
+  if (values.help) {
+    process.stdout.write(formatServiceUsage(binaryName));
+    return;
+  }
+
+  if (subcommand === "install") {
+    const configPath = resolveConfigPath(values.config);
+    const binaryPath = process.argv[1];
+    if (!binaryPath) throw new Error("could not resolve the gsd-cloud executable path");
+    const installed = installService({
+      nodePath: process.execPath,
+      binaryPath,
+      configPath,
+    });
+    process.stdout.write(`${binaryName}: ${installed.manager} service installed and started.\n`);
+    process.stdout.write(`${binaryName}: unit ${installed.unitPath}\n`);
+    process.stdout.write(installed.logPath
+      ? `${binaryName}: the runtime now starts at login and restarts on crash; logs ${installed.logPath}\n`
+      : `${binaryName}: the runtime now starts at login and restarts on crash; logs \`journalctl --user -u gsd-cloud\`\n`);
+    return;
+  }
+
+  if (subcommand === "uninstall") {
+    const removed = uninstallService();
+    process.stdout.write(removed.removed
+      ? `${binaryName}: ${removed.manager} service uninstalled (${removed.unitPath} removed).\n`
+      : `${binaryName}: service is not installed.\n`);
+    return;
+  }
+
+  if (subcommand === "status") {
+    const status = serviceStatus();
+    if (!status.installed) {
+      process.stdout.write(`${binaryName}: service is not installed (no ${status.manager} unit at ${status.unitPath}).\n`);
+      return;
+    }
+    const state = status.running
+      ? `running (PID ${status.pid})`
+      : status.loaded
+        ? `loaded but not running${status.lastExitStatus != null ? ` (last exit status: ${status.lastExitStatus})` : ""}`
+        : "installed but not loaded";
+    process.stdout.write(`${binaryName}: ${status.manager} service ${status.label} is ${state}.\n`);
+    process.stdout.write(`${binaryName}: unit ${status.unitPath}\n`);
+    return;
+  }
+
+  throw new Error(`Unknown service command: ${subcommand} (expected install, uninstall, or status)`);
+}
+
 function selectedProjectDirs(savedProjectDirs: string[]): string[] {
   const configured = process.env["GSD_CLOUD_PROJECTS"];
   if (configured?.trim()) {
@@ -304,6 +374,9 @@ export function formatUsage(binaryName: string): string {
        ${binaryName} connect [--config <path>] [--verbose] [--foreground]
        ${binaryName} stop [--config <path>]
        ${binaryName} disconnect [--config <path>]
+       ${binaryName} service install [--config <path>]
+       ${binaryName} service uninstall
+       ${binaryName} service status
 
 Commands:
   login      (Recommended) Browser-based pairing — opens an approval URL, then
@@ -314,6 +387,9 @@ Commands:
   connect    Start a background connection using saved credentials and projects.
   stop       Stop the background runtime without removing saved credentials.
   disconnect Stop the background runtime and remove local cloud credentials.
+  service    Manage the OS background service (launchd on macOS, systemd user
+             unit on Linux) that starts the runtime at login and restarts it
+             on crash. See \`${binaryName} service --help\`.
 
 Options:
   --config <path>        Path to YAML config file (default: ~/.gsd/daemon.yaml)
@@ -329,5 +405,24 @@ Environment:
                          (default: current working directory)
   GSD_CLI_PATH           Path to the gsd binary (default: gsd on PATH)
   GSD_CLOUD_EXECUTOR     Backend adapter: gsd-pi (default), codex, claude
+`;
+}
+
+function formatServiceUsage(binaryName: string): string {
+  return `Usage: ${binaryName} service install [--config <path>]
+       ${binaryName} service uninstall
+       ${binaryName} service status
+
+Commands:
+  install    Install and start the OS service for the cloud runtime — a
+             launchd LaunchAgent on macOS (starts at login, KeepAlive on crash)
+             or a systemd user unit on Linux (starts at login, Restart=on-failure).
+             Pair with \`${binaryName} login\` first.
+  uninstall  Stop and remove the OS service. Pairing and credentials are kept.
+  status     Show whether the OS service is installed, loaded, and running.
+
+Options:
+  --config <path>  Path to YAML config file (default: ~/.gsd/daemon.yaml)
+  --help           Show this help message and exit
 `;
 }
