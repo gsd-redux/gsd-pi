@@ -45,6 +45,42 @@ counters, per-project activity) read from the runtime's status file — this is
 the same file the GSD Cloud Monitor macOS app polls. See
 [`apps/gsd-cloud-monitor`](../../apps/gsd-cloud-monitor/README.md).
 
+## Run as a background service
+
+`connect` detaches the runtime from your terminal, but it does not start again
+after a logout/reboot or a crash. To keep the cloud agent always running —
+start at login and restart on failure — install it as an OS service (macOS and
+Linux only):
+
+```bash
+# Install and start the service: a launchd LaunchAgent on macOS
+# (~/Library/LaunchAgents/net.opengsd.gsd-cloud.plist, RunAtLoad + KeepAlive)
+# or a systemd user unit on Linux
+# (~/.config/systemd/user/gsd-cloud.service, Restart=on-failure).
+npx @opengsd/gsd-cloud service install
+
+# Show whether the service is installed, loaded, and running.
+npx @opengsd/gsd-cloud service status
+
+# Stop and remove the service. Pairing and credentials are kept.
+npx @opengsd/gsd-cloud service uninstall
+```
+
+Pair with `login` first — the service runs `connect --foreground`, so `status`
+and `stop` see the service-managed runtime exactly like a `connect` session.
+On macOS the service appends stdout/stderr to the same `cloud-runtime.log`
+artifact that `connect` uses; on Linux it logs to the journal
+(`journalctl --user -u gsd-cloud`). On headless Linux servers, run
+`loginctl enable-linger` once so the user unit starts at boot without an
+interactive login.
+
+A clean stop (`stop`/`disconnect`) exits successfully, so neither supervisor
+restarts the runtime afterwards. If you installed the service and want to
+disconnect permanently, run `service uninstall` before `disconnect` — otherwise
+the service supervisor starts the runtime again at the next login. On
+unsupported platforms (e.g. Windows) `service` exits with a clear error; use
+`connect` there instead.
+
 ## Environment
 
 - `GSD_CLOUD_PROJECTS` — path-delimiter separated list of project directories to
