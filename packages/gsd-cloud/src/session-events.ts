@@ -152,6 +152,7 @@ export class SessionEventProducer {
   private readonly now: () => number;
   private readonly sessions = new Map<string, TrackedSession>();
   private readonly skippedBound = new Set<string>();
+  private readonly reportedPollFailure = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private polling = false;
   // Bumped on every stopPolling(); an in-flight poll cycle compares its
@@ -278,8 +279,10 @@ export class SessionEventProducer {
       const key = sessionKey(project.path, sessionId);
       try {
         const result = readStatusResult(await this.deps.poll(project, sessionId));
-        if (result.payload) payloads.push(result.payload);
-        else this.pollFailure(key, sessionId, result.errorText ?? "unexpected gsd_status result");
+        if (result.payload) {
+          payloads.push(result.payload);
+          this.reportedPollFailure.delete(key);
+        } else this.pollFailure(key, sessionId, result.errorText ?? "unexpected gsd_status result");
       } catch (err) {
         this.pollFailure(key, sessionId, err instanceof Error ? err.message : String(err));
       }
@@ -292,6 +295,8 @@ export class SessionEventProducer {
     if (message.startsWith("Session not found")) return; // vanish is handled by the diff
     const tracked = this.sessions.get(key);
     if (!tracked || tracked.ended) return;
+    if (this.reportedPollFailure.has(key)) return;
+    this.reportedPollFailure.add(key);
     this.emit(tracked, "error", { message: truncate(message, CAP_MESSAGE) });
   }
 
@@ -304,6 +309,7 @@ export class SessionEventProducer {
       if (existing.ended && !TERMINAL_STATUSES.has(payload.status)) {
         this.sessions.delete(key);
         this.skippedBound.delete(key);
+        this.reportedPollFailure.delete(key);
       } else {
         return existing;
       }
@@ -552,6 +558,7 @@ export class SessionEventProducer {
       if (tracked.ended && now - tracked.endedAt > this.endedTtlMs) {
         this.sessions.delete(key);
         this.skippedBound.delete(key);
+        this.reportedPollFailure.delete(key);
       }
     }
   }
