@@ -75,9 +75,10 @@ export function saveCloudConfig(
   const existingCloud = raw.cloud != null && typeof raw.cloud === "object"
     ? raw.cloud as Record<string, unknown>
     : {};
+  const { device_token: _legacyDeviceToken, ...preservedCloud } = existingCloud;
   const { device_token: deviceToken, ...cloud } = nextCloud;
   raw.cloud = {
-    ...existingCloud,
+    ...preservedCloud,
     ...cloud,
     gateway_url: parseCloudGatewayUrl(nextCloud.gateway_url).toString(),
     ...(deviceToken ? { device_token_encrypted: protectCloudDeviceToken(deviceToken) } : {}),
