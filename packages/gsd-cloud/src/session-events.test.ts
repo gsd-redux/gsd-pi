@@ -389,6 +389,11 @@ test("pathologically oversized frames are skipped without burning a seq", async 
 
   assert.deepEqual(kinds(sent), ["session_started", "turn_started"]);
   assert.deepEqual(sent.map((frame) => frame.seq), [1, 2], "no seq gap from the dropped frame");
+  assert.equal(
+    warnings.filter((data) => data.kind === "blocker_pending").length,
+    2,
+    "blocker_pending is retried when the first emit is dropped",
+  );
 });
 
 test("concurrent session bound: extra sessions are skipped and logged once", async (t) => {

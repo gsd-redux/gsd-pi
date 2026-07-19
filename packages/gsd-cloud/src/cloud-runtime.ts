@@ -248,7 +248,7 @@ export class CloudRuntime {
           sessionId ? { sessionId } : {},
           project.path,
         ),
-        send: (frame, projectPath) => this.send(frame, projectPath),
+        send: (frame, projectPath) => this.sendSessionEvent(frame, projectPath),
         logger: this.logger,
       });
     }
@@ -381,6 +381,17 @@ export class CloudRuntime {
     if (!deferred) return;
     this.firstConnectDeferred = undefined;
     deferred.reject(err);
+  }
+
+  /** Live session events are dropped while disconnected; the producer's replay
+   * buffer re-sends a bounded tail on reconnect. Keeping them out of the
+   * shared offline outbox avoids evicting tool_result frames. */
+  private sendSessionEvent(frame: unknown, projectPath?: string): void {
+    const text = JSON.stringify(frame);
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.send(text);
+      this.telemetry.sent(text, projectPath);
+    }
   }
 
   private send(message: unknown, projectPath?: string): void {

@@ -345,10 +345,21 @@ export class SessionEventProducer {
     let emitted = false;
 
     // --- event deltas (chronological order) ---
-    for (const raw of deltaEvents(tracked, payload)) {
+    const counterReset = payload.eventCount < tracked.lastEventCount;
+    const events = deltaEvents(tracked, payload);
+    for (const raw of events) {
       emitted = this.mapRawEvent(tracked, raw) || emitted;
     }
-    tracked.lastEventCount = Math.max(tracked.lastEventCount, payload.eventCount);
+    if (counterReset) {
+      tracked.lastEventCount = payload.eventCount;
+    } else if (events.length > 0) {
+      // Advance only by events actually present in the bounded window — jumping
+      // straight to eventCount would skip gaps when delta > recentEvents.length.
+      tracked.lastEventCount += events.length;
+    } else if (payload.eventCount > tracked.lastEventCount) {
+      // Counter moved but the window is empty; acknowledge the gap.
+      tracked.lastEventCount = payload.eventCount;
+    }
 
     // --- blocker transitions ---
     const blocker = payload.pendingBlocker;
@@ -360,13 +371,16 @@ export class SessionEventProducer {
       if (blocker.options?.length) {
         data.options = blocker.options.slice(0, CAP_OPTIONS_MAX).map((option) => truncate(option, CAP_OPTION));
       }
-      this.emit(tracked, "blocker_pending", data);
-      tracked.pendingBlockerId = blocker.id;
-      emitted = true;
+      if (this.emit(tracked, "blocker_pending", data)) {
+        tracked.pendingBlockerId = blocker.id;
+        emitted = true;
+      }
     } else if (!blocker && tracked.pendingBlockerId !== null) {
-      this.emit(tracked, "blocker_resolved", { blockerId: tracked.pendingBlockerId });
-      tracked.pendingBlockerId = null;
-      emitted = true;
+      const blockerId = tracked.pendingBlockerId;
+      if (this.emit(tracked, "blocker_resolved", { blockerId })) {
+        tracked.pendingBlockerId = null;
+        emitted = true;
+      }
     }
 
     // --- terminal status transitions ---
@@ -453,7 +467,7 @@ export class SessionEventProducer {
     }
   }
 
-  private emit(tracked: TrackedSession, kind: SessionEventKind, data: Record<string, unknown>): void {
+  private emit(tracked: TrackedSession, kind: SessionEventKind, data: Record<string, unknown>): boolean {
     const frame: SessionEventFrame = {
       type: "session_event",
       runtimeId: this.deps.runtimeId,
@@ -469,7 +483,7 @@ export class SessionEventProducer {
         kind,
         maxEventBytes: this.maxEventBytes,
       });
-      return; // do not burn the seq — consumers never see a gap from us
+      return false; // do not burn the seq — consumers never see a gap from us
     }
     tracked.seq = sized.seq;
     tracked.replay.push(sized);
@@ -477,6 +491,7 @@ export class SessionEventProducer {
       tracked.replay.splice(0, tracked.replay.length - this.replayBufferSize);
     }
     this.deps.send(sized, tracked.projectPath);
+    return true;
   }
 
   /**
@@ -618,7 +633,8 @@ function deltaEvents(tracked: TrackedSession, payload: StatusPayload): Array<Rec
     // Counter reset (session object rebuilt) — treat the visible window as new.
     return payload.eventCount < tracked.lastEventCount ? payload.recentEvents : [];
   }
-  return payload.recentEvents.slice(-delta);
+  const startIndex = Math.max(0, payload.recentEvents.length - delta);
+  return payload.recentEvents.slice(startIndex);
 }
 
 function extractText(content: unknown): string {
