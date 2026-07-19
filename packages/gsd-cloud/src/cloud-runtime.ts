@@ -226,6 +226,10 @@ export class CloudRuntime {
     const projects = await this.executor.advertisedProjects();
     this.advertisedProjects = projects;
     this.telemetry.projectsAdvertised(projects);
+    // The hello and session-event producer are tied to this connection. If the
+    // socket closed while advertisedProjects() was in flight, skip — the next
+    // open will re-advertise and start polling with a replay.
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.send({
       type: "hello",
       runtimeId: this.cloud.runtime_id,

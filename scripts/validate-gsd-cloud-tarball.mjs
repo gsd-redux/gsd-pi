@@ -215,7 +215,7 @@ try {
     helpOut = `${err.stdout ?? ''}${err.stderr ?? ''}${err.message}`;
   }
   check('bin/gsd-cloud.js --help exits 0 from the extracted tarball', helpOk, helpOk ? '' : helpOut.slice(0, 400));
-  for (const command of ['login', 'pair', 'status', 'connect', 'stop', 'disconnect']) {
+  for (const command of ['login', 'pair', 'status', 'connect', 'stop', 'disconnect', 'service']) {
     check(`--help lists \`${command}\``, helpOut.includes(command));
   }
   check('--help documents the cloud.opengsd.net default', helpOut.includes('cloud.opengsd.net'));
