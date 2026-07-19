@@ -396,6 +396,47 @@ test("pathologically oversized frames are skipped without burning a seq", async 
   );
 });
 
+test("event window overflow reports the gap without re-emitting an overlapping tail", async (t) => {
+  // The server keeps only the last three events. Between the baseline and the
+  // next poll, five events elapsed, so two are unrecoverable (never in any
+  // future window). The visible tail must be emitted exactly once and the gap
+  // logged; a later poll that slides the window forward must not re-emit the
+  // events it already streamed (duplicates carry fresh seqs the relay's
+  // (device, session, seq) dedupe cannot catch).
+  let payload = statusPayload();
+  const { producer, sent, warnings } = makeProducer(t, { poll: async () => mcpResult(payload) });
+  await producer.pollOnce(); // baseline: eventCount 0
+
+  payload = statusPayload({
+    progress: { eventCount: 5, toolCalls: 0 },
+    recentEvents: [
+      { type: "tool_use", name: "e3" },
+      { type: "tool_use", name: "e4" },
+      { type: "tool_use", name: "e5" },
+    ],
+  });
+  await producer.pollOnce();
+
+  payload = statusPayload({
+    progress: { eventCount: 6, toolCalls: 0 },
+    recentEvents: [
+      { type: "tool_use", name: "e4" },
+      { type: "tool_use", name: "e5" },
+      { type: "tool_use", name: "e6" },
+    ],
+  });
+  await producer.pollOnce();
+
+  const toolNames = sent.filter((frame) => frame.event.kind === "tool_call").map((frame) => frame.event.data.name);
+  assert.deepEqual(toolNames, ["e3", "e4", "e5", "e6"], "no event is emitted twice across the gap");
+  const seqs = sent.map((frame) => frame.seq);
+  assert.deepEqual(seqs, [...new Set(seqs)], "seqs stay unique");
+  assert.ok(
+    warnings.some((data) => data.skipped === 2 && data.windowSize === 3),
+    "the unrecoverable gap is reported",
+  );
+});
+
 test("concurrent session bound: extra sessions are skipped and logged once", async (t) => {
   const payloads: Record<string, unknown> = {
     s1: statusPayload({ sessionId: "s1" }),
@@ -591,4 +632,22 @@ test("socket close pauses polling; reconnect resumes without recreating the prod
     reopened.sent.some((text) => (JSON.parse(text) as { type: string }).type === "session_event"),
     "replayed/heartbeat frames flow on the new socket",
   );
+});
+
+test("session events bypass the offline outbox; must-deliver frames are buffered", (t) => {
+  const { runtime, internals } = makeWiredRuntime({}, wiredExecutor);
+  t.after(() => runtime.stop());
+  // No open socket: a session_event is dropped (the producer's replay buffer
+  // redelivers it on reconnect) so it cannot evict a queued tool_result from
+  // the bounded offline outbox.
+  const priv = internals as unknown as {
+    sendSessionEvent: (frame: unknown, projectPath?: string) => void;
+    send: (message: unknown, projectPath?: string) => void;
+    outbox: Array<{ text: string }>;
+  };
+  priv.sendSessionEvent({ type: "session_event", seq: 1 });
+  priv.send({ type: "tool_result", requestId: "r1", result: {} });
+
+  const buffered = priv.outbox.map((frame) => (JSON.parse(frame.text) as { type: string }).type);
+  assert.deepEqual(buffered, ["tool_result"], "only the tool_result is queued while disconnected");
 });

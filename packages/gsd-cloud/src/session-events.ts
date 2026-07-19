@@ -345,21 +345,25 @@ export class SessionEventProducer {
     let emitted = false;
 
     // --- event deltas (chronological order) ---
-    const counterReset = payload.eventCount < tracked.lastEventCount;
-    const events = deltaEvents(tracked, payload);
-    for (const raw of events) {
+    // When more events elapsed between polls than the server's recentEvents
+    // window holds, the overflow is unrecoverable: gsd_status only returns a
+    // bounded tail and cannot page further back. Emit the visible tail once and
+    // advance the cursor to the server count so later polls never re-emit an
+    // overlapping window (that would surface as duplicate events under fresh
+    // seqs, which the relay's (device, session, seq) dedupe cannot catch). Log
+    // the gap so the loss is observable instead of silent.
+    const gap = payload.eventCount - tracked.lastEventCount - payload.recentEvents.length;
+    if (gap > 0) {
+      this.deps.logger.warn("session events: event window overflow; older events skipped", {
+        sessionId: tracked.sessionId,
+        skipped: gap,
+        windowSize: payload.recentEvents.length,
+      });
+    }
+    for (const raw of deltaEvents(tracked, payload)) {
       emitted = this.mapRawEvent(tracked, raw) || emitted;
     }
-    if (counterReset) {
-      tracked.lastEventCount = payload.eventCount;
-    } else if (events.length > 0) {
-      // Advance only by events actually present in the bounded window — jumping
-      // straight to eventCount would skip gaps when delta > recentEvents.length.
-      tracked.lastEventCount += events.length;
-    } else if (payload.eventCount > tracked.lastEventCount) {
-      // Counter moved but the window is empty; acknowledge the gap.
-      tracked.lastEventCount = payload.eventCount;
-    }
+    tracked.lastEventCount = Math.max(tracked.lastEventCount, payload.eventCount);
 
     // --- blocker transitions ---
     const blocker = payload.pendingBlocker;
