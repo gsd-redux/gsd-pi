@@ -132,13 +132,14 @@ export async function handleCloudCommand(argv: string[], opts: {
       code: values.code,
       runtimeName,
     });
+    const projectDirs = selectedProjectDirs([]);
     saveCloudConfig(configPath, {
       gateway_url: values.gateway,
       device_token: result.deviceToken,
       runtime_id: result.runtimeId,
       ...(runtimeName ? { runtime_name: runtimeName } : {}),
       enabled: true,
-    });
+    }, projectDirs);
     process.stdout.write(`${opts.binaryName}: paired cloud runtime ${result.runtimeId}.\n`);
     return;
   }
@@ -287,6 +288,12 @@ function handleServiceCommand(argv: string[], binaryName: string): void {
 
   if (subcommand === "install") {
     const configPath = resolveConfigPath(values.config);
+    const config = loadConfig(configPath);
+    if (!config.cloud?.device_token || !config.cloud.runtime_id) {
+      throw new Error("cloud runtime is not paired; run `login` or `pair` first");
+    }
+    const projectDirs = selectedProjectDirs(config.projects.scan_roots);
+    saveCloudConfig(configPath, config.cloud, projectDirs);
     const binaryPath = process.argv[1];
     if (!binaryPath) throw new Error("could not resolve the gsd-cloud executable path");
     const installed = installService({
