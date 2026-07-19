@@ -8,7 +8,7 @@
 import { parseArgs } from "node:util";
 import { realpathSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
-import { resolveConfigPath, loadConfig } from "./config.js";
+import { resolveConfigPath, loadConfig, loadScanRoots } from "./config.js";
 import { Logger } from "./logger.js";
 import {
   clearCloudConfig,
@@ -132,8 +132,7 @@ export async function handleCloudCommand(argv: string[], opts: {
       code: values.code,
       runtimeName,
     });
-    const config = loadConfig(configPath);
-    const projectDirs = selectedProjectDirs(config.projects.scan_roots);
+    const projectDirs = selectedProjectDirs(loadScanRoots(configPath));
     saveCloudConfig(configPath, {
       gateway_url: values.gateway,
       device_token: result.deviceToken,

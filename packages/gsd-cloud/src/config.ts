@@ -143,6 +143,20 @@ export function validateConfig(raw: unknown): DaemonConfig {
 }
 
 /**
+ * Read project scan_roots from a config file.
+ * Missing file or malformed YAML yields an empty list (does not throw).
+ */
+export function loadScanRoots(configPath: string): string[] {
+  if (!existsSync(configPath)) return [];
+  try {
+    const parsed = parseYaml(readFileSync(configPath, 'utf-8'));
+    return validateConfig(parsed).projects.scan_roots;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Load and validate a DaemonConfig from a YAML file.
  * If the file doesn't exist, returns defaults. If the file is malformed YAML, throws.
  */
