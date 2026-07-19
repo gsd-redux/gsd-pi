@@ -216,6 +216,39 @@ test("terminal statuses map to session_ended reasons; later repeats are ignored"
   }
 });
 
+test("a reused sessionId is revived after it ended, with a continuing seq", async (t) => {
+  let payload = statusPayload();
+  const { producer, sent } = makeProducer(t, { poll: async () => mcpResult(payload) });
+  await producer.pollOnce(); // session_started (seq 1)
+
+  payload = statusPayload({ status: "completed" });
+  await producer.pollOnce(); // session_ended (seq 2)
+
+  // Same sessionId reported active again (resumed): re-announce immediately
+  // rather than waiting for the ~10 min TTL prune of the ended entry.
+  payload = statusPayload({ status: "running" });
+  await producer.pollOnce(); // session_started (seq 3)
+
+  // A subsequent event streams as a normal delta on the revived session.
+  payload = statusPayload({
+    status: "running",
+    progress: { eventCount: 1, toolCalls: 0 },
+    recentEvents: [{ type: "turn_start", turnIndex: 0 }],
+  });
+  await producer.pollOnce(); // turn_started (seq 4)
+
+  assert.deepEqual(kinds(sent), [
+    "session_started",
+    "session_ended",
+    "session_started",
+    "turn_started",
+  ]);
+  // seq keeps climbing across the revive so the relay's (device, session, seq)
+  // dedupe accepts the resumed stream instead of dropping it as a replay.
+  assert.deepEqual(sent.map((frame) => frame.seq), [1, 2, 3, 4]);
+  assert.equal(sent[2]!.sessionId, "s1");
+});
+
 test("error status emits an error event before session_ended", async (t) => {
   let payload = statusPayload();
   const { producer, sent } = makeProducer(t, { poll: async () => mcpResult(payload) });

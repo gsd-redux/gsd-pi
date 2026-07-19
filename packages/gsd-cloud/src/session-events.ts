@@ -304,15 +304,29 @@ export class SessionEventProducer {
     const key = sessionKey(project.path, payload.sessionId);
     const existing = this.sessions.get(key);
     if (existing) {
-      // A reused sessionId with a non-terminal status is a new GSD session — drop
-      // the ended entry so live deltas are not suppressed until prune.
+      // An ended entry lingers briefly so a server that keeps returning a
+      // finished session does not cause a session_started/session_ended flap.
+      // But if the same sessionId is reported active again (reused/resumed after
+      // a new gsd_execute), revive the entry in place so a fresh session_started
+      // and its deltas flow immediately instead of being suppressed until the
+      // TTL prune. seq and the replay buffer are kept so the monotonic
+      // (device, session, seq) stream the relay dedupes on is not restarted.
       if (existing.ended && !TERMINAL_STATUSES.has(payload.status)) {
-        this.sessions.delete(key);
-        this.skippedBound.delete(key);
+        existing.ended = false;
+        existing.endedAt = 0;
+        existing.lastEventCount = payload.eventCount;
+        existing.lastStatus = "";
+        existing.pendingBlockerId = null;
+        existing.openTools.clear();
+        existing.turnCounter = 0;
+        existing.hadActivity = false;
+        existing.lastSnapshotAt = this.now();
+        // The revived session is a fresh lifetime: allow a new poll-failure
+        // error to be reported again for it.
         this.reportedPollFailure.delete(key);
-      } else {
-        return existing;
+        this.emitSessionStarted(existing, payload);
       }
+      return existing;
     }
 
     if (this.activeSessionCount() >= this.maxSessions) {
@@ -348,11 +362,17 @@ export class SessionEventProducer {
       endedAt: 0,
     };
     this.sessions.set(key, tracked);
+    this.emitSessionStarted(tracked, payload);
+    return tracked;
+  }
+
+  /** Emit the session_started frame, carrying title/model when the server
+   * reports them. Shared by first-observation tracking and session revival. */
+  private emitSessionStarted(tracked: TrackedSession, payload: StatusPayload): void {
     const data: Record<string, unknown> = {};
     if (payload.title) data.title = payload.title;
     if (payload.model) data.model = payload.model;
     this.emit(tracked, "session_started", data);
-    return tracked;
   }
 
   private applyPayload(tracked: TrackedSession, payload: StatusPayload): void {
