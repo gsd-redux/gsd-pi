@@ -569,6 +569,35 @@ test("per-session poll failure surfaces an error event", async (t) => {
   assert.match(error.event.data.message as string, /timed out/);
 });
 
+test("per-session poll failure racing stopPolling does not emit onto the next connection", async (t) => {
+  let stopDuringS2 = false;
+  let producerRef: SessionEventProducer | undefined;
+  const { producer, sent } = makeProducer(t, {
+    poll: async (_project, sessionId) => {
+      if (!sessionId) {
+        return mcpError("Multiple tracked GSD sessions; pass sessionId or projectDir. Tracked sessions: s1 /work/one; s2 /work/one");
+      }
+      if (sessionId === "s2" && stopDuringS2) {
+        // The WebSocket drops while this per-session poll is in flight:
+        // stopPolling() bumps the generation before the poll settles.
+        producerRef!.stopPolling();
+        throw new Error("MCP request timed out");
+      }
+      return mcpResult(statusPayload({ sessionId }));
+    },
+  });
+  producerRef = producer;
+  await producer.pollOnce(); // track s1 + s2
+  stopDuringS2 = true;
+  await producer.pollOnce();
+
+  assert.equal(
+    sent.filter((frame) => frame.event.kind === "error").length,
+    0,
+    "a poll failure that outlives stopPolling must not emit a stale error frame",
+  );
+});
+
 test("project-level poll failure logs and does not end tracked sessions", async (t) => {
   let result: unknown = mcpResult(statusPayload());
   const { producer, sent, warnings } = makeProducer(t, { poll: async () => result });

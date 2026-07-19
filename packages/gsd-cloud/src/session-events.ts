@@ -225,7 +225,7 @@ export class SessionEventProducer {
   private async pollProject(project: AdvertisedProject, generation: number): Promise<void> {
     let payloads: StatusPayload[];
     try {
-      payloads = await this.enumerate(project);
+      payloads = await this.enumerate(project, generation);
     } catch (err) {
       // Enumeration failed (MCP child down, timeout, …). Do not diff against a
       // missing view — sessions would look "vanished" and end spuriously.
@@ -263,7 +263,7 @@ export class SessionEventProducer {
    * gsd_status answers with an ambiguity hint that names each sessionId, so
    * parse it and poll each session explicitly.
    */
-  private async enumerate(project: AdvertisedProject): Promise<StatusPayload[]> {
+  private async enumerate(project: AdvertisedProject, generation: number): Promise<StatusPayload[]> {
     const first = readStatusResult(await this.deps.poll(project));
     if (first.payload) return [first.payload];
     const text = first.errorText ?? "";
@@ -276,22 +276,30 @@ export class SessionEventProducer {
     const sessionIds = parseTrackedSessionHints(text);
     const payloads: StatusPayload[] = [];
     for (const sessionId of sessionIds) {
+      // A multi-session enumeration awaits one poll per session; if polling was
+      // stopped mid-enumeration, abandon the rest so we do not keep probing or
+      // mutating state on behalf of a dead connection.
+      if (generation !== this.generation) break;
       const key = sessionKey(project.path, sessionId);
       try {
         const result = readStatusResult(await this.deps.poll(project, sessionId));
         if (result.payload) {
           payloads.push(result.payload);
           this.reportedPollFailure.delete(key);
-        } else this.pollFailure(key, sessionId, result.errorText ?? "unexpected gsd_status result");
+        } else this.pollFailure(key, sessionId, result.errorText ?? "unexpected gsd_status result", generation);
       } catch (err) {
-        this.pollFailure(key, sessionId, err instanceof Error ? err.message : String(err));
+        this.pollFailure(key, sessionId, err instanceof Error ? err.message : String(err), generation);
       }
     }
     return payloads;
   }
 
   /** Surface a per-session poll failure as an `error` event (session known). */
-  private pollFailure(key: string, sessionId: string, message: string): void {
+  private pollFailure(key: string, sessionId: string, message: string, generation: number): void {
+    // The poll for this session may have straddled a stopPolling(): if the
+    // generation moved on, do not emit (or mark) — a stale error frame must not
+    // land on the next connection with a fresh seq after reconnect.
+    if (generation !== this.generation) return;
     if (message.startsWith("Session not found")) return; // vanish is handled by the diff
     const tracked = this.sessions.get(key);
     if (!tracked || tracked.ended) return;
