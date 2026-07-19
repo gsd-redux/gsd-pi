@@ -33,6 +33,8 @@ export interface ServiceInstallOptions extends ServiceTargetOptions {
   configPath: string;
   /** Log file override (launchd only; defaults to the runtime artifact log). */
   logPath?: string;
+  /** Path to the `gsd` binary for the executor (from GSD_CLI_PATH at install time). */
+  gsdCliPath?: string;
 }
 
 export interface InstalledService {
@@ -161,7 +163,9 @@ export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
 \t\t<key>PATH</key>
 \t\t<string>${escapeXml(envPath)}</string>
 \t\t<key>HOME</key>
-\t\t<string>${escapeXml(home)}</string>
+\t\t<string>${escapeXml(home)}</string>${opts.gsdCliPath ? `
+\t\t<key>GSD_CLI_PATH</key>
+\t\t<string>${escapeXml(opts.gsdCliPath)}</string>` : ""}
 \t</dict>
 
 \t<key>WorkingDirectory</key>
@@ -192,7 +196,8 @@ ExecStart=${systemdArg(opts.nodePath)} ${systemdArg(opts.binaryPath)} connect --
 Restart=on-failure
 RestartSec=${SYSTEMD_RESTART_DELAY_SECONDS}
 Environment=${systemdArg(`HOME=${home}`)}
-Environment=${systemdArg(`PATH=${envPath}`)}
+Environment=${systemdArg(`PATH=${envPath}`)}${opts.gsdCliPath ? `
+Environment=${systemdArg(`GSD_CLI_PATH=${opts.gsdCliPath}`)}` : ""}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=gsd-cloud

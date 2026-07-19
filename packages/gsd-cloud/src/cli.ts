@@ -301,6 +301,7 @@ async function handleServiceCommand(argv: string[], binaryName: string): Promise
       nodePath: process.execPath,
       binaryPath,
       configPath,
+      ...(process.env["GSD_CLI_PATH"] ? { gsdCliPath: process.env["GSD_CLI_PATH"] } : {}),
     });
     process.stdout.write(`${binaryName}: ${installed.manager} service installed and started.\n`);
     process.stdout.write(`${binaryName}: unit ${installed.unitPath}\n`);
