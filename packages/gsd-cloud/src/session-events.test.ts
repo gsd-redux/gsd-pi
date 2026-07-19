@@ -470,6 +470,56 @@ test("event window overflow reports the gap without re-emitting an overlapping t
   );
 });
 
+test("a server counter reset realigns the cursor instead of re-streaming the window", async (t) => {
+  // When gsd_status reports a lower eventCount than we tracked (the session
+  // object was rebuilt server-side and counts from a lower base), deltaEvents
+  // re-streams the visible window once. The cursor must realign DOWN to the new
+  // count; pinning it at the prior high-water mark would re-emit the whole
+  // window on every later poll under fresh seqs the relay's (device, session,
+  // seq) dedupe cannot catch.
+  let payload = statusPayload();
+  const { producer, sent } = makeProducer(t, { poll: async () => mcpResult(payload) });
+  await producer.pollOnce(); // baseline: eventCount 0, session_started
+
+  payload = statusPayload({
+    progress: { eventCount: 3, toolCalls: 0 },
+    recentEvents: [
+      { type: "tool_use", name: "a1" },
+      { type: "tool_use", name: "a2" },
+      { type: "tool_use", name: "a3" },
+    ],
+  });
+  await producer.pollOnce(); // streams a1, a2, a3; cursor at 3
+
+  // Server counter resets to a lower base (session rebuilt); one new event.
+  payload = statusPayload({
+    progress: { eventCount: 1, toolCalls: 0 },
+    recentEvents: [{ type: "tool_use", name: "b1" }],
+  });
+  await producer.pollOnce(); // re-streams the window once: b1
+
+  // Counter moves forward from the reset base; only the new tail is new.
+  payload = statusPayload({
+    progress: { eventCount: 2, toolCalls: 0 },
+    recentEvents: [
+      { type: "tool_use", name: "b1" },
+      { type: "tool_use", name: "b2" },
+    ],
+  });
+  await producer.pollOnce(); // must emit only b2, not b1 again
+
+  const toolNames = sent
+    .filter((frame) => frame.event.kind === "tool_call")
+    .map((frame) => frame.event.data.name);
+  assert.deepEqual(
+    toolNames,
+    ["a1", "a2", "a3", "b1", "b2"],
+    "the cursor realigns after the reset; no event is re-streamed",
+  );
+  const seqs = sent.map((frame) => frame.seq);
+  assert.deepEqual(seqs, [...new Set(seqs)], "seqs stay unique");
+});
+
 test("concurrent session bound: extra sessions are skipped and logged once", async (t) => {
   const payloads: Record<string, unknown> = {
     s1: statusPayload({ sessionId: "s1" }),
