@@ -132,7 +132,8 @@ export async function handleCloudCommand(argv: string[], opts: {
       code: values.code,
       runtimeName,
     });
-    const projectDirs = selectedProjectDirs([]);
+    const config = loadConfig(configPath);
+    const projectDirs = selectedProjectDirs(config.projects.scan_roots);
     saveCloudConfig(configPath, {
       gateway_url: values.gateway,
       device_token: result.deviceToken,
