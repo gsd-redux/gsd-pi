@@ -298,7 +298,16 @@ export class SessionEventProducer {
   private track(project: AdvertisedProject, payload: StatusPayload): TrackedSession | undefined {
     const key = sessionKey(project.path, payload.sessionId);
     const existing = this.sessions.get(key);
-    if (existing) return existing;
+    if (existing) {
+      // A reused sessionId with a non-terminal status is a new GSD session — drop
+      // the ended entry so live deltas are not suppressed until prune.
+      if (existing.ended && !TERMINAL_STATUSES.has(payload.status)) {
+        this.sessions.delete(key);
+        this.skippedBound.delete(key);
+      } else {
+        return existing;
+      }
+    }
 
     if (this.activeSessionCount() >= this.maxSessions) {
       if (!this.skippedBound.has(key)) {
