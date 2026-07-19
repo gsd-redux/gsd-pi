@@ -398,7 +398,7 @@ export class SessionEventProducer {
     for (const raw of deltaEvents(tracked, payload)) {
       emitted = this.mapRawEvent(tracked, raw) || emitted;
     }
-    tracked.lastEventCount = Math.max(tracked.lastEventCount, payload.eventCount);
+    tracked.lastEventCount = payload.eventCount;
 
     // --- blocker transitions ---
     const blocker = payload.pendingBlocker;

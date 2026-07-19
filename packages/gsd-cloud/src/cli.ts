@@ -42,7 +42,7 @@ export async function handleCloudCommand(argv: string[], opts: {
   const command = argv[0];
 
   if (command === "service") {
-    handleServiceCommand(argv.slice(1), opts.binaryName);
+    await handleServiceCommand(argv.slice(1), opts.binaryName);
     return;
   }
 
@@ -267,7 +267,7 @@ async function startAndReportBackgroundRuntime(
   process.stdout.write(`${binaryName}: logs ${status.log_file}\n`);
 }
 
-function handleServiceCommand(argv: string[], binaryName: string): void {
+async function handleServiceCommand(argv: string[], binaryName: string): Promise<void> {
   const subcommand = argv[0];
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     process.stdout.write(formatServiceUsage(binaryName));
@@ -294,6 +294,7 @@ function handleServiceCommand(argv: string[], binaryName: string): void {
     }
     const projectDirs = selectedProjectDirs(config.projects.scan_roots);
     saveCloudConfig(configPath, config.cloud, projectDirs);
+    await stopBackgroundRuntime(configPath);
     const binaryPath = process.argv[1];
     if (!binaryPath) throw new Error("could not resolve the gsd-cloud executable path");
     const installed = installService({
