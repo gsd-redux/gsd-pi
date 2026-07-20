@@ -50,13 +50,18 @@ export default async function RootLayout({
       const raw = cookieStore.get(CLOUD_SESSION_COOKIE)?.value
       const session = raw ? verifyCloudSessionCookie(raw, secret) : null
       if (session) {
-        // Escape `<` so the JSON can safely live inside an inline script tag.
+        // Escape characters that are legal in JSON strings but break parsing
+        // when inlined in a <script> block: `<` (so `</script>` can't close the
+        // tag) and the U+2028/U+2029 line separators (invalid as raw JS source).
         cloudClientSession = JSON.stringify({
           sub: session.sub,
           deviceId: session.deviceId,
           role: session.role,
           projects: session.projects,
-        }).replace(/</g, '\\u003c')
+        })
+          .replace(/</g, '\\u003c')
+          .replace(/\u2028/g, '\\u2028')
+          .replace(/\u2029/g, '\\u2029')
       }
     } catch {
       // Missing/invalid cloud env or cookie — render without a session;

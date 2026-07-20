@@ -110,8 +110,26 @@ function buildConnectUrl(gatewayInternalUrl: string, token: string): string {
   return url.toString();
 }
 
+// `ws` delivers a "message" payload as RawData: a string, a Buffer, an
+// ArrayBuffer / typed-array view, or a Buffer[] of fragments (depending on the
+// binaryType and whether the frame arrived fragmented). Normalize every shape
+// to UTF-8 text so no frame is silently dropped.
+function rawDataToText(data: unknown): string | null {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (Array.isArray(data)) {
+    if (data.length === 0 || !data.every((chunk) => Buffer.isBuffer(chunk))) return null;
+    return Buffer.concat(data as Buffer[]).toString("utf8");
+  }
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+  }
+  return null;
+}
+
 function parseGatewayMessage(data: unknown): GatewayServerMessage | null {
-  const text = typeof data === "string" ? data : Buffer.isBuffer(data) ? data.toString("utf8") : null;
+  const text = rawDataToText(data);
   if (!text) return null;
   let parsed: unknown;
   try {
@@ -297,6 +315,18 @@ export class CloudTransport implements BridgeTransport {
     if (this.closeNotified) return;
     this.closeNotified = true;
     this.opened = false;
+    // Drop the socket reference and best-effort close the underlying TCP
+    // connection. A gateway "closed"/"error" frame does not guarantee the ws
+    // itself is closed, so leaving it referenced would leak the connection.
+    const ws = this.ws;
+    this.ws = null;
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // Already closing/closed.
+      }
+    }
     for (const listener of this.closeListeners) {
       try {
         listener(info);

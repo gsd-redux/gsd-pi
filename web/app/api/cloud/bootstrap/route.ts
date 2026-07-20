@@ -30,11 +30,19 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "Invalid or expired token" }, { status: 401 });
   }
 
+  // Behind a TLS-terminating reverse proxy `url.protocol` is "http:", which
+  // would drop the Secure attribute in production. Trust the first
+  // x-forwarded-proto value when present, falling back to the URL scheme.
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const scheme = forwardedProto
+    ? forwardedProto.split(",")[0]!.trim().toLowerCase()
+    : url.protocol.replace(/:$/, "");
+
   const cookieValue = mintCloudSessionCookie(session, config.appBridgeSecret);
   const headers = new Headers({ Location: "/" });
   headers.append(
     "Set-Cookie",
-    serializeCloudSessionCookie(cookieValue, { secure: url.protocol === "https:" }),
+    serializeCloudSessionCookie(cookieValue, { secure: scheme === "https" }),
   );
 
   return new Response(null, { status: 302, headers });
