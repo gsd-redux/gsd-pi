@@ -42,6 +42,55 @@ This exposes terminal and file APIs to any client that can reach the server unle
 - **Onboarding flow** — API key setup and provider configuration in the browser
 - **Model selection** — switch models and providers from the web UI
 
+## Local And Cloud Modes
+
+`gsd --web` starts local mode. Local mode treats `?project=` as a local
+filesystem path, falls back to `GSD_WEB_PROJECT_CWD` when omitted, and creates a
+per-project stdio bridge to a local `gsd --mode rpc` child process.
+
+Cloud mode is for the hosted `gsd-cloud` app. Build the cloud image from the
+repository root:
+
+```bash
+docker build -f web/Dockerfile.cloud -t gsd-web:cloud .
+```
+
+Run it with the required server-side gateway settings:
+
+```bash
+docker run --rm -p 3000:3000 \
+  -e GATEWAY_INTERNAL_URL="http://gateway.internal:9100" \
+  -e GATEWAY_INTERNAL_TOKEN="replace-with-internal-token" \
+  -e APP_BRIDGE_SECRET="replace-with-app-bridge-secret" \
+  gsd-web:cloud
+```
+
+`web/Dockerfile.cloud` sets `GSD_CLOUD_MODE=1` and `PORT=3000`. Cloud startup
+fails closed unless `GATEWAY_INTERNAL_URL`, `GATEWAY_INTERNAL_TOKEN`, and
+`APP_BRIDGE_SECRET` are present.
+
+In cloud mode, `?project=` is a session-granted project alias, not a local path.
+The bridge uses `CloudTransport`: the web server mints an internal RPC token via
+`POST {GATEWAY_INTERNAL_URL}/internal/rpc/token`, opens a WebSocket to
+`/rpc/connect?token=...`, and forwards bridge NDJSON frames through the gateway.
+File browsing proxies project-relative `readdir`, `read`, `stat`, and non-viewer
+`write` operations to `/internal/fs`. Local host operations such as browsing
+directories, switching roots, creating projects, local PTY terminals, shutdown,
+and update are disabled.
+
+### Cloud Authentication
+
+Cloud entry starts at `/api/cloud/bootstrap?token=...`. The token is a
+short-lived HMAC-signed app bridge token minted by the `gsd-cloud` SaaS with
+`APP_BRIDGE_SECRET`. On success, the app sets an httpOnly, SameSite=Lax
+`gsd_cloud_session` cookie for 8 hours and redirects to `/`.
+
+Every other `/api/*` request in cloud mode requires that cookie. A `?project=`
+alias must be included in the cookie's `projects` grant. The local
+`GSD_WEB_AUTH_TOKEN` bearer-token gate is ignored in cloud mode, so keep
+`GATEWAY_INTERNAL_TOKEN` and `APP_BRIDGE_SECRET` server-side and run the public
+app behind the cloud SaaS or an equivalent authenticated TLS proxy.
+
 ## Platform Notes
 
 - **macOS/Linux** — Full support
