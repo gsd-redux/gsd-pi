@@ -51,14 +51,26 @@ export type SendBinaryFn = (frame: Buffer) => void;
 /** Callback to send a JSON control message. */
 export type SendJsonFn = (message: object) => void;
 
-export function ensureNodePtySpawnHelperExecutable(
-  packageRoot = dirname(nodeRequire.resolve("node-pty/package.json")),
-): void {
+export function ensureNodePtySpawnHelperExecutable(packageRoot?: string): void {
   if (process.platform === "win32") return;
 
+  // Resolve node-pty lazily, after the win32 early-return, so a missing addon
+  // never throws during default-argument evaluation. On Windows this function
+  // no-ops without touching node-pty; elsewhere, if node-pty is not installed
+  // there is no helper to repair and the dynamic import in startSession()
+  // surfaces the actionable "not installed" error instead.
+  let root = packageRoot;
+  if (root === undefined) {
+    try {
+      root = dirname(nodeRequire.resolve("node-pty/package.json"));
+    } catch {
+      return;
+    }
+  }
+
   const helperPaths = [
-    join(packageRoot, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
-    join(packageRoot, "build", "Release", "spawn-helper"),
+    join(root, "prebuilds", `${process.platform}-${process.arch}`, "spawn-helper"),
+    join(root, "build", "Release", "spawn-helper"),
   ];
 
   for (const helperPath of helperPaths) {

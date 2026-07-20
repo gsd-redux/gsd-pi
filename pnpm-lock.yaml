@@ -118,9 +118,6 @@ importers:
       minimatch:
         specifier: ^10.2.3
         version: 10.2.5
-      node-pty:
-        specifier: ^1.1.0
-        version: 1.1.0
       openai:
         specifier: ^6.26.0
         version: 6.26.0(ws@8.21.0)(zod@4.4.3)
@@ -222,6 +219,9 @@ importers:
       koffi:
         specifier: ^2.9.0
         version: 2.16.2
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
 
   extensions/google-search:
     dependencies:
