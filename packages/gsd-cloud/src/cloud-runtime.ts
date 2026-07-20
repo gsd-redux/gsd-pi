@@ -52,6 +52,25 @@ function toFrameBuffer(data: Buffer | ArrayBuffer | Buffer[]): Buffer {
   return Buffer.from(data);
 }
 
+/** Upper bound for terminal cols/rows; guards against absurd allocations. */
+const MAX_TERMINAL_DIMENSION = 1000;
+
+/**
+ * Clamps an untrusted terminal dimension (cols/rows arrive over the network) to
+ * a sane positive integer. node-pty throws synchronously on non-finite, zero,
+ * negative, or non-integer sizes, which would otherwise crash the runtime.
+ */
+function toTerminalDimension(value: unknown, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const int = Math.floor(n);
+  if (int < 1) return fallback;
+  return Math.min(int, MAX_TERMINAL_DIMENSION);
+}
+
+/** Max UTF-8 byte length of a binary-frame channel name (1-byte length prefix). */
+const MAX_CHANNEL_BYTES = 255;
+
 export class CloudRuntime {
   private static readonly MAX_OUTBOX = 200;
   // How many times to retry the initial connect before rejecting start(). A
@@ -334,13 +353,23 @@ export class CloudRuntime {
     if (message.type === "terminal.start" && message.sessionId && this.terminalManager) {
       void this.terminalManager.startSession(
         message.sessionId,
-        message.cols ?? 80,
-        message.rows ?? 24,
+        toTerminalDimension(message.cols, 80),
+        toTerminalDimension(message.rows, 24),
       );
       return;
     }
     if (message.type === "terminal.resize" && this.terminalManager) {
-      this.terminalManager.resize(message.cols ?? 80, message.rows ?? 24);
+      // cols/rows are untrusted; clamp them and guard the resize so a malformed
+      // size (string/NaN/0) cannot make node-pty throw and crash the runtime.
+      const cols = toTerminalDimension(message.cols, 80);
+      const rows = toTerminalDimension(message.rows, 24);
+      try {
+        this.terminalManager.resize(cols, rows);
+      } catch (err) {
+        this.logger.warn("terminal resize failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       return;
     }
     if (message.type === "terminal.stop" && this.terminalManager) {
@@ -361,9 +390,18 @@ export class CloudRuntime {
       // skip replay entirely when neither yields a channel.
       const sessionId = this.terminalManager.getActiveSessionId() ?? message.sessionId;
       if (!sessionId) return;
+      const channel: `terminal:${string}` = `terminal:${sessionId}`;
+      // encodeBinaryFrame throws when the channel name exceeds 255 UTF-8 bytes.
+      // The fallback sessionId is untrusted, and handleMessage() rejections are
+      // not caught upstream, so guard here rather than risk crashing the runtime.
+      if (Buffer.byteLength(channel, "utf8") > MAX_CHANNEL_BYTES) {
+        this.logger.warn("terminal.attached channel name too long; skipping replay", {
+          bytes: Buffer.byteLength(channel, "utf8"),
+        });
+        return;
+      }
       const replay = this.terminalManager.onBrowserReconnect();
       if (replay) {
-        const channel: `terminal:${string}` = `terminal:${sessionId}`;
         for (const buf of replay.replayData) {
           const frame = encodeBinaryFrame(channel, buf);
           if (this.socket?.readyState === WebSocket.OPEN) {

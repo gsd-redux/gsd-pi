@@ -474,3 +474,59 @@ test("attached replay follows the active PTY session, not the sessionId the brow
     ["terminal:active"],
   );
 });
+
+test("terminal.resize clamps malformed dimensions and never throws into the message loop", async (t) => {
+  const runtime = makeRuntime();
+  const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
+  const socket = fakeSocket();
+  internals.socket = socket;
+
+  const resizes: Array<[number, number]> = [];
+  let throwNext = false;
+  internals.terminalManager = {
+    resize: (cols: number, rows: number) => {
+      resizes.push([cols, rows]);
+      if (throwNext) throw new Error("pty resize boom");
+    },
+    dispose: () => undefined,
+  };
+
+  // Hostile/malformed dimensions coerce to the clamped fallbacks instead of
+  // reaching node-pty as strings/NaN/0/negatives (which would throw).
+  await internals.handleSocketMessage(socket, JSON.stringify({ type: "terminal.resize", cols: "abc", rows: 0 }));
+  await internals.handleSocketMessage(socket, JSON.stringify({ type: "terminal.resize", cols: -5, rows: 999999 }));
+  assert.deepEqual(resizes, [[80, 24], [80, 1000]]);
+
+  // A resize that throws (node-pty rejecting a value) is swallowed with a
+  // warning rather than surfacing as an unhandled rejection.
+  throwNext = true;
+  await assert.doesNotReject(
+    internals.handleSocketMessage(socket, JSON.stringify({ type: "terminal.resize", cols: 100, rows: 40 })),
+  );
+});
+
+test("terminal.attached skips replay when the channel name would exceed 255 bytes", async (t) => {
+  const runtime = makeRuntime();
+  const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
+  const socket = fakeSocket();
+  internals.socket = socket;
+
+  let reconnectCalls = 0;
+  internals.terminalManager = {
+    onBrowserReconnect: () => { reconnectCalls += 1; return { replayData: [Buffer.from("x")] }; },
+    getActiveSessionId: () => null,
+    dispose: () => undefined,
+  };
+
+  // No active PTY, so the untrusted sessionId forms the channel; an over-long
+  // id would make encodeBinaryFrame throw. The guard skips replay (before even
+  // touching the reconnect buffer) instead of crashing the message loop.
+  const hugeSessionId = "s".repeat(300);
+  await assert.doesNotReject(
+    internals.handleSocketMessage(socket, JSON.stringify({ type: "terminal.attached", sessionId: hugeSessionId })),
+  );
+  assert.equal(socket.sent.length, 0);
+  assert.equal(reconnectCalls, 0);
+});

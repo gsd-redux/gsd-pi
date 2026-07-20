@@ -114,6 +114,19 @@ export class TerminalManager {
       : process.env.SHELL || "/bin/sh";
     const channel: `terminal:${string}` = `terminal:${sessionId}`;
 
+    // sessionId is gateway-supplied and forms the binary channel name. If it
+    // exceeds 255 UTF-8 bytes, encodeBinaryFrame would throw on the first PTY
+    // output and crash the runtime, so reject up front before spawning.
+    if (Buffer.byteLength(channel, "utf8") > 255) {
+      this.sendJson({
+        channel: "control",
+        type: "terminal.error",
+        sessionId,
+        error: "Terminal session id is too long (channel name exceeds 255 bytes)",
+      });
+      return;
+    }
+
     try {
       ensureNodePtySpawnHelperExecutable();
     } catch (err) {
