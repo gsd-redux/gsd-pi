@@ -1486,7 +1486,11 @@ test("decideOrchestratorDispatch adopts next active milestone after the session 
         ...makeState(),
         activeMilestone: { id: "M002", title: "Next" },
         registry: [
-          { id: "M001", title: "First", status },
+          // "deferred" is a valid isSkippedForDispatch input but not a status
+          // deriveState emits for a milestone, so the narrow registry union
+          // omits it; cast at this boundary to exercise the predicate's
+          // deferred branch without widening the production type.
+          { id: "M001", title: "First", status: status as GSDState["registry"][number]["status"] },
           { id: "M002", title: "Next", status: "active" },
         ],
       };
