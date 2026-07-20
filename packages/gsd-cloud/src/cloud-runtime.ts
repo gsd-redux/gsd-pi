@@ -292,9 +292,13 @@ export class CloudRuntime {
     if (socket !== this.socket) return;
     try {
       const { channel, data } = decodeBinaryFrame(frame);
-      if (channel.startsWith("terminal:") && this.terminalManager) {
-        this.terminalManager.write(data);
-      }
+      if (!channel.startsWith("terminal:") || !this.terminalManager) return;
+      // Only route input to the PTY when the frame's channel names the currently
+      // active session. A stale or incorrect sessionId (e.g. a frame that raced a
+      // reconnect) must not inject keystrokes into a different session's PTY.
+      const sessionId = channel.slice("terminal:".length);
+      if (sessionId !== this.terminalManager.getActiveSessionId()) return;
+      this.terminalManager.write(data);
     } catch (err) {
       this.logger.warn("binary frame decode error", {
         error: err instanceof Error ? err.message : String(err),
@@ -338,10 +342,14 @@ export class CloudRuntime {
       return;
     }
     if (message.type === "terminal.attached" && this.terminalManager) {
+      // Address replay to the session the attach names, falling back to the live
+      // PTY session. Without either we cannot form a real channel, so skip replay
+      // rather than emit frames on "terminal:unknown" that nothing multiplexes.
+      const sessionId = message.sessionId ?? this.terminalManager.getActiveSessionId();
+      if (!sessionId) return;
       const replay = this.terminalManager.onBrowserReconnect();
       if (replay) {
-        const sessionId = this.terminalManager.getActiveSessionId();
-        const channel: `terminal:${string}` = `terminal:${sessionId ?? "unknown"}`;
+        const channel: `terminal:${string}` = `terminal:${sessionId}`;
         for (const buf of replay.replayData) {
           const frame = encodeBinaryFrame(channel, buf);
           if (this.socket?.readyState === WebSocket.OPEN) {

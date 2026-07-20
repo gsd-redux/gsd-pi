@@ -33,7 +33,15 @@ export function encodeBinaryFrame(channel: string, data: Buffer): Buffer {
  * @returns The channel name and remaining payload data.
  */
 export function decodeBinaryFrame(frame: Buffer): { channel: string; data: Buffer } {
+  if (frame.length < HEADER_LENGTH_SIZE) {
+    throw new Error(`Binary frame too short: ${frame.length} byte(s), need at least ${HEADER_LENGTH_SIZE}`);
+  }
   const headerLen = frame[0]!;
+  if (frame.length < HEADER_LENGTH_SIZE + headerLen) {
+    throw new Error(
+      `Binary frame truncated: channel length ${headerLen} but only ${frame.length - HEADER_LENGTH_SIZE} channel byte(s) available`,
+    );
+  }
   const channel = frame.subarray(HEADER_LENGTH_SIZE, HEADER_LENGTH_SIZE + headerLen).toString('utf8');
   const data = frame.subarray(HEADER_LENGTH_SIZE + headerLen);
   return { channel, data };

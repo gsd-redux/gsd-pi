@@ -238,6 +238,13 @@ export class TerminalManager {
    */
   onBrowserDisconnect(): void {
     if (!this.session?.alive) return;
+    // Clear any timer from a prior detach so duplicate/repeated terminal.detached
+    // events restart the full 5-minute window instead of letting a stale earlier
+    // timer destroy the PTY before the most recent detach's window elapses.
+    if (this.session.disconnectTimer) {
+      clearTimeout(this.session.disconnectTimer);
+      this.session.disconnectTimer = null;
+    }
     this.session.disconnectTimer = setTimeout(() => {
       this.destroySession();
     }, DISCONNECT_TIMEOUT_MS);
