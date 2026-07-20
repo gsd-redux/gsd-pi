@@ -2,6 +2,8 @@ import WebSocket from "ws";
 import type { Logger } from "./logger.js";
 import type { DaemonConfig } from "./types.js";
 import type { AdvertisedProject, Executor } from "./executors/executor.js";
+import { decodeBinaryFrame, encodeBinaryFrame } from "./binary-frame.js";
+import { TerminalManager } from "./terminal-manager.js";
 import { createGatewayLookup, parseCloudGatewayUrl, validateGatewayNetworkTarget } from "./cloud-config.js";
 import { SessionEventProducer } from "./session-events.js";
 import {
@@ -23,6 +25,9 @@ interface GatewayMessage {
   toolName?: string;
   args?: Record<string, unknown>;
   projectAlias?: string;
+  sessionId?: string;
+  cols?: number;
+  rows?: number;
 }
 
 interface QueuedFrame {
@@ -54,6 +59,8 @@ export class CloudRuntime {
   // Kept across reconnects so per-session seq counters and replay buffers
   // survive; polling pauses while the socket is down.
   private sessionEvents: SessionEventProducer | undefined;
+  // Created per connection so the send closures bind to the live socket.
+  private terminalManager: TerminalManager | undefined;
 
   constructor(
     private readonly cloud: NonNullable<DaemonConfig["cloud"]>,
@@ -93,6 +100,9 @@ export class CloudRuntime {
     this.sessionEvents?.stopPolling();
     this.inFlight.clear();
     this.outbox = [];
+    // Kill any active PTY session before closing the socket.
+    this.terminalManager?.dispose();
+    this.terminalManager = undefined;
     const socket = this.socket;
     this.socket = undefined;
     socket?.close();
@@ -138,11 +148,26 @@ export class CloudRuntime {
       }
     }
 
+    // Per-connection terminal subsystem; its send closures bind to this socket.
+    this.terminalManager?.dispose();
+    this.terminalManager = new TerminalManager(
+      (frame: Buffer) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(frame, { binary: true });
+        }
+      },
+      (message: object) => this.send(message),
+    );
+
     socket.on("open", () => {
       this.handleSocketOpen(socket);
     });
-    socket.on("message", (data) => {
-      void this.handleSocketMessage(socket, data.toString("utf8"));
+    socket.on("message", (data, isBinary) => {
+      if (isBinary) {
+        this.handleBinaryInput(socket, data as Buffer);
+      } else {
+        void this.handleSocketMessage(socket, data.toString("utf8"));
+      }
     });
     socket.on("close", () => {
       this.handleSocketClose(socket);
@@ -259,6 +284,24 @@ export class CloudRuntime {
     this.sessionEvents.start();
   }
 
+  /**
+   * Handles incoming binary frames from the gateway (browser terminal input).
+   * Decodes the channel header and writes the payload to the PTY.
+   */
+  private handleBinaryInput(socket: WebSocket, frame: Buffer): void {
+    if (socket !== this.socket) return;
+    try {
+      const { channel, data } = decodeBinaryFrame(frame);
+      if (channel.startsWith("terminal:") && this.terminalManager) {
+        this.terminalManager.write(data);
+      }
+    } catch (err) {
+      this.logger.warn("binary frame decode error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private async handleMessage(text: string): Promise<void> {
     let message: GatewayMessage;
     try {
@@ -270,6 +313,45 @@ export class CloudRuntime {
       void this.cancelInFlight(message.requestId);
       return;
     }
+
+    // Terminal control messages (D-04-01, D-04-02, D-04-12)
+    if (message.type === "terminal.start" && message.sessionId && this.terminalManager) {
+      void this.terminalManager.startSession(
+        message.sessionId,
+        message.cols ?? 80,
+        message.rows ?? 24,
+      );
+      return;
+    }
+    if (message.type === "terminal.resize" && this.terminalManager) {
+      this.terminalManager.resize(message.cols ?? 80, message.rows ?? 24);
+      return;
+    }
+    if (message.type === "terminal.stop" && this.terminalManager) {
+      this.terminalManager.stopSession();
+      return;
+    }
+
+    // Browser attach/detach notifications for 5-minute persistence (D-04-02)
+    if (message.type === "terminal.detached" && this.terminalManager) {
+      this.terminalManager.onBrowserDisconnect();
+      return;
+    }
+    if (message.type === "terminal.attached" && this.terminalManager) {
+      const replay = this.terminalManager.onBrowserReconnect();
+      if (replay) {
+        const sessionId = this.terminalManager.getActiveSessionId();
+        const channel: `terminal:${string}` = `terminal:${sessionId ?? "unknown"}`;
+        for (const buf of replay.replayData) {
+          const frame = encodeBinaryFrame(channel, buf);
+          if (this.socket?.readyState === WebSocket.OPEN) {
+            this.socket.send(frame, { binary: true });
+          }
+        }
+      }
+      return;
+    }
+
     if (message.type !== "tool_call" || !message.requestId || !message.toolName) return;
     const routingKey = this.resolveRoutingKey(message);
     const project = this.resolveProject(routingKey);

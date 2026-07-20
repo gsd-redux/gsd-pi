@@ -41,6 +41,7 @@
     "test:e2e": "pnpm --filter @opengsd/cloud-mcp-gateway... run build && pnpm run build && node e2e/run-e2e.mjs"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "ws": "^8.21.0",
     "yaml": "^2.8.2"
   },
