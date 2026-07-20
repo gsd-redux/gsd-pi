@@ -1449,7 +1449,7 @@ test("decideOrchestratorDispatch does not replay milestone-scoped verification r
   assert.equal(sess.pendingVerificationRetryDispatch, stalePendingRetry);
 });
 
-test("decideOrchestratorDispatch adopts next active milestone after the session milestone is closed or parked", async (t) => {
+test("decideOrchestratorDispatch adopts next active milestone after the session milestone is closed, parked, or deferred", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-orchestrator-milestone-adopt-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
 
@@ -1472,7 +1472,7 @@ test("decideOrchestratorDispatch adopts next active milestone after the session 
   setRegistry(new RuleRegistry([captureRule]));
 
   try {
-    for (const status of ["complete", "parked"] as const) {
+    for (const status of ["complete", "parked", "deferred"] as const) {
       openDispatchDecisionDatabase(t, [
         { id: "M001", title: "First", status },
         { id: "M002", title: "Next", status: "active" },
