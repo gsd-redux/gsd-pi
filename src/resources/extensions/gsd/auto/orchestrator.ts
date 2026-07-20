@@ -163,10 +163,12 @@ function shouldAdoptActiveMilestone(
   }
 
   // Adopt the active milestone whenever the session's current milestone is no
-  // longer a valid dispatch target (closed, parked, or deferred). Using the
-  // canonical isSkippedForDispatch predicate (not just isClosedStatus) is the
-  // root-cause fix for the permanent dispatch-mismatch guard: a parked or
-  // deferred current milestone previously left currentMilestoneId stuck.
+  // longer a valid dispatch target per the canonical isSkippedForDispatch
+  // predicate (a derived milestone status is only complete/active/pending/parked,
+  // so in practice "closed or parked"), rather than the narrower isClosedStatus.
+  // This is the root-cause fix for the permanent dispatch-mismatch guard: a
+  // parked current milestone previously left currentMilestoneId stuck because
+  // isClosedStatus ignored it.
   const currentMilestone = state.registry.find((milestone) => milestone.id === currentMilestoneId);
   return !!currentMilestone && isSkippedForDispatch(currentMilestone.status);
 }
