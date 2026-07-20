@@ -1,10 +1,13 @@
 import { collectDoctorData, applyDoctorFixes } from "../../../../src/web/doctor-service.ts"
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const url = new URL(request.url)
     const scope = url.searchParams.get("scope") ?? undefined
@@ -30,6 +33,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     let scope: string | undefined
     try {

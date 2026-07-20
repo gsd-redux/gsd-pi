@@ -9,7 +9,7 @@ import {
   MAX_TRANSCRIPT_TURNS,
   pushPendingUserMessage,
   type CompletedTurn,
-} from "../transcript-store"
+} from "../transcript-store.ts"
 
 describe("transcript-store", () => {
   test("turn FSM: text delta accumulates then completes into a turn", () => {

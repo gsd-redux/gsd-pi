@@ -1,0 +1,56 @@
+# GSD Web — cloud image (ADR-047 web convergence)
+#
+# Runs the gsd-pi web app in cloud mode inside the gsd-cloud SaaS: RPC traffic
+# flows through the cloud gateway relay instead of a local `gsd --mode rpc`
+# child, and auth comes from HMAC session cookies minted at /api/cloud/bootstrap.
+#
+# Build from the REPO ROOT (the web app traces workspace deps):
+#   docker build -f web/Dockerfile.cloud -t gsd-web:cloud .
+#
+# Required runtime environment (the container refuses to boot without these —
+# see web/instrumentation.ts):
+#   GSD_CLOUD_MODE=1            enables cloud mode (set below)
+#   GATEWAY_INTERNAL_URL        internal base URL of the cloud gateway
+#                               (e.g. http://gateway.internal:9100)
+#   GATEWAY_INTERNAL_TOKEN      shared secret for /internal/rpc|fs calls
+#   APP_BRIDGE_SECRET           HMAC secret for app bridge tokens + session cookies
+# Optional:
+#   PORT                        listen port (default 3000)
+
+# ─── Builder ─────────────────────────────────────────────────────────────────
+FROM node:24-slim AS builder
+WORKDIR /repo
+
+# Build tools for node-pty's prebuild fallback. node-pty is unused at runtime
+# in cloud mode (local terminal routes return 404) but is still installed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN corepack enable
+
+COPY . .
+
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter gsd-web build
+
+# ─── Runtime ─────────────────────────────────────────────────────────────────
+FROM node:24-slim AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    GSD_CLOUD_MODE=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# Next standalone output (outputFileTracingRoot is the repo root, so the
+# server entry lands at web/server.js inside the standalone tree).
+COPY --from=builder /repo/web/.next/standalone ./
+COPY --from=builder /repo/web/.next/static ./web/.next/static
+COPY --from=builder /repo/web/public ./web/public
+
+EXPOSE 3000
+
+CMD ["node", "web/server.js"]

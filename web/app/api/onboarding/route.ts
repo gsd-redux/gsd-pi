@@ -3,6 +3,7 @@ import {
   type OnboardingState,
 } from "../../../../src/web/onboarding-service.ts";
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts";
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,8 @@ function isActionPayload(value: unknown): value is OnboardingAction {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   requireProjectCwd(request);
   return Response.json(
     {
@@ -52,6 +55,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   requireProjectCwd(request);
   let payload: unknown;
   try {

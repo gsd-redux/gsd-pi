@@ -20,6 +20,7 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { cloudModeLocalRouteGuard } from "../../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,8 @@ const MIME_TO_EXT: Record<string, string> = {
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   let formData: FormData;
   try {
     formData = await request.formData();

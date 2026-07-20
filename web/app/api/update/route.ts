@@ -4,11 +4,14 @@ import {
   triggerUpdate,
 } from "../../../../src/web/update-service.ts"
 import { verifyAuthToken } from "../../../lib/auth-guard";
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   // Defense-in-depth: verify auth token even though the proxy should catch it.
   const authError = verifyAuthToken(request);
   if (authError) return authError;
@@ -42,6 +45,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   // Defense-in-depth: verify auth token even though the proxy should catch it.
   const authError = verifyAuthToken(request);
   if (authError) return authError;

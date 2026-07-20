@@ -1,10 +1,13 @@
 import { collectNotificationsData, clearNotificationsData } from "../../../../src/web/notifications-service.ts"
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request);
     const url = new URL(request.url)
@@ -32,6 +35,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function DELETE(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request);
     await clearNotificationsData(projectCwd)

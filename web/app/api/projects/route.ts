@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { discoverProjects } from "../../../../src/web/project-discovery-service.ts";
 import { detectProjectKind } from "../../../../src/web/bridge-service.ts";
+import { getCloudSessionFromRequest } from "../../../lib/cloud-auth.ts";
+import { cloudModeLocalRouteGuard, isCloudMode } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +18,33 @@ function expandTilde(p: string): string {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  // Cloud mode (ADR-047): there is no local disk to scan — the project list
+  // is the set of aliases granted by the session cookie.
+  if (isCloudMode()) {
+    const session = getCloudSessionFromRequest(request);
+    if (!session) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const projects = session.projects.map((alias) => ({
+      name: alias,
+      path: alias,
+      kind: "active-gsd" as const,
+      signals: {
+        hasGsdFolder: true,
+        hasPlanningFolder: false,
+        hasGitRepo: false,
+        hasPackageJson: false,
+        fileCount: 0,
+      },
+      lastModified: Date.now(),
+    }));
+    return Response.json(projects, {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
   const url = new URL(request.url);
   const root = url.searchParams.get("root");
 
@@ -39,6 +68,9 @@ export async function GET(request: Request): Promise<Response> {
 // ─── POST: create a new project directory ──────────────────────────────────
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
+
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const rawDevRoot = typeof body.devRoot === "string" ? body.devRoot.trim() : "";

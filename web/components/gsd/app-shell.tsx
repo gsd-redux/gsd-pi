@@ -13,6 +13,7 @@ import { FocusedPanel } from "@/components/gsd/focused-panel"
 import { OnboardingGate } from "@/components/gsd/onboarding-gate"
 import { CommandSurface } from "@/components/gsd/command-surface"
 import { DevOverridesProvider } from "@/lib/dev-overrides"
+import { isCloudModeClient } from "@/lib/cloud-client"
 import { ProjectStoreManagerProvider, useProjectStoreManager } from "@/lib/project-store-manager"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -638,6 +639,10 @@ function ProjectAwareWorkspace() {
   // being cached for later reuse — the server must stay alive.  Only send
   // the shutdown beacon when the page is truly being discarded.
   useEffect(() => {
+    // Cloud mode (ADR-047): the server is a shared SaaS host — there is no
+    // per-tab local server to shut down, so the exit hook is not registered.
+    if (isCloudModeClient()) return
+
     const handlePageHide = (event: PageTransitionEvent) => {
       if (event.persisted) {
         // Page is entering bfcache (tab switch, app backgrounding) — keep

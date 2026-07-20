@@ -7,11 +7,14 @@ import {
 } from "../../../../src/web/mcp-management-service.ts"
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
 import type { WebMcpMutationRequest } from "@/lib/mcp-management-types"
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request)
     const payload = await collectMcpManagementData(projectCwd)
@@ -31,6 +34,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request)
     const body = await request.json() as WebMcpMutationRequest

@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { webPreferencesPath } from "../../../../src/app-paths.ts";
+import { getCloudSessionFromRequest } from "../../../lib/cloud-auth.ts";
+import { cloudModeLocalRouteGuard, isCloudMode } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,7 +26,17 @@ function readLaunchCwd(): string | null {
 
 // ─── GET: read current preferences ─────────────────────────────────────────
 
-export async function GET(): Promise<Response> {
+export async function GET(request?: Request): Promise<Response> {
+  // Cloud mode (ADR-047): no local preferences file — the "launch project"
+  // is the first alias granted by the session cookie.
+  if (isCloudMode()) {
+    const session = request ? getCloudSessionFromRequest(request) : null;
+    if (!session) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return Response.json({ launchCwd: session.projects[0] ?? null, devRoot: null });
+  }
+
   const launchCwd = readLaunchCwd();
   try {
     if (!existsSync(webPreferencesPath)) {
@@ -45,6 +57,9 @@ export async function GET(): Promise<Response> {
 // ─── PUT: write preferences ────────────────────────────────────────────────
 
 export async function PUT(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
+
   try {
     const body = await request.json() as Record<string, unknown>;
 

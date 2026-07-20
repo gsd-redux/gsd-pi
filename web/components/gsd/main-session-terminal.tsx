@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { validateImageFile } from "@/lib/image-utils"
 import { buildProjectAbsoluteUrl, buildProjectPath } from "@/lib/project-url"
 import { authFetch, appendAuthParam } from "@/lib/auth"
+import { canCloudMutate } from "@/lib/cloud-client"
 import { getXtermOptions, getXtermTheme } from "@/lib/xterm-theme"
 import "@xterm/xterm/css/xterm.css"
 
@@ -96,6 +97,14 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
   const [connectionState, setConnectionState] = useState<"connecting" | "connected" | "error">("connecting")
   const [hasOutput, setHasOutput] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
+  // Cloud viewer role (ADR-047): the terminal is read-only — no keystroke
+  // input, no image-drop upload. Resolved post-hydration (the session is
+  // injected on window); effects read canCloudMutate() directly so gating
+  // never forces a terminal re-init.
+  const [cloudReadOnly, setCloudReadOnly] = useState(false)
+  useEffect(() => {
+    setCloudReadOnly(!canCloudMutate())
+  }, [])
 
   const flushInputQueue = useCallback(async () => {
     if (flushingRef.current) return
@@ -183,12 +192,14 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
       const initialSize = await settleTerminalLayout(containerRef.current, terminal, fitAddon, () => disposed)
       if (disposed) return
 
-      terminal.onData((data) => {
-        sendInput(data)
-      })
-      terminal.onBinary((data) => {
-        sendInput(data)
-      })
+      if (canCloudMutate()) {
+        terminal.onData((data) => {
+          sendInput(data)
+        })
+        terminal.onBinary((data) => {
+          sendInput(data)
+        })
+      }
 
       const connectStream = (preferredSize: { cols: number; rows: number } | null) => {
         const streamUrl = buildProjectAbsoluteUrl(
@@ -270,6 +281,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
   // recognizes \n (LF) as "insert newline". Capture-phase keydown intercepts
   // before xterm's internal textarea processes the event.
   useEffect(() => {
+    if (!canCloudMutate()) return
     const el = wrapperRef.current
     if (!el) return
 
@@ -291,6 +303,7 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
   // same pattern used for paste in ShellTerminal.
 
   useEffect(() => {
+    if (!canCloudMutate()) return
     const el = wrapperRef.current
     if (!el) return
 
@@ -386,6 +399,11 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
           <span className="text-xs text-muted-foreground">
             {connectionState === "error" ? "Reconnecting main session terminal…" : "Connecting to main session…"}
           </span>
+        </div>
+      )}
+      {cloudReadOnly && (
+        <div className="absolute right-2 top-2 z-10 rounded bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Read-only
         </div>
       )}
       {/* Drop overlay */}

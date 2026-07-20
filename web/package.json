@@ -72,6 +72,7 @@
     "sonner": "^1.7.1",
     "tailwind-merge": "^3.3.1",
     "vaul": "^1.1.2",
+    "ws": "^8.21.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -80,6 +81,7 @@
     "@types/node": "^22",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.27.4",
     "eslint": "^9.38.0",
     "eslint-config-next": "16.2.4",

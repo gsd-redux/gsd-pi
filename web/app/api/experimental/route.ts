@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -53,6 +54,8 @@ function writePrefs(data: Record<string, unknown>, body: string): void {
 // ─── GET — read current experimental flags ───────────────────────────────────
 
 export async function GET(): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const { data } = readPrefs()
     const exp = typeof data.experimental === "object" && data.experimental !== null
@@ -70,6 +73,8 @@ export async function GET(): Promise<Response> {
 // Body: { flag: "rtk", enabled: boolean }
 
 export async function PATCH(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const body = await request.json() as Record<string, unknown>
     const { flag, enabled } = body

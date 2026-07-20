@@ -1,10 +1,13 @@
 import { collectUndoInfo, executeUndo } from "../../../../src/web/undo-service.ts"
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request);
     const payload = await collectUndoInfo(projectCwd)
@@ -28,6 +31,8 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request);
     const payload = await executeUndo(projectCwd)

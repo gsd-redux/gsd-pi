@@ -6,11 +6,14 @@
  */
 
 import { writeToSession } from "../../../../lib/pty-manager";
+import { cloudModeLocalRouteGuard } from "../../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   let body: { id?: string; data?: string };
   try {
     body = await request.json();

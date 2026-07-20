@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "n
 import { resolve, dirname, join } from "node:path";
 import { homedir, platform, userInfo } from "node:os";
 import { isAllowedBrowsePath, getAdditionalRoots } from "../../../lib/browse-scope.ts";
+import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,6 +58,8 @@ function getDevRoot(): string {
  *     existing drive letters on Windows)
  */
 export async function GET(request: Request): Promise<Response> {
+  const cloudGuard = cloudModeLocalRouteGuard();
+  if (cloudGuard) return cloudGuard;
   try {
     const url = new URL(request.url);
     const rawPath = url.searchParams.get("path");
