@@ -82,7 +82,13 @@ function resolveCloudFsContext(request: Request): CloudFsRequestContext | Respon
     return Response.json({ error: "No project selected" }, { status: 400 });
   }
   const ref = decodeCloudProjectRef(projectCwd);
-  return { context: { deviceId: ref.deviceId, projectAlias: ref.alias }, role: ref.role };
+  // The fs envelope must address the device OWNER (the gateway verifies
+  // runtime ownership); owner-only deployments carry no owner claim, so fall
+  // back to the session subject.
+  return {
+    context: { owner: session.owner ?? session.sub, deviceId: ref.deviceId, projectAlias: ref.alias },
+    role: ref.role,
+  };
 }
 
 function mapCloudFsError(err: unknown, pathParam: string, headers: Record<string, string>): Response {
@@ -141,14 +147,14 @@ async function handleCloudGet(request: Request, rootParam: RootMode, pathParam: 
         { status: 413, headers },
       );
     }
-    const content = await cloudFsReadFile(context, remotePath);
-    return Response.json({ content }, { headers });
+    const { content, mtime } = await cloudFsReadFile(context, remotePath);
+    return Response.json({ content, mtime }, { headers });
   } catch (err) {
     return mapCloudFsError(err, pathParam, headers);
   }
 }
 
-async function handleCloudPost(request: Request, rootParam: string, pathParam: unknown, content: string): Promise<Response> {
+async function handleCloudPost(request: Request, rootParam: string, pathParam: unknown, content: string, expectedMtime: number | null): Promise<Response> {
   const resolved = resolveCloudFsContext(request);
   if (resolved instanceof Response) return resolved;
   const { context, role } = resolved;
@@ -176,7 +182,13 @@ async function handleCloudPost(request: Request, rootParam: string, pathParam: u
   const remotePath = prefix ? `${prefix}/${relPath}` : relPath;
 
   try {
-    await cloudFsWriteFile(context, remotePath, content);
+    const result = await cloudFsWriteFile(context, remotePath, content, expectedMtime);
+    if (result.conflict) {
+      return Response.json(
+        { conflict: true, currentContent: result.currentContent, currentMtime: result.currentMtime },
+        { status: 409 },
+      );
+    }
   } catch (err) {
     return mapCloudFsError(err, pathParam, {});
   }
@@ -300,10 +312,11 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { path: pathParam, content, root: rootParam = "gsd" } = body as {
+  const { path: pathParam, content, root: rootParam = "gsd", expectedMtime } = body as {
     path?: string;
     content?: unknown;
     root?: string;
+    expectedMtime?: unknown;
   };
 
   if (rootParam !== "gsd" && rootParam !== "project") {
@@ -328,7 +341,13 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (isCloudMode()) {
-    return handleCloudPost(request, rootParam, pathParam, content);
+    return handleCloudPost(
+      request,
+      rootParam,
+      pathParam,
+      content,
+      typeof expectedMtime === "number" && Number.isFinite(expectedMtime) ? expectedMtime : null,
+    );
   }
 
   const projectCwd = requireProjectCwd(request);

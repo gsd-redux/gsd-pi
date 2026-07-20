@@ -94,6 +94,22 @@ describe("validateAppBridgeToken", () => {
     }
   });
 
+  test("carries the device owner claim when present", () => {
+    const session = validateAppBridgeToken(makeToken({ owner: "user-owner-9" }), SECRET, NOW);
+    assert.equal(session?.sub, "user-123");
+    assert.equal(session?.owner, "user-owner-9");
+  });
+
+  test("omits owner when the token has no owner claim", () => {
+    const session = validateAppBridgeToken(makeToken(), SECRET, NOW);
+    assert.equal(session?.owner, undefined);
+  });
+
+  test("rejects a malformed owner claim", () => {
+    assert.equal(validateAppBridgeToken(makeToken({ owner: 42 }), SECRET, NOW), null);
+    assert.equal(validateAppBridgeToken(makeToken({ owner: "" }), SECRET, NOW), null);
+  });
+
   test("rejects structurally invalid tokens", () => {
     assert.equal(validateAppBridgeToken("", SECRET, NOW), null);
     assert.equal(validateAppBridgeToken("no-signature", SECRET, NOW), null);
@@ -130,6 +146,17 @@ describe("cloud session cookie", () => {
       projects: ["only"],
       exp: NOW + 8 * 60 * 60,
     });
+  });
+
+  test("round-trips the owner claim through mint and verify", () => {
+    const value = mintCloudSessionCookie(
+      { sub: "user-2", owner: "user-owner-9", deviceId: "dev-1", role: "member", projects: ["alpha"] },
+      SECRET,
+      NOW,
+    );
+    const session = verifyCloudSessionCookie(value, SECRET, NOW + 60);
+    assert.equal(session?.sub, "user-2");
+    assert.equal(session?.owner, "user-owner-9");
   });
 
   test("expires after the max age", () => {

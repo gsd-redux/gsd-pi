@@ -1,20 +1,28 @@
 // GSD Web — Cloud file-system client (ADR-047 web convergence).
 //
 // In cloud mode the file-browser API routes proxy to the gateway's internal
-// fs endpoint instead of reading the Next host's local disk. Read operations
-// (readdir/read/stat) use GET; the write operation uses POST. All requests
-// carry the internal token and the device id from the cloud session cookie.
+// fs endpoint instead of reading the Next host's local disk. Every operation
+// (readdir/read/stat/write) is a POST carrying an fs channel message that the
+// gateway forwards to the device's daemon; the daemon's result message comes
+// back in the response's `result` field.
 //
 // Wire contract (must match the gateway's /internal/fs handler):
-//   GET  {GATEWAY_INTERNAL_URL}/internal/fs?deviceId=&projectAlias=&op=readdir|read|stat&path=
-//        → readdir: { entries: [{ name, type: "file" | "directory" }] }
-//        → read:    { content: string }
-//        → stat:    { size: number, isDirectory: boolean, isFile: boolean }
 //   POST {GATEWAY_INTERNAL_URL}/internal/fs
-//        body { deviceId, projectAlias, op: "write", path, content }
-//        → { success: true }
-//   Errors: non-2xx with an optional { error: string } body.
+//        Authorization: Bearer GATEWAY_INTERNAL_TOKEN
+//        body {
+//          userId,     // device OWNER's user id — the gateway verifies runtime ownership
+//          runtimeId,  // the device id
+//          message: {
+//            channel: "fs",
+//            type: "fs.readdir" | "fs.read" | "fs.stat" | "fs.write",
+//            requestId, path, showHidden?, content?, expectedMtime?, expectedSize?,
+//          },
+//        }
+//        → 200 { result: <daemon fs.*.result message> }
+//        → 502 { error } on gateway-level failure (device offline, timeout, unauthorized)
+//   Daemon-level failures arrive as 200 with result.type === "fs.error".
 
+import { randomUUID } from "node:crypto"
 import { getCloudModeConfig } from "./cloud-mode.ts"
 
 export interface CloudFsEntry {
@@ -29,78 +37,80 @@ export interface CloudFsStat {
 }
 
 export interface CloudFsContext {
+  /** Device owner's user id — the gateway verifies runtime ownership against it. */
+  owner: string
   deviceId: string
   projectAlias: string
 }
 
-function buildFsUrl(op: string, context: CloudFsContext, path: string): string {
-  const { gatewayInternalUrl } = getCloudModeConfig()
+/** Daemon fs.*.result message as forwarded by the gateway. */
+type FsResult = Record<string, unknown> & { type?: string }
+
+function cloudFsError(message: string, status: number): Error & { status: number } {
+  const error = new Error(message) as Error & { status: number }
+  error.status = status
+  return error
+}
+
+async function cloudFsRequest(
+  type: "fs.readdir" | "fs.read" | "fs.stat" | "fs.write",
+  context: CloudFsContext,
+  message: Record<string, unknown>,
+  fetchFn: typeof fetch = fetch,
+): Promise<FsResult> {
+  const { gatewayInternalUrl, gatewayInternalToken } = getCloudModeConfig()
+
   const url = new URL(gatewayInternalUrl)
   url.pathname = `${url.pathname.replace(/\/+$/, "")}/internal/fs`
   url.search = ""
-  url.searchParams.set("deviceId", context.deviceId)
-  url.searchParams.set("projectAlias", context.projectAlias)
-  url.searchParams.set("op", op)
-  url.searchParams.set("path", path)
-  return url.toString()
-}
 
-async function cloudFsRequest<T>(
-  op: "readdir" | "read" | "stat" | "write",
-  context: CloudFsContext,
-  path: string,
-  content?: string,
-  fetchFn: typeof fetch = fetch,
-): Promise<T> {
-  const { gatewayInternalUrl, gatewayInternalToken } = getCloudModeConfig()
-
-  let url: string
-  let init: RequestInit
-  if (op === "write") {
-    const writeUrl = new URL(gatewayInternalUrl)
-    writeUrl.pathname = `${writeUrl.pathname.replace(/\/+$/, "")}/internal/fs`
-    writeUrl.search = ""
-    url = writeUrl.toString()
-    init = {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${gatewayInternalToken}`,
-        "Content-Type": "application/json",
+  const response = await fetchFn(url.toString(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${gatewayInternalToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      userId: context.owner,
+      runtimeId: context.deviceId,
+      message: {
+        channel: "fs",
+        type,
+        requestId: randomUUID(),
+        ...message,
       },
-      body: JSON.stringify({
-        deviceId: context.deviceId,
-        projectAlias: context.projectAlias,
-        op,
-        path,
-        content,
-      }),
-    }
-  } else {
-    url = buildFsUrl(op, context, path)
-    init = {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${gatewayInternalToken}`,
-      },
-    }
-  }
+    }),
+  })
 
-  const response = await fetchFn(url, init)
   if (!response.ok) {
-    let message = `fs ${op} failed (HTTP ${response.status})`
+    // Gateway-level failure (device offline, timeout, unauthorized) — pass the message through.
+    let text = `fs ${type} failed (HTTP ${response.status})`
     try {
       const body = (await response.json()) as { error?: string }
       if (typeof body.error === "string" && body.error) {
-        message = body.error
+        text = body.error
       }
     } catch {
       // Keep the HTTP-status message.
     }
-    const error = new Error(message) as Error & { status?: number }
-    error.status = response.status
-    throw error
+    throw cloudFsError(text, response.status)
   }
-  return (await response.json()) as T
+
+  const body = (await response.json()) as { result?: FsResult }
+  const result = body.result
+  if (!result || typeof result !== "object") {
+    throw cloudFsError(`fs ${type} response missing result`, 502)
+  }
+
+  // Daemon-level failure: a missing path maps to 404 so callers can treat it
+  // like a local ENOENT; anything else is a daemon-side error.
+  if (result.type === "fs.error") {
+    const text = typeof result.error === "string" && result.error ? result.error : `fs ${type} failed`
+    const status = /ENOENT|no such file or directory/i.test(text) ? 404 : 500
+    throw cloudFsError(text, status)
+  }
+
+  return result
 }
 
 export async function cloudFsReaddir(
@@ -108,20 +118,36 @@ export async function cloudFsReaddir(
   path: string,
   fetchFn?: typeof fetch,
 ): Promise<CloudFsEntry[]> {
-  const body = await cloudFsRequest<{ entries?: CloudFsEntry[] }>("readdir", context, path, undefined, fetchFn)
-  return Array.isArray(body.entries) ? body.entries : []
+  const result = await cloudFsRequest("fs.readdir", context, { path, showHidden: false }, fetchFn)
+  if (!Array.isArray(result.entries)) return []
+  const entries: CloudFsEntry[] = []
+  for (const entry of result.entries as Array<Record<string, unknown>>) {
+    if (typeof entry?.name !== "string") continue
+    // Symlinks render as files — the tree only recurses into real directories,
+    // which also avoids following links that point outside the project root.
+    entries.push({ name: entry.name, type: entry.type === "directory" ? "directory" : "file" })
+  }
+  return entries
+}
+
+export interface CloudFsReadResult {
+  content: string
+  mtime: number | null
 }
 
 export async function cloudFsReadFile(
   context: CloudFsContext,
   path: string,
   fetchFn?: typeof fetch,
-): Promise<string> {
-  const body = await cloudFsRequest<{ content?: string }>("read", context, path, undefined, fetchFn)
-  if (typeof body.content !== "string") {
+): Promise<CloudFsReadResult> {
+  const result = await cloudFsRequest("fs.read", context, { path }, fetchFn)
+  if (typeof result.content !== "string") {
     throw new Error("fs read response missing content")
   }
-  return body.content
+  return {
+    content: result.content,
+    mtime: typeof result.mtime === "number" ? result.mtime : null,
+  }
 }
 
 export async function cloudFsStat(
@@ -129,16 +155,44 @@ export async function cloudFsStat(
   path: string,
   fetchFn?: typeof fetch,
 ): Promise<CloudFsStat> {
-  return await cloudFsRequest<CloudFsStat>("stat", context, path, undefined, fetchFn)
+  const result = await cloudFsRequest("fs.stat", context, { path }, fetchFn)
+  // fs.stat reports a missing path as exists:false rather than an fs.error.
+  if (result.exists === false) {
+    throw cloudFsError(`File not found: ${path}`, 404)
+  }
+  return {
+    size: typeof result.size === "number" ? result.size : 0,
+    isDirectory: result.fileType === "directory",
+    isFile: result.fileType === "file",
+  }
+}
+
+export interface CloudFsWriteResult {
+  success: boolean
+  conflict: boolean
+  currentContent: string | null
+  currentMtime: number | null
 }
 
 export async function cloudFsWriteFile(
   context: CloudFsContext,
   path: string,
   content: string,
+  expectedMtime: number | null = null,
   fetchFn?: typeof fetch,
-): Promise<void> {
-  await cloudFsRequest<{ success?: boolean }>("write", context, path, content, fetchFn)
+): Promise<CloudFsWriteResult> {
+  const result = await cloudFsRequest(
+    "fs.write",
+    context,
+    { path, content, expectedMtime, expectedSize: null },
+    fetchFn,
+  )
+  return {
+    success: result.success === true,
+    conflict: result.conflict === true,
+    currentContent: typeof result.currentContent === "string" ? result.currentContent : null,
+    currentMtime: typeof result.currentMtime === "number" ? result.currentMtime : null,
+  }
 }
 
 // ─── Directory trees ─────────────────────────────────────────────────────────

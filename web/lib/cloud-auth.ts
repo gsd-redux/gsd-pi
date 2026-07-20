@@ -7,8 +7,12 @@
 // 1. The APP BRIDGE TOKEN: minted by the gsd-cloud SaaS
 //    (POST /api/machines/[id]/app-token) and presented to
 //    GET /api/cloud/bootstrap?token=... Payload:
-//      { v:1, sub:<userId>, deviceId, role:"owner"|"member"|"viewer",
-//        projects:<project aliases>, exp:<unix seconds> }
+//      { v:1, sub:<userId>, owner?:<device owner userId>, deviceId,
+//        role:"owner"|"member"|"viewer", projects:<project aliases>,
+//        exp:<unix seconds> }
+//    `owner` is present when the SaaS mints a token for a shared member —
+//    relay calls must address the device owner. Owner-only deployments omit
+//    it; callers fall back to `sub`.
 //
 // 2. The SESSION COOKIE: minted by the bootstrap route on success — an
 //    httpOnly, sameSite=lax cookie carrying the same payload shape with an
@@ -27,6 +31,8 @@ export const APP_BRIDGE_TOKEN_VERSION = 1 as const
 /** Verified identity + grants carried by the app bridge token / session cookie. */
 export interface CloudSession {
   sub: string
+  /** Device owner's user id when the session belongs to a shared member. */
+  owner?: string
   deviceId: string
   role: CloudRole
   projects: string[]
@@ -85,8 +91,10 @@ function normalizeSessionPayload(payload: Record<string, unknown>): CloudSession
   if (typeof payload.role !== "string" || !CLOUD_ROLES.has(payload.role)) return null
   if (!Array.isArray(payload.projects) || payload.projects.some((p) => typeof p !== "string")) return null
   if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return null
+  if (payload.owner !== undefined && (typeof payload.owner !== "string" || payload.owner.length === 0)) return null
   return {
     sub: payload.sub,
+    ...(typeof payload.owner === "string" ? { owner: payload.owner } : {}),
     deviceId: payload.deviceId,
     role: payload.role as CloudRole,
     projects: payload.projects as string[],
@@ -122,6 +130,7 @@ export function mintCloudSessionCookie(
     {
       v: APP_BRIDGE_TOKEN_VERSION,
       sub: session.sub,
+      ...(session.owner !== undefined ? { owner: session.owner } : {}),
       deviceId: session.deviceId,
       role: session.role,
       projects: session.projects,
