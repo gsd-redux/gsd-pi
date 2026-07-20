@@ -106,7 +106,12 @@ export class TerminalManager {
       this.cleanupSession();
     }
 
-    const shell = process.env.SHELL || "/bin/sh";
+    // Pick a platform-appropriate login shell: SHELL is unset on Windows and
+    // "/bin/sh" does not exist there, so a win32 spawn would fail with ENOENT.
+    const isWindows = process.platform === "win32";
+    const shell = isWindows
+      ? process.env.COMSPEC || "powershell.exe"
+      : process.env.SHELL || "/bin/sh";
     const channel: `terminal:${string}` = `terminal:${sessionId}`;
 
     try {
@@ -140,7 +145,10 @@ export class TerminalManager {
         name: "xterm-256color",
         cols,
         rows,
-        cwd: process.env.HOME || "/",
+        // HOME is typically unset on Windows and "/" is not a valid win32 cwd,
+        // so prefer USERPROFILE there and fall back to the process cwd on both
+        // platforms rather than a hardcoded root that can fail PTY spawn.
+        cwd: (isWindows ? process.env.USERPROFILE : process.env.HOME) || process.cwd(),
         env: process.env as Record<string, string>,
       });
     } catch (err) {

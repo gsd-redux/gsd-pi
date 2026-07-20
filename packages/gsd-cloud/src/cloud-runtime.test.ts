@@ -449,3 +449,28 @@ test("binary terminal frames reach the PTY and attached replays buffered output"
     ["replay-1", "replay-2"],
   );
 });
+
+test("attached replay follows the active PTY session, not the sessionId the browser claims", async (t) => {
+  const runtime = makeRuntime();
+  const internals = runtime as unknown as RuntimeInternals;
+  t.after(() => runtime.stop());
+  const socket = fakeSocket();
+  internals.socket = socket;
+
+  internals.terminalManager = {
+    write: () => undefined,
+    onBrowserReconnect: () => ({ replayData: [Buffer.from("replay")] }),
+    getActiveSessionId: () => "active",
+    dispose: () => undefined,
+  };
+
+  // The attach names a stale/incorrect session, but a different PTY is live.
+  // Replay must be addressed to the active session's channel so output is not
+  // mis-multiplexed onto a channel chosen by untrusted input.
+  await internals.handleSocketMessage(socket, JSON.stringify({ type: "terminal.attached", sessionId: "stale" }));
+  const sentBuffers = socket.sent as unknown as Buffer[];
+  assert.deepEqual(
+    sentBuffers.map((f) => decodeBinaryFrame(f).channel),
+    ["terminal:active"],
+  );
+});

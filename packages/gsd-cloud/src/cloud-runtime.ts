@@ -40,6 +40,18 @@ interface InFlightRequest {
   routingKey?: string;
 }
 
+/**
+ * Normalizes a `ws` binary payload to a single Buffer. Per the `RawData` type,
+ * `ws` may deliver a binary message as a Buffer, an ArrayBuffer, or a Buffer[]
+ * (fragmented frames); casting straight to Buffer silently drops the latter two
+ * shapes, so decode fails and terminal input routing breaks.
+ */
+function toFrameBuffer(data: Buffer | ArrayBuffer | Buffer[]): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
+}
+
 export class CloudRuntime {
   private static readonly MAX_OUTBOX = 200;
   // How many times to retry the initial connect before rejecting start(). A
@@ -164,7 +176,7 @@ export class CloudRuntime {
     });
     socket.on("message", (data, isBinary) => {
       if (isBinary) {
-        this.handleBinaryInput(socket, data as Buffer);
+        this.handleBinaryInput(socket, toFrameBuffer(data));
       } else {
         void this.handleSocketMessage(socket, data.toString("utf8"));
       }
@@ -342,10 +354,12 @@ export class CloudRuntime {
       return;
     }
     if (message.type === "terminal.attached" && this.terminalManager) {
-      // Address replay to the session the attach names, falling back to the live
-      // PTY session. Without either we cannot form a real channel, so skip replay
-      // rather than emit frames on "terminal:unknown" that nothing multiplexes.
-      const sessionId = message.sessionId ?? this.terminalManager.getActiveSessionId();
+      // Address replay to the active PTY session's channel, not the sessionId the
+      // browser claims: output-channel selection must follow the real session so
+      // replay cannot be mis-multiplexed onto a different session by untrusted
+      // input. Fall back to message.sessionId only when no PTY is active, and
+      // skip replay entirely when neither yields a channel.
+      const sessionId = this.terminalManager.getActiveSessionId() ?? message.sessionId;
       if (!sessionId) return;
       const replay = this.terminalManager.onBrowserReconnect();
       if (replay) {

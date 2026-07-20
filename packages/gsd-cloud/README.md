@@ -3,12 +3,18 @@
 Connect a local GSD runtime to [GSD Cloud](https://cloud.opengsd.net) so you can
 monitor and control your GSD projects from any browser.
 
-This is a **self-contained** agent. It depends only on `ws` and `yaml` — no
-`@opengsd/daemon`, no `@opengsd/mcp-server`, no `@opengsd/gsd-pi`. It runs the
-RFC 8628 device-flow login, opens a persistent WebSocket to the cloud gateway,
-and forwards each requested GSD workflow tool to your locally-installed `gsd`
-CLI (via `gsd --mode mcp`). The gateway default of `https://cloud.opengsd.net`
-is injected for `login`/`pair` so you never have to type `--gateway`.
+This is a **self-contained** agent. Its required runtime dependencies are only
+`ws` and `yaml` — no `@opengsd/daemon`, no `@opengsd/mcp-server`, no
+`@opengsd/gsd-pi`. It runs the RFC 8628 device-flow login, opens a persistent
+WebSocket to the cloud gateway, and forwards each requested GSD workflow tool to
+your locally-installed `gsd` CLI (via `gsd --mode mcp`). The gateway default of
+`https://cloud.opengsd.net` is injected for `login`/`pair` so you never have to
+type `--gateway`.
+
+`node-pty` is an **optional** native dependency used only for browser terminal
+sessions. It is loaded dynamically at runtime; if it is not installed (for
+example when its prebuilt binary is unavailable for your platform), the core CLI
+still works and only the cloud terminal feature is unavailable.
 
 Requires the `gsd` CLI (from `@opengsd/gsd-pi`) to be installed and on your
 `PATH` (or set `GSD_CLI_PATH`).

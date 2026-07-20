@@ -16,7 +16,7 @@ export const HEADER_LENGTH_SIZE = 1;
  * @throws If channel name exceeds 255 bytes when UTF-8 encoded.
  */
 export function encodeBinaryFrame(channel: string, data: Buffer): Buffer {
-  const channelBuf = Buffer.from(channel, 'utf8');
+  const channelBuf = Buffer.from(channel, "utf8");
   if (channelBuf.length > 255) {
     throw new Error(`Channel name exceeds 255 bytes: ${channelBuf.length}`);
   }
@@ -42,7 +42,7 @@ export function decodeBinaryFrame(frame: Buffer): { channel: string; data: Buffe
       `Binary frame truncated: channel length ${headerLen} but only ${frame.length - HEADER_LENGTH_SIZE} channel byte(s) available`,
     );
   }
-  const channel = frame.subarray(HEADER_LENGTH_SIZE, HEADER_LENGTH_SIZE + headerLen).toString('utf8');
+  const channel = frame.subarray(HEADER_LENGTH_SIZE, HEADER_LENGTH_SIZE + headerLen).toString("utf8");
   const data = frame.subarray(HEADER_LENGTH_SIZE + headerLen);
   return { channel, data };
 }
