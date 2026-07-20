@@ -1473,6 +1473,10 @@ test("decideOrchestratorDispatch adopts next active milestone after the session 
 
   try {
     for (const status of ["complete", "parked", "deferred"] as const) {
+      // Reset per iteration so the assertion below cannot pass by reading a
+      // captured context from an earlier status when this iteration failed to
+      // invoke the dispatch rule.
+      captured.length = 0;
       openDispatchDecisionDatabase(t, [
         { id: "M001", title: "First", status },
         { id: "M002", title: "Next", status: "active" },
@@ -1500,7 +1504,8 @@ test("decideOrchestratorDispatch adopts next active milestone after the session 
       if (!result || !("unitType" in result)) assert.fail(`expected dispatch decision, got ${JSON.stringify(result)}`);
       assert.equal(result.unitId, "M002/S01/T01");
       assert.equal((session as { currentMilestoneId: string }).currentMilestoneId, "M002", status);
-      assert.equal(captured[captured.length - 1]?.session?.currentMilestoneId, "M002", status);
+      assert.equal(captured.length, 1, status);
+      assert.equal(captured[0]?.session?.currentMilestoneId, "M002", status);
     }
   } finally {
     resetRegistry();
