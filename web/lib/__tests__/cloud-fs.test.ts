@@ -33,6 +33,7 @@ function okFetch(body: unknown, calls: FetchCall[]): typeof fetch {
 function requestEnvelope(call: FetchCall): {
   userId: string;
   runtimeId: string;
+  projectAlias: string;
   message: Record<string, unknown>;
 } {
   return JSON.parse(String(call.init.body));
@@ -78,6 +79,7 @@ describe("cloud-fs", () => {
     const envelope = requestEnvelope(calls[0]);
     assert.equal(envelope.userId, "user-owner-1");
     assert.equal(envelope.runtimeId, "device-abc");
+    assert.equal(envelope.projectAlias, "alpha");
     assert.equal(envelope.message.channel, "fs");
     assert.equal(envelope.message.type, "fs.readdir");
     assert.equal(envelope.message.path, "src/lib");

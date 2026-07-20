@@ -1535,9 +1535,21 @@ export class BridgeService {
       startupTimeout = setTimeout(() => reject(new Error(`RPC bridge startup timed out after ${START_TIMEOUT_MS}ms`)), START_TIMEOUT_MS);
     });
 
-    try {
+    // connect() must run inside the timeout race: a CloudTransport whose socket
+    // opens but never receives an opened/error/closed frame would otherwise
+    // hang startup indefinitely.
+    const startup = (async () => {
       await transport.connect();
-      await Promise.race([this.refreshState(true), timeout]);
+      await this.refreshState(true);
+    })();
+    // If the timeout wins the race, `startup` stays pending and will reject
+    // later (e.g. once we close the transport below). Attach a no-op handler so
+    // that late rejection never surfaces as an unhandledRejection; the timeout
+    // error is the authoritative failure.
+    startup.catch(() => {});
+
+    try {
+      await Promise.race([startup, timeout]);
       this.snapshot.phase = "ready";
       this.snapshot.updatedAt = nowIso();
       this.snapshot.lastError = null;
@@ -1546,6 +1558,16 @@ export class BridgeService {
       this.snapshot.phase = "failed";
       this.recordError(error, "starting");
       this.broadcastStatus();
+      // Tear down the (possibly half-open) transport so a timed-out or failed
+      // startup never leaks a live connection or dangling listeners.
+      if (this.transport === transport) {
+        this.transport = null;
+      }
+      try {
+        await transport.close();
+      } catch {
+        // Best effort — startup already failed.
+      }
       throw error;
     } finally {
       if (startupTimeout) {

@@ -10,8 +10,10 @@
 //   POST {GATEWAY_INTERNAL_URL}/internal/fs
 //        Authorization: Bearer GATEWAY_INTERNAL_TOKEN
 //        body {
-//          userId,     // device OWNER's user id — the gateway verifies runtime ownership
-//          runtimeId,  // the device id
+//          userId,       // device OWNER's user id — the gateway verifies runtime ownership
+//          runtimeId,    // the device id
+//          projectAlias, // advertised project alias — scopes the fs request to one
+//                        // project on the device (the gateway routes by it)
 //          message: {
 //            channel: "fs",
 //            type: "fs.readdir" | "fs.read" | "fs.stat" | "fs.write",
@@ -73,6 +75,7 @@ async function cloudFsRequest(
     body: JSON.stringify({
       userId: context.owner,
       runtimeId: context.deviceId,
+      projectAlias: context.projectAlias,
       message: {
         channel: "fs",
         type,

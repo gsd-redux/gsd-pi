@@ -100,6 +100,12 @@ function mapCloudFsError(err: unknown, pathParam: string, headers: Record<string
   if (status === 403) {
     return Response.json({ error: message }, { status: 403, headers });
   }
+  if (status === 500) {
+    // The cloud-fs client explicitly classifies a daemon-side failure as 500;
+    // preserve it instead of masking it as a generic gateway error.
+    return Response.json({ error: `Cloud file operation failed: ${message}` }, { status: 500, headers });
+  }
+  // Gateway-level failure (device offline, timeout, unauthorized) or unknown.
   return Response.json({ error: `Cloud file operation failed: ${message}` }, { status: 502, headers });
 }
 
