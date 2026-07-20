@@ -185,6 +185,7 @@
     "ignore": "^7.0.5",
     "marked": "^15.0.12",
     "minimatch": "^10.2.3",
+    "node-pty": "^1.1.0",
     "openai": "^6.26.0",
     "partial-json": "^0.1.7",
     "picomatch": "^4.0.3",
