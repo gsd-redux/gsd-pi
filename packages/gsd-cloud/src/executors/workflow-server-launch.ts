@@ -14,7 +14,7 @@
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 
 export interface WorkflowServerLaunch {
   command: string;
@@ -45,6 +45,34 @@ function parseArgsEnv(raw: string | undefined): string[] {
   return parsed as string[];
 }
 
+/**
+ * Node-side PATH scan, used when `which`/`where` is unavailable (minimal
+ * container images often ship neither) or returns nothing. Splits PATH on the
+ * OS delimiter and, on Windows, tries each PATHEXT extension. Only returns a
+ * path that actually exists.
+ */
+function searchPath(command: string): string | null {
+  // An explicit path is not a PATH lookup — just confirm it exists.
+  if (command.includes("/") || command.includes("\\")) {
+    const abs = resolve(command);
+    return existsSync(abs) ? abs : null;
+  }
+  const pathValue = process.env.PATH ?? "";
+  if (!pathValue) return null;
+  const exts =
+    process.platform === "win32"
+      ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      : [""];
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = join(dir, command + ext);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
 function defaultLookup(command: string): string | null {
   const tool = process.platform === "win32" ? "where" : "which";
   try {
@@ -53,10 +81,14 @@ function defaultLookup(command: string): string | null {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return out.trim().split(/\r?\n/)[0] || null;
+    const resolved = out.trim().split(/\r?\n/)[0] || null;
+    // `which`/`where` can report a stale hit; confirm the target still exists.
+    if (resolved && existsSync(resolved)) return resolved;
   } catch {
-    return null;
+    // `which`/`where` missing (minimal image) or errored — fall through to the
+    // Node-side PATH scan below.
   }
+  return searchPath(command);
 }
 
 /** Walk up from the resolved gsd binary looking for packages/mcp-server/dist/cli.js. */
