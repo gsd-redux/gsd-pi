@@ -7,7 +7,8 @@
 // `gsd --mode mcp` instead yields a session registry without those tools, so
 // every workflow call fails with "Unknown tool" (issue #1513).
 //
-// Resolution order mirrors detectWorkflowMcpLaunchConfig in the gsd extension:
+// Resolution order (daemon-specific; it does not mirror the extension's
+// detectWorkflowMcpLaunchConfig, which probes the project root for hints):
 //  1. GSD_WORKFLOW_MCP_COMMAND (+ optional GSD_WORKFLOW_MCP_ARGS JSON array)
 //  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
 //  3. `gsd-mcp-server` on PATH
@@ -31,7 +32,13 @@ export interface ResolveWorkflowServerLaunchOptions {
 
 function parseArgsEnv(raw: string | undefined): string[] {
   if (!raw || !raw.trim()) return [];
-  const parsed = JSON.parse(raw) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`GSD_WORKFLOW_MCP_ARGS must be valid JSON: ${detail}`);
+  }
   if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
     throw new Error("GSD_WORKFLOW_MCP_ARGS must be a JSON array of strings");
   }

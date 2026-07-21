@@ -95,3 +95,19 @@ test("rejects malformed GSD_WORKFLOW_MCP_ARGS loudly", (t) => {
     /GSD_WORKFLOW_MCP_ARGS/,
   );
 });
+
+test("rejects invalid-JSON GSD_WORKFLOW_MCP_ARGS with a targeted error", (t) => {
+  const { gsdBinary } = makeInstalledLayout(t);
+  assert.throws(
+    () =>
+      resolveWorkflowServerLaunch({
+        gsdBinary,
+        env: {
+          GSD_WORKFLOW_MCP_COMMAND: "/custom/wf-server",
+          GSD_WORKFLOW_MCP_ARGS: "--flag --other",
+        },
+        lookup: () => null,
+      }),
+    /GSD_WORKFLOW_MCP_ARGS must be valid JSON/,
+  );
+});
