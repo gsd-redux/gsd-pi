@@ -359,6 +359,34 @@ test("startup failures flush runtime telemetry before rejecting", async (t) => {
 
 });
 
+test("startup rejects executor initialization before connecting", async (t) => {
+  const events: string[] = [];
+  const telemetry = {
+    ...Object.fromEntries([
+      "connected", "disconnected", "received", "sent", "projectsAdvertised",
+      "requestStarted", "requestFinished", "stopped", "failed", "flush",
+    ].map((name) => [name, () => undefined])),
+    connecting: () => events.push("connecting"),
+    socketError: (message: string) => events.push(`error:${message}`),
+  } as never;
+  const runtime = new CloudRuntime(
+    { gateway_url: "not-a-url", device_token: "fixture", runtime_id: "runtime" },
+    {
+      initialize: () => {
+        throw new Error("Cannot locate the GSD workflow MCP server");
+      },
+      execute: async () => ({}),
+      advertisedProjects: async () => [],
+    },
+    noopLogger as never,
+    telemetry,
+  );
+  t.after(() => runtime.stop());
+
+  await assert.rejects(runtime.start(), /Cannot locate the GSD workflow MCP server/);
+  assert.deepEqual(events, ["error:Cannot locate the GSD workflow MCP server"]);
+});
+
 test("malformed gateway failures flush runtime telemetry before rejecting", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-startup-url-error-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

@@ -103,6 +103,10 @@ export class GsdPiExecutor implements Executor {
     this.warnDuplicateAliases();
   }
 
+  initialize(): void {
+    this.resolveWorkflowLaunch();
+  }
+
   /**
    * Advertised aliases are directory basenames, so two projects that share a
    * folder name collide. Warn up front — such an alias can only be routed by an
