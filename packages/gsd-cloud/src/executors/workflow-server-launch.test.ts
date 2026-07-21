@@ -67,6 +67,14 @@ test("discovers the installed workflow server from a Windows npm command shim", 
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const npmBin = join(root, "npm");
   const gsdBinary = join(npmBin, "gsd.cmd");
+  const gsdLoader = join(
+    npmBin,
+    "node_modules",
+    "@opengsd",
+    "gsd-pi",
+    "dist",
+    "loader.js",
+  );
   const workflowCli = join(
     npmBin,
     "node_modules",
@@ -77,8 +85,10 @@ test("discovers the installed workflow server from a Windows npm command shim", 
     "dist",
     "cli.js",
   );
+  mkdirSync(dirname(gsdLoader), { recursive: true });
   mkdirSync(dirname(workflowCli), { recursive: true });
   writeFileSync(gsdBinary, "@node node_modules/@opengsd/gsd-pi/dist/loader.js %*\r\n");
+  writeFileSync(gsdLoader, "// gsd loader\n");
   writeFileSync(workflowCli, "// workflow server\n");
 
   const launch = resolveWorkflowServerLaunch({
@@ -89,7 +99,7 @@ test("discovers the installed workflow server from a Windows npm command shim", 
 
   assert.ok(launch, "expected a launch config");
   assert.deepEqual(launch.args, [realpathSync(workflowCli)]);
-  assert.equal(launch.gsdCliPath, realpathSync(gsdBinary));
+  assert.equal(launch.gsdCliPath, realpathSync(gsdLoader));
 });
 
 test("falls back to gsd-mcp-server on PATH when no installed layout matches", (t) => {

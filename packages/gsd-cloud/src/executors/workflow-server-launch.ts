@@ -64,7 +64,18 @@ function resolveGsdBinary(
     : lookup(candidate);
   if (!resolved) return undefined;
   try {
-    return realpathSync(resolve(resolved));
+    const cliPath = realpathSync(resolve(resolved));
+    if (!/\.(?:cmd|ps1)$/i.test(cliPath)) return cliPath;
+    return realpathSync(
+      resolve(
+        dirname(cliPath),
+        "node_modules",
+        "@opengsd",
+        "gsd-pi",
+        "dist",
+        "loader.js",
+      ),
+    );
   } catch {
     return undefined;
   }

@@ -111,10 +111,24 @@ test("bare gsd name is resolved before reaching the workflow server", async (t) 
   const npmBin = join(root, "npm");
   const serverPath = join(root, "server.mjs");
   const gsdBinary = join(npmBin, process.platform === "win32" ? "gsd.cmd" : "gsd");
+  let expectedGsdCliPath = gsdBinary;
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(npmBin, { recursive: true });
   writeFileSync(gsdBinary, process.platform === "win32" ? "@node %*\r\n" : "#!/bin/sh\n");
-  if (process.platform !== "win32") chmodSync(gsdBinary, 0o755);
+  if (process.platform === "win32") {
+    expectedGsdCliPath = join(
+      npmBin,
+      "node_modules",
+      "@opengsd",
+      "gsd-pi",
+      "dist",
+      "loader.js",
+    );
+    mkdirSync(dirname(expectedGsdCliPath), { recursive: true });
+    writeFileSync(expectedGsdCliPath, "#!/usr/bin/env node\n");
+  } else {
+    chmodSync(gsdBinary, 0o755);
+  }
   writeCliPathServer(serverPath);
 
   const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
@@ -140,7 +154,7 @@ test("bare gsd name is resolved before reaching the workflow server", async (t) 
   t.after(() => executor.close());
   const result = await executor.execute("gsd_status", {});
 
-  assert.deepEqual(result, { gsdCliPath: realpathSync(gsdBinary) });
+  assert.deepEqual(result, { gsdCliPath: realpathSync(expectedGsdCliPath) });
 });
 
 test("Milestone lifecycle request identity becomes private MCP metadata", async (t) => {
