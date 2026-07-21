@@ -28,6 +28,7 @@ export interface ResolveWorkflowServerLaunchOptions {
   env?: NodeJS.ProcessEnv;
   /** PATH lookup, injectable for tests. Defaults to which/where. */
   lookup?: (command: string) => string | null;
+  platform?: NodeJS.Platform;
 }
 
 function parseArgsEnv(raw: string | undefined): string[] {
@@ -47,10 +48,21 @@ function defaultLookup(command: string): string | null {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return out.trim().split(/\r?\n/)[0] || null;
+    return out.trim() || null;
   } catch {
     return null;
   }
+}
+
+function selectLookupPath(output: string | null, platform: NodeJS.Platform): string | null {
+  const paths = output
+    ?.split(/\r?\n/)
+    .map((path) => path.trim())
+    .filter(Boolean) ?? [];
+  if (platform === "win32") {
+    return paths.find((path) => /\.cmd$/i.test(path)) ?? paths[0] ?? null;
+  }
+  return paths[0] ?? null;
 }
 
 function resolveGsdBinary(
@@ -65,17 +77,17 @@ function resolveGsdBinary(
   if (!resolved) return undefined;
   try {
     const cliPath = realpathSync(resolve(resolved));
-    if (!/\.(?:cmd|ps1)$/i.test(cliPath)) return cliPath;
-    return realpathSync(
-      resolve(
-        dirname(cliPath),
-        "node_modules",
-        "@opengsd",
-        "gsd-pi",
-        "dist",
-        "loader.js",
-      ),
+    const npmLoader = resolve(
+      dirname(cliPath),
+      "node_modules",
+      "@opengsd",
+      "gsd-pi",
+      "dist",
+      "loader.js",
     );
+    if (existsSync(npmLoader)) return realpathSync(npmLoader);
+    if (/\.(?:cmd|ps1)$/i.test(cliPath)) return undefined;
+    return cliPath;
   } catch {
     return undefined;
   }
@@ -109,7 +121,10 @@ export function resolveWorkflowServerLaunch(
   options: ResolveWorkflowServerLaunchOptions = {},
 ): WorkflowServerLaunch | null {
   const env = options.env ?? process.env;
-  const lookup = options.lookup ?? defaultLookup;
+  const rawLookup = options.lookup ?? defaultLookup;
+  const platform = options.platform ?? process.platform;
+  const lookup = (command: string): string | null =>
+    selectLookupPath(rawLookup(command), platform);
   const gsdCliPath = resolveGsdBinary(options.gsdBinary, lookup);
 
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();

@@ -66,6 +66,7 @@ test("discovers the installed workflow server from a Windows npm command shim", 
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-windows-shim-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const npmBin = join(root, "npm");
+  const extensionlessShim = join(npmBin, "gsd");
   const gsdBinary = join(npmBin, "gsd.cmd");
   const gsdLoader = join(
     npmBin,
@@ -87,6 +88,7 @@ test("discovers the installed workflow server from a Windows npm command shim", 
   );
   mkdirSync(dirname(gsdLoader), { recursive: true });
   mkdirSync(dirname(workflowCli), { recursive: true });
+  writeFileSync(extensionlessShim, "#!/bin/sh\n");
   writeFileSync(gsdBinary, "@node node_modules/@opengsd/gsd-pi/dist/loader.js %*\r\n");
   writeFileSync(gsdLoader, "// gsd loader\n");
   writeFileSync(workflowCli, "// workflow server\n");
@@ -94,12 +96,24 @@ test("discovers the installed workflow server from a Windows npm command shim", 
   const launch = resolveWorkflowServerLaunch({
     gsdBinary: "gsd",
     env: {},
-    lookup: (command) => (command === "gsd" ? gsdBinary : null),
+    lookup: (command) =>
+      command === "gsd" ? `${extensionlessShim}\r\n${gsdBinary}\r\n` : null,
+    platform: "win32",
   });
 
   assert.ok(launch, "expected a launch config");
   assert.deepEqual(launch.args, [realpathSync(workflowCli)]);
   assert.equal(launch.gsdCliPath, realpathSync(gsdLoader));
+
+  const extensionlessLaunch = resolveWorkflowServerLaunch({
+    gsdBinary: extensionlessShim,
+    env: {},
+    lookup: () => null,
+    platform: "win32",
+  });
+  assert.ok(extensionlessLaunch, "expected a launch config from the extensionless shim");
+  assert.deepEqual(extensionlessLaunch.args, [realpathSync(workflowCli)]);
+  assert.equal(extensionlessLaunch.gsdCliPath, realpathSync(gsdLoader));
 });
 
 test("falls back to gsd-mcp-server on PATH when no installed layout matches", (t) => {
