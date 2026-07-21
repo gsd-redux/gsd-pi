@@ -10,8 +10,8 @@
 //   2. POST /pairing-codes (user bearer token) to mint a pairing code.
 //   3. Run the real gsd-cloud CLI `pair` against it (temp HOME + temp config).
 //   4. Run the real gsd-cloud CLI `connect --foreground` with GSD_CLOUD_PROJECTS
-//      pointing at a fixture project dir (minimal .gsd) and GSD_CLI_PATH pointing
-//      at a fixture MCP stdio server standing in for `gsd --mode mcp`.
+//      pointing at a fixture project dir (minimal .gsd) and the workflow MCP
+//      command pointing at a fixture stdio server.
 //   5. Assert the runtime registers (gateway registry lists the fixture project).
 //   6. Drive the /mcp endpoint (Streamable HTTP): initialize, tools/list,
 //      gsd_cloud_projects, and a forwarded gsd_query tool call.
@@ -24,8 +24,8 @@
 // Environment:
 //   GSD_CLOUD_E2E=0|false        Skip (exit 0) — for CI jobs without a full build.
 //   GSD_CLOUD_E2E_TIMEOUT_MS     Global watchdog timeout (default 120000).
-//   GSD_CLOUD_E2E_GSD_CLI        Use a real gsd binary instead of the fixture
-//                                (fixture project must then satisfy gsd --mode mcp).
+//   GSD_CLOUD_E2E_GSD_CLI        Use a real gsd installation and its bundled
+//                                workflow MCP server instead of the fixture.
 //   GSD_CLOUD_E2E_KEEP_TMP=1     Keep the temp root for debugging (path is printed).
 
 import { randomBytes } from "node:crypto";
@@ -50,7 +50,7 @@ const REPO_ROOT = join(PKG_DIR, "..", "..");
 const CLI_BIN = join(PKG_DIR, "bin", "gsd-cloud.js");
 const CLI_DIST = join(PKG_DIR, "dist", "cli.js");
 const GATEWAY_DIST = join(REPO_ROOT, "packages", "cloud-mcp-gateway", "dist", "index.js");
-const FIXTURE_GSD_BIN = join(E2E_DIR, "fixture-gsd-mcp.mjs");
+const FIXTURE_WORKFLOW_SERVER = join(E2E_DIR, "fixture-gsd-mcp.mjs");
 const FIXTURE_MARKER = "GSD_CLOUD_E2E_FIXTURE";
 
 const HTTP_TIMEOUT_MS = 10_000;
@@ -131,7 +131,7 @@ function checkPrereqs() {
   writeFileSync(join(projectDir, ".gsd", "PROJECT.md"), "# Project\n\ngsd-cloud e2e fixture.\n");
 
   // The fixture must be executable regardless of how git materialized file modes.
-  chmodSync(FIXTURE_GSD_BIN, 0o755);
+  chmodSync(FIXTURE_WORKFLOW_SERVER, 0o755);
 }
 
 async function startGateway(ctx) {
@@ -343,15 +343,25 @@ async function assertShutdown(ctx) {
 // ---------------------------------------------------------------------------
 
 function childEnv() {
-  return {
+  const env = {
     ...process.env,
     HOME: join(tmpRoot, "home"),
     // Deterministic device-token encryption key — pair and connect run as
     // separate processes and must derive the same key.
     GSD_CLOUD_TOKEN_KEY: "gsd-cloud-e2e-token-key",
     GSD_CLOUD_PROJECTS: join(tmpRoot, "fixture-project"),
-    GSD_CLI_PATH: process.env.GSD_CLOUD_E2E_GSD_CLI ?? FIXTURE_GSD_BIN,
   };
+  const gsdCliPath = process.env.GSD_CLOUD_E2E_GSD_CLI?.trim();
+  if (gsdCliPath) {
+    env.GSD_CLI_PATH = gsdCliPath;
+    delete env.GSD_WORKFLOW_MCP_COMMAND;
+    delete env.GSD_WORKFLOW_MCP_ARGS;
+  } else {
+    delete env.GSD_CLI_PATH;
+    env.GSD_WORKFLOW_MCP_COMMAND = process.execPath;
+    env.GSD_WORKFLOW_MCP_ARGS = JSON.stringify([FIXTURE_WORKFLOW_SERVER]);
+  }
+  return env;
 }
 
 function runProcess(command, args, { env, timeoutMs }) {

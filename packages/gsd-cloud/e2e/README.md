@@ -25,9 +25,9 @@ separate gate you opt into locally or in CI.
    written to the config.
 4. Runs the real CLI `gsd-cloud connect --foreground` with
    `GSD_CLOUD_PROJECTS` pointing at a fixture project (minimal `.gsd`) and
-   `GSD_CLI_PATH` pointing at `fixture-gsd-mcp.mjs`, a stand-in for
-   `gsd --mode mcp` that speaks the executor's newline-delimited MCP stdio
-   protocol.
+   `GSD_WORKFLOW_MCP_COMMAND`/`ARGS` launching `fixture-gsd-mcp.mjs`, a stand-in
+   for the workflow MCP server that speaks the executor's newline-delimited MCP
+   stdio protocol.
 5. Asserts the runtime registers in the gateway registry (alias, canonical
    path, `online: true`, `gsd` marker).
 6. Drives the `/mcp` Streamable HTTP endpoint: `initialize`, `tools/list`
@@ -45,7 +45,7 @@ separate gate you opt into locally or in CI.
 | --- | --- |
 | `GSD_CLOUD_E2E=0` / `false` | Skip the harness (exit 0) — for CI jobs that cannot build the full chain. |
 | `GSD_CLOUD_E2E_TIMEOUT_MS` | Global watchdog timeout (default `120000`). |
-| `GSD_CLOUD_E2E_GSD_CLI` | Path to a real `gsd` binary to use instead of the fixture (full-stack mode; the fixture project must then satisfy `gsd --mode mcp`). |
+| `GSD_CLOUD_E2E_GSD_CLI` | Path to a real `gsd` binary whose installed package contains the workflow MCP server (full-stack mode). |
 | `GSD_CLOUD_E2E_KEEP_TMP=1` | Keep the temp root for debugging (the path is printed in the summary). |
 
 ## CI notes

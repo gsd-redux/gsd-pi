@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Project/App: Open GSD
-// File Purpose: E2E fixture standing in for the `gsd` binary.
+// File Purpose: E2E fixture standing in for the workflow MCP server.
 //
-// The gsd-pi executor drives a real `gsd --mode mcp` child over newline-delimited
+// The gsd-pi executor drives the workflow MCP server over newline-delimited
 // JSON-RPC on stdio. This fixture speaks exactly that protocol subset so the E2E
 // harness can exercise the full cloud path (gateway -> WS relay -> cloud runtime
-// -> executor -> stdio MCP) without building the entire gsd CLI. It is selected
-// via GSD_CLI_PATH; set GSD_CLOUD_E2E_GSD_CLI to a real gsd binary for a
-// full-stack run instead.
+// -> executor -> stdio MCP) without starting the installed server. It is selected
+// via GSD_WORKFLOW_MCP_COMMAND/ARGS; set GSD_CLOUD_E2E_GSD_CLI to a real gsd
+// binary for a full-stack run instead.
 //
 // Protocol contract (mirrors what McpStdioClient sends/reads):
 //   <- {"jsonrpc":"2.0","id":N,"method":"initialize","params":{...}}

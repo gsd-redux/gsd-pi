@@ -4,9 +4,16 @@
 // of silently routing cloud work to whichever entry comes first.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { GsdPiExecutor } from "./gsd-pi-executor.js";
 
 const warnings: Array<{ msg: string; meta: unknown }> = [];
@@ -16,6 +23,23 @@ const logger = {
   error: () => undefined,
   debug: () => undefined,
 };
+
+function writeCliPathServer(serverPath: string): void {
+  writeFileSync(
+    serverPath,
+    `import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const message = JSON.parse(line);
+  if (message.id === undefined) continue;
+  const result = message.method === "initialize"
+    ? { protocolVersion: "2024-11-05", capabilities: {} }
+    : { gsdCliPath: process.env.GSD_CLI_PATH };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\\n");
+}
+`,
+  );
+}
 
 test("ambiguous alias across colliding basenames rejects instead of mis-routing", async () => {
   const exec = new GsdPiExecutor(logger as never, {
@@ -58,20 +82,9 @@ test("configured gsd binary is passed to the workflow server", async (t) => {
   const serverPath = join(root, "server.mjs");
   const gsdBinary = join(root, "custom", "gsd");
   mkdirSync(projectDir, { recursive: true });
-  writeFileSync(
-    serverPath,
-    `import { createInterface } from "node:readline";
-const lines = createInterface({ input: process.stdin });
-for await (const line of lines) {
-  const message = JSON.parse(line);
-  if (message.id === undefined) continue;
-  const result = message.method === "initialize"
-    ? { protocolVersion: "2024-11-05", capabilities: {} }
-    : { gsdCliPath: process.env.GSD_CLI_PATH };
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\\n");
-}
-`,
-  );
+  mkdirSync(dirname(gsdBinary), { recursive: true });
+  writeFileSync(gsdBinary, "#!/usr/bin/env node\n");
+  writeCliPathServer(serverPath);
 
   const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
   const previousArgs = process.env.GSD_WORKFLOW_MCP_ARGS;
@@ -88,7 +101,46 @@ for await (const line of lines) {
   t.after(() => executor.close());
   const result = await executor.execute("gsd_status", {});
 
-  assert.deepEqual(result, { gsdCliPath: gsdBinary });
+  assert.deepEqual(result, { gsdCliPath: realpathSync(gsdBinary) });
+});
+
+test("bare gsd name is resolved before reaching the workflow server", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-bare-cli-path-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projectDir = join(root, "project");
+  const npmBin = join(root, "npm");
+  const serverPath = join(root, "server.mjs");
+  const gsdBinary = join(npmBin, process.platform === "win32" ? "gsd.cmd" : "gsd");
+  mkdirSync(projectDir, { recursive: true });
+  mkdirSync(npmBin, { recursive: true });
+  writeFileSync(gsdBinary, process.platform === "win32" ? "@node %*\r\n" : "#!/bin/sh\n");
+  if (process.platform !== "win32") chmodSync(gsdBinary, 0o755);
+  writeCliPathServer(serverPath);
+
+  const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
+  const previousArgs = process.env.GSD_WORKFLOW_MCP_ARGS;
+  const previousCliPath = process.env.GSD_CLI_PATH;
+  const previousPath = process.env.PATH;
+  process.env.GSD_WORKFLOW_MCP_COMMAND = process.execPath;
+  process.env.GSD_WORKFLOW_MCP_ARGS = JSON.stringify([serverPath]);
+  delete process.env.GSD_CLI_PATH;
+  process.env.PATH = `${npmBin}${delimiter}${previousPath ?? ""}`;
+  t.after(() => {
+    if (previousCommand === undefined) delete process.env.GSD_WORKFLOW_MCP_COMMAND;
+    else process.env.GSD_WORKFLOW_MCP_COMMAND = previousCommand;
+    if (previousArgs === undefined) delete process.env.GSD_WORKFLOW_MCP_ARGS;
+    else process.env.GSD_WORKFLOW_MCP_ARGS = previousArgs;
+    if (previousCliPath === undefined) delete process.env.GSD_CLI_PATH;
+    else process.env.GSD_CLI_PATH = previousCliPath;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+
+  const executor = new GsdPiExecutor(logger as never, { projectDirs: [projectDir] });
+  t.after(() => executor.close());
+  const result = await executor.execute("gsd_status", {});
+
+  assert.deepEqual(result, { gsdCliPath: realpathSync(gsdBinary) });
 });
 
 test("Milestone lifecycle request identity becomes private MCP metadata", async (t) => {

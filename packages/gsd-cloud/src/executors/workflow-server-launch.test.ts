@@ -30,6 +30,7 @@ test("discovers the workflow server beside an installed gsd binary", (t) => {
   assert.ok(launch, "expected a launch config");
   assert.equal(launch.command, process.execPath);
   assert.deepEqual(launch.args, [workflowCli]);
+  assert.equal(launch.gsdCliPath, realpathSync(gsdBinary));
 });
 
 test("explicit GSD_WORKFLOW_MCP_COMMAND wins over discovery", (t) => {
@@ -42,7 +43,11 @@ test("explicit GSD_WORKFLOW_MCP_COMMAND wins over discovery", (t) => {
     },
     lookup: () => null,
   });
-  assert.deepEqual(launch, { command: "/custom/wf-server", args: ["--flag"] });
+  assert.deepEqual(launch, {
+    command: "/custom/wf-server",
+    args: ["--flag"],
+    gsdCliPath: realpathSync(gsdBinary),
+  });
 });
 
 test("bare gsd binary name resolves through PATH lookup before walking ancestors", (t) => {
@@ -54,6 +59,7 @@ test("bare gsd binary name resolves through PATH lookup before walking ancestors
   });
   assert.ok(launch, "expected a launch config");
   assert.deepEqual(launch.args, [workflowCli]);
+  assert.equal(launch.gsdCliPath, realpathSync(gsdBinary));
 });
 
 test("discovers the installed workflow server from a Windows npm command shim", (t) => {
@@ -83,6 +89,7 @@ test("discovers the installed workflow server from a Windows npm command shim", 
 
   assert.ok(launch, "expected a launch config");
   assert.deepEqual(launch.args, [realpathSync(workflowCli)]);
+  assert.equal(launch.gsdCliPath, realpathSync(gsdBinary));
 });
 
 test("falls back to gsd-mcp-server on PATH when no installed layout matches", (t) => {

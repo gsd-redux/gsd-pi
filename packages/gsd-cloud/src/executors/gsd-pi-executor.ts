@@ -162,17 +162,17 @@ export class GsdPiExecutor implements Executor {
           "or put gsd-mcp-server on PATH.",
       );
     }
+    const childEnv = { ...process.env };
+    if (launch.gsdCliPath) childEnv.GSD_CLI_PATH = launch.gsdCliPath;
+    else delete childEnv.GSD_CLI_PATH;
+    childEnv.GSD_PROJECT_ROOT = path;
+    childEnv.GSD_WORKFLOW_PROJECT_ROOT = path;
     const client = new McpStdioClient(
       launch.command,
       launch.args,
       this.logger,
       {
-        env: {
-          ...process.env,
-          GSD_CLI_PATH: this.gsdBinary,
-          GSD_PROJECT_ROOT: path,
-          GSD_WORKFLOW_PROJECT_ROOT: path,
-        },
+        env: childEnv,
         cwd: path,
       },
     );
