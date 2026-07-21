@@ -158,6 +158,25 @@ test("systemd unit quotes arguments containing spaces", (t) => {
   assert.ok(!unit.includes(`--config ${configPath}\n`));
 });
 
+test("service unit PATH appends the install-time PATH so interactive-only commands resolve", (t) => {
+  const home = tmpHome(t);
+  const opts = baseInstallOpts(home, {
+    nodePath: "/opt/node/bin/node",
+    environment: { PATH: `/home/user/.local/bin:/usr/bin:${join(home, "bin")}` },
+  });
+  // Node bin dir + system dirs stay first; interactive-only dirs are appended,
+  // and dirs already in the base (e.g. /usr/bin) are not duplicated. This lets a
+  // bare GSD_WORKFLOW_MCP_COMMAND on ~/.local/bin resolve under the service.
+  const expected =
+    `/opt/node/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/home/user/.local/bin:${join(home, "bin")}`;
+
+  const xml = generateLaunchdPlist(opts);
+  assert.ok(xml.includes(`<key>PATH</key>\n\t\t<string>${expected}</string>`));
+
+  const unit = generateSystemdUnit(opts);
+  assert.ok(unit.includes(`Environment="PATH=${expected}"`));
+});
+
 test("service units preserve workflow MCP discovery overrides", (t) => {
   const home = tmpHome(t);
   const environment = {
@@ -198,6 +217,13 @@ test("service units preserve workflow MCP discovery overrides", (t) => {
     }
   });
 
+  // installService with environment:undefined captures process.env at install
+  // time, and buildEnvPath now folds that env's PATH into the unit PATH. Render
+  // the expectation from the same process.env so the equality reflects the
+  // fallback path rather than the PATH-free opts used for the key assertions.
+  const expectedPlist = generateLaunchdPlist({ ...opts, environment: process.env });
+  const expectedUnit = generateSystemdUnit({ ...opts, environment: process.env });
+
   for (const platform of ["darwin", "linux"] as const) {
     const unitPath = join(home, `${platform}.service`);
     installService(
@@ -206,7 +232,7 @@ test("service units preserve workflow MCP discovery overrides", (t) => {
     );
     assert.equal(
       readFileSync(unitPath, "utf8"),
-      platform === "darwin" ? plist : unit,
+      platform === "darwin" ? expectedPlist : expectedUnit,
     );
   }
 });

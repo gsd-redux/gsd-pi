@@ -126,10 +126,22 @@ export function escapeXml(value: string): string {
  * Build the NVM-aware PATH string. Includes the directory containing the Node
  * binary so the service can find node (and a PATH-local `gsd`) even when
  * launched outside a shell session where NVM isn't sourced.
+ *
+ * The install-time PATH (`inheritedPath`) is appended after the fixed base so a
+ * bare `GSD_WORKFLOW_MCP_COMMAND` / `gsd` that was only discoverable via the
+ * user's interactive PATH (e.g. ~/.local/bin) still resolves under the service.
+ * The Node bin dir and system dirs stay first, so they keep priority; only
+ * additional interactive dirs are appended, de-duplicated.
  */
-function buildEnvPath(nodePath: string): string {
+function buildEnvPath(nodePath: string, inheritedPath?: string): string {
   const nodeBinDir = dirname(nodePath);
-  return `${nodeBinDir}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
+  const base = `${nodeBinDir}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
+  const baseDirs = new Set(base.split(":"));
+  const extra = (inheritedPath ?? "")
+    .split(":")
+    .map((dir) => dir.trim())
+    .filter((dir) => dir.length > 0 && !baseDirs.has(dir));
+  return extra.length > 0 ? `${base}:${extra.join(":")}` : base;
 }
 
 function serviceEnvironment(opts: ServiceInstallOptions): Array<[string, string]> {
@@ -164,7 +176,7 @@ function systemdArg(value: string): string {
 export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
   const home = opts.homeDir ?? homedir();
   const logPath = opts.logPath ?? runtimeLogPath(opts.configPath);
-  const envPath = buildEnvPath(opts.nodePath);
+  const envPath = buildEnvPath(opts.nodePath, opts.environment?.PATH);
   const workflowEnvironment = serviceEnvironment(opts)
     .map(([key, value]) => `
 \t\t<key>${escapeXml(key)}</key>
@@ -221,7 +233,7 @@ export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
 /** Generate the systemd user unit for the gsd-cloud runtime. */
 export function generateSystemdUnit(opts: ServiceInstallOptions): string {
   const home = opts.homeDir ?? homedir();
-  const envPath = buildEnvPath(opts.nodePath);
+  const envPath = buildEnvPath(opts.nodePath, opts.environment?.PATH);
   const workflowEnvironment = serviceEnvironment(opts)
     .map(([key, value]) => `Environment=${systemdArg(`${key}=${value}`)}`)
     .join("\n");
