@@ -13,7 +13,7 @@
 //  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 
 export interface WorkflowServerLaunch {
@@ -53,6 +53,10 @@ function parseArgsEnv(raw: string | undefined): string[] {
  */
 function isExecutableFile(candidate: string): boolean {
   try {
+    // Reject directories: on POSIX they usually carry the execute ("searchable")
+    // bit, so an X_OK-only check would mistake a same-named directory for the
+    // binary. which/where only return regular files.
+    if (!statSync(candidate).isFile()) return false;
     accessSync(candidate, constants.X_OK);
     return true;
   } catch {

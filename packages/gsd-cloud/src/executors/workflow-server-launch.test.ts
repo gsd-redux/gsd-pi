@@ -159,6 +159,23 @@ test(
   },
 );
 
+test(
+  "ignores a same-named directory on PATH (searchable bit is not executability)",
+  { skip: process.platform === "win32" ? "POSIX directory exec-bit semantics" : false },
+  (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "gsd-cloud-dir-decoy-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    // A directory named exactly like the command carries the execute
+    // ("searchable") bit on POSIX; the scan must not mistake it for the binary.
+    mkdirSync(join(dir, "gsd-mcp-server"));
+    const launch = resolveWorkflowServerLaunch({
+      gsdBinary: join(dir, "missing", "gsd"),
+      env: { PATH: dir },
+    });
+    assert.equal(launch, null);
+  },
+);
+
 test("a bare gsd name that does not resolve on PATH does not anchor discovery off cwd", (t) => {
   const fakeCwd = mkdtempSync(join(tmpdir(), "gsd-cloud-cwd-anchor-"));
   t.after(() => rmSync(fakeCwd, { recursive: true, force: true }));
