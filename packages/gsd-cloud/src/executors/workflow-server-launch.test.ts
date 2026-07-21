@@ -107,6 +107,20 @@ test("explicit workflow server env and cwd are carried into the launch", () => {
   });
 });
 
+test("GSD_WORKFLOW_MCP_CWD sets cwd only and never becomes the workflow project root", () => {
+  const launch = resolveWorkflowServerLaunch({
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: "/custom/wf-server",
+      GSD_WORKFLOW_MCP_CWD: "/custom/cwd",
+    },
+    lookup: () => null,
+  });
+  // cwd honors the override, but no project root is inferred from it — otherwise
+  // a single cwd override would pin every memoized per-project child to one root.
+  assert.equal(launch?.cwd, "/custom/cwd");
+  assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, undefined);
+});
+
 test("preserves relative explicit workflow server commands for the project cwd", () => {
   const launch = resolveWorkflowServerLaunch({
     env: {

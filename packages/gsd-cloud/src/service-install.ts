@@ -138,7 +138,14 @@ function serviceEnvironment(opts: ServiceInstallOptions): Array<[string, string]
     const value = opts.environment?.[key];
     if (value !== undefined) values.set(key, value);
   }
-  if (opts.gsdCliPath) values.set("GSD_CLI_PATH", opts.gsdCliPath);
+  if (opts.gsdCliPath) {
+    // GSD_CLI_PATH and GSD_BIN_PATH are equivalent CLI-path overrides
+    // downstream, so pin both to the resolved binary. Setting only GSD_CLI_PATH
+    // would leave a mismatched GSD_BIN_PATH from opts.environment intact, and a
+    // consumer reading GSD_BIN_PATH would then see a stale, disagreeing path.
+    values.set("GSD_CLI_PATH", opts.gsdCliPath);
+    values.set("GSD_BIN_PATH", opts.gsdCliPath);
+  }
   return [...values];
 }
 

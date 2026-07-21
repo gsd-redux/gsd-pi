@@ -359,11 +359,16 @@ export function resolveWorkflowServerLaunch(
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
     const args = parseArgsEnv(env.GSD_WORKFLOW_MCP_ARGS);
+    // GSD_WORKFLOW_MCP_CWD (explicitCwd) is a working-directory override for the
+    // server process only — it is deliberately NOT a project-root fallback.
+    // Discovery is memoized host-level, so folding it into GSD_WORKFLOW_PROJECT_ROOT
+    // would pin every per-project child to the same root and clobber the
+    // executor's per-project path (gsd-pi-executor uses launch.env root ?? path),
+    // breaking multi-project routing. It still lands as launch.cwd below.
     const workflowProjectRoot =
       explicitEnvironment?.GSD_WORKFLOW_PROJECT_ROOT?.trim()
       || env.GSD_WORKFLOW_PROJECT_ROOT?.trim()
-      || env.GSD_PROJECT_ROOT?.trim()
-      || explicitCwd;
+      || env.GSD_PROJECT_ROOT?.trim();
     const launchEnvironment = {
       ...explicitEnvironment,
       ...(configuredCliPath && gsdCliPath

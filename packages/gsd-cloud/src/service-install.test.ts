@@ -211,6 +211,27 @@ test("service units preserve workflow MCP discovery overrides", (t) => {
   }
 });
 
+test("gsdCliPath pins GSD_CLI_PATH and GSD_BIN_PATH together, overriding a stale GSD_BIN_PATH", (t) => {
+  const home = tmpHome(t);
+  // A mismatched GSD_BIN_PATH in the captured environment must not survive: the
+  // two vars are equivalent CLI-path overrides downstream, so both must resolve
+  // to the freshly resolved binary rather than disagreeing.
+  const opts = baseInstallOpts(home, {
+    gsdCliPath: "/opt/homebrew/bin/gsd",
+    environment: { GSD_BIN_PATH: "/stale/daemon/gsd" },
+  });
+
+  const plist = generateLaunchdPlist(opts);
+  assert.ok(plist.includes("<key>GSD_CLI_PATH</key>\n\t\t<string>/opt/homebrew/bin/gsd</string>"));
+  assert.ok(plist.includes("<key>GSD_BIN_PATH</key>\n\t\t<string>/opt/homebrew/bin/gsd</string>"));
+  assert.ok(!plist.includes("/stale/daemon/gsd"));
+
+  const unit = generateSystemdUnit(opts);
+  assert.ok(unit.includes(`Environment="GSD_CLI_PATH=/opt/homebrew/bin/gsd"`));
+  assert.ok(unit.includes(`Environment="GSD_BIN_PATH=/opt/homebrew/bin/gsd"`));
+  assert.ok(!unit.includes("/stale/daemon/gsd"));
+});
+
 // --------------- install ---------------
 
 test("installService writes the launchd plist, loads it, and verifies registration", (t) => {

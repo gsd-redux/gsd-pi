@@ -356,6 +356,10 @@ test("createProjectEntry honors explicit workflow env and cwd", async (t) => {
   assert.equal(spawned[0]!.options.env?.CUSTOM_WORKFLOW_VALUE, "preserved");
   assert.equal(spawned[0]!.options.env?.GSD_CLI_PATH, "/opt/custom/gsd");
   assert.equal(spawned[0]!.options.env?.GSD_BIN_PATH, "/opt/custom/gsd");
+  // GSD_WORKFLOW_MCP_CWD overrides the working directory only — it must NOT leak
+  // into the workflow project root, which stays pinned to the per-project path
+  // so multi-project routing is preserved.
+  assert.equal(spawned[0]!.options.env?.GSD_WORKFLOW_PROJECT_ROOT, resolve(projectDir));
 });
 
 test("GSD_BIN_PATH wins over the executor's default gsd PATH anchor", async (t) => {
