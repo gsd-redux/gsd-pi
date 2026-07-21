@@ -35,7 +35,8 @@ separate gate you opt into locally or in CI.
    `gsd_cloud_projects` (asserts the fixture project is listed), and a
    forwarded `gsd_query` tool call (asserts the fixture's marker response came
    back through gateway → websocket → runtime → executor → stdio MCP → and
-   return).
+   return). It also forwards `gsd_status` to prove the workflow tool surface is
+   available through the same path.
 7. SIGTERMs the runtime, asserts a clean exit code and that the registry
    detaches, then tears everything down.
 

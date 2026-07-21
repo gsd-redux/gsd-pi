@@ -111,6 +111,7 @@ export class CloudRuntime {
       throw error;
     });
     try {
+      this.executor.initialize?.();
       this.connect();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

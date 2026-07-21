@@ -33,6 +33,35 @@ test("discovers the workflow server beside an installed gsd binary", (t) => {
   assert.equal(launch.gsdCliPath, realpathSync(gsdBinary));
 });
 
+test("discovers the installed workflow server from GSD_BIN_PATH", (t) => {
+  const { gsdBinary, workflowCli } = makeInstalledLayout(t);
+  const launch = resolveWorkflowServerLaunch({
+    env: { GSD_BIN_PATH: gsdBinary },
+    lookup: () => null,
+  });
+
+  assert.deepEqual(launch, {
+    command: process.execPath,
+    args: [workflowCli],
+    gsdCliPath: realpathSync(gsdBinary),
+  });
+});
+
+test("discovers the installed workflow server from GSD_WORKFLOW_PATH", (t) => {
+  const { gsdBinary, workflowCli } = makeInstalledLayout(t);
+  const workflowPath = join(dirname(dirname(gsdBinary)), "GSD-WORKFLOW.md");
+  writeFileSync(workflowPath, "# GSD Workflow\n");
+  const launch = resolveWorkflowServerLaunch({
+    env: { GSD_WORKFLOW_PATH: workflowPath },
+    lookup: () => null,
+  });
+
+  assert.deepEqual(launch, {
+    command: process.execPath,
+    args: [workflowCli],
+  });
+});
+
 test("explicit GSD_WORKFLOW_MCP_COMMAND wins over discovery", (t) => {
   const { gsdBinary } = makeInstalledLayout(t);
   const launch = resolveWorkflowServerLaunch({

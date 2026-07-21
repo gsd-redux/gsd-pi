@@ -1,5 +1,5 @@
 // Project/App: Open GSD
-// File Purpose: Executor adapter that drives the installed `gsd` CLI headlessly.
+// File Purpose: Executor adapter that drives the installed workflow MCP server.
 //
 // MECHANISM
 // ---------
@@ -10,13 +10,6 @@
 // `tools/call` requests for each `execute()` — the same gsd_* tool names the
 // cloud gateway forwards. No GSD package is linked; the only contract is the
 // MCP wire protocol.
-//
-// NOTE: as of gsd-pi 1.11.0, `gsd --mode mcp` is NOT a valid child for this
-// executor — its session registry does not include the workflow adapter tools,
-// so every call fails with "Unknown tool" (issue #1513). This is a current
-// behavioral limitation, not a permanent contract: if `--mode mcp` is fixed to
-// register the workflow surface, it may become a viable child. Discovery of the
-// correct server lives in workflow-server-launch.ts.
 //
 // DOCUMENTED GAPS (see report):
 //  1. Project discovery. The daemon's LocalToolExecutor scanned filesystem roots
@@ -103,6 +96,10 @@ export class GsdPiExecutor implements Executor {
     this.warnDuplicateAliases();
   }
 
+  initialize(): void {
+    this.resolveWorkflowLaunch();
+  }
+
   /**
    * Advertised aliases are directory basenames, so two projects that share a
    * folder name collide. Warn up front — such an alias can only be routed by an
@@ -181,10 +178,9 @@ export class GsdPiExecutor implements Executor {
   private async createProjectEntry(path: string): Promise<ProjectEntry> {
     const existing = this.projects.get(path);
     if (existing) return existing;
-    // The child must be the workflow MCP server — `gsd --mode mcp` does not
-    // register the workflow adapter surface (gsd_status, gsd_roadmap, …), so
-    // every call against it fails with "Unknown tool" (issue #1513). Spawn in
-    // the project directory and pin the workflow root explicitly.
+    // Spawn the discovered workflow MCP server in the project directory and
+    // pin the workflow root explicitly. workflow-server-launch.ts owns the
+    // discovery contract and the reason `gsd --mode mcp` is not used here.
     const launch = this.resolveWorkflowLaunch();
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,

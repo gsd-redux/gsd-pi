@@ -106,7 +106,7 @@ test("advertised alias is the directory basename", async () => {
   assert.equal(projects[0]?.alias, "app");
 });
 
-test("missing workflow server rejects without an unhandled rejection", (t) => {
+test("initialization rejects a missing workflow server without an unhandled rejection", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-missing-server-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const projectDir = join(root, "project");
@@ -120,7 +120,7 @@ test("missing workflow server rejects without an unhandled rejection", (t) => {
       projectDirs: [${JSON.stringify(projectDir)}],
     });
     try {
-      await executor.execute("gsd_status", {});
+      executor.initialize();
       process.exitCode = 2;
     } catch (error) {
       if (!(error instanceof Error) || !error.message.includes("Cannot locate")) {
@@ -131,6 +131,8 @@ test("missing workflow server rejects without an unhandled rejection", (t) => {
   `;
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: "" };
   delete env.GSD_CLI_PATH;
+  delete env.GSD_BIN_PATH;
+  delete env.GSD_WORKFLOW_PATH;
   delete env.GSD_WORKFLOW_MCP_COMMAND;
   delete env.GSD_WORKFLOW_MCP_ARGS;
   const result = spawnSync(

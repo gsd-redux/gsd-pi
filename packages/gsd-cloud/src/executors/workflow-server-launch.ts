@@ -7,10 +7,11 @@
 // `gsd --mode mcp` instead yields a session registry without those tools, so
 // every workflow call fails with "Unknown tool" (issue #1513).
 //
-// Resolution order (daemon-specific; it does not mirror the extension's
-// detectWorkflowMcpLaunchConfig, which probes the project root for hints):
+// Resolution mirrors the extension's environment override, installed-layout,
+// and PATH stages, but uses host installation anchors instead of the project root:
 //  1. GSD_WORKFLOW_MCP_COMMAND (+ optional GSD_WORKFLOW_MCP_ARGS JSON array)
-//  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
+//  2. packages/mcp-server/dist/cli.js walking up from resolved gsd binaries or
+//     GSD_WORKFLOW_PATH
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
@@ -176,8 +177,8 @@ function resolveGsdBinary(
   }
 }
 
-function findWorkflowCliFromBinary(gsdCliPath: string): string | null {
-  let current = dirname(gsdCliPath);
+function findWorkflowCliFromAnchor(anchor: string): string | null {
+  let current = dirname(anchor);
   while (true) {
     const candidates = [
       resolve(current, "packages", "mcp-server", "dist", "cli.js"),
@@ -314,7 +315,12 @@ export function resolveWorkflowServerLaunch(
   const rawLookup = options.lookup ?? ((command: string) => defaultLookup(command, env, platform));
   const lookup = (command: string): string | null =>
     selectLookupPath(rawLookup(command), platform);
-  const gsdCliPath = resolveGsdBinary(options.gsdBinary, lookup);
+  const resolvedGsdAnchors: string[] = [];
+  for (const candidate of [options.gsdBinary, env.GSD_BIN_PATH, env.GSD_CLI_PATH]) {
+    const resolved = resolveGsdBinary(candidate, lookup);
+    if (resolved && !resolvedGsdAnchors.includes(resolved)) resolvedGsdAnchors.push(resolved);
+  }
+  const gsdCliPath = resolvedGsdAnchors[0];
 
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
@@ -341,9 +347,19 @@ export function resolveWorkflowServerLaunch(
     };
   }
 
-  if (gsdCliPath) {
-    const cli = findWorkflowCliFromBinary(gsdCliPath);
-    if (cli) return { command: process.execPath, args: [cli], gsdCliPath };
+  const workflowPath = env.GSD_WORKFLOW_PATH?.trim();
+  const discoveryAnchors = workflowPath
+    ? [...resolvedGsdAnchors, workflowPath]
+    : resolvedGsdAnchors;
+  for (const anchor of discoveryAnchors) {
+    const cli = findWorkflowCliFromAnchor(anchor);
+    if (cli) {
+      return {
+        command: process.execPath,
+        args: [cli],
+        ...(gsdCliPath ? { gsdCliPath } : {}),
+      };
+    }
   }
 
   const onPath = lookup("gsd-mcp-server");
