@@ -4,6 +4,7 @@
 // of silently routing cloud work to whichever entry comes first.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -73,6 +74,42 @@ test("advertised alias is the directory basename", async () => {
   const projects = await exec.advertisedProjects();
   assert.equal(projects.length, 1);
   assert.equal(projects[0]?.alias, "app");
+});
+
+test("missing workflow server rejects without an unhandled rejection", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-missing-server-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projectDir = join(root, "project");
+  mkdirSync(projectDir, { recursive: true });
+
+  const childScript = `
+    import { GsdPiExecutor } from ${JSON.stringify(new URL("./gsd-pi-executor.js", import.meta.url).href)};
+    const logger = { info() {}, warn() {}, error() {}, debug() {} };
+    const executor = new GsdPiExecutor(logger, {
+      gsdBinary: ${JSON.stringify(join(root, "missing-gsd"))},
+      projectDirs: [${JSON.stringify(projectDir)}],
+    });
+    try {
+      await executor.execute("gsd_status", {});
+      process.exitCode = 2;
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("Cannot locate")) {
+        process.exitCode = 3;
+      }
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  `;
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: "" };
+  delete env.GSD_CLI_PATH;
+  delete env.GSD_WORKFLOW_MCP_COMMAND;
+  delete env.GSD_WORKFLOW_MCP_ARGS;
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", childScript],
+    { encoding: "utf8", env },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("configured gsd binary is passed to the workflow server", async (t) => {

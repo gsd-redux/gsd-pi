@@ -54,11 +54,11 @@ rl.on("line", (line) => {
 
   if (method === "tools/list") {
     return respond(id, {
-      tools: [{
-        name: "gsd_query",
-        description: "Fixture stand-in for the gsd_query reader tool.",
+      tools: ["gsd_query", "gsd_status"].map((name) => ({
+        name,
+        description: `Fixture stand-in for the ${name} workflow tool.`,
         inputSchema: { type: "object", properties: {}, required: [] },
-      }],
+      })),
     });
   }
 
@@ -72,6 +72,15 @@ rl.on("line", (line) => {
         content: [{
           type: "text",
           text: `${FIXTURE_MARKER} gsd_query ok projectDir=${projectDir} query=${query}`,
+        }],
+      });
+    }
+    if (name === "gsd_status") {
+      const projectDir = typeof args.projectDir === "string" ? args.projectDir : "<none>";
+      return respond(id, {
+        content: [{
+          type: "text",
+          text: `${FIXTURE_MARKER} gsd_status ok projectDir=${projectDir}`,
         }],
       });
     }

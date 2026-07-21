@@ -142,7 +142,10 @@ export class GsdPiExecutor implements Executor {
     if (!init) {
       init = this.createProjectEntry(path);
       this.projectInit.set(path, init);
-      void init.finally(() => this.projectInit.delete(path));
+      void init.then(
+        () => this.projectInit.delete(path),
+        () => this.projectInit.delete(path),
+      );
     }
     return init;
   }
