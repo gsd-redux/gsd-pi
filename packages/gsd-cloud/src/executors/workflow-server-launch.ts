@@ -7,10 +7,11 @@
 // `gsd --mode mcp` instead yields a session registry without those tools, so
 // every workflow call fails with "Unknown tool" (issue #1513).
 //
-// Resolution order (daemon-specific; it does not mirror the extension's
-// detectWorkflowMcpLaunchConfig, which probes the project root for hints):
+// Resolution mirrors the extension's environment override, installed-layout,
+// and PATH stages, but uses host installation anchors instead of the project root:
 //  1. GSD_WORKFLOW_MCP_COMMAND (+ optional GSD_WORKFLOW_MCP_ARGS JSON array)
-//  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
+//  2. packages/mcp-server/dist/cli.js walking up from resolved gsd binaries or
+//     GSD_WORKFLOW_PATH
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";

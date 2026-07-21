@@ -3,7 +3,7 @@
 //
 // Zero external deps — just enough of the Model Context Protocol to `initialize`
 // a server and issue `tools/call` requests. Used by the gsd-pi shell-out adapter
-// to drive `gsd --mode mcp` without linking any GSD package.
+// to drive the workflow MCP server without linking any GSD package.
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";

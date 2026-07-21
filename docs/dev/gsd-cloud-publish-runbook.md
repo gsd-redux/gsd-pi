@@ -93,10 +93,8 @@ npm view @opengsd/gsd-cloud dependencies     # exactly: ws, yaml (nothing else)
 npx -y @opengsd/gsd-cloud@<version> --help   # lists login/pair/status/connect/stop/disconnect
 ```
 
-A deeper live smoke (the v1.5 CAGT-05 acceptance loop) is: from a GSD project
-directory, `npx @opengsd/gsd-cloud login` (no `--gateway`), approve the device
-in the browser at cloud.opengsd.net, then confirm the machine shows online on
-the dashboard and `npx @opengsd/gsd-cloud status` reports connected.
+For the deeper live smoke, follow the authoritative
+[cloud live E2E runbook](cloud-live-e2e-runbook.md).
 
 ## Rollback / the 72-hour rule
 
