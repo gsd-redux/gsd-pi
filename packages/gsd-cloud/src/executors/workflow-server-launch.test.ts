@@ -97,23 +97,19 @@ test("rejects malformed GSD_WORKFLOW_MCP_ARGS loudly", (t) => {
 });
 
 test(
-  "resolves gsd-mcp-server via a Node PATH scan when which/where is unavailable",
+  "resolves gsd-mcp-server via a Node PATH scan on the injected env when which/where is unavailable",
   { skip: process.platform === "win32" ? "POSIX PATH-scan fallback" : false },
   (t) => {
     const dir = mkdtempSync(join(tmpdir(), "gsd-cloud-path-scan-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     writeFileSync(join(dir, "gsd-mcp-server"), "#!/bin/sh\n");
-    // PATH holds only our temp dir, so `which` itself cannot be located and
-    // execFileSync throws — forcing the default lookup's Node-side scan, which
-    // must still find the server file sitting on PATH.
-    const originalPath = process.env.PATH;
-    process.env.PATH = dir;
-    t.after(() => {
-      process.env.PATH = originalPath;
-    });
+    // The injected env's PATH holds only our temp dir, so `which` itself cannot
+    // be located and execFileSync throws — forcing the default lookup's
+    // Node-side scan, which must honor options.env (not process.env) and still
+    // find the server file sitting on that PATH.
     const launch = resolveWorkflowServerLaunch({
       gsdBinary: join(dir, "missing", "gsd"),
-      env: {},
+      env: { PATH: dir },
     });
     assert.ok(launch, "expected a launch config");
     assert.equal(launch.command, join(dir, "gsd-mcp-server"));

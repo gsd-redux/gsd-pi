@@ -47,21 +47,21 @@ function parseArgsEnv(raw: string | undefined): string[] {
 
 /**
  * Node-side PATH scan, used when `which`/`where` is unavailable (minimal
- * container images often ship neither) or returns nothing. Splits PATH on the
- * OS delimiter and, on Windows, tries each PATHEXT extension. Only returns a
- * path that actually exists.
+ * container images often ship neither) or returns nothing. Splits the supplied
+ * env's PATH on the OS delimiter and, on Windows, tries each PATHEXT extension.
+ * Only returns a path that actually exists.
  */
-function searchPath(command: string): string | null {
+function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
   // An explicit path is not a PATH lookup — just confirm it exists.
   if (command.includes("/") || command.includes("\\")) {
     const abs = resolve(command);
     return existsSync(abs) ? abs : null;
   }
-  const pathValue = process.env.PATH ?? "";
+  const pathValue = env.PATH ?? "";
   if (!pathValue) return null;
   const exts =
     process.platform === "win32"
-      ? (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
       : [""];
   for (const dir of pathValue.split(delimiter)) {
     if (!dir) continue;
@@ -73,13 +73,16 @@ function searchPath(command: string): string | null {
   return null;
 }
 
-function defaultLookup(command: string): string | null {
+function defaultLookup(command: string, env: NodeJS.ProcessEnv): string | null {
   const tool = process.platform === "win32" ? "where" : "which";
   try {
     const out = execFileSync(tool, [command], {
       timeout: 5_000,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      // Honor the caller-supplied env so `which`/`where` searches the same PATH
+      // as the Node-side fallback below.
+      env,
     });
     const resolved = out.trim().split(/\r?\n/)[0] || null;
     // `which`/`where` can report a stale hit; confirm the target still exists.
@@ -88,7 +91,7 @@ function defaultLookup(command: string): string | null {
     // `which`/`where` missing (minimal image) or errored — fall through to the
     // Node-side PATH scan below.
   }
-  return searchPath(command);
+  return searchPath(command, env);
 }
 
 /** Walk up from the resolved gsd binary looking for packages/mcp-server/dist/cli.js. */
@@ -114,7 +117,7 @@ export function resolveWorkflowServerLaunch(
   options: ResolveWorkflowServerLaunchOptions = {},
 ): WorkflowServerLaunch | null {
   const env = options.env ?? process.env;
-  const lookup = options.lookup ?? defaultLookup;
+  const lookup = options.lookup ?? ((command: string) => defaultLookup(command, env));
 
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
