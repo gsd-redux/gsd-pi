@@ -316,8 +316,10 @@ test("createProjectEntry spawns the resolved workflow server pinned to the proje
   assert.equal(call.options.cwd, resolve(projectDir));
   assert.equal(call.options.env?.GSD_PROJECT_ROOT, resolve(projectDir));
   assert.equal(call.options.env?.GSD_WORKFLOW_PROJECT_ROOT, resolve(projectDir));
-  // gsdBinary is an absolute path, so it is propagated to the child.
+  // gsdBinary is an absolute path, so it is propagated to the child as both
+  // GSD_CLI_PATH and GSD_BIN_PATH (equivalent CLI-path overrides downstream).
   assert.equal(call.options.env?.GSD_CLI_PATH, "/usr/local/bin/gsd");
+  assert.equal(call.options.env?.GSD_BIN_PATH, "/usr/local/bin/gsd");
 });
 
 test("createProjectEntry does not inject GSD_CLI_PATH for a bare gsd binary name", async (t) => {
@@ -327,12 +329,16 @@ test("createProjectEntry does not inject GSD_CLI_PATH for a bare gsd binary name
   const originalCmd = process.env.GSD_WORKFLOW_MCP_COMMAND;
   const originalArgs = process.env.GSD_WORKFLOW_MCP_ARGS;
   const originalCliPath = process.env.GSD_CLI_PATH;
+  const originalBinPath = process.env.GSD_BIN_PATH;
   const originalPath = process.env.PATH;
   process.env.GSD_WORKFLOW_MCP_COMMAND = "/opt/gsd/wf-server";
   delete process.env.GSD_WORKFLOW_MCP_ARGS;
   // Ensure the ambient env does not carry GSD_CLI_PATH, so the assertion proves
   // the executor did not inject the bare name.
   delete process.env.GSD_CLI_PATH;
+  // Seed a stale GSD_BIN_PATH (an equivalent CLI-path override downstream) to
+  // prove the executor strips it rather than letting it leak into the child.
+  process.env.GSD_BIN_PATH = "/stale/daemon/gsd";
   // Point PATH at an empty dir so the bare "gsd" anchor cannot resolve to a
   // real on-disk binary — a host-installed gsd would legitimately be
   // discovered by the resolver and propagated as gsdCliPath.
@@ -343,6 +349,7 @@ test("createProjectEntry does not inject GSD_CLI_PATH for a bare gsd binary name
     restoreEnv("GSD_WORKFLOW_MCP_COMMAND", originalCmd);
     restoreEnv("GSD_WORKFLOW_MCP_ARGS", originalArgs);
     restoreEnv("GSD_CLI_PATH", originalCliPath);
+    restoreEnv("GSD_BIN_PATH", originalBinPath);
     restoreEnv("PATH", originalPath);
   });
 
@@ -357,4 +364,6 @@ test("createProjectEntry does not inject GSD_CLI_PATH for a bare gsd binary name
 
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0]!.options.env?.GSD_CLI_PATH, undefined);
+  // The stale inherited GSD_BIN_PATH must be stripped alongside GSD_CLI_PATH.
+  assert.equal(spawned[0]!.options.env?.GSD_BIN_PATH, undefined);
 });

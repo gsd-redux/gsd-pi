@@ -191,18 +191,23 @@ export class GsdPiExecutor implements Executor {
       GSD_PROJECT_ROOT: path,
       GSD_WORKFLOW_PROJECT_ROOT: path,
     };
-    // The workflow server resolves the GSD CLI via GSD_CLI_PATH (else `gsd` on
-    // PATH). Prefer the resolver's discovered CLI path; otherwise, when this
-    // executor was configured with a concrete binary path, propagate it so tool
-    // execution still works on hosts where `gsd` is not on PATH (this also
-    // covers Windows .cmd shims the resolver rejects). Never leak a stale
-    // GSD_CLI_PATH inherited from the daemon's own environment.
-    if (launch.gsdCliPath) {
-      childEnv.GSD_CLI_PATH = launch.gsdCliPath;
-    } else if (this.gsdBinary.includes("/") || this.gsdBinary.includes("\\")) {
-      childEnv.GSD_CLI_PATH = this.gsdBinary;
+    // The workflow server resolves the GSD CLI via GSD_CLI_PATH / GSD_BIN_PATH
+    // (else `gsd` on PATH); detectWorkflowMcpLaunchConfig treats both as
+    // equivalent CLI-path overrides. Prefer the resolver's discovered CLI path;
+    // otherwise, when this executor was configured with a concrete binary path,
+    // propagate it so tool execution still works on hosts where `gsd` is not on
+    // PATH (this also covers Windows .cmd shims the resolver rejects). Set both
+    // vars together so they never disagree, and never leak a stale value
+    // inherited from the daemon's own environment.
+    const childCliPath =
+      launch.gsdCliPath ??
+      (this.gsdBinary.includes("/") || this.gsdBinary.includes("\\") ? this.gsdBinary : undefined);
+    if (childCliPath) {
+      childEnv.GSD_CLI_PATH = childCliPath;
+      childEnv.GSD_BIN_PATH = childCliPath;
     } else {
       delete childEnv.GSD_CLI_PATH;
+      delete childEnv.GSD_BIN_PATH;
     }
     const client = this.clientFactory(
       launch.command,
