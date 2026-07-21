@@ -11,10 +11,12 @@
 // cloud gateway forwards. No GSD package is linked; the only contract is the
 // MCP wire protocol.
 //
-// NOTE: `gsd --mode mcp` is NOT a valid child for this executor — its session
-// registry does not include the workflow adapter tools, so every call fails
-// with "Unknown tool" (issue #1513). Discovery of the correct server lives in
-// workflow-server-launch.ts.
+// NOTE: as of gsd-pi 1.11.0, `gsd --mode mcp` is NOT a valid child for this
+// executor — its session registry does not include the workflow adapter tools,
+// so every call fails with "Unknown tool" (issue #1513). This is a current
+// behavioral limitation, not a permanent contract: if `--mode mcp` is fixed to
+// register the workflow surface, it may become a viable child. Discovery of the
+// correct server lives in workflow-server-launch.ts.
 //
 // DOCUMENTED GAPS (see report):
 //  1. Project discovery. The daemon's LocalToolExecutor scanned filesystem roots
@@ -162,14 +164,23 @@ export class GsdPiExecutor implements Executor {
           "or put gsd-mcp-server on PATH.",
       );
     }
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      GSD_PROJECT_ROOT: path,
+      GSD_WORKFLOW_PROJECT_ROOT: path,
+    };
+    // The workflow server resolves the GSD CLI via GSD_CLI_PATH (else `gsd` on
+    // PATH). When this executor was configured with a concrete binary path,
+    // propagate it so tool execution still works on hosts where `gsd` is not on
+    // PATH. A bare name (e.g. "gsd") is left to normal PATH resolution.
+    if (this.gsdBinary.includes("/") || this.gsdBinary.includes("\\")) {
+      childEnv.GSD_CLI_PATH = this.gsdBinary;
+    }
     const client = new McpStdioClient(
       launch.command,
       launch.args,
       this.logger,
-      {
-        env: { ...process.env, GSD_PROJECT_ROOT: path, GSD_WORKFLOW_PROJECT_ROOT: path },
-        cwd: path,
-      },
+      { env: childEnv, cwd: path },
     );
     const entry: ProjectEntry = { alias: basename(path), path, client };
     this.projects.set(path, entry);
