@@ -6,7 +6,7 @@
 // gsd_status", hanging the SaaS app boot).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveWorkflowServerLaunch } from "./workflow-server-launch.js";
@@ -102,7 +102,10 @@ test(
   (t) => {
     const dir = mkdtempSync(join(tmpdir(), "gsd-cloud-path-scan-"));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    writeFileSync(join(dir, "gsd-mcp-server"), "#!/bin/sh\n");
+    const stub = join(dir, "gsd-mcp-server");
+    writeFileSync(stub, "#!/bin/sh\n");
+    // Executable bit set so the scan (which mirrors `which`'s X_OK check) accepts it.
+    chmodSync(stub, 0o755);
     // The injected env's PATH holds only our temp dir, so `which` itself cannot
     // be located and execFileSync throws — forcing the default lookup's
     // Node-side scan, which must honor options.env (not process.env) and still
@@ -112,7 +115,7 @@ test(
       env: { PATH: dir },
     });
     assert.ok(launch, "expected a launch config");
-    assert.equal(launch.command, join(dir, "gsd-mcp-server"));
+    assert.equal(launch.command, stub);
     assert.deepEqual(launch.args, []);
   },
 );

@@ -13,7 +13,7 @@
 //  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
 
 export interface WorkflowServerLaunch {
@@ -46,16 +46,31 @@ function parseArgsEnv(raw: string | undefined): string[] {
 }
 
 /**
+ * True when `candidate` is a runnable executable, matching `which`/`where`
+ * semantics. On POSIX this requires the execute bit (X_OK); on Windows X_OK is
+ * a no-op so this degrades to an existence check, and executability is instead
+ * governed by the PATHEXT filtering in searchPath.
+ */
+function isExecutableFile(candidate: string): boolean {
+  try {
+    accessSync(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Node-side PATH scan, used when `which`/`where` is unavailable (minimal
  * container images often ship neither) or returns nothing. Splits the supplied
  * env's PATH on the OS delimiter and, on Windows, tries each PATHEXT extension.
- * Only returns a path that actually exists.
+ * Only returns an executable file, mirroring `which`/`where`.
  */
 function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
-  // An explicit path is not a PATH lookup — just confirm it exists.
+  // An explicit path is not a PATH lookup — just confirm it is executable.
   if (command.includes("/") || command.includes("\\")) {
     const abs = resolve(command);
-    return existsSync(abs) ? abs : null;
+    return isExecutableFile(abs) ? abs : null;
   }
   const pathValue = env.PATH ?? "";
   if (!pathValue) return null;
@@ -67,7 +82,7 @@ function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
     if (!dir) continue;
     for (const ext of exts) {
       const candidate = join(dir, command + ext);
-      if (existsSync(candidate)) return candidate;
+      if (isExecutableFile(candidate)) return candidate;
     }
   }
   return null;

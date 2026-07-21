@@ -39,7 +39,7 @@ import { basename, delimiter, resolve } from "node:path";
 import type { Logger } from "../logger.js";
 import type { AdvertisedProject, Executor } from "./executor.js";
 import { McpStdioClient } from "./mcp-stdio-client.js";
-import { resolveWorkflowServerLaunch } from "./workflow-server-launch.js";
+import { resolveWorkflowServerLaunch, type WorkflowServerLaunch } from "./workflow-server-launch.js";
 
 export interface GsdPiExecutorOptions {
   /**
@@ -68,6 +68,13 @@ export class GsdPiExecutor implements Executor {
   private readonly projects = new Map<string, ProjectEntry>();
   /** In-flight project client creation, keyed by resolved absolute project path. */
   private readonly projectInit = new Map<string, Promise<ProjectEntry>>();
+  /**
+   * Cached workflow-server launch config. Discovery is host-level (anchored on
+   * gsdBinary, not the project), so it is resolved once per executor rather than
+   * per advertised project. `undefined` = not yet resolved; `null` = resolved to
+   * "no server found". The synchronous which/where lookup runs at most once.
+   */
+  private workflowLaunch: WorkflowServerLaunch | null | undefined;
 
   constructor(private readonly logger: Logger, opts: GsdPiExecutorOptions = {}) {
     this.gsdBinary = opts.gsdBinary
@@ -156,14 +163,7 @@ export class GsdPiExecutor implements Executor {
     // register the workflow adapter surface (gsd_status, gsd_roadmap, …), so
     // every call against it fails with "Unknown tool" (issue #1513). Spawn in
     // the project directory and pin the workflow root explicitly.
-    const launch = resolveWorkflowServerLaunch({ gsdBinary: this.gsdBinary });
-    if (!launch) {
-      throw new Error(
-        "Cannot locate the GSD workflow MCP server. Set GSD_WORKFLOW_MCP_COMMAND, " +
-          "install @opengsd/gsd-pi (ships packages/mcp-server/dist/cli.js), " +
-          "or put gsd-mcp-server on PATH.",
-      );
-    }
+    const launch = this.resolveWorkflowLaunch();
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
       GSD_PROJECT_ROOT: path,
@@ -185,6 +185,25 @@ export class GsdPiExecutor implements Executor {
     const entry: ProjectEntry = { alias: basename(path), path, client };
     this.projects.set(path, entry);
     return entry;
+  }
+
+  /**
+   * Resolve (and memoize) the workflow-server launch config. Discovery is
+   * host-level, so the synchronous which/where lookup runs once per executor
+   * instead of once per advertised project.
+   */
+  private resolveWorkflowLaunch(): WorkflowServerLaunch {
+    if (this.workflowLaunch === undefined) {
+      this.workflowLaunch = resolveWorkflowServerLaunch({ gsdBinary: this.gsdBinary });
+    }
+    if (!this.workflowLaunch) {
+      throw new Error(
+        "Cannot locate the GSD workflow MCP server. Set GSD_WORKFLOW_MCP_COMMAND, " +
+          "install @opengsd/gsd-pi (ships packages/mcp-server/dist/cli.js), " +
+          "or put gsd-mcp-server on PATH.",
+      );
+    }
+    return this.workflowLaunch;
   }
 
   private resolveProjectPath(aliasOrPath?: string): string {
