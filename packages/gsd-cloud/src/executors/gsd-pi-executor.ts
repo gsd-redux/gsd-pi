@@ -3,14 +3,18 @@
 //
 // MECHANISM
 // ---------
-// The `gsd` CLI exposes every registered workflow tool over the Model Context
-// Protocol when started with `gsd --mode mcp` (see src/cli.ts in gsd-pi: mode
-// 'mcp' flips the active tool set to the full registry and serves MCP over
-// stdin/stdout). This adapter spawns ONE long-lived `gsd --mode mcp` child per
-// project and issues `tools/call` requests for each `execute()` — the same
-// gsd_* tool names the cloud gateway forwards (gsd_execute, gsd_status,
-// gsd_graph, gsd_cancel, gsd_query, …). No GSD package is linked; the only
-// contract is the MCP wire protocol.
+// The workflow tool surface (gsd_execute, gsd_status, gsd_graph, gsd_cancel,
+// gsd_query, …) is owned by the workflow MCP server (@opengsd/mcp-server,
+// shipped inside the gsd-pi package at packages/mcp-server/dist/cli.js). This
+// adapter spawns ONE long-lived workflow-server child per project and issues
+// `tools/call` requests for each `execute()` — the same gsd_* tool names the
+// cloud gateway forwards. No GSD package is linked; the only contract is the
+// MCP wire protocol.
+//
+// NOTE: `gsd --mode mcp` is NOT a valid child for this executor — its session
+// registry does not include the workflow adapter tools, so every call fails
+// with "Unknown tool" (issue #1513). Discovery of the correct server lives in
+// workflow-server-launch.ts.
 //
 // DOCUMENTED GAPS (see report):
 //  1. Project discovery. The daemon's LocalToolExecutor scanned filesystem roots
@@ -20,11 +24,11 @@
 //     working directory. Each advertised project's `repoIdentity` is computed
 //     exactly as the daemon did (sha256 of the git origin remote, else
 //     basename:path), so gateway-side identity matching is preserved.
-//  2. One MCP server per project. `gsd --mode mcp` is project-scoped (it resolves
-//     the GSD root from its cwd). A `tool_call` carrying a `projectAlias` is
-//     routed to that project's dedicated child; the `projectDir` arg the daemon
-//     injected is not needed because cwd already scopes the server. Tool args are
-//     forwarded verbatim otherwise.
+//  2. One MCP server per project. The workflow server is project-scoped via
+//     cwd + GSD_WORKFLOW_PROJECT_ROOT, and every `tools/call` also carries the
+//     resolved `projectDir`. A `tool_call` carrying a `projectAlias` is routed
+//     to that project's dedicated child. Tool args are forwarded verbatim
+//     otherwise.
 
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -33,9 +37,14 @@ import { basename, delimiter, resolve } from "node:path";
 import type { Logger } from "../logger.js";
 import type { AdvertisedProject, Executor } from "./executor.js";
 import { McpStdioClient } from "./mcp-stdio-client.js";
+import { resolveWorkflowServerLaunch } from "./workflow-server-launch.js";
 
 export interface GsdPiExecutorOptions {
-  /** Path to the `gsd` binary. Defaults to GSD_CLI_PATH env, else `gsd` on PATH. */
+  /**
+   * Path to the `gsd` binary, used as the discovery anchor for the workflow
+   * MCP server (see workflow-server-launch.ts). Defaults to GSD_CLI_PATH env,
+   * else `gsd` on PATH.
+   */
   gsdBinary?: string;
   /**
    * Explicit list of project directories to advertise. Defaults to
@@ -141,14 +150,26 @@ export class GsdPiExecutor implements Executor {
   private async createProjectEntry(path: string): Promise<ProjectEntry> {
     const existing = this.projects.get(path);
     if (existing) return existing;
-    // `gsd --mode mcp` resolves its GSD root from cwd, so spawn the child in the
-    // project directory. GSD_PROJECT_ROOT is also set as a belt-and-suspenders
-    // hint for gsd's root resolution.
+    // The child must be the workflow MCP server — `gsd --mode mcp` does not
+    // register the workflow adapter surface (gsd_status, gsd_roadmap, …), so
+    // every call against it fails with "Unknown tool" (issue #1513). Spawn in
+    // the project directory and pin the workflow root explicitly.
+    const launch = resolveWorkflowServerLaunch({ gsdBinary: this.gsdBinary });
+    if (!launch) {
+      throw new Error(
+        "Cannot locate the GSD workflow MCP server. Set GSD_WORKFLOW_MCP_COMMAND, " +
+          "install @opengsd/gsd-pi (ships packages/mcp-server/dist/cli.js), " +
+          "or put gsd-mcp-server on PATH.",
+      );
+    }
     const client = new McpStdioClient(
-      this.gsdBinary,
-      ["--mode", "mcp"],
+      launch.command,
+      launch.args,
       this.logger,
-      { env: { ...process.env, GSD_PROJECT_ROOT: path }, cwd: path },
+      {
+        env: { ...process.env, GSD_PROJECT_ROOT: path, GSD_WORKFLOW_PROJECT_ROOT: path },
+        cwd: path,
+      },
     );
     const entry: ProjectEntry = { alias: basename(path), path, client };
     this.projects.set(path, entry);

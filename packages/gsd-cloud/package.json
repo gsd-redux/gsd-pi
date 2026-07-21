@@ -36,7 +36,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc -p tsconfig.json --incremental false",
-    "test": "pnpm run build && node --test dist/inject-gateway.test.js dist/cloud-gateway-lookup.test.js dist/cloud-config.test.js dist/device-flow.test.js dist/cloud-runtime.test.js dist/runtime-telemetry.test.js dist/runtime-process.test.js dist/service-install.test.js dist/background-cli.test.js dist/session-events.test.js dist/executors/mcp-stdio-client.test.js dist/executors/gsd-pi-executor.test.js",
+    "test": "pnpm run build && node --test dist/inject-gateway.test.js dist/cloud-gateway-lookup.test.js dist/cloud-config.test.js dist/device-flow.test.js dist/cloud-runtime.test.js dist/runtime-telemetry.test.js dist/runtime-process.test.js dist/service-install.test.js dist/background-cli.test.js dist/session-events.test.js dist/executors/mcp-stdio-client.test.js dist/executors/gsd-pi-executor.test.js dist/executors/workflow-server-launch.test.js",
     "validate:tarball": "node ../../scripts/validate-gsd-cloud-tarball.mjs",
     "test:e2e": "pnpm --filter @opengsd/cloud-mcp-gateway... run build && pnpm run build && node e2e/run-e2e.mjs"
   },
