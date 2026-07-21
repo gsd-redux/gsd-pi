@@ -72,7 +72,9 @@ function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
     const abs = resolve(command);
     return isExecutableFile(abs) ? abs : null;
   }
-  const pathValue = env.PATH ?? "";
+  // Windows commonly exposes PATH as `Path` (or `path`); injected env objects
+  // are case-sensitive, unlike the process.env proxy, so check all casings.
+  const pathValue = env.PATH ?? env.Path ?? env.path ?? "";
   if (!pathValue) return null;
   const exts =
     process.platform === "win32"
@@ -141,7 +143,11 @@ export function resolveWorkflowServerLaunch(
 
   let anchor = options.gsdBinary?.trim();
   if (anchor && !anchor.includes("/") && !anchor.includes("\\")) {
-    anchor = lookup(anchor) ?? anchor;
+    // A bare command name is only a valid discovery anchor once resolved to an
+    // on-disk path. If PATH lookup fails, drop it rather than keeping the bare
+    // name: resolve("gsd") would otherwise anchor discovery off the daemon's
+    // cwd. Callers wanting a relative anchor can pass "./gsd" explicitly.
+    anchor = lookup(anchor) ?? undefined;
   }
   if (anchor) {
     const cli = findWorkflowCliFromBinary(anchor);

@@ -135,3 +135,46 @@ test("rejects invalid-JSON GSD_WORKFLOW_MCP_ARGS with a targeted error", (t) => 
     /GSD_WORKFLOW_MCP_ARGS must be valid JSON/,
   );
 });
+
+test(
+  "scans a Windows-style Path (not PATH) env var in the Node PATH fallback",
+  { skip: process.platform === "win32" ? "POSIX PATH-scan fallback" : false },
+  (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "gsd-cloud-path-casing-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const stub = join(dir, "gsd-mcp-server");
+    writeFileSync(stub, "#!/bin/sh\n");
+    chmodSync(stub, 0o755);
+    // Only `Path` is set (no `PATH`), as Windows exposes it. With no PATH on the
+    // injected env, `which` cannot be located and execFileSync throws, forcing
+    // the Node-side scan, which must still find the server via the case-variant
+    // fallback. No lookup is injected so the real defaultLookup runs.
+    const launch = resolveWorkflowServerLaunch({
+      gsdBinary: join(dir, "missing", "gsd"),
+      env: { Path: dir },
+    });
+    assert.ok(launch, "expected a launch config");
+    assert.equal(launch.command, stub);
+    assert.deepEqual(launch.args, []);
+  },
+);
+
+test("a bare gsd name that does not resolve on PATH does not anchor discovery off cwd", (t) => {
+  const fakeCwd = mkdtempSync(join(tmpdir(), "gsd-cloud-cwd-anchor-"));
+  t.after(() => rmSync(fakeCwd, { recursive: true, force: true }));
+  // A decoy `gsd` file plus a plausible installed layout in cwd — the trap the
+  // pre-fix code would walk into via resolve("gsd") anchoring off cwd.
+  mkdirSync(join(fakeCwd, "packages", "mcp-server", "dist"), { recursive: true });
+  writeFileSync(join(fakeCwd, "gsd"), "// decoy launcher\n");
+  writeFileSync(join(fakeCwd, "packages", "mcp-server", "dist", "cli.js"), "// decoy server\n");
+  const originalCwd = process.cwd();
+  process.chdir(fakeCwd);
+  t.after(() => process.chdir(originalCwd));
+  const launch = resolveWorkflowServerLaunch({
+    gsdBinary: "gsd",
+    env: {},
+    // Neither the bare gsd name nor gsd-mcp-server resolves on PATH.
+    lookup: () => null,
+  });
+  assert.equal(launch, null);
+});
