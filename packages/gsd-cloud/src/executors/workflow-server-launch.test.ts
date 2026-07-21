@@ -329,6 +329,22 @@ test("rejects malformed GSD_WORKFLOW_MCP_ARGS loudly", (t) => {
   );
 });
 
+test("coerces non-string GSD_WORKFLOW_MCP_ARGS entries to strings instead of throwing", (t) => {
+  const { gsdBinary } = makeInstalledLayout(t);
+  // Numbers/booleans are accepted and String()-coerced, matching the extension's
+  // detectWorkflowMcpLaunchConfig contract, rather than rejected.
+  const launch = resolveWorkflowServerLaunch({
+    gsdBinary,
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: "/custom/wf-server",
+      GSD_WORKFLOW_MCP_ARGS: '["--port", 8080, true]',
+    },
+    lookup: () => null,
+  });
+  assert.ok(launch, "expected a launch config");
+  assert.deepEqual(launch.args, ["--port", "8080", "true"]);
+});
+
 test(
   "resolves gsd-mcp-server via a Node PATH scan on the injected env when which/where is unavailable",
   { skip: process.platform === "win32" ? "POSIX PATH-scan fallback" : false },

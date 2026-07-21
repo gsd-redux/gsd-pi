@@ -42,10 +42,13 @@ function parseArgsEnv(raw: string | undefined): string[] {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`GSD_WORKFLOW_MCP_ARGS must be valid JSON: ${detail}`);
   }
-  if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
-    throw new Error("GSD_WORKFLOW_MCP_ARGS must be a JSON array of strings");
+  if (!Array.isArray(parsed)) {
+    throw new Error("GSD_WORKFLOW_MCP_ARGS must be a JSON array");
   }
-  return parsed as string[];
+  // Coerce entries with String(...) rather than rejecting non-strings, matching
+  // the extension's detectWorkflowMcpLaunchConfig contract (explicitArgs.map(String)),
+  // so reasonable values like numbers/booleans don't cause startup failures.
+  return parsed.map(String);
 }
 
 /**
