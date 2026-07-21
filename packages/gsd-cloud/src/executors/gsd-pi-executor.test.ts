@@ -15,13 +15,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
-import { GsdPiExecutor } from "./gsd-pi-executor.js";
+import { GsdPiExecutor, type WorkflowClientFactory } from "./gsd-pi-executor.js";
 import type { McpStdioClient } from "./mcp-stdio-client.js";
+
+// Derive the spawn-options shape from the executor's factory signature so the
+// helper stays aligned with it (e.g. windowsVerbatimArguments) instead of
+// re-declaring a subset that drifts and hides Windows-shim wiring.
+type SpawnOptions = Parameters<WorkflowClientFactory>[3];
 
 interface SpawnRecord {
   command: string;
   args: string[];
-  options: { env?: NodeJS.ProcessEnv; cwd?: string };
+  options: SpawnOptions;
 }
 
 /** Restore an env var, deleting it when the original was unset (assigning
@@ -32,13 +37,8 @@ function restoreEnv(key: string, value: string | undefined): void {
 }
 
 /** Records how the per-project MCP client would be constructed, without spawning. */
-function recordingClientFactory(sink: SpawnRecord[]) {
-  return (
-    command: string,
-    args: string[],
-    _logger: unknown,
-    options: { env?: NodeJS.ProcessEnv; cwd?: string },
-  ): McpStdioClient => {
+function recordingClientFactory(sink: SpawnRecord[]): WorkflowClientFactory {
+  return (command, args, _logger, options) => {
     sink.push({ command, args, options });
     return {
       callTool: async () => ({ ok: true }),
