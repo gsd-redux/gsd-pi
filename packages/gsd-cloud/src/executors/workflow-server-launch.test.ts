@@ -160,6 +160,63 @@ test("resolves a Windows workflow server PATH shim to its JavaScript entrypoint"
     command: process.execPath,
     args: [realpathSync(entrypoint)],
   });
+
+  const explicitLaunch = resolveWorkflowServerLaunch({
+    gsdBinary: join(root, "missing-gsd"),
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: commandShim,
+      GSD_WORKFLOW_MCP_ARGS: '["--probe"]',
+    },
+    lookup: () => null,
+    platform: "win32",
+  });
+  assert.deepEqual(explicitLaunch, {
+    command: process.execPath,
+    args: [realpathSync(entrypoint), "--probe"],
+  });
+});
+
+test("wraps nonstandard Windows workflow server shims with native interpreters", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-windows-server-fallback-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const commandShim = join(root, "custom-server.cmd");
+  const powershellShim = join(root, "custom-server.ps1");
+  writeFileSync(commandShim, "@custom-workflow-server %*\r\n");
+  writeFileSync(powershellShim, "& custom-workflow-server @args\r\n");
+
+  const commandLaunch = resolveWorkflowServerLaunch({
+    gsdBinary: join(root, "missing-gsd"),
+    env: { COMSPEC: "C:\\Windows\\System32\\cmd.exe" },
+    lookup: (command) => (command === "gsd-mcp-server" ? commandShim : null),
+    platform: "win32",
+  });
+  assert.deepEqual(commandLaunch, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    args: ["/d", "/s", "/c", realpathSync(commandShim)],
+  });
+
+  const powershellLaunch = resolveWorkflowServerLaunch({
+    gsdBinary: join(root, "missing-gsd"),
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: powershellShim,
+      GSD_WORKFLOW_MCP_ARGS: '["--probe"]',
+    },
+    lookup: () => null,
+    platform: "win32",
+  });
+  assert.deepEqual(powershellLaunch, {
+    command: "powershell.exe",
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      realpathSync(powershellShim),
+      "--probe",
+    ],
+  });
 });
 
 test("returns null when no workflow server can be located", (t) => {

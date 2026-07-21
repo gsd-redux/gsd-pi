@@ -117,13 +117,50 @@ function findWorkflowCliFromBinary(gsdCliPath: string): string | null {
   }
 }
 
-function resolveWorkflowServerCommand(commandPath: string): WorkflowServerLaunch | null {
+function isWindowsShim(commandPath: string): boolean {
+  return /\.(?:cmd|ps1)$/i.test(commandPath);
+}
+
+function wrapWindowsServerShim(
+  commandPath: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): WorkflowServerLaunch {
+  if (/\.ps1$/i.test(commandPath)) {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        commandPath,
+        ...args,
+      ],
+    };
+  }
+  return {
+    command: env.COMSPEC?.trim() || "cmd.exe",
+    args: ["/d", "/s", "/c", commandPath, ...args],
+  };
+}
+
+function resolveWorkflowServerCommand(
+  commandPath: string,
+  args: string[],
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): WorkflowServerLaunch {
   let resolvedCommand: string;
   try {
     resolvedCommand = realpathSync(resolve(commandPath));
   } catch {
-    if (/\.(?:cmd|ps1)$/i.test(commandPath)) return null;
-    return { command: commandPath, args: [] };
+    if (platform === "win32" && isWindowsShim(commandPath)) {
+      return wrapWindowsServerShim(commandPath, args, env);
+    }
+    return { command: commandPath, args };
   }
 
   const commandDir = dirname(resolvedCommand);
@@ -146,10 +183,12 @@ function resolveWorkflowServerCommand(commandPath: string): WorkflowServerLaunch
     ),
   ].find((path) => existsSync(path));
   if (entrypoint) {
-    return { command: process.execPath, args: [realpathSync(entrypoint)] };
+    return { command: process.execPath, args: [realpathSync(entrypoint), ...args] };
   }
-  if (/\.(?:cmd|ps1)$/i.test(resolvedCommand)) return null;
-  return { command: resolvedCommand, args: [] };
+  if (platform === "win32" && isWindowsShim(resolvedCommand)) {
+    return wrapWindowsServerShim(resolvedCommand, args, env);
+  }
+  return { command: resolvedCommand, args };
 }
 
 export function resolveWorkflowServerLaunch(
@@ -164,9 +203,13 @@ export function resolveWorkflowServerLaunch(
 
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
+    const args = parseArgsEnv(env.GSD_WORKFLOW_MCP_ARGS);
+    const commandPath = explicitCommand.includes("/") || explicitCommand.includes("\\")
+      ? explicitCommand
+      : lookup(explicitCommand) ?? explicitCommand;
+    const launch = resolveWorkflowServerCommand(commandPath, args, platform, env);
     return {
-      command: explicitCommand,
-      args: parseArgsEnv(env.GSD_WORKFLOW_MCP_ARGS),
+      ...launch,
       ...(gsdCliPath ? { gsdCliPath } : {}),
     };
   }
@@ -178,8 +221,8 @@ export function resolveWorkflowServerLaunch(
 
   const onPath = lookup("gsd-mcp-server");
   if (onPath) {
-    const launch = resolveWorkflowServerCommand(onPath);
-    if (launch) return { ...launch, ...(gsdCliPath ? { gsdCliPath } : {}) };
+    const launch = resolveWorkflowServerCommand(onPath, [], platform, env);
+    return { ...launch, ...(gsdCliPath ? { gsdCliPath } : {}) };
   }
 
   return null;
