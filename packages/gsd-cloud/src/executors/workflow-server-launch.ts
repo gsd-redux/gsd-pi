@@ -136,11 +136,13 @@ function escapeWindowsCommand(command: string): string {
   return command.replace(WINDOWS_META_CHARS, "^$1");
 }
 
-function escapeWindowsArgument(argument: string): string {
-  const quoted = `"${argument
+function escapeWindowsArgument(argument: string, doubleEscapeMetaChars: boolean): string {
+  let escaped = `"${argument
     .replace(/(?=(\\+?)?)\1"/g, "$1$1\\\"")
     .replace(/(?=(\\+?)?)\1$/, "$1$1")}"`;
-  return quoted.replace(WINDOWS_META_CHARS, "^$1");
+  escaped = escaped.replace(WINDOWS_META_CHARS, "^$1");
+  if (doubleEscapeMetaChars) escaped = escaped.replace(WINDOWS_META_CHARS, "^$1");
+  return escaped;
 }
 
 function wrapWindowsServerShim(
@@ -163,9 +165,10 @@ function wrapWindowsServerShim(
       ],
     };
   }
+  const doubleEscapeMetaChars = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(commandPath);
   const shellCommand = [
     escapeWindowsCommand(commandPath),
-    ...args.map(escapeWindowsArgument),
+    ...args.map((argument) => escapeWindowsArgument(argument, doubleEscapeMetaChars)),
   ].join(" ");
   return {
     command: env.COMSPEC?.trim() || "cmd.exe",

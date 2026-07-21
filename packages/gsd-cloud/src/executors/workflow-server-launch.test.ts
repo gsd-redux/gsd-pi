@@ -272,10 +272,11 @@ test("does not replace an explicit custom wrapper beside the workflow package", 
   });
 });
 
-test("escapes spaced CMD shim paths and metacharacter arguments", (t) => {
+test("double-escapes metacharacter arguments for spaced node_modules bin shims", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd cloud cmd fallback-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const commandShim = join(root, "custom server.cmd");
+  const commandShim = join(root, "node_modules", ".bin", "custom server.cmd");
+  mkdirSync(dirname(commandShim), { recursive: true });
   writeFileSync(commandShim, "@custom-workflow-server %*\r\n");
 
   const launch = resolveWorkflowServerLaunch({
@@ -295,7 +296,7 @@ test("escapes spaced CMD shim paths and metacharacter arguments", (t) => {
       "/d",
       "/s",
       "/c",
-      `"${escapedCommand} ^\"left^ ^&^ right^\""`,
+      `"${escapedCommand} ^^^\"left^^^ ^^^&^^^ right^^^\""`,
     ],
     windowsVerbatimArguments: true,
   });
