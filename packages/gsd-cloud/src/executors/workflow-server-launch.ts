@@ -14,7 +14,7 @@
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 
 export interface WorkflowServerLaunch {
   command: string;
@@ -73,7 +73,7 @@ function isExecutableFile(candidate: string): boolean {
  * env's PATH on the OS delimiter and, on Windows, tries each PATHEXT extension.
  * Only returns an executable file, mirroring `which`/`where`.
  */
-function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
+function searchPath(command: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
   // An explicit path is not a PATH lookup — just confirm it is executable.
   if (command.includes("/") || command.includes("\\")) {
     const abs = resolve(command);
@@ -83,11 +83,14 @@ function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
   // are case-sensitive, unlike the process.env proxy, so check all casings.
   const pathValue = env.PATH ?? env.Path ?? env.path ?? "";
   if (!pathValue) return null;
-  const exts =
-    process.platform === "win32"
-      ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
-      : [""];
-  for (const dir of pathValue.split(delimiter)) {
+  const isWindows = platform === "win32";
+  const exts = isWindows
+    ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+    : [""];
+  // Split PATH with the delimiter of the injected platform, not the host's, so
+  // Windows-style (`;`) values resolve when tests simulate win32 on POSIX.
+  const pathDelimiter = isWindows ? win32.delimiter : posix.delimiter;
+  for (const dir of pathValue.split(pathDelimiter)) {
     if (!dir) continue;
     for (const ext of exts) {
       const candidate = join(dir, command + ext);
@@ -97,8 +100,12 @@ function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
-function defaultLookup(command: string, env: NodeJS.ProcessEnv): string | null {
-  const tool = process.platform === "win32" ? "where" : "which";
+function defaultLookup(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): string | null {
+  const tool = platform === "win32" ? "where" : "which";
   try {
     const out = execFileSync(tool, [command], {
       timeout: 5_000,
@@ -120,7 +127,7 @@ function defaultLookup(command: string, env: NodeJS.ProcessEnv): string | null {
     // `which`/`where` missing (minimal image) or errored — fall through to the
     // Node-side PATH scan below.
   }
-  return searchPath(command, env);
+  return searchPath(command, env, platform);
 }
 
 function selectLookupPath(output: string | null, platform: NodeJS.Platform): string | null {
@@ -300,8 +307,8 @@ export function resolveWorkflowServerLaunch(
   options: ResolveWorkflowServerLaunchOptions = {},
 ): WorkflowServerLaunch | null {
   const env = options.env ?? process.env;
-  const rawLookup = options.lookup ?? ((command: string) => defaultLookup(command, env));
   const platform = options.platform ?? process.platform;
+  const rawLookup = options.lookup ?? ((command: string) => defaultLookup(command, env, platform));
   const lookup = (command: string): string | null =>
     selectLookupPath(rawLookup(command), platform);
   const gsdCliPath = resolveGsdBinary(options.gsdBinary, lookup);
