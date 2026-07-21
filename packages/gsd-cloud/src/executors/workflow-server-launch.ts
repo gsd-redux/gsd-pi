@@ -7,13 +7,14 @@
 // `gsd --mode mcp` instead yields a session registry without those tools, so
 // every workflow call fails with "Unknown tool" (issue #1513).
 //
-// Resolution order mirrors detectWorkflowMcpLaunchConfig in the gsd extension:
+// Resolution order (daemon-specific; it does not mirror the extension's
+// detectWorkflowMcpLaunchConfig, which probes the project root for hints):
 //  1. GSD_WORKFLOW_MCP_COMMAND (+ optional GSD_WORKFLOW_MCP_ARGS JSON array)
 //  2. packages/mcp-server/dist/cli.js walking up from the resolved gsd binary
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, resolve, win32 } from "node:path";
+import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join, resolve, win32 } from "node:path";
 
 export interface WorkflowServerLaunch {
   command: string;
@@ -34,25 +35,92 @@ export interface ResolveWorkflowServerLaunchOptions {
 
 function parseArgsEnv(raw: string | undefined): string[] {
   if (!raw || !raw.trim()) return [];
-  const parsed = JSON.parse(raw) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`GSD_WORKFLOW_MCP_ARGS must be valid JSON: ${detail}`);
+  }
   if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
     throw new Error("GSD_WORKFLOW_MCP_ARGS must be a JSON array of strings");
   }
   return parsed as string[];
 }
 
-function defaultLookup(command: string): string | null {
+/**
+ * True when `candidate` is a runnable executable, matching `which`/`where`
+ * semantics. On POSIX this requires the execute bit (X_OK); on Windows X_OK is
+ * a no-op so this degrades to an existence check, and executability is instead
+ * governed by the PATHEXT filtering in searchPath.
+ */
+function isExecutableFile(candidate: string): boolean {
+  try {
+    // Reject directories: on POSIX they usually carry the execute ("searchable")
+    // bit, so an X_OK-only check would mistake a same-named directory for the
+    // binary. which/where only return regular files.
+    if (!statSync(candidate).isFile()) return false;
+    accessSync(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Node-side PATH scan, used when `which`/`where` is unavailable (minimal
+ * container images often ship neither) or returns nothing. Splits the supplied
+ * env's PATH on the OS delimiter and, on Windows, tries each PATHEXT extension.
+ * Only returns an executable file, mirroring `which`/`where`.
+ */
+function searchPath(command: string, env: NodeJS.ProcessEnv): string | null {
+  // An explicit path is not a PATH lookup — just confirm it is executable.
+  if (command.includes("/") || command.includes("\\")) {
+    const abs = resolve(command);
+    return isExecutableFile(abs) ? abs : null;
+  }
+  // Windows commonly exposes PATH as `Path` (or `path`); injected env objects
+  // are case-sensitive, unlike the process.env proxy, so check all casings.
+  const pathValue = env.PATH ?? env.Path ?? env.path ?? "";
+  if (!pathValue) return null;
+  const exts =
+    process.platform === "win32"
+      ? (env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)
+      : [""];
+  for (const dir of pathValue.split(delimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = join(dir, command + ext);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function defaultLookup(command: string, env: NodeJS.ProcessEnv): string | null {
   const tool = process.platform === "win32" ? "where" : "which";
   try {
     const out = execFileSync(tool, [command], {
       timeout: 5_000,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      // Honor the caller-supplied env so `which`/`where` searches the same PATH
+      // as the Node-side fallback below.
+      env,
     });
-    return out.trim() || null;
+    // `which`/`where` can report stale hits; drop any line whose target no
+    // longer exists before handing candidates to selectLookupPath. If nothing
+    // valid remains, fall through to the Node-side PATH scan below.
+    const valid = out
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && existsSync(line));
+    if (valid.length > 0) return valid.join("\n");
   } catch {
-    return null;
+    // `which`/`where` missing (minimal image) or errored — fall through to the
+    // Node-side PATH scan below.
   }
+  return searchPath(command, env);
 }
 
 function selectLookupPath(output: string | null, platform: NodeJS.Platform): string | null {
@@ -72,6 +140,10 @@ function resolveGsdBinary(
 ): string | undefined {
   const candidate = gsdBinary?.trim();
   if (!candidate) return undefined;
+  // A bare command name is only a valid discovery anchor once resolved to an
+  // on-disk path. If PATH lookup fails, drop it rather than keeping the bare
+  // name: resolve("gsd") would otherwise anchor discovery off the daemon's
+  // cwd. Callers wanting a relative anchor can pass "./gsd" explicitly.
   const resolved = candidate.includes("/") || candidate.includes("\\")
     ? candidate
     : lookup(candidate);
@@ -228,7 +300,7 @@ export function resolveWorkflowServerLaunch(
   options: ResolveWorkflowServerLaunchOptions = {},
 ): WorkflowServerLaunch | null {
   const env = options.env ?? process.env;
-  const rawLookup = options.lookup ?? defaultLookup;
+  const rawLookup = options.lookup ?? ((command: string) => defaultLookup(command, env));
   const platform = options.platform ?? process.platform;
   const lookup = (command: string): string | null =>
     selectLookupPath(rawLookup(command), platform);
