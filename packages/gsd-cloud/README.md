@@ -3,11 +3,13 @@
 Connect a local GSD runtime to [GSD Cloud](https://cloud.opengsd.net) so you can
 monitor and control your GSD projects from any browser.
 
-This is a **self-contained** agent. Its required linked runtime dependencies are
-only `ws` and `yaml` — no `@opengsd/daemon`, `@opengsd/mcp-server`, or
-`@opengsd/gsd-pi`. It runs the RFC 8628 device-flow login, opens a persistent
-WebSocket to the cloud gateway, and forwards each requested GSD workflow tool to
-the workflow MCP server shipped with your locally installed `@opengsd/gsd-pi`.
+This is a **self-contained** agent. Its only runtime dependencies are `ws` and
+`yaml` — no `@opengsd/daemon`, `@opengsd/mcp-server`, or `@opengsd/gsd-pi`. It
+runs the RFC 8628 device-flow login, opens a persistent WebSocket to the cloud
+gateway, and forwards each requested GSD workflow tool to a workflow MCP server.
+That server is resolved at runtime, in order: an explicit
+`GSD_WORKFLOW_MCP_COMMAND`, the server bundled with a locally installed
+`@opengsd/gsd-pi`, or `gsd-mcp-server` found on your `PATH`.
 The gateway default of `https://cloud.opengsd.net` is injected for `login`/`pair`
 so you never have to type `--gateway`.
 
