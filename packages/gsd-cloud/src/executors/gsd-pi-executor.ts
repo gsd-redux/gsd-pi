@@ -41,6 +41,17 @@ import type { AdvertisedProject, Executor } from "./executor.js";
 import { McpStdioClient } from "./mcp-stdio-client.js";
 import { resolveWorkflowServerLaunch, type WorkflowServerLaunch } from "./workflow-server-launch.js";
 
+/**
+ * Factory for a per-project MCP client. Injectable so tests can observe the
+ * resolved command/args/env without spawning a real child process.
+ */
+export type WorkflowClientFactory = (
+  command: string,
+  args: string[],
+  logger: Logger,
+  options: { env?: NodeJS.ProcessEnv; cwd?: string },
+) => McpStdioClient;
+
 export interface GsdPiExecutorOptions {
   /**
    * Path to the `gsd` binary, used as the discovery anchor for the workflow
@@ -53,6 +64,11 @@ export interface GsdPiExecutorOptions {
    * GSD_CLOUD_PROJECTS (path-delimiter separated), else [cwd].
    */
   projectDirs?: string[];
+  /**
+   * Overrides how per-project MCP clients are constructed. Defaults to spawning
+   * a real McpStdioClient; injected in tests to assert the wiring.
+   */
+  clientFactory?: WorkflowClientFactory;
 }
 
 interface ProjectEntry {
@@ -75,11 +91,14 @@ export class GsdPiExecutor implements Executor {
    * "no server found". The synchronous which/where lookup runs at most once.
    */
   private workflowLaunch: WorkflowServerLaunch | null | undefined;
+  private readonly clientFactory: WorkflowClientFactory;
 
   constructor(private readonly logger: Logger, opts: GsdPiExecutorOptions = {}) {
     this.gsdBinary = opts.gsdBinary
       ?? process.env["GSD_CLI_PATH"]
       ?? "gsd";
+    this.clientFactory = opts.clientFactory
+      ?? ((command, args, logger, options) => new McpStdioClient(command, args, logger, options));
     this.projectDirs = (opts.projectDirs ?? defaultProjectDirs()).map((p) => resolve(p));
     this.warnDuplicateAliases();
   }
@@ -176,7 +195,7 @@ export class GsdPiExecutor implements Executor {
     if (this.gsdBinary.includes("/") || this.gsdBinary.includes("\\")) {
       childEnv.GSD_CLI_PATH = this.gsdBinary;
     }
-    const client = new McpStdioClient(
+    const client = this.clientFactory(
       launch.command,
       launch.args,
       this.logger,
