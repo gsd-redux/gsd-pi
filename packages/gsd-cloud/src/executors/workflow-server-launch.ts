@@ -117,6 +117,41 @@ function findWorkflowCliFromBinary(gsdCliPath: string): string | null {
   }
 }
 
+function resolveWorkflowServerCommand(commandPath: string): WorkflowServerLaunch | null {
+  let resolvedCommand: string;
+  try {
+    resolvedCommand = realpathSync(resolve(commandPath));
+  } catch {
+    if (/\.(?:cmd|ps1)$/i.test(commandPath)) return null;
+    return { command: commandPath, args: [] };
+  }
+
+  const commandDir = dirname(resolvedCommand);
+  const entrypoint = [
+    resolve(
+      commandDir,
+      "node_modules",
+      "@opengsd",
+      "mcp-server",
+      "bin",
+      "gsd-mcp-server.js",
+    ),
+    resolve(
+      commandDir,
+      "..",
+      "@opengsd",
+      "mcp-server",
+      "bin",
+      "gsd-mcp-server.js",
+    ),
+  ].find((path) => existsSync(path));
+  if (entrypoint) {
+    return { command: process.execPath, args: [realpathSync(entrypoint)] };
+  }
+  if (/\.(?:cmd|ps1)$/i.test(resolvedCommand)) return null;
+  return { command: resolvedCommand, args: [] };
+}
+
 export function resolveWorkflowServerLaunch(
   options: ResolveWorkflowServerLaunchOptions = {},
 ): WorkflowServerLaunch | null {
@@ -143,7 +178,8 @@ export function resolveWorkflowServerLaunch(
 
   const onPath = lookup("gsd-mcp-server");
   if (onPath) {
-    return { command: onPath, args: [], ...(gsdCliPath ? { gsdCliPath } : {}) };
+    const launch = resolveWorkflowServerCommand(onPath);
+    if (launch) return { ...launch, ...(gsdCliPath ? { gsdCliPath } : {}) };
   }
 
   return null;

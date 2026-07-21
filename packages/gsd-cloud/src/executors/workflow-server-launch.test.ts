@@ -127,6 +127,41 @@ test("falls back to gsd-mcp-server on PATH when no installed layout matches", (t
   assert.deepEqual(launch, { command: "/usr/local/bin/gsd-mcp-server", args: [] });
 });
 
+test("resolves a Windows workflow server PATH shim to its JavaScript entrypoint", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-windows-server-shim-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const npmBin = join(root, "npm");
+  const extensionlessShim = join(npmBin, "gsd-mcp-server");
+  const commandShim = join(npmBin, "gsd-mcp-server.cmd");
+  const entrypoint = join(
+    npmBin,
+    "node_modules",
+    "@opengsd",
+    "mcp-server",
+    "bin",
+    "gsd-mcp-server.js",
+  );
+  mkdirSync(dirname(entrypoint), { recursive: true });
+  writeFileSync(extensionlessShim, "#!/bin/sh\n");
+  writeFileSync(commandShim, "@node node_modules/@opengsd/mcp-server/bin/gsd-mcp-server.js %*\r\n");
+  writeFileSync(entrypoint, "// workflow server entrypoint\n");
+
+  const launch = resolveWorkflowServerLaunch({
+    gsdBinary: join(root, "missing-gsd"),
+    env: {},
+    lookup: (command) =>
+      command === "gsd-mcp-server"
+        ? `${extensionlessShim}\r\n${commandShim}\r\n`
+        : null,
+    platform: "win32",
+  });
+
+  assert.deepEqual(launch, {
+    command: process.execPath,
+    args: [realpathSync(entrypoint)],
+  });
+});
+
 test("returns null when no workflow server can be located", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-nothing-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
