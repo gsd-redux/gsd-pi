@@ -340,7 +340,10 @@ async function assertForwardedStatus(ctx) {
     throw new Error(`forwarded gsd_status returned no text: ${JSON.stringify(response)}`);
   }
   if (REAL_GSD_CLI) {
-    if (!response.result?.isError || text !== `Session not found for projectDir: ${expectedPath}`) {
+    // This asserts forwarding/wiring, so match the stable parts (error flag +
+    // "Session not found" prefix + routed projectDir) rather than the workflow
+    // server's exact wording, which can change harmlessly.
+    if (!response.result?.isError || !text.startsWith("Session not found") || !text.includes(expectedPath)) {
       throw new Error(`real workflow gsd_status response was unexpected: ${JSON.stringify(response)}`);
     }
     return;
