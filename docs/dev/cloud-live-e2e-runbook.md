@@ -14,7 +14,8 @@ the SaaS (`/api/device/*` endpoints are not part of the standalone gateway).
 
 - Node.js >= 22 on the test machine.
 - The `gsd` CLI (`@opengsd/gsd-pi`) installed and on `PATH` (or exported via
-  `GSD_CLI_PATH`).
+  `GSD_CLI_PATH`), with its workflow MCP server discoverable. See the
+  [`@opengsd/gsd-cloud` environment requirements](../../packages/gsd-cloud/README.md#environment).
 - A local GSD project directory (contains `.gsd/`). `cd` into it — it becomes
   the advertised project.
 - A cloud.opengsd.net account you can log into in a browser.
@@ -86,9 +87,9 @@ Expected JSON output:
 ## 5. Exercise a cloud read path
 
 From the dashboard, open the advertised project and trigger a read-only view
-that goes through the gateway → runtime → local `gsd --mode mcp` loop (project
-state/roadmap view). Expected: project state renders; the runtime log on the
-machine records the forwarded tool call and its `tool_result`.
+that goes through the gateway → runtime → local workflow MCP server loop
+(project state/roadmap view). Expected: project state renders; the runtime log
+on the machine records the forwarded tool call and its `tool_result`.
 
 This is the production equivalent of the local harness's forwarded
 `gsd_query` assertion.
@@ -121,8 +122,8 @@ directories you created.
 | `login` spinner never completes | Approval not given, or code expired (10 min TTL) | Re-run `login`; approve promptly. |
 | `Authorization approved!` then immediate exit | `gateway_url` returned by the server failed CLI validation | Check stderr for `ignoring invalid server-supplied relay URL`; verify the deployment's relay URL config. |
 | `connected in the background` but machine offline on dashboard | WebSocket to relay rejected (device token) or relay unreachable | Read the runtime log from `status`; check `https://cloud.opengsd.net/healthz`. |
-| `status` shows `running: false` after `login` | Background child died after ready | Read the log file path from `status`; look for executor spawn errors (`gsd` missing from `PATH` → set `GSD_CLI_PATH`). |
-| Dashboard project view errors | Local `gsd --mode mcp` failed in the project dir | Run `gsd --mode mcp` manually in the project dir and check it initializes. |
+| `status` shows `running: false` after `login` | Background child died after ready | Read the log file path from `status`; look for executor discovery errors (`gsd` missing from `PATH` → set `GSD_CLI_PATH`; workflow server missing → follow the package environment requirements). |
+| Dashboard project view errors | Local workflow MCP server failed in the project dir | Run `gsd-mcp-server` manually in the project dir and check it initializes, or test the command configured by `GSD_WORKFLOW_MCP_COMMAND`. |
 
 ## Rollback signals
 
