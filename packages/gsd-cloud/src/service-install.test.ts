@@ -1,6 +1,6 @@
 // Project/App: Open GSD
 // File Purpose: Unit coverage for OS service unit rendering, platform dispatch, and failure paths.
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -326,6 +326,21 @@ test("installService surfaces systemctl failures with user-session guidance", (t
     () => installService(opts, run),
     /Failed to connect to bus: No medium found.*loginctl enable-linger/s,
   );
+});
+
+test("installService writes unit files owner-only so persisted secrets stay private", (t) => {
+  const home = tmpHome(t);
+  // The unit files can embed GSD_WORKFLOW_MCP_ENV credentials, so they must not
+  // be readable by other local users.
+  const secretEnv = { GSD_WORKFLOW_MCP_ENV: '{"TOKEN":"s3cret"}' };
+
+  const darwin = baseInstallOpts(home, { platform: "darwin", environment: secretEnv });
+  installService(darwin, mockRunCommand().run);
+  assert.equal(statSync(launchdPlistPath(home)).mode & 0o777, 0o600);
+
+  const linux = baseInstallOpts(home, { platform: "linux", environment: secretEnv });
+  installService(linux, mockRunCommand().run);
+  assert.equal(statSync(systemdUnitPath(home)).mode & 0o777, 0o600);
 });
 
 // --------------- uninstall ---------------

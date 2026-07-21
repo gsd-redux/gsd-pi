@@ -291,7 +291,9 @@ export function installService(
     }
     mkdirSync(dirname(logPath!), { recursive: true });
     writeFileSync(unitPath, generateLaunchdPlist(renderOptions), "utf8");
-    chmodSync(unitPath, 0o644);
+    // Owner-only: the plist can embed GSD_WORKFLOW_MCP_ENV secrets, so it must
+    // not be world-readable. It is a per-user LaunchAgent read by the same user.
+    chmodSync(unitPath, 0o600);
     try {
       runCommand(["launchctl", "load", unitPath]);
     } catch (error) {
@@ -307,7 +309,9 @@ export function installService(
     }
   } else {
     writeFileSync(unitPath, generateSystemdUnit(renderOptions), "utf8");
-    chmodSync(unitPath, 0o644);
+    // Owner-only: the unit can embed GSD_WORKFLOW_MCP_ENV secrets, so it must
+    // not be world-readable. It is a per-user systemd unit read by the same user.
+    chmodSync(unitPath, 0o600);
     try {
       runCommand(["systemctl", "--user", "daemon-reload"]);
       runCommand(["systemctl", "--user", "enable", "--now", SYSTEMD_UNIT_NAME]);
