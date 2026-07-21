@@ -174,6 +174,7 @@ export class GsdPiExecutor implements Executor {
       {
         env: childEnv,
         cwd: path,
+        windowsVerbatimArguments: launch.windowsVerbatimArguments,
       },
     );
     const entry: ProjectEntry = { alias: basename(path), path, client };

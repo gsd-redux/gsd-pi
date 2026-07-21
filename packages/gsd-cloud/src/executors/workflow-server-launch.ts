@@ -13,12 +13,13 @@
 //  3. `gsd-mcp-server` on PATH
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve, win32 } from "node:path";
 
 export interface WorkflowServerLaunch {
   command: string;
   args: string[];
   gsdCliPath?: string;
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface ResolveWorkflowServerLaunchOptions {
@@ -121,6 +122,27 @@ function isWindowsShim(commandPath: string): boolean {
   return /\.(?:cmd|ps1)$/i.test(commandPath);
 }
 
+function isWorkflowServerShim(commandPath: string): boolean {
+  return /^gsd-mcp-server(?:\.(?:cmd|ps1))?$/i.test(commandPath.split(/[\\/]/).pop() ?? "");
+}
+
+function isAbsoluteCommand(commandPath: string, platform: NodeJS.Platform): boolean {
+  return isAbsolute(commandPath) || (platform === "win32" && win32.isAbsolute(commandPath));
+}
+
+const WINDOWS_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeWindowsCommand(command: string): string {
+  return command.replace(WINDOWS_META_CHARS, "^$1");
+}
+
+function escapeWindowsArgument(argument: string): string {
+  const quoted = `"${argument
+    .replace(/(?=(\\+?)?)\1"/g, "$1$1\\\"")
+    .replace(/(?=(\\+?)?)\1$/, "$1$1")}"`;
+  return quoted.replace(WINDOWS_META_CHARS, "^$1");
+}
+
 function wrapWindowsServerShim(
   commandPath: string,
   args: string[],
@@ -141,9 +163,14 @@ function wrapWindowsServerShim(
       ],
     };
   }
+  const shellCommand = [
+    escapeWindowsCommand(commandPath),
+    ...args.map(escapeWindowsArgument),
+  ].join(" ");
   return {
     command: env.COMSPEC?.trim() || "cmd.exe",
-    args: ["/d", "/s", "/c", commandPath, ...args],
+    args: ["/d", "/s", "/c", `"${shellCommand}"`],
+    windowsVerbatimArguments: true,
   };
 }
 
@@ -152,6 +179,7 @@ function resolveWorkflowServerCommand(
   args: string[],
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  inferEntrypoint: boolean,
 ): WorkflowServerLaunch {
   let resolvedCommand: string;
   try {
@@ -163,27 +191,29 @@ function resolveWorkflowServerCommand(
     return { command: commandPath, args };
   }
 
-  const commandDir = dirname(resolvedCommand);
-  const entrypoint = [
-    resolve(
-      commandDir,
-      "node_modules",
-      "@opengsd",
-      "mcp-server",
-      "bin",
-      "gsd-mcp-server.js",
-    ),
-    resolve(
-      commandDir,
-      "..",
-      "@opengsd",
-      "mcp-server",
-      "bin",
-      "gsd-mcp-server.js",
-    ),
-  ].find((path) => existsSync(path));
-  if (entrypoint) {
-    return { command: process.execPath, args: [realpathSync(entrypoint), ...args] };
+  if (inferEntrypoint) {
+    const commandDir = dirname(resolvedCommand);
+    const entrypoint = [
+      resolve(
+        commandDir,
+        "node_modules",
+        "@opengsd",
+        "mcp-server",
+        "bin",
+        "gsd-mcp-server.js",
+      ),
+      resolve(
+        commandDir,
+        "..",
+        "@opengsd",
+        "mcp-server",
+        "bin",
+        "gsd-mcp-server.js",
+      ),
+    ].find((path) => existsSync(path));
+    if (entrypoint) {
+      return { command: process.execPath, args: [realpathSync(entrypoint), ...args] };
+    }
   }
   if (platform === "win32" && isWindowsShim(resolvedCommand)) {
     return wrapWindowsServerShim(resolvedCommand, args, env);
@@ -204,10 +234,22 @@ export function resolveWorkflowServerLaunch(
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
     const args = parseArgsEnv(env.GSD_WORKFLOW_MCP_ARGS);
-    const commandPath = explicitCommand.includes("/") || explicitCommand.includes("\\")
-      ? explicitCommand
-      : lookup(explicitCommand) ?? explicitCommand;
-    const launch = resolveWorkflowServerCommand(commandPath, args, platform, env);
+    const hasPath = explicitCommand.includes("/") || explicitCommand.includes("\\");
+    const commandPath = hasPath ? explicitCommand : lookup(explicitCommand) ?? explicitCommand;
+    let launch: WorkflowServerLaunch;
+    if (hasPath && !isAbsoluteCommand(explicitCommand, platform)) {
+      launch = platform === "win32" && isWindowsShim(explicitCommand)
+        ? wrapWindowsServerShim(explicitCommand, args, env)
+        : { command: explicitCommand, args };
+    } else {
+      launch = resolveWorkflowServerCommand(
+        commandPath,
+        args,
+        platform,
+        env,
+        isWorkflowServerShim(commandPath),
+      );
+    }
     return {
       ...launch,
       ...(gsdCliPath ? { gsdCliPath } : {}),
@@ -221,7 +263,7 @@ export function resolveWorkflowServerLaunch(
 
   const onPath = lookup("gsd-mcp-server");
   if (onPath) {
-    const launch = resolveWorkflowServerCommand(onPath, [], platform, env);
+    const launch = resolveWorkflowServerCommand(onPath, [], platform, env, true);
     return { ...launch, ...(gsdCliPath ? { gsdCliPath } : {}) };
   }
 

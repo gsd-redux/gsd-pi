@@ -50,6 +50,20 @@ test("explicit GSD_WORKFLOW_MCP_COMMAND wins over discovery", (t) => {
   });
 });
 
+test("preserves relative explicit workflow server commands for the project cwd", () => {
+  const launch = resolveWorkflowServerLaunch({
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: "./scripts/workflow-server",
+      GSD_WORKFLOW_MCP_ARGS: '["--flag"]',
+    },
+    lookup: () => null,
+  });
+  assert.deepEqual(launch, {
+    command: "./scripts/workflow-server",
+    args: ["--flag"],
+  });
+});
+
 test("bare gsd binary name resolves through PATH lookup before walking ancestors", (t) => {
   const { gsdBinary, workflowCli } = makeInstalledLayout(t);
   const launch = resolveWorkflowServerLaunch({
@@ -192,7 +206,8 @@ test("wraps nonstandard Windows workflow server shims with native interpreters",
   });
   assert.deepEqual(commandLaunch, {
     command: "C:\\Windows\\System32\\cmd.exe",
-    args: ["/d", "/s", "/c", realpathSync(commandShim)],
+    args: ["/d", "/s", "/c", `"${realpathSync(commandShim)}"`],
+    windowsVerbatimArguments: true,
   });
 
   const powershellLaunch = resolveWorkflowServerLaunch({
@@ -216,6 +231,73 @@ test("wraps nonstandard Windows workflow server shims with native interpreters",
       realpathSync(powershellShim),
       "--probe",
     ],
+  });
+});
+
+test("does not replace an explicit custom wrapper beside the workflow package", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-custom-wrapper-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const customWrapper = join(root, "custom-wrapper.cmd");
+  const entrypoint = join(
+    root,
+    "node_modules",
+    "@opengsd",
+    "mcp-server",
+    "bin",
+    "gsd-mcp-server.js",
+  );
+  mkdirSync(dirname(entrypoint), { recursive: true });
+  writeFileSync(customWrapper, "@custom-workflow-server %*\r\n");
+  writeFileSync(entrypoint, "// workflow server entrypoint\n");
+
+  const launch = resolveWorkflowServerLaunch({
+    env: {
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      GSD_WORKFLOW_MCP_COMMAND: customWrapper,
+      GSD_WORKFLOW_MCP_ARGS: '["--probe"]',
+    },
+    lookup: () => null,
+    platform: "win32",
+  });
+
+  assert.deepEqual(launch, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      `"${realpathSync(customWrapper)} ^\"--probe^\""`,
+    ],
+    windowsVerbatimArguments: true,
+  });
+});
+
+test("escapes spaced CMD shim paths and metacharacter arguments", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd cloud cmd fallback-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const commandShim = join(root, "custom server.cmd");
+  writeFileSync(commandShim, "@custom-workflow-server %*\r\n");
+
+  const launch = resolveWorkflowServerLaunch({
+    env: {
+      COMSPEC: "C:\\Windows\\System32\\cmd.exe",
+      GSD_WORKFLOW_MCP_COMMAND: commandShim,
+      GSD_WORKFLOW_MCP_ARGS: '["left & right"]',
+    },
+    lookup: () => null,
+    platform: "win32",
+  });
+  const escapedCommand = realpathSync(commandShim).replace(/ /g, "^ ");
+
+  assert.deepEqual(launch, {
+    command: "C:\\Windows\\System32\\cmd.exe",
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      `"${escapedCommand} ^\"left^ ^&^ right^\""`,
+    ],
+    windowsVerbatimArguments: true,
   });
 });
 

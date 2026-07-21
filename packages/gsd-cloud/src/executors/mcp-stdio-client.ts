@@ -43,7 +43,11 @@ export class McpStdioClient {
     private readonly command: string,
     private readonly args: string[],
     private readonly logger: Logger,
-    private readonly options: { env?: NodeJS.ProcessEnv; cwd?: string } = {},
+    private readonly options: {
+      env?: NodeJS.ProcessEnv;
+      cwd?: string;
+      windowsVerbatimArguments?: boolean;
+    } = {},
   ) {}
 
   /** Ensure the server is spawned and `initialize` has completed. Idempotent. */
@@ -99,6 +103,7 @@ export class McpStdioClient {
       stdio: ["pipe", "pipe", "pipe"],
       env: this.options.env ?? process.env,
       ...(this.options.cwd ? { cwd: this.options.cwd } : {}),
+      ...(this.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
     }) as ChildProcessWithoutNullStreams;
     this.child = child;
 
