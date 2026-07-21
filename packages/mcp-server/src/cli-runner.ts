@@ -231,6 +231,9 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
 
   const projectDir = env.GSD_WORKFLOW_PROJECT_ROOT || cwd();
   const probeSession = isMcpProbeSession(env);
+  // A parent MCP client owns these children's lifetimes and may intentionally
+  // run more than one for the same project. Keep them out of the singleton PID
+  // registry so one child cannot sweep or unregister another.
   const clientManagedSession = env.GSD_MCP_CLIENT_MANAGED?.trim() === '1';
   const observationToken = env.GSD_MILESTONE_STATUS_OBSERVATION_TOKEN?.trim();
   let pumpScopedObservationSession = false;

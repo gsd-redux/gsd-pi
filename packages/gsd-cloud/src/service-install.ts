@@ -35,6 +35,7 @@ export interface ServiceInstallOptions extends ServiceTargetOptions {
   logPath?: string;
   /** Path to the `gsd` binary for the executor (from GSD_CLI_PATH at install time). */
   gsdCliPath?: string;
+  /** Workflow discovery environment to persist in the generated service definition. */
   environment?: NodeJS.ProcessEnv;
 }
 

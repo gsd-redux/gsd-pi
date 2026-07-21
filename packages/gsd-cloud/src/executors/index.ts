@@ -19,8 +19,8 @@ export interface SelectExecutorOptions extends GsdPiExecutorOptions {
 
 /**
  * Resolve the execution backend. Defaults to the gsd-pi shell-out adapter, which
- * drives the installed `gsd` CLI over MCP. Selection can also be overridden with
- * the GSD_CLOUD_EXECUTOR env var.
+ * drives the installed workflow MCP server. Selection can also be overridden
+ * with the GSD_CLOUD_EXECUTOR env var.
  */
 export function selectExecutor(logger: Logger, opts: SelectExecutorOptions = {}): Executor {
   const kind = opts.kind ?? (process.env["GSD_CLOUD_EXECUTOR"] as ExecutorKind | undefined) ?? "gsd-pi";

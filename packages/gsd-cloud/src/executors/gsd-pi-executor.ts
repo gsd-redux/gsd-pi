@@ -48,8 +48,8 @@ export type WorkflowClientFactory = (
 export interface GsdPiExecutorOptions {
   /**
    * Path to the `gsd` binary, used as the discovery anchor for the workflow
-   * MCP server (see workflow-server-launch.ts). Defaults to GSD_CLI_PATH env,
-   * else `gsd` on PATH.
+   * MCP server (see workflow-server-launch.ts). Defaults to GSD_CLI_PATH or
+   * GSD_BIN_PATH, then `gsd` on PATH.
    */
   gsdBinary?: string;
   /**
