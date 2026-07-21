@@ -4,7 +4,7 @@
 // of silently routing cloud work to whichever entry comes first.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { GsdPiExecutor } from "./gsd-pi-executor.js";
@@ -49,6 +49,46 @@ test("advertised alias is the directory basename", async () => {
   const projects = await exec.advertisedProjects();
   assert.equal(projects.length, 1);
   assert.equal(projects[0]?.alias, "app");
+});
+
+test("configured gsd binary is passed to the workflow server", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-cli-path-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const projectDir = join(root, "project");
+  const serverPath = join(root, "server.mjs");
+  const gsdBinary = join(root, "custom", "gsd");
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(
+    serverPath,
+    `import { createInterface } from "node:readline";
+const lines = createInterface({ input: process.stdin });
+for await (const line of lines) {
+  const message = JSON.parse(line);
+  if (message.id === undefined) continue;
+  const result = message.method === "initialize"
+    ? { protocolVersion: "2024-11-05", capabilities: {} }
+    : { gsdCliPath: process.env.GSD_CLI_PATH };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\\n");
+}
+`,
+  );
+
+  const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
+  const previousArgs = process.env.GSD_WORKFLOW_MCP_ARGS;
+  process.env.GSD_WORKFLOW_MCP_COMMAND = process.execPath;
+  process.env.GSD_WORKFLOW_MCP_ARGS = JSON.stringify([serverPath]);
+  t.after(() => {
+    if (previousCommand === undefined) delete process.env.GSD_WORKFLOW_MCP_COMMAND;
+    else process.env.GSD_WORKFLOW_MCP_COMMAND = previousCommand;
+    if (previousArgs === undefined) delete process.env.GSD_WORKFLOW_MCP_ARGS;
+    else process.env.GSD_WORKFLOW_MCP_ARGS = previousArgs;
+  });
+
+  const executor = new GsdPiExecutor(logger as never, { gsdBinary, projectDirs: [projectDir] });
+  t.after(() => executor.close());
+  const result = await executor.execute("gsd_status", {});
+
+  assert.deepEqual(result, { gsdCliPath: gsdBinary });
 });
 
 test("Milestone lifecycle request identity becomes private MCP metadata", async (t) => {

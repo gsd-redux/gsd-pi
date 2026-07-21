@@ -52,7 +52,6 @@ function defaultLookup(command: string): string | null {
   }
 }
 
-/** Walk up from the resolved gsd binary looking for packages/mcp-server/dist/cli.js. */
 function findWorkflowCliFromBinary(gsdBinary: string): string | null {
   let current: string;
   try {
@@ -63,8 +62,21 @@ function findWorkflowCliFromBinary(gsdBinary: string): string | null {
     return null;
   }
   while (true) {
-    const candidate = resolve(current, "packages", "mcp-server", "dist", "cli.js");
-    if (existsSync(candidate)) return candidate;
+    const candidates = [
+      resolve(current, "packages", "mcp-server", "dist", "cli.js"),
+      resolve(
+        current,
+        "node_modules",
+        "@opengsd",
+        "gsd-pi",
+        "packages",
+        "mcp-server",
+        "dist",
+        "cli.js",
+      ),
+    ];
+    const candidate = candidates.find((path) => existsSync(path));
+    if (candidate) return realpathSync(candidate);
     const parent = dirname(current);
     if (parent === current) return null;
     current = parent;

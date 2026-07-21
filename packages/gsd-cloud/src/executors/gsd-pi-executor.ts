@@ -167,7 +167,12 @@ export class GsdPiExecutor implements Executor {
       launch.args,
       this.logger,
       {
-        env: { ...process.env, GSD_PROJECT_ROOT: path, GSD_WORKFLOW_PROJECT_ROOT: path },
+        env: {
+          ...process.env,
+          GSD_CLI_PATH: this.gsdBinary,
+          GSD_PROJECT_ROOT: path,
+          GSD_WORKFLOW_PROJECT_ROOT: path,
+        },
         cwd: path,
       },
     );

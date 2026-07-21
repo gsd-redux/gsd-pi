@@ -3,13 +3,13 @@
 Connect a local GSD runtime to [GSD Cloud](https://cloud.opengsd.net) so you can
 monitor and control your GSD projects from any browser.
 
-This is a **self-contained** agent. Its required runtime dependencies are only
-`ws` and `yaml` — no `@opengsd/daemon`, no `@opengsd/mcp-server`, no
+This is a **self-contained** agent. Its required linked runtime dependencies are
+only `ws` and `yaml` — no `@opengsd/daemon`, `@opengsd/mcp-server`, or
 `@opengsd/gsd-pi`. It runs the RFC 8628 device-flow login, opens a persistent
 WebSocket to the cloud gateway, and forwards each requested GSD workflow tool to
-your locally-installed `gsd` CLI (via `gsd --mode mcp`). The gateway default of
-`https://cloud.opengsd.net` is injected for `login`/`pair` so you never have to
-type `--gateway`.
+the workflow MCP server shipped with your locally installed `@opengsd/gsd-pi`.
+The gateway default of `https://cloud.opengsd.net` is injected for `login`/`pair`
+so you never have to type `--gateway`.
 
 `node-pty` is an **optional** native dependency used only for browser terminal
 sessions. It is loaded dynamically at runtime; if it is not installed (for
@@ -91,8 +91,8 @@ unsupported platforms (e.g. Windows) `service` exits with a clear error; use
 
 While connected, the runtime also streams `session_event` frames over the same
 WebSocket so the dashboard can render GSD sessions live. For each advertised
-project it polls `gsd_status` every 3 seconds (via that project's
-`gsd --mode mcp` client) and normalizes the deltas into a fixed event
+project it polls `gsd_status` every 3 seconds through that project's workflow
+MCP server and normalizes the deltas into a fixed event
 vocabulary: `session_started`, `turn_started`, `assistant_text`, `tool_call`,
 `tool_result`, `blocker_pending`, `blocker_resolved`, `session_idle`,
 `session_ended`, and `error`, plus a `snapshot` every 30 seconds per active
@@ -111,6 +111,11 @@ are skipped and logged). Tool-call forwarding is unchanged. Set
 - `GSD_CLOUD_PROJECTS` — path-delimiter separated list of project directories to
   advertise to the cloud (default: the current working directory).
 - `GSD_CLI_PATH` — path to the `gsd` binary (default: `gsd` on `PATH`).
+- `GSD_WORKFLOW_MCP_COMMAND` — workflow MCP server command. By default the
+  daemon discovers `packages/mcp-server/dist/cli.js` beside the installed `gsd`
+  package, then falls back to `gsd-mcp-server` on `PATH`.
+- `GSD_WORKFLOW_MCP_ARGS` — optional JSON array of arguments for
+  `GSD_WORKFLOW_MCP_COMMAND`.
 - `GSD_CLOUD_EXECUTOR` — backend adapter: `gsd-pi` (default). `codex` and
   `claude` adapters are stubbed for future use.
 - `GSD_CLOUD_SESSION_EVENTS` — live session-event streaming: `0` or `false`
@@ -124,4 +129,5 @@ current terminal.
 ## Requirements
 
 - Node.js >= 22
-- The `gsd` CLI (`@opengsd/gsd-pi`) installed locally
+- The `gsd` CLI (`@opengsd/gsd-pi`) installed locally with its workflow MCP
+  server discoverable, or `GSD_WORKFLOW_MCP_COMMAND` configured explicitly

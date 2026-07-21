@@ -8,10 +8,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveWorkflowServerLaunch } from "./workflow-server-launch.js";
 
-function makeInstalledLayout(t: test.TestContext): { packageRoot: string; gsdBinary: string; workflowCli: string } {
+function makeInstalledLayout(t: test.TestContext): { gsdBinary: string; workflowCli: string } {
   const root = mkdtempSync(join(tmpdir(), "gsd-cloud-workflow-launch-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const packageRoot = join(root, "lib", "node_modules", "@opengsd", "gsd-pi");
@@ -21,9 +21,7 @@ function makeInstalledLayout(t: test.TestContext): { packageRoot: string; gsdBin
   const gsdBinary = join(packageRoot, "dist", "loader.js");
   writeFileSync(gsdBinary, "// gsd loader\n");
   writeFileSync(workflowCli, "// workflow server\n");
-  // realpath: discovery resolves symlinks (macOS /var → /private/var), so
-  // expectations must compare against the resolved path.
-  return { packageRoot, gsdBinary, workflowCli: realpathSync(workflowCli) };
+  return { gsdBinary, workflowCli: realpathSync(workflowCli) };
 }
 
 test("discovers the workflow server beside an installed gsd binary", (t) => {
@@ -56,6 +54,35 @@ test("bare gsd binary name resolves through PATH lookup before walking ancestors
   });
   assert.ok(launch, "expected a launch config");
   assert.deepEqual(launch.args, [workflowCli]);
+});
+
+test("discovers the installed workflow server from a Windows npm command shim", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "gsd-cloud-windows-shim-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const npmBin = join(root, "npm");
+  const gsdBinary = join(npmBin, "gsd.cmd");
+  const workflowCli = join(
+    npmBin,
+    "node_modules",
+    "@opengsd",
+    "gsd-pi",
+    "packages",
+    "mcp-server",
+    "dist",
+    "cli.js",
+  );
+  mkdirSync(dirname(workflowCli), { recursive: true });
+  writeFileSync(gsdBinary, "@node node_modules/@opengsd/gsd-pi/dist/loader.js %*\r\n");
+  writeFileSync(workflowCli, "// workflow server\n");
+
+  const launch = resolveWorkflowServerLaunch({
+    gsdBinary: "gsd",
+    env: {},
+    lookup: (command) => (command === "gsd" ? gsdBinary : null),
+  });
+
+  assert.ok(launch, "expected a launch config");
+  assert.deepEqual(launch.args, [realpathSync(workflowCli)]);
 });
 
 test("falls back to gsd-mcp-server on PATH when no installed layout matches", (t) => {
