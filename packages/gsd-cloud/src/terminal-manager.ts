@@ -323,7 +323,9 @@ export class TerminalManager {
   }
 
   /**
-   * Force-kills the PTY, clears all timers, and nulls the session.
+   * Force-kills the PTY, clears all timers, and nulls the session. Emits
+   * terminal.stopped when the session was still alive, because the onExit
+   * handler that normally sends it has been disposed by this point.
    */
   private destroySession(): void {
     if (!this.session) return;
@@ -346,6 +348,16 @@ export class TerminalManager {
     if (session.alive) {
       try { session.pty.kill(); } catch { /* best-effort cleanup */ }
       session.alive = false;
+      // The onExit handler is disposed above, so a force-destroy (e.g. the
+      // 5-minute detach timer firing or daemon shutdown) would otherwise never
+      // tell the gateway the session ended, leaving the relay holding the
+      // device's single session slot. Notify explicitly here.
+      this.sendJson({
+        channel: "control",
+        type: "terminal.stopped",
+        sessionId: session.sessionId,
+        exitCode: null,
+      });
     }
   }
 
