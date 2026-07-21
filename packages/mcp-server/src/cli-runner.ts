@@ -231,6 +231,7 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
 
   const projectDir = env.GSD_WORKFLOW_PROJECT_ROOT || cwd();
   const probeSession = isMcpProbeSession(env);
+  const clientManagedSession = env.GSD_MCP_CLIENT_MANAGED?.trim() === '1';
   const observationToken = env.GSD_MILESTONE_STATUS_OBSERVATION_TOKEN?.trim();
   let pumpScopedObservationSession = false;
   let registered = false;
@@ -298,7 +299,7 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
     }
     if (cleaningUp) return;
 
-    if (!probeSession && !pumpScopedObservationSession) {
+    if (!probeSession && !pumpScopedObservationSession && !clientManagedSession) {
       sweepOrphans(projectDir);
       if (registerInstance(projectDir) === false) {
         throw new Error('refusing to start: existing MCP server PID could not be verified');

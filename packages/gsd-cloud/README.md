@@ -118,6 +118,11 @@ are skipped and logged). Tool-call forwarding is unchanged. Set
   package, then falls back to `gsd-mcp-server` on `PATH`.
 - `GSD_WORKFLOW_MCP_ARGS` — optional JSON array of arguments for
   `GSD_WORKFLOW_MCP_COMMAND`.
+- `GSD_WORKFLOW_MCP_ENV` — optional JSON object of environment variables for an
+  explicit workflow MCP server, including nested `GSD_CLI_PATH` or
+  `GSD_BIN_PATH` overrides.
+- `GSD_WORKFLOW_MCP_CWD` — optional working directory for an explicit workflow
+  MCP server.
 - `GSD_CLOUD_EXECUTOR` — backend adapter: `gsd-pi` (default). `codex` and
   `claude` adapters are stubbed for future use.
 - `GSD_CLOUD_SESSION_EVENTS` — live session-event streaming: `0` or `false`

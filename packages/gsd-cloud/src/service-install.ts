@@ -35,6 +35,7 @@ export interface ServiceInstallOptions extends ServiceTargetOptions {
   logPath?: string;
   /** Path to the `gsd` binary for the executor (from GSD_CLI_PATH at install time). */
   gsdCliPath?: string;
+  environment?: NodeJS.ProcessEnv;
 }
 
 export interface InstalledService {
@@ -70,6 +71,15 @@ export const LAUNCHD_LABEL = "net.opengsd.gsd-cloud";
 const LAUNCHD_PLIST_FILENAME = `${LAUNCHD_LABEL}.plist`;
 export const SYSTEMD_UNIT_NAME = "gsd-cloud.service";
 const SYSTEMD_RESTART_DELAY_SECONDS = 5;
+const SERVICE_ENVIRONMENT_KEYS = [
+  "GSD_CLI_PATH",
+  "GSD_BIN_PATH",
+  "GSD_WORKFLOW_PATH",
+  "GSD_WORKFLOW_MCP_COMMAND",
+  "GSD_WORKFLOW_MCP_ARGS",
+  "GSD_WORKFLOW_MCP_ENV",
+  "GSD_WORKFLOW_MCP_CWD",
+] as const;
 
 // --------------- platform dispatch ---------------
 
@@ -121,9 +131,25 @@ function buildEnvPath(nodePath: string): string {
   return `${nodeBinDir}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
 }
 
+function serviceEnvironment(opts: ServiceInstallOptions): Array<[string, string]> {
+  const values = new Map<string, string>();
+  for (const key of SERVICE_ENVIRONMENT_KEYS) {
+    const value = opts.environment?.[key];
+    if (value !== undefined) values.set(key, value);
+  }
+  if (opts.gsdCliPath) values.set("GSD_CLI_PATH", opts.gsdCliPath);
+  return [...values];
+}
+
 /** Quote one argument for a systemd unit line (no shell is involved). */
 function systemdArg(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\\"")
+    .replace(/%/g, "%%")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")}"`;
 }
 
 /** Generate the launchd plist XML for the gsd-cloud runtime. */
@@ -131,6 +157,11 @@ export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
   const home = opts.homeDir ?? homedir();
   const logPath = opts.logPath ?? runtimeLogPath(opts.configPath);
   const envPath = buildEnvPath(opts.nodePath);
+  const workflowEnvironment = serviceEnvironment(opts)
+    .map(([key, value]) => `
+\t\t<key>${escapeXml(key)}</key>
+\t\t<string>${escapeXml(value)}</string>`)
+    .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -163,9 +194,7 @@ export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
 \t\t<key>PATH</key>
 \t\t<string>${escapeXml(envPath)}</string>
 \t\t<key>HOME</key>
-\t\t<string>${escapeXml(home)}</string>${opts.gsdCliPath ? `
-\t\t<key>GSD_CLI_PATH</key>
-\t\t<string>${escapeXml(opts.gsdCliPath)}</string>` : ""}
+\t\t<string>${escapeXml(home)}</string>${workflowEnvironment}
 \t</dict>
 
 \t<key>WorkingDirectory</key>
@@ -185,6 +214,9 @@ export function generateLaunchdPlist(opts: ServiceInstallOptions): string {
 export function generateSystemdUnit(opts: ServiceInstallOptions): string {
   const home = opts.homeDir ?? homedir();
   const envPath = buildEnvPath(opts.nodePath);
+  const workflowEnvironment = serviceEnvironment(opts)
+    .map(([key, value]) => `Environment=${systemdArg(`${key}=${value}`)}`)
+    .join("\n");
 
   return `[Unit]
 Description=GSD Cloud runtime agent (gsd-cloud)
@@ -196,8 +228,8 @@ ExecStart=${systemdArg(opts.nodePath)} ${systemdArg(opts.binaryPath)} connect --
 Restart=on-failure
 RestartSec=${SYSTEMD_RESTART_DELAY_SECONDS}
 Environment=${systemdArg(`HOME=${home}`)}
-Environment=${systemdArg(`PATH=${envPath}`)}${opts.gsdCliPath ? `
-Environment=${systemdArg(`GSD_CLI_PATH=${opts.gsdCliPath}`)}` : ""}
+Environment=${systemdArg(`PATH=${envPath}`)}${workflowEnvironment ? `
+${workflowEnvironment}` : ""}
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=gsd-cloud
@@ -233,6 +265,9 @@ export function installService(
   opts: ServiceInstallOptions,
   runCommand: RunServiceCommandFn = defaultRunServiceCommand,
 ): InstalledService {
+  const renderOptions = opts.environment === undefined
+    ? { ...opts, environment: process.env }
+    : opts;
   const manager = serviceManagerForPlatform(opts.platform);
   const unitPath = resolveUnitPath(manager, opts);
   const logPath = manager === "launchd" ? (opts.logPath ?? runtimeLogPath(opts.configPath)) : null;
@@ -247,7 +282,7 @@ export function installService(
       }
     }
     mkdirSync(dirname(logPath!), { recursive: true });
-    writeFileSync(unitPath, generateLaunchdPlist(opts), "utf8");
+    writeFileSync(unitPath, generateLaunchdPlist(renderOptions), "utf8");
     chmodSync(unitPath, 0o644);
     try {
       runCommand(["launchctl", "load", unitPath]);
@@ -263,7 +298,7 @@ export function installService(
       );
     }
   } else {
-    writeFileSync(unitPath, generateSystemdUnit(opts), "utf8");
+    writeFileSync(unitPath, generateSystemdUnit(renderOptions), "utf8");
     chmodSync(unitPath, 0o644);
     try {
       runCommand(["systemctl", "--user", "daemon-reload"]);

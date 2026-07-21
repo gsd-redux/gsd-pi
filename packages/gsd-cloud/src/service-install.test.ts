@@ -35,6 +35,7 @@ function baseInstallOpts(home: string, overrides?: Partial<ServiceInstallOptions
     binaryPath: "/usr/local/lib/node_modules/@opengsd/gsd-cloud/bin/gsd-cloud.js",
     configPath: join(home, ".gsd", "daemon.yaml"),
     homeDir: home,
+    environment: {},
     ...overrides,
   };
 }
@@ -155,6 +156,59 @@ test("systemd unit quotes arguments containing spaces", (t) => {
   const unit = generateSystemdUnit(baseInstallOpts(home, { configPath }));
   assert.ok(unit.includes(`--config "${configPath}"`));
   assert.ok(!unit.includes(`--config ${configPath}\n`));
+});
+
+test("service units preserve workflow MCP discovery overrides", (t) => {
+  const home = tmpHome(t);
+  const environment = {
+    GSD_BIN_PATH: "/opt/gsd/bin/gsd",
+    GSD_WORKFLOW_MCP_COMMAND: "/opt/workflow/bin/server",
+    GSD_WORKFLOW_MCP_ARGS: '["--label","one & two"]',
+    GSD_WORKFLOW_MCP_ENV: '{"TOKEN":"quote\\\" & percent%"}',
+    GSD_WORKFLOW_MCP_CWD: "/srv/workflow & projects",
+  };
+  const opts = baseInstallOpts(home, {
+    environment,
+  });
+
+  const plist = generateLaunchdPlist(opts);
+  const unit = generateSystemdUnit(opts);
+
+  for (const [key, value] of Object.entries(environment)) {
+    assert.ok(plist.includes(`<key>${key}</key>`), `launchd missing ${key}`);
+    assert.ok(plist.includes(`<string>${escapeXml(value)}</string>`), `launchd missing ${key} value`);
+    const escapedForSystemd = value
+      .replace(/%/g, "%%")
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"');
+    assert.ok(
+      unit.includes(`Environment="${key}=${escapedForSystemd}"`),
+      `systemd missing ${key}`,
+    );
+  }
+
+  const previousEnvironment = Object.fromEntries(
+    Object.keys(environment).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, environment);
+  t.after(() => {
+    for (const [key, value] of Object.entries(previousEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  for (const platform of ["darwin", "linux"] as const) {
+    const unitPath = join(home, `${platform}.service`);
+    installService(
+      { ...opts, platform, unitPath, environment: undefined },
+      mockRunCommand().run,
+    );
+    assert.equal(
+      readFileSync(unitPath, "utf8"),
+      platform === "darwin" ? plist : unit,
+    );
+  }
 });
 
 // --------------- install ---------------

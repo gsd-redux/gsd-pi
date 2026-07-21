@@ -79,6 +79,34 @@ test("explicit GSD_WORKFLOW_MCP_COMMAND wins over discovery", (t) => {
   });
 });
 
+test("explicit workflow server env and cwd are carried into the launch", () => {
+  const launch = resolveWorkflowServerLaunch({
+    env: {
+      GSD_WORKFLOW_MCP_COMMAND: "/custom/wf-server",
+      GSD_WORKFLOW_MCP_ENV: JSON.stringify({
+        FOO: "bar",
+        GSD_BIN_PATH: "/custom/gsd",
+        GSD_WORKFLOW_PROJECT_ROOT: "/custom/project",
+      }),
+      GSD_WORKFLOW_MCP_CWD: "/custom/cwd",
+    },
+    lookup: () => null,
+  });
+
+  assert.deepEqual(launch, {
+    command: "/custom/wf-server",
+    args: [],
+    cwd: "/custom/cwd",
+    env: {
+      FOO: "bar",
+      GSD_CLI_PATH: "/custom/gsd",
+      GSD_BIN_PATH: "/custom/gsd",
+      GSD_WORKFLOW_PROJECT_ROOT: "/custom/project",
+    },
+    gsdCliPath: "/custom/gsd",
+  });
+});
+
 test("preserves relative explicit workflow server commands for the project cwd", () => {
   const launch = resolveWorkflowServerLaunch({
     env: {

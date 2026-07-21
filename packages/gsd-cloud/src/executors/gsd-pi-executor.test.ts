@@ -318,10 +318,88 @@ test("createProjectEntry spawns the resolved workflow server pinned to the proje
   assert.equal(call.options.cwd, resolve(projectDir));
   assert.equal(call.options.env?.GSD_PROJECT_ROOT, resolve(projectDir));
   assert.equal(call.options.env?.GSD_WORKFLOW_PROJECT_ROOT, resolve(projectDir));
+  assert.equal(call.options.env?.GSD_MCP_CLIENT_MANAGED, "1");
   // gsdBinary is an absolute path, so it is propagated to the child as both
   // GSD_CLI_PATH and GSD_BIN_PATH (equivalent CLI-path overrides downstream).
   assert.equal(call.options.env?.GSD_CLI_PATH, "/usr/local/bin/gsd");
   assert.equal(call.options.env?.GSD_BIN_PATH, "/usr/local/bin/gsd");
+});
+
+test("createProjectEntry honors explicit workflow env and cwd", async (t) => {
+  const projectDir = mkdtempSync(join(tmpdir(), "gsd-cloud-explicit-launch-"));
+  t.after(() => rmSync(projectDir, { recursive: true, force: true }));
+
+  const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
+  const previousEnv = process.env.GSD_WORKFLOW_MCP_ENV;
+  const previousCwd = process.env.GSD_WORKFLOW_MCP_CWD;
+  process.env.GSD_WORKFLOW_MCP_COMMAND = "/opt/gsd/wf-server";
+  process.env.GSD_WORKFLOW_MCP_ENV = JSON.stringify({
+    CUSTOM_WORKFLOW_VALUE: "preserved",
+    GSD_BIN_PATH: "/opt/custom/gsd",
+  });
+  process.env.GSD_WORKFLOW_MCP_CWD = "/opt/workflow-cwd";
+  t.after(() => {
+    restoreEnv("GSD_WORKFLOW_MCP_COMMAND", previousCommand);
+    restoreEnv("GSD_WORKFLOW_MCP_ENV", previousEnv);
+    restoreEnv("GSD_WORKFLOW_MCP_CWD", previousCwd);
+  });
+
+  const spawned: SpawnRecord[] = [];
+  const executor = new GsdPiExecutor(logger as never, {
+    projectDirs: [projectDir],
+    clientFactory: recordingClientFactory(spawned),
+  });
+
+  await executor.execute("gsd_status", {}, basename(projectDir));
+
+  assert.equal(spawned[0]!.options.cwd, "/opt/workflow-cwd");
+  assert.equal(spawned[0]!.options.env?.CUSTOM_WORKFLOW_VALUE, "preserved");
+  assert.equal(spawned[0]!.options.env?.GSD_CLI_PATH, "/opt/custom/gsd");
+  assert.equal(spawned[0]!.options.env?.GSD_BIN_PATH, "/opt/custom/gsd");
+});
+
+test("GSD_BIN_PATH wins over the executor's default gsd PATH anchor", async (t) => {
+  const preferred = mkdtempSync(join(tmpdir(), "gsd-cloud-preferred-gsd-"));
+  const pathInstall = mkdtempSync(join(tmpdir(), "gsd-cloud-path-gsd-"));
+  const projectDir = mkdtempSync(join(tmpdir(), "gsd-cloud-precedence-project-"));
+  t.after(() => {
+    rmSync(preferred, { recursive: true, force: true });
+    rmSync(pathInstall, { recursive: true, force: true });
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  const preferredGsd = join(preferred, "dist", "loader.js");
+  const pathGsd = join(pathInstall, "gsd");
+  mkdirSync(dirname(preferredGsd), { recursive: true });
+  writeFileSync(preferredGsd, "// preferred gsd\n");
+  writeFileSync(pathGsd, "#!/bin/sh\n");
+  chmodSync(pathGsd, 0o755);
+
+  const previousCommand = process.env.GSD_WORKFLOW_MCP_COMMAND;
+  const previousBinPath = process.env.GSD_BIN_PATH;
+  const previousCliPath = process.env.GSD_CLI_PATH;
+  const previousPath = process.env.PATH;
+  process.env.GSD_WORKFLOW_MCP_COMMAND = "/opt/gsd/wf-server";
+  process.env.GSD_BIN_PATH = preferredGsd;
+  delete process.env.GSD_CLI_PATH;
+  process.env.PATH = pathInstall;
+  t.after(() => {
+    restoreEnv("GSD_WORKFLOW_MCP_COMMAND", previousCommand);
+    restoreEnv("GSD_BIN_PATH", previousBinPath);
+    restoreEnv("GSD_CLI_PATH", previousCliPath);
+    restoreEnv("PATH", previousPath);
+  });
+
+  const spawned: SpawnRecord[] = [];
+  const executor = new GsdPiExecutor(logger as never, {
+    projectDirs: [projectDir],
+    clientFactory: recordingClientFactory(spawned),
+  });
+
+  await executor.execute("gsd_status", {}, basename(projectDir));
+
+  assert.equal(spawned[0]!.options.env?.GSD_CLI_PATH, realpathSync(preferredGsd));
+  assert.equal(spawned[0]!.options.env?.GSD_BIN_PATH, realpathSync(preferredGsd));
 });
 
 test("createProjectEntry does not inject GSD_CLI_PATH for a bare gsd binary name", async (t) => {

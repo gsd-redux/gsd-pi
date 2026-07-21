@@ -71,7 +71,7 @@ interface ProjectEntry {
 }
 
 export class GsdPiExecutor implements Executor {
-  private readonly gsdBinary: string;
+  private readonly gsdBinary?: string;
   private readonly projectDirs: string[];
   /** Lazily-created MCP clients, keyed by resolved absolute project path. */
   private readonly projects = new Map<string, ProjectEntry>();
@@ -87,9 +87,7 @@ export class GsdPiExecutor implements Executor {
   private readonly clientFactory: WorkflowClientFactory;
 
   constructor(private readonly logger: Logger, opts: GsdPiExecutorOptions = {}) {
-    this.gsdBinary = opts.gsdBinary
-      ?? process.env["GSD_CLI_PATH"]
-      ?? "gsd";
+    this.gsdBinary = opts.gsdBinary;
     this.clientFactory = opts.clientFactory
       ?? ((command, args, logger, options) => new McpStdioClient(command, args, logger, options));
     this.projectDirs = (opts.projectDirs ?? defaultProjectDirs()).map((p) => resolve(p));
@@ -184,8 +182,10 @@ export class GsdPiExecutor implements Executor {
     const launch = this.resolveWorkflowLaunch();
     const childEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      ...launch.env,
       GSD_PROJECT_ROOT: path,
-      GSD_WORKFLOW_PROJECT_ROOT: path,
+      GSD_WORKFLOW_PROJECT_ROOT: launch.env?.GSD_WORKFLOW_PROJECT_ROOT ?? path,
+      GSD_MCP_CLIENT_MANAGED: "1",
     };
     // The workflow server resolves the GSD CLI via GSD_CLI_PATH / GSD_BIN_PATH
     // (else `gsd` on PATH); detectWorkflowMcpLaunchConfig treats both as
@@ -197,7 +197,7 @@ export class GsdPiExecutor implements Executor {
     // inherited from the daemon's own environment.
     const childCliPath =
       launch.gsdCliPath ??
-      (this.gsdBinary.includes("/") || this.gsdBinary.includes("\\") ? this.gsdBinary : undefined);
+      (this.gsdBinary?.includes("/") || this.gsdBinary?.includes("\\") ? this.gsdBinary : undefined);
     if (childCliPath) {
       childEnv.GSD_CLI_PATH = childCliPath;
       childEnv.GSD_BIN_PATH = childCliPath;
@@ -211,7 +211,7 @@ export class GsdPiExecutor implements Executor {
       this.logger,
       {
         env: childEnv,
-        cwd: path,
+        cwd: launch.cwd ?? path,
         windowsVerbatimArguments: launch.windowsVerbatimArguments,
       },
     );

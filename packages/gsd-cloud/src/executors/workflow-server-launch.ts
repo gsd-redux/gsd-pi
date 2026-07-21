@@ -9,7 +9,7 @@
 //
 // Resolution mirrors the extension's environment override, installed-layout,
 // and PATH stages, but uses host installation anchors instead of the project root:
-//  1. GSD_WORKFLOW_MCP_COMMAND (+ optional GSD_WORKFLOW_MCP_ARGS JSON array)
+//  1. GSD_WORKFLOW_MCP_COMMAND (+ optional ARGS, ENV, and CWD overrides)
 //  2. packages/mcp-server/dist/cli.js walking up from resolved gsd binaries or
 //     GSD_WORKFLOW_PATH
 //  3. `gsd-mcp-server` on PATH
@@ -20,6 +20,8 @@ import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 export interface WorkflowServerLaunch {
   command: string;
   args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
   gsdCliPath?: string;
   windowsVerbatimArguments?: boolean;
 }
@@ -50,6 +52,23 @@ function parseArgsEnv(raw: string | undefined): string[] {
   // the extension's detectWorkflowMcpLaunchConfig contract (explicitArgs.map(String)),
   // so reasonable values like numbers/booleans don't cause startup failures.
   return parsed.map(String);
+}
+
+function parseEnvironmentEnv(raw: string | undefined): Record<string, string> | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`GSD_WORKFLOW_MCP_ENV must be valid JSON: ${detail}`);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("GSD_WORKFLOW_MCP_ENV must be a JSON object");
+  }
+  return Object.fromEntries(
+    Object.entries(parsed).map(([key, value]) => [key, String(value)]),
+  );
 }
 
 /**
@@ -315,16 +334,43 @@ export function resolveWorkflowServerLaunch(
   const rawLookup = options.lookup ?? ((command: string) => defaultLookup(command, env, platform));
   const lookup = (command: string): string | null =>
     selectLookupPath(rawLookup(command), platform);
+  const explicitEnvironment = parseEnvironmentEnv(env.GSD_WORKFLOW_MCP_ENV);
+  const explicitCwd = env.GSD_WORKFLOW_MCP_CWD?.trim();
+  const configuredCliPath =
+    explicitEnvironment?.GSD_CLI_PATH?.trim()
+    || explicitEnvironment?.GSD_BIN_PATH?.trim()
+    || env.GSD_CLI_PATH?.trim()
+    || env.GSD_BIN_PATH?.trim();
+  const anchorCandidates = options.gsdBinary !== undefined
+    ? [options.gsdBinary, configuredCliPath]
+    : [configuredCliPath, "gsd"];
+  const resolvedConfiguredCliPath = resolveGsdBinary(configuredCliPath, lookup);
   const resolvedGsdAnchors: string[] = [];
-  for (const candidate of [options.gsdBinary, env.GSD_BIN_PATH, env.GSD_CLI_PATH]) {
-    const resolved = resolveGsdBinary(candidate, lookup);
+  for (const candidate of anchorCandidates) {
+    const resolved = candidate === configuredCliPath
+      ? resolvedConfiguredCliPath
+      : resolveGsdBinary(candidate, lookup);
     if (resolved && !resolvedGsdAnchors.includes(resolved)) resolvedGsdAnchors.push(resolved);
   }
-  const gsdCliPath = resolvedGsdAnchors[0];
+  const gsdCliPath = options.gsdBinary === undefined && configuredCliPath
+    ? resolvedConfiguredCliPath ?? configuredCliPath
+    : resolvedGsdAnchors[0];
 
   const explicitCommand = env.GSD_WORKFLOW_MCP_COMMAND?.trim();
   if (explicitCommand) {
     const args = parseArgsEnv(env.GSD_WORKFLOW_MCP_ARGS);
+    const workflowProjectRoot =
+      explicitEnvironment?.GSD_WORKFLOW_PROJECT_ROOT?.trim()
+      || env.GSD_WORKFLOW_PROJECT_ROOT?.trim()
+      || env.GSD_PROJECT_ROOT?.trim()
+      || explicitCwd;
+    const launchEnvironment = {
+      ...explicitEnvironment,
+      ...(configuredCliPath && gsdCliPath
+        ? { GSD_CLI_PATH: gsdCliPath, GSD_BIN_PATH: gsdCliPath }
+        : {}),
+      ...(workflowProjectRoot ? { GSD_WORKFLOW_PROJECT_ROOT: resolve(workflowProjectRoot) } : {}),
+    };
     const hasPath = explicitCommand.includes("/") || explicitCommand.includes("\\");
     const commandPath = hasPath ? explicitCommand : lookup(explicitCommand) ?? explicitCommand;
     let launch: WorkflowServerLaunch;
@@ -343,6 +389,8 @@ export function resolveWorkflowServerLaunch(
     }
     return {
       ...launch,
+      ...(explicitCwd ? { cwd: explicitCwd } : {}),
+      ...(Object.keys(launchEnvironment).length > 0 ? { env: launchEnvironment } : {}),
       ...(gsdCliPath ? { gsdCliPath } : {}),
     };
   }
