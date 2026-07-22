@@ -433,8 +433,7 @@ function slicePlanHasEmbeddedTasks(basePath: string, mid: string, sid: string): 
   if (!slicePlanPath || !existsSync(slicePlanPath)) return false;
   const content = readFileSync(slicePlanPath, "utf-8");
   const phasesRoot = join(gsdProjectionRoot(basePath), "phases");
-  const isPhasesSlicePlan =
-    slicePlanPath === phasesRoot || slicePlanPath.startsWith(`${phasesRoot}${sep}`);
+  const isPhasesSlicePlan = slicePlanPath.startsWith(`${phasesRoot}${sep}`);
   const hasTaskCheckboxes = /^-\s+\[[ xX]\]\s+\*\*[\w.]+/m.test(content);
   return content.includes("<tasks>") || (isPhasesSlicePlan && hasTaskCheckboxes);
 }
