@@ -1534,8 +1534,12 @@ export function loadManagedProjectionPaths(targetRoot: string): string[] {
       throw new Error("native projection root identity locking is unavailable");
     }
     const path = historyPath(targetRoot);
-    if (!existsSync(path)) return [];
-    return parseManagedProjectionPaths(JSON.parse(readFileSync(path, "utf8")) as unknown);
+    // Run the read under the write fence so it does not bypass maintenance/
+    // replacement intents, matching the native path and loadUnboundProjectionEvidence.
+    return withProjectionMutationSync(path, () => {
+      if (!existsSync(path)) return [];
+      return parseManagedProjectionPaths(JSON.parse(readFileSync(path, "utf8")) as unknown);
+    });
   }
   const path = historyPath(targetRoot);
   return withProjectionMutationSync(path, () => withManagedProjectionRoot(targetRoot, (handle) => {
