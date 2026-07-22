@@ -227,6 +227,27 @@ function parseManagedProjectionPaths(value: unknown): string[] {
   return [...new Set(value)].sort();
 }
 
+// Plain-fs counterpart of the native history read. The native
+// ProjectionRootIdentityLock reads with AT_SYMLINK_NOFOLLOW, so a symlinked (or
+// otherwise non-regular) managed-outputs.json is never followed: doing so could
+// read from outside the projection root, or mask the history as "missing" when
+// a symlink's target is absent. Mirror that here with an lstat-based check that
+// treats only a genuinely absent file as empty and rejects symlinks/non-files
+// before reading.
+function readFallbackManagedProjectionPaths(path: string): string[] {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error("managed projection history is not a regular file");
+  }
+  return parseManagedProjectionPaths(JSON.parse(readFileSync(path, "utf8")) as unknown);
+}
+
 function readManagedProjectionPaths(handle: ProjectionRootIdentityLock): string[] {
   if (!handle.pathExists(HISTORY_LOGICAL_PATH)) return [];
   return parseManagedProjectionPaths(JSON.parse(handle.readFile(HISTORY_LOGICAL_PATH).toString("utf8")) as unknown);
@@ -1536,10 +1557,7 @@ export function loadManagedProjectionPaths(targetRoot: string): string[] {
     const path = historyPath(targetRoot);
     // Run the read under the write fence so it does not bypass maintenance/
     // replacement intents, matching the native path and loadUnboundProjectionEvidence.
-    return withProjectionMutationSync(path, () => {
-      if (!existsSync(path)) return [];
-      return parseManagedProjectionPaths(JSON.parse(readFileSync(path, "utf8")) as unknown);
-    });
+    return withProjectionMutationSync(path, () => readFallbackManagedProjectionPaths(path));
   }
   const path = historyPath(targetRoot);
   return withProjectionMutationSync(path, () => withManagedProjectionRoot(targetRoot, (handle) => {

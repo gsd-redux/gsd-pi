@@ -747,3 +747,89 @@ test("loadManagedProjectionPaths returns empty without a history file when the n
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), []);
 });
+
+// The no-native fallback must fail closed when a managed projection mutation
+// journal directory exists: journals can only be recovered through the native
+// identity lock, so reading the history file directly could silently drop
+// pending recovery state. This guards against accidental relaxation of that
+// safety policy back to a plain read.
+test("loadManagedProjectionPaths fails closed with a mutation journal when the native engine is unavailable", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-history-journal-fail-closed-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const migration = join(base, ".gsd", "migration");
+  mkdirSync(migration, { recursive: true });
+  writeFileSync(
+    join(migration, "managed-outputs.json"),
+    `${JSON.stringify(["phases/01-a/01-PLAN.md"])}\n`,
+  );
+  // The presence of the journal directory alone must force fail-closed.
+  mkdirSync(join(migration, "projection-mutations"));
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { loadManagedProjectionPaths } = await import(${JSON.stringify(moduleUrl)});
+    loadManagedProjectionPaths(process.argv[1]);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    base,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the mutation journal to force fail-closed");
+  assert.match(result.stderr, /native projection root identity locking is unavailable/);
+});
+
+// The native history read opens with AT_SYMLINK_NOFOLLOW, so the plain-fs
+// fallback must reject a symlinked managed-outputs.json rather than follow it
+// (which could read from outside the projection root, or mask the history as
+// missing when the link target is absent). Scoped to POSIX because creating a
+// symlink on Windows needs elevated privileges.
+test("loadManagedProjectionPaths fallback rejects a symlinked history file", {
+  skip: process.platform === "win32"
+    ? "POSIX-only: symlink creation needs elevated privileges on Windows"
+    : false,
+}, (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-history-symlink-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const migration = join(base, ".gsd", "migration");
+  mkdirSync(migration, { recursive: true });
+  const historyPath = join(migration, "managed-outputs.json");
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { loadManagedProjectionPaths } = await import(${JSON.stringify(moduleUrl)});
+    const { writeFileSync, symlinkSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const base = process.argv[1];
+    const historyPath = process.argv[2];
+    // Real target kept inside .gsd so the link's realpath stays in the root.
+    const realTarget = join(dirname(historyPath), "real-managed-outputs.json");
+    writeFileSync(realTarget, JSON.stringify(["phases/01-a/01-PLAN.md"]) + "\\n");
+    symlinkSync(realTarget, historyPath);
+    loadManagedProjectionPaths(base);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    base,
+    historyPath,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the symlinked history file to be rejected");
+  assert.match(result.stderr, /managed projection history is not a regular file/);
+  // The symlink must be left intact (fail closed), not followed or unlinked.
+  assert.equal(lstatSync(historyPath).isSymbolicLink(), true);
+});
