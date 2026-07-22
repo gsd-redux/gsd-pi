@@ -472,3 +472,30 @@ test("canonical escalation fails closed until the durable adapter can persist it
   assert.equal(row("SELECT COUNT(*) AS count FROM workflow_attempt_results").count, 0);
   assert.equal(row("SELECT status FROM tasks WHERE id = 'T01'").status, "in_progress");
 });
+
+test("canonical soft escalation is dropped and staged instead of dead-ending closeout", async () => {
+  const basePath = createBase();
+  const attemptId = claimCanonicalAttempt(basePath);
+
+  // With phases.mid_execution_escalation disabled (the default) a soft
+  // escalation (continueWithDefault !== false) is ignored on the legacy path,
+  // so the canonical path must stage the completion rather than throwing.
+  const result = await executeTaskComplete({
+    ...completionParams(),
+    escalation: {
+      question: "Files changed outside the task plan — proceed?",
+      options: [
+        { id: "A", label: "Continue", tradeoffs: "Accept the incidental changes." },
+        { id: "B", label: "Pause", tradeoffs: "Wait for direction." },
+      ],
+      recommendation: "A",
+      recommendationRationale: "The changes are incidental to the verified work.",
+      continueWithDefault: true,
+    },
+  } as never, basePath, invocation("pi:gsd_task_complete:soft-escalation-call"));
+
+  assert.notEqual(result.isError, true);
+  assert.match(String(result.content[0]?.text), /awaiting host verification/i);
+  assert.equal((result.details as Record<string, unknown>).attemptId, attemptId);
+  assert.equal(row("SELECT outcome FROM workflow_attempt_results").outcome, "succeeded");
+});

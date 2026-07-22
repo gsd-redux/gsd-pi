@@ -875,7 +875,26 @@ export async function executeTaskComplete(
         throw new Error("Canonical Task completion requires private invocation identity");
       }
       if (params.escalation) {
-        throw new Error("Canonical Task completion escalation is not yet supported by the durable completion adapter");
+        // The durable completion adapter cannot yet record escalation
+        // artifacts. Rather than dead-ending the closeout, mirror the legacy
+        // escalation gating (see handleCompleteTask): escalation is only
+        // honored when phases.mid_execution_escalation is enabled. When it is
+        // disabled (the default), the legacy path drops a soft escalation
+        // (continueWithDefault !== false) with a warning and completes the
+        // task — so do the same here instead of throwing. Only cases the
+        // legacy path would actually honor (escalation enabled) or reject (a
+        // hard blocker with escalation disabled) have no canonical equivalent
+        // yet, so those still surface the unsupported error.
+        const escalationEnabled =
+          loadEffectiveGSDPreferences()?.preferences?.phases?.mid_execution_escalation === true;
+        const hardBlocker = params.escalation.continueWithDefault === false;
+        if (escalationEnabled || hardBlocker) {
+          throw new Error("Canonical Task completion escalation is not yet supported by the durable completion adapter");
+        }
+        logWarning(
+          "tool",
+          `complete_task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring on the canonical completion path (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
+        );
       }
       const staged = await stageTaskCompletion({
         invocation,
