@@ -553,3 +553,73 @@ test("dispatch: missing task plan recovery logs root/worktree diagnostic when de
     "should dispatch without crashing in debug mode");
   // Flat-phase: no recovery diagnostic entry expected (tasks in slice plan)
 });
+
+test("dispatch: unprojected worktree stops with a projection diagnosis instead of plan-slice recovery — issue #1520", async (t) => {
+  // Incident shape: flat-phase slice plan with embedded tasks exists at the
+  // project root, but the active worktree's projection is incomplete — the
+  // milestone CONTEXT landed, the slice plan did not. Re-planning cannot fix
+  // a projection gap, so the rule must stop with an accurate diagnosis rather
+  // than burn plan-slice retries and blame "missing" task plans.
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1520-unprojected-"));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
+
+  scaffoldMilestoneContext(tmp, "M004");
+  scaffoldSlicePlan(tmp, "M004", "S02");
+
+  // Active worktree is partially projected: CONTEXT present, slice plan missing.
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M004");
+  mkdirSync(worktreeRoot, { recursive: true });
+  scaffoldMilestoneContext(worktreeRoot, "M004");
+
+  const session = {
+    basePath: worktreeRoot,
+    originalBasePath: tmp,
+    currentMilestoneId: "M004",
+    missingTaskPlanRetryCount: new Map<string, number>(),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M004", "S02", "T01", session));
+
+  assert.equal(result.action, "stop",
+    `expected stop, got ${result.action}${result.action === "dispatch" ? `/${result.unitType}` : ""}`);
+  assert.ok(result.action === "stop");
+  assert.equal(result.level, "error");
+  assert.match(result.reason, /projection/i);
+  assert.match(result.reason, /M004\/S02/);
+  assert.doesNotMatch(result.reason, /Fix the task-plan files manually/);
+  // No plan-slice retry budget was spent on an unfixable-by-replan condition.
+  assert.equal(session.missingTaskPlanRetryCount.has("M004/S02"), false);
+});
+
+test("dispatch: worktree recovery still replans when the root slice plan lacks embedded tasks — #909 preserved", async (t) => {
+  // Boundary case: the slice plan exists in legacy form (no embedded tasks)
+  // at both the project root and the active worktree, and the per-task plan
+  // is genuinely absent. The #909 plan-slice recovery still applies — the
+  // projection-diagnosis stop must not swallow it. (A legacy worktree with
+  // no slice plan at all never reaches the recovery rule: the missing-context
+  // guard dispatches discuss-milestone first.)
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1520-legacy-replan-"));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
+
+  scaffoldLegacyMilestoneContext(tmp, "M004");
+  scaffoldLegacySlicePlan(tmp, "M004", "S02");
+
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M004");
+  mkdirSync(worktreeRoot, { recursive: true });
+  scaffoldLegacyMilestoneContext(worktreeRoot, "M004");
+  scaffoldLegacySlicePlan(worktreeRoot, "M004", "S02");
+
+  const session = {
+    basePath: worktreeRoot,
+    originalBasePath: tmp,
+    currentMilestoneId: "M004",
+    missingTaskPlanRetryCount: new Map<string, number>(),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M004", "S02", "T01", session));
+
+  assert.equal(result.action, "dispatch");
+  assert.ok(result.action === "dispatch" && result.unitType === "plan-slice",
+    `unitType should be plan-slice, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.equal(session.missingTaskPlanRetryCount.get("M004/S02"), 1);
+});
