@@ -595,7 +595,19 @@ test("removeProjectionTreeSync fallback rejects a non-directory target", (t) => 
   assert.equal(readFileSync(target, "utf8"), "state-content");
 });
 
-test("removeProjectionTreeSync fallback surfaces non-ENOENT lstat errors", (t) => {
+// A non-ENOENT lstat error at the removal target must surface rather than be
+// treated as a missing target (a no-op). The only trigger that reaches the
+// fallback's leaf-lstat through the public API with a deterministic code is an
+// over-length basename: on POSIX (NAME_MAX == 255) it reliably yields
+// ENAMETOOLONG. A null byte would seem cleaner but is rejected upstream by
+// logicalProjectionPath before the fallback runs, and Windows returns
+// platform-dependent codes for over-length components, so this assertion is
+// scoped to POSIX where the code is stable.
+test("removeProjectionTreeSync fallback surfaces non-ENOENT lstat errors", {
+  skip: process.platform === "win32"
+    ? "POSIX-only: relies on NAME_MAX yielding a stable ENAMETOOLONG code"
+    : false,
+}, (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-remove-fallback-lstat-error-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const gsd = join(base, ".gsd");
@@ -603,8 +615,6 @@ test("removeProjectionTreeSync fallback surfaces non-ENOENT lstat errors", (t) =
   writeFileSync(join(gsd, "gsd.db"), "database-present");
   const parent = join(gsd, "phases");
   mkdirSync(parent);
-  // An over-length basename makes lstat fail with ENAMETOOLONG (not ENOENT).
-  // The fallback must surface this rather than treating it as a missing target.
   const target = join(parent, "x".repeat(300));
   const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
   const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
