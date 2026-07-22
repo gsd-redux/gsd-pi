@@ -379,8 +379,12 @@ function removeProjectionTreeWithoutDatabaseSync(directoryPath: string): void {
     let targetStat;
     try {
       targetStat = lstatSync(absolutePath, { bigint: true });
-    } catch {
-      return;
+    } catch (error) {
+      // Only a genuinely missing target is a no-op, matching the native path
+      // (which returns early on `!handle.pathExists(name)`). Real errors like
+      // EACCES/EPERM/ENOTDIR must surface rather than be masked.
+      if (normalizeErrnoCode(error) === "ENOENT") return;
+      throw error;
     }
     if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) {
       throw new Error("projection removal target is not a directory");

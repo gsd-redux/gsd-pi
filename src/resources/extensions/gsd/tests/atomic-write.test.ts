@@ -595,6 +595,39 @@ test("removeProjectionTreeSync fallback rejects a non-directory target", (t) => 
   assert.equal(readFileSync(target, "utf8"), "state-content");
 });
 
+test("removeProjectionTreeSync fallback surfaces non-ENOENT lstat errors", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-remove-fallback-lstat-error-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const parent = join(gsd, "phases");
+  mkdirSync(parent);
+  // An over-length basename makes lstat fail with ENAMETOOLONG (not ENOENT).
+  // The fallback must surface this rather than treating it as a missing target.
+  const target = join(parent, "x".repeat(300));
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { removeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    removeProjectionTreeSync(process.argv[1]);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    target,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the lstat error to surface");
+  assert.match(result.stderr, /ENAMETOOLONG/);
+});
+
 test("loadManagedProjectionPaths falls back to a plain-fs read when the native engine is unavailable", (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-history-native-fallback-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
