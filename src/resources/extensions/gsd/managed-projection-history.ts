@@ -220,13 +220,16 @@ function withManagedProjectionRoot<T>(
   }
 }
 
-function readManagedProjectionPaths(handle: ProjectionRootIdentityLock): string[] {
-  if (!handle.pathExists(HISTORY_LOGICAL_PATH)) return [];
-  const value = JSON.parse(handle.readFile(HISTORY_LOGICAL_PATH).toString("utf8")) as unknown;
+function parseManagedProjectionPaths(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
     throw new Error("managed projection history is invalid");
   }
   return [...new Set(value)].sort();
+}
+
+function readManagedProjectionPaths(handle: ProjectionRootIdentityLock): string[] {
+  if (!handle.pathExists(HISTORY_LOGICAL_PATH)) return [];
+  return parseManagedProjectionPaths(JSON.parse(handle.readFile(HISTORY_LOGICAL_PATH).toString("utf8")) as unknown);
 }
 
 function recordManagedProjectionLogicalPath(handle: ProjectionRootIdentityLock, logicalPath: string): void {
@@ -1523,6 +1526,17 @@ function recoverManagedProjectionMutations(
 }
 
 export function loadManagedProjectionPaths(targetRoot: string): string[] {
+  if (!isProjectionRootIdentityLockAvailable()) {
+    // Mutation journals can only be recovered through the native identity
+    // lock; fail closed when recovery state exists, otherwise read the
+    // history file directly (same policy as loadUnboundProjectionEvidence).
+    if (existsSync(journalRoot(targetRoot))) {
+      throw new Error("native projection root identity locking is unavailable");
+    }
+    const path = historyPath(targetRoot);
+    if (!existsSync(path)) return [];
+    return parseManagedProjectionPaths(JSON.parse(readFileSync(path, "utf8")) as unknown);
+  }
   const path = historyPath(targetRoot);
   return withProjectionMutationSync(path, () => withManagedProjectionRoot(targetRoot, (handle) => {
     recoverManagedProjectionMutations(targetRoot, handle);

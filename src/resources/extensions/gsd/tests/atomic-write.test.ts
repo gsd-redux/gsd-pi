@@ -529,3 +529,128 @@ test("atomicWriteAsync aborts before any rename when the temp fsync fails", asyn
   assert.equal(harness.calls.some((call) => call.startsWith("rename:")), false);
   assert.equal(harness.files.has("/data/output.txt"), false);
 });
+
+test("removeProjectionTreeSync falls back when the pinned native engine lacks identity locks", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-remove-native-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const tree = join(gsd, "phases", "22-m022");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { removeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    mkdirSync(join(process.argv[1], "slices", "S01"), { recursive: true });
+    writeFileSync(join(process.argv[1], "slices", "S01", "S01-PLAN.md"), "plan-content");
+    removeProjectionTreeSync(process.argv[1]);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    tree,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(existsSync(tree), false);
+});
+
+test("removeProjectionTreeSync fallback rejects a non-directory target", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-remove-fallback-file-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const target = join(gsd, "STATE.md");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { removeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(process.argv[1], "state-content");
+    removeProjectionTreeSync(process.argv[1]);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    target,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the file target to be rejected");
+  assert.match(result.stderr, /projection removal target is not a directory/);
+  assert.equal(readFileSync(target, "utf8"), "state-content");
+});
+
+test("loadManagedProjectionPaths falls back to a plain-fs read when the native engine is unavailable", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-history-native-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const migration = join(base, ".gsd", "migration");
+  mkdirSync(migration, { recursive: true });
+  writeFileSync(
+    join(migration, "managed-outputs.json"),
+    `${JSON.stringify(["phases/01-a/01-PLAN.md", "phases/01-a/01-CONTEXT.md", "phases/01-a/01-PLAN.md"])}\n`,
+  );
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { loadManagedProjectionPaths } = await import(${JSON.stringify(moduleUrl)});
+    process.stdout.write(JSON.stringify(loadManagedProjectionPaths(process.argv[1])));
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    base,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    "phases/01-a/01-CONTEXT.md",
+    "phases/01-a/01-PLAN.md",
+  ]);
+});
+
+test("loadManagedProjectionPaths returns empty without a history file when the native engine is unavailable", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-history-empty-fallback-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  mkdirSync(join(base, ".gsd"));
+  const moduleUrl = new URL("../managed-projection-history.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { loadManagedProjectionPaths } = await import(${JSON.stringify(moduleUrl)});
+    process.stdout.write(JSON.stringify(loadManagedProjectionPaths(process.argv[1])));
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    base,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), []);
+});
