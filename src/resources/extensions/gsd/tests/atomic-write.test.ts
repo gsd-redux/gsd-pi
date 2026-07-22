@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -593,6 +593,56 @@ test("removeProjectionTreeSync fallback rejects a non-directory target", (t) => 
   assert.notEqual(result.status, 0, "expected the file target to be rejected");
   assert.match(result.stderr, /projection removal target is not a directory/);
   assert.equal(readFileSync(target, "utf8"), "state-content");
+});
+
+// The fallback rejects symlink targets to mirror the native path. This guards
+// against a regression to an rmSync-only implementation, which would silently
+// unlink the symlink instead of failing closed. Scoped to POSIX because
+// creating a directory symlink on Windows needs elevated privileges.
+test("removeProjectionTreeSync fallback rejects and preserves a symlink target", {
+  skip: process.platform === "win32"
+    ? "POSIX-only: directory symlink creation needs elevated privileges on Windows"
+    : false,
+}, (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-remove-fallback-symlink-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const gsd = join(base, ".gsd");
+  mkdirSync(gsd);
+  writeFileSync(join(gsd, "gsd.db"), "database-present");
+  const link = join(gsd, "phases");
+  // Kept inside .gsd so the symlink's realpath stays within the projection root.
+  const realDir = join(gsd, "real-target-dir");
+  const moduleUrl = new URL("../atomic-write.ts", import.meta.url).href;
+  const loaderPath = new URL("./resolve-ts.mjs", import.meta.url).pathname;
+  const script = `
+    const { removeProjectionTreeSync } = await import(${JSON.stringify(moduleUrl)});
+    const { mkdirSync, writeFileSync, symlinkSync } = await import("node:fs");
+    const { dirname, join } = await import("node:path");
+    const link = process.argv[1];
+    const realDir = join(dirname(link), "real-target-dir");
+    mkdirSync(realDir);
+    writeFileSync(join(realDir, "keep.txt"), "keep-me");
+    symlinkSync(realDir, link, "dir");
+    removeProjectionTreeSync(link);
+  `;
+
+  const result = spawnSync(process.execPath, [
+    "--import", loaderPath,
+    "--experimental-strip-types",
+    "--input-type=module",
+    "--eval", script,
+    link,
+  ], {
+    encoding: "utf8",
+    env: { ...process.env, GSD_NATIVE_DISABLE: "1" },
+  });
+
+  assert.notEqual(result.status, 0, "expected the symlink target to be rejected");
+  assert.match(result.stderr, /projection removal target is not a directory/);
+  // The symlink must be left intact (fail closed), not silently unlinked, and
+  // its real target and contents must be untouched.
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(realDir, "keep.txt"), "utf8"), "keep-me");
 });
 
 // A non-ENOENT lstat error at the removal target must surface rather than be
