@@ -886,7 +886,7 @@ export async function executeTaskComplete(
         // hard blocker with escalation disabled) have no canonical equivalent
         // yet, so those still surface the unsupported error.
         const escalationEnabled =
-          loadEffectiveGSDPreferences()?.preferences?.phases?.mid_execution_escalation === true;
+          loadEffectiveGSDPreferences(basePath)?.preferences?.phases?.mid_execution_escalation === true;
         const hardBlocker = params.escalation.continueWithDefault === false;
         if (escalationEnabled || hardBlocker) {
           throw new Error("Canonical Task completion escalation is not yet supported by the durable completion adapter");
