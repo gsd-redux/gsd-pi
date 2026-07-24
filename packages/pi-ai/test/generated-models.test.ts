@@ -66,6 +66,27 @@ describe("models.generated.ts", () => {
 		}
 	});
 
+	test("includes GPT-5.6 variants for the GitHub Copilot provider", () => {
+		expect("gpt-5.6" in MODELS["github-copilot"]).toBe(false);
+
+		for (const [id, name, input, output] of [
+			["gpt-5.6-sol", "GPT-5.6 Sol", 5, 30],
+			["gpt-5.6-terra", "GPT-5.6 Terra", 2.5, 15],
+			["gpt-5.6-luna", "GPT-5.6 Luna", 1, 6],
+		] as const) {
+			const copilot = MODELS["github-copilot"][id];
+			expect(copilot).toBeDefined();
+			expect(copilot.api).toBe("openai-responses");
+			expect(copilot.name).toBe(name);
+			expect(copilot.baseUrl).toBe("https://api.individual.githubcopilot.com");
+			expect(copilot.contextWindow).toBe(400_000);
+			expect(copilot.maxTokens).toBe(128_000);
+			expect(copilot.thinkingLevelMap).toMatchObject({ minimal: "low", xhigh: "xhigh", max: "max" });
+			expect(copilot.cost.input).toBe(input);
+			expect(copilot.cost.output).toBe(output);
+		}
+	});
+
 	test("includes GPT-5.6 variants for OpenAI and OpenAI Codex providers", () => {
 		expect("gpt-5.6" in MODELS.openai).toBe(false);
 		expect("gpt-5.6" in MODELS["openai-codex"]).toBe(false);

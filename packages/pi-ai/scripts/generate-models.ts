@@ -1689,6 +1689,25 @@ async function generateModels() {
 		});
 	}
 
+	// Add missing GitHub Copilot GPT-5.6 variants until models.dev includes them.
+	const copilotGpt55 = allModels.find((m) => m.provider === "github-copilot" && m.id === "gpt-5.5");
+	if (copilotGpt55) {
+		for (const variant of gpt56Variants) {
+			if (allModels.some((m) => m.provider === "github-copilot" && m.id === variant.id)) continue;
+			allModels.push({
+				...copilotGpt55,
+				id: variant.id,
+				name: variant.name,
+				cost: {
+					...copilotGpt55.cost,
+					input: variant.input,
+					output: variant.output,
+					cacheRead: variant.cacheRead,
+				},
+			});
+		}
+	}
+
 	const deepseekCompat: OpenAICompletionsCompat = {
 		requiresReasoningContentOnAssistantMessages: true,
 		thinkingFormat: "deepseek",
