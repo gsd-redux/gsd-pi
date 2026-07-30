@@ -268,6 +268,15 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	) {
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
 	}
+	if (
+		(model.provider === "minimax" || model.provider === "minimax-cn") &&
+		model.api === "anthropic-messages" &&
+		model.id === "MiniMax-M3"
+	) {
+		// M3 exposes adaptive and disabled thinking modes over the Anthropic-compatible
+		// endpoint, so force adaptive thinking instead of the budget-based default.
+		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
+	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
 		mergeThinkingLevelMap(model, DEEPSEEK_V4_THINKING_LEVEL_MAP);
 	}
@@ -1786,12 +1795,16 @@ async function generateModels() {
 		}
 	}
 
-	const minimaxDirectModelOverrides = new Map([
+	const minimaxDirectModelOverrides = new Map<
+		string,
+		{ contextWindow: number; maxTokens: number; input?: ("text" | "image" | "video")[] }
+	>([
 		["MiniMax-M2.7", { contextWindow: 204800, maxTokens: 131072 }],
 		["MiniMax-M2.7-highspeed", { contextWindow: 204800, maxTokens: 131072 }],
 		// MiniMax's API overview advertises a 1M context window for M3; models.dev
-		// currently reports the documented guaranteed 512K floor.
-		["MiniMax-M3", { contextWindow: 1000000, maxTokens: 131072 }],
+		// currently reports the documented guaranteed 512K floor. M3 also accepts
+		// video inputs alongside text and image, which models.dev does not report.
+		["MiniMax-M3", { contextWindow: 1000000, maxTokens: 131072, input: ["text", "image", "video"] }],
 	]);
 	const minimaxDirectSupportedIds = new Set(minimaxDirectModelOverrides.keys());
 
@@ -1804,6 +1817,9 @@ async function generateModels() {
 			if (override) {
 				candidate.contextWindow = override.contextWindow;
 				candidate.maxTokens = override.maxTokens;
+				if (override.input) {
+					candidate.input = override.input;
+				}
 			}
 		}
 	}

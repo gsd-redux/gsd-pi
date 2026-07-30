@@ -180,7 +180,8 @@ describe("models.generated.ts", () => {
 				provider,
 				baseUrl,
 				reasoning: true,
-				input: ["text", "image"],
+				input: ["text", "image", "video"],
+				compat: { forceAdaptiveThinking: true },
 				cost: {
 					input: 0.6,
 					output: 2.4,
