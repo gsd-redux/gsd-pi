@@ -1167,7 +1167,7 @@ export class ModelRegistry {
 	private getDiscoveryProviderDefaults(provider: string): {
 		api: Api;
 		baseUrl: string;
-		input: ("text" | "image")[];
+		input: Model<Api>["input"];
 		contextWindow: number;
 		maxTokens: number;
 	} {
