@@ -29,7 +29,12 @@ import { readKnowledge } from './readers/knowledge.js';
 import { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDiff } from './readers/graph.js';
 import { resolveGsdRoot, resolveMilestoneFile } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
-import { registerWorkflowTools, validateProjectDir } from './workflow-tools.js';
+import {
+  hasWorkflowToolBridgeConfiguration,
+  registerWorkflowTools,
+  validateProjectDir,
+  warmWorkflowToolBridges,
+} from './workflow-tools.js';
 import { installMoonshotCompatibleToolSchemas } from './moonshot-tool-schema.js';
 import { applySecrets, checkExistingEnvKeys, detectDestination, resolveProjectEnvFilePath } from './env-writer.js';
 
@@ -1077,16 +1082,25 @@ export async function secureEnvCollectHandler(
 // ---------------------------------------------------------------------------
 
 /**
- * Create and configure an MCP server with session, read-only, and workflow tools.
+ * Create and configure an MCP server with session and read-only tools, plus
+ * workflow tools when their runtime bridge is available.
  *
  * Returns the McpServer instance — call `connect(transport)` to start serving.
  * Uses dynamic imports for the MCP SDK to avoid TS subpath resolution issues.
  */
 export async function createMcpServer(
   sessionManager: SessionManager,
+  options: { includeWorkflowTools?: boolean } = {},
 ): Promise<{
   server: McpServerInstance;
 }> {
+  const includeWorkflowTools = options.includeWorkflowTools
+    ?? hasWorkflowToolBridgeConfiguration();
+  // The CLI passes an explicit decision and owns its pre-connect warm-up.
+  if (includeWorkflowTools && options.includeWorkflowTools === undefined) {
+    await warmWorkflowToolBridges();
+  }
+
   // Dynamic import — same workaround as src/mcp-server.ts
   const mcpMod = await import(`${MCP_PKG}/server/mcp.js`);
   const McpServer = mcpMod.McpServer as new (
@@ -1554,10 +1568,12 @@ export async function createMcpServer(
   // tokens/turn of duplicate schemas. Set GSD_MCP_ADVERTISE_ALIASES=1 to
   // restore alias advertising for clients that still call legacy names.
   // GSD_MCP_HIDE_ALIASES=1 (legacy var) is honored as a no-op force-hide.
-  registerWorkflowTools(server, {
-    advertiseAliases:
-      process.env.GSD_MCP_ADVERTISE_ALIASES === '1' && process.env.GSD_MCP_HIDE_ALIASES !== '1',
-  });
+  if (includeWorkflowTools) {
+    registerWorkflowTools(server, {
+      advertiseAliases:
+        process.env.GSD_MCP_ADVERTISE_ALIASES === '1' && process.env.GSD_MCP_HIDE_ALIASES !== '1',
+    });
+  }
 
   installMoonshotCompatibleToolSchemas(server as unknown as Parameters<typeof installMoonshotCompatibleToolSchemas>[0]);
 

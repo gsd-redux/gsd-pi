@@ -48,7 +48,7 @@ test("createMcpServer advertises Moonshot-safe inputSchema for every tool", asyn
 	const previousHide = process.env.GSD_MCP_HIDE_ALIASES;
 	process.env.GSD_MCP_ADVERTISE_ALIASES = "1";
 	delete process.env.GSD_MCP_HIDE_ALIASES;
-	const { server } = await createMcpServer(sm).finally(() => {
+	const { server } = await createMcpServer(sm, { includeWorkflowTools: true }).finally(() => {
 		if (previousAdvertise === undefined) delete process.env.GSD_MCP_ADVERTISE_ALIASES;
 		else process.env.GSD_MCP_ADVERTISE_ALIASES = previousAdvertise;
 		if (previousHide === undefined) delete process.env.GSD_MCP_HIDE_ALIASES;

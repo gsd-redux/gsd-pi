@@ -89,27 +89,107 @@ try {
   }
   const installedManifest = JSON.parse(installedManifestText);
 
-  execFileSync(
-    process.execPath,
-    ["--input-type=module", "--eval", "const m = await import('@opengsd/mcp-server'); if (typeof m.createMcpServer !== 'function') process.exit(1)"],
-    { cwd: installDir, stdio: "inherit" },
-  );
+  const publicApiScript = `
+    import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+    import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+    import { createMcpServer } from "@opengsd/mcp-server";
 
-  const binEntry = installedManifest.bin?.["gsd-mcp-server"];
-  if (typeof binEntry !== "string") throw new Error("packed @opengsd/mcp-server has no gsd-mcp-server bin");
-  const binUrl = pathToFileURL(resolve(dirname(installedManifestPath), binEntry)).href;
-  execFileSync(process.execPath, [
-    "--input-type=module",
-    "--eval",
-    `process.stdin.destroy(); await import(${JSON.stringify(binUrl)})`,
-  ], {
+    delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    const { server } = await createMcpServer({});
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "mcp-server-public-api-validator", version: "1.0.0" });
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const { tools } = await client.listTools();
+      if (!tools.some((tool) => tool.name === "gsd_execute")) {
+        throw new Error("packed MCP public API did not advertise gsd_execute");
+      }
+      if (tools.some((tool) => tool.name === "gsd_summary_save")) {
+        throw new Error("packed MCP public API advertised workflow tools without a workflow bridge");
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    process.env.GSD_WORKFLOW_EXECUTORS_MODULE = ${JSON.stringify(join(installDir, "missing-workflow-tool-executors.js"))};
+    let invalidBridgeRejected = false;
+    try {
+      await createMcpServer({});
+    } catch {
+      invalidBridgeRejected = true;
+    } finally {
+      delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    }
+    if (!invalidBridgeRejected) {
+      throw new Error("packed MCP public API accepted an invalid workflow bridge");
+    }
+  `;
+  execFileSync(process.execPath, ["--input-type=module", "--eval", publicApiScript], {
     cwd: installDir,
-    encoding: "utf8",
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: "inherit",
     timeout: 30_000,
   });
 
-  console.log("@opengsd/mcp-server standalone tarball install, import, and bin are valid.");
+  const binEntry = installedManifest.bin?.["gsd-mcp-server"];
+  if (typeof binEntry !== "string") throw new Error("packed @opengsd/mcp-server has no gsd-mcp-server bin");
+  const binPath = resolve(dirname(installedManifestPath), binEntry);
+  const handshakeScript = `
+    import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+    import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+    function withTimeout(promise, label) {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label + " timed out")), 10_000);
+      });
+      return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+    }
+
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [${JSON.stringify(binPath)}],
+      cwd: ${JSON.stringify(installDir)},
+      env: {
+        GSD_CODING_AGENT_DIR: ${JSON.stringify(join(installDir, "agent"))},
+        GSD_HOME: ${JSON.stringify(join(installDir, ".gsd"))},
+        GSD_MCP_CLIENT_MANAGED: "1",
+        GSD_MCP_PROBE: "1",
+        GSD_WORKFLOW_PROJECT_ROOT: ${JSON.stringify(installDir)},
+      },
+      stderr: "pipe",
+    });
+    let serverStderr = "";
+    transport.stderr?.on("data", (chunk) => {
+      serverStderr += chunk.toString();
+    });
+    const client = new Client({ name: "mcp-server-tarball-validator", version: "1.0.0" });
+
+    try {
+      await withTimeout(client.connect(transport), "MCP connect");
+      const { tools } = await withTimeout(client.listTools(), "MCP tools/list");
+      if (!tools.some((tool) => tool.name === "gsd_execute")) {
+        throw new Error("packed MCP server did not advertise gsd_execute");
+      }
+      if (tools.some((tool) => tool.name === "gsd_summary_save")) {
+        throw new Error("packed MCP server advertised workflow tools without a workflow bridge");
+      }
+    } catch (err) {
+      if (serverStderr) process.stderr.write(serverStderr);
+      throw err;
+    } finally {
+      await client.close();
+    }
+  `;
+  execFileSync(process.execPath, ["--input-type=module", "--eval", handshakeScript], {
+    cwd: installDir,
+    encoding: "utf8",
+    stdio: ["ignore", "inherit", "inherit"],
+    timeout: 30_000,
+  });
+
+  console.log("@opengsd/mcp-server standalone tarball install, import, and MCP handshake are valid.");
 } finally {
   try {
     execFileSync(process.execPath, [join(root, "scripts", "postpack-restore-workspace.cjs")], {

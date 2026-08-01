@@ -113,7 +113,7 @@ The workflow MCP surface includes:
 - `gsd_memory_query`
 - `gsd_memory_graph`
 
-By default, the packaged MCP server advertises only the canonical workflow tool names above. Legacy aliases are compatibility names and are not included in `tools/list` unless `GSD_MCP_ADVERTISE_ALIASES=1` is set. Prefer moving clients and prompts to canonical names before enabling aliases, because aliases duplicate schemas in the model-facing tool surface.
+When workflow bridges are enabled, the packaged MCP server advertises only the canonical workflow tool names above by default. Legacy aliases are compatibility names and are not included in `tools/list` unless `GSD_MCP_ADVERTISE_ALIASES=1` is set. Prefer moving clients and prompts to canonical names before enabling aliases, because aliases duplicate schemas in the model-facing tool surface.
 
 These tools use the same GSD workflow handlers as the native in-process tool path wherever a shared handler exists.
 
@@ -155,13 +155,11 @@ Secret handling differs by destination:
 Current support boundary:
 
 - when running inside the GSD monorepo checkout, the MCP server auto-discovers the shared workflow executor module
-- outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` to an importable `workflow-tool-executors` module path if you want the mutation tools enabled
+- a direct standalone install without workflow bridges serves the session, read, and interactive tools but omits workflow mutation tools
+- outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` and `GSD_WORKFLOW_WRITE_GATE_MODULE` to importable bridge module paths to enable workflow mutation tools
 - `ask_user_questions` and `secure_env_collect` require an MCP client that supports form elicitation
-- session/read tool implementations do not use this bridge, but the packaged CLI still warms it at startup so Claude Code never sees a partial workflow surface
 
-If the executor bridge cannot be loaded, the packaged CLI fails startup with a precise configuration error instead of silently degrading.
-
-Startup is fail-closed for the workflow bridge: `gsd-mcp-server` loads the workflow executor and write-gate bridge before it connects over stdio. If bridge warm-up fails, the MCP host sees a startup failure instead of a partially advertised tool surface.
+Configured workflow startup remains fail-closed: `gsd-mcp-server` loads the workflow executor and write-gate bridge before it connects over stdio. If either configured or co-located bridge fails to load, the MCP host sees a startup failure instead of a partially advertised workflow surface.
 
 The server also keeps a per-project PID registry at `$GSD_HOME/mcp-instances.json` (default `~/.gsd/mcp-instances.json`). On startup it terminates a previously registered `gsd-mcp-server` process for the same project when the saved PID still belongs to an MCP server, then records the current PID. On normal shutdown it removes only its own entry. Corrupt registry files are preserved as `.corrupt-<timestamp>` backups before a new registry is written.
 
@@ -286,7 +284,7 @@ Resolve a pending blocker in a session by sending a response to the blocked UI r
 | `GSD_WORKFLOW_EXECUTORS_MODULE` | Optional absolute path or `file:` URL for the shared GSD workflow executor module used by workflow mutation tools. |
 | `GSD_WORKFLOW_WRITE_GATE_MODULE` | Optional absolute path or `file:` URL for the shared write-gate module used by workflow mutation tools. |
 | `GSD_WORKFLOW_PROJECT_ROOT` | Canonical project root for workflow tools and the per-project MCP PID registry key. Defaults to the server's current working directory. |
-| `GSD_MCP_ADVERTISE_ALIASES` | Set to literal `1` to include legacy workflow aliases in the packaged MCP server's `tools/list`. Unset by default, so the server advertises canonical tool names only. |
+| `GSD_MCP_ADVERTISE_ALIASES` | Set to literal `1` to include legacy workflow aliases in the packaged MCP server's `tools/list`. When workflow bridges are enabled, leaving it unset exposes canonical workflow names only. |
 | `GSD_MCP_HIDE_ALIASES` | Legacy force-hide switch. Set to literal `1` to keep packaged MCP aliases hidden even when `GSD_MCP_ADVERTISE_ALIASES=1`. |
 | `GSD_ADVERTISE_TOOL_ALIASES` | Set to literal `1` to register legacy workflow aliases on the native in-process GSD tool surface. This does not affect the packaged MCP server; use `GSD_MCP_ADVERTISE_ALIASES` for `gsd-mcp-server`. |
 | `GSD_HOME` | Global GSD directory. Also controls where `mcp-instances.json` is stored. |

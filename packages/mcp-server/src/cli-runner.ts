@@ -5,6 +5,7 @@ import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
 import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
 import {
+  hasWorkflowToolBridgeConfiguration,
   resolveMilestoneStatusObservationTokenState,
   type MilestoneStatusObservationTokenState,
   warmWorkflowToolBridges,
@@ -102,9 +103,13 @@ export interface RunMcpServerCliOptions {
   sweepProjectOrphanMcpServers?: (projectDir: string) => void;
   unregisterMcpInstance?: (projectDir: string) => void;
   createSessionManager?: () => SessionManagerLike;
-  createMcpServer?: (sessionManager: SessionManagerLike) => Promise<{ server: McpServerLike }>;
+  createMcpServer?: (
+    sessionManager: SessionManagerLike,
+    options: { includeWorkflowTools: boolean },
+  ) => Promise<{ server: McpServerLike }>;
   importStdioServerTransport?: () => Promise<{ StdioServerTransport: StdioTransportConstructor }>;
   warmWorkflowToolBridges?: () => Promise<unknown> | unknown;
+  hasWorkflowToolBridgeConfiguration?: (env: NodeJS.ProcessEnv) => boolean;
   resolveMilestoneStatusObservationTokenState?: (
     projectDir: string,
     token: string,
@@ -220,10 +225,13 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
   const unregisterInstance = options.unregisterMcpInstance ?? unregisterMcpInstance;
   const createSessionManager = options.createSessionManager ?? (() => new SessionManager());
   const createServer = options.createMcpServer ?? (
-    async (manager: SessionManagerLike) => createMcpServer(manager as SessionManager)
+    async (manager: SessionManagerLike, serverOptions: { includeWorkflowTools: boolean }) =>
+      createMcpServer(manager as SessionManager, serverOptions)
   );
   const importTransport = options.importStdioServerTransport ?? importDefaultStdioServerTransport;
   const warmBridges = options.warmWorkflowToolBridges ?? warmWorkflowToolBridges;
+  const hasBridgeConfiguration = options.hasWorkflowToolBridgeConfiguration
+    ?? hasWorkflowToolBridgeConfiguration;
   const resolveObservationTokenState = options.resolveMilestoneStatusObservationTokenState
     ?? resolveMilestoneStatusObservationTokenState;
 
@@ -302,6 +310,8 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
     }
     if (cleaningUp) return;
 
+    const includeWorkflowTools = hasBridgeConfiguration(env);
+
     if (!probeSession && !pumpScopedObservationSession && !clientManagedSession) {
       sweepOrphans(projectDir);
       if (registerInstance(projectDir) === false) {
@@ -311,7 +321,7 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
     }
 
     sessionManager = createSessionManager();
-    ({ server } = await createServer(sessionManager));
+    ({ server } = await createServer(sessionManager, { includeWorkflowTools }));
 
     const { StdioServerTransport } = await importTransport();
     trackedStdin = createActivityTrackingInput(stdin, () => {
@@ -351,14 +361,15 @@ export async function runMcpServerCli(options: RunMcpServerCliOptions = {}): Pro
         cleanup: () => void cleanup(),
       });
 
-    // Fail closed (ADR-036): warm the executor / write-gate bridges BEFORE
-    // connecting the transport. If a bridge is broken we must not advertise the
-    // workflow tool surface — a rejection here propagates to the catch below so
-    // startup aborts and the client never sees tools that would error on first
-    // call. A healthy warm-up pre-pays the bridge import so the first real tool
-    // call stays fast.
-    await warmBridges();
-    stderr.write('[gsd-mcp-server] workflow bridges ready\n');
+    // Fail closed (ADR-036): when workflow tools are enabled, warm their bridges
+    // BEFORE connecting the transport. A standalone install without bridges
+    // omits that tool surface instead of advertising handlers that cannot run.
+    if (includeWorkflowTools) {
+      await warmBridges();
+      stderr.write('[gsd-mcp-server] workflow bridges ready\n');
+    } else {
+      stderr.write('[gsd-mcp-server] workflow bridges not configured; workflow tools disabled\n');
+    }
 
     await server.connect(transport);
     stderr.write('[gsd-mcp-server] MCP server started on stdio\n');

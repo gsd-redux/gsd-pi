@@ -8,7 +8,7 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import {
   WORKFLOW_TOOL_NAMES as CONTRACT_WORKFLOW_TOOL_NAMES,
@@ -943,6 +943,26 @@ function getWorkflowExecutorModuleCandidates(env: NodeJS.ProcessEnv = process.en
   );
 
   return [...new Set(candidates)];
+}
+
+export function hasWorkflowToolBridgeConfiguration(
+  env: NodeJS.ProcessEnv = process.env,
+  moduleExists: (modulePath: string) => boolean = existsSync,
+): boolean {
+  if (
+    env.GSD_WORKFLOW_EXECUTORS_MODULE?.trim()
+    || env.GSD_WORKFLOW_WRITE_GATE_MODULE?.trim()
+  ) {
+    return true;
+  }
+
+  const localCandidates = [
+    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
+    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/mcp-bridge.js"),
+  ];
+  return localCandidates.some((candidate) =>
+    moduleExists(fileURLToPath(new URL(candidate, import.meta.url)))
+  );
 }
 
 async function getWorkflowToolExecutors(): Promise<WorkflowToolExecutors> {
