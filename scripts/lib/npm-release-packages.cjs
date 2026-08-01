@@ -11,18 +11,19 @@
 // The required npm set for a release is:
 //   1. the root package (@opengsd/gsd-pi)
 //   2. the native platform packages (@opengsd/engine-*), one per platform
-//   3. every workspace package under packages/* that opts in via "publishConfig"
+//   3. every pnpm workspace package that opts in via "publishConfig"
 //      (the @gsd/* packages have no publishConfig — they ship bundled inside the
 //      gsd-pi tarball and are linked at install time, so they are NOT published)
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { globSync } = require('glob');
+const { parse } = require('yaml');
 
 const { PLATFORM_PACKAGE_DIRS } = require('./version-sync.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const PACKAGES_DIR = path.join(REPO_ROOT, 'packages');
 
 const INTERNAL_DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'];
 
@@ -41,19 +42,28 @@ function getEnginePackageNames() {
 }
 
 /**
- * Workspace packages under packages/* that opt into npm publishing via
+ * Workspace packages that opt into npm publishing via
  * "publishConfig" (and are not marked private). Returns { dir, name, deps }
  * where deps is the subset of this set that the package depends on.
  */
-function getPublishableWorkspacePackages() {
-  if (!fs.existsSync(PACKAGES_DIR)) return [];
-  const workspaces = [];
-  for (const dir of fs.readdirSync(PACKAGES_DIR)) {
-    const pkgJsonPath = path.join(PACKAGES_DIR, dir, 'package.json');
-    if (!fs.existsSync(pkgJsonPath)) continue;
+function getPublishableWorkspacePackages(repoRoot = REPO_ROOT) {
+  const workspacePath = path.join(repoRoot, 'pnpm-workspace.yaml');
+  if (!fs.existsSync(workspacePath)) return [];
+  const workspace = parse(fs.readFileSync(workspacePath, 'utf8'));
+  const patterns = Array.isArray(workspace?.packages) ? workspace.packages : [];
+  const includes = patterns.filter((pattern) => typeof pattern === 'string' && !pattern.startsWith('!'));
+  const excludes = patterns
+    .filter((pattern) => typeof pattern === 'string' && pattern.startsWith('!'))
+    .map((pattern) => `${pattern.slice(1).replace(/\/$/, '')}/package.json`);
+  const manifests = globSync(
+    includes.map((pattern) => `${pattern.replace(/\/$/, '')}/package.json`),
+    { cwd: repoRoot, nodir: true, ignore: ['**/node_modules/**', ...excludes] },
+  );
+  const workspaces = manifests.map((manifest) => {
+    const pkgJsonPath = path.join(repoRoot, manifest);
     const pkg = readJson(pkgJsonPath);
-    if (pkg.name) workspaces.push({ dir, name: pkg.name, pkg });
-  }
+    return { dir: path.dirname(manifest), name: pkg.name, pkg };
+  }).filter(({ name }) => name);
   const pkgs = workspaces.filter(({ pkg }) => pkg.private !== true && pkg.publishConfig);
   const workspaceNames = new Set(workspaces.map((p) => p.name));
   const names = new Set(pkgs.map((p) => p.name));
@@ -125,14 +135,14 @@ module.exports = {
 
 if (require.main === module) {
   // `node scripts/lib/npm-release-packages.cjs [--workspace-dirs]`
-  // --workspace-dirs emits "<name>:packages/<dir>" lines in dependency order
+  // --workspace-dirs emits "<name>:<workspace-dir>" lines in dependency order
   // (consumed by scripts/publish-workspace-packages.sh, which publishes each
   // package from its own directory). Default emits the full required name list.
   // Guard: only write when non-empty so `mapfile -t` in bash doesn't receive a
   // lone '\n' that loads one blank element and bypasses the empty-list exit.
   const arg = process.argv[2];
   if (arg === '--workspace-dirs') {
-    const entries = getOrderedWorkspacePublishList().map((p) => `${p.name}:packages/${p.dir}`);
+    const entries = getOrderedWorkspacePublishList().map((p) => `${p.name}:${p.dir}`);
     if (entries.length) process.stdout.write(entries.join('\n') + '\n');
   } else {
     const names = getRequiredNpmPackageNames();

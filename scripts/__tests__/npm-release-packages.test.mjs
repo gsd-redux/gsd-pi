@@ -4,8 +4,9 @@
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
@@ -13,6 +14,7 @@ import test from "node:test";
 const require = createRequire(import.meta.url);
 const {
   getRequiredNpmPackageNames,
+  getPublishableWorkspacePackages,
   getOrderedWorkspacePublishList,
   getEnginePackageNames,
   getRootPackageName,
@@ -59,7 +61,7 @@ test("publishable workspaces do not depend on bundled workspaces at runtime", ()
   const publishedNames = new Set(packages.map((pkg) => pkg.name));
 
   for (const pkg of packages) {
-    const manifestPath = path.join(repoRoot, "packages", pkg.dir, "package.json");
+    const manifestPath = path.join(repoRoot, pkg.dir, "package.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
       for (const [dependency, range] of Object.entries(manifest[field] ?? {})) {
@@ -70,6 +72,37 @@ test("publishable workspaces do not depend on bundled workspaces at runtime", ()
         );
       }
     }
+  }
+});
+
+test("release invariant covers every pnpm workspace root", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "npm-release-workspaces-"));
+  try {
+    writeFileSync(
+      path.join(fixture, "pnpm-workspace.yaml"),
+      "packages:\n  - 'packages/*'\n  - 'extensions/*'\n  - 'web'\n",
+    );
+    mkdirSync(path.join(fixture, "extensions", "publisher"), { recursive: true });
+    writeFileSync(
+      path.join(fixture, "extensions", "publisher", "package.json"),
+      JSON.stringify({
+        name: "@example/publisher",
+        publishConfig: { access: "public" },
+        dependencies: { "@example/private-web": "workspace:*" },
+      }),
+    );
+    mkdirSync(path.join(fixture, "web"), { recursive: true });
+    writeFileSync(
+      path.join(fixture, "web", "package.json"),
+      JSON.stringify({ name: "@example/private-web", private: true }),
+    );
+
+    assert.throws(
+      () => getPublishableWorkspacePackages(fixture),
+      /@example\/publisher is publishable but dependencies contains unpublished workspace dependency @example\/private-web/,
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
   }
 });
 

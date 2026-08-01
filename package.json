@@ -121,7 +121,7 @@
     "verify:native-platform-packages": "node scripts/verify-native-platform-packages.mjs",
     "verify:npm-release": "node scripts/verify-npm-release.mjs",
     "verify:version-sync": "node scripts/verify-version-sync.cjs",
-    "validate-pack": "node scripts/validate-pack.js",
+    "validate-pack": "node scripts/validate-mcp-server-tarball.mjs && node scripts/validate-pack.js",
     "prepack": "node scripts/prepack-resolve-workspace.cjs",
     "postpack": "node scripts/postpack-restore-workspace.cjs",
     "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
