@@ -8,7 +8,7 @@
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { normalizeObjectSchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
-import { sanitizeSchemaForMoonshot } from "@gsd/pi-ai";
+import { sanitizeSchemaForMoonshot } from "./moonshot-schema-sanitizer.js";
 
 const EMPTY_OBJECT_JSON_SCHEMA = { type: "object", properties: {} } as const;
 

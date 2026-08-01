@@ -3,9 +3,23 @@ import test from "node:test";
 import { z } from "zod";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 import { normalizeObjectSchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
-import { collectForbiddenUnionSchemaPaths, sanitizeSchemaForMoonshot } from "@gsd/pi-ai";
+import { sanitizeSchemaForMoonshot } from "./moonshot-schema-sanitizer.js";
 import { SessionManager } from "./session-manager.js";
 import { createMcpServer } from "./server.js";
+
+function collectForbiddenUnionSchemaPaths(value: unknown, path = "$"): string[] {
+	if (value === null || typeof value !== "object") return [];
+	if (Array.isArray(value)) {
+		return value.flatMap((item, index) => collectForbiddenUnionSchemaPaths(item, `${path}[${index}]`));
+	}
+
+	const violations: string[] = [];
+	for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+		if (key === "anyOf" || key === "oneOf" || key === "allOf") violations.push(`${path}.${key}`);
+		violations.push(...collectForbiddenUnionSchemaPaths(nested, `${path}.${key}`));
+	}
+	return violations;
+}
 
 test("sanitizeSchemaForMoonshot flattens zod union workflow fields", () => {
 	const schema = z.object({
@@ -20,9 +34,10 @@ test("sanitizeSchemaForMoonshot flattens zod union workflow fields", () => {
 	const sanitized = sanitizeSchemaForMoonshot(raw);
 	assert.equal(sanitized.type, "object");
 	assert.deepEqual(collectForbiddenUnionSchemaPaths(sanitized), []);
+	const keyFilesSchema = (sanitized.properties as Record<string, unknown>).keyFiles;
+	assert.deepEqual(keyFilesSchema, { type: "array", items: { type: "string" } });
 	const modeSchema = (sanitized.properties as Record<string, unknown>).mode;
-	assert.ok(modeSchema && typeof modeSchema === "object");
-	assert.equal("anyOf" in modeSchema, false);
+	assert.deepEqual(modeSchema, { type: "string", enum: ["build", "query"] });
 });
 
 test("createMcpServer advertises Moonshot-safe inputSchema for every tool", async () => {

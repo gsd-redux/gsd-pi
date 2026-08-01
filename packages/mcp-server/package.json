@@ -50,7 +50,6 @@
     "test": "pnpm run build:test && node --test dist/mcp-server.test.js dist/remote-questions.test.js dist/moonshot-tool-schema.test.js dist/pid-registry.test.js dist/probe-mode.test.js dist/stdio-watchdog.test.js dist/cli-runner.test.js dist/readers/graph.test.js dist/readers/paths.test.js dist/readers/readers.test.js"
   },
   "dependencies": {
-    "@gsd/pi-ai": "workspace:*",
     "@opengsd/contracts": "workspace:*",
     "@opengsd/rpc-client": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.27.1",

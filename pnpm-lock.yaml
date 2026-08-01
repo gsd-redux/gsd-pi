@@ -354,9 +354,6 @@ importers:
 
   packages/mcp-server:
     dependencies:
-      '@gsd/pi-ai':
-        specifier: workspace:*
-        version: link:../pi-ai
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.29.0(zod@4.4.3)

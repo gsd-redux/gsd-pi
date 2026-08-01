@@ -4,6 +4,7 @@
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -16,6 +17,7 @@ const {
   getEnginePackageNames,
   getRootPackageName,
 } = require("../lib/npm-release-packages.cjs");
+const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../..");
 
 test("required npm set includes the previously-missing leaf packages", () => {
   const names = getRequiredNpmPackageNames();
@@ -52,6 +54,25 @@ test("bundled @gsd/* packages are NOT published", () => {
   }
 });
 
+test("publishable workspaces do not depend on bundled workspaces at runtime", () => {
+  const packages = getOrderedWorkspacePublishList();
+  const publishedNames = new Set(packages.map((pkg) => pkg.name));
+
+  for (const pkg of packages) {
+    const manifestPath = path.join(repoRoot, "packages", pkg.dir, "package.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+      for (const [dependency, range] of Object.entries(manifest[field] ?? {})) {
+        if (typeof range !== "string" || !range.startsWith("workspace:")) continue;
+        assert.ok(
+          publishedNames.has(dependency),
+          `${pkg.name} ${field} contains unpublished workspace dependency ${dependency}`,
+        );
+      }
+    }
+  }
+});
+
 test("workspace packages are ordered so dependencies publish first", () => {
   const order = getOrderedWorkspacePublishList().map((p) => p.name);
   const idx = (name) => order.indexOf(name);
@@ -69,7 +90,6 @@ test("--workspace-dirs CLI output has no trailing blank line (regression: empty 
   // When getOrderedWorkspacePublishList() returns [], the previous code wrote
   // ''.join('\n') + '\n' = '\n', causing `mapfile -t` in bash to load one blank
   // element and bypass the ${#ENTRIES[@]} -eq 0 early-exit guard.
-  const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../..");
   const out = execSync("node scripts/lib/npm-release-packages.cjs --workspace-dirs", {
     cwd: repoRoot,
   }).toString();

@@ -47,21 +47,25 @@ function getEnginePackageNames() {
  */
 function getPublishableWorkspacePackages() {
   if (!fs.existsSync(PACKAGES_DIR)) return [];
-  const pkgs = [];
+  const workspaces = [];
   for (const dir of fs.readdirSync(PACKAGES_DIR)) {
     const pkgJsonPath = path.join(PACKAGES_DIR, dir, 'package.json');
     if (!fs.existsSync(pkgJsonPath)) continue;
     const pkg = readJson(pkgJsonPath);
-    if (pkg.private === true) continue;
-    if (!pkg.publishConfig) continue;
-    pkgs.push({ dir, name: pkg.name, pkg });
+    if (pkg.name) workspaces.push({ dir, name: pkg.name, pkg });
   }
+  const pkgs = workspaces.filter(({ pkg }) => pkg.private !== true && pkg.publishConfig);
+  const workspaceNames = new Set(workspaces.map((p) => p.name));
   const names = new Set(pkgs.map((p) => p.name));
   return pkgs.map(({ dir, name, pkg }) => {
     const deps = new Set();
     for (const field of INTERNAL_DEP_FIELDS) {
       for (const dep of Object.keys(pkg[field] || {})) {
-        if (names.has(dep)) deps.add(dep);
+        if (!workspaceNames.has(dep)) continue;
+        if (!names.has(dep)) {
+          throw new Error(`${name} is publishable but ${field} contains unpublished workspace dependency ${dep}`);
+        }
+        deps.add(dep);
       }
     }
     return { dir, name, deps: [...deps] };
