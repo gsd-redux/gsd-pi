@@ -3,9 +3,9 @@ id: T025
 title: Re-baseline the gates — resolve the prompt-golden Phase-2 red leg and the discard-witness native-lock red leg
 wave: 2
 deps: [T024]
-status: in-progress
+status: done
 agent: build_T025
-commit: null
+commit: dd3304633ff567fb8a086db5c3d4a82a590dcc9d
 base: c6935a65bd224bd8416cb8552da97af14c1f5904
 worktree: .worktrees/gsd-path-T025
 task_branch: gsd-path/T025
