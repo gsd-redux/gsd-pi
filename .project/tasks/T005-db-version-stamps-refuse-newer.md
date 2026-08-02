@@ -3,9 +3,9 @@ id: T005
 title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads; realign the legacy-import schema pin + corpus to V46
 wave: 2
 deps: [T001, T003, T024, T025]
-status: in-progress
+status: done
 agent: build_T005
-commit: null
+commit: 92ce63b209d651772f27f4618e1a6329e222b559
 base: 50f88d435508973df096dae077e199f15e45007c
 worktree: .worktrees/gsd-path-T005
 task_branch: gsd-path/T005
