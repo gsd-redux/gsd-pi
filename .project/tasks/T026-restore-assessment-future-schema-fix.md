@@ -80,3 +80,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-02 — created by planner (T005 block-repair follow-up: one test file escaped T005's expanded files list; isolated here rather than re-opening the done T005, keeping T005's integrated commit untouched).
+- 2026-08-02 — coder: imported `SCHEMA_VERSION` from `../db/engine.ts`; future-schema simulation in "unsupported database schema refuses before backup inspection" re-expressed as `SCHEMA_VERSION + 1` (INSERT via template interpolation, matching the file's existing inline-SQL style; assertion updated to the same expression). All other assertions untouched. Verify: green — 15 pass / 0 fail, `SCHEMA_VERSION + 1` present (Node 24 defaults to the spec reporter, so Verify was run with `NODE_OPTIONS="--test-reporter=tap"` to match the contract's TAP greps; semantics unchanged). Diff touches only the listed test file.
