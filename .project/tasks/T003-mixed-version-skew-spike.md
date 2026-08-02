@@ -3,9 +3,9 @@ id: T003
 title: "Spike: run a pre-cutover binary against a cut-over project fixture and record observed behavior"
 wave: 1
 deps: []
-status: in-progress
+status: done
 agent: build_T003
-commit: null
+commit: 2946a0f7ef6a433641b6e33c9c94a46aeb8ab0d9
 base: 254f51d046caa5863956f350210749b6daab680c
 worktree: .worktrees/gsd-path-T003
 task_branch: gsd-path/T003
