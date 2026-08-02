@@ -3,9 +3,9 @@ id: T007
 title: Flip read authority at the derive seam — markdown fallback unreachable on the live path
 wave: 2
 deps: [T001, T006, T024, T025]
-status: in-progress
+status: done
 agent: build_T007
-commit: null
+commit: 6da17d40acfdecf9562bc72a9640f37cfbacaac6
 base: 95bc1a5d035bfb664b9553ad9996facc1b1ea9f1
 worktree: .worktrees/gsd-path-T007
 task_branch: gsd-path/T007
