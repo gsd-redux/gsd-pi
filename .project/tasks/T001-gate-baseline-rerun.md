@@ -3,9 +3,9 @@ id: T001
 title: Re-run all four gates at clean HEAD and record evidence
 wave: 1
 deps: []
-status: in-progress
+status: done
 agent: build_T001
-commit: null
+commit: ecd912871c690d8fdf3c19c358ed1e076e18f3c2
 base: 254f51d046caa5863956f350210749b6daab680c
 worktree: .worktrees/gsd-path-T001
 task_branch: gsd-path/T001
