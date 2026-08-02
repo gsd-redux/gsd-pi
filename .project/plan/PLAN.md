@@ -65,6 +65,7 @@ changes anywhere in this wave.
 | T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006, T024, T025 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/from-db.ts, tests |
 | T008 | markdown-renderer: additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads | T007 | src/resources/extensions/gsd/markdown-renderer.ts, tests |
 | T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008, T024, T025 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
+| T026 | Fix restore-assessment unsupported-schema test after the V46 pin advance (future-schema simulation moves off v46, expressed as SCHEMA_VERSION + 1) | T005 | src/resources/extensions/gsd/tests/legacy-import-restore-assessment.test.ts |
 
 ## Wave 3 — consumers, evidence, command, docs
 
@@ -243,3 +244,18 @@ wave 3 and report; wave 4 waits.
   `tests/single-writer-invariant.test.ts` (T007) hard-excluded — stamp-only
   V46 adds no schema file. T001–T004, T024, T025 (done) untouched; all other
   task ids and deps unchanged.
+- 2026-08-02 — **T005 pin-advance fallout: new T026** (evidence: red test at
+  primary HEAD after T005 integrated as `92ce63b2` —
+  `tests/legacy-import-restore-assessment.test.ts` "unsupported database
+  schema refuses before backup inspection", 14 pass / 1 fail, `actual:
+  'backup'`, `expected: 'authority'`): the test simulated an unsupported
+  future schema by inserting `schema_version` 46, which the V46 pin advance
+  made SUPPORTED (the assessment refuses only when observed ≠
+  `SCHEMA_VERSION`; production code correct, fixture stale). One file escaped
+  T005's expanded files list. Repair: new wave-2 task **T026** (deps [T005])
+  owns only that test file (cross-wave shared with T014, wave 3, layered —
+  T026 makes the version-simulation fix only) and re-expresses the
+  unsupported version as `SCHEMA_VERSION + 1` so the next pin advance cannot
+  re-break it; no corpus fixture needed (the case is stamped inline via
+  SQL). T005's integrated commit is untouched; all other task ids/deps
+  unchanged.

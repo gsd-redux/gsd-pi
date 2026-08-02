@@ -18,7 +18,7 @@ for f in sorted(tasks_dir.glob("T*.md")):
     wave = int(re.search(r"^wave: (\d+)", block, re.M).group(1))
     deps = re.search(r"^deps: \[(.*?)\]", block, re.M).group(1)
     deps = [d.strip() for d in deps.split(",") if d.strip()]
-    files_m = re.search(r"^files:\n((?:  - .*\n)+)", block, re.M)
+    files_m = re.search(r"^files:\n((?:  - [^\n]*(?:\n|$))+)", block, re.M)
     files = [l.strip()[2:].strip() for l in files_m.group(1).splitlines()] if files_m else []
     tasks[tid] = {"wave": wave, "deps": deps, "files": files, "name": f.name}
 
