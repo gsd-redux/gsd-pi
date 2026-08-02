@@ -2,7 +2,7 @@
 id: T005
 title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads
 wave: 2
-deps: [T001, T003, T024]
+deps: [T001, T003, T024, T025]
 status: pending
 agent: null
 commit: null
@@ -135,3 +135,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 
 - 2026-08-01 — created by planner
 - 2026-08-02 — re-scoped by planner (Defect B repair: T003 spike observed silent divergence — refuse-newer must be typed and surfaced at read seams, not just an engine floor). Added deps T003→kept, T024; took `state/derive/db-open.ts` from T007's scope.
+- 2026-08-02 — planner (T024 split repair): dep T025 added — acceptance runs `baseline:refactor:phase0`, green only after T025's re-baseline.

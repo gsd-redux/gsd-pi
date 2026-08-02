@@ -97,3 +97,4 @@ TMP=$(mktemp -u)/none.json; ! node scripts/legacy-cleanup-evidence.mjs --file "$
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — planner (T024 split repair): heads-up from T025 — once the gates pass, the `ensureTelemetryReport` fabrication path becomes REACHABLE (the default evidence command `baseline:refactor:gate` passes but writes no telemetry file, so a bare `legacy:cleanup:evidence` run fabricates an all-zero green). This task's fail-closed redesign must account for the now-live path; evidence recorded in `.project/plan/wave2-gate-baseline.md`.

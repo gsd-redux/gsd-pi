@@ -42,8 +42,9 @@ four tasks write docs only; no production code moves in wave 1.
 
 ## Wave 2 — walking skeleton
 
-Goal: one project, end to end: the gates execute green at clean HEAD (T024 —
-they were unrunnable pre-repair, Defect A); a fixture `~/.gsd` project is
+Goal: one project, end to end: the gates execute at clean HEAD (T024
+contracts redirect) and are verified green (T025 re-baseline — they were
+unrunnable pre-repair, Defect A); a fixture `~/.gsd` project is
 migrated via the existing authority-cutover domain op inside the startup
 EXCLUSIVE claim (verified backup + receipt + idempotent re-entry as no-op);
 refuse-newer is a typed error surfaced loudly at state reads, projection
@@ -57,12 +58,13 @@ changes anywhere in this wave.
 
 | Task | Title | Deps | Files |
 |------|-------|------|-------|
-| T024 | Unblock gates at clean HEAD: redirect @opengsd/contracts to source in both test tiers, re-run the T001 baseline | — | src/resources/extensions/gsd/tests/dist-redirect.mjs, scripts/dist-test-resolve.mjs, .project/plan/wave1-gate-baseline.md |
-| T005 | Stamp gsd.db (application_id, user_version, V46); typed refuse-newer surfaced at the DB-open seam and state reads | T001, T003, T024 | src/resources/extensions/gsd/db/engine.ts, db-workspace.ts, state/derive/db-open.ts, src/headless-query.ts, src/read-cli.ts, tests |
-| T006 | Filesystem-state cutover via the authority-cutover op: EXCLUSIVE-claim migration, idempotent re-entry, authority-epoch loud refusal, partial-destination wedge fix, projection-write version gating, rebuild error propagation | T002, T005, T024 | src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts, migrate-external.ts, src/cli.ts, src/headless-recover.ts, tests |
-| T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006, T024 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/from-db.ts, tests |
+| T024 | Redirect @opengsd/contracts to source in both test tiers so the gates' full test bodies execute at clean HEAD (redirect ONLY — gates need not be green) | — | src/resources/extensions/gsd/tests/dist-redirect.mjs, scripts/dist-test-resolve.mjs, .project/plan/wave1-gate-baseline.md |
+| T025 | Re-baseline the gates: resolve the prompt-golden Phase-2 red leg and the discard-witness native-lock red leg (native build step + loader local-addon preference) | T024 | src/tests/fixtures/prompt-golden-fixtures.ts, src/tests/prompt-golden-fixtures.test.ts, src/resources/extensions/gsd/auto-prompts.ts, packages/native/src/native.ts, src/resources/extensions/gsd/managed-projection-history.ts, src/resources/extensions/gsd/tests/park-milestone.test.ts, .project/plan/wave2-gate-baseline.md |
+| T005 | Stamp gsd.db (application_id, user_version, V46); typed refuse-newer surfaced at the DB-open seam and state reads | T001, T003, T024, T025 | src/resources/extensions/gsd/db/engine.ts, db-workspace.ts, state/derive/db-open.ts, src/headless-query.ts, src/read-cli.ts, tests |
+| T006 | Filesystem-state cutover via the authority-cutover op: EXCLUSIVE-claim migration, idempotent re-entry, authority-epoch loud refusal, partial-destination wedge fix, projection-write version gating, rebuild error propagation | T002, T005, T024, T025 | src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts, migrate-external.ts, src/cli.ts, src/headless-recover.ts, tests |
+| T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006, T024, T025 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/from-db.ts, tests |
 | T008 | markdown-renderer: additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads | T007 | src/resources/extensions/gsd/markdown-renderer.ts, tests |
-| T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008, T024 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
+| T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008, T024, T025 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
 
 ## Wave 3 — consumers, evidence, command, docs
 
@@ -106,11 +108,15 @@ wave 3 and report; wave 4 waits.
 
 ## Dependency notes
 
-- T024 has no deps and is the first wave-2 layer: every gate- or test-tier
-  Verify in waves 2+ requires the `@opengsd/contracts` source redirect it
-  lands. T005, T006, T007, and T009 carry the dep explicitly (their
-  acceptance/Verify run `baseline:refactor:phase0`, the successor gate, or
-  `verify:pr`); T008 inherits it transitively via T007.
+- T024→T025 is the gate-unblock chain and the first wave-2 layers: T024 lands
+  the `@opengsd/contracts` source redirect so the gates' test bodies EXECUTE
+  (its Verify asserts execution, not greenness); T025 resolves the two
+  surviving true-baseline red legs and records `VERDICT: BASELINE GREEN` in
+  `.project/plan/wave2-gate-baseline.md`. T005, T006, T007, and T009 depend
+  on both explicitly (their acceptance/Verify run `baseline:refactor:phase0`,
+  the successor gate, or `verify:pr`); T008 inherits transitively via T007;
+  waves 3–4 inherit transitively (T023's full-gate closeout reaches T025 via
+  every wave-2/3 chain).
 - T005→T006→T007→T008 is the skeleton spine: schema stamps land first so any
   binary new enough to check refuses loudly on skew; the cutover op rides the
   existing `migrateSchema` chain and `project-authority-cutover-domain-operation.ts`
@@ -175,3 +181,31 @@ wave 3 and report; wave 4 waits.
   ADR-046 downgrade window; the release-note directive (upgrade all linked
   worktrees together) remains necessary and is now empirically justified.
   T001–T004 (done) unchanged; all other task ids and deps unchanged.
+- 2026-08-02 — **T024 block + split** (evidence: T024 task Log — coder
+  narrative + orchestrator rejection record; `.project/plan/wave1-gate-baseline.md`):
+  the contracts redirect worked (ERR_MODULE_NOT_FOUND eliminated; gate runs
+  34 tests; witnesses 2/15 → 14/15 executing) but T024's Verify bundled a
+  gate-green leg that cannot pass because the TRUE baseline is red for two
+  pre-existing, redirect-unrelated reasons. Repair: **T024 re-scoped to the
+  redirect ONLY** — its Verify proves ERR_MODULE_NOT_FOUND is eliminated and
+  the previously-dead tests/witnesses EXECUTE, not that gates are green
+  (frontmatter reset to pending/null; blocked-history Log preserved; the
+  validated implementation approach kept verbatim). New task **T025**
+  (wave 2, deps [T024]) owns the two red legs: (1) prompt-golden Phase-2
+  reduction assertion (9454/15400, needs ≤9240) — diagnose stale reference
+  (suspect: prompt-compression commit 331cee83a) vs genuine regression vs
+  test-logic defect, resolve exactly one with evidence visible in diff + Log,
+  never touching the 0.6 factor or weakening `verify:pr`; (2) `discard`
+  witness native-lock failure — root cause CONFIRMED environmental by planner
+  investigation: the pinned `@opengsd/engine-darwin-arm64` v1.11.0 binary
+  loads but lacks `ProjectionRootIdentityLock` (added to the Rust engine
+  after the pin; CI documents this skew and builds from source with
+  `GSD_NATIVE_PREFER_LOCAL=1`), and `packages/native/src/native.ts` tries the
+  stale npm package first so it never reaches local builds — T025 makes the
+  loader prefer a present local addon and adds the documented
+  `pnpm run build:native:dev` step to the gate procedure (no package.json or
+  gate-script changes, keeping T025's files disjoint from T009/T024). Final
+  green re-run recorded in `.project/plan/wave2-gate-baseline.md` (owned by
+  T025). T005/T006/T007/T009 now depend on T025 as well as T024; T015's Log
+  notes the `legacy:cleanup:evidence` fabrication path becomes reachable once
+  the gates pass (already scoped for T015's fail-closed redesign).

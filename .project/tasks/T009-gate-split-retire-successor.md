@@ -2,7 +2,7 @@
 id: T009
 title: Split-retire the no-cutover gate — create gate:lifecycle-shadow-no-cutover and add it to verify:pr
 wave: 2
-deps: [T002, T007, T008, T024]
+deps: [T002, T007, T008, T024, T025]
 status: pending
 agent: null
 commit: null
@@ -100,3 +100,4 @@ test -f scripts/lifecycle-shadow-no-cutover-gate.mjs && test ! -f scripts/semant
 
 - 2026-08-01 — created by planner
 - 2026-08-02 — re-scoped by planner (Defect A repair): dep T024 added — this task's Verify runs `gate:lifecycle-shadow-no-cutover` and `verify:pr`, which require the contracts redirect to execute at clean HEAD.
+- 2026-08-02 — planner (T024 split repair): dep T025 added — the successor gate inherits the `discard` witness, which requires T025's native build procedure (`pnpm run build:native:dev` after install; the loader then prefers the local addon) to execute green at clean HEAD.

@@ -2,7 +2,7 @@
 id: T006
 title: Filesystem-state cutover via the authority-cutover op + write-side skew protections (projection-write gating, rebuild error propagation)
 wave: 2
-deps: [T002, T005, T024]
+deps: [T002, T005, T024, T025]
 status: pending
 agent: null
 commit: null
@@ -129,3 +129,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 
 - 2026-08-01 — created by planner
 - 2026-08-02 — re-scoped by planner (Defect B repair: T003 spike mandates projection-write version gating and rebuild-path error propagation; added src/cli.ts, src/headless-recover.ts, two test files, dep T024).
+- 2026-08-02 — planner (T024 split repair): dep T025 added — acceptance runs `baseline:refactor:phase0`, green only after T025's re-baseline.
