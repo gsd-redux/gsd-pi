@@ -3,12 +3,12 @@ id: T006
 title: Filesystem-state cutover via the authority-cutover op + write-side skew protections (projection-write gating, rebuild error propagation)
 wave: 2
 deps: [T002, T005, T024, T025]
-status: pending
-agent: null
+status: in-progress
+agent: build_T006
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: d5ad152436619cedcab1743b6b254493ac45fc60
+worktree: .worktrees/gsd-path-T006
+task_branch: gsd-path/T006
 files:
   - src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts
   - src/resources/extensions/gsd/migrate-external.ts
