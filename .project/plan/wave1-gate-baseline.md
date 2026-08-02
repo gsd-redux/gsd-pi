@@ -97,3 +97,45 @@ Notes for re-baselining before wave 2:
   `dist-redirect.mjs` to cover `@opengsd/contracts`, then re-run this baseline.
 - `legacy:cleanup:gate` behaves honestly on a missing file (ENOENT, exit 1) — no fabricated
   green; it is not counted among the RED gates.
+
+## Re-run after T024 contracts redirect
+
+- Date: 2026-08-02 (UTC)
+- Scope: redirect-only re-run. `packages/contracts/dist` absent throughout (confirmed before
+  each run). Fix under test: `dist-redirect.mjs` (strip-types tier) and
+  `dist-test-resolve.mjs` (compiled tier) now redirect `@opengsd/contracts` to source /
+  `dist-test/packages/contracts/src/index.js`. No gate script, test, fixture, or package
+  was built or modified.
+
+### 1. `pnpm run baseline:refactor:gate` — exit code 1 (expected; T025 leg)
+
+Zero `ERR_MODULE_NOT_FOUND` in output. All 34 tests now EXECUTE (previously 2 of 34 died on
+the contracts module error before their assertions ran): 33 pass, 1 fail.
+Surviving red leg: `prompt golden fixtures meet Phase 2 reduction gate` — a true Phase-2
+reduction assertion failure, pre-existing, owned by T025.
+
+### 2. `pnpm run gate:semantic-shadow-no-cutover` — exit code 1 (expected; T025 leg)
+
+Zero `ERR_MODULE_NOT_FOUND` in output. `Structural: 8/8`, `Behavioral: 14/15` (was 2/15 at
+baseline). 13 witnesses that previously never executed now execute and pass:
+runtime-disagreement, frozen-public-response, mode-transport-matrix, unadopted-import,
+park-unpark, skipped-dispatch, db-unavailable-dispatch, db-unavailable-resolver,
+db-unavailable-resolver-no-active, resolve-dispatch-authority, db-unavailable-status,
+state-derivation-authority — plus semantic-shadow-no-cutover itself.
+Surviving red leg: `discard` witness — native projection-root identity locking unavailable
+(@gsd/native), pre-existing, owned by T025.
+
+### 3. Compiled-tier spot check — `pnpm run test:compile`, then
+`node --import ./scripts/dist-test-resolve.mjs --experimental-test-isolation=process --test dist-test/src/tests/prompt-golden-fixtures.test.js`
+
+`@opengsd/contracts` resolves in the compiled tier (direct import returns all contract
+exports: RPC_CONTRACT_VERSION, WORKFLOW_TOOL_CONTRACTS, etc.; compiled output present at
+`dist-test/packages/contracts/src/index.js`). The prompt-golden test file executes its 3
+tests (1 pass, 2 fail). Both failures are `ERR_MODULE_NOT_FOUND` for
+`dist-test/packages/native/dist/file-identity/index.js` (imported transitively via
+`atomic-write.js`) — a pre-existing compiled-tier gap for the native package (compile-tests
+emits `packages/native/src`, the hook's native mapping expects `dist/`), unrelated to the
+contracts redirect and out of scope here; the Phase-2 assertion outcome itself is T025's
+concern.
+
+No new VERDICT line: the final green verdict belongs to T025's evidence doc.
