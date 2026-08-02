@@ -1,0 +1,101 @@
+---
+id: T009
+title: Split-retire the no-cutover gate — create gate:lifecycle-shadow-no-cutover and add it to verify:pr
+wave: 2
+deps: [T002, T007, T008]
+status: pending
+agent: null
+commit: null
+base: null
+worktree: null
+task_branch: null
+files:
+  - scripts/semantic-shadow-no-cutover-gate.mjs
+  - scripts/lifecycle-shadow-no-cutover-gate.mjs
+  - package.json
+  - src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts
+---
+
+# T009 — Split-retire gate:semantic-shadow-no-cutover; wire successor into verify:pr
+
+## Context
+
+Gate retirement is settled as a split-retire; NO invariant is dropped.
+`scripts/semantic-shadow-no-cutover-gate.mjs` today runs 8 structural checks
+(status-response-authority, parallel-eligibility-authority,
+slice-dispatch-authority, dispatch-resolver-no-canonical-read,
+retry-ledger-authority, state-derivation-authority,
+validation-assessment-authority, closed-local-inputs) plus 16 behavioral
+witnesses. Per SYNTHESIS.md the disposition is four-class: (a)
+lifecycle-shadow invariants move VERBATIM into a successor gate
+`gate:lifecycle-shadow-no-cutover` — D005 remains in force there (T002);
+(b) filesystem-state invariants are now positive post-cutover unit checks —
+already landed as `tests/derive-seam-authority.test.ts` (T007),
+`tests/projection-fidelity.test.ts` (T008), and the existing
+`tests/parsers-legacy-importers.test.ts` registry; (c) DB-unavailable
+fail-closed witnesses and the never-promote-`omitted` rule stay as-is in the
+unit tier; (d) unadopted import/reconcile and frozen cross-mode response
+witnesses are deleted on the ADR-046 timebox — wave-4 task T021, NOT here;
+(e) `closed-local-inputs` ports to the successor gate unchanged. The
+successor gate is ADDED to `verify:pr` — strengthening it; the veto only
+forbids weakening.
+
+## Steps
+
+1. Read `scripts/semantic-shadow-no-cutover-gate.mjs` fully (857 lines;
+   exports `NO_CUTOVER_SOURCE_FILES`, `NO_CUTOVER_BEHAVIORAL_WITNESSES`,
+   `analyzeNoCutoverSources`, `runSemanticShadowNoCutoverGate`).
+2. Create `scripts/lifecycle-shadow-no-cutover-gate.mjs`: port the structural
+   checks for lifecycle-shadow authority — status-response-authority,
+   parallel-eligibility-authority, slice-dispatch-authority,
+   dispatch-resolver-no-canonical-read, retry-ledger-authority,
+   state-derivation-authority, validation-assessment-authority — plus
+   `closed-local-inputs` (pointed at the NEW gate file itself), and the
+   lifecycle behavioral witnesses: runtime-disagreement,
+   resolve-dispatch-authority, state-derivation-authority,
+   same-status-repair, park-unpark, discard, skipped-dispatch,
+   db-unavailable-dispatch, db-unavailable-resolver,
+   db-unavailable-resolver-no-active, db-unavailable-status. Keep the
+   timeboxed witnesses (frozen-public-response, mode-transport-matrix,
+   unadopted-import, unadopted-reconcile) in the successor gate's witness
+   list with an explicit `// ADR-046 timebox: delete after 2 stable releases
+   + >=60 days post-cutover release (T021)` comment — they keep running
+   until T021 removes them. Reuse the old gate's analysis helpers by
+   extracting them into a shared module ONLY if duplication would exceed
+   ~200 lines; otherwise a self-contained successor script is preferred
+   (simplicity first).
+3. Retire the old gate: delete `scripts/semantic-shadow-no-cutover-gate.mjs`
+   and remove the `gate:semantic-shadow-no-cutover` script from
+   `package.json`. In
+   `src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts`,
+   remove any self-test that imports the deleted gate script; keep the
+   behavioral witness tests themselves intact (the successor gate invokes
+   them by title).
+4. `package.json`: add `"gate:lifecycle-shadow-no-cutover": "node
+   scripts/lifecycle-shadow-no-cutover-gate.mjs"` and append
+   ` && pnpm run gate:lifecycle-shadow-no-cutover` to the `verify:pr`
+   script. Do not remove or alter any other verify:pr component.
+5. Sanity-run: `pnpm run gate:lifecycle-shadow-no-cutover` must be green at
+   the task commit; the old gate name must no longer appear in package.json.
+
+## Acceptance criteria
+
+1. `scripts/lifecycle-shadow-no-cutover-gate.mjs` exists and passes; every
+   lifecycle structural check and non-timeboxed witness from the old gate
+   has a successor home — enumerate the mapping in the task Log.
+2. Timeboxed witnesses still run under the successor gate, marked for T021.
+3. `verify:pr` includes the successor gate and loses nothing else; the old
+   gate script and its package.json entry are gone.
+4. `tests/semantic-shadow-no-cutover.test.ts` no longer imports the deleted
+   gate script; witness tests still pass by title.
+5. `pnpm run verify:pr` green at the task commit.
+
+## Verify
+
+```bash
+test -f scripts/lifecycle-shadow-no-cutover-gate.mjs && test ! -f scripts/semantic-shadow-no-cutover-gate.mjs && grep -q "gate:lifecycle-shadow-no-cutover" package.json && grep -q "verify:pr.*gate:lifecycle-shadow-no-cutover" package.json && pnpm run gate:lifecycle-shadow-no-cutover
+```
+
+## Log
+
+- 2026-08-01 — created by planner

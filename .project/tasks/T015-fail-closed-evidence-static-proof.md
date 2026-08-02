@@ -1,0 +1,99 @@
+---
+id: T015
+title: Fail-closed legacy:cleanup:evidence redesign + static no-caller/no-importer proof
+wave: 3
+deps: [T002, T007]
+status: pending
+agent: null
+commit: null
+base: null
+worktree: null
+task_branch: null
+files:
+  - scripts/legacy-cleanup-evidence.mjs
+  - scripts/legacy-cleanup-gate.mjs
+  - scripts/legacy-state-path-proof.mjs
+  - src/tests/legacy-cleanup-evidence.test.ts
+  - src/tests/legacy-cleanup-gate.test.ts
+  - package.json
+---
+
+# T015 — Fail-closed evidence pipeline + static state-path proof (NO new counters)
+
+## Context
+
+The deletion-proof strategy is settled: re-base the proof on STATIC evidence,
+NOT on building the missing runtime counter. The live derive seam already
+refuses markdown fallback (post-T007 it is unreachable), so the honest proof
+is: (a) a static no-caller/no-importer AST proof for the legacy state-read
+path, (b) the `parsers-legacy` importer-registry test driven to zero
+production importers, (c) a redesigned `legacy:cleanup:evidence` that FAILS
+CLOSED — today `ensureTelemetryReport` (scripts/legacy-cleanup-evidence.mjs:73-87)
+fabricates an all-zero report when no telemetry file exists, so green is
+satisfiable by construction and proves nothing (T001 confirmed this at
+HEAD). The five existing counters (`legacy.workflowEngineUsed`,
+`legacy.uokFallbackUsed`, `legacy.mcpAliasUsed`,
+`legacy.componentFormatUsed`, `legacy.providerDefaultUsed`) keep their
+current categories; NO `legacy.markdownFallbackUsed` counter is added —
+that decision is settled, do not revisit it.
+
+## Steps
+
+1. Read `scripts/legacy-cleanup-evidence.mjs`, `scripts/legacy-cleanup-gate.mjs`,
+   `src/tests/legacy-cleanup-evidence.test.ts`,
+   `src/tests/legacy-cleanup-gate.test.ts`.
+2. Fail-closed redesign of `legacy-cleanup-evidence.mjs`: when the telemetry
+   file is missing (ENOENT) the command MUST exit non-zero with a
+   `telemetry evidence missing — cannot prove zero usage` error; delete the
+   `ensureTelemetryReport` fabrication path. When the file exists but was
+   not produced during this invocation's evidence commands (compare the
+   report `ts` against the run start), exit non-zero with a stale-evidence
+   error. Green now requires real, fresh telemetry output from the evidence
+   commands plus zero non-zero counters.
+3. New `scripts/legacy-state-path-proof.mjs` — the static proof, modeled on
+   the AST utilities already in the retiring gate style: (a) AST-scan (use
+   the `typescript` package like
+   `scripts/semantic-shadow-no-cutover-gate.mjs` does, or the importer
+   registry's regex discipline — pick one and justify in a comment) proving
+   zero production callers of `_deriveStateImpl` and zero production
+   importers of `parsers-legacy` outside `tests/`; (b) exit non-zero
+   listing every offending file:line; (c) a `--json` report mode. Until
+   T020/T022 land, this proof reports the remaining known importers — wire
+   it so `legacy:cleanup:gate` runs it and BLOCKS while any production
+   importer/caller exists. This makes the gate honest: green ⇔ zero legacy
+   state-path usage, provable statically.
+4. `legacy-cleanup-gate.mjs`: integrate the static proof — the gate fails
+   when the proof lists any offender, when telemetry is missing/stale, or
+   when any counter is non-zero/missing. Keep the existing counter
+   categories unchanged.
+5. `package.json`: add `"legacy:cleanup:proof": "node
+   scripts/legacy-state-path-proof.mjs"`; keep existing script names
+   unchanged.
+6. Update `src/tests/legacy-cleanup-evidence.test.ts` and
+   `src/tests/legacy-cleanup-gate.test.ts`: missing telemetry ⇒ non-zero;
+   stale telemetry ⇒ non-zero; fabricated all-zero reports no longer occur;
+   fresh zero telemetry + clean static proof ⇒ pass. Update the gate test
+   for the new static-proof integration. Any test that asserted the
+   fabricated-report behavior is removed (AGENTS.md).
+
+## Acceptance criteria
+
+1. `legacy:cleanup:evidence` exits non-zero on missing or stale telemetry —
+   green is no longer satisfiable by construction.
+2. `legacy:cleanup:proof` exits non-zero listing offenders while any
+   production `_deriveStateImpl` caller or `parsers-legacy` importer
+   exists, and zero when none exist (test with a fixture offender).
+3. `legacy:cleanup:gate` composes telemetry + static proof; the five
+   counter categories are unchanged; no new runtime counter exists
+   anywhere.
+4. Both script test files updated and green.
+
+## Verify
+
+```bash
+TMP=$(mktemp -u)/none.json; ! node scripts/legacy-cleanup-evidence.mjs --file "$TMP" >/dev/null 2>&1 && node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/tests/legacy-cleanup-evidence.test.ts src/tests/legacy-cleanup-gate.test.ts && grep -q "legacy:cleanup:proof" package.json && ! grep -rn "markdownFallbackUsed" scripts/ src/resources/extensions/gsd --include="*.mjs" --include="*.ts" | grep -v tests
+```
+
+## Log
+
+- 2026-08-01 — created by planner
