@@ -3,7 +3,7 @@ id: T005
 title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads
 wave: 2
 deps: [T001, T003, T024, T025]
-status: in-progress
+status: blocked
 agent: build_T005
 commit: null
 base: c3ed1ff366cc328810cf79003108793962ccf647
@@ -136,3 +136,5 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 - 2026-08-01 — created by planner
 - 2026-08-02 — re-scoped by planner (Defect B repair: T003 spike observed silent divergence — refuse-newer must be typed and surfaced at read seams, not just an engine floor). Added deps T003→kept, T024; took `state/derive/db-open.ts` from T007's scope.
 - 2026-08-02 — planner (T024 split repair): dep T025 added — acceptance runs `baseline:refactor:phase0`, green only after T025's re-baseline.
+- 2026-08-02 — coder BLOCKED (plan defect: step 1b contradicts acceptance #4 within the files list). Implementation of Steps 1–6 is complete in the worktree: task Verify passes (14/14 tests across db-open-version-stamp/headless-query-db-open/read-cli-schema-too-new + all greps) and `baseline:refactor:phase0` is green (140/140). But `pnpm run typecheck:extensions` cannot be clean with the mandated `SCHEMA_VERSION = 46`: it conflicts with `LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION = 45 as const` in `src/resources/extensions/gsd/legacy-import-contract.ts` (NOT in files), producing TS2322 "Type '46' is not assignable to type '45'" in five unlisted test files: `tests/project-authority-cutover.test.ts:93`, `tests/legacy-import-forward-repair.test.ts:203`, `tests/legacy-import-application-writer.test.ts:82`, `tests/legacy-import-application-result.test.ts:387`, `tests/domain-operation.test.ts:149`. Fixing requires unlisted paths — the V45-bump precedent (commit 9c338846f) advanced the pin AND regenerated the legacy-import corpus (binary .gsd.db fixtures + oracle.json) in the same commit; runtime legacy-import/headless-recover tests also go red ("legacy import Preview requires database schema 45"). Needed: expand T005's files list to include the legacy-import pin + fixture regen, or spin a companion task for it. (Note: two unrelated oauth-api-model-routing typecheck errors were environmental — packages/pi-ai dist unbuilt in the worktree — and cleared after `pnpm --filter @gsd/pi-ai build`.)
+- 2026-08-02 — orchestrator: block accepted as documented plan defect (not an implementation failure — diff not rejected). Isolated worktree .worktrees/gsd-path-T005 RETAINED at base c3ed1ff366cc328810cf79003108793962ccf647 on branch gsd-path/T005 with the complete Steps 1–6 implementation uncommitted; no product commit created. Routing to planner for contract repair (files-list expansion or companion task), then resuming build_T005 in the retained worktree.
