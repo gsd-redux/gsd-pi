@@ -3,9 +3,9 @@ id: T006
 title: Filesystem-state cutover via the authority-cutover op + write-side skew protections (projection-write gating, rebuild error propagation)
 wave: 2
 deps: [T002, T005, T024, T025]
-status: in-progress
+status: done
 agent: build_T006
-commit: null
+commit: ffc8fca6cbee8441bd5d7af4ee8d3fe96cd6f659
 base: d5ad152436619cedcab1743b6b254493ac45fc60
 worktree: .worktrees/gsd-path-T006
 task_branch: gsd-path/T006
