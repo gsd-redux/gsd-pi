@@ -3,12 +3,12 @@ id: T024
 title: Unblock gates at clean HEAD — redirect @opengsd/contracts to source in both test tiers, then re-run the T001 baseline
 wave: 2
 deps: []
-status: in-progress
+status: blocked
 agent: build_T024
 commit: null
 base: 219c3ad52bdc46b0753da1c57e5943dd03954a0a
-worktree: .worktrees/gsd-path-T024
-task_branch: gsd-path/T024
+worktree: null
+task_branch: null
 files:
   - src/resources/extensions/gsd/tests/dist-redirect.mjs
   - scripts/dist-test-resolve.mjs
@@ -103,3 +103,5 @@ grep -q "@opengsd/contracts" src/resources/extensions/gsd/tests/dist-redirect.mj
 ## Log
 
 - 2026-08-02 — created by planner (Defect A repair: gates unrunnable at clean HEAD, `@opengsd/contracts` never redirected to source)
+- 2026-08-02 — coder: redirect implemented in both tiers (`dist-redirect.mjs` exact + `dist/index.js` + subpath branches; `dist-test-resolve.mjs` WORKSPACE_ENTRIES/BUILT_PACKAGE_ENTRIES `'contracts'`, `'@opengsd'` scope, exact-match branch in `resolveWorkspaceSubpath`). Contracts `ERR_MODULE_NOT_FOUND` eliminated: baseline:refactor:gate now runs 34 tests (33 pass), semantic-shadow behavioral witnesses 2/15 → 14/15, compiled-tier `@opengsd/contracts` import verified resolving. Baseline re-run appended to `.project/plan/wave1-gate-baseline.md` (## Re-run after T024). Verify: greps pass, gate leg exit 1. BLOCKED — true baseline red: baseline:refactor:gate (prompt-golden Phase-2 reduction assertion 9454/15400 < 40%), baseline:refactor:phase0 (embedded gate), gate:semantic-shadow-no-cutover (`discard` witness — @gsd/native projection-root identity locking unavailable). Not fixed per step 6; plan re-baselines before T005.
+- 2026-08-02 — orchestrator: Verify rejected (gate leg exit 1 — pre-existing reds unrelated to the contracts redirect). Rejected diff recorded: paths {scripts/dist-test-resolve.mjs, src/resources/extensions/gsd/tests/dist-redirect.mjs, .project/plan/wave1-gate-baseline.md, .project/tasks/T024-gate-unblock-contracts-redirect.md}, diff hash bcd8b5561655c8e99b311241f7c2adcd380ec808. All rejected changes task-owned; worktree and branch retired. Plan defect: T024 Verify bundled the gate re-run leg, which cannot pass while the true baseline is red — plan repair splits the redirect task from the re-baseline task (T025) before retry.
