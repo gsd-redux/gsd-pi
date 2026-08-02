@@ -3,9 +3,9 @@ id: T004
 title: Produce the authoritative parsers-legacy importer union inventory with per-consumer dispositions
 wave: 1
 deps: []
-status: in-progress
+status: done
 agent: build_T004
-commit: null
+commit: ad1187974803678c68c03d2a30417745a1731653
 base: 254f51d046caa5863956f350210749b6daab680c
 worktree: .worktrees/gsd-path-T004
 task_branch: gsd-path/T004
