@@ -3,9 +3,9 @@ id: T009
 title: Split-retire the no-cutover gate — create gate:lifecycle-shadow-no-cutover and add it to verify:pr
 wave: 2
 deps: [T002, T007, T008, T024, T025]
-status: in-progress
+status: done
 agent: build_T009
-commit: null
+commit: 3a627dd52268a3978c309bbb651ef7de2f6ec7f9
 base: a41848537874f36bfb7a3b9e2d44671f83658422
 worktree: .worktrees/gsd-path-T009
 task_branch: gsd-path/T009
