@@ -60,7 +60,7 @@ changes anywhere in this wave.
 |------|-------|------|-------|
 | T024 | Redirect @opengsd/contracts to source in both test tiers so the gates' full test bodies execute at clean HEAD (redirect ONLY — gates need not be green) | — | src/resources/extensions/gsd/tests/dist-redirect.mjs, scripts/dist-test-resolve.mjs, .project/plan/wave1-gate-baseline.md |
 | T025 | Re-baseline the gates: resolve the prompt-golden Phase-2 red leg and the discard-witness native-lock red leg (native build step + loader local-addon preference) | T024 | src/tests/fixtures/prompt-golden-fixtures.ts, src/tests/prompt-golden-fixtures.test.ts, src/resources/extensions/gsd/auto-prompts.ts, packages/native/src/native.ts, src/resources/extensions/gsd/managed-projection-history.ts, src/resources/extensions/gsd/tests/park-milestone.test.ts, .project/plan/wave2-gate-baseline.md |
-| T005 | Stamp gsd.db (application_id, user_version, V46); typed refuse-newer surfaced at the DB-open seam and state reads | T001, T003, T024, T025 | src/resources/extensions/gsd/db/engine.ts, db-workspace.ts, state/derive/db-open.ts, src/headless-query.ts, src/read-cli.ts, tests |
+| T005 | Stamp gsd.db (application_id, user_version, V46); typed refuse-newer surfaced at the DB-open seam and state reads; legacy-import schema pin + corpus realigned to V46 | T001, T003, T024, T025 | src/resources/extensions/gsd/db/engine.ts, db-workspace.ts, state/derive/db-open.ts, src/headless-query.ts, src/read-cli.ts, legacy-import-contract.ts, legacy-import-surfaces.ts, legacy-import corpus fixtures, tests |
 | T006 | Filesystem-state cutover via the authority-cutover op: EXCLUSIVE-claim migration, idempotent re-entry, authority-epoch loud refusal, partial-destination wedge fix, projection-write version gating, rebuild error propagation | T002, T005, T024, T025 | src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts, migrate-external.ts, src/cli.ts, src/headless-recover.ts, tests |
 | T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006, T024, T025 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/from-db.ts, tests |
 | T008 | markdown-renderer: additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads | T007 | src/resources/extensions/gsd/markdown-renderer.ts, tests |
@@ -130,6 +130,16 @@ wave 3 and report; wave 4 waits.
   `src/cli.ts` graph build, refuse-newer propagation in
   `src/headless-recover.ts`). T006 depends on T005 because both protections
   consume T005's typed error/reason.
+- T005 also owns the legacy-import schema-pin advance
+  (`LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION` 45→46) and the corpus
+  realignment: the V44→V45 precedent (`9c338846f`) landed pin + corpus regen +
+  test updates in a single commit, and the pin's literal type cannot compile
+  against `SCHEMA_VERSION = 46` otherwise. `tests/legacy-import-corpus.test.ts`
+  is cross-wave shared with T012 (wave 3, layered — T005 makes the version
+  bump only). `tests/project-authority-cutover.test.ts` moved from T006 to
+  T005 (same-wave sharing disallowed; T005 fixes its pin-related TS2322), and
+  T006's end-to-end coverage lives in its new own file
+  `tests/project-authority-cutover-filesystem-state.test.ts`.
 - T009 depends on T007+T008 because the successor gate's positive post-cutover
   checks (DB-authority at the derive seam, projection fidelity against stamped
   projections) must exist before the old gate's invariants are re-homed.
@@ -209,3 +219,27 @@ wave 3 and report; wave 4 waits.
   T025). T005/T006/T007/T009 now depend on T025 as well as T024; T015's Log
   notes the `legacy:cleanup:evidence` fabrication path becomes reachable once
   the gates pass (already scoped for T015's fail-closed redesign).
+- 2026-08-02 — **T005 block + expansion** (evidence: T005 task Log — coder
+  block report + orchestrator acceptance): Steps 1–6 landed green in the
+  retained worktree (task Verify 14/14, `baseline:refactor:phase0` 140/140)
+  but acceptance #4 was unsatisfiable — `SCHEMA_VERSION = 46` collides with
+  `LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION = 45 as const`
+  (`legacy-import-contract.ts:90`, not in T005's files), producing TS2322 in
+  five unlisted test files plus runtime "legacy import Preview requires
+  database schema 45" failures. Repair: **T005 expanded in place** (same id,
+  same base `c3ed1ff…`, retained worktree `.worktrees/gsd-path-T005`,
+  status blocked→pending) rather than a companion task — the pin semantic is
+  part of the same cutover-stamp concern, the resume is one continued agent
+  run, and precedent `9c338846f` landed pin + corpus regen + tests in one
+  commit. T005 gains: the pin advance (`legacy-import-contract.ts`,
+  `legacy-import-surfaces.ts` scenario rename), corpus realignment
+  (historical-v45 / current-v46 / future-v47, binaries rebuilt via the
+  extension's own stamp-only V45→V46 migration), the five TS2322 test fixes,
+  and the precedent-implicated version-sensitive legacy-import tests;
+  acceptance gains typecheck-clean (#6) and corpus-realigned (#7).
+  `tests/project-authority-cutover.test.ts` moved from T006 to T005
+  (same-wave sharing disallowed); T006's Step 7 coverage re-scoped into its
+  new own file `tests/project-authority-cutover-filesystem-state.test.ts`.
+  `tests/single-writer-invariant.test.ts` (T007) hard-excluded — stamp-only
+  V46 adds no schema file. T001–T004, T024, T025 (done) untouched; all other
+  task ids and deps unchanged.

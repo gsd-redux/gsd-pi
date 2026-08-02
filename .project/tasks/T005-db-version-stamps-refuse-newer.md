@@ -1,9 +1,9 @@
 ---
 id: T005
-title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads
+title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads; realign the legacy-import schema pin + corpus to V46
 wave: 2
 deps: [T001, T003, T024, T025]
-status: blocked
+status: pending
 agent: build_T005
 commit: null
 base: c3ed1ff366cc328810cf79003108793962ccf647
@@ -15,12 +15,29 @@ files:
   - src/resources/extensions/gsd/state/derive/db-open.ts
   - src/headless-query.ts
   - src/read-cli.ts
+  - src/resources/extensions/gsd/legacy-import-contract.ts
+  - src/resources/extensions/gsd/legacy-import-surfaces.ts
+  - src/resources/extensions/gsd/tests/__fixtures__/legacy-import-corpus/
   - src/resources/extensions/gsd/tests/db-open-version-stamp.test.ts
   - src/tests/headless-query-db-open.test.ts
   - src/tests/read-cli-schema-too-new.test.ts
+  - src/resources/extensions/gsd/tests/project-authority-cutover.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-forward-repair.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-writer.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-result.test.ts
+  - src/resources/extensions/gsd/tests/domain-operation.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-corpus.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-preview-database-target.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-preview-public-corpus.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-plan-corpus.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-public-corpus.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-preview-classification-fixtures.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-contract.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-application-plan.test.ts
+  - src/resources/extensions/gsd/tests/legacy-import-preview.test.ts
 ---
 
-# T005 — DB version stamps + refuse-newer surfacing contract (re-scoped per T003 spike)
+# T005 — DB version stamps + refuse-newer surfacing + legacy-import pin/corpus realignment (expanded per block repair)
 
 ## Context
 
@@ -45,9 +62,44 @@ migration). Gate note: this task's acceptance runs
 `baseline:refactor:phase0`, which only executes at clean HEAD after T024's
 contracts redirect.
 
+**Why the legacy-import pin rides with V46 (settled by planner, precedent
+`9c338846f`):** the legacy importer pins its accepted base schema via
+`LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION = 45 as const`
+(`legacy-import-contract.ts:90`); bumping `SCHEMA_VERSION` to 46 without
+advancing the pin makes `pnpm run typecheck:extensions` unsatisfiable (TS2322
+in five test files) and turns runtime legacy-import tests red ("legacy import
+Preview requires database schema 45"). The V44→V45 precedent (commit
+`9c338846f`) advanced the pin, adjusted the message templating, and
+regenerated the legacy-import corpus in ONE commit — pin semantic is part of
+the same cutover-stamp concern, so it belongs in this task, not a companion.
+V46 is stamp-only (NO table changes), so most of the precedent's production
+edits are no-ops here: `legacy-import-preview-base.ts` (message now templated
+on the constant), `legacy-import-preview-classifier.ts` and
+`legacy-import-preview-database-target.ts` (already consume the constant;
+anchor check `authority_recovery_receipts === (version >= 45)` stays correct
+for v46), `legacy-import-backup.ts`, `legacy-import-database-target-inspector.ts`,
+`legacy-import-preview.ts`, and `db-migration-steps.ts` (V45-table-specific)
+are NOT expected to need edits.
+
+## Resume state (READ FIRST)
+
+Steps 1–6 below are COMPLETE in the retained worktree `.worktrees/gsd-path-T005`
+(branch `gsd-path/T005`, base `c3ed1ff366cc328810cf79003108793962ccf647`,
+uncommitted). Do NOT redo them and do NOT start a fresh worktree. Begin with
+Step 0 to confirm the preserved state, then continue at Step 7. Note: the
+worktree needed `pnpm --filter @gsd/pi-ai build` once for unrelated
+environmental typecheck errors (packages/pi-ai dist unbuilt) — repeat that
+build if the two oauth-api-model-routing errors reappear.
+
 ## Steps
 
-1. In `src/resources/extensions/gsd/db/engine.ts`:
+0. Resume-state verification: in the retained worktree, re-run this task's
+   Verify command restricted to the original three test files
+   (`db-open-version-stamp.test.ts`, `headless-query-db-open.test.ts`,
+   `read-cli-schema-too-new.test.ts`) plus the original greps. All 14 tests
+   must pass. If anything regressed, STOP and report rather than rebuilding
+   from scratch.
+1. In `src/resources/extensions/gsd/db/engine.ts` (DONE — verify in Step 0):
    a. Add and export `class SchemaTooNewError extends Error` with
       `name = "GSDSchemaTooNewError"` and readonly fields
       `currentVersion: number` and `supportedVersion: number`; throw it from
@@ -66,9 +118,9 @@ contracts redirect.
       the same code path — pick ONE placement and test it. Apply the same
       stamps in the fresh-DB initialization path so new and migrated DBs
       are indistinguishable. V46 adds/alters NO tables.
-2. In `src/resources/extensions/gsd/db-workspace.ts`: add
-   `"schema-too-new"` to the `WorkflowDatabaseOpenReason` union and to the
-   failure branch of `WorkflowDatabaseOpenResult`; in
+2. In `src/resources/extensions/gsd/db-workspace.ts` (DONE — verify in
+   Step 0): add `"schema-too-new"` to the `WorkflowDatabaseOpenReason` union
+   and to the failure branch of `WorkflowDatabaseOpenResult`; in
    `openWorkflowDatabase`'s catch, map `isSchemaTooNewError(err)` to
    `{ ok: false, reason: "schema-too-new", location, error }` — the error
    (with its exact message) is ALWAYS attached. All other failures keep
@@ -82,33 +134,112 @@ contracts redirect.
    EXHAUSTIVE switch that stops compiling, but do NOT change any other
    consumer's behavior — read-side surfacing is only in the files this
    task owns.
-3. In `src/resources/extensions/gsd/state/derive/db-open.ts` (moved into
-   this task's scope from T007): when DB open fails with
-   `isSchemaTooNewError` (directly, or via a `"schema-too-new"` result from
+3. In `src/resources/extensions/gsd/state/derive/db-open.ts` (DONE — verify
+   in Step 0): when DB open fails with `isSchemaTooNewError` (directly, or
+   via a `"schema-too-new"` result from
    `openExistingWorkflowDbOpen`/`openWorkflowDatabase`), THROW the
    `SchemaTooNewError` instead of returning a degraded
    `buildDbUnavailableState` result. Genuine unavailability (DB missing,
    corrupt, busy) keeps the existing fail-closed degraded path — only the
    version-skew case becomes loud.
-4. In `src/headless-query.ts` and `src/read-cli.ts`: a `SchemaTooNewError`
-   propagating from `deriveState` / state reads must print the exact
-   engine message to stderr and exit non-zero — never emit a degraded
-   all-zero/`activeMilestone: null` payload with exit 0. Catch it at the
-   command boundary, format minimally (`[gsd] <exact message>`), and set a
-   non-zero exit code; all other errors keep current handling.
-5. Write `src/resources/extensions/gsd/tests/db-open-version-stamp.test.ts`:
-   (a) v45→v46 migration stamps `application_id`, `user_version = 46`,
-   `MAX(schema_version.version) = 46`; fresh DB gets the same three stamps;
-   (b) opening a v47 DB throws `SchemaTooNewError` (assert class, fields,
-   and the exact message substring `newer than the v46 this gsd-pi
-   supports`); (c) the v45→v46 migration created a verified
-   `gsd.db.backup-v45`.
-6. Extend `src/tests/headless-query-db-open.test.ts` and write
-   `src/tests/read-cli-schema-too-new.test.ts`: fixture project at one
-   schema version above supported — `gsd headless query` and
-   `gsd read progress --json` exit NON-ZERO and stderr contains the exact
-   refuse-newer message; a genuinely DB-unavailable fixture still takes the
-   existing degraded/fail-closed path with its current exit behavior.
+4. In `src/headless-query.ts` and `src/read-cli.ts` (DONE — verify in
+   Step 0): a `SchemaTooNewError` propagating from `deriveState` / state
+   reads must print the exact engine message to stderr and exit non-zero —
+   never emit a degraded all-zero/`activeMilestone: null` payload with
+   exit 0. Catch it at the command boundary, format minimally
+   (`[gsd] <exact message>`), and set a non-zero exit code; all other
+   errors keep current handling.
+5. `src/resources/extensions/gsd/tests/db-open-version-stamp.test.ts`
+   (DONE — verify in Step 0): (a) v45→v46 migration stamps
+   `application_id`, `user_version = 46`, `MAX(schema_version.version) = 46`;
+   fresh DB gets the same three stamps; (b) opening a v47 DB throws
+   `SchemaTooNewError` (assert class, fields, and the exact message
+   substring `newer than the v46 this gsd-pi supports`); (c) the v45→v46
+   migration created a verified `gsd.db.backup-v45`.
+6. `src/tests/headless-query-db-open.test.ts` and
+   `src/tests/read-cli-schema-too-new.test.ts` (DONE — verify in Step 0):
+   fixture project at one schema version above supported —
+   `gsd headless query` and `gsd read progress --json` exit NON-ZERO and
+   stderr contains the exact refuse-newer message; a genuinely
+   DB-unavailable fixture still takes the existing degraded/fail-closed
+   path with its current exit behavior.
+7. Legacy-import pin advance (mirrors precedent `9c338846f`, stamp-only
+   variant):
+   a. `legacy-import-contract.ts`: `LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION`
+      45 → 46.
+   b. `legacy-import-surfaces.ts`: `requiredScenarios` entry `"schema-v45"`
+      → `"schema-v46"` (the scenario name tracks the current schema, per the
+      precedent's `"schema-v44"` → `"schema-v45"` rename).
+   c. Grep all `legacy-import-*.ts` production files for hardcoded `45` /
+      `v45` schema references. Expected: NONE remain — preview-base,
+      preview-classifier, and preview-database-target already consume the
+      constant. If a hardcoded reference IS found in a legacy-import
+      production file not in this task's files list, add that file to the
+      frontmatter files list, fix it, and record both in the Log. Do NOT
+      edit `db-migration-steps.ts`, `legacy-import-backup.ts`,
+      `legacy-import-database-target-inspector.ts`, or
+      `legacy-import-preview.ts` for this task — their V45 edits were
+      table-specific and V46 adds no tables.
+8. Legacy-import corpus realignment (fixtures dir is in this task's files;
+   mirror the precedent's rename/regen pattern):
+   a. Rebuild each binary fixture DB that sits at the base schema using the
+      extension's OWN engine — copy the fixture tree to a tmp dir, open the
+      DB via `openDatabase` (`gsd-db.ts`) so `migrateSchema` runs the
+      stamp-only V45→V46 step, close, and copy the migrated `gsd.db` back
+      over the fixture. Affected cases: `action-matrix`,
+      `lifecycle-truth-matrix`, `root-external-boundaries`, and
+      `db-target-matrix`'s current DB. Record the exact procedure/script in
+      the Log so the next version bump can repeat it.
+   b. `db-target-matrix`: delete `historical-v44/`, rename
+      `current-v45/` → `historical-v45/`, rename `future-v46/` →
+      `current-v46/`, and create a NEW `future-v47/` as a copy of the new
+      current DB stamped one version ahead (`UPDATE schema_version`,
+      `PRAGMA user_version = 47` — same pragma helper pattern as
+      `db-open-version-stamp.test.ts`).
+   c. Update every case `oracle.json`: `base_database_schema_version` 45→46;
+      for cases whose binary changed, recompute each changed source's
+      `byte_size`/`sha256` and the case `source_set_hash`. In
+      `db-target-matrix/oracle.json` rename the version-keyed rows
+      (source ids `database-current-v45`→`database-current-v46`,
+      `database-future-v46`→`database-future-v47`,
+      `database-historical-v44`→`database-historical-v45`; diagnosis ids
+      likewise) preserving dispositions: current = mapped, future =
+      unparsed + `future-schema-version` blocker + `unsupported`
+      resolution, historical = mapped + `historical-schema-version` info.
+   d. `oracle.schema.json`: `base_database_schema_version` const 45→46.
+   e. `corpus.json`: recompute the affected cases' `file_set_hash`,
+      `oracle_hash`, and `source_set_hash` using the hashing functions in
+      `tests/helpers/legacy-import-corpus.ts` (the loader/validator) — do
+      not hand-roll hashes.
+9. Fix the version-sensitive tests broken by the V46 stamp + pin advance:
+   a. The five TS2322 files: `tests/project-authority-cutover.test.ts:93`,
+      `tests/legacy-import-forward-repair.test.ts:203`,
+      `tests/legacy-import-application-writer.test.ts:82`,
+      `tests/legacy-import-application-result.test.ts:387`,
+      `tests/domain-operation.test.ts:149` — these construct/annotate
+      values against the pin's literal type; update them to track 46 (or
+      reference the constant/SCHEMA_VERSION where the test intent allows).
+      `project-authority-cutover.test.ts` is now owned by THIS task (moved
+      from T006): fix ONLY the pin-related breakage there; T006's new
+      end-to-end coverage lives in T006's own new file.
+   b. Version-keyed expectations in the corpus consumers:
+      `tests/legacy-import-corpus.test.ts` (cross-wave shared with T012,
+      wave 3 — layered ownership, this task makes the version bump only),
+      `tests/legacy-import-preview-database-target.test.ts`, and the other
+      listed `legacy-import-*` test files — update hardcoded
+      `current-v45`/`future-v46`/`historical-v44` names and 45 literals to
+      the realigned matrix.
+   c. LATITUDE CLAUSE: if the stamp+pin advance breaks an additional
+      legacy-import test file not listed in this task's files (typecheck or
+      runtime), you MAY fix it, and you MUST then append it to the
+      frontmatter files list and record the failure output in the Log.
+      HARD EXCLUSION: never touch
+      `tests/single-writer-invariant.test.ts` (T007, same wave) — stamp-only
+      V46 adds no schema file, so it needs no change; if you believe it
+      does, STOP and report instead of editing.
+10. Full gate re-run: this task's complete Verify command (below), then
+    `pnpm run baseline:refactor:phase0` — both must be green. Evidence (test
+    counts, typecheck result) goes in the Log.
 
 ## Acceptance criteria
 
@@ -120,15 +251,21 @@ contracts redirect.
 3. `gsd headless query` and `gsd read progress` on a newer-schema project
    exit non-zero with the exact engine message — no degraded exit-0
    payload. Genuine DB-unavailable behavior is unchanged.
-4. No consumer outside this task's file list changes behavior; typecheck
-   clean (`pnpm run typecheck:extensions`).
+4. No consumer outside this task's file list changes behavior.
 5. `pnpm run baseline:refactor:phase0` green (runnable post-T024);
    single-writer invariant untouched.
+6. `pnpm run typecheck:extensions` clean with `SCHEMA_VERSION = 46` — the
+   previously unsatisfiable criterion; the five TS2322 files compile.
+7. Legacy-import realigned to V46: pin is 46, corpus oracles carry
+   `base_database_schema_version: 46`, db-target-matrix covers
+   historical-v45 / current-v46 / future-v47 with dispositions preserved
+   (current mapped, future refused, historical mapped-with-info), and all
+   corpus/preview consumer tests are green.
 
 ## Verify
 
 ```bash
-node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/db-open-version-stamp.test.ts src/tests/headless-query-db-open.test.ts src/tests/read-cli-schema-too-new.test.ts && grep -q "SCHEMA_VERSION = 46" src/resources/extensions/gsd/db/engine.ts && grep -q "SchemaTooNewError" src/resources/extensions/gsd/db/engine.ts && grep -q "schema-too-new" src/resources/extensions/gsd/db-workspace.ts
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/db-open-version-stamp.test.ts src/tests/headless-query-db-open.test.ts src/tests/read-cli-schema-too-new.test.ts src/resources/extensions/gsd/tests/project-authority-cutover.test.ts src/resources/extensions/gsd/tests/legacy-import-forward-repair.test.ts src/resources/extensions/gsd/tests/legacy-import-application-writer.test.ts src/resources/extensions/gsd/tests/legacy-import-application-result.test.ts src/resources/extensions/gsd/tests/domain-operation.test.ts src/resources/extensions/gsd/tests/legacy-import-corpus.test.ts src/resources/extensions/gsd/tests/legacy-import-preview-database-target.test.ts && pnpm run typecheck:extensions && grep -q "SCHEMA_VERSION = 46" src/resources/extensions/gsd/db/engine.ts && grep -q "SchemaTooNewError" src/resources/extensions/gsd/db/engine.ts && grep -q "schema-too-new" src/resources/extensions/gsd/db-workspace.ts && grep -q "LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION = 46" src/resources/extensions/gsd/legacy-import-contract.ts
 ```
 
 ## Log
@@ -138,3 +275,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 - 2026-08-02 — planner (T024 split repair): dep T025 added — acceptance runs `baseline:refactor:phase0`, green only after T025's re-baseline.
 - 2026-08-02 — coder BLOCKED (plan defect: step 1b contradicts acceptance #4 within the files list). Implementation of Steps 1–6 is complete in the worktree: task Verify passes (14/14 tests across db-open-version-stamp/headless-query-db-open/read-cli-schema-too-new + all greps) and `baseline:refactor:phase0` is green (140/140). But `pnpm run typecheck:extensions` cannot be clean with the mandated `SCHEMA_VERSION = 46`: it conflicts with `LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION = 45 as const` in `src/resources/extensions/gsd/legacy-import-contract.ts` (NOT in files), producing TS2322 "Type '46' is not assignable to type '45'" in five unlisted test files: `tests/project-authority-cutover.test.ts:93`, `tests/legacy-import-forward-repair.test.ts:203`, `tests/legacy-import-application-writer.test.ts:82`, `tests/legacy-import-application-result.test.ts:387`, `tests/domain-operation.test.ts:149`. Fixing requires unlisted paths — the V45-bump precedent (commit 9c338846f) advanced the pin AND regenerated the legacy-import corpus (binary .gsd.db fixtures + oracle.json) in the same commit; runtime legacy-import/headless-recover tests also go red ("legacy import Preview requires database schema 45"). Needed: expand T005's files list to include the legacy-import pin + fixture regen, or spin a companion task for it. (Note: two unrelated oauth-api-model-routing typecheck errors were environmental — packages/pi-ai dist unbuilt in the worktree — and cleared after `pnpm --filter @gsd/pi-ai build`.)
 - 2026-08-02 — orchestrator: block accepted as documented plan defect (not an implementation failure — diff not rejected). Isolated worktree .worktrees/gsd-path-T005 RETAINED at base c3ed1ff366cc328810cf79003108793962ccf647 on branch gsd-path/T005 with the complete Steps 1–6 implementation uncommitted; no product commit created. Routing to planner for contract repair (files-list expansion or companion task), then resuming build_T005 in the retained worktree.
+- 2026-08-02 — planner (block repair): EXPANDED T005 rather than spinning a companion — the pin semantic is part of the same cutover-stamp concern, the resume is one continued agent run in the retained worktree, and precedent `9c338846f` landed pin + corpus regen + test updates in a single commit. Added files: `legacy-import-contract.ts`, `legacy-import-surfaces.ts`, the legacy-import corpus fixtures dir, the five TS2322 test files, and the precedent-implicated version-sensitive legacy-import test files (`legacy-import-corpus.test.ts` is cross-wave shared with T012, wave 3 — layered). `tests/project-authority-cutover.test.ts` MOVED from T006's files into T005's (T005 fixes only its pin-related type error; T006's end-to-end coverage moves to a new T006-owned file). New Steps 0 (resume verification), 7 (pin advance), 8 (corpus realignment), 9 (test fixes + bounded latitude clause; `single-writer-invariant.test.ts` hard-excluded — T007, same wave), 10 (full gate). New acceptance #6 (typecheck clean) and #7 (corpus realigned). Original Steps 1–6 confirmed DONE in the worktree. Status reset blocked→pending; base/worktree/task_branch unchanged so build_T005 resumes in place.

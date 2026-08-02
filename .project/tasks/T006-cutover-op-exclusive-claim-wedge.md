@@ -14,7 +14,7 @@ files:
   - src/resources/extensions/gsd/migrate-external.ts
   - src/cli.ts
   - src/headless-recover.ts
-  - src/resources/extensions/gsd/tests/project-authority-cutover.test.ts
+  - src/resources/extensions/gsd/tests/project-authority-cutover-filesystem-state.test.ts
   - src/resources/extensions/gsd/tests/migrate-external-wedge.test.ts
   - src/tests/headless-recover.test.ts
   - src/tests/graph-build-version-gate.test.ts
@@ -88,7 +88,10 @@ at clean HEAD only after T024.
    with a non-zero exit, replacing the generic "failed to open or create
    the GSD database" for that case only; other open failures keep the
    generic message.
-7. Extend `src/resources/extensions/gsd/tests/project-authority-cutover.test.ts`:
+7. Write NEW `src/resources/extensions/gsd/tests/project-authority-cutover-filesystem-state.test.ts`
+   (this task's end-to-end coverage lives in its own file — the pre-existing
+   `project-authority-cutover.test.ts` is owned by T005, which fixes its
+   pin-related type error; READ it for fixture patterns but do NOT edit it):
    (a) end-to-end fixture — pre-cutover project migrates via the op inside
    the EXCLUSIVE claim (verified backup, receipt, projections, v46);
    (b) idempotent re-entry returns `status: "replayed"` and mutates nothing
@@ -122,7 +125,7 @@ at clean HEAD only after T024.
 ## Verify
 
 ```bash
-node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/project-authority-cutover.test.ts src/resources/extensions/gsd/tests/migrate-external-wedge.test.ts src/tests/headless-recover.test.ts src/tests/graph-build-version-gate.test.ts
+node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/project-authority-cutover-filesystem-state.test.ts src/resources/extensions/gsd/tests/migrate-external-wedge.test.ts src/tests/headless-recover.test.ts src/tests/graph-build-version-gate.test.ts
 ```
 
 ## Log
@@ -130,3 +133,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 - 2026-08-01 — created by planner
 - 2026-08-02 — re-scoped by planner (Defect B repair: T003 spike mandates projection-write version gating and rebuild-path error propagation; added src/cli.ts, src/headless-recover.ts, two test files, dep T024).
 - 2026-08-02 — planner (T024 split repair): dep T025 added — acceptance runs `baseline:refactor:phase0`, green only after T025's re-baseline.
+- 2026-08-02 — planner (T005 block repair, file-ownership move): `tests/project-authority-cutover.test.ts` MOVED to T005's files — T005's V46 pin advance must fix a TS2322 at its line 93, and same-wave file sharing is disallowed. This task's Step 7 end-to-end coverage (end-to-end fixture, idempotent re-entry, epoch refusal, rollback) re-scoped into the NEW T006-owned `tests/project-authority-cutover-filesystem-state.test.ts`; Verify filename updated. No behavior/scope change beyond the test-file split; deps unchanged (T006 already depends on T005).
