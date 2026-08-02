@@ -3,12 +3,12 @@ id: T024
 title: Unblock gates at clean HEAD — redirect @opengsd/contracts to source in both test tiers, then re-run the T001 baseline
 wave: 2
 deps: []
-status: pending
-agent: null
+status: in-progress
+agent: build_T024
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 219c3ad52bdc46b0753da1c57e5943dd03954a0a
+worktree: .worktrees/gsd-path-T024
+task_branch: gsd-path/T024
 files:
   - src/resources/extensions/gsd/tests/dist-redirect.mjs
   - scripts/dist-test-resolve.mjs
