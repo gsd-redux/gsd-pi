@@ -2,7 +2,7 @@
 id: T009
 title: Split-retire the no-cutover gate — create gate:lifecycle-shadow-no-cutover and add it to verify:pr
 wave: 2
-deps: [T002, T007, T008]
+deps: [T002, T007, T008, T024]
 status: pending
 agent: null
 commit: null
@@ -99,3 +99,4 @@ test -f scripts/lifecycle-shadow-no-cutover-gate.mjs && test ! -f scripts/semant
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — re-scoped by planner (Defect A repair): dep T024 added — this task's Verify runs `gate:lifecycle-shadow-no-cutover` and `verify:pr`, which require the contracts redirect to execute at clean HEAD.

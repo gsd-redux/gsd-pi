@@ -42,9 +42,12 @@ four tasks write docs only; no production code moves in wave 1.
 
 ## Wave 2 — walking skeleton
 
-Goal: one project, end to end: a fixture `~/.gsd` project is migrated via the
-existing authority-cutover domain op inside the startup EXCLUSIVE claim
-(verified backup + receipt + idempotent re-entry as no-op); `deriveState`
+Goal: one project, end to end: the gates execute green at clean HEAD (T024 —
+they were unrunnable pre-repair, Defect A); a fixture `~/.gsd` project is
+migrated via the existing authority-cutover domain op inside the startup
+EXCLUSIVE claim (verified backup + receipt + idempotent re-entry as no-op);
+refuse-newer is a typed error surfaced loudly at state reads, projection
+writers, and rebuild paths (T003 spike mandates, Defect B); `deriveState`
 serves the real runtime path from the DB with files rendered as stamped
 read-only projections; `markdown-renderer.ts` stops reading its own
 projections back through parsers-legacy; rollback is demonstrated by restoring
@@ -54,11 +57,12 @@ changes anywhere in this wave.
 
 | Task | Title | Deps | Files |
 |------|-------|------|-------|
-| T005 | Stamp gsd.db (application_id, user_version, schema V46) and lock the refuse-newer guard | T001, T003 | src/resources/extensions/gsd/db/engine.ts, tests/db-open-version-stamp.test.ts |
-| T006 | Filesystem-state cutover via the authority-cutover op: EXCLUSIVE-claim migration, idempotent re-entry, authority-epoch loud refusal, partial-destination wedge fix | T002, T005 | src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts, src/resources/extensions/gsd/migrate-external.ts, tests |
-| T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/*, tests |
+| T024 | Unblock gates at clean HEAD: redirect @opengsd/contracts to source in both test tiers, re-run the T001 baseline | — | src/resources/extensions/gsd/tests/dist-redirect.mjs, scripts/dist-test-resolve.mjs, .project/plan/wave1-gate-baseline.md |
+| T005 | Stamp gsd.db (application_id, user_version, V46); typed refuse-newer surfaced at the DB-open seam and state reads | T001, T003, T024 | src/resources/extensions/gsd/db/engine.ts, db-workspace.ts, state/derive/db-open.ts, src/headless-query.ts, src/read-cli.ts, tests |
+| T006 | Filesystem-state cutover via the authority-cutover op: EXCLUSIVE-claim migration, idempotent re-entry, authority-epoch loud refusal, partial-destination wedge fix, projection-write version gating, rebuild error propagation | T002, T005, T024 | src/resources/extensions/gsd/project-authority-cutover-domain-operation.ts, migrate-external.ts, src/cli.ts, src/headless-recover.ts, tests |
+| T007 | Flip read authority at the derive seam; markdown fallback unreachable on the live path | T001, T006, T024 | src/resources/extensions/gsd/state.ts, src/resources/extensions/gsd/state/derive/from-db.ts, tests |
 | T008 | markdown-renderer: additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads | T007 | src/resources/extensions/gsd/markdown-renderer.ts, tests |
-| T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
+| T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008, T024 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
 
 ## Wave 3 — consumers, evidence, command, docs
 
@@ -102,12 +106,24 @@ wave 3 and report; wave 4 waits.
 
 ## Dependency notes
 
+- T024 has no deps and is the first wave-2 layer: every gate- or test-tier
+  Verify in waves 2+ requires the `@opengsd/contracts` source redirect it
+  lands. T005, T006, T007, and T009 carry the dep explicitly (their
+  acceptance/Verify run `baseline:refactor:phase0`, the successor gate, or
+  `verify:pr`); T008 inherits it transitively via T007.
 - T005→T006→T007→T008 is the skeleton spine: schema stamps land first so any
   binary new enough to check refuses loudly on skew; the cutover op rides the
   existing `migrateSchema` chain and `project-authority-cutover-domain-operation.ts`
   machinery (no new migration path); the derive-seam flip only happens once the
   cutover op can migrate a real project; the renderer stamp/re-point only makes
   sense post-flip.
+- Defect B split (T003 spike mandates): T005 owns the read side (typed
+  `SchemaTooNewError`, `"schema-too-new"` open reason, loud state reads via
+  `headless-query`/`read-cli`, and `state/derive/db-open.ts` — moved out of
+  T007's scope); T006 owns the write side (projection-write version gating in
+  `src/cli.ts` graph build, refuse-newer propagation in
+  `src/headless-recover.ts`). T006 depends on T005 because both protections
+  consume T005's typed error/reason.
 - T009 depends on T007+T008 because the successor gate's positive post-cutover
   checks (DB-authority at the derive seam, projection fidelity against stamped
   projections) must exist before the old gate's invariants are re-homed.
@@ -128,3 +144,34 @@ wave 3 and report; wave 4 waits.
 - Out-of-repo readers behind the `.gsd → ~/.gsd/projects/<hash>/` symlink are
   unobservable; the accepted residual risk (projection format frozen
   byte-compatible, documented as de facto public API) is recorded by T019.
+
+## Repair log
+
+- 2026-08-02 — **Defect A repair** (evidence: `.project/plan/wave1-gate-baseline.md`,
+  VERDICT BASELINE RED): `baseline:refactor:gate`, `baseline:refactor:phase0`,
+  and `gate:semantic-shadow-no-cutover` were unrunnable at clean HEAD —
+  `@opengsd/contracts` was never redirected to source by either test-tier
+  resolve hook and its `dist/` is never present at clean HEAD; 13 of 15
+  behavioral witnesses and all four phase-0 files never executed, so true gate
+  status was undetermined. Repair: new wave-2 task **T024** (deps []) extends
+  `src/resources/extensions/gsd/tests/dist-redirect.mjs` and
+  `scripts/dist-test-resolve.mjs` to cover `@opengsd/contracts` (matching the
+  existing `@gsd/*` redirect convention) and re-runs the T001 baseline before
+  any cutover code lands; if the re-run is RED for non-contracts reasons the
+  wave stops and re-baselines. T005/T006/T007/T009 now depend on T024.
+- 2026-08-02 — **Defect B repair** (evidence:
+  `docs/dev/state-db-cutover-mixed-version-spike.md`, observed behavior:
+  silent divergence): the engine refuse-newer floor exists but is swallowed at
+  CLI surfaces — state reads exited 0 with wrong/empty state, `graph build`
+  wrote a new empty projection into a newer project, `headless recover` failed
+  generically. Repair: **T005 re-scoped** to the read side — typed
+  `SchemaTooNewError`, `"schema-too-new"` open reason in `db-workspace.ts`,
+  loud propagation in `state/derive/db-open.ts` (moved from T007's scope), and
+  non-zero exits with the exact message in `headless-query.ts`/`read-cli.ts`;
+  **T006 re-scoped** to the write side — projection-write version gating in
+  `src/cli.ts` graph build and refuse-newer propagation in
+  `headless-recover.ts`. Both stay within the settled refuse-newer guard
+  decision (floor kept, message unchanged, no silent downgrade path) and the
+  ADR-046 downgrade window; the release-note directive (upgrade all linked
+  worktrees together) remains necessary and is now empirically justified.
+  T001–T004 (done) unchanged; all other task ids and deps unchanged.

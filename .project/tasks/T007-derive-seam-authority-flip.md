@@ -2,7 +2,7 @@
 id: T007
 title: Flip read authority at the derive seam — markdown fallback unreachable on the live path
 wave: 2
-deps: [T001, T006]
+deps: [T001, T006, T024]
 status: pending
 agent: null
 commit: null
@@ -12,7 +12,6 @@ task_branch: null
 files:
   - src/resources/extensions/gsd/state.ts
   - src/resources/extensions/gsd/state/derive/from-db.ts
-  - src/resources/extensions/gsd/state/derive/db-open.ts
   - src/resources/extensions/gsd/tests/derive-state-db.test.ts
   - src/resources/extensions/gsd/tests/single-writer-invariant.test.ts
   - src/resources/extensions/gsd/tests/bootstrap-derive-state-db-open.test.ts
@@ -30,9 +29,12 @@ filesystem fallback with zero production callers on the live path — pitfalls
 evidence confirms the live derive seam already refuses markdown fallback.
 This task makes the flip real at the seam: after the cutover (T006), the
 live runtime path derives state from the DB, files are read-only
-projections, and DB-unavailable fails closed (it already does via
-`buildDbUnavailableState` in `state/derive/db-open.ts`). `_deriveStateImpl`
-itself is NOT deleted here — that is timebox-gated wave-4 task T022. This
+projections, and DB-unavailable fails closed (via `buildDbUnavailableState`
+in `state/derive/db-open.ts` — which is owned by T005: T005 made the
+version-skew case throw `SchemaTooNewError` loudly while genuine
+unavailability keeps the degraded fail-closed path; do NOT edit db-open.ts
+here). `_deriveStateImpl` itself is NOT deleted here — that is
+timebox-gated wave-4 task T022. This
 task also removes `state.ts`'s own import of `parsers-legacy` if the
 post-flip seam no longer needs it (check what `_deriveStateImpl`'s remaining
 pre-migration role requires; the import leaves only if no live symbol needs
@@ -43,14 +45,17 @@ keep their current behavior.
 
 ## Steps
 
-1. Read `state.ts` (especially lines 1-80 and 290-340),
-   `state/derive/from-db.ts`, and `state/derive/db-open.ts` fully.
+1. Read `state.ts` (especially lines 1-80 and 290-340) and
+   `state/derive/from-db.ts` fully; read `state/derive/db-open.ts` for
+   context but do NOT modify it (T005 owns it — including the
+   schema-too-new throw you will build on).
 2. Make the post-cutover dispatch unconditional: when a project DB exists at
    schema v46 with the filesystem-state cutover receipt (from T006), state
    derivation MUST go through `deriveStateFromDb`; the `_deriveStateImpl`
    fallback branch is never taken on the live path. Keep the existing
    fail-closed `buildDbUnavailableState` behavior for genuinely unavailable
-   DBs — no silent markdown reads anywhere in the dispatch.
+   DBs — no silent markdown reads anywhere in the dispatch; version-skew
+   already throws loudly via T005's `SchemaTooNewError`.
 3. Keep `_deriveStateImpl` exported (deletion is T022) but add a
    `GSD_ALLOW_LEGACY_DERIVE`-style guard ONLY if an existing test requires
    calling it directly; prefer updating those tests to construct a
@@ -90,3 +95,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — re-scoped by planner (Defect B repair): `state/derive/db-open.ts` moved to T005's file scope (typed schema-too-new throw lives there); dep T024 added.
