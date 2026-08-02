@@ -84,3 +84,21 @@ grep -q "D005" docs/dev/state-db-cutover-milestone-decision.md && grep -q "files
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — coder: reconciled blocker count from the dossier JSON (9
+  `deferredCutoverBlockers` ids, authoritative), the T07 cutover-decision
+  research (13 numbered NO-GO items), and the project DB record (zero live
+  `lifecycle-shadow-observed` audit rows, corroborating
+  `observationEvidencePlane: "capstone_fixture"`). Mapping: research items
+  1,2,4,5,7 map 1:1 onto dossier ids; item 3 folds into
+  `canonical-dependency-eligibility`; item 6 splits into two ids; items 8–9
+  share `compatibility-retirement` (yielding 9 unique ids); items 10–11 are
+  observation-coverage facts, item 12 a since-closed T07 verification
+  prerequisite, item 13 the D005 governance precondition. Classified all 9
+  blockers for filesystem-state deletion impact: all NO (each concerns
+  canonical-lifecycle read authority or lifecycle compatibility surfaces
+  only). Wrote `docs/dev/state-db-cutover-milestone-decision.md` recording
+  the D005 supersede-for-filesystem-state-only decision, the full
+  classification table, the 9-vs-13 reconciliation, the accepted
+  unobservable-symlink-reader risk (frozen byte-compatible projection
+  format), and the no-contradiction-by-silence gate-retirement statement.
+  Verify: PASS (all five greps). No production code modified.
