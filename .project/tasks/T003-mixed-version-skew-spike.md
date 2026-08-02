@@ -3,12 +3,12 @@ id: T003
 title: "Spike: run a pre-cutover binary against a cut-over project fixture and record observed behavior"
 wave: 1
 deps: []
-status: pending
-agent: null
+status: in-progress
+agent: build_T003
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 254f51d046caa5863956f350210749b6daab680c
+worktree: .worktrees/gsd-path-T003
+task_branch: gsd-path/T003
 files:
   - docs/dev/state-db-cutover-mixed-version-spike.md
 ---

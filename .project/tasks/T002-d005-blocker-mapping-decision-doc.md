@@ -3,12 +3,12 @@ id: T002
 title: Map T07 deferred blockers and write the D005 supersede-for-filesystem-state-only milestone decision doc
 wave: 1
 deps: []
-status: pending
-agent: null
+status: in-progress
+agent: build_T002
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 254f51d046caa5863956f350210749b6daab680c
+worktree: .worktrees/gsd-path-T002
+task_branch: gsd-path/T002
 files:
   - docs/dev/state-db-cutover-milestone-decision.md
 ---

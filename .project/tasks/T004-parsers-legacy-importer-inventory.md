@@ -3,12 +3,12 @@ id: T004
 title: Produce the authoritative parsers-legacy importer union inventory with per-consumer dispositions
 wave: 1
 deps: []
-status: pending
-agent: null
+status: in-progress
+agent: build_T004
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 254f51d046caa5863956f350210749b6daab680c
+worktree: .worktrees/gsd-path-T004
+task_branch: gsd-path/T004
 files:
   - docs/dev/state-db-cutover-parsers-legacy-inventory.md
 ---
