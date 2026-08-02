@@ -3,9 +3,9 @@ id: T002
 title: Map T07 deferred blockers and write the D005 supersede-for-filesystem-state-only milestone decision doc
 wave: 1
 deps: []
-status: in-progress
+status: done
 agent: build_T002
-commit: null
+commit: 47d3ee1ab5f8ef9a688fb41ae3dd0e76ab7c3daf
 base: 254f51d046caa5863956f350210749b6daab680c
 worktree: .worktrees/gsd-path-T002
 task_branch: gsd-path/T002
