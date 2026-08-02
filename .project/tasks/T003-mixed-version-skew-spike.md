@@ -82,3 +82,26 @@ grep -qE "observed behavior: (loud refusal|read-only|silent divergence|corrupts 
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — coder: spike executed. Built v1.11.0 (SCHEMA_VERSION 31) in a
+  disposable worktree (relocated to `$(mktemp -d)` — inside `gsd-pi/.worktrees/**`
+  the build's module resolution leaks into the primary checkout's `dist` and
+  fails; documented in the report). Fixture project at schema v32 built with
+  v1.11.0's own compiled modules (ADR-002 symlink layout, seeded M001/S01/T01,
+  rendered ROADMAP + PLAN projections, `recordSchemaVersion(db, 32)`).
+  Probes: `headless query` exit 0 with degraded empty state (active milestone
+  invisible, generic "DB unavailable" blocker); `read progress --json` exit 0
+  all-zero, no error at all; `headless recover` exit 1 with generic
+  "failed to open" (refuse-newer reason swallowed); `graph build` exit 0 and
+  WROTE a new empty `.gsd/graphs/graph.json` without consulting the DB version.
+  sha256 before/after identical for `gsd.db` and both projections; only the
+  new graph.json appeared. Engine floor confirmed via direct probe
+  (`gsd.db schema is v32, newer than the v31 this gsd-pi supports`).
+  Classification: **silent divergence** (reads exit 0 with wrong state;
+  projection writer bypasses the floor; only the rebuild path fails, quietly
+  generic). Report: `docs/dev/state-db-cutover-mixed-version-spike.md`.
+  PLAN ASSUMPTION AMENDED per acceptance criterion 3: the refuse-newer floor
+  exists at engine level but is not surfaced — wave-2 tasks T005/T006 must be
+  re-scoped before they start to cover read-seam surfacing, projection-write
+  version gating, and error propagation on rebuild paths.
+  Verify: PASS. Disposable worktree and temp dirs removed; no committed files
+  other than the spike report.
