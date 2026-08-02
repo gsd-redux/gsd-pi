@@ -3,12 +3,12 @@ id: T024
 title: Redirect @opengsd/contracts to source in both test tiers so the gates' full test bodies execute at clean HEAD
 wave: 2
 deps: []
-status: pending
-agent: null
+status: in-progress
+agent: build_T024
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: ff77ea38a9b1552746ab923c66ea92ba1ef62d89
+worktree: .worktrees/gsd-path-T024
+task_branch: gsd-path/T024-retry
 files:
   - src/resources/extensions/gsd/tests/dist-redirect.mjs
   - scripts/dist-test-resolve.mjs
