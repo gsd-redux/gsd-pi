@@ -3,12 +3,12 @@ id: T025
 title: Re-baseline the gates — resolve the prompt-golden Phase-2 red leg and the discard-witness native-lock red leg
 wave: 2
 deps: [T024]
-status: pending
-agent: null
+status: in-progress
+agent: build_T025
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: c6935a65bd224bd8416cb8552da97af14c1f5904
+worktree: .worktrees/gsd-path-T025
+task_branch: gsd-path/T025
 files:
   - src/tests/fixtures/prompt-golden-fixtures.ts
   - src/tests/prompt-golden-fixtures.test.ts
