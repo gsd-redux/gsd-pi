@@ -3,12 +3,12 @@ id: T005
 title: Stamp gsd.db (application_id, user_version, V46); make refuse-newer typed and surface it at the DB-open seam and state reads
 wave: 2
 deps: [T001, T003, T024, T025]
-status: pending
-agent: null
+status: in-progress
+agent: build_T005
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: c3ed1ff366cc328810cf79003108793962ccf647
+worktree: .worktrees/gsd-path-T005
+task_branch: gsd-path/T005
 files:
   - src/resources/extensions/gsd/db/engine.ts
   - src/resources/extensions/gsd/db-workspace.ts
