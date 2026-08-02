@@ -94,3 +94,32 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — coder: implemented. (1) Additive stamp: `writeAndStore` now appends
+  `<!-- gsd:state-version=<revision>:<authorityEpoch> -->` at end of file via
+  `stampProjectionContent`; values read from the `project_authority` singleton row
+  (the row the T006 cutover receipt advances) via new exports
+  `getCurrentProjectStateVersion` / `readProjectionStateVersion` /
+  `stripProjectionStamp`. Strip-then-stamp keeps artifact replays byte-stable (no
+  stamp accumulation); disk bytes, artifact `full_content`, and returned `content`
+  are identical. Byte-compat proven by a diff test pinning the frozen pre-stamp
+  roadmap byte stream + exactly one stamp line. Scope note: projections written by
+  other modules (DECISIONS.md via db-writer, .planning/ via planning-writer) are
+  outside this task's files list and remain unstamped. (2) Self-read-back re-point:
+  the plan-checkbox stale check in `detectStaleRendersImpl` no longer parses the
+  PLAN file — it compares on-disk bytes stamp-insensitively against the DB render
+  intent (`planRenderIntentDrift`); added exported `detectProjectionDrift`
+  (roadmap+plan, DB-vs-render-intent, stamp-only differences are not drift).
+  Reasons keep the "in roadmap"/"in plan" markers stale-render.ts's repair
+  dispatch keys on. Exported signatures unchanged (`detectStaleRenders`,
+  `renderPlanCheckboxes`, `renderAllFromDb`, `roadmapRenderMarksSliceDone`).
+  (3) `roadmapRenderMarksSliceDone`: T012 has NOT landed and `schemas/parsers.ts`
+  `parseRoadmap` is not equivalent (no `done` field — it parses Slice Overview
+  tables), so the existing `parsers-legacy` `parseRoadmap` import stays; no new
+  `parsers-legacy` import was added (`parsePlan` import removed).
+  `parsers-legacy-importers.test.ts` stays green. (4) Tests: byte-compat diff +
+  byte-stable re-render tests added to markdown-renderer.test.ts; new
+  projection-fidelity.test.ts (stamp on every projection matching the DB
+  revision/epoch, hand-edit detected as stale, stamp-only diff not drift).
+  Verify green: 29 pass / 0 fail / 10 pre-existing skips. Smoke:
+  flat-phase-renderer + state-reconciliation-drift (63 pass / 0 fail),
+  parsers-legacy-importers + complete-milestone-projection-stale (8 pass / 0 fail).
