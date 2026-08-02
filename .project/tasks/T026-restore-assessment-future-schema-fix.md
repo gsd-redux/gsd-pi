@@ -3,9 +3,9 @@ id: T026
 title: Fix legacy-import restore-assessment future-schema test after the V46 pin advance (unsupported fixture moves v46→v47)
 wave: 2
 deps: [T005]
-status: in-progress
+status: done
 agent: build_T026
-commit: null
+commit: 13e9bae14f32a5c7938c630db46fa32298ab6ecd
 base: 95bc1a5d035bfb664b9553ad9996facc1b1ea9f1
 worktree: .worktrees/gsd-path-T026
 task_branch: gsd-path/T026
