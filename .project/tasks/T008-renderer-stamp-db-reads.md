@@ -3,9 +3,9 @@ id: T008
 title: markdown-renderer — additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads
 wave: 2
 deps: [T007]
-status: in-progress
+status: done
 agent: build_T008
-commit: null
+commit: bb0ada2a66cfa1a04e923c0c81f4d7286f855c9a
 base: 37aedafb2ab40d82c2851eb67df79f87e6e02fa7
 worktree: .worktrees/gsd-path-T008
 task_branch: gsd-path/T008
