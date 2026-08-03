@@ -32,3 +32,4 @@ it on completion. If this file and the artifacts disagree, the artifacts win
 - 2026-08-01 — plan — PLAN.md + 23 tasks gated PASS (rows↔files 1:1, acyclic, no same-wave file overlap, decisions covered, vetoes untouched); awaiting approval
 - 2026-08-02 — plan — done: user approved plan ("approve"); build authorized for all 4 waves (wave 4 holds at ADR-046 timebox STOP conditions)
 - 2026-08-02 — build — build started; branch bound: gsd-path/gsd-pi created at origin/main SHA 331cee83a (main is strict ancestor of previous checkout; unrelated MCP-fix branch left unpolluted)
+- 2026-08-02 — build — wave 1 done (4/4, review pass cycle 1); wave 2 done (9/9 incl. repairs T024/T025/T026/T027, review pass cycle 2); plan repaired twice (T024 split+T025 re-baseline, T005 expand+T026, T027 fix task)
