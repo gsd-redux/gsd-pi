@@ -3,9 +3,9 @@ id: T027
 title: Realign stale schema-version literals and stamp-era byte expectations so verify:pr's test:unit leg is green at HEAD (wave-2 review cycle-1 T009F1)
 wave: 2
 deps: [T005, T008]
-status: in-progress
+status: done
 agent: build_T027
-commit: null
+commit: b46753dfa048b12bc5fe69332331d2fe811cadf0
 base: 8560139d8d932d3a32837b78324335124f77e282
 worktree: .worktrees/gsd-path-T027
 task_branch: gsd-path/T027
