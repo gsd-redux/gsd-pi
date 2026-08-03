@@ -956,12 +956,18 @@ export function hasWorkflowToolBridgeConfiguration(
     return true;
   }
 
-  const localCandidates = [
-    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
-    ...buildBridgeImportCandidates("../../../src/resources/extensions/gsd/mcp-bridge.js"),
+  // Workflow tools need BOTH co-located bridges (executors + write gate), so
+  // each module must resolve to at least one existing candidate. A partial
+  // checkout with only one of them must report "not configured" rather than
+  // enabling workflow tools and then failing warmWorkflowToolBridges().
+  const localModuleCandidateGroups = [
+    buildBridgeImportCandidates("../../../src/resources/extensions/gsd/tools/workflow-tool-executors.js"),
+    buildBridgeImportCandidates("../../../src/resources/extensions/gsd/mcp-bridge.js"),
   ];
-  return localCandidates.some((candidate) =>
-    moduleExists(fileURLToPath(new URL(candidate, import.meta.url)))
+  return localModuleCandidateGroups.every((candidates) =>
+    candidates.some((candidate) =>
+      moduleExists(fileURLToPath(new URL(candidate, import.meta.url)))
+    )
   );
 }
 
