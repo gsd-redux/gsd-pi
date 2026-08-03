@@ -18,10 +18,8 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { globSync } = require('glob');
-const { parse } = require('yaml');
 
-const { PLATFORM_PACKAGE_DIRS } = require('./version-sync.cjs');
+const { PLATFORM_PACKAGE_DIRS, RELEASE_WORKSPACE_PACKAGE_DIRS } = require('./version-sync.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -29,6 +27,66 @@ const INTERNAL_DEP_FIELDS = ['dependencies', 'optionalDependencies', 'peerDepend
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function getWorkspacePatterns(workspacePath) {
+  const patterns = [];
+  let inPackages = false;
+  for (const line of fs.readFileSync(workspacePath, 'utf8').split(/\r?\n/)) {
+    if (/^packages:\s*(?:#.*)?$/.test(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (!inPackages) continue;
+    if (/^\S/.test(line)) break;
+    const match = line.match(/^\s+-\s+(?:'([^']+)'|"([^"]+)"|([^#\s]+))/);
+    if (match) patterns.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return patterns;
+}
+
+function expandWorkspacePattern(repoRoot, pattern) {
+  const normalized = pattern.replace(/^\.\//, '').replace(/\/$/, '');
+  const segments = normalized.split('/');
+  if (path.isAbsolute(normalized) || segments.includes('..')) {
+    throw new Error(`Unsafe pnpm workspace pattern: ${pattern}`);
+  }
+  if (segments.some((segment) => segment !== '*' && /[*?{}[\]]/.test(segment))) {
+    throw new Error(`Unsupported pnpm workspace pattern: ${pattern}`);
+  }
+
+  let directories = [''];
+  for (const segment of segments) {
+    if (segment !== '*') {
+      directories = directories.map((directory) => path.join(directory, segment));
+      continue;
+    }
+    directories = directories.flatMap((directory) => {
+      const absolute = path.join(repoRoot, directory);
+      if (!fs.existsSync(absolute)) return [];
+      return fs.readdirSync(absolute, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => path.join(directory, entry.name));
+    });
+  }
+  return directories.filter((directory) => fs.existsSync(path.join(repoRoot, directory, 'package.json')));
+}
+
+function getWorkspaceManifestPaths(repoRoot) {
+  const workspacePath = path.join(repoRoot, 'pnpm-workspace.yaml');
+  if (!fs.existsSync(workspacePath)) return [];
+  const patterns = getWorkspacePatterns(workspacePath);
+  const excluded = new Set(
+    patterns
+      .filter((pattern) => pattern.startsWith('!'))
+      .flatMap((pattern) => expandWorkspacePattern(repoRoot, pattern.slice(1))),
+  );
+  return [...new Set(
+    patterns
+      .filter((pattern) => !pattern.startsWith('!'))
+      .flatMap((pattern) => expandWorkspacePattern(repoRoot, pattern))
+      .filter((directory) => !excluded.has(directory)),
+  )].map((directory) => path.join(directory, 'package.json'));
 }
 
 /** Root package name (@opengsd/gsd-pi). */
@@ -47,19 +105,7 @@ function getEnginePackageNames() {
  * where deps is the subset of this set that the package depends on.
  */
 function getPublishableWorkspacePackages(repoRoot = REPO_ROOT) {
-  const workspacePath = path.join(repoRoot, 'pnpm-workspace.yaml');
-  if (!fs.existsSync(workspacePath)) return [];
-  const workspace = parse(fs.readFileSync(workspacePath, 'utf8'));
-  const patterns = Array.isArray(workspace?.packages) ? workspace.packages : [];
-  const includes = patterns.filter((pattern) => typeof pattern === 'string' && !pattern.startsWith('!'));
-  const excludes = patterns
-    .filter((pattern) => typeof pattern === 'string' && pattern.startsWith('!'))
-    .map((pattern) => `${pattern.slice(1).replace(/\/$/, '')}/package.json`);
-  const manifests = globSync(
-    includes.map((pattern) => `${pattern.replace(/\/$/, '')}/package.json`),
-    { cwd: repoRoot, nodir: true, ignore: ['**/node_modules/**', ...excludes] },
-  );
-  const workspaces = manifests.map((manifest) => {
+  const workspaces = getWorkspaceManifestPaths(repoRoot).map((manifest) => {
     const pkgJsonPath = path.join(repoRoot, manifest);
     const pkg = readJson(pkgJsonPath);
     return { dir: path.dirname(manifest), name: pkg.name, pkg };
@@ -82,6 +128,15 @@ function getPublishableWorkspacePackages(repoRoot = REPO_ROOT) {
   });
 }
 
+function assertReleaseWorkspacePreparationCoverage(packages) {
+  const preparedDirectories = new Set(RELEASE_WORKSPACE_PACKAGE_DIRS);
+  for (const pkg of packages) {
+    if (!preparedDirectories.has(pkg.dir)) {
+      throw new Error(`${pkg.name} is publishable but ${pkg.dir} is not included in release preparation`);
+    }
+  }
+}
+
 /**
  * Publishable workspace packages in DEPENDENCY order (a package always appears
  * after every package it depends on) so `npm publish` of one never references a
@@ -89,6 +144,7 @@ function getPublishableWorkspacePackages(repoRoot = REPO_ROOT) {
  */
 function getOrderedWorkspacePublishList() {
   const packages = getPublishableWorkspacePackages();
+  assertReleaseWorkspacePreparationCoverage(packages);
   const byName = new Map(packages.map((p) => [p.name, p]));
   const ordered = [];
   const placed = new Set();
@@ -129,6 +185,7 @@ module.exports = {
   getRootPackageName,
   getEnginePackageNames,
   getPublishableWorkspacePackages,
+  assertReleaseWorkspacePreparationCoverage,
   getOrderedWorkspacePublishList,
   getRequiredNpmPackageNames,
 };

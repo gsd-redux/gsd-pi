@@ -18,6 +18,7 @@ const {
   getOrderedWorkspacePublishList,
   getEnginePackageNames,
   getRootPackageName,
+  assertReleaseWorkspacePreparationCoverage,
 } = require("../lib/npm-release-packages.cjs");
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../..");
 
@@ -104,6 +105,15 @@ test("release invariant covers every pnpm workspace root", () => {
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
+});
+
+test("publish discovery cannot outrun version and prepack preparation", () => {
+  assert.throws(
+    () => assertReleaseWorkspacePreparationCoverage([
+      { dir: "extensions/new-publisher", name: "@example/new-publisher", deps: [] },
+    ]),
+    /@example\/new-publisher is publishable but extensions\/new-publisher is not included in release preparation/,
+  );
 });
 
 test("workspace packages are ordered so dependencies publish first", () => {

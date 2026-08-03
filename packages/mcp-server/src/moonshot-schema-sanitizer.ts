@@ -65,20 +65,10 @@ function mergeObjectVariants(variants: Record<string, unknown>[]): Record<string
 		}
 		return merged;
 	}, {});
-	const required = Array.from(
-		new Set(
-			variants.flatMap((variant) =>
-				Array.isArray(variant.required)
-					? variant.required.filter((name): name is string => typeof name === "string")
-					: [],
-			),
-		),
-	);
 
 	return {
 		type: "object",
 		properties,
-		...(required.length > 0 ? { required } : {}),
 	};
 }
 

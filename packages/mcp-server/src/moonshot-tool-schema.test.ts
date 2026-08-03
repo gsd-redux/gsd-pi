@@ -40,6 +40,28 @@ test("sanitizeSchemaForMoonshot flattens zod union workflow fields", () => {
 	assert.deepEqual(modeSchema, { type: "string", enum: ["build", "query"] });
 });
 
+test("sanitizeSchemaForMoonshot does not require fields from every object union variant", () => {
+	const sanitized = sanitizeSchemaForMoonshot({
+		type: "object",
+		properties: {
+			selection: {
+				anyOf: [
+					{ type: "object", properties: { milestone: { type: "string" } }, required: ["milestone"] },
+					{ type: "object", properties: { project: { type: "string" } }, required: ["project"] },
+				],
+			},
+		},
+	});
+
+	assert.deepEqual((sanitized.properties as Record<string, unknown>).selection, {
+		type: "object",
+		properties: {
+			milestone: { type: "string" },
+			project: { type: "string" },
+		},
+	});
+});
+
 test("createMcpServer advertises Moonshot-safe inputSchema for every tool", async () => {
 	const sm = new SessionManager();
 	// Plan 035 suppresses alias schemas by default; opt into the broad surface
