@@ -66,6 +66,7 @@ changes anywhere in this wave.
 | T008 | markdown-renderer: additive DB state-version stamp on projections; re-point self-read-back merge paths to DB reads | T007 | src/resources/extensions/gsd/markdown-renderer.ts, tests |
 | T009 | Split-retire the no-cutover gate: create gate:lifecycle-shadow-no-cutover and add it to verify:pr | T002, T007, T008, T024, T025 | scripts/semantic-shadow-no-cutover-gate.mjs, scripts/lifecycle-shadow-no-cutover-gate.mjs, package.json, tests/semantic-shadow-no-cutover.test.ts |
 | T026 | Fix restore-assessment unsupported-schema test after the V46 pin advance (future-schema simulation moves off v46, expressed as SCHEMA_VERSION + 1) | T005 | src/resources/extensions/gsd/tests/legacy-import-restore-assessment.test.ts |
+| T027 | Realign stale schema-version literals and stamp-era byte expectations so verify:pr's test:unit leg is green at HEAD (review cycle-1 T009F1, carries T009 AC5) | T005, T008 | src/resources/extensions/gsd/tests/db-authority-recovery-schema.test.ts, db-lifecycle-foundation.test.ts, db-milestone-reopen-schema.test.ts, db-milestone-completion-schema.test.ts, gsd-rebuild.test.ts, migrate-safety-audit.test.ts |
 
 ## Wave 3 — consumers, evidence, command, docs
 
@@ -259,3 +260,25 @@ wave 3 and report; wave 4 waits.
   re-break it; no corpus fixture needed (the case is stamped inline via
   SQL). T005's integrated commit is untouched; all other task ids/deps
   unchanged.
+- 2026-08-02 — **Wave-2 review cycle 1 blocked → new T027** (evidence:
+  `.project/review/wave-2.cycle1.md` — T009 AC5 `verify:pr` green fails on
+  deterministically red tests, all confirmed NOT caused by T009's diff;
+  attribution re-run at T008's base `37aedafb`): T005's V46 bump left stale
+  `SCHEMA_VERSION, 45` literals (`db-authority-recovery-schema.test.ts`,
+  `db-lifecycle-foundation.test.ts`); T008's projection stamp left
+  unstamped-byte expectations (`gsd-rebuild.test.ts`) and a
+  canonical-representation conflict (`migrate-safety-audit.test.ts`).
+  Repair: new wave-2 task **T027** (deps [T005, T008]) carries T009 AC5 and
+  the T026 fix pattern (version expectations `SCHEMA_VERSION`-relative;
+  stamp-aware byte expectations; semantically honest audit reconciliation —
+  never weakening `migrate/audit.js`). Planner pre-sweep at HEAD extended
+  the review's 4-file enumeration to 6 (added
+  `db-milestone-reopen-schema.test.ts:218`,
+  `db-milestone-completion-schema.test.ts:176` — confirmed red via source
+  runner, 26/3), verified all six files UNOWNED by any task, and found no
+  further unstamped exact-byte projection assertions; the sweep step +
+  ownership-block rule are explicit in the contract. T009's other ACs all
+  passed review; T021 inherits the review's dangling-import warning
+  (`scripts/m003-s07-dossier-input.ts` + test import the deleted
+  `semantic-shadow-no-cutover-gate.mjs` — unreachable by verify:pr, crash
+  if run; fits T021's retirement scope).
