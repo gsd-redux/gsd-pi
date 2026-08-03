@@ -3,7 +3,7 @@ id: T010
 title: Re-point doctor, reactive-graph, and artifact-verification consumers of parsers-legacy to DB reads
 wave: 3
 deps: [T007]
-status: in-progress
+status: blocked
 agent: build_T010
 commit: null
 base: 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37
@@ -101,3 +101,5 @@ NOT edit it here; expect its stale-entry check to be red until then.
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-02 — BLOCKED by coder (plan defect): Step 3 contradicts Acceptance
+- 2026-08-02 — orchestrator: block accepted as documented plan defect (no production diff; nothing rejected). Worktree .worktrees/gsd-path-T010 RETAINED clean at base 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37 on branch gsd-path/T010. T012 landed the relocated parsers (parseLegacyPlan/parseLegacyRoadmap in schemas/parsers.ts) — planner re-scopes T010 against that landed state before redispatch.
