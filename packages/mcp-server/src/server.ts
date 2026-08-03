@@ -1096,8 +1096,7 @@ export async function createMcpServer(
 }> {
   const includeWorkflowTools = options.includeWorkflowTools
     ?? hasWorkflowToolBridgeConfiguration();
-  // The CLI passes an explicit decision and owns its pre-connect warm-up.
-  if (includeWorkflowTools && options.includeWorkflowTools === undefined) {
+  if (includeWorkflowTools) {
     await warmWorkflowToolBridges();
   }
 

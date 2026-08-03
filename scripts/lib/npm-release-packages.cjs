@@ -108,7 +108,8 @@ function getPublishableWorkspacePackages(repoRoot = REPO_ROOT) {
   const workspaces = getWorkspaceManifestPaths(repoRoot).map((manifest) => {
     const pkgJsonPath = path.join(repoRoot, manifest);
     const pkg = readJson(pkgJsonPath);
-    return { dir: path.dirname(manifest), name: pkg.name, pkg };
+    const dir = path.dirname(manifest).replaceAll('\\', '/');
+    return { dir, name: pkg.name, pkg };
   }).filter(({ name }) => name);
   const pkgs = workspaces.filter(({ pkg }) => pkg.private !== true && pkg.publishConfig);
   const workspaceNames = new Set(workspaces.map((p) => p.name));

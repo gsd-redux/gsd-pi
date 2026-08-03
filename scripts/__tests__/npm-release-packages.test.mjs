@@ -116,6 +116,29 @@ test("publish discovery cannot outrun version and prepack preparation", () => {
   );
 });
 
+test("workspace discovery emits portable package directory IDs", (t) => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "npm-release-windows-paths-"));
+  const workspaceDir = path.win32.join("packages", "mcp-server");
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+
+  writeFileSync(
+    path.join(fixture, "pnpm-workspace.yaml"),
+    ["packages:", `  - '${workspaceDir}'`, ""].join("\n"),
+  );
+  mkdirSync(path.join(fixture, workspaceDir), { recursive: true });
+  writeFileSync(
+    path.join(fixture, workspaceDir, "package.json"),
+    JSON.stringify({
+      name: "@opengsd/mcp-server",
+      publishConfig: { access: "public" },
+    }),
+  );
+
+  const packages = getPublishableWorkspacePackages(fixture);
+  assert.equal(packages[0]?.dir, "packages/mcp-server");
+  assert.doesNotThrow(() => assertReleaseWorkspacePreparationCoverage(packages));
+});
+
 test("workspace packages are ordered so dependencies publish first", () => {
   const order = getOrderedWorkspacePublishList().map((p) => p.name);
   const idx = (name) => order.indexOf(name);
