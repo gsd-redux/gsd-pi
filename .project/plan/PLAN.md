@@ -80,7 +80,7 @@ fix-doc items. Nothing in this wave deletes `parsers-legacy.ts`,
 
 | Task | Title | Deps | Files |
 |------|-------|------|-------|
-| T010 | Re-point doctor, reactive-graph, and artifact-verification consumers to DB reads | T007 | src/resources/extensions/gsd/doctor*.ts, reactive-graph.ts, artifact-verification.ts, tests |
+| T010 | Re-point doctor, reactive-graph, and artifact-verification consumers to DB reads | T007, T012 | src/resources/extensions/gsd/doctor*.ts, reactive-graph.ts, artifact-verification.ts, tests |
 | T011 | Re-point display/prompt consumers (workspace-index, visualizer-data, auto-prompts, github-sync) | T007 | src/resources/extensions/gsd/workspace-index.ts, visualizer-data.ts, auto-prompts.ts, src/resources/extensions/github-sync/sync.ts, tests |
 | T012 | Relocate shared markdown parsers off parsers-legacy; re-point md-importer and migration-auto-check | T007 | src/resources/extensions/gsd/md-importer.ts, migration-auto-check.ts, parsers-legacy.ts, schemas/parsers.ts, tests |
 | T013 | Convert drift detectors to stamped projection-reads via relocated parsers | T008, T012 | src/resources/extensions/gsd/state-reconciliation/drift/*, tests |
@@ -282,3 +282,20 @@ wave 3 and report; wave 4 waits.
   (`scripts/m003-s07-dossier-input.ts` + test import the deleted
   `semantic-shadow-no-cutover-gate.mjs` — unreachable by verify:pr, crash
   if run; fits T021's retirement scope).
+- 2026-08-03 — **T010 block resolved: re-scoped to T012's landed reality**
+  (evidence: T010 task Log block record; T012 commit
+  `e6f14314bd0d5c9aa8de6a600952c2521bb74e11`): T010's Step 3 "otherwise keep
+  its existing parse" branch contradicted AC1's zero-`parsers-legacy` grep
+  for `doctor-engine-checks.ts` because no relocated parser home exported
+  `parsePlan` at T010's base. T012 landed the relocation byte-identically
+  (`parseLegacyRoadmap`/`parseLegacyPlan` in `schemas/parsers.ts`;
+  `parsers-legacy.ts` now a deprecated re-export shim). Repair: T010 Step 3
+  re-scoped — `doctor-engine-checks.ts` re-points its projection parse
+  (:31 import, :149 call) to `parseLegacyPlan` from `./schemas/parsers.js`;
+  Context records the landed state; AC1/Verify gained
+  `parseLegacyPlan`/`schemas/parsers` greps; other four consumers
+  unchanged. T010 deps [T007]→[T007, T012]; status blocked→pending; agent
+  build_T010 kept; base/worktree/task_branch nulled — orchestrator rebases
+  branch `gsd-path/T010` onto the new primary HEAD and redispatches into
+  the retained clean worktree (same procedure as the T005 repair). Files
+  list unchanged, so wave-3 overlap picture is untouched.
