@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 2 of 4
+Current wave: 3 of 4
 Updated: 2026-08-02
 
 ## Waves
@@ -11,7 +11,7 @@ Updated: 2026-08-02
 | Wave | Goal | Tasks | Done | Review |
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
-| 2 | walking skeleton (+T024 gate-unblock) | 6 | 0/6 | — |
+| 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
 | 3 | consumers, evidence, command, docs | 10 | 0/10 | — |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
