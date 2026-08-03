@@ -3,9 +3,9 @@ id: T012
 title: Relocate shared markdown parsers off parsers-legacy; re-point md-importer and migration-auto-check
 wave: 3
 deps: [T007]
-status: in-progress
+status: done
 agent: build_T012
-commit: null
+commit: e6f14314bd0d5c9aa8de6a600952c2521bb74e11
 base: 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37
 worktree: .worktrees/gsd-path-T012
 task_branch: gsd-path/T012
