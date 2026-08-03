@@ -80,3 +80,30 @@ NOT touched here — its deletion is timebox-gated T021.
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-03 — coder: implemented. Inventory (step 1): md-importer.ts,
+  migration-auto-check.ts, markdown-renderer.ts (post-T008), and the drift
+  detectors (T013) import only `parseRoadmap`/`parsePlan` from
+  parsers-legacy.ts; `schemas/parsers.ts` has NO equivalent (its
+  validation-flavored `parseRoadmap` returns ParsedRoadmap for
+  schemas/validate.ts — not interchangeable, per T008's note), so both
+  functions were MOVED (step 2) into `schemas/parsers.ts` as
+  `parseLegacyRoadmap`/`parseLegacyPlan` (the `Legacy` prefix is forced by
+  the export-name collision with the validation parseRoadmap; bodies are
+  byte-identical, including the parse cache + clearLegacyParseCache
+  registration with files.ts). parsers-legacy.ts shrank to a re-export shim
+  (original names preserved for state.ts per T007, markdown-renderer per
+  T008, drift detectors per T013) with the DEPRECATED header (step 4).
+  md-importer.ts and migration-auto-check.ts re-pointed to
+  schemas/parsers.ts via import aliases (step 3). Tests (step 5):
+  parsers.test.ts and legacy-import-corpus.test.ts re-pointed;
+  md-importer.test.ts and migrate-validator-parsers.test.ts needed no edit
+  (no parsers-legacy references). Naming note for T013/T016: the relocated
+  symbols are `parseLegacyRoadmap`/`parseLegacyPlan` in schemas/parsers.ts.
+  Known cross-wave state: parsers-legacy-importers.test.ts (T016-owned) now
+  fails its "no stale entries" assertion on md-importer.ts and
+  migration-auto-check.ts — expected; T016 reconciles the allowlist.
+  Verify: PASS — grep conditions hold; 107 tests pass / 0 fail across
+  parsers, legacy-import-corpus, md-importer, migrate-validator-parsers
+  (baseline was also 107/0). Smoke: roadmap-slices + markdown-renderer +
+  state-reconciliation-drift + migrate-writer = 131 pass / 0 fail
+  (14 pre-existing skips).
