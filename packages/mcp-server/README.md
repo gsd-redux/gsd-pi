@@ -4,17 +4,20 @@ MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other M
 
 Start GSD auto-mode sessions, poll progress, resolve blockers, and retrieve results — all through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-This package exposes three tool surfaces:
+This package always exposes two bridge-independent tool surfaces:
 
 - session/read tools for starting and inspecting GSD sessions
 - MCP-native interactive tools for structured user input
-- headless-safe workflow tools for planning, completion, validation, reassessment, metadata persistence, and journal reads
+
+When workflow bridges are available, it also exposes headless-safe workflow tools for planning, completion, validation, reassessment, metadata persistence, and journal reads.
 
 ## Installation
 
 ```bash
 npm install @opengsd/mcp-server
 ```
+
+The published package installs without the bundled-only `@gsd/pi-ai` package. A standalone process starts with the bridge-independent tool surfaces; see [Workflow tools](#workflow-tools) to enable workflow mutation tools.
 
 Or with the monorepo workspace:
 

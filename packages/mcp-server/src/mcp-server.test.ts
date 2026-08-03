@@ -16,6 +16,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
 
 import { SessionManager } from './session-manager.js';
 import { installGlobalErrorHandlers } from './cli-errors.js';
@@ -831,12 +832,25 @@ describe('SessionManager.resolveCLIPath', () => {
 
 describe('createMcpServer tool registration', () => {
   let sm: TestableSessionManager;
+  let previousExecutorsModule: string | undefined;
+  let previousWriteGateModule: string | undefined;
+  const workflowBridgeFixture = fileURLToPath(
+    new URL('../test-fixtures/workflow-bridge.mjs', import.meta.url),
+  );
 
   beforeEach(() => {
     sm = createManager();
+    previousExecutorsModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    previousWriteGateModule = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    process.env.GSD_WORKFLOW_EXECUTORS_MODULE = workflowBridgeFixture;
+    process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = workflowBridgeFixture;
   });
 
   afterEach(async () => {
+    if (previousExecutorsModule === undefined) delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    else process.env.GSD_WORKFLOW_EXECUTORS_MODULE = previousExecutorsModule;
+    if (previousWriteGateModule === undefined) delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    else process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = previousWriteGateModule;
     for (const mgr of allManagers) {
       await mgr.cleanup();
     }

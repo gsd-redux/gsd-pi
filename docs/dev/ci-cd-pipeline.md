@@ -137,7 +137,7 @@ The pipeline only triggers after `ci.yml` passes. Key gating tests include:
 1. A version reaches the Test stage automatically
 2. In GitHub Actions, run **NPM Publish** with `channel=latest`; the workflow publishes and verifies `@dev` from `main`, then plans the release, builds all five native binaries, and the `prod-release` job will show "Waiting for review"
 3. Click **Review deployments** → select `prod` → **Approve**
-4. The workflow publishes the matching `@opengsd/engine-*` packages, verifies they are visible on npm, publishes `@opengsd/gsd-pi@latest`, pushes the release commit/tag, and creates a GitHub Release
+4. The workflow publishes the matching `@opengsd/engine-*` packages, then every publishable workspace package in dependency order, verifies the complete release set on npm, publishes `@opengsd/gsd-pi@latest`, pushes the release commit/tag, and creates a GitHub Release
 
 To enable live LLM tests during Prod promotion:
 - Set the `RUN_LIVE_TESTS` environment variable to `true` on the `prod` environment
@@ -162,7 +162,7 @@ For `@dev` or `@next` rollbacks, the next successful merge will overwrite the ta
 
 | Setting | Value |
 |---------|-------|
-| npm Trusted Publisher workflow filename | `npm-publish.yml` (for `@opengsd/gsd-pi` only) |
+| npm Trusted Publisher workflow filename | `npm-publish.yml` (for every package in the release set) |
 | Environment: `dev` | No protection rules |
 | Environment: `test` | No protection rules |
 | Environment: `prod` | Required reviewers: maintainers |
@@ -187,23 +187,14 @@ Use this when any `@opengsd/engine-*` package is missing from npm (today: `@open
    - `platform_packages_only`: **true**
    - `publish_auth`: **token** ← required for packages that do not exist yet
 4. Confirm all five packages resolve: `npm view @opengsd/engine-darwin-x64 version` (and the other four).
-5. **Then** configure trusted publishing on each package (table below).
+5. **Then** configure trusted publishing on each package as described below.
 6. Re-run **NPM Publish** with the desired channel.
 
 The publish step skips packages already on npm and attempts all five platforms before failing, so one error does not leave the rest unpublished.
 
 #### Trusted publishing (after first publish)
 
-Configure **every** package on [npm package settings](https://www.npmjs.com/settings/opengsd/packages) → package → **Publishing access** → **Trusted Publisher**:
-
-| npm package | Trusted Publisher workflow |
-|-------------|---------------------------|
-| `@opengsd/gsd-pi` | `npm-publish.yml` |
-| `@opengsd/engine-darwin-arm64` | `npm-publish.yml` |
-| `@opengsd/engine-darwin-x64` | `npm-publish.yml` |
-| `@opengsd/engine-linux-x64-gnu` | `npm-publish.yml` |
-| `@opengsd/engine-linux-arm64-gnu` | `npm-publish.yml` |
-| `@opengsd/engine-win32-x64-msvc` | `npm-publish.yml` |
+Configure **every** package on [npm package settings](https://www.npmjs.com/settings/opengsd/packages) → package → **Publishing access** → **Trusted Publisher**. Use `npm-publish.yml` for the root package, every native engine package, and every publishable workspace package returned by `node scripts/lib/npm-release-packages.cjs`; that script is the authoritative release-set inventory.
 
 For all packages: repository **`open-gsd/gsd-pi`**, environment **(none)**.
 

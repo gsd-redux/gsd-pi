@@ -1,10 +1,13 @@
 /**
- * MCP Server — registers GSD orchestration, project-state, and workflow tools.
+ * MCP Server — registers GSD orchestration and project-state tools, plus
+ * workflow tools when their runtime bridges are available.
  *
  * Session tools (6): gsd_execute, gsd_status, gsd_result, gsd_cancel, gsd_query, gsd_resolve_blocker
  * Interactive tools (2): ask_user_questions, secure_env_collect via MCP form elicitation
  * Read-only tools (6): gsd_progress, gsd_roadmap, gsd_history, gsd_doctor, gsd_captures, gsd_knowledge
- * Workflow tools (29): headless-safe planning, metadata persistence, replanning, completion, validation, reassessment, gate result, status, and journal tools
+ * Workflow tools (when bridges are available): headless-safe planning,
+ * metadata persistence, replanning, completion, validation, reassessment,
+ * gate result, status, and journal tools
  *
  * Uses dynamic imports for @modelcontextprotocol/sdk because TS Node16
  * cannot resolve the SDK's subpath exports statically (same pattern as

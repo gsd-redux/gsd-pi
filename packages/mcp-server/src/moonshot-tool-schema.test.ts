@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
-import { normalizeObjectSchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { sanitizeSchemaForMoonshot } from "./moonshot-schema-sanitizer.js";
 import { SessionManager } from "./session-manager.js";
 import { createMcpServer } from "./server.js";
@@ -62,43 +65,72 @@ test("sanitizeSchemaForMoonshot does not require fields from every object union 
 	});
 });
 
-test("createMcpServer advertises Moonshot-safe inputSchema for every tool", async () => {
+test("createMcpServer advertises Moonshot-safe inputSchema for every tool", async (t) => {
 	const sm = new SessionManager();
+	const bridgePath = fileURLToPath(new URL("../test-fixtures/workflow-bridge.mjs", import.meta.url));
 	// Plan 035 suppresses alias schemas by default; opt into the broad surface
 	// so this test verifies every tool (canonical AND alias) is Moonshot-safe.
 	const previousAdvertise = process.env.GSD_MCP_ADVERTISE_ALIASES;
 	const previousHide = process.env.GSD_MCP_HIDE_ALIASES;
-	process.env.GSD_MCP_ADVERTISE_ALIASES = "1";
-	delete process.env.GSD_MCP_HIDE_ALIASES;
-	const { server } = await createMcpServer(sm, { includeWorkflowTools: true }).finally(() => {
+	const previousExecutorsModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+	const previousWriteGateModule = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+	t.after(async () => {
 		if (previousAdvertise === undefined) delete process.env.GSD_MCP_ADVERTISE_ALIASES;
 		else process.env.GSD_MCP_ADVERTISE_ALIASES = previousAdvertise;
 		if (previousHide === undefined) delete process.env.GSD_MCP_HIDE_ALIASES;
 		else process.env.GSD_MCP_HIDE_ALIASES = previousHide;
+		if (previousExecutorsModule === undefined) delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+		else process.env.GSD_WORKFLOW_EXECUTORS_MODULE = previousExecutorsModule;
+		if (previousWriteGateModule === undefined) delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+		else process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = previousWriteGateModule;
+		await sm.cleanup();
+	});
+	process.env.GSD_MCP_ADVERTISE_ALIASES = "1";
+	delete process.env.GSD_MCP_HIDE_ALIASES;
+	process.env.GSD_WORKFLOW_EXECUTORS_MODULE = bridgePath;
+	process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = bridgePath;
+	const { server } = await createMcpServer(sm, { includeWorkflowTools: true });
+	const mcpServer = server as unknown as McpServer;
+	mcpServer.registerTool(
+		"moonshot_union_probe",
+		{
+			description: "Exercise Moonshot schema sanitization through the advertised MCP surface.",
+			inputSchema: {
+				keyFiles: z.union([z.array(z.string()), z.string()]),
+				mode: z.union([z.literal("build"), z.literal("query")]),
+			},
+		},
+		async () => ({ content: [{ type: "text", text: "ok" }] }),
+	);
+	const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+	const client = new Client({ name: "moonshot-tool-schema-test", version: "1.0.0" });
+	t.after(async () => {
+		await client.close();
+		await server.close();
+	});
+	await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+	const { tools } = await client.listTools();
+	const probe = tools.find((tool) => tool.name === "moonshot_union_probe");
+	assert.ok(probe, "Moonshot compatibility probe must be advertised");
+	const probeProperties = probe.inputSchema.properties;
+	assert.ok(probeProperties, "Moonshot compatibility probe must advertise properties");
+	assert.deepEqual(probeProperties.keyFiles, {
+		type: "array",
+		items: { type: "string" },
+	});
+	assert.deepEqual(probeProperties.mode, {
+		type: "string",
+		enum: ["build", "query"],
 	});
 
-	const registeredTools =
-		(server as { _registeredTools?: Record<string, { enabled: boolean; inputSchema?: unknown }> })._registeredTools ??
-		{};
-	let toolCount = 0;
-
-	for (const [name, tool] of Object.entries(registeredTools)) {
-		if (!tool.enabled) continue;
-		toolCount += 1;
-
-		const obj = normalizeObjectSchema(tool.inputSchema as Parameters<typeof normalizeObjectSchema>[0]);
-		const raw = obj
-			? toJsonSchemaCompat(obj, { strictUnions: true, pipeStrategy: "input" })
-			: { type: "object", properties: {} };
-		const sanitized = sanitizeSchemaForMoonshot(raw);
-
-		assert.equal(sanitized.type, "object", `${name}: root type must be object`);
+	for (const tool of tools) {
+		assert.equal(tool.inputSchema.type, "object", `${tool.name}: root type must be object`);
 		assert.deepEqual(
-			collectForbiddenUnionSchemaPaths(sanitized),
+			collectForbiddenUnionSchemaPaths(tool.inputSchema),
 			[],
-			`${name}: Moonshot schema must not contain anyOf/oneOf/allOf`,
+			`${tool.name}: Moonshot schema must not contain anyOf/oneOf/allOf`,
 		);
 	}
 
-	assert.ok(toolCount >= 50, `expected broad MCP tool surface, got ${toolCount}`);
+	assert.ok(tools.length >= 50, `expected broad MCP tool surface, got ${tools.length}`);
 });

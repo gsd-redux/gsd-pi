@@ -653,11 +653,9 @@ jobs:
       - name: Verify workspace packages are built
         run: node scripts/verify-workspace-dist.cjs
 
-      # Publish the @opengsd workspace packages (contracts, rpc-client, mcp-server,
-      # cloud-mcp-gateway, daemon) BEFORE the main package and BEFORE cutting the
-      # release. The set is derived from each package's publishConfig, so it can't
-      # drift out of sync the way the old hardcoded list did (which left
-      # cloud-mcp-gateway + daemon unpublished for two releases).
+      # Publish every workspace package selected by publishConfig BEFORE the main
+      # package and BEFORE cutting the release. The derived set cannot drift the
+      # way the old hardcoded list did.
       - name: Publish workspace packages to npm
         env:
           RELEASE_VERSION: ${{ needs.prod-release-plan.outputs.version }}

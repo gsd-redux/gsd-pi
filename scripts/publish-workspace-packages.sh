@@ -44,7 +44,7 @@ _verify_dist_tag() {
   echo "Confirmed: ${pkg} @${tag} → ${VERSION}."
 }
 
-# Lines of "<name>:packages/<dir>" in dependency order.
+# Lines of "<name>:<workspace-dir>" in dependency order.
 mapfile -t _raw_entries < <(node scripts/lib/npm-release-packages.cjs --workspace-dirs)
 # Filter empty strings (defense-in-depth: prevents a stray trailing newline
 # from loading one blank element that bypasses the early-exit check).

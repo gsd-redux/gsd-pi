@@ -994,10 +994,11 @@ async function getWorkflowToolExecutors(): Promise<WorkflowToolExecutors> {
 
 /**
  * Eagerly load and shape-check the workflow executor and write-gate bridges.
- * The stdio CLI awaits this at startup so a broken bridge fails the spawn
- * with an actionable error instead of presenting an available-looking tool
- * surface that errors on the first call. Shares the cached promises the tool
- * handlers use, so a successful warm-up also removes first-call import latency.
+ * When workflow tools are enabled, the stdio CLI awaits this before connecting
+ * so a broken bridge fails the spawn with an actionable error instead of
+ * presenting an available-looking tool surface that errors on the first call.
+ * Shares the cached promises the tool handlers use, so a successful warm-up
+ * also removes first-call import latency.
  */
 export async function warmWorkflowToolBridges(): Promise<void> {
   await getWorkflowToolExecutors();
