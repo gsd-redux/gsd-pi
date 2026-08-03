@@ -3,12 +3,12 @@ id: T011
 title: Re-point display/prompt consumers (workspace-index, visualizer-data, auto-prompts, github-sync) off parsers-legacy
 wave: 3
 deps: [T007]
-status: pending
-agent: null
+status: in-progress
+agent: build_T011
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37
+worktree: .worktrees/gsd-path-T011
+task_branch: gsd-path/T011
 files:
   - src/resources/extensions/gsd/workspace-index.ts
   - src/resources/extensions/gsd/visualizer-data.ts

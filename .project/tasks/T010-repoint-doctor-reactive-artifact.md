@@ -3,12 +3,12 @@ id: T010
 title: Re-point doctor, reactive-graph, and artifact-verification consumers of parsers-legacy to DB reads
 wave: 3
 deps: [T007]
-status: pending
-agent: null
+status: in-progress
+agent: build_T010
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37
+worktree: .worktrees/gsd-path-T010
+task_branch: gsd-path/T010
 files:
   - src/resources/extensions/gsd/doctor.ts
   - src/resources/extensions/gsd/doctor-state-checks.ts

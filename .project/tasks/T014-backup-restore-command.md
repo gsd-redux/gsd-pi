@@ -3,12 +3,12 @@ id: T014
 title: Ship the explicit backup-restore command; re-point commands-maintenance off parsers-legacy
 wave: 3
 deps: [T006]
-status: pending
-agent: null
+status: in-progress
+agent: build_T014
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37
+worktree: .worktrees/gsd-path-T014
+task_branch: gsd-path/T014
 files:
   - src/resources/extensions/gsd/commands-maintenance.ts
   - src/resources/extensions/gsd/legacy-import-restore-assessment.ts
