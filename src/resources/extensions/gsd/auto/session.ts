@@ -181,6 +181,12 @@ export class AutoSession {
   // ── Recovery ─────────────────────────────────────────────────────────────
   pendingCrashRecovery: string | null = null;
   pendingVerificationRetry: PendingVerificationRetry | null = null;
+  /**
+   * recoveryActionId of the terminal agent-owned abort minted by the last host
+   * verification pass. It is the only key `gsd_task_recovery_resume` accepts, so
+   * finalize prints it in the `verification-abort` break reason (#1593).
+   */
+  lastTaskRecoveryAbortId: string | null = null;
   readonly verificationRetryCount = new Map<string, number>();
   readonly verificationRetryFailureHashes = new Map<string, string>();
   readonly exhaustedVerificationUnits = new Set<string>();
@@ -399,6 +405,7 @@ export class AutoSession {
     // Recovery
     this.pendingCrashRecovery = null;
     this.pendingVerificationRetry = null;
+    this.lastTaskRecoveryAbortId = null;
     this.verificationRetryCount.clear();
     this.verificationRetryFailureHashes.clear();
     this.exhaustedVerificationUnits.clear();

@@ -239,6 +239,10 @@ function routeHostTechnicalFailure(
   attempt: VerificationAttemptSnapshot,
   verdict: FailedVerdictIdentity,
   failureKind: "verification-failed" | "verification-drift" = "verification-failed",
+  // A terminal abort is resumable by design via `gsd_task_recovery_resume`, but that
+  // tool needs the exact recoveryActionId. Hand it back so the caller can surface it
+  // on the finalize break reason instead of discarding it here (#1593).
+  recordAbort?: (recoveryActionId: string) => void,
 ): "retry" | "abort" {
   if (!attempt.resultId) throw new Error("Host verification Attempt Result is missing");
   const routeInput = {
@@ -273,8 +277,11 @@ function routeHostTechnicalFailure(
     case "remediate":
     case "replan":
       return "retry";
-    case "abort":
-      return recovery.status === "replayed" && recovery.resumeAuthorized ? "retry" : "abort";
+    case "abort": {
+      if (recovery.status === "replayed" && recovery.resumeAuthorized) return "retry";
+      recordAbort?.(recovery.recoveryActionId);
+      return "abort";
+    }
     default:
       throw new Error(`Unsupported agent recovery action ${recovery.action}`);
   }
@@ -639,6 +646,14 @@ export async function runPostUnitVerification(
     return "continue";
   }
 
+  // Capture the recoveryActionId of a terminal abort so the finalize break reason can
+  // print it — it is the only key `gsd_task_recovery_resume` accepts (#1593). Reset per
+  // verification pass so a stale id from an earlier unit can never be reported.
+  s.lastTaskRecoveryAbortId = null;
+  const recordAbort = (recoveryActionId: string) => {
+    s.lastTaskRecoveryAbortId = recoveryActionId;
+  };
+
   let recoverableAttempt: VerificationAttemptSnapshot | null = null;
   let recoverableAuthority: TaskVerificationAuthority | null = null;
   let canonicalVerdictWriteStarted = false;
@@ -664,7 +679,7 @@ export async function runPostUnitVerification(
         verdictId: replayedVerdict.verdictId,
         evidenceId: replayedVerdict.evidenceId,
         verdict: replayedVerdict.verdict,
-      }, replayedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed")
+      }, replayedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort)
       : null;
     if (!replayedRecovery && !isTaskAttemptAwaitingVerification(latestAttempt)) {
       throw new Error("Host verification requires the latest succeeded canonical Attempt at the verify stage");
@@ -743,7 +758,7 @@ export async function runPostUnitVerification(
         verdictId: invalidated.verdictId,
         evidenceId: invalidated.evidenceId,
         verdict: "inconclusive",
-      }, "verification-drift");
+      }, "verification-drift", recordAbort);
       if (recovery === "abort") return "abort";
       return recordDurableVerificationRetry(s, retryKey, failureContext);
     }
@@ -1106,7 +1121,7 @@ export async function runPostUnitVerification(
           verdictId: recordedVerdict.verdictId,
           evidenceId: recordedVerdict.evidenceId,
           verdict: hostTechnicalVerdict,
-        });
+        }, "verification-failed", recordAbort);
       }
 
       try {
@@ -1243,7 +1258,7 @@ export async function runPostUnitVerification(
         verdictId: storedVerdict.verdictId,
         evidenceId: storedVerdict.evidenceId,
         verdict: storedVerdict.verdict,
-      }, storedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed");
+      }, storedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort);
       if (recovery === "abort") return "abort";
       const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
       return recordDurableVerificationRetry(s, retryKey, message);
@@ -1271,7 +1286,7 @@ export async function runPostUnitVerification(
       verdictId: recorded.verdictId,
       evidenceId: recorded.evidenceId,
       verdict: "inconclusive",
-    });
+    }, "verification-failed", recordAbort);
     if (recovery === "abort") return "abort";
     const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
     return recordDurableVerificationRetry(s, retryKey, message);
