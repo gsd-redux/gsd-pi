@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
@@ -206,4 +206,17 @@ test("tracked bookkeeping under a symlinked .gsd does not change the tested sour
   const after = capture([{ id: "root", cwd }]);
 
   assert.equal(after.aggregateRevision, before.aggregateRevision);
+});
+
+test("a .gsd symlink resolving to the repository parent still produces a source proof", () => {
+  const cwd = createRepository("parent-symlinked-state");
+  // `relative()` yields exactly ".." here — without treating that as outside-repo
+  // the pathspec would become `:(exclude)..` and git would reject the command.
+  symlinkSync(dirname(cwd), join(cwd, ".gsd"), "dir");
+
+  const before = capture([{ id: "root", cwd }]);
+  writeFileSync(join(cwd, "tracked.txt"), "changed\n");
+  const after = capture([{ id: "root", cwd }]);
+
+  assert.notEqual(after.aggregateRevision, before.aggregateRevision);
 });
