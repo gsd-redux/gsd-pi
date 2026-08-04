@@ -39,7 +39,7 @@ export interface TaskExecutionCutoverDeps {
   readTaskAttempt(attemptId: string): TaskExecutionAttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): Pick<
     TaskRecoveryRouteSnapshot,
-    "action" | "recoveryOwner" | "resumeAuthorized"
+    "recoveryActionId" | "action" | "recoveryOwner" | "resumeAuthorized"
   > | null;
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
@@ -300,6 +300,17 @@ function routeTaskFailure(
   });
 }
 
+// The terminal abort is resumable by design via `gsd_task_recovery_resume`, but that
+// tool requires the exact recoveryActionId. Carry the id in the break reason so it
+// reaches the journal, the dispatch ledger, and the operator instead of being discarded.
+function taskRecoveryAbortResult(recoveryActionId: string): UnitPhaseResult {
+  return {
+    action: "break",
+    reason:
+      `task-recovery-abort (recoveryActionId: ${recoveryActionId}; resume with gsd_task_recovery_resume)`,
+  };
+}
+
 function applyRecoveryDecision(
   recovery: TaskRecoveryReceipt,
 ): UnitPhaseResult {
@@ -313,7 +324,7 @@ function applyRecoveryDecision(
       if (recovery.status === "replayed" && recovery.resumeAuthorized) {
         return { action: "retry", reason: "task-recovery-resumed" };
       }
-      return { action: "break", reason: "task-recovery-abort" };
+      return taskRecoveryAbortResult(recovery.recoveryActionId);
     case "clarify":
     case "pause":
       throw new Error("Agent-owned Task recovery cannot return a human-owned action");
@@ -393,7 +404,7 @@ export async function runWithTaskExecutionAttempt(
           return { action: "next", data: {} };
         }
         if (recovery.action === "abort" && !recovery.resumeAuthorized) {
-          return { action: "break", reason: "task-recovery-abort" };
+          return taskRecoveryAbortResult(recovery.recoveryActionId);
         }
       } else {
         if (!predecessor.resultId) {

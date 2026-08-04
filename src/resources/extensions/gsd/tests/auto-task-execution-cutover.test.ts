@@ -35,6 +35,11 @@ import { recordTaskTechnicalVerdict } from "../task-verification-domain-operatio
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 
+// The stuck-state resume key must ride along with every terminal abort break so an
+// operator can call gsd_task_recovery_resume without querying the database by hand.
+const TASK_RECOVERY_ABORT_REASON =
+  "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
+
 type UnitPhaseResult =
   | { action: "break"; reason: string }
   | { action: "retry"; reason: string }
@@ -76,6 +81,7 @@ interface CutoverDeps {
   readLatestTaskAttempt(task: TaskIdentity): AttemptSnapshot | null;
   readTaskAttempt(attemptId: string): AttemptSnapshot | null;
   readTaskRecoveryRoute(attemptId: string): {
+    recoveryActionId: string;
     recoveryOwner: "agent" | "user" | "external";
     action: "retry" | "repair" | "remediate" | "replan" | "abort" | "clarify" | "pause";
     resumeAuthorized?: boolean;
@@ -128,6 +134,7 @@ interface CutoverDeps {
   }): {
     status: "committed" | "replayed";
     action: "retry" | "repair" | "remediate" | "replan" | "abort";
+    recoveryActionId: string;
   };
 }
 
@@ -242,7 +249,7 @@ function fakeDomain() {
     },
     readTaskRecoveryRoute(attemptId) {
       calls.push({ name: "read-recovery", value: attemptId });
-      return { recoveryOwner: "agent", action: "retry" };
+      return { recoveryActionId: "recovery-action-1", recoveryOwner: "agent", action: "retry" };
     },
     claimTaskAttempt(claim) {
       calls.push({ name: "claim", value: claim });
@@ -288,7 +295,7 @@ function fakeDomain() {
     routeTaskFailure(route) {
       calls.push({ name: "route", value: route });
       routes.push(route);
-      return { status: "replayed", action: "retry" };
+      return { status: "replayed", action: "retry", recoveryActionId: "recovery-action-1" };
     },
   };
 
@@ -846,7 +853,11 @@ for (const phaseResult of [
       dispatchId: secondDispatchId,
     }), async () => ({ action: "break", reason: "unit-hard-timeout" }), canonicalDeps());
 
-    assert.deepEqual(terminalResult, { action: "break", reason: "task-recovery-abort" });
+    assert.equal(terminalResult.action, "break");
+    assert.match(
+      (terminalResult as { reason: string }).reason,
+      /^task-recovery-abort \(recoveryActionId: [0-9a-f-]{36}; resume with gsd_task_recovery_resume\)$/,
+    );
     const firstAttempt = database().prepare(`
       SELECT attempt_id FROM workflow_execution_attempts WHERE attempt_number = 1
     `).get() as { attempt_id: string };
@@ -886,11 +897,14 @@ test("a durable abort overrides an executor retry", async () => {
     ...domain.deps,
     routeTaskFailure(route) {
       domain.routes.push(route);
-      return { status: "committed", action: "abort" };
+      return { status: "committed", action: "abort", recoveryActionId: "recovery-action-1" };
     },
   });
 
-  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.deepEqual(result, {
+    action: "break",
+    reason: TASK_RECOVERY_ABORT_REASON,
+  });
   assert.equal(domain.routes.length, 1);
 });
 
@@ -922,6 +936,7 @@ test("an explicitly resumed durable abort claims one later Attempt", async () =>
         status: "replayed",
         action: "abort",
         resumeAuthorized: true,
+        recoveryActionId: "recovery-action-1",
       };
     },
   });
@@ -997,11 +1012,14 @@ test("a durable abort for stale-worker takeover stops before replacement claim o
     ...domain.deps,
     routeTaskFailure(route) {
       domain.routes.push(route);
-      return { status: "committed", action: "abort" };
+      return { status: "committed", action: "abort", recoveryActionId: "recovery-action-1" };
     },
   });
 
-  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.deepEqual(result, {
+    action: "break",
+    reason: TASK_RECOVERY_ABORT_REASON,
+  });
   assert.equal(ran, false);
   assert.equal(domain.claims.length, 0);
   assert.equal(domain.routes.length, 1);
@@ -1029,7 +1047,7 @@ test("a newly routed failed predecessor redispatches before its lineage-linked r
     routeTaskFailure(route: Parameters<CutoverDeps["routeTaskFailure"]>[0]) {
       domain.calls.push({ name: "route", value: route });
       domain.routes.push(route);
-      return { status: routeStatus, action: "repair" as const };
+      return { status: routeStatus, action: "repair" as const, recoveryActionId: "recovery-action-1" };
     },
   };
 
@@ -1104,11 +1122,14 @@ test("an unresumed verification abort stops before a replacement claim", async (
   }, {
     ...domain.deps,
     readTaskRecoveryRoute() {
-      return { recoveryOwner: "agent", action: "abort" };
+      return { recoveryActionId: "recovery-action-1", recoveryOwner: "agent", action: "abort" };
     },
   });
 
-  assert.deepEqual(result, { action: "break", reason: "task-recovery-abort" });
+  assert.deepEqual(result, {
+    action: "break",
+    reason: TASK_RECOVERY_ABORT_REASON,
+  });
   assert.equal(ran, false);
   assert.equal(domain.claims.length, 0);
 });
@@ -1136,7 +1157,7 @@ test("an explicitly resumed verification abort claims one lineage-linked Attempt
   }, {
     ...domain.deps,
     readTaskRecoveryRoute() {
-      return { recoveryOwner: "agent", action: "abort", resumeAuthorized: true };
+      return { recoveryActionId: "recovery-action-1", recoveryOwner: "agent", action: "abort", resumeAuthorized: true };
     },
   });
 
@@ -1147,7 +1168,11 @@ test("an explicitly resumed verification abort claims one lineage-linked Attempt
 });
 
 for (const [label, recovery] of [
-  ["a user-owned verification route", { recoveryOwner: "user" as const, action: "clarify" as const }],
+  ["a user-owned verification route", {
+    recoveryActionId: "recovery-action-1",
+    recoveryOwner: "user" as const,
+    action: "clarify" as const,
+  }],
   ["a missing verification route", null],
 ] as const) {
   test(`${label} resumes verification without executing again`, async () => {
@@ -1222,7 +1247,7 @@ test("a replacement lease routes a stale running Attempt and redispatches before
     routeTaskFailure(route: Parameters<CutoverDeps["routeTaskFailure"]>[0]) {
       domain.calls.push({ name: "route", value: route });
       domain.routes.push(route);
-      return { status: routeStatus, action: "repair" as const };
+      return { status: routeStatus, action: "repair" as const, recoveryActionId: "recovery-action-1" };
     },
   };
 
