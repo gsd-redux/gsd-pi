@@ -50,7 +50,7 @@
     "sql.js": "^1.14.1",
     "strip-ansi": "^7.1.0",
     "typebox": "1.1.38",
-    "undici": "7.28.0",
+    "undici": "7.29.0",
     "yaml": "2.9.0",
     "@gsd/agent-core": "workspace:*",
     "@gsd/native": "workspace:*",
