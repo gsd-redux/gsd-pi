@@ -84,14 +84,14 @@ function promptMetric(prompt: string): { chars: number; bytes: number; lines: nu
 
 // The rendered prompts embed the fixture root's absolute path, whose length is
 // platform-dependent (Linux `/tmp/...` vs macOS `/var/folders/<hash>/T/...`).
-// Collapse it to a fixed token so the size gate measures prompt content only.
-const FIXTURE_ROOT_TOKEN = "/gsd-fixture-root";
+// Collapse it to a fixed placeholder so the size gate measures prompt content only.
+const FIXTURE_ROOT_PLACEHOLDER = "/gsd-fixture-root";
 
 function normalizeFixtureRoot(prompt: string, base: string): string {
   const roots = new Set([base, realpathSync(base)]);
   let normalized = prompt;
   for (const root of roots) {
-    normalized = normalized.split(root).join(FIXTURE_ROOT_TOKEN);
+    normalized = normalized.split(root).join(FIXTURE_ROOT_PLACEHOLDER);
   }
   return normalized;
 }
