@@ -8,9 +8,10 @@
 
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { handleExtensions } from "../commands-extensions.ts";
 
 function setupHome(): string {
@@ -19,9 +20,19 @@ function setupHome(): string {
 	mkdirSync(extDir, { recursive: true });
 	writeFileSync(
 		join(extDir, "extension-manifest.json"),
-		JSON.stringify({ id: "demo-ext", name: "Demo", tier: "optional" }),
+		JSON.stringify({ id: "demo-ext", name: "Demo", tier: "community" }),
 	);
 	return home;
+}
+
+function makeCtx(notices: string[]): ExtensionCommandContext {
+	return {
+		ui: {
+			notify: (message: string, _type?: "info" | "warning" | "error" | "success") => {
+				notices.push(message);
+			},
+		},
+	} as unknown as ExtensionCommandContext;
 }
 
 describe("extensions registry lock (#1598)", () => {
@@ -30,19 +41,20 @@ describe("extensions registry lock (#1598)", () => {
 		const home = setupHome();
 		process.env.GSD_HOME = home;
 		const notices: string[] = [];
-		const ctx = { ui: { notify: (msg: string) => notices.push(msg) } };
+		const ctx = makeCtx(notices);
 
 		try {
-			await handleExtensions("disable demo-ext", ctx as never);
+			await handleExtensions("disable demo-ext", ctx);
 			const disabled = JSON.parse(readFileSync(join(home, "extensions", "registry.json"), "utf-8"));
 			assert.equal(disabled.entries["demo-ext"].enabled, false);
 
-			await handleExtensions("enable demo-ext", ctx as never);
+			await handleExtensions("enable demo-ext", ctx);
 			const enabled = JSON.parse(readFileSync(join(home, "extensions", "registry.json"), "utf-8"));
 			assert.equal(enabled.entries["demo-ext"].enabled, true);
 		} finally {
 			if (previous === undefined) delete process.env.GSD_HOME;
 			else process.env.GSD_HOME = previous;
+			rmSync(home, { recursive: true, force: true });
 		}
 
 		assert.deepEqual(notices, [
