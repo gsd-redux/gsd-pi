@@ -68,7 +68,7 @@ function gsdBookkeepingExclusions(cwd: string): string[] {
     return [];
   }
   const rel = relative(repoRoot, gsdTarget).replaceAll("\\", "/");
-  if (!rel || rel === ".gsd" || rel.startsWith("../") || isAbsolute(rel)) return [];
+  if (!rel || rel === ".gsd" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) return [];
   return [`:(exclude)${rel}`, `:(exclude)${rel}/**`];
 }
 
