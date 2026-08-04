@@ -3257,7 +3257,7 @@ export function registerWorkflowTools(
 
   server.tool(
     "gsd_milestone_status",
-    "Read the current status of a milestone and all its slices from the GSD database.",
+    "Read the current status of a milestone and all its slices from the GSD database. Includes `dependsOn`, the persisted milestone dependencies.",
     milestoneStatusParams,
     async (args: Record<string, unknown>) => {
       // gsd_milestone_status is a read-only query. In-process (query-tools.ts)

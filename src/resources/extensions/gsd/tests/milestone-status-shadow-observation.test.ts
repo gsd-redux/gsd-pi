@@ -141,6 +141,7 @@ test("milestone status observes all five shadow classes from its read snapshot w
     status: "pending",
     createdAt: "2026-07-14T10:00:00.000Z",
     completedAt: null,
+    dependsOn: [],
     sliceCount: 2,
     slices: [
       { id: "S01", status: "active", taskCounts: { total: 1, done: 1, pending: 0 } },

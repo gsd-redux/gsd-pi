@@ -131,7 +131,8 @@ export function registerQueryTools(
     label: "Milestone Status",
     description:
       "Read the current status of a milestone and all its slices from the GSD database. " +
-      "Returns milestone metadata, per-slice status, and task counts per slice. " +
+      "Returns milestone metadata (including `dependsOn`, the persisted milestone dependencies), " +
+      "per-slice status, and task counts per slice. " +
       "Use this instead of querying .gsd/gsd.db directly via sqlite3 or better-sqlite3.",
     promptSnippet: "Get milestone status, slice statuses, and task counts for a given milestoneId",
     promptGuidelines: [

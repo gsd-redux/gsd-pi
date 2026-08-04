@@ -120,6 +120,7 @@ test("gsd_milestone_status returns milestone metadata and slice statuses", async
       status: "active",
       createdAt: _getAdapter()!.prepare("SELECT created_at FROM milestones WHERE id = 'M001'").get()!["created_at"],
       completedAt: null,
+      dependsOn: [],
       sliceCount: 2,
       slices: [
         { id: "S01", status: "complete", taskCounts: { total: 2, done: 2, pending: 0 } },

@@ -2186,6 +2186,7 @@ export async function executeMilestoneStatus(
         status: milestone.status,
         createdAt: milestone.created_at,
         completedAt: milestone.completed_at,
+        dependsOn: milestone.depends_on ?? [],
         sliceCount: slices.length,
         slices,
       };

@@ -175,6 +175,7 @@ test("legacy milestone status remains public when canonical lifecycle disagrees"
     status: "active",
     createdAt: "2026-07-15T00:00:00.000Z",
     completedAt: null,
+    dependsOn: [],
     sliceCount: 1,
     slices: [{
       id: "S01",

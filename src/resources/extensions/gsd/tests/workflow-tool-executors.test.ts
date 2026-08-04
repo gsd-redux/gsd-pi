@@ -990,11 +990,33 @@ test("executeMilestoneStatus returns milestone metadata and slice counts", async
     assert.equal(parsed.milestoneId, "M001");
     assert.equal(parsed.title, "Milestone One");
     assert.equal(parsed.sliceCount, 1);
+    assert.deepEqual(parsed.dependsOn, []);
     assert.equal(parsed.slices[0].id, "S01");
     assert.equal(parsed.slices[0].taskCounts.pending, 1);
     assert.equal(result.details.status, "active");
     assert.equal(result.details.title, "Milestone One");
+    assert.deepEqual(result.details.dependsOn, []);
     assert.deepEqual(result.details.slices, parsed.slices);
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeMilestoneStatus returns persisted milestone dependencies", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    seedMilestone("M009", "Milestone Nine");
+    seedMilestone("M010", "Milestone Ten");
+    _getAdapter()!.prepare("UPDATE milestones SET depends_on = ? WHERE id = ?")
+      .run(JSON.stringify(["M009"]), "M010");
+
+    const result = await inProjectDir(base, () => executeMilestoneStatus({ milestoneId: "M010" }, base));
+    const parsed = JSON.parse(result.content[0].text);
+
+    assert.deepEqual(parsed.dependsOn, ["M009"]);
+    assert.deepEqual(result.details.dependsOn, ["M009"]);
   } finally {
     closeDatabase();
     cleanup(base);

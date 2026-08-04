@@ -219,6 +219,7 @@ function expectedFoundResponse() {
     status: "pending",
     createdAt: "2026-07-15T00:00:00.000Z",
     completedAt: null,
+    dependsOn: [],
     sliceCount: 2,
     slices: [
       { id: "S01", status: "active", taskCounts: { total: 1, done: 1, pending: 0 } },
