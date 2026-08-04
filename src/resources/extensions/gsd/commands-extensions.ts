@@ -11,20 +11,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { dirname, join, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { gsdHome } from "./gsd-home.js";
-
-const _require = createRequire(import.meta.url);
-const { lockSync, unlockSync } = _require("proper-lockfile") as {
-  lockSync: (
-    path: string,
-    options?: {
-      retries?: number | { retries?: number; minTimeout?: number; maxTimeout?: number; factor?: number };
-      stale?: number;
-    },
-  ) => () => void;
-  unlockSync: (path: string) => void;
-};
+import { withFileLockSync } from "./file-lock.js";
 
 /**
  * Strict numeric comparison of two npm-style version strings.
@@ -145,25 +133,24 @@ function saveRegistry(registry: ExtensionRegistry): void {
  * Prevents two concurrent `gsd extensions install/uninstall/update` invocations
  * from trampling each other's registry mutations.
  *
- * Uses proper-lockfile.lockSync against the registry path. Directory is created
+ * Uses withFileLockSync against the registry path, which wraps proper-lockfile's
+ * sync API in a manual retry loop — `lockSync` throws ESYNC if given a `retries`
+ * option, so retries must be driven by the caller (#1598). Directory is created
  * first so locking works on fresh installs. Lock is always released via finally.
  */
 function withRegistryLock<T>(mutate: (registry: ExtensionRegistry) => T): T {
   const filePath = getRegistryPath();
   mkdirSync(dirname(filePath), { recursive: true });
-  // lockSync requires the file to exist — ensure it does before acquiring.
+  // The lock target must exist — ensure it does before acquiring.
   if (!existsSync(filePath)) {
     writeFileSync(filePath, JSON.stringify({ version: 1, entries: {} }, null, 2), "utf-8");
   }
-  lockSync(filePath, { retries: { retries: 5, minTimeout: 50, maxTimeout: 500 } });
-  try {
+  return withFileLockSync(filePath, () => {
     const registry = loadRegistry();
     const result = mutate(registry);
     saveRegistry(registry);
     return result;
-  } finally {
-    try { unlockSync(filePath); } catch { /* lock may already be gone */ }
-  }
+  });
 }
 
 function isEnabled(registry: ExtensionRegistry, id: string): boolean {
