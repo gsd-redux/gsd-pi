@@ -1134,6 +1134,31 @@ export function saveReworkBrief(entry: {
   return { briefId };
 }
 
+/**
+ * Read the structured verification evidence staged for a Task by
+ * `gsd_task_complete` (#1591). Used by host verification to decide whether
+ * task-specific evidence already satisfies an artifact-only Task.
+ */
+export function getTaskVerificationEvidence(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): Array<{ command: string; exitCode: number; verdict: string; durationMs: number }> {
+  if (!getDbOrNull()!) return [];
+  const rows = getDbOrNull()!.prepare(
+    `SELECT command, exit_code, verdict, duration_ms
+     FROM verification_evidence
+     WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid
+     ORDER BY id`,
+  ).all({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId }) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    command: String(row.command ?? ""),
+    exitCode: Number(row.exit_code ?? 0),
+    verdict: String(row.verdict ?? ""),
+    durationMs: Number(row.duration_ms ?? 0),
+  }));
+}
+
 export function getBlockingReworkFindingsForTask(
   milestoneId: string,
   sliceId: string,

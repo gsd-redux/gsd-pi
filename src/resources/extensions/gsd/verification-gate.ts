@@ -25,10 +25,33 @@ function truncate(value: string | null | undefined, maxBytes: number): string {
 
 // ─── Command Discovery ──────────────────────────────────────────────────────
 
+/** Structured evidence staged by `gsd_task_complete` for the current Task. */
+export interface TaskVerificationEvidence {
+  command: string;
+  exitCode: number;
+  verdict: string;
+  durationMs?: number;
+}
+
 export interface DiscoverCommandsOptions {
   preferenceCommands?: string[];
   taskPlanVerify?: string;
+  /** Structured task-specific evidence supplied at completion (#1591). */
+  taskEvidence?: TaskVerificationEvidence[];
   cwd: string;
+}
+
+/**
+ * Task-specific evidence qualifies when at least one record exists and every
+ * record reports a passing verdict with a zero exit code (#1591).
+ */
+export function hasQualifyingTaskEvidence(
+  evidence: TaskVerificationEvidence[] | undefined,
+): boolean {
+  if (!evidence || evidence.length === 0) return false;
+  return evidence.every((record) =>
+    record.exitCode === 0 && /^(pass|passed)$/i.test((record.verdict ?? "").trim())
+  );
 }
 
 export interface DiscoveredCommands {
@@ -81,6 +104,17 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
     if (commands.length > 0) {
       return { commands, source: "task-plan" };
     }
+  }
+
+  // 1b. Prose task verify backed by passing structured task evidence (#1591).
+  // Task-specific evidence must not be silently replaced by unrelated
+  // project-wide preference commands.
+  if (
+    hasTaskPlanProse &&
+    !hasUnsafeTaskPlanCommand &&
+    hasQualifyingTaskEvidence(options.taskEvidence)
+  ) {
+    return { commands: [], source: "task-plan-prose" };
   }
 
   // 2. Preference commands
@@ -558,6 +592,8 @@ export interface RunVerificationGateOptions {
   cwd: string;
   preferenceCommands?: string[];
   taskPlanVerify?: string;
+  /** Structured task-specific evidence supplied at completion (#1591). */
+  taskEvidence?: TaskVerificationEvidence[];
   /** Per-command timeout in ms. Defaults to 120 000 (2 minutes). */
   commandTimeoutMs?: number;
 }
@@ -620,6 +656,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
   const { commands, source } = discoverCommands({
     preferenceCommands: options.preferenceCommands,
     taskPlanVerify: options.taskPlanVerify,
+    ...(options.taskEvidence ? { taskEvidence: options.taskEvidence } : {}),
     cwd: options.cwd,
   });
 
@@ -696,6 +733,8 @@ export function runVerificationGateForTargets(options: {
   targets: VerificationTarget[];
   preferenceCommands?: string[];
   taskPlanVerify?: string;
+  /** Structured task-specific evidence supplied at completion (#1591). */
+  taskEvidence?: TaskVerificationEvidence[];
   commandTimeoutMs?: number;
 }): VerificationResult {
   const timestamp = Date.now();
@@ -717,6 +756,7 @@ export function runVerificationGateForTargets(options: {
       cwd: target.cwd,
       preferenceCommands: options.preferenceCommands ?? target.preferenceCommands,
       taskPlanVerify: options.taskPlanVerify,
+      ...(options.taskEvidence ? { taskEvidence: options.taskEvidence } : {}),
       commandTimeoutMs: options.commandTimeoutMs,
     });
     passed = passed && result.passed;

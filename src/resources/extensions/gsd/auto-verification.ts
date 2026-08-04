@@ -20,7 +20,7 @@ import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdic
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { hasPendingMilestoneSubjectiveUat } from "./milestone-subjective-uat-domain-operation.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices, getTaskVerificationEvidence } from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
@@ -33,7 +33,7 @@ import {
   captureRuntimeErrors,
   runDependencyAudit,
 } from "./verification-gate.js";
-import type { VerificationTarget } from "./verification-gate.js";
+import type { VerificationTarget, TaskVerificationEvidence } from "./verification-gate.js";
 import { writeVerificationJSON, type PostExecutionCheckJSON, type EvidenceJSON } from "./verification-evidence.js";
 import { logWarning } from "./workflow-logger.js";
 import { runPostExecutionChecks, type PostExecutionResult } from "./post-execution-checks.js";
@@ -697,11 +697,14 @@ export async function runPostUnitVerification(
     let taskPlanVerify: string | undefined;
     let taskRow: TaskRow | null = null;
     let sliceRow: SliceRow | null = null;
+    // Structured evidence staged by gsd_task_complete for this Task (#1591).
+    let taskEvidence: TaskVerificationEvidence[] = [];
     if (mid && sid && tid) {
       if (isDbAvailable()) {
         taskRow = getTask(mid, sid, tid);
         sliceRow = getSlice(mid, sid);
         taskPlanVerify = taskRow?.verify;
+        taskEvidence = getTaskVerificationEvidence(mid, sid, tid);
       }
       // When DB unavailable, taskPlanVerify stays undefined — gate runs without task-specific checks
     }
@@ -779,12 +782,14 @@ export async function runPostUnitVerification(
         cwd: verificationTargets[0]?.cwd ?? s.basePath,
         preferenceCommands: prefs?.verification_commands ?? verificationTargets[0]?.preferenceCommands,
         taskPlanVerify,
+        taskEvidence,
       });
     } else {
       result = runVerificationGateForTargets({
         targets: verificationTargets,
         preferenceCommands: prefs?.verification_commands,
         taskPlanVerify,
+        taskEvidence,
       });
     }
 

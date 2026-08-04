@@ -266,6 +266,54 @@ describe("verification-gate: discovery", () => {
     assert.deepStrictEqual(result.commands, []);
   });
 
+  test("prose taskPlanVerify with passing task evidence beats preference commands (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "Planning artifacts exist and contain all required sections",
+      preferenceCommands: ["cargo test", "cargo clippy"],
+      taskEvidence: [
+        { command: "gsd_exec node: artifact check", exitCode: 0, verdict: "passed", durationMs: 12 },
+        { command: "gsd_exec node: consolidated artifact verification", exitCode: 0, verdict: "pass", durationMs: 8 },
+      ],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan-prose");
+    assert.deepStrictEqual(result.commands, []);
+  });
+
+  test("failing task evidence still falls through to preference commands (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "Planning artifacts exist and contain all required sections",
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [
+        { command: "gsd_exec node: artifact check", exitCode: 1, verdict: "fail", durationMs: 3 },
+      ],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "preference");
+    assert.deepStrictEqual(result.commands, ["cargo test"]);
+  });
+
+  test("task evidence does not override a runnable task-plan command (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "npm run test",
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [{ command: "node check.js", exitCode: 0, verdict: "pass", durationMs: 1 }],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan");
+    assert.deepStrictEqual(result.commands, ["npm run test"]);
+  });
+
+  test("task evidence does not bypass preferences without prose task verify (issue #1591)", () => {
+    const result = discoverCommands({
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [{ command: "node check.js", exitCode: 0, verdict: "pass", durationMs: 1 }],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "preference");
+    assert.deepStrictEqual(result.commands, ["cargo test"]);
+  });
+
   test("genuinely unsafe command still suppresses the prose fallback", () => {
     const result = discoverCommands({
       taskPlanVerify: "npm run test > results.txt",
