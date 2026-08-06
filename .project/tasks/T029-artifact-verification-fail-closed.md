@@ -169,3 +169,49 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
   a silent verify-pass was pinned as an asserted invariant (idle-recovery
   "lenient", T013's forged-stamp no-drift test, and the two #3607 legacy-branch
   tests). All were green before the cutover touched them.
+- 2026-08-06 — coder (Step 5): repaired all six failures with the dispositions
+  as written. No production code changed in this pass — the two fail-closed
+  conversions from the previous pass are untouched.
+  INVERTED (2), `verify-artifact-tightened.test.ts`: the `[x]` and `[X]` tests
+  now assert `false` plus a `recovery` warning matching `/DB unavailable/` and
+  `/cannot confirm task completion/`, and are retitled "execute-task with the DB
+  unavailable — checked checkbox [x] fails closed" (and its uppercase twin) so
+  no title claims a pass. Added a local `verifyAndCaptureLogs` helper mirroring
+  the one in `recovery-verify-logs.test.ts`. The four sibling #3607 negative
+  tests (unchecked, bare heading, missing plan, wrong task id) were left alone —
+  they already assert `false` and still pass.
+  RESEEDED (4): added `seedSettledTaskAttempt(mid,sid,tid)` to
+  `verify-artifact-tightened.test.ts` (adapted from `seedCanonicalTaskAttempt`
+  in `auto-recovery.test.ts`) and seeded #1500 with M009/S04/T02 rows plus a
+  settled succeeded Attempt. `auto-recovery.test.ts` #1703 and #4699, and the
+  #1703 twin in `integration/auto-recovery.test.ts`, each seed a `complete`
+  M001 milestone + complete S01 + a passing milestone-validation assessment so
+  the closeout proof clears; all three still assert `true` on their original
+  subject. `integration/auto-recovery.test.ts` needed `insertAssessment` added
+  to its `gsd-db.ts` import and a `closeDatabase()` in that test's own `t.after`
+  (its shared `cleanup` does not close the DB).
+- 2026-08-06 — coder Verify (exact result):
+  `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts src/resources/extensions/gsd/tests/integration/idle-recovery.test.ts src/resources/extensions/gsd/tests/auto-recovery.test.ts src/resources/extensions/gsd/tests/verify-artifact-tightened.test.ts src/resources/extensions/gsd/tests/integration/auto-recovery.test.ts`
+  → `tests 182 / pass 182 / fail 0 / cancelled 0 / skipped 0 / todo 0`.
+  No seventh failure; no path outside `files` required. `git status --porcelain`
+  shows exactly the six in-scope paths.
+- 2026-08-06 — coder, FOR THE REVIEWER (finding, not a block): the #1500 reseed
+  is green but its assertion is now **tautological**, and I verified this by
+  probe rather than assuming it. Renaming the stale `S04-T02-SUMMARY.md` so it
+  cannot be found leaves the test passing (1/1). Cause:
+  `artifact-verification.ts:352` returns from the
+  `execute-task && isDbAvailable()` Attempt-readiness branch before `absPath`
+  is ever resolved, so `findExistingSiblingPhaseArtifact` is never consulted.
+  With the DB absent the new fail-closed branch returns `false` regardless. The
+  sibling-dir fallback is therefore unreachable for execute-task in both
+  directions, and `allowSiblingTeamSuffixProjections` (`:373`, set only for
+  execute-task) is dead — the team-suffix fallback it enables can no longer
+  change any return value. This is a consequence of T010's DB-authority
+  conversion, not of this task. I kept the fixture and documented the caveat
+  in-test rather than shipping a guard that reads as protecting #1500 when it
+  does not; deleting the dead fallback was outside this task's criteria. If the
+  milestone wants the #1500 protection to remain real, it needs either a
+  dedicated test on the resolver or a decision to drop the fallback outright.
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree):
+  exit 0 — tests 182 / pass 182 / fail 0 across all five files. Diff scope
+  check: 5 declared files plus the task file; zero paths outside `files`.
