@@ -63,3 +63,18 @@ grep -q "handleDbRestoreBackup" src/resources/extensions/gsd/commands/handlers/o
 ## Log
 
 - 2026-08-06 — created by planner from wave-3 review cycle 1 (T014 AC1 failure)
+- 2026-08-06 — coder: `ops.ts` now imports `handleDbRestoreBackup` from
+  `commands-maintenance.js` and dispatches `db restore-backup` (exact + trimmed
+  prefix, remainder passed through) in the same shape as the adjacent
+  `recover`/`rebuild`/`sync` arms, placed just before `sync`. `catalog.ts` adds
+  `db` to `GSD_COMMAND_DESCRIPTION`, a `{ cmd: "db", ... }` entry beside
+  `rebuild` in `TOP_LEVEL_SUBCOMMANDS`, and a `db` → `restore-backup`
+  `NESTED_COMPLETIONS` family. New `tests/db-restore-backup-routing.test.ts`
+  covers: the route returns handled and produces the handler's no-candidates
+  informational message; the argument remainder survives the prefix trim
+  (`--backup … --list` hits the mutually-exclusive refusal); `db-restore-backup`
+  is still unclaimed; and the catalog/nested-completion registration.
+  Verify (exact): `tests 8 / pass 8 / fail 0` — 4 routing + 4 pre-existing
+  `backup-restore-command.test.ts`; both greps matched; exit 0.
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree): exit 0.
+  Diff scope check: declared files plus the task file; zero paths outside `files`.
