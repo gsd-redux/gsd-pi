@@ -3,9 +3,9 @@ id: T019
 title: Freeze projection format; document projections as de facto public API; record accepted residual risks
 wave: 3
 deps: [T002, T003, T008]
-status: in-progress
+status: done
 agent: build_T019
-commit: null
+commit: c48bb87d174a3b74bbed9e1c14579f348d8fe697
 base: 291e71c154aac359be01cc38a34dccd992ab47b4
 worktree: .worktrees/gsd-path-T019
 task_branch: gsd-path/T019
