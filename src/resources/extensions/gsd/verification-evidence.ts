@@ -219,7 +219,7 @@ export function formatEvidenceTable(result: VerificationResult): string {
 
   const lines: string[] = [
     "| # | Command | Exit Code | Verdict | Duration |",
-    "|---|---------|-----------|---------|----------|",
+    "| --- | --- | --- | --- | --- |",
   ];
 
   for (let i = 0; i < result.checks.length; i++) {
@@ -239,7 +239,7 @@ export function formatEvidenceTable(result: VerificationResult): string {
     lines.push("**Runtime Errors**");
     lines.push("");
     lines.push("| # | Source | Severity | Blocking | Message |");
-    lines.push("|---|--------|----------|----------|---------|");
+    lines.push("| --- | --- | --- | --- | --- |");
     for (let i = 0; i < result.runtimeErrors.length; i++) {
       const err = result.runtimeErrors[i];
       const blockIcon = err.blocking ? "🚫 yes" : "ℹ️ no";
@@ -258,7 +258,7 @@ export function formatEvidenceTable(result: VerificationResult): string {
     lines.push("**Audit Warnings**");
     lines.push("");
     lines.push("| # | Package | Severity | Title | Fix Available |");
-    lines.push("|---|---------|----------|-------|---------------|");
+    lines.push("| --- | --- | --- | --- | --- |");
     for (let i = 0; i < result.auditWarnings.length; i++) {
       const w = result.auditWarnings[i];
       const emoji = severityEmoji[w.severity] ?? "⚪";

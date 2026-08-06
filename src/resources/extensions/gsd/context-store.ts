@@ -336,7 +336,7 @@ export function formatDecisionsForPrompt(decisions: Decision[]): string {
 	const header =
 		"| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |";
 	const separator =
-		"|---|------|-------|----------|--------|-----------|------------|---------|";
+		"| --- | --- | --- | --- | --- | --- | --- | --- |";
 	const rows = decisions.map(
 		(d) =>
 			`| ${d.id} | ${d.when_context} | ${d.scope} | ${d.decision} | ${d.choice} | ${d.rationale} | ${d.revisable} | ${d.made_by ?? "agent"} |`,

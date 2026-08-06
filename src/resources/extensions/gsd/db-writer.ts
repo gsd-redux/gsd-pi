@@ -68,7 +68,7 @@ function generateDecisionsAppendBlock(decisions: Decision[]): string {
   lines.push('## Decisions Table');
   lines.push('');
   lines.push('| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |');
-  lines.push('|---|------|-------|----------|--------|-----------|------------|---------|');
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
 
   for (const d of decisions) {
     const cells = [
@@ -106,7 +106,7 @@ export function generateDecisionsMd(decisions: Decision[]): string {
   lines.push('     Read this file at the start of any planning or research phase. -->');
   lines.push('');
   lines.push('| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |');
-  lines.push('|---|------|-------|----------|--------|-----------|------------|---------|');
+  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
 
   for (const d of decisions) {
     // Escape pipe characters within cell values to preserve table structure
@@ -187,7 +187,7 @@ export function generateRequirementsMd(requirements: Requirement[]): string {
   lines.push('## Traceability');
   lines.push('');
   lines.push('| ID | Class | Status | Primary owner | Supporting | Proof |');
-  lines.push('|---|---|---|---|---|---|');
+  lines.push('| --- | --- | --- | --- | --- | --- |');
 
   for (const r of requirements) {
     const proof = r.validation || 'unmapped';
