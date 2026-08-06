@@ -10,6 +10,7 @@ import {
   formatVerdictRecordedNotice,
   formatVerdictRejectedNotice,
   isBlockedStopReason,
+  markBlockedStopReason,
   stopNoticeDisplayReason,
   stopNoticeKind,
   isTerminalNotice,
@@ -103,5 +104,54 @@ describe("emitter↔detector round-trip", () => {
     ]) {
       assert.ok(TERMINAL_NOTICE_PREFIXES.some((prefix) => message.startsWith(prefix)), message);
     }
+  });
+});
+
+describe("blocked stop marking", () => {
+  // Run 5 of the auto-mode acceptance harness stopped with
+  // "state did not advance after finalized complete-slice M001/S02" and exited 0
+  // — reporting success while the milestone was still open. The orchestrator had
+  // classified it kind:"blocked", but the reason reached the headless host
+  // unmarked, and the exit code is derived from the marker alone.
+  const orchestratorReason = "state did not advance after finalized complete-slice M001/S02";
+
+  test("an unmarked reason does not classify as blocked", () => {
+    assert.equal(isBlockedStopReason(orchestratorReason), false);
+    assert.equal(stopNoticeKind(orchestratorReason), "stopped");
+  });
+
+  test("marking makes it classify as blocked and survive the round-trip", () => {
+    const marked = markBlockedStopReason(orchestratorReason);
+    assert.equal(isBlockedStopReason(marked), true);
+    assert.equal(stopNoticeKind(marked), "blocked");
+    assert.equal(stopNoticeDisplayReason(marked), orchestratorReason);
+    assert.equal(formatStopNoticePrefix(marked), `Auto-mode blocked — ${orchestratorReason}`);
+  });
+
+  test("marking is idempotent", () => {
+    const once = markBlockedStopReason(orchestratorReason);
+    assert.equal(markBlockedStopReason(once), once);
+  });
+});
+
+describe("blocked stop notices reach the host as blocked+terminal", () => {
+  // The full emitter→detector path for the run-5 stall: orchestrator marks the
+  // reason, stopAuto formats the notice, the headless host classifies it.
+  const notice = formatStopNoticePrefix(
+    markBlockedStopReason("state did not advance after finalized complete-slice M001/S02"),
+  ).toLowerCase();
+
+  test("classifies as blocked (drives the blocked exit code, not 0)", () => {
+    assert.ok(isBlockedNoticeMessage(notice), notice);
+  });
+
+  test("classifies as terminal (ends the run rather than hanging)", () => {
+    assert.ok(isTerminalNotice(notice), notice);
+  });
+
+  test("a plain stop stays non-blocking", () => {
+    const plain = formatStopNoticePrefix("all milestones complete").toLowerCase();
+    assert.ok(isTerminalNotice(plain));
+    assert.equal(isBlockedNoticeMessage(plain), false);
   });
 });

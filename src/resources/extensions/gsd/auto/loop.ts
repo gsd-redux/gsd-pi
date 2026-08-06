@@ -33,6 +33,7 @@ import {
 } from "./unit-phase.js";
 import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
+import { markBlockedStopReason } from "../stop-notice.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import { resolveEngine } from "../engine-resolver.js";
@@ -1194,7 +1195,10 @@ export async function autoLoop(
               });
               finishTurn("paused", "manual-attention", "orchestration-blocked");
             } else {
-              await deps.stopAuto(ctx, pi, blockMessage);
+              // Carry the blocked marker: the headless host picks its exit code
+              // from the reason string, so an unmarked blocked stop exits 0 and
+              // reports success over a milestone that never closed.
+              await deps.stopAuto(ctx, pi, markBlockedStopReason(blockMessage));
               finishTurn("stopped", "manual-attention", "orchestration-blocked");
             }
             finishIncompleteIteration({

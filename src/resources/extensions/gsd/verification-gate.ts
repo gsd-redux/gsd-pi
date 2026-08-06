@@ -553,8 +553,12 @@ export function isLikelyCommand(cmd: string): boolean {
     return !readsAsProseAfterCommandWord(effectiveTokens);
   }
 
-  // Path-like first token → command
-  if (effectiveFirstToken.startsWith("/") || effectiveFirstToken.startsWith("./") || effectiveFirstToken.startsWith("../")) return true;
+  // Path-like first token → command, unless the rest reads as English prose.
+  // "./out/report.txt exists and contains the summary" is a description of a
+  // file, not an invocation of it.
+  if (effectiveFirstToken.startsWith("/") || effectiveFirstToken.startsWith("./") || effectiveFirstToken.startsWith("../")) {
+    return !readsAsProseAfterCommandWord(effectiveTokens);
+  }
 
   // Has flag-like tokens → command
   if (effectiveTokens.some(t => t.startsWith("-"))) return true;
@@ -571,7 +575,12 @@ export function isLikelyCommand(cmd: string): boolean {
   // Non-ASCII prose with multiple words should not be executed as a command.
   if (!/[A-Za-z0-9]/.test(effectiveFirstToken) && effectiveTokens.length >= 4) return false;
 
-  return true;
+  // Everything above only rejects prose that announces itself with a capital
+  // letter or comma. Lowercase prose fell through to "command" and got executed
+  // — `greet/hello.txt exists and contains "hello"` ran the .txt file as a
+  // program and failed with exit 126 "Permission denied", failing the gate for
+  // a task that had in fact succeeded. English function words are the tell.
+  return !readsAsProseAfterCommandWord(effectiveTokens);
 }
 
 /**

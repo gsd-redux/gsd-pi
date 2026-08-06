@@ -6,6 +6,7 @@ import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync, existsSync, 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 
 import {
   _setFlatPhaseMigrationBoundaryForTest,
@@ -15,6 +16,7 @@ import {
 } from "../flat-phase-migration.ts";
 import { openDatabase, closeDatabase, insertArtifact, insertMilestone, insertSlice, insertTask, getAllMilestones, getMilestoneSlices, getSliceTasks, _getAdapter } from "../gsd-db.ts";
 import { writeCompatMarker } from "../compat/compat-marker.ts";
+import { resolveMilestonePath } from "../paths.ts";
 
 const tmpDirs: string[] = [];
 function makeTmp(options: { withTask?: boolean } = {}): string {
@@ -45,6 +47,61 @@ afterEach(() => {
   closeDatabase();
   for (const d of tmpDirs) { try { rmSync(d, { recursive: true, force: true }); } catch { /* */ } }
   tmpDirs.length = 0;
+});
+
+test("milestone resolution follows the layout across migration", async () => {
+  // Guards the invariant that a writer depends on: after the layout is rewritten
+  // (milestones/ → phases/), resolveMilestonePath must point at the new dir. A
+  // writer that resolves null here synthesizes a canonical name of its own, and
+  // the projection ends up split across two phase directories for one milestone
+  // — which is how S02's slice summary went missing and closeout stalled.
+  const base = makeTmp();
+
+  // Warm the cache against the legacy layout.
+  const before = resolveMilestonePath(base, "M001");
+  assert.ok(before?.includes("milestones"), `expected legacy dir, got ${before}`);
+
+  await migrateToFlatPhase(base);
+
+  const after = resolveMilestonePath(base, "M001");
+  assert.ok(
+    after?.includes("phases"),
+    `after migration the milestone must resolve into phases/, got ${after}`,
+  );
+  assert.equal(existsSync(after!), true, "the resolved phase dir must exist on disk");
+});
+
+test("concurrent migrations in separate processes do not corrupt each other", async () => {
+  // Headless runs the gsd extension in two processes (host + RPC child) and both
+  // fire session_start. Before the cross-process lock, the second migration moved
+  // milestones/ aside or cleared phases/ mid-render and the loser died on ENOENT.
+  // Only a real child process exercises the lock — an in-process test cannot.
+  const base = makeTmp();
+  closeDatabase(); // children own the DB handle
+
+  const migrationUrl = new URL("../flat-phase-migration.js", import.meta.url).href;
+  const dbUrl = new URL("../gsd-db.js", import.meta.url).href;
+  const worker = `
+    const db = await import(${JSON.stringify(dbUrl)});
+    const mig = await import(${JSON.stringify(migrationUrl)});
+    db.openDatabase(${JSON.stringify(join(base, ".gsd", "gsd.db"))});
+    try { await mig.migrateToFlatPhase(${JSON.stringify(base)}); }
+    finally { if (db.isDbAvailable()) db.closeDatabase(); }
+  `;
+
+  const exits = await Promise.all(
+    [0, 1].map(() => new Promise<number>((resolve) => {
+      const child = spawn(process.execPath, ["--input-type=module", "-e", worker], { stdio: "pipe" });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+      child.on("exit", (code) => resolve(code === 0 ? 0 : (assert.fail(`migration worker failed: ${stderr}`), 1)));
+    })),
+  );
+
+  assert.deepEqual(exits, [0, 0], "both concurrent migrations must succeed");
+  assert.equal(needsFlatPhaseMigration(base), false, "migration must be complete after the race");
+  assert.equal(existsSync(join(base, ".gsd", "phases")), true, "flat-phase layout must exist");
+  assert.equal(existsSync(join(base, ".gsd", "milestones")), false, "legacy layout must be gone");
 });
 
 test("needsFlatPhaseMigration returns true when .gsd/milestones/ exists", () => {

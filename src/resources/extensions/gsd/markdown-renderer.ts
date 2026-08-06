@@ -425,6 +425,13 @@ function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[], gates: GateR
 
   lines.push(`# ${slice.id}: ${slice.title || slice.id}`);
   lines.push("");
+  // State the DB identities explicitly. Under flat-phase layout this file lives
+  // at .gsd/phases/01-m001/01-01-PLAN.md, and an agent with only the path to go
+  // on infers milestoneId "01-m001"/sliceId "01-01" — which the tool contract
+  // rejects, since it demands the DB identities M001/S01.
+  lines.push(`**Milestone:** ${slice.milestone_id}`);
+  lines.push(`**Slice:** ${slice.id}`);
+  lines.push("");
   lines.push(`**Goal:** ${slice.goal}`);
   lines.push(`**Demo:** ${slice.demo}`);
   lines.push("");

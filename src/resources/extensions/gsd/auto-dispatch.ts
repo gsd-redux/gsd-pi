@@ -57,6 +57,8 @@ import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { dirname, join, sep } from "node:path";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
+import { isFlatPhaseMigrationInFlight } from "./flat-phase-migration.js";
+import { composeToolAffordanceReminder } from "./unit-context-composer.js";
 import {
   buildDiscussMilestonePrompt,
   buildDiscussProjectPrompt,
@@ -853,6 +855,15 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // "never discussed" and re-dispatches discuss-milestone after task
       // closeout instead of continuing execution (#1317).
       const artifactBasePath = resolveArtifactBasePath(basePath, mid, session);
+      // The layout migration moves .gsd/milestones/ aside before rendering
+      // .gsd/phases/, so mid-flight the slice plans exist in neither layout.
+      // A dispatch landing in that window reads "never discussed" and re-plans a
+      // milestone that is already fully planned in the DB, discarding the plan.
+      // Startup dispatch races the migration on every run, so decline to decide
+      // while the layout is converting; the next iteration sees a settled tree.
+      // Scoped to a migration actually in flight — a settled legacy project must
+      // still reach this rule (#4671).
+      if (isFlatPhaseMigrationInFlight(artifactBasePath)) return null;
       if (hasMilestonePassedDiscuss(artifactBasePath, mid)) return null;
       // Align with the plan-v2 gate's lookup semantics: whitespace-only counts
       // as missing, and an auto worktree may fall back to GSD_PROJECT_ROOT.
@@ -2074,6 +2085,22 @@ function applyLanguageDirectiveToDispatch(
   return { ...action, prompt: `${directive}\n\n${action.prompt}` };
 }
 
+/**
+ * Repeat the unit's allowed tool tokens at the very end of the dispatched prompt.
+ *
+ * `## Tool Surface` already carries this, but it lands ~4% into a 14K-character
+ * prompt (measured on validate-milestone: offset 627, 13,731 characters after it)
+ * and units kept reaching for `bash`, `gsd_uat_exec`, and subagent `"review"`
+ * regardless. Applied at the dispatch seam so every unit gets it from one place,
+ * rather than editing each prompt builder's tail.
+ */
+function appendToolAffordanceToDispatch(action: DispatchAction): DispatchAction {
+  if (action.action !== "dispatch" || !action.prompt || !action.unitType) return action;
+  const reminder = composeToolAffordanceReminder(action.unitType);
+  if (!reminder || action.prompt.trimEnd().endsWith(reminder)) return action;
+  return { ...action, prompt: `${action.prompt.trimEnd()}\n\n${reminder}` };
+}
+
 // ─── Resolver ─────────────────────────────────────────────────────────────
 
 /**
@@ -2170,7 +2197,7 @@ export async function resolveDispatch(
         level: "error",
       };
     }
-    return applyLanguageDirectiveToDispatch(action, ctx.prefs);
+    return applyLanguageDirectiveToDispatch(appendToolAffordanceToDispatch(action), ctx.prefs);
   }
 
   for (const rule of DISPATCH_RULES) {
@@ -2189,7 +2216,7 @@ export async function resolveDispatch(
           matchedRule: rule.name,
         };
       }
-      return applyLanguageDirectiveToDispatch(action, ctx.prefs);
+      return applyLanguageDirectiveToDispatch(appendToolAffordanceToDispatch(action), ctx.prefs);
     }
   }
 

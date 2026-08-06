@@ -14,6 +14,7 @@ import {
   getMilestoneSlices,
   getSliceTasks,
 } from "./gsd-db.js";
+import { withFileLock } from "./file-lock.js";
 import { countDbHierarchy, scanMarkdownHierarchy } from "./migration-auto-check.js";
 import { logWarning } from "./workflow-logger.js";
 import { LAYOUT_SEGMENTS } from "./layout-policy.js";
@@ -306,6 +307,19 @@ export function needsFlatPhaseMigration(basePath: string): boolean {
   return hasLegacyMilestoneSubdirs(legacyMigratingPath(basePath));
 }
 
+/**
+ * Is a flat-phase migration mid-flight right now?
+ *
+ * True only while the legacy tree sits at `.gsd/milestones.migrating` — the
+ * window between moving it aside and rendering `.gsd/phases/`, during which the
+ * slice plans exist in neither layout. Distinct from `needsFlatPhaseMigration`,
+ * which is also true for a settled legacy project that has not started
+ * migrating: callers that must not misread a transient gap want this one.
+ */
+export function isFlatPhaseMigrationInFlight(basePath: string): boolean {
+  return hasLegacyMilestoneSubdirs(legacyMigratingPath(basePath));
+}
+
 /** Retention window before flat-phase migration backups are auto-pruned. */
 export const FLAT_PHASE_BACKUP_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -366,6 +380,41 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
 
+  // Headless runs the gsd extension in two processes (host + RPC child) and both
+  // fire session_start, so two migrations race over the same tree: one moves
+  // milestones/ aside or clears phases/ while the other is mid-render, and the
+  // loser dies on ENOENT. A whole-migration cross-process lock is the only
+  // ordering that helps — the steps are not individually idempotent.
+  // Stale window is well above file-lock's 10s default: migration renders the
+  // entire projection and can legitimately run for minutes on a large project.
+  try {
+    await withFileLock(
+      join(basePath, ".gsd"),
+      async () => {
+        // Re-check under the lock: the winner may have completed the migration
+        // while this process was waiting, which makes the loser a clean no-op
+        // rather than a second destructive pass.
+        if (!needsFlatPhaseMigration(basePath)) return;
+        await migrateToFlatPhaseLocked(basePath);
+      },
+      // Migration is mostly synchronous fs work, so it blocks the event loop and
+      // proper-lockfile's mtime keepalive timer cannot fire while it runs. The
+      // stale window therefore has to exceed the whole migration, not the gap
+      // between keepalives, or a waiting process declares the lock dead and
+      // steals it mid-render.
+      { retries: 30, stale: 600_000 },
+    );
+  } catch (err) {
+    // If the lock was stolen anyway, the holder's release() throws even though
+    // its migration finished. Outcome decides: a completed migration makes that
+    // release error noise, an incomplete one is a real failure.
+    const message = (err as Error)?.message ?? "";
+    if (!/already released|compromised/i.test(message) || needsFlatPhaseMigration(basePath)) throw err;
+    logWarning("migration", `flat-phase migration lock released early but migration completed: ${message}`);
+  }
+}
+
+async function migrateToFlatPhaseLocked(basePath: string): Promise<void> {
   const milestonesPath = join(basePath, ".gsd", "milestones");
   const migratingPath = legacyMigratingPath(basePath);
   const phasesPath = join(basePath, ".gsd", LAYOUT_SEGMENTS.level1);
