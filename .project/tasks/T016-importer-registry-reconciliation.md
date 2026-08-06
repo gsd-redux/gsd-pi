@@ -3,9 +3,9 @@ id: T016
 title: Reconcile the parsers-legacy importer registry after wave-3 consumer migration
 wave: 3
 deps: [T010, T011, T012, T013, T014, T028]
-status: in-progress
+status: done
 agent: build_T016
-commit: null
+commit: 0ea5f522702bb92347e4aa308d5ed1cf712cb624
 base: c6980f0b3fc36e7e5dcc79f6dafacbd5126138e9
 worktree: .worktrees/gsd-path-T016
 task_branch: gsd-path/T016
