@@ -3,12 +3,12 @@ id: T015
 title: Fail-closed legacy:cleanup:evidence redesign + static no-caller/no-importer proof
 wave: 3
 deps: [T002, T007]
-status: in-progress
-agent: build_T015
+status: pending
+agent: null
 commit: null
-base: 291e71c154aac359be01cc38a34dccd992ab47b4
-worktree: .worktrees/gsd-path-T015
-task_branch: gsd-path/T015
+base: null
+worktree: null
+task_branch: null
 files:
   - scripts/legacy-cleanup-evidence.mjs
   - scripts/legacy-cleanup-gate.mjs
@@ -98,3 +98,17 @@ TMP=$(mktemp -u)/none.json; ! node scripts/legacy-cleanup-evidence.mjs --file "$
 
 - 2026-08-01 — created by planner
 - 2026-08-02 — planner (T024 split repair): heads-up from T025 — once the gates pass, the `ensureTelemetryReport` fabrication path becomes REACHABLE (the default evidence command `baseline:refactor:gate` passes but writes no telemetry file, so a bare `legacy:cleanup:evidence` run fabricates an all-zero green). This task's fail-closed redesign must account for the now-live path; evidence recorded in `.project/plan/wave2-gate-baseline.md`.
+- 2026-08-05 — coder: fail-closed redesign + static proof implemented.
+  - `scripts/legacy-cleanup-evidence.mjs`: deleted `ensureTelemetryReport` (fabrication path gone — no writer of telemetry remains in the script). `collectLegacyCleanupEvidence` records a run start, runs the evidence commands, then loads telemetry through the new fail-closed loader (`notBeforeMs`), and composes the static proof (`opts.proofRoot` seam for tests).
+  - `scripts/legacy-cleanup-gate.mjs`: new `loadTelemetryEvidence` throws `telemetry evidence missing — cannot prove zero usage` on ENOENT, and stale errors for an unparseable `ts`, a `ts` predating the run, or a `ts` older than `--max-age-ms` (default 24h). `evaluateLegacyCleanupGate(report, proof)` now also fails when the proof is absent (`proofMissing`) or lists offenders; the five counter categories are unchanged and no new counter was added.
+  - `scripts/legacy-state-path-proof.mjs` (new): line-scoped regex scan (comments stripped) of `src/resources/extensions` excluding `tests/` and `*.test.ts`, reporting `deriveStateImplCaller` and `parsersLegacyImporter` offenders as file:line, `--root`/`--json`, exit 2 on offenders. Regex over TS-AST is justified in a file comment: `typescript` is not a scripts/ runtime dependency and both bans are lexical; this matches the existing importer-registry discipline. Note: `scripts/semantic-shadow-no-cutover-gate.mjs` (cited in the task) does not exist at this base, so the alternative the task explicitly allowed was taken.
+  - Live run: `node scripts/legacy-state-path-proof.mjs` exits 2 and lists the 9 remaining production `parsers-legacy` importers (zero `_deriveStateImpl` production callers) — the gate blocks until T020/T022 land, as intended.
+  - `package.json`: added `"legacy:cleanup:proof": "node scripts/legacy-state-path-proof.mjs"`; existing script names untouched.
+  - Tests: removed the `ensureTelemetryReport` fabrication test (behavior deleted); added missing/stale/fresh-pass evidence tests and gate tests for proof-missing, proof-offenders, `loadTelemetryEvidence`, and fixture-driven proof offender/clean cases.
+  - Verify (exact): all 16 tests pass — `ℹ tests 16 / ℹ pass 16 / ℹ fail 0`; full command chain exited 0 (`VERIFY_EXIT=0`).
+- 2026-08-05 — orchestrator Verify rerun (authoritative, isolated worktree):
+  full chain exit 0 — missing-evidence path fails closed, tests 16 / pass 16 /
+  fail 0, `legacy:cleanup:proof` present in package.json, zero non-test
+  `markdownFallbackUsed` references. Diff scope check: 6 declared files (one
+  new, scripts/legacy-state-path-proof.mjs) plus the task file; zero paths
+  outside `files`.
