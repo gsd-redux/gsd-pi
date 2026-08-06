@@ -82,3 +82,33 @@ remove content validation that nothing else performs.
 - 2026-08-05 — created by planner (documented plan-defect repair during wave-3
   integration; blocks T016's expected-state assertions and T020's zero-importer
   deletion gate)
+- 2026-08-06 — coder: re-homed the import at `markdown-renderer.ts:52` from
+  `./parsers-legacy.js` to `parseLegacyRoadmap` from `./schemas/parsers.js`.
+  Updated both call sites (`:1233` inside the commented-out roadmap-checkbox
+  block, `:1345` in `roadmapRenderMarksSliceDone`) plus the two prose comments
+  that named `parsers-legacy`, so the file now has zero references. Parse
+  semantics unchanged (`parsers-legacy.parseRoadmap` was already a re-export of
+  `parseLegacyRoadmap`); `roadmapRenderMarksSliceDone` and `renderAllFromDb`
+  exports and signatures untouched. In `markdown-renderer.test.ts` only the
+  import path changed: `parseLegacyRoadmap as parseRoadmap` /
+  `parseLegacyPlan as parsePlan` from `../schemas/parsers.ts`, keeping the
+  local names so no assertion or coverage changed.
+  Note: `parseLegacyRoadmap` was imported by its own name (not aliased to
+  `parseRoadmap`) because `schemas/parsers.ts` also exports an unrelated
+  `parseRoadmap` returning `ParsedRoadmap`.
+  Verify: PASS (exit 0) — no `parsers-legacy` match in markdown-renderer.ts,
+  `parseLegacyRoadmap` present, `node --test markdown-renderer.test.ts
+  projection-fidelity.test.ts` → tests 39 / pass 29 / fail 0 / skipped 10, and
+  `legacy-state-path-proof.mjs` reports exactly 1 `parsersLegacyImporter`
+  (`gsd/state.ts`).
+  Observation (out of scope, no action taken): `tests/parsers-legacy-importers.test.ts`
+  third case "allowlist has no stale entries" was already failing on this base
+  (its ALLOWED_IMPORTERS lists ~19 modules while only 2 still import the shim);
+  this change adds `gsd/markdown-renderer.ts` to that pre-existing stale set.
+  That file is not in this task's `files` and T020 owns the shim deletion.
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree):
+  exit 0 — zero `parsers-legacy` refs in markdown-renderer.ts,
+  `parseLegacyRoadmap` present, tests 39 / pass 29 / fail 0 / skipped 10, and
+  legacy-state-path-proof.mjs reports exactly 1 remaining production importer
+  (gsd/state.ts). Diff scope check: 2 declared files plus the task file; zero
+  paths outside `files`.
