@@ -3,7 +3,7 @@ id: T010
 title: Re-point doctor, reactive-graph, and artifact-verification consumers of parsers-legacy to DB reads
 wave: 3
 deps: [T007, T012]
-status: in-progress
+status: blocked
 agent: build_T010
 commit: null
 base: 28701e57c33d3e605177a8b03ee4bc3777d60439
@@ -119,3 +119,39 @@ AC1's zero-`parsers-legacy` grep holds for all five files.
 - 2026-08-02 — BLOCKED by coder (plan defect): Step 3 contradicts Acceptance
 - 2026-08-02 — orchestrator: block accepted as documented plan defect (no production diff; nothing rejected). Worktree .worktrees/gsd-path-T010 RETAINED clean at base 40bdcfca4d1eea63fb1eb2d3198928c73d91fd37 on branch gsd-path/T010. T012 landed the relocated parsers (parseLegacyPlan/parseLegacyRoadmap in schemas/parsers.ts) — planner re-scopes T010 against that landed state before redispatch.
 - 2026-08-03 — planner (block repair): re-scoped Step 3 against T012's landed reality (commit e6f14314 — parseRoadmap/parsePlan now byte-identical in schemas/parsers.ts as parseLegacyRoadmap/parseLegacyPlan; parsers-legacy.ts is a deprecated re-export shim). doctor-engine-checks.ts re-points its projection parse (:31 import, :149 call) to parseLegacyPlan from ./schemas/parsers.js, resolving the Step-3-vs-AC1 contradiction; AC1 and Verify gained parseLegacyPlan/schemas-parsers greps. Other consumers (doctor.ts, doctor-state-checks.ts, reactive-graph.ts, artifact-verification.ts) unchanged — T012's diff did not alter their picture. Deps [T007]→[T007, T012]; status blocked→pending; agent build_T010 kept; base/worktree/task_branch nulled for re-record at dispatch (orchestrator rebases branch gsd-path/T010 onto the new primary HEAD, retained worktree reused, same procedure as T005's repair).
+- 2026-08-03 — BLOCKED by coder (plan defect, second): Step 5's
+  deletions/re-points in artifact-verification.ts break pinned tests in
+  `src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts`, which is
+  NOT in this task's `files` list and is owned by no other task (grep of
+  `.project/tasks/`: zero hits). Confirmed green at base (14/14 pass). Two of
+  its tests assert exactly the behavior Step 5 removes, via the
+  `_setRoadmapParserFnForTests` seam (re-exported through auto-recovery.ts:93,
+  also unlisted):
+  1. "complete-slice verify logs a recovery warning when the legacy roadmap
+     parse fails" — requires the complete-slice `else if (!isDbAvailable())`
+     roadmap-parse fallback (artifact-verification.ts:532-545). Deleting it:
+     `getSlice` returns null when the DB is unavailable (db/queries.ts:177),
+     so verification falls through to `return true`; the test asserts
+     `result === false` plus a /roadmap parse failed/ recovery log containing
+     the injected "forced legacy roadmap parse failure" message. FAIL.
+  2. "parallel-research verify logs a recovery warning when the roadmap parse
+     throws" — requires the research-slice/parallel-research roadmap parse
+     (artifact-verification.ts:338). Re-pointing to DB reads per Step 5:
+     `getMilestoneSlices` returns [] when the DB is unavailable
+     (db/queries.ts:682), so the loop never runs and verification returns
+     true; the test asserts `result === false` plus /forced parallel-research
+     parse failure/. FAIL.
+  The third seam test (plan-milestone :515) can survive — the roadmap content
+  parse there validates the artifact itself and can be re-homed to
+  schemas/parsers.js — but 1 and 2 cannot. Step 5's enumerated test files to
+  update (auto-recovery, integration/auto-recovery, plan-milestone-artifact-
+  verification, sidecar-artifact-verification) omit recovery-verify-logs.
+  Per AGENTS.md, tests asserting removed behavior must be removed or updated,
+  but this file is outside my allowed paths: completion needs an unlisted
+  path. Suggested planner fix: add
+  `src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts` to T010's
+  `files` list (the :622 and :522 seam tests then get removed/rewritten with
+  the branches they pin), or narrow Step 5 to spare the complete-slice
+  DB-unavailable branch and the parallel-research roadmap parse. No
+  production or test files were edited; only pnpm install +
+  build:native:dev were run in the worktree.
