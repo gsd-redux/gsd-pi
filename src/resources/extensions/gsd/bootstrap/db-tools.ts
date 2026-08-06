@@ -1627,4 +1627,459 @@ export function registerDbTools(pi: ExtensionAPI): void {
   };
 
   registerWorkflowTool(pi, saveGateResultTool);
+
+  // ─── gsd_requirement_list ────────────────────────────────────────────────
+  //
+  // Read-only: lists requirements from the canonical `requirements` table.
+  // Agents previously had to parse REQUIREMENTS.md (stale projection) to
+  // answer "what requirements exist?". This tool queries the live DB so the
+  // result is always authoritative, even immediately after `gsd migrate`.
+
+  const requirementListExecute = async (
+    _toolCallId: string,
+    params: any,
+    _signal: AbortSignal | undefined,
+    _onUpdate: unknown,
+    _ctx: unknown,
+  ) => {
+    const basePath = resolveCtxCwd(_ctx);
+    const dbAvailable = await ensureDbOpen(basePath);
+    if (!dbAvailable) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: GSD database is not available.' }],
+        details: { operation: 'list_requirements', error: 'db_unavailable' } as any,
+      };
+    }
+    try {
+      const { queryRequirements } = await import('../context-store.js');
+      // queryRequirements always excludes superseded rows (superseded_by IS NULL).
+      // includeSuperseded is deliberately unsupported here: superseded requirements
+      // should be recovered via migration tooling, not surfaced in agent context.
+      let results = queryRequirements({
+        status: params.status ?? undefined,
+        milestoneId: params.milestoneId ?? undefined,
+      });
+
+      // JS-level class filter (not in DB query — keeps query opts minimal)
+      if (params.class) {
+        results = results.filter((r) => r.class === params.class);
+      }
+
+      // Honour caller-supplied limit (default 200, hard cap 500)
+      const limit = Math.min(params.limit ?? 200, 500);
+      results = results.slice(0, limit);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Found ${results.length} requirement(s).`,
+          },
+        ],
+        details: { operation: 'list_requirements', count: results.length, requirements: results } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError('tool', `gsd_requirement_list failed: ${msg}`, { tool: 'gsd_requirement_list', error: String(err) });
+      return {
+        content: [{ type: 'text' as const, text: `Error listing requirements: ${msg}` }],
+        details: { operation: 'list_requirements', error: msg } as any,
+      };
+    }
+  };
+
+  const requirementListTool = {
+    name: 'gsd_requirement_list',
+    label: 'List Requirements',
+    description:
+      'List requirements from the GSD database. Returns the canonical store contents — ' +
+      'always authoritative, never stale. Use instead of parsing REQUIREMENTS.md.',
+    promptSnippet: 'List GSD requirements from the canonical DB store',
+    promptGuidelines: [
+      'Use gsd_requirement_list to read what requirements are recorded — do not parse REQUIREMENTS.md.',
+      'Filter by class (e.g. "core-capability"), status (e.g. "active"), or milestoneId to narrow results.',
+      'The returned requirements array matches the DB canonical state, not the projection on disk.',
+      'Default limit is 200; hard cap is 500. Increase limit only if you need a full corpus scan.',
+    ],
+    parameters: Type.Object({
+      class: Type.Optional(
+        Type.String({
+          description:
+            'Filter by requirement class: core-capability, primary-user-loop, launchability, ' +
+            'continuity, failure-visibility, integration, quality-attribute, operability, ' +
+            'admin/support, compliance/security, differentiator, constraint, anti-feature.',
+        }),
+      ),
+      status: Type.Optional(
+        Type.String({ description: 'Filter by status (e.g. "active", "validated", "deferred").' }),
+      ),
+      milestoneId: Type.Optional(
+        Type.String({ description: 'Filter to requirements owned by or supporting a specific milestone (e.g. "M005").' }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: 'Maximum number of requirements to return. Default 200, hard cap 500.',
+          minimum: 1,
+          maximum: 500,
+        }),
+      ),
+    }),
+    execute: requirementListExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg('toolTitle', theme.bold('requirement_list'));
+      const filters: string[] = [];
+      if (args.class) filters.push(`class=${args.class}`);
+      if (args.status) filters.push(`status=${args.status}`);
+      if (args.milestoneId) filters.push(`milestone=${args.milestoneId}`);
+      if (filters.length) text += theme.fg('dim', ` [${filters.join(', ')}]`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = readDetails(result);
+      if (result.isError || d?.error) {
+        return new Text(theme.fg('error', formatToolErrorText(result, d)), 0, 0);
+      }
+      const count = d?.count ?? 0;
+      return new Text(theme.fg('success', `${count} requirement(s) found`), 0, 0);
+    },
+  };
+
+  registerWorkflowTool(pi, requirementListTool);
+
+  // ─── gsd_requirement_get ─────────────────────────────────────────────────
+  //
+  // Point-lookup by stable R### ID. Returns the full requirement row or a
+  // typed error object — never throws, never fabricates.
+
+  const requirementGetExecute = async (
+    _toolCallId: string,
+    params: any,
+    _signal: AbortSignal | undefined,
+    _onUpdate: unknown,
+    _ctx: unknown,
+  ) => {
+    const basePath = resolveCtxCwd(_ctx);
+    const dbAvailable = await ensureDbOpen(basePath);
+    if (!dbAvailable) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: GSD database is not available.' }],
+        details: { operation: 'get_requirement', id: params.id, error: 'db_unavailable' } as any,
+      };
+    }
+    try {
+      const { getRequirementById } = await import('../context-store.js');
+      const req = getRequirementById(params.id);
+
+      if (!req) {
+        // ensureDbOpen already confirmed DB is available, so null == not found
+        // (either genuinely absent or superseded — both map to not_found here)
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Requirement ${params.id} not found (may not exist or is superseded).`,
+            },
+          ],
+          details: { operation: 'get_requirement', id: params.id, error: 'not_found' } as any,
+        };
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: `Requirement ${req.id}: ${req.description}` }],
+        details: { operation: 'get_requirement', id: req.id, requirement: req } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError('tool', `gsd_requirement_get failed: ${msg}`, { tool: 'gsd_requirement_get', error: String(err) });
+      return {
+        content: [{ type: 'text' as const, text: `Error fetching requirement: ${msg}` }],
+        details: { operation: 'get_requirement', id: params.id, error: msg } as any,
+      };
+    }
+  };
+
+  const requirementGetTool = {
+    name: 'gsd_requirement_get',
+    label: 'Get Requirement',
+    description:
+      'Fetch a single requirement by its stable ID (e.g. "R021") from the GSD database. ' +
+      'Returns the full row or a typed error (not_found / db_unavailable). ' +
+      'Use this instead of grepping REQUIREMENTS.md.',
+    promptSnippet: 'Fetch a single GSD requirement by ID from the canonical DB store',
+    promptGuidelines: [
+      'Use gsd_requirement_get to read a specific requirement by ID (e.g. "R021").',
+      'Returns { error: "not_found" } when the ID does not exist or has been superseded.',
+      'Returns { error: "db_unavailable" } when the GSD database cannot be opened.',
+      'Never fabricate requirement content — if not_found, call gsd_requirement_list to verify what IDs exist.',
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: 'Requirement ID to fetch (e.g. "R021").' }),
+    }),
+    execute: requirementGetExecute,
+    renderCall(args: any, theme: any) {
+      return new Text(
+        theme.fg('toolTitle', theme.bold('requirement_get ')) + theme.fg('accent', args.id ?? ''),
+        0,
+        0,
+      );
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = readDetails(result);
+      if (result.isError || d?.error) {
+        const isNotFound = d?.error === 'not_found';
+        return new Text(
+          theme.fg(isNotFound ? 'warning' : 'error', formatToolErrorText(result, d)),
+          0,
+          0,
+        );
+      }
+      const r = d?.requirement;
+      return new Text(
+        theme.fg('success', `${r?.id ?? ''}: ${r?.description ?? ''}`) +
+          theme.fg('dim', ` [${r?.class ?? ''}]`),
+        0,
+        0,
+      );
+    },
+  };
+
+  registerWorkflowTool(pi, requirementGetTool);
+
+  // ─── gsd_decision_list ────────────────────────────────────────────────────
+  //
+  // Read-only: lists decisions from the canonical `memories` table
+  // (ADR-013 Stage 3 — the legacy `decisions` table is no longer the source
+  // of truth). Returns the same Decision shape as the existing query layer.
+  //
+  // Why this matters: agents cannot verify DB-canonical decision state without
+  // parsing DECISIONS.md, which may be stale after `gsd migrate` or a failed
+  // projection regen. This tool closes that gap.
+
+  const decisionListExecute = async (
+    _toolCallId: string,
+    params: any,
+    _signal: AbortSignal | undefined,
+    _onUpdate: unknown,
+    _ctx: unknown,
+  ) => {
+    const basePath = resolveCtxCwd(_ctx);
+    const dbAvailable = await ensureDbOpen(basePath);
+    if (!dbAvailable) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: GSD database is not available.' }],
+        details: { operation: 'list_decisions', error: 'db_unavailable' } as any,
+      };
+    }
+    try {
+      const { queryDecisionsFromMemories, getAllDecisionsFromMemories } = await import('../context-store.js');
+
+      // includeSuperseded=true uses getAllDecisionsFromMemories (renders full chain)
+      // includeSuperseded=false (default) uses queryDecisionsFromMemories (active only)
+      const includeSuperseded = params.includeSuperseded === true;
+      let results = includeSuperseded
+        ? getAllDecisionsFromMemories()
+        : queryDecisionsFromMemories({ scope: params.scope, milestoneId: params.milestoneId });
+
+      // JS-level filters for the includeSuperseded=true path
+      // (getAllDecisionsFromMemories has no filter opts)
+      if (includeSuperseded) {
+        if (params.scope) {
+          results = results.filter((d) => d.scope === params.scope);
+        }
+        if (params.milestoneId) {
+          results = results.filter((d) => d.when_context.includes(params.milestoneId));
+        }
+      }
+
+      const limit = Math.min(params.limit ?? 200, 500);
+      results = results.slice(0, limit);
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Found ${results.length} decision(s).`,
+          },
+        ],
+        details: { operation: 'list_decisions', count: results.length, decisions: results } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError('tool', `gsd_decision_list failed: ${msg}`, { tool: 'gsd_decision_list', error: String(err) });
+      return {
+        content: [{ type: 'text' as const, text: `Error listing decisions: ${msg}` }],
+        details: { operation: 'list_decisions', error: msg } as any,
+      };
+    }
+  };
+
+  const decisionListTool = {
+    name: 'gsd_decision_list',
+    label: 'List Decisions',
+    description:
+      'List decisions from the GSD database. Reads from the canonical memories table ' +
+      '(ADR-013 Stage 3) — always authoritative. Use instead of parsing DECISIONS.md.',
+    promptSnippet: 'List GSD decisions from the canonical DB store (memories table)',
+    promptGuidelines: [
+      'Use gsd_decision_list to read what decisions are recorded — do not parse DECISIONS.md.',
+      'Filter by scope (exact match, e.g. "architecture") or milestoneId to narrow results.',
+      'Set includeSuperseded: true to see the full decision chain including overridden decisions.',
+      'Decisions are sourced from the memories table (ADR-013 Stage 3), not the legacy decisions table.',
+      'Default limit is 200; hard cap is 500.',
+    ],
+    parameters: Type.Object({
+      scope: Type.Optional(
+        Type.String({
+          description: 'Filter by scope (exact match, e.g. "architecture", "library", "observability").',
+        }),
+      ),
+      milestoneId: Type.Optional(
+        Type.String({
+          description: 'Filter to decisions whose when_context contains the milestone ID (e.g. "M005").',
+        }),
+      ),
+      includeSuperseded: Type.Optional(
+        Type.Boolean({
+          description:
+            'When true, include superseded decisions (full chain). ' +
+            'Default false — returns only active decisions.',
+        }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: 'Maximum number of decisions to return. Default 200, hard cap 500.',
+          minimum: 1,
+          maximum: 500,
+        }),
+      ),
+    }),
+    execute: decisionListExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg('toolTitle', theme.bold('decision_list'));
+      const filters: string[] = [];
+      if (args.scope) filters.push(`scope=${args.scope}`);
+      if (args.milestoneId) filters.push(`milestone=${args.milestoneId}`);
+      if (args.includeSuperseded) filters.push('includeSuperseded');
+      if (filters.length) text += theme.fg('dim', ` [${filters.join(', ')}]`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = readDetails(result);
+      if (result.isError || d?.error) {
+        return new Text(theme.fg('error', formatToolErrorText(result, d)), 0, 0);
+      }
+      const count = d?.count ?? 0;
+      return new Text(theme.fg('success', `${count} decision(s) found`), 0, 0);
+    },
+  };
+
+  registerWorkflowTool(pi, decisionListTool);
+
+  // ─── gsd_decision_get ────────────────────────────────────────────────────
+  //
+  // Point-lookup by stable D### ID. Sources from the canonical memories table
+  // (ADR-013 Stage 3). Returns the full Decision row or a typed error object.
+
+  const decisionGetExecute = async (
+    _toolCallId: string,
+    params: any,
+    _signal: AbortSignal | undefined,
+    _onUpdate: unknown,
+    _ctx: unknown,
+  ) => {
+    const basePath = resolveCtxCwd(_ctx);
+    const dbAvailable = await ensureDbOpen(basePath);
+    if (!dbAvailable) {
+      return {
+        content: [{ type: 'text' as const, text: 'Error: GSD database is not available.' }],
+        details: { operation: 'get_decision', id: params.id, error: 'db_unavailable' } as any,
+      };
+    }
+    try {
+      const { getDecisionById } = await import('../context-store.js');
+      const decision = getDecisionById(params.id, params.includeSuperseded === true);
+
+      if (!decision) {
+        // ensureDbOpen confirmed DB is available; null means absent, tombstoned, or superseded
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `Decision ${params.id} not found (may not exist, is a tombstone, or is superseded — ` +
+                `use includeSuperseded: true to check the full chain).`,
+            },
+          ],
+          details: { operation: 'get_decision', id: params.id, error: 'not_found' } as any,
+        };
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: `Decision ${decision.id}: ${decision.decision}` }],
+        details: { operation: 'get_decision', id: decision.id, decision } as any,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError('tool', `gsd_decision_get failed: ${msg}`, { tool: 'gsd_decision_get', error: String(err) });
+      return {
+        content: [{ type: 'text' as const, text: `Error fetching decision: ${msg}` }],
+        details: { operation: 'get_decision', id: params.id, error: msg } as any,
+      };
+    }
+  };
+
+  const decisionGetTool = {
+    name: 'gsd_decision_get',
+    label: 'Get Decision',
+    description:
+      'Fetch a single decision by its stable ID (e.g. "D007") from the GSD database. ' +
+      'Reads from the canonical memories table (ADR-013 Stage 3). ' +
+      'Returns the full row or a typed error (not_found / db_unavailable).',
+    promptSnippet: 'Fetch a single GSD decision by ID from the canonical DB store',
+    promptGuidelines: [
+      'Use gsd_decision_get to read a specific decision by ID (e.g. "D007").',
+      'Returns { error: "not_found" } when the ID is absent, tombstoned, or (by default) superseded.',
+      'Set includeSuperseded: true to retrieve a superseded decision by ID.',
+      'Returns { error: "db_unavailable" } when the GSD database cannot be opened.',
+      'Decision data is sourced from the memories table (ADR-013 Stage 3), not the legacy decisions table.',
+      'Never fabricate decision content — if not_found, call gsd_decision_list to verify what IDs exist.',
+    ],
+    parameters: Type.Object({
+      id: Type.String({ description: 'Decision ID to fetch (e.g. "D007").' }),
+      includeSuperseded: Type.Optional(
+        Type.Boolean({
+          description:
+            'When true, also returns the decision if it is superseded. ' +
+            'Default false — returns not_found for superseded decisions.',
+        }),
+      ),
+    }),
+    execute: decisionGetExecute,
+    renderCall(args: any, theme: any) {
+      let text =
+        theme.fg('toolTitle', theme.bold('decision_get ')) + theme.fg('accent', args.id ?? '');
+      if (args.includeSuperseded) text += theme.fg('dim', ' [+superseded]');
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = readDetails(result);
+      if (result.isError || d?.error) {
+        const isNotFound = d?.error === 'not_found';
+        return new Text(
+          theme.fg(isNotFound ? 'warning' : 'error', formatToolErrorText(result, d)),
+          0,
+          0,
+        );
+      }
+      const dec = d?.decision;
+      return new Text(
+        theme.fg('success', `${dec?.id ?? ''}: ${dec?.decision ?? ''}`) +
+          theme.fg('dim', ` → ${dec?.choice ?? ''}`),
+        0,
+        0,
+      );
+    },
+  };
+
+  registerWorkflowTool(pi, decisionGetTool);
 }

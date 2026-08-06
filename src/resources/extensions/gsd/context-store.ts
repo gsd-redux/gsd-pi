@@ -526,3 +526,111 @@ export function formatRoadmapExcerpt(
 
   return excerptLines.join('\n');
 }
+
+// ─── Point-lookup helpers (used by gsd_requirement_get / gsd_decision_get) ──
+
+/**
+ * Fetch a single requirement by stable ID (e.g. "R021").
+ *
+ * Returns null when the ID does not exist, when the requirement has been
+ * superseded, or when the DB is unavailable. The caller distinguishes
+ * "not found" from "db_unavailable" by checking `isDbAvailable()` separately.
+ *
+ * Never throws.
+ */
+export function getRequirementById(id: string): Requirement | null {
+  if (!isDbAvailable()) return null;
+  const adapter = _getAdapter();
+  if (!adapter) return null;
+
+  try {
+    const row = adapter
+      .prepare('SELECT * FROM requirements WHERE id = :id AND superseded_by IS NULL')
+      .get({ ':id': id }) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    return {
+      id: row['id'] as string,
+      class: row['class'] as string,
+      status: row['status'] as string,
+      description: row['description'] as string,
+      why: row['why'] as string,
+      source: row['source'] as string,
+      primary_owner: (row['primary_owner'] as string) ?? '',
+      supporting_slices: (row['supporting_slices'] as string) ?? '',
+      validation: (row['validation'] as string) ?? '',
+      notes: (row['notes'] as string) ?? '',
+      full_content: (row['full_content'] as string) ?? '',
+      superseded_by: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a single decision by stable ID (e.g. "D007").
+ *
+ * Reads from the canonical `memories` table (ADR-013 Stage 3). Returns null
+ * when the ID does not exist, the memory is a tombstone (`deleted: true`),
+ * or the DB is unavailable.
+ *
+ * `includeSuperseded` (default false): when false, returns null for
+ * decisions that have a non-null `structured_fields.superseded_by`.
+ *
+ * Never throws.
+ */
+export function getDecisionById(
+  id: string,
+  includeSuperseded = false,
+): Decision | null {
+  if (!isDbAvailable()) return null;
+  const adapter = _getAdapter();
+  if (!adapter) return null;
+
+  try {
+    const rows = adapter
+      .prepare(
+        `SELECT seq, structured_fields FROM memories
+         WHERE category = 'architecture'
+           AND json_extract(structured_fields, '$.sourceDecisionId') = :id`,
+      )
+      .all({ ':id': id }) as Array<Record<string, unknown>>;
+
+    for (const row of rows) {
+      const sfRaw = row['structured_fields'] as string | null;
+      if (!sfRaw) continue;
+      let sf: Record<string, unknown>;
+      try {
+        sf = JSON.parse(sfRaw) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (sf['deleted'] === true) return null;
+      const supersededBy =
+        typeof sf['superseded_by'] === 'string' ? (sf['superseded_by'] as string) : null;
+      if (!includeSuperseded && supersededBy) return null;
+
+      return {
+        seq: row['seq'] as number,
+        id,
+        when_context: typeof sf['when_context'] === 'string' ? (sf['when_context'] as string) : '',
+        scope: typeof sf['scope'] === 'string' ? (sf['scope'] as string) : '',
+        decision: typeof sf['decision'] === 'string' ? (sf['decision'] as string) : '',
+        choice: typeof sf['choice'] === 'string' ? (sf['choice'] as string) : '',
+        rationale: typeof sf['rationale'] === 'string' ? (sf['rationale'] as string) : '',
+        revisable: typeof sf['revisable'] === 'string' ? (sf['revisable'] as string) : '',
+        made_by: (
+          typeof sf['made_by'] === 'string' ? sf['made_by'] : 'agent'
+        ) as import('./types.js').DecisionMadeBy,
+        source: typeof sf['source'] === 'string' ? (sf['source'] as string) : 'discussion',
+        superseded_by: supersededBy,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
