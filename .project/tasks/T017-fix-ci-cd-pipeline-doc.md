@@ -3,9 +3,9 @@ id: T017
 title: Rewrite docs/dev/ci-cd-pipeline.md to document the manual npm-publish.yml reality
 wave: 3
 deps: []
-status: in-progress
+status: done
 agent: build_T017
-commit: null
+commit: c507999eb25cd8f385e8570403785068397a47f3
 base: 291e71c154aac359be01cc38a34dccd992ab47b4
 worktree: .worktrees/gsd-path-T017
 task_branch: gsd-path/T017
