@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — review cycle 1 BLOCKED; 5 fix tasks (T029-T033) dispatched
+Current wave: 3 of 4 — 16/16 done; review cycle 2
 Updated: 2026-08-05
 
 ## Waves
@@ -12,7 +12,7 @@ Updated: 2026-08-05
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
 | 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
-| 3 | consumers, evidence, command, docs (+T028, +T029-T033 fixes) | 16 | 11/16 | cycle 1 blocked (4 findings) |
+| 3 | consumers, evidence, command, docs (+T028, +T029-T033 fixes) | 16 | 16/16 | cycle 1 blocked (4 findings); cycle 2 running |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
 ## In flight
@@ -24,6 +24,9 @@ Updated: 2026-08-05
 
 <!-- Anything a human should know: 2×-failed tasks, defective task files
      fixed mid-build, serialized file conflicts. -->
+- 2026-08-06 — SCOPE DECISION PENDING for wave 4. T033 re-keyed the proof on parser symbols per user ruling; it now reports BLOCK with 8 offender files / 12 lines — the 7 relocated-symbol modules (artifact-verification, doctor-engine-checks, markdown-renderer, md-importer, migration-auto-check, drift/roadmap, drift/sketch-flag) plus state.ts. Every one of the 7 carries `Retired by: none` — NO TASK OWNS THEM. Wave 4 as planned assumes T022 clears the way for T020, but T020's zero-offender gate is now unreachable: either a successor milestone owns the 7, or wave 4 ships without T020. T033 also added a live-repo test pinning the proof RED so a future rename cannot quietly green it.
+- 2026-08-06 — coverage loss found by T029's coder and verified by probe, NOT a T029 defect: the `#1500` regression assertion ("execute-task accepts SUMMARY in stale sibling flat-phase dir") is now TAUTOLOGICAL — execute-task returns from the DB Attempt-readiness branch before any path resolution, so renaming the stale sibling SUMMARY still leaves the test green, and `allowSiblingTeamSuffixProjections` is dead for that unit type. Consequence of T010's conversion. Documented in-test rather than shipping a guard that reads as protecting #1500 when it cannot. Needs a ruling: restore sibling-dir resolution under DB authority, or retire #1500's guard explicitly.
+- 2026-08-06 — FOURTH instance of a silent verify-pass pinned as an asserted invariant: verify-artifact-tightened's two `#3607` tests opened with `closeDatabase()` + `assert.equal(isDbAvailable(), false)` and then asserted a checkbox PASSES verification. Prior three: idle-recovery "lenient", T013's forged-stamp no-drift test, auto-recovery's complete-milestone pair. All were green before the cutover touched them. The pre-cutover suite systematically documented permissiveness as intent.
 - 2026-08-06 — wave-3 review cycle 1 BLOCKED: 7 pass, 4 fail (T010, T011, T013, T014). Every failure was invisible to the Verify commands, which all pass. Highest-value finding is cross-cutting and changes what this milestone can claim: the static proof and importer registry key on the `parsers-legacy` MODULE SPECIFIER, which wave 3 largely emptied by RENAMING imports to schemas/parsers.js for byte-identical functions. Seven production modules still parse legacy markdown; after T022 the gate would report zero offenders with the legacy read path live, satisfying INTENT success criterion 3 by a rename. User ruled 2026-08-06: re-key on symbols (T033), accepting the gate goes red and T020 becomes unreachable until those seven are addressed. Second cross-cutting warning, NOT yet owned by a task and needing a ruling at closeout: `legacy:cleanup:evidence` cannot go green honestly — no command in DEFAULT_EVIDENCE_COMMANDS produces telemetry, so the only green path is a caller-supplied --command writing the report; INTENT criterion 3 requires it green, and SYNTHESIS ruled no markdownFallbackUsed counter would be built. Also unowned: `detectStaleRenders` is a hard `return []` stub and `detectProjectionDrift` has no production caller, so two of SYNTHESIS's three promised positive post-cutover checks are inert.
 - 2026-08-05 — plan defect (planning omission, not a task failure): T015's static proof cut production `parsers-legacy` importers 9 → 2, and the survivors are `gsd/state.ts` (expected; T022 removes it) and `gsd/markdown-renderer.ts` (owned by NO task — T008's AC2 forbade only a NEW import and never required removing the existing one, so T008 passed correctly). T016's expected-state assertions and T020's zero-importer deletion gate are both unreachable without it. Added T028 (re-home to schemas/parsers.js, same disposition already used by T010/T012/T013); T016 deps += T028. T008 is NOT reopened.
 - 2026-08-05 — T010 resolved on the fourth contract, after three blocks — all three were plan defects, none an implementation failure. Root cause: `files` was built from an inventory that never enumerated the tests pinning markdown-fallback behavior, so each attempt discovered only what it broke. Closed by sweeping all 21 unlisted test files touching these modules against the implementation (19 green, 2 red) and repairing once against the measured blast radius. A pinned SILENT PASS was found and inverted: `idle-recovery` "complete-slice — no roadmap file present is lenient (returns true)" asserted the exact verify-fail→verify-pass hole SYNTHESIS (c) exists to close.
