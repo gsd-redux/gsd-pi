@@ -2,7 +2,7 @@
 id: T016
 title: Reconcile the parsers-legacy importer registry after wave-3 consumer migration
 wave: 3
-deps: [T010, T011, T012, T013, T014]
+deps: [T010, T011, T012, T013, T014, T028]
 status: pending
 agent: null
 commit: null
@@ -70,3 +70,4 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-05 — planner: deps += T028. The proof shipped by T015 shows TWO remaining production importers, not one: gsd/state.ts (expected, removed by T022) and gsd/markdown-renderer.ts (unowned — T008's AC2 forbade only a NEW import, never required removing the existing one). T028 re-homes it to schemas/parsers.js. This task's expected-state list ("only gsd/state.ts") is correct only after T028 lands.

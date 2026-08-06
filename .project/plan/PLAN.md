@@ -86,7 +86,8 @@ fix-doc items. Nothing in this wave deletes `parsers-legacy.ts`,
 | T013 | Convert drift detectors to stamped projection-reads via relocated parsers | T008, T012 | src/resources/extensions/gsd/state-reconciliation/drift/*, tests |
 | T014 | Ship the explicit backup-restore command; re-point commands-maintenance | T006 | src/resources/extensions/gsd/commands-maintenance.ts, legacy-import-restore-assessment.ts, tests |
 | T015 | Fail-closed legacy:cleanup:evidence redesign + static no-caller/no-importer proof | T002, T007 | scripts/legacy-cleanup-evidence.mjs, scripts/legacy-cleanup-gate.mjs, scripts/legacy-state-path-proof.mjs, src/tests/legacy-cleanup-*.test.ts, package.json |
-| T016 | Reconcile the parsers-legacy importer registry after wave-3 migration | T010, T011, T012, T013, T014 | src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts |
+| T028 | Re-home markdown-renderer's roadmap projection parse off parsers-legacy | T008, T012 | src/resources/extensions/gsd/markdown-renderer.ts, tests/markdown-renderer.test.ts |
+| T016 | Reconcile the parsers-legacy importer registry after wave-3 migration | T010, T011, T012, T013, T014, T028 | src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts |
 | T017 | Rewrite docs/dev/ci-cd-pipeline.md to document the manual npm-publish.yml reality | — | docs/dev/ci-cd-pipeline.md |
 | T018 | Downgrade ADR-004/-009/-011/-013/-036 status labels to audit-verified reality | — | docs/dev/ADR-004-*, ADR-009-*, ADR-011-*, ADR-013-*, ADR-036-* |
 | T019 | Freeze projection format; document projections as de facto public API; record accepted residual risks | T002, T003, T008 | docs/dev/state-db-cutover-projection-contract.md, docs/dev/state-db-cutover-milestone-decision.md |
