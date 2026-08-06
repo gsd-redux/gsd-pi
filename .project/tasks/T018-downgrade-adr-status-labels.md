@@ -3,9 +3,9 @@ id: T018
 title: Downgrade ADR-004/-009/-011/-013/-036 status labels to audit-verified reality
 wave: 3
 deps: []
-status: in-progress
+status: done
 agent: build_T018
-commit: null
+commit: f26c624af8dc4a4ea471c003ad13e38e32642ba2
 base: 291e71c154aac359be01cc38a34dccd992ab47b4
 worktree: .worktrees/gsd-path-T018
 task_branch: gsd-path/T018
