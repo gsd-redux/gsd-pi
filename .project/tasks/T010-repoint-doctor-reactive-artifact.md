@@ -3,12 +3,12 @@ id: T010
 title: Re-point doctor, reactive-graph, and artifact-verification consumers of parsers-legacy to DB reads
 wave: 3
 deps: [T007, T012]
-status: blocked
+status: pending
 agent: build_T010
 commit: null
-base: 28701e57c33d3e605177a8b03ee4bc3777d60439
-worktree: .worktrees/gsd-path-T010
-task_branch: gsd-path/T010
+base: null
+worktree: null
+task_branch: null
 files:
   - src/resources/extensions/gsd/doctor.ts
   - src/resources/extensions/gsd/doctor-state-checks.ts
@@ -33,6 +33,8 @@ files:
   - src/resources/extensions/gsd/tests/integration/auto-recovery.test.ts
   - src/resources/extensions/gsd/tests/plan-milestone-artifact-verification.test.ts
   - src/resources/extensions/gsd/tests/sidecar-artifact-verification.test.ts
+  - src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts
+  - src/resources/extensions/gsd/auto-recovery.ts
 ---
 
 # T010 — Re-point doctor / reactive-graph / artifact-verification to DB reads
@@ -84,12 +86,43 @@ AC1's zero-`parsers-legacy` grep holds for all five files.
    never a markdown parse. Update `reactive-graph.test.ts` /
    `dispatch-reactive-logs.test.ts` accordingly.
 5. `artifact-verification.ts`: delete the pre-migration/DB-unavailable
-   fallback branches; verification reads the DB. Update
-   `auto-recovery.test.ts`, `integration/auto-recovery.test.ts`,
+   fallback branches; verification reads the DB. **Deleting a fallback must
+   never convert a verify-fail into a verify-pass** — SYNTHESIS (c) keeps the
+   DB-unavailable fail-closed witnesses as-is in the unit tier, so each
+   deleted branch fails closed instead:
+   - complete-slice (:529-545): today `getSlice` returning null falls to the
+     `else if (!isDbAvailable())` roadmap parse. Deleting that branch alone
+     makes the `dbSlice === null` case fall through to `return true` — a
+     silent pass. Replace it with an explicit fail-closed: when the DB is
+     unavailable (or the slice row is absent), `logWarning("recovery", ...)`
+     naming DB unavailability and `return false`.
+   - parallel-research (:337-338): re-pointing the roadmap parse to
+     `getMilestoneSlices` yields `[]` when the DB is unavailable, so the loop
+     never runs and verification returns true — same silent pass. Fail closed
+     the same way before the loop.
+   - plan-milestone (:515): this roadmap parse validates the *artifact's own
+     content*, not authority — keep it and re-home it to
+     `parseLegacyRoadmap` from `./schemas/parsers.js`. The
+     `_setRoadmapParserFnForTests` seam (artifact-verification.ts:80,
+     re-exported at auto-recovery.ts:93) therefore SURVIVES for this parse;
+     delete it only if the re-homing leaves it genuinely unused, and update
+     the auto-recovery.ts re-export in the same commit if so.
+   Update `auto-recovery.test.ts`, `integration/auto-recovery.test.ts`,
    `plan-milestone-artifact-verification.test.ts`,
    `sidecar-artifact-verification.test.ts` — remove or invert assertions of
    markdown-fallback behavior (AGENTS.md: tests asserting removed behavior
    are removed or updated); keep DB-path coverage intact.
+5b. `recovery-verify-logs.test.ts`: the two witnesses at :352 and :375
+   (complete-slice legacy-roadmap-parse failure, parallel-research parse
+   throw) pin behavior Step 5 removes, so they are re-expressed, NOT deleted —
+   their guarantee (verification fails closed and logs a recovery warning) is
+   exactly what SYNTHESIS (c) preserves. This fixture base carries no
+   `gsd.db`, so `isDbAvailable()` is already false without any seam: drop the
+   `_setRoadmapParserFnForTests` injection from these two and assert the same
+   `result === false` plus a recovery log, now naming DB unavailability rather
+   than a parse failure. The third witness (:404, plan-milestone) keeps its
+   seam per Step 5. Every other test in this file is untouched — confirm the
+   file is green at base (14/14) before and after.
 6. Update the twelve `doctor-*.test.ts` files only where they asserted
    fallback/markdown-derived behavior; do not rewrite tests wholesale.
 7. Remove the `parsers-legacy` import from each of the five production files
@@ -106,11 +139,17 @@ AC1's zero-`parsers-legacy` grep holds for all five files.
 3. Updated tests pass; no test asserts the removed fallback behavior; DB-path
    coverage is not deleted.
 4. `pnpm run baseline:refactor:phase0` stays green.
+5. No deleted fallback turns a verify-fail into a verify-pass: with the DB
+   unavailable, complete-slice and parallel-research verification return
+   `false` and log a `recovery` warning. `recovery-verify-logs.test.ts` is
+   green with all three witnesses present (two re-expressed against
+   DB-unavailability, one keeping the parser seam) — the file's test count
+   does not drop.
 
 ## Verify
 
 ```bash
-! grep -n "parsers-legacy" src/resources/extensions/gsd/doctor.ts src/resources/extensions/gsd/doctor-state-checks.ts src/resources/extensions/gsd/doctor-engine-checks.ts src/resources/extensions/gsd/reactive-graph.ts src/resources/extensions/gsd/artifact-verification.ts && grep -q "parseLegacyPlan" src/resources/extensions/gsd/doctor-engine-checks.ts && grep -q "schemas/parsers" src/resources/extensions/gsd/doctor-engine-checks.ts && node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/reactive-graph.test.ts src/resources/extensions/gsd/tests/auto-recovery.test.ts src/resources/extensions/gsd/tests/doctor-runtime-checks.test.ts src/resources/extensions/gsd/tests/doctor-workspace.test.ts
+! grep -n "parsers-legacy" src/resources/extensions/gsd/doctor.ts src/resources/extensions/gsd/doctor-state-checks.ts src/resources/extensions/gsd/doctor-engine-checks.ts src/resources/extensions/gsd/reactive-graph.ts src/resources/extensions/gsd/artifact-verification.ts && grep -q "parseLegacyPlan" src/resources/extensions/gsd/doctor-engine-checks.ts && grep -q "schemas/parsers" src/resources/extensions/gsd/doctor-engine-checks.ts && node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/reactive-graph.test.ts src/resources/extensions/gsd/tests/auto-recovery.test.ts src/resources/extensions/gsd/tests/doctor-runtime-checks.test.ts src/resources/extensions/gsd/tests/doctor-workspace.test.ts src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts
 ```
 
 ## Log
@@ -155,3 +194,25 @@ AC1's zero-`parsers-legacy` grep holds for all five files.
   DB-unavailable branch and the parallel-research roadmap parse. No
   production or test files were edited; only pnpm install +
   build:native:dev were run in the worktree.
+- 2026-08-05 — planner (block repair, second): resolved against SYNTHESIS
+  § gate disposition clause (c) — "DB-unavailable fail-closed witnesses and
+  the never-promote-`omitted` rule keep as-is in the unit tier". The coder's
+  finding is upheld and is sharper than either suggested fix: deleting the
+  two branches does not merely break pinned tests, it converts verify-fail
+  into verify-pass (complete-slice falls through to `return true` when
+  `getSlice` is null; parallel-research's loop never runs when
+  `getMilestoneSlices` is `[]`). Deleting the witnesses would therefore have
+  buried a silent-pass regression, so option A (delete) is rejected as
+  contradicting (c), and option B (spare the legacy branches) is rejected as
+  contradicting T007's landed authority flip. Step 5 now requires each
+  deleted fallback to fail closed, new Step 5b re-expresses the two witnesses
+  against DB-unavailability (the fixture base has no gsd.db, so no seam is
+  needed), and the plan-milestone content parse plus its
+  `_setRoadmapParserFnForTests` seam survive, re-homed to schemas/parsers.js.
+  files += recovery-verify-logs.test.ts (owned by no other task) and
+  auto-recovery.ts (the seam's re-export site, in case re-homing retires it);
+  neither overlaps a pending wave-3 task. AC5 added; Verify runs
+  recovery-verify-logs.test.ts. status blocked→pending; agent build_T010
+  kept; base/worktree/task_branch nulled for re-record at dispatch (retained
+  clean worktree reused, same procedure as the first repair). User ruling
+  2026-08-05: repair T010 in place rather than splitting or deferring to T015.
