@@ -3,9 +3,9 @@ id: T030
 title: Fix the closed-status predicate in auto-prompts so run-uat and reassess still dispatch
 wave: 3
 deps: [T011]
-status: in-progress
+status: done
 agent: build_T030
-commit: null
+commit: 9c0f6ab1fb59cf74e174e40ff831a428c813ce62
 base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
 worktree: .worktrees/gsd-path-T030
 task_branch: gsd-path/T030
