@@ -3,12 +3,12 @@ id: T029
 title: Close the two surviving fail-open DB-unavailable branches in artifact-verification
 wave: 3
 deps: [T010]
-status: pending
-agent: null
+status: in-progress
+agent: build_T029
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
+worktree: .worktrees/gsd-path-T029
+task_branch: gsd-path/T029
 files:
   - src/resources/extensions/gsd/artifact-verification.ts
   - src/resources/extensions/gsd/tests/recovery-verify-logs.test.ts

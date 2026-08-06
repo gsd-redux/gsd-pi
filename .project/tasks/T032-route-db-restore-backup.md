@@ -3,12 +3,12 @@ id: T032
 title: Route the shipped backup-restore command so /gsd db restore-backup is reachable
 wave: 3
 deps: [T014]
-status: pending
-agent: null
+status: in-progress
+agent: build_T032
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
+worktree: .worktrees/gsd-path-T032
+task_branch: gsd-path/T032
 files:
   - src/resources/extensions/gsd/commands/handlers/ops.ts
   - src/resources/extensions/gsd/commands/catalog.ts

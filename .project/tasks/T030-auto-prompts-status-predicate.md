@@ -3,12 +3,12 @@ id: T030
 title: Fix the closed-status predicate in auto-prompts so run-uat and reassess still dispatch
 wave: 3
 deps: [T011]
-status: pending
-agent: null
+status: in-progress
+agent: build_T030
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
+worktree: .worktrees/gsd-path-T030
+task_branch: gsd-path/T030
 files:
   - src/resources/extensions/gsd/auto-prompts.ts
   - src/resources/extensions/gsd/tests/auto-prompts-fallback.test.ts

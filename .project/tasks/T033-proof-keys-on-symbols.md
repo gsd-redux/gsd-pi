@@ -3,12 +3,12 @@ id: T033
 title: Re-key the legacy static proof and importer registry on parser symbols, not the module specifier
 wave: 3
 deps: [T015, T016, T028]
-status: pending
-agent: null
+status: in-progress
+agent: build_T033
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
+worktree: .worktrees/gsd-path-T033
+task_branch: gsd-path/T033
 files:
   - scripts/legacy-state-path-proof.mjs
   - src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts
