@@ -87,6 +87,11 @@ fix-doc items. Nothing in this wave deletes `parsers-legacy.ts`,
 | T014 | Ship the explicit backup-restore command; re-point commands-maintenance | T006 | src/resources/extensions/gsd/commands-maintenance.ts, legacy-import-restore-assessment.ts, tests |
 | T015 | Fail-closed legacy:cleanup:evidence redesign + static no-caller/no-importer proof | T002, T007 | scripts/legacy-cleanup-evidence.mjs, scripts/legacy-cleanup-gate.mjs, scripts/legacy-state-path-proof.mjs, src/tests/legacy-cleanup-*.test.ts, package.json |
 | T028 | Re-home markdown-renderer's roadmap projection parse off parsers-legacy | T008, T012 | src/resources/extensions/gsd/markdown-renderer.ts, tests/markdown-renderer.test.ts |
+| T029 | Close the two surviving fail-open DB-unavailable branches in artifact-verification | T010 | src/resources/extensions/gsd/artifact-verification.ts, tests/recovery-verify-logs.test.ts, tests/integration/idle-recovery.test.ts |
+| T030 | Fix the closed-status predicate in auto-prompts so run-uat and reassess still dispatch | T011 | src/resources/extensions/gsd/auto-prompts.ts, tests/auto-prompts-fallback.test.ts |
+| T031 | Revert the unsound drift stamp short-circuit; delete the test pinning its silent pass | T013 | src/resources/extensions/gsd/state-reconciliation/drift/roadmap.ts, drift/stale-render.ts, tests/state-reconciliation-drift.test.ts |
+| T032 | Route the shipped backup-restore command so /gsd db restore-backup is reachable | T014 | src/resources/extensions/gsd/commands/handlers/ops.ts, commands/catalog.ts, tests/db-restore-backup-routing.test.ts |
+| T033 | Re-key the legacy static proof and importer registry on parser symbols | T015, T016, T028 | scripts/legacy-state-path-proof.mjs, tests/parsers-legacy-importers.test.ts, src/tests/legacy-cleanup-gate.test.ts |
 | T016 | Reconcile the parsers-legacy importer registry after wave-3 migration | T010, T011, T012, T013, T014, T028 | src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts |
 | T017 | Rewrite docs/dev/ci-cd-pipeline.md to document the manual npm-publish.yml reality | — | docs/dev/ci-cd-pipeline.md |
 | T018 | Downgrade ADR-004/-009/-011/-013/-036 status labels to audit-verified reality | — | docs/dev/ADR-004-*, ADR-009-*, ADR-011-*, ADR-013-*, ADR-036-* |
