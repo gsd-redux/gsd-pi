@@ -3,9 +3,9 @@ id: T031
 title: Revert the unsound drift stamp short-circuit and delete the test pinning its silent pass
 wave: 3
 deps: [T013]
-status: in-progress
+status: done
 agent: build_T031
-commit: null
+commit: 6bdb4f895fef724c0bb805e54a5e45fb6ea1648a
 base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
 worktree: .worktrees/gsd-path-T031
 task_branch: gsd-path/T031
