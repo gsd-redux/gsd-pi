@@ -3,9 +3,9 @@ id: T028
 title: Re-home markdown-renderer's roadmap projection parse off parsers-legacy
 wave: 3
 deps: [T008, T012]
-status: in-progress
+status: done
 agent: build_T028
-commit: null
+commit: ec2e3b67668ff6401d6015a486a90b2ce8464fc6
 base: 178a59ea9b258f3ae17a285c08b7a2ccdc1ba0aa
 worktree: .worktrees/gsd-path-T028
 task_branch: gsd-path/T028
