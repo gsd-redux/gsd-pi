@@ -107,6 +107,12 @@ export function getPriorSliceCompletionBlocker(
       continue;
     }
 
+    // #4414: Sentinel unitId "{mid}/parallel-research" orchestrates research
+    // across multiple real slices and is never inserted into the slices table,
+    // so the per-slice identity/dependency checks below cannot apply to it.
+    // Earlier-milestone gating above still runs.
+    if (targetSid === "parallel-research") continue;
+
     const targetSlice = slices.find((slice) => slice.id === targetSid);
     if (!targetSlice) {
       return `Cannot dispatch ${unitType} ${unitId}: slice ${targetMid}/${targetSid} is missing from the workflow DB.`;
