@@ -204,3 +204,24 @@ describe("ClassificationResult taskMetadata", () => {
     assert.equal(typeof extractTaskMetadata, "function", "extractTaskMetadata should be a callable function");
   });
 });
+
+// --- subagent recon tier regression ---
+// Before this fix, all subagent/* unit types fell through to the
+// `UNIT_TYPE_TIERS[unitType] ?? "standard"` default, causing codebase-mapper and
+// scout to dispatch to claude-sonnet instead of claude-haiku.
+
+test("subagent/codebase-mapper classifies as light", () => {
+  const result = classifyUnitComplexity("subagent/codebase-mapper", "M001", "/tmp/fake");
+  assert.equal(result.tier, "light", "codebase-mapper is read-only FS scanning - should be light tier");
+});
+
+test("subagent/scout classifies as light", () => {
+  const result = classifyUnitComplexity("subagent/scout", "M001", "/tmp/fake");
+  assert.equal(result.tier, "light", "scout is read-only recon - should be light tier");
+});
+
+test("subagent/security-auditor is NOT light (stays at standard default)", () => {
+  // Deliberate: analysis agents must not be silently downgraded to haiku.
+  const result = classifyUnitComplexity("subagent/security-auditor", "M001", "/tmp/fake");
+  assert.notEqual(result.tier, "light", "security-auditor requires reasoning - must not be light");
+});

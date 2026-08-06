@@ -13,6 +13,7 @@ import {
   scoreEligibleModels,
   getEligibleModels,
   MODEL_CAPABILITY_PROFILES,
+  MODEL_CAPABILITY_TIER,
 } from "../model-router.js";
 import type { DynamicRoutingConfig, RoutingDecision, ModelCapabilities } from "../model-router.js";
 import type { ClassificationResult } from "../complexity-classifier.js";
@@ -1323,4 +1324,54 @@ describe("getModelTier unknown default", () => {
     assert.equal(lightModels.length, 0, "Unknown model should NOT be in light tier");
     assert.equal(heavyModels.length, 0, "Unknown model should NOT be in heavy tier");
   });
+});
+
+// --- claude-sonnet-5 catalog regression (v1.12.0 gap) ---
+// Discovered during Edelman Studio M010 model-routing config: claude-sonnet-5 was
+// absent from MODEL_CAPABILITY_TIER, causing isKnownModel() to return false and
+// the #2192 routing-bypass path to activate for any phase configured with sonnet-5.
+
+test("claude-sonnet-5 is classified as standard tier in MODEL_CAPABILITY_TIER", () => {
+  assert.equal(
+    MODEL_CAPABILITY_TIER["claude-sonnet-5"],
+    "standard",
+    "claude-sonnet-5 must be in the tier map so isKnownModel() returns true",
+  );
+});
+
+test("claude-sonnet-5 as ceiling: standard task is NOT bypassed - routing applies normally", () => {
+  // With sonnet-5 now a known model, resolveModelForComplexity must NOT hit the
+  // #2192 bail-out. A standard task with a sonnet-5 ceiling should stay on sonnet-5.
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-4-8" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "standard", reason: "test", downgraded: false },
+    { primary: "claude-sonnet-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+  );
+  assert.equal(result.modelId, "claude-sonnet-5", "standard task with sonnet-5 ceiling should use sonnet-5");
+  assert.equal(result.wasDowngraded, false, "should not be downgraded when task tier matches ceiling");
+  assert.ok(!result.reason?.includes("not in the known tier map"), "must not hit #2192 bypass reason");
+});
+
+test("claude-sonnet-5 as ceiling: light task IS downgraded to haiku - routing not bypassed", () => {
+  // Confirms that with sonnet-5 as a known model, dynamic routing correctly
+  // downgrades light tasks to tier_models.light (haiku) instead of bypassing.
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-4-8" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "light", reason: "test", downgraded: false },
+    { primary: "claude-sonnet-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+  );
+  assert.equal(result.modelId, "claude-haiku-4-5", "light task with sonnet-5 ceiling must downgrade to haiku");
+  assert.equal(result.wasDowngraded, true);
 });

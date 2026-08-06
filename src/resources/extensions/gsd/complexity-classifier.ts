@@ -35,6 +35,13 @@ const UNIT_TYPE_TIERS: Record<string, ComplexityTier> = {
   // Tier 1 — Light: compact verification turns
   "run-uat": "light",
 
+  // Subagent recon/mapping types: read-only filesystem scans that require no
+  // substantive reasoning. Only add entries here for verifiably read-only scout
+  // agents. Do NOT add security-auditor, code-reviewer, or analysis agents here
+  // -- those belong at standard or heavy (#subagent-tier-policy).
+  "subagent/codebase-mapper": "light",   // read-only FS scan; no deep reasoning required
+  "subagent/scout": "light",             // broad recon; analogous to codebase-mapper
+
   // Tier 2 — Standard: research, routine discussion, slice completion
   // complete-slice can carry large inlined context; avoid routing it to the
   // cheapest "light" model by default (#4520).
