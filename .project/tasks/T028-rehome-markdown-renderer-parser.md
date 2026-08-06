@@ -3,12 +3,12 @@ id: T028
 title: Re-home markdown-renderer's roadmap projection parse off parsers-legacy
 wave: 3
 deps: [T008, T012]
-status: pending
-agent: null
+status: in-progress
+agent: build_T028
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 178a59ea9b258f3ae17a285c08b7a2ccdc1ba0aa
+worktree: .worktrees/gsd-path-T028
+task_branch: gsd-path/T028
 files:
   - src/resources/extensions/gsd/markdown-renderer.ts
   - src/resources/extensions/gsd/tests/markdown-renderer.test.ts
