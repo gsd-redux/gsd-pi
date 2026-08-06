@@ -361,3 +361,50 @@ AC1's zero-`parsers-legacy` grep holds for all five files.
   dropped, the tree is byte-identical, and the repo's four pre-existing
   stashes are verified intact. status stays in-progress; base/worktree/
   task_branch unchanged (retained worktree, same base 291e71c15).
+- 2026-08-05 — coder (Step 5c, after the third repair): both newly-listed files
+  are now green and the task is READY. Verify PASSES (exit 0; 136/136 across
+  reactive-graph, auto-recovery, doctor-runtime-checks, doctor-workspace,
+  recovery-verify-logs). `reactive-executor.test.ts` 24/24 (was 20/24);
+  `integration/idle-recovery.test.ts` 24/24 (was 22/24). AC4
+  `pnpm run baseline:refactor:phase0` still green (34/34 + 139/139).
+  `pnpm run typecheck:extensions` reports zero errors outside the pre-existing
+  `tests/oauth-api-model-routing.test.ts` pair (packages/pi-ai/dist unbuilt here).
+  Step 5c dispositions applied exactly as written:
+  * reactive-executor.test.ts — RESEEDED, assertions untouched. Added a
+    `seedSliceTasks(repo, tasks)` helper (openDatabase + insertMilestone +
+    insertSlice + insertTask with an explicit `sequence`, so `getSliceTasks`'s
+    `ORDER BY sequence, id` reproduces the fixtures' declared task order and the
+    `deepEqual(["T01","T02"])` / `["T02","T03"]` assertions still hold). Seeded
+    the four named fixtures — 3 tasks, 2 tasks, 2 tasks, and 3 tasks with T01
+    `status:"complete"` for the re-entry test — and added `closeDatabase()` to
+    each of their finally blocks. Their per-task `T0x-PLAN.md` IO sections are
+    unchanged: the DB supplies ids/titles/done, the PLAN files still supply IO.
+    The other 20 tests in the file are untouched.
+  * idle-recovery.test.ts, "all artifacts present + roadmap marked [x] returns
+    true" — RESEEDED with a `complete` DB slice row; still asserts `true`, NOT
+    inverted.
+  * idle-recovery.test.ts, "no roadmap file present is lenient (returns true)" —
+    INVERTED and renamed to "complete-slice — unconfirmable completion fails
+    closed (returns false)". It now asserts `result === false` plus a `recovery`
+    warning matching /verify-fail complete-slice M001\/S01/ and /DB unavailable/,
+    with a comment recording what it used to assert and why that was the silent
+    pass. This is AC5's witness in the integration tier.
+  Two adjacent edits in idle-recovery.test.ts, disclosed for review: (1)
+  `cleanup()` now calls `closeDatabase()` before `rmSync` so the seeded DBs do
+  not leak into later tests in the file; (2) the third complete-slice test
+  ("SUMMARY + UAT present but roadmap NOT marked [x] returns false") was passing
+  but only vacuously — with no DB it took the new fail-closed path while its
+  title still claimed roadmap-checkbox authority, i.e. it asserted removed
+  behavior (AC3). It is now seeded with an `in_progress` slice row and retitled
+  "... but the slice row is not complete returns false", so it pins the real
+  DB-path rejection and stays distinct from the inverted no-DB test. Its
+  assertion (`false`) is unchanged. The section header comment was updated from
+  "roadmap check" to "completion check" for the same reason; the ROADMAP_COMPLETE
+  / ROADMAP_INCOMPLETE fixtures were deliberately KEPT in all four tests so they
+  now prove the projection does not decide the outcome. No other test in either
+  newly-listed file was touched, and no Git command was run.
+- 2026-08-05 — orchestrator Verify rerun (authoritative, isolated worktree):
+  contract Verify exit 0 — tests 136 / pass 136 / fail 0. AC6 rerun: tests 48 /
+  pass 48 / fail 0 (reactive-executor 24/24, integration/idle-recovery 24/24).
+  Diff scope check: 11 changed paths, all declared or the task file; zero paths
+  outside `files`.
