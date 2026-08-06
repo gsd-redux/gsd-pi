@@ -80,3 +80,26 @@ grep -q "status-guards" src/resources/extensions/gsd/auto-prompts.ts && ! grep -
 ## Log
 
 - 2026-08-06 — created by planner from wave-3 review cycle 1 (T011 AC2 failure)
+- 2026-08-06 — coder: added `isCompletedSliceStatus()` in `auto-prompts.ts`
+  (`isClosedStatus(status) && status !== "skipped"`, importing `isClosedStatus`
+  from `./status-guards.js`; no local closed-set literal) and used it at both
+  former equality sites — `loadRoadmapCompletedSliceCandidates` (was `:1666`)
+  and `checkNeedsReassessment` (was `:1637`). The companion
+  `hasIncomplete` check in `checkNeedsReassessment` now uses
+  `!isClosedStatus(s.status)` so a fully-closed milestone containing a
+  `skipped`/`done`/`closed` slice still short-circuits, matching the roadmap
+  checkbox it replaced. Made the DB-unavailable path explicit: an early
+  `if (!isDbAvailable()) return null;` with a comment stating why null is the
+  sound answer (no markdown parse reintroduced); the surrounding try/catch now
+  wraps the DB read directly.
+- 2026-08-06 — coder: tests — added three cases to
+  `tests/auto-prompts-fallback.test.ts`: legacy `done`/`closed` rows are
+  returned as UAT candidates while `skipped` is excluded and reverse order is
+  preserved; `checkNeedsReassessment` picks a `done` slice as last-completed;
+  and it returns null when every slice is closed via legacy aliases. Each fails
+  if the predicate regresses to `status === "complete"`.
+- 2026-08-06 — Verify: `grep -q "status-guards" ... && ! grep -nE 'status === "complete"' ... && node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/auto-prompts-fallback.test.ts`
+  → PASS: tests 10, pass 10, fail 0 (duration_ms 2171). (Unrelated pre-existing
+  stderr notice about a stale `@opengsd/engine-darwin-arm64` addon.)
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree): exit 0.
+  Diff scope check: declared files plus the task file; zero paths outside `files`.
