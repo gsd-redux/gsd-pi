@@ -3,12 +3,12 @@ id: T013
 title: Convert drift detectors to stamped projection-reads via the relocated parsers
 wave: 3
 deps: [T008, T012]
-status: pending
-agent: null
+status: in-progress
+agent: build_T013
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 291e71c154aac359be01cc38a34dccd992ab47b4
+worktree: .worktrees/gsd-path-T013
+task_branch: gsd-path/T013
 files:
   - src/resources/extensions/gsd/state-reconciliation/drift/roadmap.ts
   - src/resources/extensions/gsd/state-reconciliation/drift/sketch-flag.ts

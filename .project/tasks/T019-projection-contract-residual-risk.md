@@ -3,12 +3,12 @@ id: T019
 title: Freeze projection format; document projections as de facto public API; record accepted residual risks
 wave: 3
 deps: [T002, T003, T008]
-status: pending
-agent: null
+status: in-progress
+agent: build_T019
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 291e71c154aac359be01cc38a34dccd992ab47b4
+worktree: .worktrees/gsd-path-T019
+task_branch: gsd-path/T019
 files:
   - docs/dev/state-db-cutover-projection-contract.md
   - docs/dev/state-db-cutover-milestone-decision.md
