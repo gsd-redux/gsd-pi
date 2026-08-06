@@ -3,12 +3,12 @@ id: T015
 title: Fail-closed legacy:cleanup:evidence redesign + static no-caller/no-importer proof
 wave: 3
 deps: [T002, T007]
-status: pending
-agent: null
-commit: null
-base: null
-worktree: null
-task_branch: null
+status: done
+agent: build_T015
+commit: 16ab84dfa25034bdd68f4b9caaf9fe75eef94556
+base: 291e71c154aac359be01cc38a34dccd992ab47b4
+worktree: .worktrees/gsd-path-T015
+task_branch: gsd-path/T015
 files:
   - scripts/legacy-cleanup-evidence.mjs
   - scripts/legacy-cleanup-gate.mjs
