@@ -3,9 +3,9 @@ id: T029
 title: Close the two surviving fail-open DB-unavailable branches in artifact-verification
 wave: 3
 deps: [T010]
-status: in-progress
+status: done
 agent: build_T029
-commit: null
+commit: 942d048d7454569a11e831f8f2477cfa57c0f0d4
 base: ac2717d34ed47a0170d8f1c767eea555daeb2fb9
 worktree: .worktrees/gsd-path-T029
 task_branch: gsd-path/T029
