@@ -78,3 +78,39 @@ ADR-017 #5702). The registry test is reconciled by T016 — do NOT edit it.
 ## Log
 
 - 2026-08-01 — created by planner
+- 2026-08-05 — coder: implemented.
+  - `drift/roadmap.ts`: import re-pointed to `../../schemas/parsers.js`
+    (`parseLegacyRoadmap as parseRoadmap`); added `projectionIsStampFresh()`
+    and a short-circuit in `milestoneHasDivergence` — the ROADMAP file is now
+    read once, and a stamp equal to `getCurrentProjectStateVersion()` returns
+    "no divergence" before `parseRoadmap` runs. Unstamped/mismatched content
+    takes the untouched comparison path.
+  - `drift/sketch-flag.ts`: import re-pointed to
+    `parseLegacyPlan as parsePlan` from `../../schemas/parsers.js`; no stamp
+    short-circuit, with a doc-comment on `sketchIsPlanned` explaining that a
+    stamped stub is still a stub (content judgment, not freshness).
+  - `drift/stale-render.ts`: had no `parsers-legacy` import; added
+    `renderPathIsStampFresh()` and filtered stamp-fresh entries out of
+    `detectStaleRenderDriftFromBasePath` (markdown-renderer.ts line ~1168
+    explicitly defers this wiring to T013). Unreadable/missing paths (the
+    `*.md missing` reasons) never count as fresh.
+  - `tests/roadmap-slices.test.ts`: `parseRoadmap` import re-pointed to
+    `../schemas/parsers.ts`.
+  - `tests/state-reconciliation-drift.test.ts`: +3 tests — stamp-fresh ROADMAP
+    with diverging content produces no `roadmap-divergence` and is left byte-
+    identical; `999:999` stamp falls back to the comparison path and repairs;
+    a state-version-stamped stub PLAN still does not clear `is_sketch`. All
+    existing unstamped-fixture coverage untouched.
+  - `tests/artifact-db-drift-memo.test.ts`: no change needed (no
+    `parsers-legacy` import, no stamp interaction); left as-is.
+  - Verify: PASS — grep found zero `parsers-legacy` matches under
+    `state-reconciliation/drift/`; node:test run of the three files reported
+    `tests 94 / pass 90 / fail 0 / skipped 4` (baseline before this task was
+    `tests 91 / pass 87 / fail 0 / skipped 4`), exit code 0.
+  - Also ran `npx tsc --noEmit -p tsconfig.extensions.json --incremental false`:
+    zero errors in any touched file (the two reported errors are pre-existing
+    in `tests/oauth-api-model-routing.test.ts`, untouched by this task).
+- 2026-08-05 — orchestrator Verify rerun (authoritative, isolated worktree):
+  exit 0 — zero `parsers-legacy` matches under state-reconciliation/drift/;
+  tests 94 / pass 90 / fail 0 / skipped 4. Diff scope check: 5 declared files
+  plus the task file; zero paths outside `files`.
