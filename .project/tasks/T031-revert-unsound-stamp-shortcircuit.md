@@ -75,3 +75,19 @@ write-path change to make mid-wave with the wave already blocked.
 ## Log
 
 - 2026-08-06 — created by planner from wave-3 review cycle 1 (T013 AC2 failure); user ruled revert-and-delete over root-cause revision bump
+- 2026-08-06 — coder: reverted the stamp short-circuit. `drift/roadmap.ts`: deleted
+  `projectionIsStampFresh` + its call in `milestoneHasDivergence`, dropped the now-unused
+  `getCurrentProjectStateVersion`/`readProjectionStateVersion` imports, left a comment
+  recording why a stamp is not a freshness signal (revision CAS doesn't cover slice writes;
+  stamp is a content byte). `drift/stale-render.ts`: deleted `renderPathIsStampFresh` and the
+  `.filter(...)` over `detectStaleRenders`, dropped the same two imports plus `node:fs`
+  `readFileSync`; `detectStaleRenders`' `return []` stub left untouched per Step 4. The
+  `schemas/parsers.js` re-homing from T013 is untouched. Test file: deleted the forged-current-stamp
+  no-drift test (old `:1700-1736`) and its stale header comment; kept the mismatched-stamp test
+  (renamed to T031) and added the inverse pin — a fixture stamped with the CURRENT state version
+  whose content diverges must report `roadmap-divergence` and be re-rendered from DB.
+- 2026-08-06 — Verify: `! grep parsers-legacy ... && ! grep getCurrentProjectStateVersion ... && node --test state-reconciliation-drift.test.ts roadmap-slices.test.ts` → both greps found nothing;
+  tests 93 / pass 89 / fail 0 / cancelled 0 / skipped 4 / todo 0, duration_ms 10032.86; exit 0.
+  Also ran `tsc -p tsconfig.extensions.json --noEmit --incremental false`: no diagnostics for any touched file.
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree): exit 0.
+  Diff scope check: declared files plus the task file; zero paths outside `files`.
