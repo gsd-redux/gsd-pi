@@ -3,9 +3,9 @@ id: T038
 title: Reseed the four auto-prompts test files T011 broke, including the file cycle 3 missed
 wave: 3
 deps: [T011, T030, T034]
-status: in-progress
+status: done
 agent: build_T038
-commit: null
+commit: 75c07cdbc27fbda7f3c52b2189993ed513817c37
 base: 0c202c67eb5968ed9a872fbded416e12e3d86f15
 worktree: .worktrees/gsd-path-T038
 task_branch: gsd-path/T038
