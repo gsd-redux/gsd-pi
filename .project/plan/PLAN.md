@@ -19,7 +19,7 @@ Project verify: `pnpm run verify:pr`
 
 ## Config
 
-- max_review_cycles: 4   <!-- raised 3→4 by user ruling 2026-08-06 for wave 3: cycle 3 blocked on 15 RED tests from T011 in files no Verify ran (branch CI-red); reviewer judged it a mechanical DB reseed with no design question, so one more cycle closes a bounded defect rather than shipping a CI-red branch -->
+- max_review_cycles: 4 (closed)   <!-- USER RULING 2026-08-07, second cap: do NOT run a cycle 5. Cycle 4 established the remaining risk is undiscoverable by review-style inspection (two failures reachable only transitively, one from a test that imports nothing and scans the filesystem). Wave 3 closes on a REAL GATE RUN instead: verify:pr + test:integration executed OUTSIDE .worktrees/ (build:core cannot resolve inside a nested worktree). Fix tasks T039-T041 first. -->
 
 ## Wave 1 — risk burn-down
 
