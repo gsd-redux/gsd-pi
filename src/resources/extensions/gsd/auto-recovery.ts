@@ -69,6 +69,7 @@ import { hasImplementationArtifacts } from "./milestone-implementation-evidence.
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import {
   readExecuteTaskArtifactReadiness,
+  readTerminalTaskRecoveryAbort,
   resolveArtifactVerificationBase,
 } from "./artifact-verification.js";
 import {
@@ -219,6 +220,32 @@ export function refreshRecoveryDbForArtifact(
         reason: "execute-task-attempt-not-actionable",
         message: `Stuck recovery found execute-task ${unitId} artifacts, but its latest canonical Task Attempt has no actionable verify or route Result.`,
       };
+    }
+    // #1622: a route-stage Attempt whose agent-owned recovery already aborted is
+    // NOT recoverable by re-dispatch — the next dispatch breaks instantly with
+    // `task-recovery-abort`, orphaning a worktree and leaving auto-mode to
+    // silently re-dispatch forever. Fail closed with the operator-actionable
+    // recovery path instead of reporting success.
+    if (readiness === "route") {
+      let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
+      try {
+        terminalAbort = readTerminalTaskRecoveryAbort(mid, sid, tid);
+      } catch (err) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "execute-task-recovery-route-read-failed",
+          message: `Stuck recovery could not read the canonical Task recovery route for execute-task ${unitId}: ${getErrorMessage(err)}`,
+        };
+      }
+      if (terminalAbort) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "execute-task-recovery-aborted",
+          message: `Stuck recovery found execute-task ${unitId} artifacts, but its canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}); re-dispatching would break immediately with task-recovery-abort. Resume it with \`gsd_task_recovery_resume\` using recoveryActionId ${terminalAbort.recoveryActionId}, or reconcile the projection drift with \`gsd rebuild markdown\` then \`gsd recover\`.`,
+        };
+      }
     }
     return { ok: true };
   }

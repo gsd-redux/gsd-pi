@@ -12,6 +12,7 @@ import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArti
 import { resolveMilestoneFile } from "../paths.ts";
 import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult, updateMilestoneStatus } from "../gsd-db.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
 import { internalExecutionInvocation } from "../execution-invocation.ts";
 import { readEvents } from "../workflow-events.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
@@ -69,7 +70,9 @@ function makeTmpProject(): string {
   return dir;
 }
 
-function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
+function seedCanonicalTaskAttempt(
+  outcome?: "succeeded" | "failed",
+): { attemptId: string; resultId: string | undefined } {
   const db = _getAdapter();
   assert.ok(db);
   db.exec(`
@@ -104,16 +107,18 @@ function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
     milestoneLeaseToken: 7,
     coordinationDispatchId: Number(dispatch?.["id"]),
   });
+  let resultId: string | undefined;
   if (outcome) {
-    settleTaskAttempt({
+    resultId = settleTaskAttempt({
       invocation: internalExecutionInvocation(`test:artifact-recovery:settle:${outcome}`),
       attemptId: claim.attemptId,
       outcome,
       failureClass: outcome === "succeeded" ? "none" : "executor-failed",
       summary: `executor ${outcome}`,
       output: {},
-    });
+    }).resultId;
   }
+  return { attemptId: claim.attemptId, resultId };
 }
 
 function runGit(base: string, args: string[]): void {
@@ -585,6 +590,39 @@ test("refreshRecoveryDbForArtifact accepts canonical verify and route Result hea
     refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", second),
     { ok: true },
   );
+});
+
+test("refreshRecoveryDbForArtifact refuses execute-task recovery after a terminal agent abort (#1622)", () => {
+  const dir = makeTmpProject();
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Task", status: "pending" });
+  const attempt = seedCanonicalTaskAttempt("failed");
+  assert.ok(attempt.resultId);
+  const route = recordFailureAndSelectRecovery({
+    invocation: internalExecutionInvocation("test:artifact-recovery:route:abort"),
+    attemptId: attempt.attemptId,
+    resultId: attempt.resultId!,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "host verification never committed",
+    evidence: { unitType: "execute-task", unitId: "M001/S01/T01" },
+    rationale: "Terminal agent-owned abort",
+  });
+  assert.equal(route.action, "abort");
+
+  // The artifact still verifies (the Attempt is parked at the route stage), so
+  // without the guard stuck recovery reports success and re-dispatches into an
+  // instant `task-recovery-abort` break.
+  assert.equal(verifyExpectedArtifact("execute-task", "M001/S01/T01", dir), true);
+
+  const result = refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", dir);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.fatal, true);
+  assert.equal(result.reason, "execute-task-recovery-aborted");
+  assert.ok(result.message.includes(route.recoveryActionId));
+  assert.ok(result.message.includes("gsd_task_recovery_resume"));
+  assert.ok(result.message.includes("gsd recover"));
 });
 
 test("refreshRecoveryDbForArtifact closes complete-milestone DB row when artifacts exist but DB is stale (#5568)", async () => {

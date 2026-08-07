@@ -883,35 +883,48 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
    * unbounded recover→re-saturate→recover loop — mirrors the legacy
    * Level-1-recover-then-Level-2-hard-stop escalation.
    *
-   * Returns true when recovery succeeded; the caller should re-loop (return a
-   * skipped result) instead of stopping.
+   * Returns `recovered: true` when recovery succeeded; the caller should re-loop
+   * (return a skipped result) instead of stopping. A fatal refusal carries its
+   * operator-actionable `blockedReason` so the hard-stop tells the user how to
+   * recover instead of only naming the dead end (#1622).
    */
-  private tryStuckArtifactRecovery(unitType: string, unitId: string): boolean {
+  private tryStuckArtifactRecovery(
+    unitType: string,
+    unitId: string,
+  ): { recovered: boolean; blockedReason?: string } {
     const key = buildDispatchKey(unitType, unitId);
-    if (this.lastStuckRecoveryKey === key) return false; // already tried this episode
+    if (this.lastStuckRecoveryKey === key) return { recovered: false }; // already tried this episode
     const basePath = this.getLiveDispatchBasePath();
-    if (!verifyExpectedArtifact(unitType, unitId, basePath)) return false;
+    if (!verifyExpectedArtifact(unitType, unitId, basePath)) return { recovered: false };
     const refreshed = refreshRecoveryDbForArtifact(unitType, unitId, basePath);
     // Fatal failures cannot be recovered — hard-stop. Non-fatal (e.g. plan-slice
     // DB refresh hiccup) still fall through: invalidating caches and resetting
     // the ring gives the next advance a clean slate to pick up the correct state,
     // mirroring the legacy Level-1 "continue" escalation path.
-    if (!refreshed.ok && refreshed.fatal) return false;
+    if (!refreshed.ok && refreshed.fatal) {
+      return { recovered: false, blockedReason: refreshed.message };
+    }
     this.lastStuckRecoveryKey = key;
     invalidateAllCaches();
     this.dispatchHistory.clearOnRecovery();
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    return true;
+    return { recovered: true };
   }
 
   private stuckRecovered(
     decision: { unitType: string; unitId: string },
     stateSnapshot: GSDState,
   ): AutoAdvanceResult {
+    // execute-task recovery only *reads* the canonical Task Attempt — it never
+    // writes the task row — so claiming "DB refreshed" here misreported what
+    // happened and hid the projection drift behind a success line (#1622).
+    const outcome = decision.unitType === "execute-task"
+      ? "canonical Task Attempt state verified (no DB write)"
+      : "DB refreshed";
     const recovered: AutoAdvanceResult = {
       kind: "skipped",
-      reason: `stuck-recovery: ${decision.unitType} ${decision.unitId} artifact found on disk; DB refreshed`,
+      reason: `stuck-recovery: ${decision.unitType} ${decision.unitId} artifact found on disk; ${outcome}`,
       stateSnapshot,
     };
     this.status.phase = "running";
@@ -1157,14 +1170,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         // #442: the unit re-dispatched immediately after finalizing may have
         // actually completed on disk with a stale DB. Verify + recover before
         // hard-stopping (legacy graduated stuck-recovery parity).
-        if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
+        const finalizedRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
+        if (finalizedRecovery.recovered) {
           this.clearPendingDispatch();
           return this.stuckRecovered(decision, reconciliation.stateSnapshot);
         }
         this.clearPendingDispatch();
+        const finalizedReason = `state did not advance after finalized ${decision.unitType} ${decision.unitId}`;
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
+          reason: finalizedRecovery.blockedReason
+            ? `${finalizedReason} — ${finalizedRecovery.blockedReason}`
+            : finalizedReason,
           action: "stop",
           stateSnapshot: reconciliation.stateSnapshot,
         };
@@ -1220,14 +1237,17 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         // #442: before declaring a stuck loop, verify the unit didn't actually
         // complete on disk (stale DB) and recover if so — legacy graduated
         // stuck-recovery parity. Otherwise hard-stop with a diagnosable reason.
-        if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
+        const stuckRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
+        if (stuckRecovery.recovered) {
           this.clearPendingDispatch();
           return this.stuckRecovered(decision, reconciliation.stateSnapshot);
         }
         this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: `stuck-loop: ${stuckVerdict.reason}`,
+          reason: stuckRecovery.blockedReason
+            ? `stuck-loop: ${stuckVerdict.reason} — ${stuckRecovery.blockedReason}`
+            : `stuck-loop: ${stuckVerdict.reason}`,
           action: "stop",
         };
         this.journalTransition({
