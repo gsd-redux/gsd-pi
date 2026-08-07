@@ -10,7 +10,7 @@ base: 274430a457936ca0d4cece15dc2f92359e2d7816
 worktree: .worktrees/gsd-path-T035
 task_branch: gsd-path/T035
 files:
-  - src/resources/extensions/gsd/commands/core.ts
+  - src/resources/extensions/gsd/commands/handlers/core.ts
   - src/resources/extensions/gsd/tests/help-menu-coverage.test.ts
 ---
 
@@ -53,3 +53,11 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-06 — created by planner from wave-3 review cycle 2 (T032 regression)
+- 2026-08-06 — planner (contract repair): `files` named
+  `src/resources/extensions/gsd/commands/core.ts`, which does not exist — an
+  orchestrator authoring error truncating the path the review actually gave
+  (`commands/handlers/core.ts:159-162`). Corrected to
+  `src/resources/extensions/gsd/commands/handlers/core.ts`. The coder edited the
+  correct file and disclosed the discrepancy rather than blocking or silently
+  widening scope; with the path corrected its diff is fully in scope and is
+  accepted. No rejection.
