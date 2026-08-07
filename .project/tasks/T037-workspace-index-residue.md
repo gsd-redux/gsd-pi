@@ -3,12 +3,12 @@ id: T037
 title: Reseed the workspace-index contract tests T011 broke
 wave: 3
 deps: [T011]
-status: pending
-agent: null
+status: in-progress
+agent: build_T037
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 0c202c67eb5968ed9a872fbded416e12e3d86f15
+worktree: .worktrees/gsd-path-T037
+task_branch: gsd-path/T037
 files:
   - src/tests/integration/web-state-surfaces-contract.test.ts
 ---

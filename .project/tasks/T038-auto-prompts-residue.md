@@ -3,12 +3,12 @@ id: T038
 title: Reseed the four auto-prompts test files T011 broke, including the file cycle 3 missed
 wave: 3
 deps: [T011, T030, T034]
-status: pending
-agent: null
+status: in-progress
+agent: build_T038
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 0c202c67eb5968ed9a872fbded416e12e3d86f15
+worktree: .worktrees/gsd-path-T038
+task_branch: gsd-path/T038
 files:
   - src/resources/extensions/gsd/tests/prompt-budget-enforcement.test.ts
   - src/resources/extensions/gsd/tests/integration/run-uat.test.ts
