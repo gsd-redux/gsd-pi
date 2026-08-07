@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — 21/21 built; review cycle 4 (cap raised to 4)
+Current wave: 3 of 4 — 21/21 built; CYCLE 4 BLOCKED at raised cap — awaiting 2nd human ruling
 Updated: 2026-08-05
 
 ## Waves
@@ -12,7 +12,7 @@ Updated: 2026-08-05
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
 | 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
-| 3 | consumers, evidence, command, docs (+T028, +T029-T038 fixes) | 21 | 21/21 | c1 blocked (4); c2 blocked (3); c3 blocked (1); c4 running (cap 4) |
+| 3 | consumers, evidence, command, docs (+T028, +T029-T038 fixes) | 21 | 21/21 | c1(4) c2(3) c3(1) c4(3) all blocked — AT RAISED CAP |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
 ## In flight
@@ -24,6 +24,10 @@ Updated: 2026-08-05
 
 <!-- Anything a human should know: 2×-failed tasks, defective task files
      fixed mid-build, serialized file conflicts. -->
+- 2026-08-07 — CYCLE 4 BLOCKED at the raised cap. T037/T038 verified genuinely closed (byte-identity of auto-prompts.ts 29af5990c and workspace-index.ts e3ee87462 re-derived by git rev-parse; 8 mutations re-run; 95/95; not one assert line changed in the five files — diffs are purely additive fixture seeding). `test:integration` is now CLEAR (1272 tests, 0 fail) — the cap raise achieved exactly its stated goal. BUT the reviewer ran the leg nobody had run: `test:unit:compiled` fails 5 tests in 4 files, deterministic, THREE distinct wave-3 owners — T011 (dispatch-run-uat-browser-tools, run-uat-replay-cap; both attributed by single-file swap to a27f96189^), T029 (journal-integration:381 #4289, 4-point bisect: green at 331cee83a and 27c224fe1, red from 942d048d7), T014 (silent-catch-diagnostics; all 10 offending lines blame to ef879f79b, several on the NEW restore path).
+- 2026-08-07 — WHY EVERY SWEEP MISSED THEM — this answers the question three cycles could not. The two T011 instances import only `auto-dispatch.ts`, a TRANSITIVE consumer, so the direct-importer sweep missed them and the reviewer's own 29-file symbol sweep missed them too. `silent-catch-diagnostics` imports nothing from the product at all — it scans the filesystem, so NO import-based sweep of any depth could ever find it. Only RUNNING THE LEGS works. Glob coverage was also measured: of 1366 test files under src/, only 5 fall outside every CI glob and none touches a T011 surface — so the gap was never glob coverage, it was that no wave-3 Verify and no review cycle ever ran a suite-level gate.
+- 2026-08-07 — ENVIRONMENTAL, and a large part of the root cause: `build:core` CANNOT run inside `.worktrees/` — TypeScript resolution walks up out of the nested worktree and binds @gsd/pi-coding-agent to the primary checkout's dist. Proven by the reviewer, worked around by rsync --link-dest copying the tree outside the repo, where build:core/build:web-host/test:compile all exit 0. Also: without build:native:test + the dist-test addon mirror, the successor gate falsely reports `discard: FAIL`. Any future wave-level gate must run OUTSIDE .worktrees/.
+- 2026-08-07 — the 20K cap test is confirmed unfailable but REDUNDANT, not a coverage hole: the reviewer ran that mutation against all 10 cap/budget-adjacent prompt test files (126 tests) and two other tests kill it. No other budget/cap test is vacuous. Record, do not fix. Correction to the entry above: FOUR tests were vacuous, not three.
 - 2026-08-07 — the 39-file sweep found MORE than the review did. Cycle 3 named 15 RED tests in 4 files; sweeping every in-repo test importing a T011-touched module (auto-prompts, workspace-index, visualizer-data, github-sync/sync) found a 5th file with a 16th: right-sized-workflow-prompts.test.ts "complete-milestone prompt does not trust pass validation missing current summary coverage" — a validation-trust guard that would have shipped broken and burned cycle 4. Third time this sweep-before-authoring move has paid (T010 after 3 blocks, T029 after 1, here). GENERALIZABLE: when a task flips a read path, the set of tests it breaks is NOT the set it declares.
 - 2026-08-07 — T038 additionally found THREE tests passing VACUOUSLY (the silent form of the same defect): run-uat (n) and (q) returned null only because the wrapper found no candidates at all; right-sized's two "trusts passing validation" positives never had a SUMMARY to cover. All reseeded and proven killable. Running total of this defect class across the wave: 6 unfailable + 16 red + 3 vacuous.
 - 2026-08-07 — DISCLOSED, out of scope, NOT fixed — closeout must not count this as covered: complete-milestone-excerpt.test.ts "caps repeated inlined context around 20k chars" is unfailable and was unfailable at the review base. Removing the cap entirely (capPreamble → no-op) leaves it green, because the closer keeps CONTEXT/KNOWLEDGE on-demand so the fixture's bodies are never inlined (~7K measured against a 21K bound). Pre-existing, not a T011 surface.

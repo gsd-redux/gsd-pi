@@ -4,7 +4,7 @@ project: gsd-pi
 milestone: state-db-cutover # set by the grill; names the archive directory at ship
 phase: build        # onboard | grill | research | synthesize | plan | build | review | shipped
                     # onboard only for brownfield projects; greenfield starts at grill
-status: active      # active | done | blocked
+status: blocked     # active | done | blocked
 branch: gsd-path/gsd-pi # bound once at build; reset for the next milestone
 archive: null       # persisted archive transaction path; never recomputed
 ---
@@ -41,3 +41,4 @@ it on completion. If this file and the artifacts disagree, the artifacts win
 - 2026-08-06 — build — REVIEW CAP REACHED. Cycle 3 blocked: all cycle-2 findings verified closed by probe, but 15 RED tests found in four files no cycle had swept, attributable to T011. Branch is CI-red (test:integration runs them; test:unit:compiled's glob does not). Build state set to blocked pending a human ruling on relax / redirect / raise-the-cap.
 - 2026-08-07 — build — USER RULING at the review cap: raise max_review_cycles 3→4 and fix. Rationale recorded: the branch is CI-red (test:integration runs the 15 failing tests; test:unit:compiled's flat glob does not), and the reviewer found no design question — a mechanical DB reseed of the shape T034 already executed. status blocked→active. Sweeping all 39 in-repo test files importing a T011-touched module BEFORE authoring the fix tasks, per the reviewer's instruction, so the contracts cover the measured break set rather than the known 15.
 - 2026-08-07 — build — T037/T038 integrated; all 16 RED tests green at HEAD (95/95 across the 5 files); branch no longer CI-red. Both fixes were fixture-only with production files proven byte-unchanged by hash. Wave 3 now 21/21. Review cycle 4 dispatched under the raised cap.
+- 2026-08-07 — build — cycle 4 BLOCKED at the raised cap. test:integration clear (1272/0 fail) but test:unit:compiled red: 5 tests, 4 files, 3 owners (T011 x2, T029, T014). Cause of the repeated misses now established: two are transitive-only importers and one imports nothing at all (filesystem scanner), so no import-based sweep could find them — only running the legs. Build blocked pending a second human ruling.
