@@ -3,12 +3,12 @@ id: T034
 title: Repair the reassess/UAT dispatch tests T011 broke and restore the #1112 cache-race guard
 wave: 3
 deps: [T011, T030]
-status: pending
-agent: null
+status: in-progress
+agent: build_T034
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 274430a457936ca0d4cece15dc2f92359e2d7816
+worktree: .worktrees/gsd-path-T034
+task_branch: gsd-path/T034
 files:
   - src/resources/extensions/gsd/tests/reassess-detection.test.ts
   - src/resources/extensions/gsd/tests/uat-dispatch.test.ts
