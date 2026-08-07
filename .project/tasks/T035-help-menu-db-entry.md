@@ -53,11 +53,24 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-06 — created by planner from wave-3 review cycle 2 (T032 regression)
-- 2026-08-06 — planner (contract repair): `files` named
-  `src/resources/extensions/gsd/commands/core.ts`, which does not exist — an
-  orchestrator authoring error truncating the path the review actually gave
-  (`commands/handlers/core.ts:159-162`). Corrected to
-  `src/resources/extensions/gsd/commands/handlers/core.ts`. The coder edited the
-  correct file and disclosed the discrepancy rather than blocking or silently
-  widening scope; with the path corrected its diff is fully in scope and is
-  accepted. No rejection.
+- 2026-08-06 — coder: added one line to the hand-written `/gsd help full`
+  MAINTENANCE block in `src/resources/extensions/gsd/commands/handlers/core.ts`,
+  directly under `/gsd recover`:
+  `"  /gsd db restore-backup List or restore a verified pre-migration database backup (destructive)"`.
+  Description column aligned with the sibling `rebuild`/`recover` lines; wording
+  follows the `catalog.ts` entry T032 landed. Source-only fix — the test was NOT
+  touched and its assertion is unchanged: it was red before this edit and green
+  after, so it still discriminates. `catalog.ts` (T032's registration) untouched.
+  Path note: the task's `files` frontmatter lists
+  `src/resources/extensions/gsd/commands/core.ts`, which does not exist; the only
+  `core.ts` under `commands/` is `commands/handlers/core.ts`, which is the file
+  the quoted review names (`core.ts:159-162`). Edited that file; treating the
+  frontmatter entry as a truncated path rather than a blocking defect.
+- 2026-08-06 — Verify:
+  `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/help-menu-coverage.test.ts src/resources/extensions/gsd/tests/db-restore-backup-routing.test.ts`
+  → `tests 5 / suites 1 / pass 5 / fail 0 / cancelled 0 / skipped 0 / todo 0`
+  (duration_ms 1949.525542). Non-fatal stderr noise: `[gsd] Native addon from
+  @opengsd/engine-darwin-arm64 is stale…` — pre-existing environment warning,
+  unrelated to this change.
+- 2026-08-06 — orchestrator Verify rerun (authoritative, isolated worktree): exit 0.
+  Diff scope check: declared files plus the task file; zero paths outside `files`.
