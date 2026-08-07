@@ -3,9 +3,9 @@ id: T035
 title: Fix the help-menu coverage regression from the db subcommand registration
 wave: 3
 deps: [T032]
-status: in-progress
+status: done
 agent: build_T035
-commit: null
+commit: 6c06b377675b0692d8e5ec727e3f48c8e02fcf25
 base: 274430a457936ca0d4cece15dc2f92359e2d7816
 worktree: .worktrees/gsd-path-T035
 task_branch: gsd-path/T035
