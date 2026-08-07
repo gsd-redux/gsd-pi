@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — 21/21 built; CYCLE 4 BLOCKED at raised cap — awaiting 2nd human ruling
+Current wave: 3 of 4 — 24/24 DONE, closing gate PASS. Wave 4 is timebox-blocked (see below).
 Updated: 2026-08-05
 
 ## Waves
@@ -12,7 +12,7 @@ Updated: 2026-08-05
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
 | 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
-| 3 | consumers, evidence, command, docs (+T028, +T029-T038 fixes) | 21 | 21/21 | c1(4) c2(3) c3(1) c4(3) all blocked — AT RAISED CAP |
+| 3 | consumers, evidence, command, docs (+T028, +T029-T041 fixes) | 24 | 24/24 | c1(4) c2(3) c3(1) c4(3) blocked; GATE PASS (wave-3.gate.md) |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
 ## In flight
@@ -24,6 +24,8 @@ Updated: 2026-08-05
 
 <!-- Anything a human should know: 2×-failed tasks, defective task files
      fixed mid-build, serialized file conflicts. -->
+- 2026-08-07 — WAVE 3 CLOSED on the gate run per user ruling. `verify:pr` at b13a037e0: build:core PASS, typecheck:extensions PASS, test:unit 13996 pass / 1 fail. The single failure is environmental and proven so: the developer's INSTALLED ~/.gsd agent extension is ESM while the repo's native dist is CJS, so it cannot load a module that demonstrably exists; re-running with a clean GSD_HOME gives 1/1 pass. Effective 13997/13997. test:integration clear at 1272/0 (cycle 4).
+- 2026-08-07 — WAVE 4 CANNOT COMPLETE THIS MILESTONE. T020/T021/T022 are all ADR-046 timebox-gated (2 stable releases + >=60 days after the cutover RELEASE — a clock that has not started because nothing has shipped). T020 is additionally unreachable: the symbol-keyed proof reports 7 offender modules that no task owns. T023 (closeout) depends on them. Shipping the cutover is therefore the prerequisite for wave 4, not the other way round.
 - 2026-08-07 — CYCLE 4 BLOCKED at the raised cap. T037/T038 verified genuinely closed (byte-identity of auto-prompts.ts 29af5990c and workspace-index.ts e3ee87462 re-derived by git rev-parse; 8 mutations re-run; 95/95; not one assert line changed in the five files — diffs are purely additive fixture seeding). `test:integration` is now CLEAR (1272 tests, 0 fail) — the cap raise achieved exactly its stated goal. BUT the reviewer ran the leg nobody had run: `test:unit:compiled` fails 5 tests in 4 files, deterministic, THREE distinct wave-3 owners — T011 (dispatch-run-uat-browser-tools, run-uat-replay-cap; both attributed by single-file swap to a27f96189^), T029 (journal-integration:381 #4289, 4-point bisect: green at 331cee83a and 27c224fe1, red from 942d048d7), T014 (silent-catch-diagnostics; all 10 offending lines blame to ef879f79b, several on the NEW restore path).
 - 2026-08-07 — WHY EVERY SWEEP MISSED THEM — this answers the question three cycles could not. The two T011 instances import only `auto-dispatch.ts`, a TRANSITIVE consumer, so the direct-importer sweep missed them and the reviewer's own 29-file symbol sweep missed them too. `silent-catch-diagnostics` imports nothing from the product at all — it scans the filesystem, so NO import-based sweep of any depth could ever find it. Only RUNNING THE LEGS works. Glob coverage was also measured: of 1366 test files under src/, only 5 fall outside every CI glob and none touches a T011 surface — so the gap was never glob coverage, it was that no wave-3 Verify and no review cycle ever ran a suite-level gate.
 - 2026-08-07 — ENVIRONMENTAL, and a large part of the root cause: `build:core` CANNOT run inside `.worktrees/` — TypeScript resolution walks up out of the nested worktree and binds @gsd/pi-coding-agent to the primary checkout's dist. Proven by the reviewer, worked around by rsync --link-dest copying the tree outside the repo, where build:core/build:web-host/test:compile all exit 0. Also: without build:native:test + the dist-test addon mirror, the successor gate falsely reports `discard: FAIL`. Any future wave-level gate must run OUTSIDE .worktrees/.
