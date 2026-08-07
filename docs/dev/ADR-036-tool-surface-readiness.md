@@ -1,6 +1,8 @@
 # ADR-036: Tool Surface Readiness — close the MCP startup race at two altitudes
 
-**Status:** Accepted (implemented)
+**Status:** Accepted (partially landed — runtime readiness gate, `tool-unavailable` recovery kind, bridge warm-up, PID registry, and typed naming seam verified at HEAD; static-gate call-site fold deferred)
+
+> Implementation note (2026-08-01 audit): the trace confirms `getToolSurfaceReadinessError` (`src/resources/extensions/gsd/tool-surface-readiness.ts:356`, wired at `claude-code-cli/stream-adapter.ts:2079`), the `TOOL_SURFACE_NOT_READY` phrase contract, `tool-unavailable` in `recovery-classification.ts`, `warmWorkflowToolBridges` (`packages/mcp-server/src/workflow-tools.ts:982`), `pid-registry.ts` / `stdio-watchdog.ts` / `probe-mode.ts`, `unit-tool-contracts.ts`, and `CanonicalWorkflowToolName` (`packages/contracts/src/workflow.ts:302`) — every table row below except the deferred static-gate fold.
 **Date:** 2026-06-10
 **Deciders:** Jeremy McSpadden
 **Related:** ADR-008 (workflow tools over MCP for provider parity), ADR-015 (runtime invariant modules: Tool Contract, Recovery Classification)

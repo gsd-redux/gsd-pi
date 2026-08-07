@@ -2,6 +2,7 @@
 // File Purpose: Strict public Domain Operation for irreversible project authority cutover.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   GSD_IDEMPOTENCY_CONFLICT,
@@ -9,6 +10,8 @@ import {
   GSDError,
 } from "./errors.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import { databaseMaintenanceIntentPath } from "./database-maintenance-fence.js";
+import { processStartIdentity } from "./process-start-identity.js";
 import {
   _executeAuthorityCutoverDomainOperation,
   canonicalDomainJson,
@@ -16,7 +19,7 @@ import {
   type DomainJsonValue,
   type DomainOperationResult,
 } from "./db/domain-operation.js";
-import { getDb, readTransaction, SCHEMA_VERSION } from "./db/engine.js";
+import { getDb, getDbPath, readTransaction, SCHEMA_VERSION } from "./db/engine.js";
 import { insertAuthorityCutoverReceipt } from "./db/writers/authority-recovery.js";
 import {
   LEGACY_IMPORT_APPLICATION_EVENT_TYPE,
@@ -125,6 +128,11 @@ export interface ProjectAuthorityCutoverReceipt {
   readonly resultingRevision: number;
   readonly priorAuthorityEpoch: number;
   readonly resultingAuthorityEpoch: number;
+  // Filesystem-state (markdown) authority flips to the DB with this cutover.
+  // Recorded on the receipt and in the durable cutover event payload; the
+  // pre-cutover evidence shape is unchanged, so the evidence schema version
+  // constant does not move.
+  readonly filesystemStateAuthority: "db";
   readonly cutoverAt: string;
   readonly eventIds: readonly string[];
   readonly outboxIds: readonly number[];
@@ -541,12 +549,14 @@ function loadAndValidateCutoverReceipt(
       "applicationIdentityHash",
       "evidenceHash",
       "consentHash",
+      "filesystemStateAuthority",
       "priorRevision",
       "resultingRevision",
       "priorAuthorityEpoch",
       "resultingAuthorityEpoch",
     ])
     && payload?.["authorityContractVersion"] === row["authority_contract_version"]
+    && payload?.["filesystemStateAuthority"] === "db"
     && application?.["project_id"] === row["project_id"]
     && application?.["resulting_revision"] === row["expected_revision"]
     && application?.["resulting_authority_epoch"] === row["expected_authority_epoch"]
@@ -585,6 +595,7 @@ function loadAndValidateCutoverReceipt(
     resultingRevision: Number(row["resulting_revision"]),
     priorAuthorityEpoch: Number(row["expected_authority_epoch"]),
     resultingAuthorityEpoch: Number(row["resulting_authority_epoch"]),
+    filesystemStateAuthority: "db",
     cutoverAt: String(row["cutover_at"]),
     eventIds: Object.freeze([...operation.eventIds]),
     outboxIds: Object.freeze([...operation.outboxIds]),
@@ -626,7 +637,75 @@ function mapFailure(error: unknown): ProjectAuthorityCutoverError {
   );
 }
 
+/**
+ * Op-entry ownership assertion: the atomic flip runs inside the startup
+ * EXCLUSIVE claim, so this process must either hold the database maintenance
+ * intent itself or face no live foreign claimant. The ownership proof mirrors
+ * how startup maintenance asserts ownership (readDatabaseMaintenanceIntent /
+ * databaseMaintenanceOwnerIsActive in db/engine.ts): no intent file means the
+ * claim is uncontested; an intent owned by this process means the startup
+ * EXCLUSIVE window is held here; an intent whose owner is dead or whose
+ * process-start identity moved on (PID reuse) is stale and adoptable at the
+ * next open. Anything else — a live foreign owner, or an intent that cannot
+ * be proven — fails closed as writer contention (retryable).
+ */
+function assertStartupExclusiveOwnership(): void {
+  const databasePath = getDbPath();
+  if (databasePath === null || databasePath === ":memory:") return;
+  let raw: string;
+  try {
+    raw = readFileSync(databaseMaintenanceIntentPath(databasePath), "utf8");
+  } catch (error) {
+    if ((error as { code?: unknown })?.code === "ENOENT") return;
+    fail(
+      "PROJECT_AUTHORITY_CUTOVER_WRITER_CONTENTION",
+      "authority cutover cannot prove the startup EXCLUSIVE ownership state",
+      true,
+    );
+  }
+  let intent: unknown;
+  try {
+    intent = JSON.parse(raw);
+  } catch {
+    fail(
+      "PROJECT_AUTHORITY_CUTOVER_WRITER_CONTENTION",
+      "authority cutover found a malformed database maintenance intent",
+      true,
+    );
+  }
+  const record = intent as Record<string, unknown>;
+  const ownerPid = Number(record["ownerPid"]);
+  const ownerIdentity = record["ownerProcessStartIdentity"];
+  if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || typeof ownerIdentity !== "string") {
+    fail(
+      "PROJECT_AUTHORITY_CUTOVER_WRITER_CONTENTION",
+      "authority cutover found an invalid database maintenance intent",
+      true,
+    );
+  }
+  // Our own pid: a matching identity is the startup EXCLUSIVE claim held by
+  // this process; a mismatched one is a stale claim from a previous process
+  // instance that carried this pid. Both allow the cutover to proceed.
+  if (ownerPid === process.pid) return;
+  try {
+    process.kill(ownerPid, 0);
+  } catch (error) {
+    if ((error as { code?: unknown })?.code === "ESRCH") return;
+  }
+  const currentIdentity = processStartIdentity(ownerPid);
+  if (currentIdentity === null || currentIdentity === ownerIdentity) {
+    fail(
+      "PROJECT_AUTHORITY_CUTOVER_WRITER_CONTENTION",
+      "authority cutover requires the startup EXCLUSIVE claim; a live maintenance owner holds it",
+      true,
+      { ownerPid },
+    );
+  }
+  // PID reused by an unrelated process instance: the claim is stale.
+}
+
 export function cutoverProjectAuthority(input: unknown): ProjectAuthorityCutoverReceipt {
+  assertStartupExclusiveOwnership();
   const snapshot = snapshotInput(input);
   const invocation = snapshot.invocation;
   const request: AuthorityCutoverDomainOperationRequest = {
@@ -680,6 +759,7 @@ export function cutoverProjectAuthority(input: unknown): ProjectAuthorityCutover
             applicationIdentityHash: observed.applicationIdentityHash,
             evidenceHash: snapshot.evidenceHash,
             consentHash: snapshot.consentHash,
+            filesystemStateAuthority: "db",
             priorRevision: snapshot.expectedRevision,
             resultingRevision: context.resultingRevision,
             priorAuthorityEpoch: snapshot.expectedAuthorityEpoch,

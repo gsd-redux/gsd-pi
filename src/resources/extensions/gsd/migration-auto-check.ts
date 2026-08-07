@@ -8,7 +8,7 @@ import {
   isDbAvailable,
 } from "./gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
-import { parsePlan, parseRoadmap } from "./parsers-legacy.js";
+import { parseLegacyPlan as parsePlan, parseLegacyRoadmap as parseRoadmap } from "./schemas/parsers.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import {
   resolveMilestoneFile,

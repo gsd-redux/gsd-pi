@@ -2,37 +2,366 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["preview_schema_version", "preview_id", "import_kind", "importer_version", "base_project_revision", "base_authority_epoch", "base_database_schema_version", "source_set_hash", "change_set_hash", "counts", "sources", "changes", "diagnoses", "resolutions"],
+  "required": [
+    "preview_schema_version",
+    "preview_id",
+    "import_kind",
+    "importer_version",
+    "base_project_revision",
+    "base_authority_epoch",
+    "base_database_schema_version",
+    "source_set_hash",
+    "change_set_hash",
+    "counts",
+    "sources",
+    "changes",
+    "diagnoses",
+    "resolutions"
+  ],
   "properties": {
-    "preview_schema_version": { "const": 1 },
-    "preview_id": { "$ref": "#/$defs/id" },
-    "import_kind": { "type": "string", "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)(?![\\s\\S]*[A-Z])[\\s\\S]+$" },
-    "importer_version": { "$ref": "#/$defs/trimmedNonBlank" },
-    "base_project_revision": { "type": "integer", "minimum": 0 },
-    "base_authority_epoch": { "type": "integer", "minimum": 0 },
-    "base_database_schema_version": { "const": 45 },
-    "source_set_hash": { "$ref": "#/$defs/hash" },
-    "change_set_hash": { "$ref": "#/$defs/hash" },
-    "counts": {
-      "type": "object", "additionalProperties": false,
-      "required": ["create", "update", "delete", "preserve", "unparsed", "unresolved"],
-      "properties": { "create": { "$ref": "#/$defs/count" }, "update": { "$ref": "#/$defs/count" }, "delete": { "$ref": "#/$defs/count" }, "preserve": { "$ref": "#/$defs/count" }, "unparsed": { "$ref": "#/$defs/count" }, "unresolved": { "$ref": "#/$defs/count" } }
+    "preview_schema_version": {
+      "const": 1
     },
-    "sources": { "type": "array", "items": { "$ref": "#/$defs/source" } },
-    "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } },
-    "diagnoses": { "type": "array", "items": { "$ref": "#/$defs/diagnosis" } },
-    "resolutions": { "type": "array", "items": { "$ref": "#/$defs/resolution" } }
+    "preview_id": {
+      "$ref": "#/$defs/id"
+    },
+    "import_kind": {
+      "type": "string",
+      "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)(?![\\s\\S]*[A-Z])[\\s\\S]+$"
+    },
+    "importer_version": {
+      "$ref": "#/$defs/trimmedNonBlank"
+    },
+    "base_project_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "base_authority_epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "base_database_schema_version": {
+      "const": 46
+    },
+    "source_set_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "change_set_hash": {
+      "$ref": "#/$defs/hash"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "create",
+        "update",
+        "delete",
+        "preserve",
+        "unparsed",
+        "unresolved"
+      ],
+      "properties": {
+        "create": {
+          "$ref": "#/$defs/count"
+        },
+        "update": {
+          "$ref": "#/$defs/count"
+        },
+        "delete": {
+          "$ref": "#/$defs/count"
+        },
+        "preserve": {
+          "$ref": "#/$defs/count"
+        },
+        "unparsed": {
+          "$ref": "#/$defs/count"
+        },
+        "unresolved": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    },
+    "diagnoses": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnosis"
+      }
+    },
+    "resolutions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resolution"
+      }
+    }
   },
   "$defs": {
-    "id": { "type": "string", "minLength": 1, "pattern": "^(?:\\S|\\S.*\\S)$" },
-    "trimmedNonBlank": { "type": "string", "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[\\s\\S]+$" },
-    "count": { "type": "integer", "minimum": 0 },
-    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "locator": { "type": "object", "additionalProperties": false, "required": ["start_byte", "end_byte"], "properties": { "start_byte": { "type": "integer", "minimum": 0 }, "end_byte": { "type": "integer", "minimum": 1 }, "line": { "type": "integer", "minimum": 1 }, "json_pointer": { "type": "string" } } },
-    "target": { "type": "object", "additionalProperties": false, "required": ["kind", "key"], "properties": { "kind": { "type": "string", "minLength": 1 }, "key": { "type": "string", "minLength": 1 }, "field": { "type": "string", "minLength": 1 } } },
-    "source": { "type": "object", "additionalProperties": false, "required": ["source_id", "path", "kind", "byte_size", "sha256", "parser_id", "parser_version", "encoding", "outcome"], "properties": { "source_id": { "$ref": "#/$defs/id" }, "path": { "type": "string", "minLength": 1 }, "kind": { "type": "string", "minLength": 1 }, "byte_size": { "$ref": "#/$defs/count" }, "sha256": { "$ref": "#/$defs/hash" }, "parser_id": { "$ref": "#/$defs/id" }, "parser_version": { "$ref": "#/$defs/id" }, "encoding": { "enum": ["utf-8", "binary"] }, "outcome": { "enum": ["mapped", "preserved", "unparsed", "ignored-with-reason"] } } },
-    "change": { "type": "object", "additionalProperties": false, "required": ["change_id", "action", "target", "raw", "normalized", "provenance", "reason_code"], "properties": { "change_id": { "$ref": "#/$defs/id" }, "action": { "enum": ["create", "update", "delete", "preserve"] }, "target": { "$ref": "#/$defs/target" }, "raw": { "type": "object", "additionalProperties": false, "required": ["source_id", "locator", "value", "sha256"], "properties": { "source_id": { "$ref": "#/$defs/id" }, "locator": { "$ref": "#/$defs/locator" }, "value": {}, "sha256": { "$ref": "#/$defs/hash" } } }, "normalized": {}, "provenance": { "type": "object", "additionalProperties": false, "required": ["source_id", "parser_id", "parser_version"], "properties": { "source_id": { "$ref": "#/$defs/id" }, "parser_id": { "$ref": "#/$defs/id" }, "parser_version": { "$ref": "#/$defs/id" } } }, "reason_code": { "$ref": "#/$defs/id" } } },
-    "diagnosis": { "type": "object", "additionalProperties": false, "required": ["diagnosis_id", "code", "severity", "source_id", "locator", "raw_value", "message"], "properties": { "diagnosis_id": { "$ref": "#/$defs/id" }, "code": { "$ref": "#/$defs/id" }, "severity": { "enum": ["info", "warning", "blocker"] }, "source_id": { "$ref": "#/$defs/id" }, "locator": { "$ref": "#/$defs/locator" }, "raw_value": {}, "message": { "type": "string", "minLength": 1 } } },
-    "resolution": { "type": "object", "additionalProperties": false, "required": ["diagnosis_id", "disposition"], "properties": { "diagnosis_id": { "$ref": "#/$defs/id" }, "disposition": { "enum": ["mapped", "preserved", "requires-user", "unsupported"] }, "target": { "$ref": "#/$defs/target" } } }
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?:\\S|\\S.*\\S)$"
+    },
+    "trimmedNonBlank": {
+      "type": "string",
+      "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[\\s\\S]+$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "locator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_byte",
+        "end_byte"
+      ],
+      "properties": {
+        "start_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_byte": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "json_pointer": {
+          "type": "string"
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "key"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_id",
+        "path",
+        "kind",
+        "byte_size",
+        "sha256",
+        "parser_id",
+        "parser_version",
+        "encoding",
+        "outcome"
+      ],
+      "properties": {
+        "source_id": {
+          "$ref": "#/$defs/id"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "byte_size": {
+          "$ref": "#/$defs/count"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hash"
+        },
+        "parser_id": {
+          "$ref": "#/$defs/id"
+        },
+        "parser_version": {
+          "$ref": "#/$defs/id"
+        },
+        "encoding": {
+          "enum": [
+            "utf-8",
+            "binary"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "mapped",
+            "preserved",
+            "unparsed",
+            "ignored-with-reason"
+          ]
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_id",
+        "action",
+        "target",
+        "raw",
+        "normalized",
+        "provenance",
+        "reason_code"
+      ],
+      "properties": {
+        "change_id": {
+          "$ref": "#/$defs/id"
+        },
+        "action": {
+          "enum": [
+            "create",
+            "update",
+            "delete",
+            "preserve"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        },
+        "raw": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_id",
+            "locator",
+            "value",
+            "sha256"
+          ],
+          "properties": {
+            "source_id": {
+              "$ref": "#/$defs/id"
+            },
+            "locator": {
+              "$ref": "#/$defs/locator"
+            },
+            "value": {},
+            "sha256": {
+              "$ref": "#/$defs/hash"
+            }
+          }
+        },
+        "normalized": {},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_id",
+            "parser_id",
+            "parser_version"
+          ],
+          "properties": {
+            "source_id": {
+              "$ref": "#/$defs/id"
+            },
+            "parser_id": {
+              "$ref": "#/$defs/id"
+            },
+            "parser_version": {
+              "$ref": "#/$defs/id"
+            }
+          }
+        },
+        "reason_code": {
+          "$ref": "#/$defs/id"
+        }
+      }
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnosis_id",
+        "code",
+        "severity",
+        "source_id",
+        "locator",
+        "raw_value",
+        "message"
+      ],
+      "properties": {
+        "diagnosis_id": {
+          "$ref": "#/$defs/id"
+        },
+        "code": {
+          "$ref": "#/$defs/id"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "blocker"
+          ]
+        },
+        "source_id": {
+          "$ref": "#/$defs/id"
+        },
+        "locator": {
+          "$ref": "#/$defs/locator"
+        },
+        "raw_value": {},
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "diagnosis_id",
+        "disposition"
+      ],
+      "properties": {
+        "diagnosis_id": {
+          "$ref": "#/$defs/id"
+        },
+        "disposition": {
+          "enum": [
+            "mapped",
+            "preserved",
+            "requires-user",
+            "unsupported"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/target"
+        }
+      }
+    }
   }
 }

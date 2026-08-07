@@ -3,11 +3,17 @@
  *
  * Locates and loads the compiled Rust N-API addon (`.node` file).
  * Resolution order:
- *   1. @opengsd/engine-{platform} npm optional dependency (production install)
- *   2. native/addon/gsd_engine.{platform}.node (local release build)
- *   3. native/addon/gsd_engine.dev.node (local debug build)
+ *   1. native/addon/gsd_engine.{platform}.node / gsd_engine.dev.node when a
+ *      local build is present (or when GSD_NATIVE_PREFER_LOCAL=1 forces it).
+ *      The pinned npm binary is documented to lag the Rust source, so a
+ *      present local build is always the better match for the source tree.
+ *   2. @opengsd/engine-{platform} npm optional dependency (production install,
+ *      where no native/addon directory exists)
+ *   3. local builds retried as a last resort (covers a local build that
+ *      appeared between the existence check and here)
  */
 
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 // Type-only import (erased at compile time — no runtime cycle): the lock
 // class shapes are defined once in file-identity/index.ts and referenced here
@@ -34,40 +40,61 @@ const platformPackageMap: Record<string, string> = {
 
 let _loadedSuccessfully = false;
 
+// Exports the source tree expects that the pinned @opengsd/engine-* binary is
+// documented to lag (CI builds from source for exactly this reason). Used to
+// flag a stale-but-loadable addon so the failure detail names the real cause
+// instead of surfacing later as a bare "unavailable" error.
+const EXPECTED_LOCK_EXPORTS = ["SqliteFileIdentityLock", "ProjectionRootIdentityLock"] as const;
+
+function warnIfStale(loaded: Record<string, unknown>, source: string): void {
+  const missing = EXPECTED_LOCK_EXPORTS.filter((name) => typeof loaded[name] !== "function");
+  if (missing.length === 0) return;
+  process.stderr.write(
+    `[gsd] Native addon from ${source} is stale: it lacks exports the source tree expects (${missing.join(", ")}). ` +
+      `Build the local addon (pnpm run build:native:dev) or update the pinned @opengsd/engine-* package.\n`,
+  );
+}
+
 function loadNative(): Record<string, unknown> {
   const errors: string[] = [];
 
   if (process.env.GSD_NATIVE_DISABLE === "1") {
     errors.push("disabled by GSD_NATIVE_DISABLE=1");
   } else {
-    // 0. Local dev override: when GSD_NATIVE_PREFER_LOCAL=1, load the locally
-    // built addon (native/addon/*.node) ahead of the published
-    // @opengsd/engine-* package. This lets engine changes in native/crates be
-    // tested without overwriting the installed npm binary, whose version is
-    // pinned and only refreshed at release time.
-    if (process.env.GSD_NATIVE_PREFER_LOCAL === "1") {
-      const localCandidates = [
-        path.join(addonDir, `gsd_engine.${platformTag}.node`),
-        path.join(addonDir, "gsd_engine.dev.node"),
-      ];
+    const localCandidates = [
+      path.join(addonDir, `gsd_engine.${platformTag}.node`),
+      path.join(addonDir, "gsd_engine.dev.node"),
+    ];
+    // 0. Local builds first when one is present on disk (or when
+    // GSD_NATIVE_PREFER_LOCAL=1 forces it explicitly). The pinned npm binary
+    // only refreshes at release time and is documented to lag the Rust
+    // source, so a present local build is always the better match for this
+    // source tree; the env var remains as an explicit override that attempts
+    // the local paths even when they do not exist yet.
+    const preferLocal = process.env.GSD_NATIVE_PREFER_LOCAL === "1"
+      || localCandidates.some((candidate) => existsSync(candidate));
+    if (preferLocal) {
       for (const candidate of localCandidates) {
         try {
           const loaded = _require(candidate) as Record<string, unknown>;
           _loadedSuccessfully = true;
+          warnIfStale(loaded, candidate);
           return loaded;
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          errors.push(`${candidate} (prefer-local): ${message}`);
+          errors.push(`${candidate} (local): ${message}`);
         }
       }
     }
 
-    // 1. Try the platform-specific npm optional dependency
+    // 1. Try the platform-specific npm optional dependency (production
+    // fallback — reached only when no local build is present)
     const packageSuffix = platformPackageMap[platformTag];
     if (packageSuffix) {
       try {
         const loaded = _require(`@opengsd/engine-${packageSuffix}`) as Record<string, unknown>;
         _loadedSuccessfully = true;
+        warnIfStale(loaded, `@opengsd/engine-${packageSuffix}`);
         return loaded;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -76,10 +103,11 @@ function loadNative(): Record<string, unknown> {
     }
 
     // 2. Try local release build (native/addon/gsd_engine.{platform}.node)
-    const releasePath = path.join(addonDir, `gsd_engine.${platformTag}.node`);
+    const releasePath = localCandidates[0];
     try {
       const loaded = _require(releasePath) as Record<string, unknown>;
       _loadedSuccessfully = true;
+      warnIfStale(loaded, releasePath);
       return loaded;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -87,10 +115,11 @@ function loadNative(): Record<string, unknown> {
     }
 
     // 3. Try local dev build (native/addon/gsd_engine.dev.node)
-    const devPath = path.join(addonDir, "gsd_engine.dev.node");
+    const devPath = localCandidates[1];
     try {
       const loaded = _require(devPath) as Record<string, unknown>;
       _loadedSuccessfully = true;
+      warnIfStale(loaded, devPath);
       return loaded;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

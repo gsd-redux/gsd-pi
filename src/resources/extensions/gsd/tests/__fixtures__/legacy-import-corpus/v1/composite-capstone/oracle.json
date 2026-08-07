@@ -5,7 +5,7 @@
   "importer_version": "v1-test",
   "base_project_revision": 27,
   "base_authority_epoch": 3,
-  "base_database_schema_version": 45,
+  "base_database_schema_version": 46,
   "source_set_hash": "sha256:f46a7c5e2ae452d5d440aa5d1476fe152420de8961d71b1714cd656f04ff6f93",
   "change_set_hash": "sha256:51ae819b23ff90aa05d0075b2229e9f7853c0dfeabdefdbce93c3cbbe551c421",
   "counts": {
@@ -165,24 +165,47 @@
     {
       "change_id": "change-create-assessment-m702-s01-run-uat",
       "action": "create",
-      "target": { "kind": "assessment", "key": "M702/S01/run-uat" },
+      "target": {
+        "kind": "assessment",
+        "key": "M702/S01/run-uat"
+      },
       "raw": {
         "source_id": "capstone-assessment-manifest",
-        "locator": { "start_byte": 735, "end_byte": 741, "line": 11, "json_pointer": "/assessments/0/status" },
+        "locator": {
+          "start_byte": 735,
+          "end_byte": 741,
+          "line": 11,
+          "json_pointer": "/assessments/0/status"
+        },
         "value": "pass",
         "sha256": "sha256:fedce8e8af485c2586f54c43a9b656dc70b41eb9be8c64b69c98391847dd4baf"
       },
-      "normalized": { "scope": "run-uat", "verdict": "pass", "authority": "structured" },
-      "provenance": { "source_id": "capstone-assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1" },
+      "normalized": {
+        "scope": "run-uat",
+        "verdict": "pass",
+        "authority": "structured"
+      },
+      "provenance": {
+        "source_id": "capstone-assessment-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "structured-run-uat"
     },
     {
       "change_id": "change-create-decision-d701",
       "action": "create",
-      "target": { "kind": "decision", "key": "D701" },
+      "target": {
+        "kind": "decision",
+        "key": "D701"
+      },
       "raw": {
         "source_id": "capstone-decisions",
-        "locator": { "start_byte": 126, "end_byte": 236, "line": 5 },
+        "locator": {
+          "start_byte": 126,
+          "end_byte": 236,
+          "line": 5
+        },
         "value": "| D701 | import | Keep database authority | Classify before applying | Prevent projection drift | yes | user |",
         "sha256": "sha256:13dcb84e4b0ee75e99d62bd2e35387463c162c91761dc4edd469e76b46ae0b67"
       },
@@ -195,86 +218,172 @@
         "revisable": "yes",
         "made_by": "user"
       },
-      "provenance": { "source_id": "capstone-decisions", "parser_id": "gsd-decisions-table", "parser_version": "1" },
+      "provenance": {
+        "source_id": "capstone-decisions",
+        "parser_id": "gsd-decisions-table",
+        "parser_version": "1"
+      },
       "reason_code": "scope-first-decision-row"
     },
     {
       "change_id": "change-create-milestone-m701",
       "action": "create",
-      "target": { "kind": "milestone", "key": "M701" },
+      "target": {
+        "kind": "milestone",
+        "key": "M701"
+      },
       "raw": {
         "source_id": "capstone-planning-roadmap",
-        "locator": { "start_byte": 11, "end_byte": 45, "line": 3 },
+        "locator": {
+          "start_byte": 11,
+          "end_byte": 45,
+          "line": 3
+        },
         "value": "## Milestone M701: Planning bridge",
         "sha256": "sha256:d0b0954b0c1e72feff63c2ca681b529096dd280815da62f03c9ee40a2e32b021"
       },
-      "normalized": { "id": "M701", "layout": "planning", "status": "pending", "title": "Planning bridge" },
-      "provenance": { "source_id": "capstone-planning-roadmap", "parser_id": "planning-roadmap-parser", "parser_version": "1" },
+      "normalized": {
+        "id": "M701",
+        "layout": "planning",
+        "status": "pending",
+        "title": "Planning bridge"
+      },
+      "provenance": {
+        "source_id": "capstone-planning-roadmap",
+        "parser_id": "planning-roadmap-parser",
+        "parser_version": "1"
+      },
       "reason_code": "capstone-clean-planning-milestone"
     },
     {
       "change_id": "change-create-milestone-m702",
       "action": "create",
-      "target": { "kind": "milestone", "key": "M702" },
+      "target": {
+        "kind": "milestone",
+        "key": "M702"
+      },
       "raw": {
         "source_id": "capstone-nested-m702",
-        "locator": { "start_byte": 0, "end_byte": 31, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 31,
+          "line": 1
+        },
         "value": "# M702: Clean database adoption",
         "sha256": "sha256:10abf5b77f0df556069472d1d56edad36a168e44bad7c1f9d346f735d61a3ab8"
       },
-      "normalized": { "id": "M702", "layout": "nested", "title": "Clean database adoption" },
-      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-hybrid-hierarchy", "parser_version": "1" },
+      "normalized": {
+        "id": "M702",
+        "layout": "nested",
+        "title": "Clean database adoption"
+      },
+      "provenance": {
+        "source_id": "capstone-nested-m702",
+        "parser_id": "gsd-hybrid-hierarchy",
+        "parser_version": "1"
+      },
       "reason_code": "hybrid-non-overlap"
     },
     {
       "change_id": "change-create-milestone-status-m702",
       "action": "create",
-      "target": { "kind": "milestone-status", "key": "M702" },
+      "target": {
+        "kind": "milestone-status",
+        "key": "M702"
+      },
       "raw": {
         "source_id": "capstone-assessment-manifest",
-        "locator": { "start_byte": 141, "end_byte": 149, "line": 5, "json_pointer": "/milestones/0/status" },
+        "locator": {
+          "start_byte": 141,
+          "end_byte": 149,
+          "line": 5,
+          "json_pointer": "/milestones/0/status"
+        },
         "value": "active",
         "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"
       },
       "normalized": "active",
-      "provenance": { "source_id": "capstone-assessment-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1" },
+      "provenance": {
+        "source_id": "capstone-assessment-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "manifest-milestone-status"
     },
     {
       "change_id": "change-create-requirement-r701",
       "action": "create",
-      "target": { "kind": "requirement", "key": "R701" },
+      "target": {
+        "kind": "requirement",
+        "key": "R701"
+      },
       "raw": {
         "source_id": "capstone-requirements",
-        "locator": { "start_byte": 27, "end_byte": 57, "line": 5 },
+        "locator": {
+          "start_byte": 27,
+          "end_byte": 57,
+          "line": 5
+        },
         "value": "### R701: Preview before apply",
         "sha256": "sha256:5dd9e321f9d311463669ebb1b47573854cff86c0d580d6dcff7e5a87904a27e1"
       },
-      "normalized": { "id": "R701", "description": "Preview before apply", "primary_owner": "M702/S01", "status": "active" },
-      "provenance": { "source_id": "capstone-requirements", "parser_id": "gsd-requirements-sections", "parser_version": "1" },
+      "normalized": {
+        "id": "R701",
+        "description": "Preview before apply",
+        "primary_owner": "M702/S01",
+        "status": "active"
+      },
+      "provenance": {
+        "source_id": "capstone-requirements",
+        "parser_id": "gsd-requirements-sections",
+        "parser_version": "1"
+      },
       "reason_code": "colon-heading-requirement"
     },
     {
       "change_id": "change-create-slice-m702-s01",
       "action": "create",
-      "target": { "kind": "slice", "key": "M702/S01" },
+      "target": {
+        "kind": "slice",
+        "key": "M702/S01"
+      },
       "raw": {
         "source_id": "capstone-nested-m702",
-        "locator": { "start_byte": 107, "end_byte": 160, "line": 5 },
+        "locator": {
+          "start_byte": 107,
+          "end_byte": 160,
+          "line": 5
+        },
         "value": "| S01 | Classify legacy evidence | yes | none | low |",
         "sha256": "sha256:5a93350366aabf2fd9f4e1900cb121f084d899fdac8db5b53bf87e1648d40bdb"
       },
-      "normalized": { "id": "S01", "milestone_id": "M702", "status": "complete", "title": "Classify legacy evidence" },
-      "provenance": { "source_id": "capstone-nested-m702", "parser_id": "gsd-hybrid-hierarchy", "parser_version": "1" },
+      "normalized": {
+        "id": "S01",
+        "milestone_id": "M702",
+        "status": "complete",
+        "title": "Classify legacy evidence"
+      },
+      "provenance": {
+        "source_id": "capstone-nested-m702",
+        "parser_id": "gsd-hybrid-hierarchy",
+        "parser_version": "1"
+      },
       "reason_code": "hybrid-non-overlap"
     },
     {
       "change_id": "change-preserve-history",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L001"
+      },
       "raw": {
         "source_id": "capstone-history",
-        "locator": { "start_byte": 0, "end_byte": 198, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 198,
+          "line": 1
+        },
         "value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M705\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2026-01-01T00:00:00.000Z\",\"hash\":\"d942a28b15847e90\",\"actor\":\"agent\",\"session_id\":\"capstone-session\"}",
         "sha256": "sha256:4cdce8a0f83a16b2246e7bccd3db29e2737ffd1c0e2bbb016339a91e834dfaa4"
       },
@@ -282,62 +391,118 @@
         "replay_policy": "evidence-only",
         "event_version": 2,
         "command": "complete_task",
-        "entity": { "type": "task", "id": "T01" },
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
         "authority_context": null,
         "file_order": 1
       },
-      "provenance": { "source_id": "capstone-history", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "provenance": {
+        "source_id": "capstone-history",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "history-evidence-only"
     },
     {
       "change_id": "change-preserve-knowledge",
       "action": "preserve",
-      "target": { "kind": "legacy-knowledge-source", "key": ".gsd/KNOWLEDGE.md" },
+      "target": {
+        "kind": "legacy-knowledge-source",
+        "key": ".gsd/KNOWLEDGE.md"
+      },
       "raw": {
         "source_id": "capstone-knowledge",
-        "locator": { "start_byte": 0, "end_byte": 198, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 198,
+          "line": 1
+        },
         "value": "# Project Knowledge\n\n## Rules\n\n| ID | Scope | Rule | Why | Added |\n| --- | --- | --- | --- | --- |\n| K701 | import | Preserve derived evidence | Classification must not rebuild projections | M702 |\n",
         "sha256": "sha256:264531ed68c72d9831fa86a0885e3c73c9ed79dd98cd75c0bc9739cc51fcf9cd"
       },
-      "normalized": { "preservation": "verbatim", "role": "projection-input" },
-      "provenance": { "source_id": "capstone-knowledge", "parser_id": "gsd-knowledge-graph", "parser_version": "1" },
+      "normalized": {
+        "preservation": "verbatim",
+        "role": "projection-input"
+      },
+      "provenance": {
+        "source_id": "capstone-knowledge",
+        "parser_id": "gsd-knowledge-graph",
+        "parser_version": "1"
+      },
       "reason_code": "knowledge-markdown-preserved"
     },
     {
       "change_id": "change-preserve-workflow-definition",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-definition", "key": ".gsd/workflows/capstone.yaml" },
+      "target": {
+        "kind": "legacy-workflow-definition",
+        "key": ".gsd/workflows/capstone.yaml"
+      },
       "raw": {
         "source_id": "capstone-workflow-definition",
-        "locator": { "start_byte": 0, "end_byte": 315, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 315,
+          "line": 1
+        },
         "value": "version: 1\nname: capstone\ndescription: Classify the composite corpus without applying it.\nsteps:\n  - id: classify\n    name: Classify evidence\n    prompt: Produce a deterministic preview.\n  - id: review\n    name: Review ambiguity\n    depends_on:\n      - classify\n    prompt: Stop only for the unresolved M007 route.\n",
         "sha256": "sha256:6102988dceb996b5473e8437e7b94839c14cc2b2c1ec413abc3ea6f4e1d881c9"
       },
-      "normalized": { "path": ".gsd/workflows/capstone.yaml", "preservation": "verbatim" },
-      "provenance": { "source_id": "capstone-workflow-definition", "parser_id": "gsd-workflow-definition", "parser_version": "1" },
+      "normalized": {
+        "path": ".gsd/workflows/capstone.yaml",
+        "preservation": "verbatim"
+      },
+      "provenance": {
+        "source_id": "capstone-workflow-definition",
+        "parser_id": "gsd-workflow-definition",
+        "parser_version": "1"
+      },
       "reason_code": "workflow-definition-is-evidence-only"
     },
     {
       "change_id": "change-preserve-workflow-graph",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-run-artifact", "key": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml" },
+      "target": {
+        "kind": "legacy-workflow-run-artifact",
+        "key": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml"
+      },
       "raw": {
         "source_id": "capstone-workflow-graph",
-        "locator": { "start_byte": 0, "end_byte": 334, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 334,
+          "line": 1
+        },
         "value": "steps:\n  - id: classify\n    title: Classify evidence\n    status: complete\n    prompt: Produce a deterministic preview.\n  - id: review\n    title: Review ambiguity\n    status: pending\n    prompt: Stop only for the unresolved M007 route.\n    depends_on:\n      - classify\nmetadata:\n  name: capstone\n  created_at: 2026-01-01T00:00:00.000Z\n",
         "sha256": "sha256:99878cdb80af05d8837ca26d352d7406bb29423b8126991c62d0673d91801eac"
       },
-      "normalized": { "path": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml", "preservation": "verbatim" },
-      "provenance": { "source_id": "capstone-workflow-graph", "parser_id": "gsd-workflow-run-graph", "parser_version": "1" },
+      "normalized": {
+        "path": ".gsd/workflow-runs/capstone/run-001/GRAPH.yaml",
+        "preservation": "verbatim"
+      },
+      "provenance": {
+        "source_id": "capstone-workflow-graph",
+        "parser_id": "gsd-workflow-run-graph",
+        "parser_version": "1"
+      },
       "reason_code": "workflow-run-is-evidence-only"
     },
     {
       "change_id": "change-preserve-worktree",
       "action": "preserve",
-      "target": { "kind": "legacy-worktree-topology", "key": "canonical/M008" },
+      "target": {
+        "kind": "legacy-worktree-topology",
+        "key": "canonical/M008"
+      },
       "raw": {
         "source_id": "capstone-worktree-m008",
-        "locator": { "start_byte": 0, "end_byte": 37, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 37,
+          "line": 1
+        },
         "value": "gitdir: ../../../.git/worktrees/M008\n",
         "sha256": "sha256:72ffcbb76a1ae8f3b0bcabfe14d6216900f74f3f7258d57ee0e2a7ff556a9903"
       },
@@ -348,7 +513,11 @@
         "active": true,
         "evidence_kind": "portable-git-marker-descriptor"
       },
-      "provenance": { "source_id": "capstone-worktree-m008", "parser_id": "gsd-worktree-topology", "parser_version": "1" },
+      "provenance": {
+        "source_id": "capstone-worktree-m008",
+        "parser_id": "gsd-worktree-topology",
+        "parser_version": "1"
+      },
       "reason_code": "canonical-worktree-preserved"
     }
   ],
@@ -358,7 +527,11 @@
       "code": "hybrid-conflicting-content",
       "severity": "blocker",
       "source_id": "capstone-hybrid-m007-nested",
-      "locator": { "start_byte": 0, "end_byte": 28, "line": 1 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 28,
+        "line": 1
+      },
       "raw_value": "# M007: Alpha capstone route",
       "message": "The nested and flat M007 sources name different routes, so neither is imported without a user choice."
     },
@@ -367,7 +540,11 @@
       "code": "duplicate-logical-milestone",
       "severity": "blocker",
       "source_id": "capstone-hybrid-m007-flat",
-      "locator": { "start_byte": 0, "end_byte": 27, "line": 1 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 27,
+        "line": 1
+      },
       "raw_value": "# M007: Beta capstone route",
       "message": "A second hierarchy layout claims M007; both sources remain evidence until the user chooses the route."
     },
@@ -376,7 +553,10 @@
       "code": "unsupported-database-schema",
       "severity": "blocker",
       "source_id": "capstone-database-v44",
-      "locator": { "start_byte": 0, "end_byte": 16 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 16
+      },
       "raw_value": {
         "redacted": true,
         "sha256": "sha256:3f8434aff012ffcb594ad7527d6042841ce94f499887f86ab828f84a9a275f91"

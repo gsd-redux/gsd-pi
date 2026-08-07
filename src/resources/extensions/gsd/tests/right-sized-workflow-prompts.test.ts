@@ -6,6 +6,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { buildCompleteMilestonePrompt, buildPlanMilestonePrompt } from "../auto-prompts.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  isDbAvailable,
+  openDatabase,
+} from "../gsd-db.ts";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -37,6 +44,24 @@ function writeCompleteMilestoneFiles(base: string, validation: string): void {
   writeFileSync(join(dir, "M001-ROADMAP.md"), "# M001\n\n## Slices\n- [x] **S01: One** `risk:low` `depends:[]`\n  > Done\n");
   writeFileSync(join(dir, "M001-VALIDATION.md"), validation);
   writeFileSync(join(dir, "slices", "S01", "S01-SUMMARY.md"), "# S01 Summary\n\n**Verification:** passed\n");
+  // Post-cutover the closer prompt enumerates the milestone's slices from the
+  // DB, and the set of current artifacts the validation receipt must cover is
+  // derived from that list. Without the row, S01's SUMMARY is not a "current
+  // artifact" and every coverage check passes vacuously.
+  seedSliceRows();
+}
+
+/** Seed the M001/S01 rows `buildCompleteMilestonePrompt` reads. */
+function seedSliceRows(): void {
+  openDatabase(":memory:");
+  if (!isDbAvailable()) throw new Error("fixture must have an open DB");
+  insertMilestone({ id: "M001", title: "Polish static page", status: "active" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "One", status: "complete", risk: "low", depends: [], sequence: 1 });
+}
+
+function cleanupRepo(base: string): void {
+  try { closeDatabase(); } catch { /* no DB open for this fixture */ }
+  rmSync(base, { recursive: true, force: true });
 }
 
 function validationMetadata(): string {
@@ -58,7 +83,7 @@ test("plan-milestone prompt includes tiny untyped project classification and one
     assert.match(prompt, /`index\.html`/);
     assert.match(prompt, /Prefer exactly one slice/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -74,7 +99,7 @@ test("plan-milestone prompt includes small untyped project 1-2 slice guidance", 
     assert.match(prompt, /\*\*Content files:\*\* 3/);
     assert.match(prompt, /Prefer 1-2 slices/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -89,7 +114,7 @@ test("plan-milestone prompt keeps normal guidance for typed projects", async () 
     assert.match(prompt, /Use normal ecosystem-aware planning guidance/);
     assert.doesNotMatch(prompt, /Prefer exactly one slice/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -110,7 +135,7 @@ test("plan-milestone standard prompt keeps project and decisions on-demand", asy
     assert.doesNotMatch(prompt, /Plan broad project body/);
     assert.doesNotMatch(prompt, /Plan decision body/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -143,7 +168,7 @@ test("complete-milestone prompt trusts passing validation artifact", async () =>
     assert.match(prompt, /Do not delegate fresh reviewer\/security\/tester audits/);
     assert.match(prompt, /All checks passed/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -156,7 +181,7 @@ test("complete-milestone prompt trusts centralized markdown body pass verdict", 
     assert.match(prompt, /the current database receipt remains authoritative/);
     assert.match(prompt, /Do not delegate fresh reviewer\/security\/tester audits/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -169,7 +194,7 @@ test("complete-milestone prompt does not trust stale pass validation without met
     assert.match(prompt, /missing freshness metadata/);
     assert.doesNotMatch(prompt, /Passing Validation Artifact/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -195,7 +220,7 @@ test("complete-milestone prompt does not trust pass validation missing current s
     assert.match(prompt, /does not cover current milestone artifacts/);
     assert.doesNotMatch(prompt, /Passing Validation Artifact/);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });
 
@@ -208,6 +233,6 @@ test("complete-milestone prompt keeps deeper review path without passing validat
     assert.match(prompt, /verdict `needs-attention`/);
     assert.match(prompt, /Use `subagent` for review work needing fresh context/i);
   } finally {
-    rmSync(base, { recursive: true, force: true });
+    cleanupRepo(base);
   }
 });

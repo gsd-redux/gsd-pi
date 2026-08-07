@@ -40,7 +40,7 @@ const DEVIATIONS = {
   "action-matrix": {
     reason: "state-narrative-preservation",
     counts: [1, 1, 1, 1, 0, 0],
-    semantic_hash: "sha256:ff87e2acb988e4b26c630127ca3d8c701dbe184d2dc0a289cd4ae318d3176dd1",
+    semantic_hash: "sha256:10b330dc1cc05e6f8fe829604dd6a97fcfcaaf835b8698b514faf65b417f2500",
   },
   "assessment-matrix": {
     reason: "empty-base-create",
@@ -55,7 +55,7 @@ const DEVIATIONS = {
   "db-target-matrix": {
     reason: "multi-target-ambiguity",
     counts: [0, 0, 0, 0, 2, 3],
-    semantic_hash: "sha256:7ef0586963a3e05390b5c0661cc86698f568d624da0e96c11a30b1520033ed52",
+    semantic_hash: "sha256:fd81cfe86021ee191647ed068dc30b83ef0ef5c82f4c11425880f6cc7e346f05",
   },
   "gsd-flat": {
     reason: "empty-base-create-instead-of-update",
@@ -65,7 +65,7 @@ const DEVIATIONS = {
   "lifecycle-truth-matrix": {
     reason: "t06-conflicting-completeness",
     counts: [7, 0, 0, 7, 2, 11],
-    semantic_hash: "sha256:d54e1168caae09c4dafd4a2f5386d6aaab0c1b528710e49a45a101039db874e8",
+    semantic_hash: "sha256:882a204c909f0f4517e6a665c706c5b179e933588faab5226cf3157237f77099",
   },
   "planning-flat-complete": {
     reason: "empty-base-create-instead-of-update",

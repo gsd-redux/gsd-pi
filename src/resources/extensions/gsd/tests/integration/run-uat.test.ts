@@ -12,6 +12,13 @@ import { extractUatType } from '../../files.ts';
 import { resolveSliceFile } from '../../paths.ts';
 import { buildRunUatPrompt, checkNeedsRunUat } from '../../auto-prompts.ts';
 import { buildRunUatResultPresentation, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from '../../tool-presentation-plan.ts';
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  isDbAvailable,
+  openDatabase,
+} from '../../gsd-db.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const worktreePromptsDir = join(__dirname, '../..', 'prompts');
@@ -50,7 +57,36 @@ function writeSliceFile(
 }
 
 function cleanup(base: string): void {
+  // Dispatch fixtures seed slice rows in an in-memory DB; close it so the next
+  // test starts from a clean singleton.
+  try { closeDatabase(); } catch { /* no DB open for this fixture */ }
   rmSync(base, { recursive: true, force: true });
+}
+
+/**
+ * Seed the slice rows the run-uat dispatch gate reads. Post-cutover
+ * `checkNeedsRunUat` derives completed-slice candidates from DB rows only
+ * (`getMilestoneSlices`), so the ROADMAP checkboxes each fixture writes are
+ * projection context; these rows are the dispatch input.
+ */
+function seedSliceRows(
+  mid: string,
+  slices: ReadonlyArray<{ id: string; title: string; status: string; depends?: string[] }>,
+): void {
+  openDatabase(':memory:');
+  assert.ok(isDbAvailable(), 'fixture must have an open DB');
+  insertMilestone({ id: mid, title: 'Test roadmap', status: 'active' });
+  slices.forEach((slice, i) => {
+    insertSlice({
+      milestoneId: mid,
+      id: slice.id,
+      title: slice.title,
+      status: slice.status,
+      risk: 'low',
+      depends: slice.depends ?? [],
+      sequence: i + 1,
+    });
+  });
 }
 
 function makeUatContent(mode: string): string {
@@ -404,6 +440,10 @@ test('(m) non-artifact UAT skip', async () => {
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [
+        { id: 'S01', title: 'First slice', status: 'complete' },
+        { id: 'S02', title: 'Next slice', status: 'pending', depends: ['S01'] },
+      ]);
 
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('human-experience'));
 
@@ -516,6 +556,10 @@ test('(n) stale replay guard', async () => {
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [
+        { id: 'S01', title: 'First slice', status: 'complete' },
+        { id: 'S02', title: 'Next slice', status: 'pending', depends: ['S01'] },
+      ]);
 
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
       writeSliceFile(base, 'M001', 'S01', 'UAT', '---\nverdict: FAIL\n---\n');
@@ -564,6 +608,10 @@ test('(q) verdict in ASSESSMENT file skips UAT dispatch (file-based path)', asyn
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [
+        { id: 'S01', title: 'First slice', status: 'complete' },
+        { id: 'S02', title: 'Next slice', status: 'pending', depends: ['S01'] },
+      ]);
 
       // UAT spec file WITHOUT a verdict (the spec never gets one)
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
@@ -613,6 +661,10 @@ test('(r) no ASSESSMENT file still dispatches UAT (no false skip)', async () => 
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [
+        { id: 'S01', title: 'First slice', status: 'complete' },
+        { id: 'S02', title: 'Next slice', status: 'pending', depends: ['S01'] },
+      ]);
 
       // UAT spec file WITHOUT a verdict, and NO ASSESSMENT file
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
@@ -660,6 +712,10 @@ test('(s) ASSESSMENT without verdict does not skip UAT dispatch', async () => {
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [
+        { id: 'S01', title: 'First slice', status: 'complete' },
+        { id: 'S02', title: 'Next slice', status: 'pending', depends: ['S01'] },
+      ]);
 
       // UAT spec WITHOUT verdict
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeUatContent('artifact-driven'));
@@ -706,6 +762,7 @@ test('(t) browser-observable UAT dispatches for final slice even when uat_dispat
           '',
         ].join('\n'),
       );
+      seedSliceRows('M001', [{ id: 'S01', title: 'Only slice', status: 'complete' }]);
       writeSliceFile(base, 'M001', 'S01', 'UAT', makeBrowserObservableUatContent());
 
       const state = {
@@ -861,6 +918,7 @@ test('(x) checkNeedsRunUat returns runtime-executable when slice SUMMARY names a
           '',
         ].join('\n'),
       );
+      seedSliceRows('M007', [{ id: 'S01', title: 'Only slice', status: 'complete' }]);
       writeSliceFile(
         base,
         'M007',
@@ -931,6 +989,7 @@ test('(x2) checkNeedsRunUat leaves true browser-executable UAT unpromoted when n
           '',
         ].join('\n'),
       );
+      seedSliceRows('M008', [{ id: 'S01', title: 'Only slice', status: 'complete' }]);
       writeSliceFile(base, 'M008', 'S01', 'UAT', makeBrowserObservableUatContent('browser-executable'));
       writeSliceFile(
         base,

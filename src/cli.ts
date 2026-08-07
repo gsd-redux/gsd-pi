@@ -276,7 +276,20 @@ if (cliFlags.messages[0] === 'graph') {
   const projectDir = process.cwd()
   const gsdRoot = resolveGsdRoot(projectDir)
 
+  // Projection-write version gating (T003 spike, write side): `graph build`
+  // bypasses the DB, so it must consult the schema stamp and refuse to write
+  // into a newer project; read-only subcommands warn loudly but keep their
+  // read-only semantics. A missing DB keeps current behavior, and the version
+  // knowledge stays in the extension (the mcp-server graph code is untouched).
+  const { openExistingWorkflowDatabase } = await import('./resources/extensions/gsd/db-workspace.js')
+  const dbOpen = openExistingWorkflowDatabase(projectDir)
+  const schemaTooNewMessage = !dbOpen.ok && dbOpen.reason === 'schema-too-new' ? dbOpen.error.message : null
+
   if (!sub || sub === 'build') {
+    if (schemaTooNewMessage !== null) {
+      process.stderr.write(`[gsd] graph build failed: ${schemaTooNewMessage}\n`)
+      process.exit(1)
+    }
     try {
       const graph = await buildGraph(projectDir)
       await writeGraph(gsdRoot, graph)
@@ -286,6 +299,9 @@ if (cliFlags.messages[0] === 'graph') {
       process.exit(1)
     }
   } else if (sub === 'status') {
+    if (schemaTooNewMessage !== null) {
+      process.stderr.write(`[gsd] Warning: ${schemaTooNewMessage}\n`)
+    }
     try {
       const result = await graphStatus(projectDir)
       if (!result.exists) {
@@ -309,6 +325,9 @@ if (cliFlags.messages[0] === 'graph') {
       process.stderr.write('Usage: gsd graph query <term>\n')
       process.exit(1)
     }
+    if (schemaTooNewMessage !== null) {
+      process.stderr.write(`[gsd] Warning: ${schemaTooNewMessage}\n`)
+    }
     try {
       const result = await graphQuery(projectDir, term)
       if (result.nodes.length === 0) {
@@ -324,6 +343,9 @@ if (cliFlags.messages[0] === 'graph') {
       process.exit(1)
     }
   } else if (sub === 'diff') {
+    if (schemaTooNewMessage !== null) {
+      process.stderr.write(`[gsd] Warning: ${schemaTooNewMessage}\n`)
+    }
     try {
       const result = await graphDiff(projectDir)
       process.stdout.write(`Graph diff:\n`)

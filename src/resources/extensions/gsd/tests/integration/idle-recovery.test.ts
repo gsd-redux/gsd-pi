@@ -8,6 +8,8 @@ import {
   verifyExpectedArtifact,
   buildLoopRemediationSteps,
 } from "../../auto-recovery.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice } from "../../gsd-db.ts";
+import { drainLogs, setStderrLoggingEnabled, _resetLogs } from "../../workflow-logger.ts";
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -17,7 +19,15 @@ function createFixtureBase(): string {
   return base;
 }
 
+/** Open a DB under `base` and seed M001/S01 with the given slice status. */
+function seedSlice(base: string, status: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Test Slice", status, risk: "low", depends: [] });
+}
+
 function cleanup(base: string): void {
+  closeDatabase();
   rmSync(base, { recursive: true, force: true });
 }
 
@@ -147,10 +157,12 @@ test('writeBlockerPlaceholder: unknown type → null', () => {
   }
 });
 
-// ═══ verifyExpectedArtifact: complete-slice roadmap check ════════════════════
-// Regression for #indefinite-hang: complete-slice must verify roadmap [x] or
-// the idempotency skip loops forever after a crash that wrote SUMMARY+UAT but
-// did not mark the roadmap done.
+// ═══ verifyExpectedArtifact: complete-slice completion check ═════════════════
+// Regression for #indefinite-hang: complete-slice must verify the slice is
+// actually complete or the idempotency skip loops forever after a crash that
+// wrote SUMMARY+UAT but never closed the slice. Completion is DB-authoritative
+// (ADR-017), so the check reads the slice row; the ROADMAP text below is a
+// projection kept in the fixtures to prove it is NOT what decides the outcome.
 
 const ROADMAP_INCOMPLETE = `# M001: Test Milestone
 
@@ -175,6 +187,7 @@ test('verifyExpectedArtifact: complete-slice — all artifacts present + roadmap
     writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
     writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
     writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
+    seedSlice(base, "complete");
     const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
     assert.ok(result === true, "SUMMARY + UAT + roadmap [x] should verify as true");
   } finally {
@@ -182,15 +195,16 @@ test('verifyExpectedArtifact: complete-slice — all artifacts present + roadmap
   }
 });
 
-test('verifyExpectedArtifact: complete-slice — SUMMARY + UAT present but roadmap NOT marked [x] returns false', () => {
+test('verifyExpectedArtifact: complete-slice — SUMMARY + UAT present but the slice row is not complete returns false', () => {
   const base = createFixtureBase();
   try {
     const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
     writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
     writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
     writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_INCOMPLETE, "utf-8");
+    seedSlice(base, "in_progress");
     const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assert.ok(result === false, "roadmap not marked [x] should return false (crash recovery scenario)");
+    assert.ok(result === false, "an unfinished slice row should return false (crash recovery scenario)");
   } finally {
     cleanup(base);
   }
@@ -203,6 +217,7 @@ test('verifyExpectedArtifact: complete-slice — SUMMARY present but UAT missing
     writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
     // no UAT file
     writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), ROADMAP_COMPLETE, "utf-8");
+    seedSlice(base, "complete");
     const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
     assert.ok(result === false, "missing UAT should return false");
   } finally {
@@ -210,16 +225,28 @@ test('verifyExpectedArtifact: complete-slice — SUMMARY present but UAT missing
   }
 });
 
-test('verifyExpectedArtifact: complete-slice — no roadmap file present is lenient (returns true)', () => {
+test('verifyExpectedArtifact: complete-slice — unconfirmable completion fails closed (returns false)', () => {
+  // This case used to be "lenient": with no roadmap and no DB, SUMMARY + UAT
+  // alone verified as true — a silent verify-pass that let the loop advance a
+  // slice nothing had confirmed complete. Completion is DB-authoritative
+  // (ADR-017), so an unreadable slice row now fails closed and says why.
   const base = createFixtureBase();
+  const previousStderr = setStderrLoggingEnabled(false);
+  _resetLogs();
   try {
     const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
     writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\n", "utf-8");
     writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\n", "utf-8");
-    // no roadmap file
+    // no roadmap file, and no DB to read the slice row from
     const result = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assert.ok(result === true, "missing roadmap file should be lenient and return true");
+    const logs = drainLogs();
+    assert.ok(result === false, "unconfirmable slice completion must fail closed, not pass silently");
+    const recovery = logs.find((e) => e.component === "recovery" && /verify-fail complete-slice M001\/S01/u.test(e.message));
+    assert.ok(recovery, "a recovery warning must name why completion could not be confirmed");
+    assert.match(recovery!.message, /DB unavailable/u);
   } finally {
+    _resetLogs();
+    setStderrLoggingEnabled(previousStderr);
     cleanup(base);
   }
 });

@@ -1,11 +1,10 @@
 import { existsSync } from "node:fs";
 
 import { loadFile, saveFile } from "./files.js";
-import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
-import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+import { getMilestoneSlices } from "./gsd-db.js";
 import { openExistingWorkflowDatabase } from "./db-workspace.js";
 import { resolveMilestoneFile, milestonesDir, legacyMilestonesDir, resolveGsdRootFile } from "./paths.js";
-import { deriveState, isMilestoneComplete } from "./state.js";
+import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
 import { appendDoctorHistory } from "./doctor-history.js";
@@ -149,14 +148,9 @@ export async function selectDoctorScope(basePath: string, requestedScope?: strin
     const roadmapPath = resolveMilestoneFile(basePath, milestone.id, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) continue;
-    if (isDbAvailable()) {
-      const dbSlices = getMilestoneSlices(milestone.id);
-      const allDone = dbSlices.length > 0 && dbSlices.every(s => s.status === "complete");
-      if (!allDone) return milestone.id;
-    } else {
-      const roadmap = parseLegacyRoadmap(roadmapContent);
-      if (!isMilestoneComplete(roadmap)) return milestone.id;
-    }
+    const dbSlices = getMilestoneSlices(milestone.id);
+    const allDone = dbSlices.length > 0 && dbSlices.every(s => s.status === "complete");
+    if (!allDone) return milestone.id;
   }
 
   return state.registry[0]?.id;

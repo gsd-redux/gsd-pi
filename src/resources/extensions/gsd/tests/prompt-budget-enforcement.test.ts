@@ -15,6 +15,13 @@ import { fileURLToPath } from "node:url";
 import { buildExecuteTaskPrompt, buildPlanSlicePrompt, buildReactiveExecutePrompt, buildResearchSlicePrompt, inlineDependencySummaries } from "../auto-prompts.js";
 import { buildDiscussSlicePrompt } from "../guided-flow.js";
 import { computeBudgets, truncateAtSectionBoundary } from "../context-budget.js";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  isDbAvailable,
+  openDatabase,
+} from "../gsd-db.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,7 +32,26 @@ function createFixtureBase(): string {
 }
 
 function cleanup(base: string): void {
+  // Fixtures that seed slice rows open an in-memory DB; close it so the next
+  // test starts from a clean singleton.
+  try { closeDatabase(); } catch { /* no DB open for this fixture */ }
   rmSync(base, { recursive: true, force: true });
+}
+
+/**
+ * Seed the slice rows `inlineDependencySummaries` reads. Post-cutover the
+ * `depends` edge comes from the DB only (`getSlice`), so the ROADMAP the
+ * fixture writes is projection context — the rows below are what the prompt
+ * builders actually resolve dependencies from.
+ */
+function seedSliceRows(mid: string, sid: string, deps: string[]): void {
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable(), "fixture must have an open DB");
+  insertMilestone({ id: mid, title: "Test", status: "active" });
+  deps.forEach((dep, i) => {
+    insertSlice({ milestoneId: mid, id: dep, title: `Dep ${dep}`, status: "complete", risk: "low", depends: [], sequence: i + 1 });
+  });
+  insertSlice({ milestoneId: mid, id: sid, title: "Current slice", status: "in_progress", risk: "medium", depends: deps, sequence: deps.length + 1 });
 }
 
 /**
@@ -60,6 +86,8 @@ function setupDependencyFixture(
     ...sliceLines,
   ].join("\n");
   writeFileSync(join(msDir, `${mid}-ROADMAP.md`), roadmapContent);
+
+  seedSliceRows(mid, sid, deps);
 
   // Write dependency slice summaries
   for (const [depId, content] of Object.entries(summaries)) {
@@ -175,6 +203,9 @@ describe("prompt-budget: inlineDependencySummaries truncation", () => {
     mkdirSync(msDir, { recursive: true });
     const roadmap = "# Roadmap\n\n## Slices\n\n- [ ] **S01: Solo** `risk:low` `depends:[]`\n";
     writeFileSync(join(msDir, "M001-ROADMAP.md"), roadmap);
+    // Seed the slice row with an empty `depends` so this exercises the real
+    // zero-dependency branch rather than the "no DB row" path.
+    seedSliceRows("M001", "S01", []);
 
     const result = await inlineDependencySummaries("M001", "S01", base, 1000);
     assert.equal(result, "- (no dependencies)");

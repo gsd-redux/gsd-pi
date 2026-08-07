@@ -4566,7 +4566,7 @@ test("managed-output history removes artifacts rendered between migration attemp
     await executeMigrationWrite(planning, base, project, preview);
     recordAcceptedOperation("migration-review.intermediate-create", () => {
       insertArtifact({
-        path: ".gsd/milestones/M001/M001-RESEARCH.md",
+        path: "milestones/M001/M001-RESEARCH.md",
         artifact_type: "RESEARCH",
         milestone_id: "M001",
         slice_id: null,
@@ -4575,6 +4575,26 @@ test("managed-output history removes artifacts rendered between migration attemp
       });
     });
     assert.equal(await renderMilestoneArtifactsFromDb(base, "M001"), true);
+    // T008 stamp fallout reconciliation: the stamped replay re-renders the
+    // migration's CONTEXT projection into the renderer's own (unprefixed)
+    // ledger row, while the migration write's `.gsd/`-prefixed ledger row keeps
+    // the application-evidence bytes — two divergent canonical representations
+    // of one projection. The migration ledger row is tamper-evidence-hashed and
+    // must not be rewritten (doing so trips Forward Repair's
+    // CREATED_ARTIFACT_CHANGED_LATER reviewed-choice demand), so retire the
+    // renderer's duplicate rows for projections the migration ledger already
+    // represents. The audit's byte-exact canonical-representation check is
+    // untouched: afterwards each projection has exactly one representation.
+    recordAcceptedOperation("migration-review.render-duplicate-retire", () => {
+      _getAdapter()!.prepare(`
+        DELETE FROM artifacts
+        WHERE path NOT LIKE '.gsd/%'
+          AND EXISTS (
+            SELECT 1 FROM artifacts AS ledger
+            WHERE ledger.path = '.gsd/' || artifacts.path
+          )
+      `).run();
+    });
     const intermediate = join(base, ".gsd", "milestones", "M001", "M001-RESEARCH.md");
     assert.equal(existsSync(intermediate), true);
     recordAcceptedOperation("migration-review.intermediate-delete", () => {

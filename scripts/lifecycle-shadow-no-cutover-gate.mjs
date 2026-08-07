@@ -10,7 +10,7 @@ const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = dirname(SCRIPT_FILE);
 export const REPO_ROOT = resolve(SCRIPT_DIR, "..");
 
-export const NO_CUTOVER_SOURCE_FILES = Object.freeze({
+export const LIFECYCLE_SHADOW_SOURCE_FILES = Object.freeze({
   status: "src/resources/extensions/gsd/tools/workflow-tool-executors.ts",
   eligibility: "src/resources/extensions/gsd/parallel-eligibility.ts",
   dispatch: "src/resources/extensions/gsd/dispatch-guard.ts",
@@ -18,9 +18,9 @@ export const NO_CUTOVER_SOURCE_FILES = Object.freeze({
   retry: "src/resources/extensions/gsd/auto/detect-stuck.ts",
   state: "src/resources/extensions/gsd/state/derive/from-db.ts",
   validation: "src/resources/extensions/gsd/milestone-validation-verdict.ts",
-  gate: "scripts/semantic-shadow-no-cutover-gate.mjs",
+  gate: "scripts/lifecycle-shadow-no-cutover-gate.mjs",
 });
-const SOURCE_FILES = NO_CUTOVER_SOURCE_FILES;
+const SOURCE_FILES = LIFECYCLE_SHADOW_SOURCE_FILES;
 
 const DECISION_IMPORT_POLICY = Object.freeze({
   eligibility: {
@@ -95,15 +95,19 @@ function witness(id, file, title) {
   return { id, file: `${TEST_ROOT}/${file}`, title };
 }
 
-export const NO_CUTOVER_BEHAVIORAL_WITNESSES = Object.freeze([
+export const LIFECYCLE_SHADOW_BEHAVIORAL_WITNESSES = Object.freeze([
   witness("runtime-disagreement", "semantic-shadow-no-cutover.test.ts",
     "legacy milestone status remains public when canonical lifecycle disagrees"),
+  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
   witness("frozen-public-response", "semantic-shadow-contract.test.ts",
     "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor"),
+  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
   witness("mode-transport-matrix", "semantic-shadow-mode-matrix.test.ts",
     "all supported modes and transports preserve the frozen response and exact observation identity"),
+  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
   witness("unadopted-import", "md-importer-adopted-authority.test.ts",
     "unadopted re-import keeps existing checkbox completion behavior"),
+  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
   witness("unadopted-reconcile", "workflow-reconcile.test.ts",
     "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path"),
   witness("same-status-repair", "adopted-lifecycle-bypass-closure.test.ts",
@@ -643,7 +647,7 @@ function analyzeValidationAssessmentBoundary(source) {
   }
 }
 
-export function analyzeNoCutoverSources(sources) {
+export function analyzeLifecycleShadowSources(sources) {
   const checks = [
     ["status-response-authority", () => analyzeStatusBoundary(sources.status)],
     ["parallel-eligibility-authority", () => analyzeDecisionBoundary(
@@ -754,7 +758,7 @@ function loadRepositorySources(sourceLoader) {
   return Object.fromEntries(Object.entries(SOURCE_FILES).map(([id, file]) => [id, sourceLoader(file)]));
 }
 
-export function runSemanticShadowNoCutoverGate({
+export function runLifecycleShadowNoCutoverGate({
   sourceLoader = (file) => {
     // allow-source-grep: production text is parsed as a TypeScript AST for binding-flow checks.
     return readFileSync(join(REPO_ROOT, file), "utf8");
@@ -762,7 +766,7 @@ export function runSemanticShadowNoCutoverGate({
   spawnSyncImpl = spawnSync,
   now = () => performance.now(),
   environment = process.env,
-  witnesses = NO_CUTOVER_BEHAVIORAL_WITNESSES,
+  witnesses = LIFECYCLE_SHADOW_BEHAVIORAL_WITNESSES,
 } = {}) {
   let sources;
   try {
@@ -781,7 +785,7 @@ export function runSemanticShadowNoCutoverGate({
     };
   }
 
-  const structuralChecks = analyzeNoCutoverSources(sources);
+  const structuralChecks = analyzeLifecycleShadowSources(sources);
   const behavioralChecks = [];
   for (const witness of witnesses) {
     try {
@@ -827,7 +831,7 @@ export function renderSummary(report) {
   const structuralPassed = report.structuralChecks.filter((check) => check.verdict === "pass").length;
   const behavioralPassed = report.behavioralChecks.filter((check) => check.verdict === "pass").length;
   const lines = [
-    "Semantic shadow no-cutover gate",
+    "Lifecycle shadow no-cutover gate",
     `Status: ${report.verdict.toUpperCase()}`,
     `Structural: ${structuralPassed}/${report.structuralChecks.length}`,
     `Behavioral: ${behavioralPassed}/${report.behavioralChecks.length}`,
@@ -845,7 +849,7 @@ export function renderSummary(report) {
 function main() {
   try {
     const options = parseArgs();
-    const report = runSemanticShadowNoCutoverGate();
+    const report = runLifecycleShadowNoCutoverGate();
     process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : renderSummary(report));
     process.exitCode = exitCodeForReport(report);
   } catch (error) {

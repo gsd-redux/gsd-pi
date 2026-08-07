@@ -2,8 +2,7 @@ import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "nod
 import { join } from "node:path";
 
 import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
-import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, legacyMilestonesDir, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile, relMilestonePath } from "./paths.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { deriveState } from "./state.js";
@@ -195,32 +194,18 @@ export async function checkGsdStateHealth(
       continue;
     }
 
-    // Normalize slices: prefer DB, fall back to parser
+    // Slices come from the DB (ADR-017): the roadmap projection is display only.
     type NormSlice = RoadmapSliceEntry & { pending?: boolean; skipped?: boolean };
-    let slices: NormSlice[];
-    if (isDbAvailable()) {
-      const dbSlices = getMilestoneSlices(milestoneId);
-      slices = dbSlices.map(s => ({
-        id: s.id,
-        title: s.title,
-        done: isClosedStatus(s.status),
-        pending: s.status === "pending",
-        skipped: s.status === "skipped",
-        risk: (s.risk || "medium") as RoadmapSliceEntry["risk"],
-        depends: s.depends,
-        demo: s.demo,
-      }));
-    } else {
-      const activeMilestoneId = state.activeMilestone?.id;
-      const activeSliceId = state.activeSlice?.id;
-      slices = parseLegacyRoadmap(roadmapContent).slices.map(s => ({
-        ...s,
-        // Legacy roadmaps only encode done vs not-done. For doctor's
-        // missing-directory checks, treat every undone slice except the
-        // current active slice as effectively pending/unstarted.
-        pending: !s.done && (milestoneId !== activeMilestoneId || s.id !== activeSliceId),
-      }));
-    }
+    const slices: NormSlice[] = getMilestoneSlices(milestoneId).map(s => ({
+      id: s.id,
+      title: s.title,
+      done: isClosedStatus(s.status),
+      pending: s.status === "pending",
+      skipped: s.status === "skipped",
+      risk: (s.risk || "medium") as RoadmapSliceEntry["risk"],
+      depends: s.depends,
+      demo: s.demo,
+    }));
     // Wrap in Roadmap-compatible shape for detectCircularDependencies
     const roadmap = { slices };
 
@@ -353,18 +338,11 @@ export async function checkGsdStateHealth(
         }
       }
 
-      const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
-      const planContent = planPath ? await loadFile(planPath) : null;
-      // Normalize plan tasks: prefer DB, fall back to parsers-legacy
+      // Plan tasks come from the DB (ADR-017): the PLAN projection is display only.
       let plan: { tasks: Array<{ id: string; done: boolean; title: string; estimate?: string }> } | null = null;
-      if (isDbAvailable()) {
-        const dbTasks = getSliceTasks(milestoneId, slice.id);
-        if (dbTasks.length > 0) {
-          plan = { tasks: dbTasks.map(t => ({ id: t.id, done: t.status === "complete" || t.status === "done", title: t.title, estimate: t.estimate || undefined })) };
-        }
-      }
-      if (!plan && planContent) {
-        plan = parseLegacyPlan(planContent);
+      const dbTasks = getSliceTasks(milestoneId, slice.id);
+      if (dbTasks.length > 0) {
+        plan = { tasks: dbTasks.map(t => ({ id: t.id, done: t.status === "complete" || t.status === "done", title: t.title, estimate: t.estimate || undefined })) };
       }
       if (!plan) {
         if (!slice.done) {

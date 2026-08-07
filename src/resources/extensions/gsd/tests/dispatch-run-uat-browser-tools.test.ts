@@ -10,6 +10,13 @@ import { join } from "node:path";
 import { DISPATCH_RULES, type DispatchContext } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
 import { BROWSER_AUTOMATION_CONTRACT_TOOLS } from "./browser-automation-contract-fixture.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  isDbAvailable,
+  openDatabase,
+} from "../gsd-db.ts";
 
 type DispatchRuleEntry = (typeof DISPATCH_RULES)[number];
 
@@ -32,6 +39,36 @@ function makeState(): GSDState {
   };
 }
 
+/**
+ * Seed the slice rows the run-uat dispatch gate reads. Post-cutover the gate
+ * derives completed-slice candidates from DB rows only (`getMilestoneSlices`),
+ * so the ROADMAP checkboxes this fixture writes are projection context; these
+ * rows are the dispatch input.
+ */
+function seedSliceRows(): void {
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable(), "fixture must have an open DB");
+  insertMilestone({ id: "M001", title: "Browser UAT", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Completed browser slice",
+    status: "complete",
+    risk: "low",
+    depends: [],
+    sequence: 1,
+  });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S02",
+    title: "Next slice",
+    status: "pending",
+    risk: "low",
+    depends: ["S01"],
+    sequence: 2,
+  });
+}
+
 function scaffoldRunUatProject(basePath: string): void {
   const milestoneDir = join(basePath, ".gsd", "milestones", "M001");
   const sliceDir = join(milestoneDir, "slices", "S01");
@@ -48,6 +85,7 @@ function scaffoldRunUatProject(basePath: string): void {
   ].join("\n"), "utf-8");
 
   writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\n\nDone.\n", "utf-8");
+  seedSliceRows();
   writeFileSync(join(sliceDir, "S01-UAT.md"), [
     "# S01 UAT",
     "",
@@ -73,7 +111,12 @@ function makeContext(basePath: string, overrides: Partial<DispatchContext> = {})
 
 test("run-uat browser preflight uses registered tools when the active surface is scoped", async (t) => {
   const basePath = mkdtempSync(join(tmpdir(), "gsd-run-uat-browser-tools-"));
-  t.after(() => rmSync(basePath, { recursive: true, force: true }));
+  t.after(() => {
+    // The fixture seeds slice rows in an in-memory DB; close it so the next
+    // test starts from a clean singleton.
+    try { closeDatabase(); } catch { /* no DB open for this fixture */ }
+    rmSync(basePath, { recursive: true, force: true });
+  });
   scaffoldRunUatProject(basePath);
 
   const blocked = await runUatRule().match(makeContext(basePath));

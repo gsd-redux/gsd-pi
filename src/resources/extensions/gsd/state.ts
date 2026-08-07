@@ -12,11 +12,13 @@ import type {
   MilestoneRegistryEntry,
 } from './types.js';
 
-// Pre-migration fallback ONLY (ADR-017): deriveState must work on projects
-// whose DB does not exist yet (before md-importer runs), so it parses markdown
-// projections when `isDbAvailable()` is false or the DB has no rows. Once the
-// DB is populated, decision reads go through gsd-db queries — these parsers
-// must never be consulted when DB data is present.
+// LEGACY-ONLY import (post-cutover): the live derive seam
+// (state/derive/index.ts) routes exclusively to deriveStateFromDb when the DB
+// is available and fails closed via buildDbUnavailableState when it is not —
+// it never consults these parsers. parseRoadmap/parsePlan remain here solely
+// for _deriveStateImpl (explicit pre-migration derivation used by tests) and
+// the pre-migration branch of getActiveMilestoneId. Deletion is the
+// timebox-gated wave-4 task T022.
 import {
   parseRoadmap,
   parsePlan,
@@ -293,8 +295,12 @@ function extractContextTitle(content: string | null, fallback: string): string {
 
 
 // LEGACY: Filesystem-based state derivation for unmigrated projects.
-// DB-backed projects use deriveStateFromDb() above. Target: extract to
-// state-legacy.ts when all projects are DB-backed.
+// NOT reachable from the live derive seam: deriveState (state/derive/index.ts)
+// dispatches to deriveStateFromDb when the DB is available and fails closed
+// (buildDbUnavailableState) when it is not — this fallback branch is never
+// taken on the live path. Retained and still exported for explicit
+// pre-migration derivation in tests; deletion is the timebox-gated wave-4
+// task T022.
 export async function _deriveStateImpl(
   basePath: string,
   opts?: DeriveStateOptions,

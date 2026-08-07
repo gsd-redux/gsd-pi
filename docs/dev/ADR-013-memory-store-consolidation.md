@@ -9,7 +9,9 @@
 > workflow decision, but it is noncritical and cannot own or authorize workflow
 > state. The body below is retained as history.
 
-**Status:** Accepted (mostly implemented — Phase 6 preflight/cutover outstanding)
+**Status:** Accepted (partially landed — Phases 0–6 cutover verified at HEAD; the `decisions` table drop (#5756) is outstanding)
+
+> Implementation note (2026-08-01 audit): the trace confirms `structured_fields` on the memories schema (`db-base-schema.ts:80`), `bootstrap/memory-tools.ts`, `memory-backfill.ts`, `memory-consolidation-scanner.ts`, and that `db-writer.ts` no longer calls `db.upsertDecision`; the legacy `decisions` table and its `active_decisions` view still exist in `db-base-schema.ts` (lines 20 and 414), so the drop step is genuinely unlanded.
 **Date:** 2026-04-19
 **Implemented:** 2026-04 to 2026-05 (Phases 0–5; Phase 6 preflight/cutover tracked on #5751 / #5755 / #5756)
 **Author:** Jeremy (@jeremymcs)

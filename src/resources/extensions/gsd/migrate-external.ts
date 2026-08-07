@@ -43,6 +43,15 @@ export function migrateToExternalState(basePath: string): MigrationResult {
     return { migrated: false };
   }
 
+  // Self-heal a partial destination from a crashed prior attempt BEFORE any
+  // existence checks: a stale `.gsd.migrating` is adopted (renamed back to
+  // `.gsd` when `.gsd` is missing) or removed (orphaned staging alongside an
+  // intact `.gsd`), so a failed attempt never requires manual deletion to
+  // retry (recoverFailedMigration, #5571). Without this, a crash between the
+  // rename and the copy leaves `.gsd` missing and migration permanently
+  // skipped by the "doesn't exist" guard below.
+  recoverFailedMigration(basePath);
+
   const localGsd = join(basePath, ".gsd");
 
   // Skip if doesn't exist

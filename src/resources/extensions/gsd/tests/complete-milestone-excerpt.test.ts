@@ -31,7 +31,23 @@ function createBase(): string {
 }
 
 function cleanup(base: string): void {
+  // Fixtures that seed slice rows open a DB under `base`; close it before the
+  // directory goes away so the next test starts from a clean singleton.
+  try { closeDatabase(); } catch { /* no DB open for this fixture */ }
   rmSync(base, { recursive: true, force: true });
+}
+
+/**
+ * Seed the slice rows the closer/validate prompt builders read. Post-cutover
+ * the slice list comes from `getMilestoneSlices` only, so the ROADMAP written
+ * alongside is projection context; these rows are what drives excerpt inlining
+ * and the "On-demand Slice Summaries" path list.
+ */
+function seedRoadmapSlices(base: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Excerpt helper", status: "complete", risk: "medium", depends: [], sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Closer wiring", status: "complete", risk: "low", depends: ["S01"], sequence: 2 });
 }
 
 function writeRoadmap(base: string, content: string): void {
@@ -244,6 +260,7 @@ test("#4780 closer prompt: uses excerpts + lists on-demand slice SUMMARY paths",
   invalidateAllCaches();
 
   writeRoadmap(base, makeRoadmap());
+  seedRoadmapSlices(base);
   writeSummary(base, "S01", makeFatSummary("S01"));
   writeSummary(base, "S02", makeFatSummary("S02"));
   writeFileSync(join(base, ".gsd", "PROJECT.md"), "# Project\n\nBroad product context should stay on-demand.");
@@ -295,6 +312,7 @@ test("complete-milestone prompt caps repeated inlined context around 20k chars",
   invalidateAllCaches();
 
   writeRoadmap(base, makeRoadmap());
+  seedRoadmapSlices(base);
   writeSummary(base, "S01", makeFatSummary("S01"));
   writeSummary(base, "S02", makeFatSummary("S02"));
   writeFileSync(
@@ -325,6 +343,7 @@ test("validate-milestone prompt uses slice excerpts and on-demand paths instead 
   invalidateAllCaches();
 
   writeRoadmap(base, makeRoadmap());
+  seedRoadmapSlices(base);
   writeSummary(base, "S01", makeFatSummary("S01"));
   writeSummary(base, "S02", makeFatSummary("S02"));
   writeFileSync(join(base, ".gsd", "PROJECT.md"), "# Project\n\nBroad validation product context should stay on-demand.");
@@ -444,6 +463,7 @@ test("validate-milestone prompt inlines planned verification classes as canonica
     },
   });
   writeRoadmap(base, makeRoadmap());
+  seedRoadmapSlices(base);
   writeSummary(base, "S01", makeFatSummary("S01"));
   writeSummary(base, "S02", makeFatSummary("S02"));
 

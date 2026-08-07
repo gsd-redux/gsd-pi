@@ -41,6 +41,7 @@ import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import {
   closeDatabase,
   getTask,
+  insertAssessment,
   insertMilestone,
   insertSlice,
   insertTask,
@@ -378,19 +379,38 @@ test("runDispatch checks prior-slice completion against the project root in work
   ]);
 });
 
-test("runDispatch retries when complete-milestone summary exists on disk and stuck recovery can proceed (#4289)", async (t) => {
+test("runDispatch retries when the complete-milestone closeout proof holds and stuck recovery can proceed (#4289)", async (t) => {
   const capture = createEventCapture();
   let pauseCalls = 0;
   let stopCalls = 0;
+  let invalidateCalls = 0;
   const base = join(tmpdir(), `gsd-stuck-complete-${randomUUID()}`);
   t.after(() => {
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
   });
 
-  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+  const milestoneDir = join(base, ".gsd", "milestones", "M001");
+  mkdirSync(milestoneDir, { recursive: true });
   mkdirSync(join(base, "src"), { recursive: true });
-  writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Summary\nDone.\n");
+  writeFileSync(join(milestoneDir, "M001-SUMMARY.md"), "# Summary\nDone.\n");
+  writeFileSync(join(milestoneDir, "M001-VALIDATION.md"), "---\nverdict: pass\n---\n");
   writeFileSync(join(base, "src", "app.ts"), "export const ok = true;\n");
+
+  // Closeout is DB-authoritative: the SUMMARY projection alone no longer proves
+  // it, so seed the canonical rows the closeout proof reads. The loop is still
+  // stuck because its derived state is stale, which is what recovery must fix.
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "complete" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "complete" });
+  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "complete" });
+  insertAssessment({
+    path: join(milestoneDir, "M001-VALIDATION.md"),
+    milestoneId: "M001",
+    status: "pass",
+    scope: "milestone-validation",
+    fullContent: "---\nverdict: pass\n---\n",
+  });
 
   execFileSync("git", ["init", "-b", "main"], { cwd: base, stdio: "ignore" });
   execFileSync("git", ["config", "user.name", "Codex"], { cwd: base, stdio: "ignore" });
@@ -405,6 +425,7 @@ test("runDispatch retries when complete-milestone summary exists on disk and stu
   const deps = makeMockDeps(capture, {
     pauseAuto: async () => { pauseCalls++; },
     stopAuto: async () => { stopCalls++; },
+    invalidateAllCaches: () => { invalidateCalls++; },
     resolveDispatch: async () => ({
       action: "dispatch" as const,
       unitType: "complete-milestone",
@@ -432,18 +453,23 @@ test("runDispatch retries when complete-milestone summary exists on disk and stu
     midTitle: "Test Milestone",
   };
 
-  const result = await runDispatch(ic, preData, {
+  const loopState: LoopState = {
     recentUnits: [
       { key: "complete-milestone/M001" },
       { key: "complete-milestone/M001" },
     ],
     stuckRecoveryAttempts: 0,
     consecutiveFinalizeTimeouts: 0,
-  });
+  };
+
+  const result = await runDispatch(ic, preData, loopState);
 
   assert.equal(result.action, "continue");
-  assert.equal(pauseCalls, 0, "artifact-based recovery should retry before pausing");
-  assert.equal(stopCalls, 0, "artifact-based recovery should not hard-stop the loop");
+  assert.equal(pauseCalls, 0, "closeout-proof recovery should retry before pausing");
+  assert.equal(stopCalls, 0, "closeout-proof recovery should not hard-stop the loop");
+  assert.equal(invalidateCalls, 1, "Level 1 recovery should invalidate caches before retrying");
+  assert.deepEqual(loopState.recentUnits, [], "recovery should clear the stuck window");
+  assert.equal(loopState.stuckRecoveryAttempts, 1, "recovery should preserve the Level 1 attempt counter");
 });
 
 test("runDispatch does not promote an open execute-task from SUMMARY projections at Level 1", async (t) => {

@@ -23,7 +23,6 @@ import {
 import { resolveInlineLevel, loadEffectiveGSDPreferences, renderLanguageDirectiveForPrompt } from "./preferences.js";
 import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
 import { isContextModeEnabled } from "./preferences-types.js";
-import { parseRoadmap } from "./parsers-legacy.js";
 import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
 import { join, basename, relative, sep } from "node:path";
@@ -33,8 +32,10 @@ import type { TokenProvider } from "./token-counter.js";
 import {
   getBlockingReworkFindingsForTask,
   getGateResults,
+  getMilestoneSlices,
   getPendingGates,
   getPendingGatesForTurn,
+  getSlice,
   isDbAvailable,
 } from "./gsd-db.js";
 import {
@@ -70,6 +71,7 @@ import { findMilestoneIds } from "./milestone-ids.js";
 import { buildRunUatPresentationForType, RUN_UAT_TOOL_PRESENTATION_PLAN_ID } from "./tool-presentation-plan.js";
 import { classifyUatContentForRun } from "./uat-policy.js";
 import { checkNeedsRunUat as resolveNeedsRunUat, type UatDispatchCandidate } from "./uat-dispatch.js";
+import { isClosedStatus } from "./status-guards.js";
 import { buildWebAppUatGuidanceBlock } from "./web-app-uat.js";
 import {
   readPendingTaskRecoveryContext,
@@ -1059,38 +1061,22 @@ function capMalformedSummary(content: string, relPath: string): string {
 export async function inlineDependencySummaries(
   mid: string, sid: string, base: string, budgetChars?: number,
 ): Promise<string> {
-  // DB primary path — get slice depends directly
+  // DB read authority — post-cutover there is no markdown fallback.
   let depends: string[] | null = null;
   try {
-    const { isDbAvailable, getSlice } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const slice = getSlice(mid, sid);
       if (slice) {
         if (slice.depends.length === 0) return "- (no dependencies)";
         depends = slice.depends as string[];
       }
-      // If slice not found in DB, fall through to file-based parsing
     }
   } catch (err) {
     logWarning("prompt", `inlineDependencySummaries DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // If DB didn't provide depends, fall back to roadmap parsing
   if (!depends) {
-    const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-    if (roadmapPath) {
-      const roadmapContent = await loadFile(roadmapPath);
-      if (roadmapContent) {
-        const parsed = parseRoadmap(roadmapContent);
-        const slice = parsed.slices.find(s => s.id === sid);
-        if (slice && slice.depends.length > 0) {
-          depends = slice.depends;
-        }
-      }
-    }
-    if (!depends) {
-      return "- (no dependencies)";
-    }
+    return "- (no dependencies)";
   }
 
   const sections: string[] = [];
@@ -1632,6 +1618,20 @@ export async function getDependencyTaskSummaryPaths(
 // ─── Adaptive Replanning Checks ────────────────────────────────────────────
 
 /**
+ * True when a slice row counts as completed work for prompt/dispatch purposes.
+ *
+ * The DB column is free-form, so legacy and imported rows still carry "done" /
+ * "closed" (see `status-guards.ts`). These reads replaced roadmap-checkbox
+ * parsing, and the checkbox was rendered `[x]` via `isClosedStatus`, so the
+ * closed set must come from the shared guard — an equality check against
+ * "complete" silently drops migrated rows from dispatch. A user-directed skip
+ * is closed but produced no work, so it is not a reassess/UAT candidate.
+ */
+function isCompletedSliceStatus(status: string): boolean {
+  return isClosedStatus(status) && status !== "skipped";
+}
+
+/**
  * Check if the most recently completed slice needs reassessment.
  * Returns { sliceId } if reassessment is needed, null otherwise.
  *
@@ -1644,56 +1644,32 @@ export async function getDependencyTaskSummaryPaths(
 export async function checkNeedsReassessment(
   base: string, mid: string, state: GSDState,
 ): Promise<{ sliceId: string } | null> {
-  // DB primary path — fall through to file-based when DB has no data for this milestone
+  // DB read authority — post-cutover there is no markdown fallback. With no DB
+  // there is no slice state to reason about, so returning null (never dispatch
+  // reassess-roadmap) is the only sound answer: dispatching off a roadmap parse
+  // would reassess against a projection that is not the source of truth.
+  if (!isDbAvailable()) return null;
+
   try {
-    const { isDbAvailable, getMilestoneSlices } = await import("./gsd-db.js");
-    if (isDbAvailable()) {
-      const slices = getMilestoneSlices(mid);
-      if (slices.length > 0) {
-        const completedSliceIds = slices.filter(s => s.status === "complete").map(s => s.id);
-        const hasIncomplete = slices.some(s => s.status !== "complete");
-        if (completedSliceIds.length === 0 || !hasIncomplete) return null;
-        const lastCompleted = completedSliceIds[completedSliceIds.length - 1];
-        const assessmentFile = resolveSliceFile(base, mid, lastCompleted, "ASSESSMENT");
-        const hasAssessment = !!(assessmentFile && await loadFile(assessmentFile));
-        if (hasAssessment) return null;
-        const summaryFile = resolveSliceFile(base, mid, lastCompleted, "SUMMARY");
-        const hasSummary = !!(summaryFile && await loadFile(summaryFile));
-        if (!hasSummary) return null;
-        return { sliceId: lastCompleted };
-      }
+    const slices = getMilestoneSlices(mid);
+    if (slices.length > 0) {
+      const completedSliceIds = slices.filter(s => isCompletedSliceStatus(s.status)).map(s => s.id);
+      const hasIncomplete = slices.some(s => !isClosedStatus(s.status));
+      if (completedSliceIds.length === 0 || !hasIncomplete) return null;
+      const lastCompleted = completedSliceIds[completedSliceIds.length - 1];
+      const assessmentFile = resolveSliceFile(base, mid, lastCompleted, "ASSESSMENT");
+      const hasAssessment = !!(assessmentFile && await loadFile(assessmentFile));
+      if (hasAssessment) return null;
+      const summaryFile = resolveSliceFile(base, mid, lastCompleted, "SUMMARY");
+      const hasSummary = !!(summaryFile && await loadFile(summaryFile));
+      if (!hasSummary) return null;
+      return { sliceId: lastCompleted };
     }
   } catch (err) {
     logWarning("prompt", `checkNeedsReassessment DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // File-based fallback using roadmap checkboxes
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  if (!roadmapPath) return null;
-  const roadmapContent = await loadFile(roadmapPath);
-  if (!roadmapContent) return null;
-  const parsed = parseRoadmap(roadmapContent);
-  const fileCompletedIds = parsed.slices.filter(s => s.done).map(s => s.id);
-  const fileHasIncomplete = parsed.slices.some(s => !s.done);
-  if (fileCompletedIds.length === 0 || !fileHasIncomplete) return null;
-  const lastDone = fileCompletedIds[fileCompletedIds.length - 1];
-  const assessFile = resolveSliceFile(base, mid, lastDone, "ASSESSMENT");
-  const hasAssess = !!(assessFile && await loadFile(assessFile));
-  if (hasAssess) return null;
-  const summFile = resolveSliceFile(base, mid, lastDone, "SUMMARY");
-  const hasSumm = !!(summFile && await loadFile(summFile));
-  if (!hasSumm) return null;
-  return { sliceId: lastDone };
-}
-
-
-export function getRoadmapCompletedSliceCandidates(
-  roadmapContent: string,
-): UatDispatchCandidate[] {
-  return parseRoadmap(roadmapContent)
-    .slices.filter((slice) => slice.done)
-    .map((slice) => ({ sliceId: slice.id }))
-    .reverse();
+  return null;
 }
 
 
@@ -1701,9 +1677,13 @@ export async function loadRoadmapCompletedSliceCandidates(
   base: string,
   mid: string,
 ): Promise<UatDispatchCandidate[]> {
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-  return roadmapContent ? getRoadmapCompletedSliceCandidates(roadmapContent) : [];
+  // DB read authority — completed slices come from DB rows, not roadmap checkboxes.
+  void base;
+  if (!isDbAvailable()) return [];
+  return getMilestoneSlices(mid)
+    .filter((slice) => isCompletedSliceStatus(slice.status))
+    .map((slice) => ({ sliceId: slice.id }))
+    .reverse();
 }
 
 /**
@@ -3312,7 +3292,6 @@ export async function buildCompleteMilestonePrompt(
   // Inline all slice summaries (deduplicated by slice ID)
   let sliceIds: string[] = [];
   try {
-    const { isDbAvailable, getMilestoneSlices } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       sliceIds = getMilestoneSlices(mid)
         .filter(s => s.status !== "skipped")
@@ -3320,13 +3299,6 @@ export async function buildCompleteMilestonePrompt(
     }
   } catch (err) {
     logWarning("prompt", `buildCompleteMilestonePrompt DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  // File-based fallback: parse roadmap for slice IDs when DB has no data
-  if (sliceIds.length === 0 && roadmapPath) {
-    const roadmapContent = await loadFile(roadmapPath);
-    if (roadmapContent) {
-      sliceIds = parseRoadmap(roadmapContent).slices.map(s => s.id);
-    }
   }
   const seenSlices = new Set<string>();
   const summaryRelPaths: string[] = [];
@@ -3521,7 +3493,6 @@ export async function buildValidateMilestonePrompt(
   // whole milestone on every closeout pass.
   let valSliceIds: string[] = [];
   try {
-    const { isDbAvailable, getMilestoneSlices } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       valSliceIds = getMilestoneSlices(mid)
         .filter(s => s.status !== "skipped")
@@ -3529,13 +3500,6 @@ export async function buildValidateMilestonePrompt(
     }
   } catch (err) {
     logWarning("prompt", `buildValidateMilestonePrompt slice IDs lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  // File-based fallback: parse roadmap for slice IDs when DB has no data
-  if (valSliceIds.length === 0 && roadmapPath) {
-    const roadmapContent = await loadFile(roadmapPath);
-    if (roadmapContent) {
-      valSliceIds = parseRoadmap(roadmapContent).slices.map(s => s.id);
-    }
   }
   const seenValSlices = new Set<string>();
   const onDemandValidationPaths: string[] = [];

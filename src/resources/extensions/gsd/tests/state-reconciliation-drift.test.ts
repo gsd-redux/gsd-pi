@@ -31,7 +31,7 @@ import {
 } from "../gsd-db.ts";
 import { clearParseCache } from "../files.ts";
 import { clearPathCache } from "../paths.ts";
-import { detectStaleRenders } from "../markdown-renderer.ts";
+import { detectStaleRenders, getCurrentProjectStateVersion } from "../markdown-renderer.ts";
 import { invalidateStateCache } from "../state.ts";
 import {
   reconcileBeforeDispatch,
@@ -200,6 +200,50 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
     "phase/plan placeholder task: flag stays set",
   );
   assert.equal(result.repaired.length, 0, "phase/plan placeholder task: no repair");
+});
+
+test("T013: a state-version-stamped stub PLAN still does NOT clear the sketch flag", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Feature",
+    status: "pending",
+    risk: "medium",
+    depends: [],
+    demo: "S02 demo.",
+    sequence: 1,
+    isSketch: true,
+    sketchScope: "limited",
+  });
+
+  // The sketch judgment is about PLAN *content*, not projection freshness, so
+  // a stub carrying a current state-version stamp must still be parsed and
+  // rejected — the stamp only proves it was rendered from this DB state.
+  const version = getCurrentProjectStateVersion();
+  writeFileSync(
+    join(base, ".gsd", "phases", "01-test", "01-02-PLAN.md"),
+    `${makeStalePlanContent("S02", [{ id: "T01", title: "Plan 01", done: false }])}` +
+      `<!-- gsd:state-version=${version.revision}:${version.authorityEpoch} -->\n`,
+  );
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Test" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    getSlice("M001", "S02")?.is_sketch,
+    1,
+    "stamped stub PLAN: flag stays set (no stamp short-circuit)",
+  );
+  assert.equal(result.repaired.length, 0, "stamped stub PLAN: no repair");
 });
 
 test("#1288: real tasks shaped like `word + number` still clear the sketch flag", async (t) => {
@@ -1615,6 +1659,112 @@ test("ADR-017 (#5705): in-sync ROADMAP and DB → no roadmap-divergence drift", 
     result.repaired.some((d) => d.kind === "roadmap-divergence"),
     false,
     "no roadmap-divergence drift should be reported when DB matches markdown",
+  );
+});
+
+// T031: the roadmap detector compares content on every call — a state-version
+// stamp never short-circuits it, because a stale projection can carry the
+// current stamp (slice writes don't bump `project_authority.revision`) and a
+// hand-edited file keeps whatever stamp it was written with.
+function writeStampedRoadmap(roadmapPath: string, stamp: string): void {
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify stamp short-circuit",
+      "",
+      "## Slices",
+      "",
+      // Diverges from the DB below (DB has S02.depends = []).
+      "- [ ] **S01: Foundation** `risk:medium` `depends:[]`",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[S01]`",
+      "",
+      stamp,
+      "",
+    ].join("\n"),
+  );
+}
+
+function seedStampFixtureDb(base: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Foundation", status: "pending", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Plan S01", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+}
+
+test("T031: a roadmap stamped with the CURRENT state version still reports diverging content as drift", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-t031-roadmap-stamp-current-"));
+  const milestoneDir = join(base, ".gsd", "phases", "01-test");
+  const roadmapPath = join(milestoneDir, "01-ROADMAP.md");
+  mkdirSync(milestoneDir, { recursive: true });
+  t.after(() => cleanup(base));
+
+  // Write unstamped first so the DB (and its state version) exists before the
+  // stamp is computed, then stamp the diverging fixture with the current
+  // revision:epoch. A matching stamp must NOT suppress the comparison.
+  writeStampedRoadmap(roadmapPath, "");
+  seedStampFixtureDb(base);
+
+  const version = getCurrentProjectStateVersion();
+  writeStampedRoadmap(
+    roadmapPath,
+    `<!-- gsd:state-version=${version.revision}:${version.authorityEpoch} -->`,
+  );
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    "current stamp must not short-circuit the content comparison",
+  );
+  assert.deepEqual(getSlice("M001", "S02")?.depends, [], "DB depends remains authoritative");
+  assert.match(
+    readFileSync(roadmapPath, "utf-8"),
+    /- \[ \] \*\*S02: Feature\*\* `risk:medium` `depends:\[\]`/,
+    "projection re-rendered from DB depends",
+  );
+});
+
+test("T031: a stamped roadmap whose content diverges from the DB still reports drift", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-t031-roadmap-stamp-stale-"));
+  const milestoneDir = join(base, ".gsd", "phases", "01-test");
+  const roadmapPath = join(milestoneDir, "01-ROADMAP.md");
+  mkdirSync(milestoneDir, { recursive: true });
+  t.after(() => cleanup(base));
+
+  writeStampedRoadmap(roadmapPath, "<!-- gsd:state-version=999:999 -->");
+  seedStampFixtureDb(base);
+  clearRendererCaches();
+
+  assert.notDeepEqual(
+    getCurrentProjectStateVersion(),
+    { revision: 999, authorityEpoch: 999 },
+    "fixture precondition: 999:999 must not be the current DB state version",
+  );
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    "mismatched stamp must take the existing comparison path and report drift",
+  );
+  assert.deepEqual(getSlice("M001", "S02")?.depends, [], "DB depends remains authoritative");
+  assert.match(
+    readFileSync(roadmapPath, "utf-8"),
+    /- \[ \] \*\*S02: Feature\*\* `risk:medium` `depends:\[\]`/,
+    "projection re-rendered from DB depends",
   );
 });
 

@@ -160,6 +160,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd rebuild markdown  Rebuild markdown projections from the canonical DB",
     "  /gsd rebuild database  Reserved for DB-native rebuilds; does not import markdown",
     "  /gsd recover           Preview an evidence-bound DB import after loss/corruption",
+    "  /gsd db restore-backup List or restore a verified pre-migration database backup (destructive)",
     "  /gsd worktree       Manage worktrees from the TUI  [list|merge|clean|remove]",
     "  /gsd migrate        Migrate .planning/ (v1) to DB-backed .gsd/ with backup + audit",
     "  /gsd remote         Control remote auto-mode  [slack|discord|status|disconnect]",

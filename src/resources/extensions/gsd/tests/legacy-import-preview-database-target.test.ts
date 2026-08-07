@@ -46,12 +46,12 @@ import { loadLegacyImportCorpusCase } from "./helpers/legacy-import-corpus.ts";
 const CORPUS_ROOT = new URL("./__fixtures__/legacy-import-corpus/v1/", import.meta.url);
 const DATABASE_MATRIX_SCENARIOS = [
   "corrupt",
-  "current-v45",
-  "future-v46",
+  "current-v46",
+  "future-v47",
   "historical-v30",
   "historical-v34",
   "historical-v43",
-  "historical-v44",
+  "historical-v45",
   "unversioned-populated",
   "wal-present",
 ] as const;
@@ -468,7 +468,7 @@ test("legacy preview database target inspects retained main-only bytes and leave
   const gsd = join(base, ".gsd");
   mkdirSync(gsd);
   const databasePath = join(gsd, "gsd.db");
-  createDatabase(databasePath, 45);
+  createDatabase(databasePath, 46);
   const beforeBytes = readFileSync(databasePath);
   const beforeNames = readdirSync(gsd).sort();
   const capture = captureLegacyImportSourceSet({ roots: [root("project", "project", gsd, ".gsd")] });
@@ -966,8 +966,8 @@ test("legacy preview database target classifies supported schema boundaries and 
     { name: "historical-v30", version: 30, code: "historical-schema-version", outcome: "mapped" },
     { name: "historical-v34", version: 34, code: "historical-schema-version", outcome: "mapped" },
     { name: "historical-v43", version: 43, code: "historical-schema-version", outcome: "mapped" },
-    { name: "historical-v44", version: 44, code: "historical-schema-version", outcome: "mapped" },
-    { name: "future-v46", version: 46, code: "future-schema-version", outcome: "unparsed" },
+    { name: "historical-v45", version: 45, code: "historical-schema-version", outcome: "mapped" },
+    { name: "future-v47", version: 47, code: "future-schema-version", outcome: "unparsed" },
   ] as const;
   for (const scenario of scenarios) {
     const gsd = join(base, scenario.name);
@@ -1013,7 +1013,7 @@ test("legacy preview database target classifies supported schema boundaries and 
   assert.deepEqual(Object.keys(corruptResult.diagnoses[0]?.raw_value ?? {}).sort(), ["redacted", "sha256"]);
 });
 
-test("legacy preview database target requires every v45 recovery receipt anchor", (t) => {
+test("legacy preview database target requires every v46 recovery receipt anchor", (t) => {
   const base = temporaryDirectory(t);
   for (const missingName of [
     "workflow_authority_cutovers",
@@ -1023,7 +1023,7 @@ test("legacy preview database target requires every v45 recovery receipt anchor"
     const gsd = join(base, missingName);
     mkdirSync(gsd);
     const path = join(gsd, "gsd.db");
-    createDatabase(path, 45);
+    createDatabase(path, 46);
     const database = new DatabaseSync(path);
     database.exec(`DROP TABLE ${missingName}`);
     database.close();

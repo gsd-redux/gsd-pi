@@ -1,5 +1,11 @@
 // Project/App: gsd-pi
 // File Purpose: DB-backed GSD state derivation pipeline stage.
+// Post-cutover (T007) this module is the sole state authority on the live
+// derive path: DB rows decide phase/registry/progress. Markdown state
+// projections on disk (STATE.md, roadmaps, plans, summaries) are never
+// parsed as authority here; DB-unavailable fails closed in db-open.ts.
+// Canonical-lifecycle read authority (handleAllSlicesDone +
+// resolveMilestoneValidationVerdict) is pinned by D005 and unchanged.
 
 import type { ActiveRef, GSDState, MilestoneRegistryEntry, Phase } from '../../types.js';
 import { join } from 'node:path';

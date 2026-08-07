@@ -27,6 +27,7 @@ import {
   insertArtifact,
   deleteArtifactByPath,
   getGateResults,
+  getDbOrNull,
   isDbAvailable,
 } from "./gsd-db.js";
 import type { MilestoneRow, ArtifactRow } from "./db-milestone-artifact-rows.js";
@@ -48,7 +49,7 @@ import {
   buildSliceFileName,
 } from "./paths.js";
 import { saveFile, clearParseCache, registerCacheClearCallback } from "./files.js";
-import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
+import { parseLegacyRoadmap } from "./schemas/parsers.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache, milestonesDir, legacyMilestonesDir, isLegacyMilestonesLayout, resolveMilestonePath, relSliceFile, canonicalPhaseDirName } from "./paths.js";
 import { readCompatMarker, writeCompatMarker, computeProjectionSha, deriveCompatProjectionKey } from "./compat/compat-marker.js";
@@ -104,6 +105,69 @@ function flushProjectionWritesToMarker(): void {
       logWarning("renderer", `compat marker flush failed: ${(e as Error).message}`);
     }
   }
+}
+
+// ─── State-version stamp ──────────────────────────────────────────────────
+// Every projection written by this renderer carries an additive trailing
+// HTML-comment stamp recording the DB project revision/authority epoch it was
+// rendered from (the jj working-copy pattern). The stamp is the ONLY change to
+// the byte stream — strip it and the pre-cutover projection format is
+// reproduced exactly. Drift judgments compare projections stamp-insensitively
+// against the current DB render intent, so a stamp-only difference is never
+// content drift.
+
+const STATE_VERSION_STAMP_RE = /<!-- gsd:state-version=(\d+):(\d+) -->/;
+const TRAILING_STATE_VERSION_STAMP_RE = /<!-- gsd:state-version=\d+:\d+ -->[ \t]*(?:\r\n|\n)?$/;
+
+export interface ProjectStateVersion {
+  revision: number;
+  authorityEpoch: number;
+}
+
+/**
+ * Current DB project revision/authority epoch — the same authority row the
+ * cutover receipt (T006) advances. Falls back to 0:0 when the DB or its
+ * authority row is unavailable; render paths always hold an open DB, so the
+ * fallback only covers defensive/degraded callers.
+ */
+export function getCurrentProjectStateVersion(): ProjectStateVersion {
+  const db = getDbOrNull();
+  if (!db) return { revision: 0, authorityEpoch: 0 };
+  try {
+    const row = db.prepare(
+      "SELECT revision, authority_epoch FROM project_authority WHERE singleton = 1",
+    ).get() as { revision?: unknown; authority_epoch?: unknown } | undefined;
+    return {
+      revision: Number(row?.revision ?? 0),
+      authorityEpoch: Number(row?.authority_epoch ?? 0),
+    };
+  } catch {
+    return { revision: 0, authorityEpoch: 0 };
+  }
+}
+
+/** Read the state-version stamp from projection content, if present. */
+export function readProjectionStateVersion(content: string): ProjectStateVersion | null {
+  const match = content.match(STATE_VERSION_STAMP_RE);
+  if (!match) return null;
+  return { revision: Number(match[1]), authorityEpoch: Number(match[2]) };
+}
+
+/** Remove a trailing state-version stamp line; unstamped content is unchanged. */
+export function stripProjectionStamp(content: string): string {
+  return content.replace(TRAILING_STATE_VERSION_STAMP_RE, "");
+}
+
+/**
+ * Append the state-version stamp at the fixed end-of-file position. Any prior
+ * trailing stamp is replaced, so re-renders of replayed artifact content stay
+ * byte-stable instead of accumulating stamp lines.
+ */
+function stampProjectionContent(content: string): string {
+  const { revision, authorityEpoch } = getCurrentProjectStateVersion();
+  const stripped = stripProjectionStamp(content);
+  const separator = stripped === "" || stripped.endsWith("\n") ? "" : "\n";
+  return `${stripped}${separator}<!-- gsd:state-version=${revision}:${authorityEpoch} -->\n`;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -184,6 +248,8 @@ function isMilestoneFlatPhaseLayout(basePath: string, milestoneId: string): bool
 
 /**
  * Write rendered content to disk and update the artifacts table.
+ * The content is stamped with the current DB state version before writing;
+ * disk bytes, artifact content, and the returned string are identical.
  */
 async function writeAndStore(
   absPath: string,
@@ -196,8 +262,9 @@ async function writeAndStore(
     task_id?: string;
   },
   basePath: string,
-): Promise<void> {
-  await saveFile(absPath, content);
+): Promise<string> {
+  const stamped = stampProjectionContent(content);
+  await saveFile(absPath, stamped);
 
   try {
     insertArtifact({
@@ -206,7 +273,7 @@ async function writeAndStore(
       milestone_id: opts.milestone_id,
       slice_id: opts.slice_id ?? null,
       task_id: opts.task_id ?? null,
-      full_content: content,
+      full_content: stamped,
     });
   } catch {
     // Non-fatal: file is on disk, DB is best-effort
@@ -225,6 +292,7 @@ async function writeAndStore(
   }
 
   invalidateCaches();
+  return stamped;
 }
 
 function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): string {
@@ -491,7 +559,7 @@ export async function renderPlanFromDb(
   const sliceGates = getGateResults(milestoneId, sliceId, "slice");
   const content = renderSlicePlanMarkdown(slice, tasks, sliceGates);
 
-  await writeAndStore(absPath, artifactPath, content, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "PLAN",
     milestone_id: milestoneId,
     slice_id: sliceId,
@@ -501,7 +569,7 @@ export async function renderPlanFromDb(
   // No per-task render loop — task state is in the <tasks> block above.
   const taskPlanPaths: string[] = [];
 
-  return { planPath: absPath, taskPlanPaths, content };
+  return { planPath: absPath, taskPlanPaths, content: stamped };
 }
 
 export async function renderTaskPlanFromDb(
@@ -549,14 +617,14 @@ export async function renderTaskPlanFromDb(
   const taskGates = getGateResults(milestoneId, sliceId, "task").filter(g => g.task_id === taskId);
   const content = task.full_plan_md.trim() ? task.full_plan_md : renderTaskPlanMarkdown(task, taskGates);
 
-  await writeAndStore(absPath, artifactPath, content, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "PLAN",
     milestone_id: milestoneId,
     slice_id: sliceId,
     task_id: taskId,
   }, basePath);
 
-  return { taskPlanPath: absPath, content };
+  return { taskPlanPath: absPath, content: stamped };
 }
 
 export async function renderRoadmapFromDb(
@@ -603,12 +671,12 @@ export async function renderRoadmapFromDb(
   const artifactPath = toArtifactPath(absPath, basePath);
   const content = renderRoadmapMarkdown(milestone, slices);
 
-  await writeAndStore(absPath, artifactPath, content, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "ROADMAP",
     milestone_id: milestoneId,
   }, basePath);
 
-  return { roadmapPath: absPath, content };
+  return { roadmapPath: absPath, content: stamped };
 }
 
 // ─── Roadmap Checkbox Rendering ───────────────────────────────────────────
@@ -1050,6 +1118,87 @@ function parseProjectionByIdentity(path: string, parse: (content: string) => unk
   return parse(readFileSync(path, "utf-8"));
 }
 
+// ─── Projection Drift (DB-vs-render-intent) ───────────────────────────────
+// Post-cutover staleness is judged DB-vs-render-intent: the on-disk bytes
+// (stamp-insensitive) are compared against what the renderer would emit from
+// current DB rows. Projection files are never parsed to make the judgment, so
+// a hand-edit is drift while a stamp-only difference is not. Reasons keep the
+// "in roadmap" / "in plan" markers the stale-render repair dispatch keys on.
+
+function roadmapRenderIntentDrift(
+  basePath: string,
+  milestone: MilestoneRow,
+  slices: SliceRow[],
+): StaleEntry | null {
+  const roadmapPath = targetMilestoneFile(basePath, milestone.id, "ROADMAP", milestone.title);
+  if (!existsSync(roadmapPath)) return null;
+  const intent = renderRoadmapMarkdown(milestone, slices);
+  const actual = readFileSync(roadmapPath, "utf-8");
+  if (stripProjectionStamp(actual) === intent) return null;
+  return {
+    path: roadmapPath,
+    reason: `roadmap for ${milestone.id} differs from DB render intent (content drift in roadmap)`,
+  };
+}
+
+function planRenderIntentDrift(
+  basePath: string,
+  milestoneId: string,
+  slice: SliceRow,
+  tasks: TaskRow[],
+): StaleEntry | null {
+  const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
+  if (!planPath || !existsSync(planPath)) return null;
+  const gates = getGateResults(milestoneId, slice.id, "slice");
+  const intent = renderSlicePlanMarkdown(slice, tasks, gates);
+  const actual = readFileSync(planPath, "utf-8");
+  if (stripProjectionStamp(actual) === intent) return null;
+  return {
+    path: planPath,
+    reason: `plan for ${milestoneId}/${slice.id} differs from DB render intent (content drift in plan)`,
+  };
+}
+
+/**
+ * Detect content drift between on-disk ROADMAP/PLAN projections and the
+ * current DB render intent. A projection whose stamp matches the current DB
+ * revision/epoch but whose content was hand-edited IS drift; a stamp-only
+ * difference is NOT. Diagnostic primitive like detectStaleRenders — the
+ * detect+repair composition lives in state-reconciliation/drift/stale-render.ts
+ * (T013 wires the stamp short-circuit there).
+ */
+export function detectProjectionDrift(basePath: string): StaleEntry[] {
+  const stale: StaleEntry[] = [];
+  const milestones = getAllMilestones();
+
+  for (const milestone of milestones) {
+    const slices = getMilestoneSlices(milestone.id).filter((slice) => slice.status !== "skipped");
+
+    // Roadmap — skip the unplanned-milestone case renderRoadmapFromDb refuses.
+    if (!(slices.length === 0 && !milestone.vision.trim())) {
+      try {
+        const entry = roadmapRenderIntentDrift(basePath, milestone, slices);
+        if (entry) stale.push(entry);
+      } catch (e) {
+        logWarning("renderer", `roadmap drift check failed: ${(e as Error).message}`);
+      }
+    }
+
+    for (const slice of slices) {
+      const tasks = getActivePlanTasks(milestone.id, slice.id);
+      if (tasks.length === 0) continue; // the renderer never emits taskless plans
+      try {
+        const entry = planRenderIntentDrift(basePath, milestone.id, slice, tasks);
+        if (entry) stale.push(entry);
+      } catch (e) {
+        logWarning("renderer", `plan drift check failed: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  return stale;
+}
+
 export function detectStaleRenders(basePath: string): StaleEntry[] {
   // TODO(flat-phase): stale-render detection is temporarily fully disabled.
   // The isLegacyMilestonesLayout gate is unreliable: git-service.ts creates
@@ -1063,8 +1212,8 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
 }
 
 function detectStaleRendersImpl(basePath: string): StaleEntry[] {
-  // per-call createRequire("./parsers-legacy") that used to live here ran on
-  // every dispatch. The static `./parsers-legacy.js` specifier resolves in
+  // per-call createRequire() for the legacy parsers that used to live here ran
+  // on every dispatch. The static `./schemas/parsers.js` specifier resolves in
   // both packaged (.js) and source (.ts via the strip-types loader) contexts —
   // the same form a dozen other modules already use.
   const stale: StaleEntry[] = [];
@@ -1081,7 +1230,7 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
     const roadmapPath = targetMilestoneFile(basePath, milestone.id, "ROADMAP", milestone.title);
     if (existsSync(roadmapPath)) {
       try {
-        const parsed = parseProjectionByIdentity(roadmapPath, parseRoadmap) as ReturnType<typeof parseRoadmap>;
+        const parsed = parseProjectionByIdentity(roadmapPath, parseLegacyRoadmap) as ReturnType<typeof parseLegacyRoadmap>;
 
         for (const slice of slices) {
           const isCompleteInDb = isClosedStatus(slice.status);
@@ -1111,40 +1260,15 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
       const tasks = getActivePlanTasks(milestone.id, slice.id);
 
       if (!isFlatPhase) {
-        // Check plan checkboxes
-        const planPath = resolveSliceFile(basePath, milestone.id, slice.id, "PLAN");
-        if (planPath && existsSync(planPath!)) {
+        // Check plan content against the DB render intent (T008): the
+        // projection file is never parsed — staleness is judged
+        // DB-vs-render-intent via a stamp-insensitive byte comparison.
+        if (tasks.length > 0) {
           try {
-            const parsed = parseProjectionByIdentity(planPath!, parsePlan) as ReturnType<typeof parsePlan>;
-
-            for (const task of tasks) {
-              const isDoneInDb = isClosedStatus(task.status);
-              const planTask = parsed.tasks.find((t: { id: string }) => t.id === task.id);
-              if (!planTask) {
-                // DB has a task the plan markdown lacks: the projection is
-                // lossy (e.g. tasks added after the PLAN artifact was first
-                // written). Flag it so the plan is re-rendered from DB rows.
-                stale.push({
-                  path: planPath!,
-                  reason: `${task.id} exists in DB but is missing in plan`,
-                });
-                continue;
-              }
-
-              if (isDoneInDb && !planTask!.done) {
-                stale.push({
-                  path: planPath!,
-                  reason: `${task.id} is done in DB but unchecked in plan`,
-                });
-              } else if (!isDoneInDb && planTask!.done) {
-                stale.push({
-                  path: planPath!,
-                  reason: `${task.id} is not done in DB but checked in plan`,
-                });
-              }
-            }
+            const entry = planRenderIntentDrift(basePath, milestone.id, slice, tasks);
+            if (entry) stale.push(entry);
           } catch (e) {
-            logWarning("renderer", `plan parse failed: ${(e as Error).message}`);
+            logWarning("renderer", `plan render-intent check failed: ${(e as Error).message}`);
           }
         }
       }
@@ -1214,11 +1338,11 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
  * Render-verification helper: does the rendered ROADMAP markdown mark a slice
  * as done? Used by completion code to verify/repair the *projection* after a
  * DB write — never as a source of truth for dispatch or completion decisions
- * (ADR-017). Lives here so decision-path modules need not import
- * parsers-legacy directly.
+ * (ADR-017). Lives here so decision-path modules need not import the legacy
+ * markdown parsers directly.
  */
 export function roadmapRenderMarksSliceDone(roadmapContent: string, sliceId: string): boolean {
-  return parseRoadmap(roadmapContent).slices.some((slice) => slice.id === sliceId && slice.done);
+  return parseLegacyRoadmap(roadmapContent).slices.some((slice) => slice.id === sliceId && slice.done);
 }
 
 // ─── Stale Repair ─────────────────────────────────────────────────────────
@@ -1308,13 +1432,13 @@ export async function renderReplanFromDb(
 
   const content = `${lines.join("\n").trimEnd()}\n`;
 
-  await writeAndStore(absPath, artifactPath, content, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "REPLAN",
     milestone_id: milestoneId,
     slice_id: sliceId,
   }, basePath);
 
-  return { replanPath: absPath, content };
+  return { replanPath: absPath, content: stamped };
 }
 
 export async function renderAssessmentFromDb(
@@ -1345,11 +1469,11 @@ export async function renderAssessmentFromDb(
 
   const content = `${lines.join("\n").trimEnd()}\n`;
 
-  await writeAndStore(absPath, artifactPath, content, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "ASSESSMENT",
     milestone_id: milestoneId,
     slice_id: sliceId,
   }, basePath);
 
-  return { assessmentPath: absPath, content };
+  return { assessmentPath: absPath, content: stamped };
 }

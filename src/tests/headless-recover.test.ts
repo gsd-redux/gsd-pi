@@ -40,6 +40,7 @@ import { migrateHierarchyToDb } from "../resources/extensions/gsd/md-importer.ts
 import { invalidateStateCache } from "../resources/extensions/gsd/state.ts";
 import { captureCurrentLegacyImportBaseSnapshot } from "../resources/extensions/gsd/legacy-import-preview-base.ts";
 import { createLegacyImportPreview } from "../resources/extensions/gsd/legacy-import-preview.ts";
+import { recordSchemaVersion } from "../resources/extensions/gsd/db-schema-metadata.ts";
 import { executeDomainOperation } from "../resources/extensions/gsd/db/domain-operation.ts";
 import { fingerprintLegacyImportCorpusTree } from "../resources/extensions/gsd/tests/helpers/legacy-import-corpus.ts";
 
@@ -742,5 +743,41 @@ test("headless recover choice-required prints full executable forward-repair com
   assert.match(
     stderr.join(""),
     new RegExp(`gsd-recover: recovered ${counts.milestones}M/${counts.slices}S/${counts.tasks}T hierarchy`),
+  );
+});
+
+const V47_MESSAGE =
+  "gsd.db schema is v47, newer than the v46 this gsd-pi supports. " +
+  "Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.";
+
+test("headless recover forwards the exact refuse-newer message for a newer-schema project", async (t) => {
+  const base = makeMarkdownFixture();
+  const previousWrite = process.stderr.write;
+  const stderr: string[] = [];
+  t.after(() => {
+    process.stderr.write = previousWrite;
+    try { closeDatabase(); } catch { /* may not be open */ }
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  assert.equal(await ensureDbOpen(base), true);
+  recordSchemaVersion(_getAdapter()!, 47);
+  closeDatabase();
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    stderr.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+
+  const result = await handleHeadlessRecover(base);
+
+  assert.equal(result.exitCode, 1, "a newer-schema project is a recover failure");
+  assert.ok(
+    stderr.join("").includes(V47_MESSAGE),
+    `recover must forward the exact refuse-newer message:\n${stderr.join("")}`,
+  );
+  assert.doesNotMatch(
+    stderr.join(""),
+    /failed to open or create the GSD database/,
+    "the generic open-failure message is replaced for the schema-too-new case",
   );
 });

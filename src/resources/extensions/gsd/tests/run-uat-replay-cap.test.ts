@@ -9,6 +9,43 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { DISPATCH_RULES, getUatCount, incrementUatCount } from "../auto-dispatch.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  isDbAvailable,
+  openDatabase,
+} from "../gsd-db.ts";
+
+/**
+ * Seed the slice rows the run-uat dispatch gate reads. Post-cutover the gate
+ * derives completed-slice candidates from DB rows only (`getMilestoneSlices`),
+ * so the ROADMAP checkboxes this fixture writes are projection context; these
+ * rows are the dispatch input.
+ */
+function seedSliceRows(): void {
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable(), "fixture must have an open DB");
+  insertMilestone({ id: "M001", title: "UAT Cap", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Completed slice",
+    status: "complete",
+    risk: "low",
+    depends: [],
+    sequence: 1,
+  });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S02",
+    title: "Remaining slice",
+    status: "pending",
+    risk: "low",
+    depends: ["S01"],
+    sequence: 2,
+  });
+}
 
 function makeUatProject(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-uat-cap-"));
@@ -38,6 +75,7 @@ function makeUatProject(): string {
 
 test("run-uat dispatch stops after three attempts without a verdict", async () => {
   const basePath = makeUatProject();
+  seedSliceRows();
   const rule = DISPATCH_RULES.find((r) => r.name === "run-uat (post-completion)");
   assert.ok(rule, "run-uat dispatch rule is registered");
 
@@ -66,6 +104,9 @@ test("run-uat dispatch stops after three attempts without a verdict", async () =
     assert.equal(stillCapped?.action, "stop");
     assert.equal(getUatCount(basePath, "M001", "S01"), 3);
   } finally {
+    // The fixture seeds slice rows in an in-memory DB; close it so the next
+    // test starts from a clean singleton.
+    try { closeDatabase(); } catch { /* no DB open for this fixture */ }
     rmSync(basePath, { recursive: true, force: true });
   }
 });

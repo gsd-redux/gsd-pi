@@ -156,7 +156,43 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
+
+/**
+ * PRAGMA application_id stamped on every gsd.db at V46 so binaries and
+ * external tools can cheaply identify DB-authored GSD state. Derivation:
+ * the ASCII bytes of "GSDB" interpreted as a big-endian 32-bit unsigned
+ * integer (0x47 'G' << 24 | 0x53 'S' << 16 | 0x44 'D' << 8 | 0x42 'B').
+ */
+export const GSD_APPLICATION_ID = 0x47534442;
+
+/**
+ * Typed refuse-newer error. The engine throws this when a database records a
+ * schema version newer than this binary supports; read/write seams must
+ * distinguish it from generic open failures and surface the exact message
+ * instead of degrading to empty state (T003 spike: silent divergence).
+ */
+export class SchemaTooNewError extends Error {
+  override readonly name = "GSDSchemaTooNewError";
+  readonly currentVersion: number;
+  readonly supportedVersion: number;
+
+  constructor(currentVersion: number, supportedVersion: number) {
+    super(
+      `gsd.db schema is v${currentVersion}, newer than the v${supportedVersion} this gsd-pi supports. ` +
+      `Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.`,
+    );
+    this.currentVersion = currentVersion;
+    this.supportedVersion = supportedVersion;
+  }
+}
+
+export function isSchemaTooNewError(err: unknown): err is SchemaTooNewError {
+  // The name check keeps the guard reliable when the error crosses a module
+  // instance boundary (e.g. jiti-loaded extension vs. directly imported).
+  return err instanceof SchemaTooNewError
+    || (err instanceof Error && err.name === "GSDSchemaTooNewError");
+}
 
 interface StartupRepairAssessment {
   readonly required: boolean;
@@ -381,6 +417,9 @@ function initSchema(
         db.exec("CREATE INDEX IF NOT EXISTS idx_rework_findings_status ON rework_brief_findings(brief_id, severity, status)");
 
         recordSchemaVersion(db, SCHEMA_VERSION);
+        // Fresh DBs get the same V46 cutover stamps as migrated DBs so new
+        // and upgraded databases are indistinguishable.
+        stampStateCutoverPragmas(db, SCHEMA_VERSION);
       }
     }
 
@@ -445,6 +484,25 @@ let _migrationFaultForTest = false;
 /** Test-only: force migrateSchema to throw after applying its steps but before COMMIT. */
 export function _setMigrationFaultForTest(v: boolean): void { _migrationFaultForTest = v; }
 
+/**
+ * Stamp the state-DB cutover PRAGMAs so binaries and external tools can
+ * detect DB-authored GSD state cheaply (PRAGMA application_id/user_version
+ * are readable without parsing schema_version). No table changes.
+ */
+function stampStateCutoverPragmas(db: DbAdapter, version: number): void {
+  db.exec(`PRAGMA application_id = ${GSD_APPLICATION_ID}`);
+  db.exec(`PRAGMA user_version = ${version}`);
+}
+
+/**
+ * V46 — state-DB cutover stamp. Adds/alters NO tables; it only stamps
+ * application_id + user_version and records schema version 46.
+ */
+function applyMigrationV46StateCutoverStamp(db: DbAdapter): void {
+  stampStateCutoverPragmas(db, 46);
+  recordSchemaVersion(db, 46);
+}
+
 function migrateSchema(
   db: DbAdapter,
   dbPath: string | null,
@@ -453,10 +511,7 @@ function migrateSchema(
 ): void {
   const currentVersion = getCurrentSchemaVersion(db);
   if (currentVersion > SCHEMA_VERSION) {
-    throw new Error(
-      `gsd.db schema is v${currentVersion}, newer than the v${SCHEMA_VERSION} this gsd-pi supports. ` +
-      `Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.`,
-    );
+    throw new SchemaTooNewError(currentVersion, SCHEMA_VERSION);
   }
   if (currentVersion === SCHEMA_VERSION) return;
 
@@ -708,6 +763,13 @@ function migrateSchema(
     if (currentVersion < 45) {
       applyMigrationV45AuthorityRecovery(db);
       recordSchemaVersion(db, 45);
+    }
+
+    if (currentVersion < 46) {
+      // V46 adds/alters NO tables — cutover stamps only (application_id,
+      // user_version) so binaries and external tools can detect DB-authored
+      // state cheaply.
+      applyMigrationV46StateCutoverStamp(db);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");

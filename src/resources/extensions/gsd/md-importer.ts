@@ -47,7 +47,7 @@ import {
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
 import { milestoneIdToPhaseNum } from './layout-policy.js';
-import { parseRoadmap, parsePlan } from './parsers-legacy.js';
+import { parseLegacyRoadmap as parseRoadmap, parseLegacyPlan as parsePlan } from './schemas/parsers.js';
 import { parseContextDependsOn, parseSummary } from './files.js';
 import { logWarning } from './workflow-logger.js';
 import { parseDecisionsTable } from './decision-markdown-parser.js';

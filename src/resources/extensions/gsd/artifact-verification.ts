@@ -4,11 +4,12 @@
 import { parseUnitId } from "./unit-id.js";
 import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import { clearParseCache } from "./files.js";
-import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
+import { parseLegacyRoadmap, parseLegacyPlan } from "./schemas/parsers.js";
 import {
   isDbAvailable,
   getSlice,
   getSliceTasks,
+  getMilestoneSliceSummaries,
   getPendingGatesForTurn,
 } from "./gsd-db.js";
 import { refreshWorkflowDatabaseFromDisk } from "./db-workspace.js";
@@ -23,27 +24,24 @@ import {
   resolveTaskFiles,
   resolveTaskFile,
   relSliceFile,
-  resolveMilestoneFile,
   clearPathCache,
   resolveGsdRootFile,
   phaseDirMatchesMilestoneId,
 } from "./paths.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { LAYOUT_SEGMENTS, milestoneIdToPhaseNum, milestoneIdUniqueSuffix } from "./layout-policy.js";
+import { LAYOUT_SEGMENTS, milestoneIdToPhaseNum } from "./layout-policy.js";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   resolveExpectedArtifactPath,
   resolveExistingSliceResearchPath,
 } from "./auto-artifact-paths.js";
-import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { hasVerdict } from "./verdict-parser.js";
 import { validateArtifact } from "./schemas/validate.js";
 import { getProjectResearchStatus } from "./project-research-policy.js";
 import { isGsdWorktreePath } from "./worktree-root.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
-import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
 import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
@@ -65,9 +63,11 @@ export function readExecuteTaskArtifactReadiness(
   return null;
 }
 /**
- * Optional override for the legacy roadmap parser used by verifyExpectedArtifact.
- * Production leaves this null so the real parseLegacyRoadmap runs; tests inject
- * a throwing function to deterministically exercise the parse-failure catches.
+ * Optional override for the roadmap parser used by plan-milestone verification.
+ * That parse reads the artifact's own content (does it declare any slices?), not
+ * workflow authority, so it survives the DB cutover. Production leaves this null
+ * so the real parseLegacyRoadmap runs; tests inject a throwing function to
+ * deterministically exercise the parse-failure catch.
  * @internal
  */
 let _roadmapParserFn: ((content: string) => { slices: Array<{ id: string; done: boolean; depends?: string[] }> }) | null = null;
@@ -147,26 +147,9 @@ function hasCompleteProjectResearch(base: string): boolean {
   return getProjectResearchStatus(base).complete;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function hasLegacyCheckedTaskCompletion(base: string, mid: string, sid: string, tid: string): boolean {
-  const slicePath = resolveSlicePath(base, mid, sid);
-  if (!slicePath) return false;
-
-  const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
-  if (!planAbs || !existsSync(planAbs)) return false;
-
-  const planContent = readFileSync(planAbs, "utf-8");
-  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}(?:\\*\\*)?:`, "m");
-  return cbRe.test(planContent);
-}
-
 function findExistingSiblingPhaseArtifact(
   absPath: string,
   unitId: string,
-  allowTeamSuffixProjections = false,
 ): string | null {
   const { milestone } = parseUnitId(unitId);
   if (!MILESTONE_ID_RE.test(milestone)) return null;
@@ -185,11 +168,11 @@ function findExistingSiblingPhaseArtifact(
     for (const entry of readdirSync(phasesDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       if (entry.name === expectedDirName) continue;
-      const matchesPrimary = phaseDirMatchesMilestoneId(entry.name, milestone, phaseNum);
-      const matchesFallback = allowTeamSuffixProjections
-        && !milestoneIdUniqueSuffix(milestone)
-        && phaseDirMatchesMilestoneId(entry.name, milestone, phaseNum, true);
-      if (!matchesPrimary && !matchesFallback) continue;
+      // The team-suffix projection fallback that used to widen this match was
+      // enabled only for `execute-task`, whose verification no longer resolves
+      // an artifact path at all (DB-authoritative, ADR-017). It was removed by
+      // T036 rather than left as an unreachable branch.
+      if (!phaseDirMatchesMilestoneId(entry.name, milestone, phaseNum)) continue;
       const candidate = join(phasesDir, entry.name, expectedFile);
       if (existsSync(candidate)) return candidate;
     }
@@ -334,11 +317,18 @@ export function verifyExpectedArtifact(
       logWarning("recovery", `verify-fail ${unitType} ${unitId}: roadmap missing`);
       return false;
     }
+    // Fail closed: slice state is DB-authoritative (ADR-017). Without the DB
+    // there is nothing to verify against, and an empty slice list would
+    // silently turn this verify-fail into a verify-pass.
+    if (!isDbAvailable()) {
+      logWarning("recovery", `verify-fail ${unitType} ${unitId}: DB unavailable, cannot verify slice RESEARCH coverage`);
+      return false;
+    }
     try {
-      const roadmap = parseRoadmapForRecovery(readFileSync(roadmapFile, "utf-8"));
+      const slices = getMilestoneSliceSummaries(mid);
       const milestoneResearchFile = resolveExpectedArtifactPath("research-milestone", mid, base);
       const hasMilestoneResearch = !!milestoneResearchFile && existsSync(milestoneResearchFile);
-      for (const slice of roadmap.slices) {
+      for (const slice of slices) {
         if (slice.done) continue;
         if (hasMilestoneResearch && slice.id === "S01") continue;
         const depsComplete = (slice.depends ?? []).every((depId) => {
@@ -381,7 +371,6 @@ export function verifyExpectedArtifact(
   }
 
   const artifactBase = resolveArtifactVerificationBase(unitId, base);
-  const allowSiblingTeamSuffixProjections = unitType === "execute-task";
   let absPath = resolveExpectedArtifactPath(unitType, unitId, artifactBase);
   if (!absPath || !existsSync(absPath)) {
     const projectRoot = resolve(resolveWorktreeProjectRoot(artifactBase));
@@ -390,11 +379,7 @@ export function verifyExpectedArtifact(
       if (projectPath && existsSync(projectPath)) {
         absPath = projectPath;
       } else if (projectPath) {
-        const siblingPath = findExistingSiblingPhaseArtifact(
-          projectPath,
-          unitId,
-          allowSiblingTeamSuffixProjections,
-        );
+        const siblingPath = findExistingSiblingPhaseArtifact(projectPath, unitId);
         if (siblingPath) absPath = siblingPath;
       }
     }
@@ -404,11 +389,7 @@ export function verifyExpectedArtifact(
     return false;
   }
   if (!existsSync(absPath)) {
-    const siblingPath = findExistingSiblingPhaseArtifact(
-      absPath,
-      unitId,
-      allowSiblingTeamSuffixProjections,
-    );
+    const siblingPath = findExistingSiblingPhaseArtifact(absPath, unitId);
     if (siblingPath) absPath = siblingPath;
   }
   if (!existsSync(absPath)) {
@@ -513,10 +494,16 @@ export function verifyExpectedArtifact(
   }
 
   if (unitType === "execute-task") {
-    if (isDbAvailable()) return false;
-    const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
-    if (!mid || !sid || !tid) return false;
-    return hasLegacyCheckedTaskCompletion(base, mid, sid, tid);
+    // Fail closed: Task completion is DB-authoritative (ADR-017). Reaching
+    // here means the DB-backed readiness read above did not run or did not
+    // confirm the Attempt, and a `- [x] **T0N:` checkbox in a PLAN projection
+    // is not evidence of completion — accepting it turned a verify-fail into a
+    // verify-pass whenever the DB was unavailable.
+    logWarning(
+      "recovery",
+      `verify-fail ${unitType} ${unitId}: ${isDbAvailable() ? "no settled Task Attempt in the DB" : "DB unavailable"}, cannot confirm task completion`,
+    );
+    return false;
   }
 
   if (unitType === "complete-slice") {
@@ -529,19 +516,15 @@ export function verifyExpectedArtifact(
       const dbSlice = getSlice(mid, sid);
       if (dbSlice) {
         if (dbSlice.status !== "complete") return false;
-      } else if (!isDbAvailable()) {
-        const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
-        if (roadmapFile && existsSync(roadmapFile)) {
-          try {
-            const roadmapContent = readFileSync(roadmapFile, "utf-8");
-            const roadmap = parseRoadmapForRecovery(roadmapContent);
-            const slice = roadmap.slices.find((s) => s.id === sid);
-            if (slice && !slice.done) return false;
-          } catch (e) {
-            logWarning("recovery", `roadmap parse failed: ${(e as Error).message}`);
-            return false;
-          }
-        }
+      } else {
+        // Fail closed: slice completion is DB-authoritative (ADR-017). A
+        // missing row (or an unavailable DB) is not evidence of completion,
+        // so never fall through to a pass here.
+        logWarning(
+          "recovery",
+          `verify-fail ${unitType} ${unitId}: ${isDbAvailable() ? "no slice row in the DB" : "DB unavailable"}, cannot confirm slice completion`,
+        );
+        return false;
       }
     }
   }
@@ -558,10 +541,15 @@ export function verifyExpectedArtifact(
       },
     });
     if (!closeoutProof.ok) {
-      if (!isDbAvailable() && closeoutProof.reason === "db-unavailable") {
-        const summaryOutcome = classifyMilestoneSummaryContent(readFileSync(absPath, "utf-8"));
-        return summaryOutcome !== "failure" && hasImplementationArtifacts(base, mid) !== "absent";
-      }
+      // Fail closed: milestone closeout is DB-authoritative (ADR-017). A failed
+      // proof stays failed — SUMMARY content plus implementation artifacts are
+      // not a substitute for the canonical state, and rescuing on them turned a
+      // closeout-proof failure into a verify-pass whenever the DB was
+      // unavailable.
+      logWarning(
+        "recovery",
+        `verify-fail ${unitType} ${unitId}: closeout proof failed (${closeoutProof.reason})${closeoutProof.reason === "db-unavailable" ? ", DB unavailable" : ""}, cannot confirm milestone closeout`,
+      );
       return false;
     }
   }

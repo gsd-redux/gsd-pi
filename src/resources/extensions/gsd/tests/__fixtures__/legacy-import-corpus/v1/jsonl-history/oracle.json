@@ -5,7 +5,7 @@
   "importer_version": "v1-test",
   "base_project_revision": 0,
   "base_authority_epoch": 0,
-  "base_database_schema_version": 45,
+  "base_database_schema_version": 46,
   "source_set_hash": "sha256:95ab8976c4896dac47664994ebfda28ee7c0f6ccdc42cb093c9cb2c76c03a9d8",
   "change_set_hash": "sha256:16f75c063fffe96c74e098b2d99b370c793a43790f062c9fcefdfb7d14df6b69",
   "counts": {
@@ -110,197 +110,488 @@
     {
       "change_id": "history-active-001",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L001"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 0, "end_byte": 189, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 189,
+          "line": 1
+        },
         "value": "{\"cmd\":\"plan_milestone\",\"params\":{\"milestoneId\":\"M001\",\"title\":\"Legacy foundation\"},\"ts\":\"2025-01-01T00:00:00.000Z\",\"hash\":\"5c10a99963e2d4f3\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:887348f13381f25dcd0ff1be8a5e493986a7994d11427043bbfc91db4fdb2a32"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 1, "command": "plan_milestone", "entity": { "type": "milestone", "id": "M001" }, "authority_context": null, "file_order": 1 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 1,
+        "command": "plan_milestone",
+        "entity": {
+          "type": "milestone",
+          "id": "M001"
+        },
+        "authority_context": null,
+        "file_order": 1
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "history-evidence-only"
     },
     {
       "change_id": "history-active-002",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L002" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L002"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 190, "end_byte": 385, "line": 2 },
+        "locator": {
+          "start_byte": 190,
+          "end_byte": 385,
+          "line": 2
+        },
         "value": "{\"v\":2,\"cmd\":\"plan-milestone\",\"params\":{\"milestoneId\":\"M002\",\"title\":\"Current delivery\"},\"ts\":\"2025-01-01T00:01:00.000Z\",\"hash\":\"fd8deea9f8ec53b9\",\"actor\":\"system\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:6daaf0b1770710145e2fc421f5f3fcfcb832e604e88d584d9fb0fbb4c080a94e"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "plan_milestone", "entity": { "type": "milestone", "id": "M002" }, "authority_context": null, "file_order": 2 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "plan_milestone",
+        "entity": {
+          "type": "milestone",
+          "id": "M002"
+        },
+        "authority_context": null,
+        "file_order": 2
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "history-evidence-only"
     },
     {
       "change_id": "history-active-003",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L003" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L003"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 386, "end_byte": 612, "line": 3 },
+        "locator": {
+          "start_byte": 386,
+          "end_byte": 612,
+          "line": 3
+        },
         "value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M001\",\"sliceId\":\"S01\",\"taskId\":\"T01\",\"authorityContext\":\"adopted\"},\"ts\":\"2025-01-01T00:02:00.000Z\",\"hash\":\"b9e231eff8f9ba3e\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:66a3ffbab94c63d1a05ac585269ab8f0b12424c60942e34c73944419f0231e50"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_task", "entity": { "type": "task", "id": "T01" }, "authority_context": "adopted", "file_order": 3 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
+        "authority_context": "adopted",
+        "file_order": 3
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "adopted-history-evidence-only"
     },
     {
       "change_id": "history-active-004",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L004" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L004"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 613, "end_byte": 843, "line": 4 },
+        "locator": {
+          "start_byte": 613,
+          "end_byte": 843,
+          "line": 4
+        },
         "value": "{\"v\":2,\"cmd\":\"complete_task\",\"params\":{\"milestoneId\":\"M099\",\"sliceId\":\"S01\",\"taskId\":\"T01\",\"authorityContext\":\"legacy-only\"},\"ts\":\"2025-01-01T00:04:00.000Z\",\"hash\":\"24fc684e3554bed4\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:46386d69b4fd45c70c9585b8ff02c912dd414d36a03d979aa00f49b1c1e9c344"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_task", "entity": { "type": "task", "id": "T01" }, "authority_context": "legacy-only", "file_order": 4 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
+        "authority_context": "legacy-only",
+        "file_order": 4
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "unadopted-history-evidence-only"
     },
     {
       "change_id": "history-active-005",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L005" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L005"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 844, "end_byte": 1074, "line": 5 },
+        "locator": {
+          "start_byte": 844,
+          "end_byte": 1074,
+          "line": 5
+        },
         "value": "{\"v\":2,\"cmd\":\"complete_task\",\"params\":{\"milestoneId\":\"M099\",\"sliceId\":\"S01\",\"taskId\":\"T01\",\"authorityContext\":\"legacy-only\"},\"ts\":\"2025-01-01T00:04:00.000Z\",\"hash\":\"24fc684e3554bed4\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:46386d69b4fd45c70c9585b8ff02c912dd414d36a03d979aa00f49b1c1e9c344"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_task", "entity": { "type": "task", "id": "T01" }, "authority_context": "legacy-only", "file_order": 5 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
+        "authority_context": "legacy-only",
+        "file_order": 5
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "duplicate-history-evidence-preserved"
     },
     {
       "change_id": "history-active-006",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L006" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L006"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 1075, "end_byte": 1269, "line": 6 },
+        "locator": {
+          "start_byte": 1075,
+          "end_byte": 1269,
+          "line": 6
+        },
         "value": "{\"v\":2,\"cmd\":\"start-task\",\"params\":{\"milestoneId\":\"M099\",\"sliceId\":\"S01\",\"taskId\":\"T02\"},\"ts\":\"2025-01-01T00:03:00.000Z\",\"hash\":\"4dbb643c33853022\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:dd3f8029c07745927fb984fd6154b6770e625b56cd2c6e5cf48895f1e91331bc"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "start_task", "entity": { "type": "task", "id": "T02" }, "authority_context": null, "file_order": 6 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "start_task",
+        "entity": {
+          "type": "task",
+          "id": "T02"
+        },
+        "authority_context": null,
+        "file_order": 6
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "out-of-order-history-evidence-preserved"
     },
     {
       "change_id": "history-active-007",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log.jsonl#L007" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log.jsonl#L007"
+      },
       "raw": {
         "source_id": "history-active",
-        "locator": { "start_byte": 1270, "end_byte": 1459, "line": 7 },
+        "locator": {
+          "start_byte": 1270,
+          "end_byte": 1459,
+          "line": 7
+        },
         "value": "{\"v\":2,\"cmd\":\"future-command\",\"params\":{\"milestoneId\":\"M099\",\"payload\":\"retain me\"},\"ts\":\"2025-01-01T00:05:00.000Z\",\"hash\":\"034a47466486e269\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:3a71855285e937acefa03aa836f0e194ebb28ea298d1ab0c9729a6c3ea80630b"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "future_command", "entity": null, "authority_context": null, "file_order": 7 },
-      "provenance": { "source_id": "history-active", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "future_command",
+        "entity": null,
+        "authority_context": null,
+        "file_order": 7
+      },
+      "provenance": {
+        "source_id": "history-active",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "unknown-history-event-preserved"
     },
     {
       "change_id": "history-archive-001",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log-M001.jsonl.archived#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log-M001.jsonl.archived#L001"
+      },
       "raw": {
         "source_id": "history-archive-m001",
-        "locator": { "start_byte": 0, "end_byte": 177, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 177,
+          "line": 1
+        },
         "value": "{\"cmd\":\"complete_slice\",\"params\":{\"milestoneId\":\"M001\",\"sliceId\":\"S01\"},\"ts\":\"2025-01-02T00:00:00.000Z\",\"hash\":\"df4603cdbff173ce\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:5f20bef37f457e1113dd3d867f62bb35c9beeb045959ca7cae97cd49b44109da"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 1, "command": "complete_slice", "entity": { "type": "slice", "id": "S01" }, "authority_context": null, "file_order": 1 },
-      "provenance": { "source_id": "history-archive-m001", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 1,
+        "command": "complete_slice",
+        "entity": {
+          "type": "slice",
+          "id": "S01"
+        },
+        "authority_context": null,
+        "file_order": 1
+      },
+      "provenance": {
+        "source_id": "history-archive-m001",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "archived-history-evidence-only"
     },
     {
       "change_id": "history-archive-002",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/event-log-M001.jsonl.archived#L002" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/event-log-M001.jsonl.archived#L002"
+      },
       "raw": {
         "source_id": "history-archive-m001",
-        "locator": { "start_byte": 178, "end_byte": 350, "line": 2 },
+        "locator": {
+          "start_byte": 178,
+          "end_byte": 350,
+          "line": 2
+        },
         "value": "{\"v\":2,\"cmd\":\"complete-milestone\",\"params\":{\"milestoneId\":\"M001\"},\"ts\":\"2025-01-02T00:01:00.000Z\",\"hash\":\"c877176040436ab9\",\"actor\":\"system\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:8e9e129d5b09cce4290c610be8088929b3f74e03088ff13e8b24bd67dee2ba89"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_milestone", "entity": { "type": "milestone", "id": "M001" }, "authority_context": null, "file_order": 2 },
-      "provenance": { "source_id": "history-archive-m001", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_milestone",
+        "entity": {
+          "type": "milestone",
+          "id": "M001"
+        },
+        "authority_context": null,
+        "file_order": 2
+      },
+      "provenance": {
+        "source_id": "history-archive-m001",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "archived-history-evidence-only"
     },
     {
       "change_id": "history-canonical-worktree-001",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd-worktrees/M002/.gsd/event-log.jsonl#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd-worktrees/M002/.gsd/event-log.jsonl#L001"
+      },
       "raw": {
         "source_id": "history-canonical-m002",
-        "locator": { "start_byte": 0, "end_byte": 189, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 189,
+          "line": 1
+        },
         "value": "{\"cmd\":\"plan_milestone\",\"params\":{\"milestoneId\":\"M001\",\"title\":\"Legacy foundation\"},\"ts\":\"2025-01-01T00:00:00.000Z\",\"hash\":\"5c10a99963e2d4f3\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:887348f13381f25dcd0ff1be8a5e493986a7994d11427043bbfc91db4fdb2a32"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 1, "command": "plan_milestone", "entity": { "type": "milestone", "id": "M001" }, "authority_context": null, "file_order": 1 },
-      "provenance": { "source_id": "history-canonical-m002", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 1,
+        "command": "plan_milestone",
+        "entity": {
+          "type": "milestone",
+          "id": "M001"
+        },
+        "authority_context": null,
+        "file_order": 1
+      },
+      "provenance": {
+        "source_id": "history-canonical-m002",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "fork-base-history-preserved"
     },
     {
       "change_id": "history-canonical-worktree-002",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd-worktrees/M002/.gsd/event-log.jsonl#L002" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd-worktrees/M002/.gsd/event-log.jsonl#L002"
+      },
       "raw": {
         "source_id": "history-canonical-m002",
-        "locator": { "start_byte": 190, "end_byte": 387, "line": 2 },
+        "locator": {
+          "start_byte": 190,
+          "end_byte": 387,
+          "line": 2
+        },
         "value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M002\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2025-01-01T00:07:00.000Z\",\"hash\":\"59aebe24d8f53b7a\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:5b1ead95c3bc095079b4f7d3364866f90944f0304888ecbd07ca4f41787b8616"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_task", "entity": { "type": "task", "id": "T01" }, "authority_context": null, "file_order": 2 },
-      "provenance": { "source_id": "history-canonical-m002", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
+        "authority_context": null,
+        "file_order": 2
+      },
+      "provenance": {
+        "source_id": "history-canonical-m002",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "fork-branch-history-preserved"
     },
     {
       "change_id": "history-external-worktree-001",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": "$GSD_STATE_DIR/projects/project-a/worktrees/M004/.gsd/event-log.jsonl#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": "$GSD_STATE_DIR/projects/project-a/worktrees/M004/.gsd/event-log.jsonl#L001"
+      },
       "raw": {
         "source_id": "history-external-m004",
-        "locator": { "start_byte": 0, "end_byte": 194, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 194,
+          "line": 1
+        },
         "value": "{\"cmd\":\"save_decision\",\"params\":{\"scope\":\"architecture\",\"decision\":\"database-authority\"},\"ts\":\"2025-01-03T00:00:00.000Z\",\"hash\":\"00cf21e8070f4d0b\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:e2a45a18e67be85102a34024823eb65f375c04001ded0d2191ca488e9ca10294"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 1, "command": "save_decision", "entity": { "type": "decision", "id": "architecture:database-authority" }, "authority_context": null, "file_order": 1 },
-      "provenance": { "source_id": "history-external-m004", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 1,
+        "command": "save_decision",
+        "entity": {
+          "type": "decision",
+          "id": "architecture:database-authority"
+        },
+        "authority_context": null,
+        "file_order": 1
+      },
+      "provenance": {
+        "source_id": "history-external-m004",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "external-worktree-history-evidence-only"
     },
     {
       "change_id": "history-legacy-worktree-001",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/worktrees/M003/.gsd/event-log.jsonl#L001" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/worktrees/M003/.gsd/event-log.jsonl#L001"
+      },
       "raw": {
         "source_id": "history-legacy-m003",
-        "locator": { "start_byte": 0, "end_byte": 189, "line": 1 },
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 189,
+          "line": 1
+        },
         "value": "{\"cmd\":\"plan_milestone\",\"params\":{\"milestoneId\":\"M001\",\"title\":\"Legacy foundation\"},\"ts\":\"2025-01-01T00:00:00.000Z\",\"hash\":\"5c10a99963e2d4f3\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:887348f13381f25dcd0ff1be8a5e493986a7994d11427043bbfc91db4fdb2a32"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 1, "command": "plan_milestone", "entity": { "type": "milestone", "id": "M001" }, "authority_context": null, "file_order": 1 },
-      "provenance": { "source_id": "history-legacy-m003", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 1,
+        "command": "plan_milestone",
+        "entity": {
+          "type": "milestone",
+          "id": "M001"
+        },
+        "authority_context": null,
+        "file_order": 1
+      },
+      "provenance": {
+        "source_id": "history-legacy-m003",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "fork-base-history-preserved"
     },
     {
       "change_id": "history-legacy-worktree-002",
       "action": "preserve",
-      "target": { "kind": "legacy-workflow-event", "key": ".gsd/worktrees/M003/.gsd/event-log.jsonl#L002" },
+      "target": {
+        "kind": "legacy-workflow-event",
+        "key": ".gsd/worktrees/M003/.gsd/event-log.jsonl#L002"
+      },
       "raw": {
         "source_id": "history-legacy-m003",
-        "locator": { "start_byte": 190, "end_byte": 387, "line": 2 },
+        "locator": {
+          "start_byte": 190,
+          "end_byte": 387,
+          "line": 2
+        },
         "value": "{\"v\":2,\"cmd\":\"complete_task\",\"params\":{\"milestoneId\":\"M003\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2025-01-01T00:08:00.000Z\",\"hash\":\"745659124728423d\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
         "sha256": "sha256:5f083ad8d903636400fd395fb579b195b190e7d6edc59fc257bb72c67b56a4ce"
       },
-      "normalized": { "replay_policy": "evidence-only", "event_version": 2, "command": "complete_task", "entity": { "type": "task", "id": "T01" }, "authority_context": null, "file_order": 2 },
-      "provenance": { "source_id": "history-legacy-m003", "parser_id": "gsd-workflow-events", "parser_version": "2" },
+      "normalized": {
+        "replay_policy": "evidence-only",
+        "event_version": 2,
+        "command": "complete_task",
+        "entity": {
+          "type": "task",
+          "id": "T01"
+        },
+        "authority_context": null,
+        "file_order": 2
+      },
+      "provenance": {
+        "source_id": "history-legacy-m003",
+        "parser_id": "gsd-workflow-events",
+        "parser_version": "2"
+      },
       "reason_code": "fork-branch-history-preserved"
     }
   ],
@@ -310,7 +601,11 @@
       "code": "corrupt-jsonl-line",
       "severity": "warning",
       "source_id": "history-corrupt-m999",
-      "locator": { "start_byte": 0, "end_byte": 22, "line": 1 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 22,
+        "line": 1
+      },
       "raw_value": "{\"cmd\":\"complete-task\"",
       "message": "The corrupt JSONL line cannot be interpreted and remains preserved as raw history evidence."
     },
@@ -319,7 +614,11 @@
       "code": "duplicate-event-hash",
       "severity": "info",
       "source_id": "history-active",
-      "locator": { "start_byte": 844, "end_byte": 1074, "line": 5 },
+      "locator": {
+        "start_byte": 844,
+        "end_byte": 1074,
+        "line": 5
+      },
       "raw_value": "{\"v\":2,\"cmd\":\"complete_task\",\"params\":{\"milestoneId\":\"M099\",\"sliceId\":\"S01\",\"taskId\":\"T01\",\"authorityContext\":\"legacy-only\"},\"ts\":\"2025-01-01T00:04:00.000Z\",\"hash\":\"24fc684e3554bed4\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
       "message": "The repeated event hash is retained in file order without deduplication or replay."
     },
@@ -328,7 +627,11 @@
       "code": "empty-worktree-ledger-excluded",
       "severity": "info",
       "source_id": "history-empty-m005",
-      "locator": { "start_byte": 0, "end_byte": 1, "line": 1 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 1,
+        "line": 1
+      },
       "raw_value": "\n",
       "message": "The empty worktree shard carries no workflow history and is explicitly excluded."
     },
@@ -337,7 +640,11 @@
       "code": "history-fork-preserved",
       "severity": "info",
       "source_id": "history-canonical-m002",
-      "locator": { "start_byte": 190, "end_byte": 387, "line": 2 },
+      "locator": {
+        "start_byte": 190,
+        "end_byte": 387,
+        "line": 2
+      },
       "raw_value": "{\"v\":2,\"cmd\":\"complete-task\",\"params\":{\"milestoneId\":\"M002\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2025-01-01T00:07:00.000Z\",\"hash\":\"59aebe24d8f53b7a\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
       "message": "The canonical worktree ledger diverges after the shared first event and remains history-only evidence."
     },
@@ -346,7 +653,11 @@
       "code": "history-fork-preserved",
       "severity": "info",
       "source_id": "history-legacy-m003",
-      "locator": { "start_byte": 190, "end_byte": 387, "line": 2 },
+      "locator": {
+        "start_byte": 190,
+        "end_byte": 387,
+        "line": 2
+      },
       "raw_value": "{\"v\":2,\"cmd\":\"complete_task\",\"params\":{\"milestoneId\":\"M003\",\"sliceId\":\"S01\",\"taskId\":\"T01\"},\"ts\":\"2025-01-01T00:08:00.000Z\",\"hash\":\"745659124728423d\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
       "message": "The legacy worktree ledger diverges after the shared first event and remains history-only evidence."
     },
@@ -355,7 +666,11 @@
       "code": "non-workflow-jsonl-excluded",
       "severity": "info",
       "source_id": "history-doctor-exclusion",
-      "locator": { "start_byte": 0, "end_byte": 47, "line": 1 },
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 47,
+        "line": 1
+      },
       "raw_value": "{\"ts\":\"2025-01-04T00:00:00.000Z\",\"status\":\"ok\"}",
       "message": "Doctor history is JSONL but is not a workflow event ledger and is explicitly excluded."
     },
@@ -364,7 +679,11 @@
       "code": "out-of-order-event",
       "severity": "warning",
       "source_id": "history-active",
-      "locator": { "start_byte": 1075, "end_byte": 1269, "line": 6 },
+      "locator": {
+        "start_byte": 1075,
+        "end_byte": 1269,
+        "line": 6
+      },
       "raw_value": "{\"v\":2,\"cmd\":\"start-task\",\"params\":{\"milestoneId\":\"M099\",\"sliceId\":\"S01\",\"taskId\":\"T02\"},\"ts\":\"2025-01-01T00:03:00.000Z\",\"hash\":\"4dbb643c33853022\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
       "message": "The event timestamp is earlier than preceding rows; file order is retained without replay sorting."
     },
@@ -373,8 +692,15 @@
       "code": "secret-shaped-history-evidence",
       "severity": "warning",
       "source_id": "history-active",
-      "locator": { "start_byte": 1559, "end_byte": 1601, "line": 8 },
-      "raw_value": { "redacted": true, "sha256": "sha256:3e2b17e2fb31af768f6807d754d8b428322d736f6f1bdaff961a7886ba9337e5" },
+      "locator": {
+        "start_byte": 1559,
+        "end_byte": 1601,
+        "line": 8
+      },
+      "raw_value": {
+        "redacted": true,
+        "sha256": "sha256:3e2b17e2fb31af768f6807d754d8b428322d736f6f1bdaff961a7886ba9337e5"
+      },
       "message": "Secret-shaped content was found in preserved workflow history; diagnostic presentation is redacted."
     },
     {
@@ -382,20 +708,51 @@
       "code": "unknown-workflow-command",
       "severity": "warning",
       "source_id": "history-active",
-      "locator": { "start_byte": 1270, "end_byte": 1459, "line": 7 },
+      "locator": {
+        "start_byte": 1270,
+        "end_byte": 1459,
+        "line": 7
+      },
       "raw_value": "{\"v\":2,\"cmd\":\"future-command\",\"params\":{\"milestoneId\":\"M099\",\"payload\":\"retain me\"},\"ts\":\"2025-01-01T00:05:00.000Z\",\"hash\":\"034a47466486e269\",\"actor\":\"agent\",\"session_id\":\"fixture-session\"}",
       "message": "The command is not in the current workflow vocabulary and remains history-only evidence."
     }
   ],
   "resolutions": [
-    { "diagnosis_id": "diagnosis-corrupt-line", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-duplicate-event", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-empty-worktree-ledger", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-history-fork-canonical", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-history-fork-legacy", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-non-workflow-jsonl", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-out-of-order-event", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-secret-shaped-history", "disposition": "preserved" },
-    { "diagnosis_id": "diagnosis-unknown-command", "disposition": "preserved" }
+    {
+      "diagnosis_id": "diagnosis-corrupt-line",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-duplicate-event",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-empty-worktree-ledger",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-history-fork-canonical",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-history-fork-legacy",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-non-workflow-jsonl",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-out-of-order-event",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-secret-shaped-history",
+      "disposition": "preserved"
+    },
+    {
+      "diagnosis_id": "diagnosis-unknown-command",
+      "disposition": "preserved"
+    }
   ]
 }

@@ -53,7 +53,7 @@ import {
   type LegacyImportSurface,
 } from "../legacy-import-surfaces.ts";
 import { _getAdapter, closeDatabase, openDatabase, SCHEMA_VERSION } from "../gsd-db.ts";
-import { parseRoadmap } from "../parsers-legacy.ts";
+import { parseLegacyRoadmap as parseRoadmap } from "../schemas/parsers.ts";
 import { redactSecrets } from "../redact-secrets.ts";
 import { listRuns } from "../run-manager.ts";
 import {
@@ -546,7 +546,7 @@ test("legacy corpus manifest seals exact structure and aggregate accounting", ()
       SELECT
         (SELECT max(version) FROM schema_version) AS schema_version,
         (SELECT count(*) FROM workflow_import_applications) AS import_applications
-    `).get() }, { schema_version: 45, import_applications: 0 });
+    `).get() }, { schema_version: 46, import_applications: 0 });
     assert.equal(database.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
   });
   assert.equal(hashBytes(readFileSync(databasePath)), databaseBefore, "read-only boundary inspection must not mutate the database");
@@ -768,7 +768,7 @@ test("workflow_import_applications rejects an incomplete Preview envelope", () =
 });
 
 test("legacy import surface registry pins the deterministic Preview envelope contract", () => {
-  assert.equal(SCHEMA_VERSION, 45, "legacy import contract targets the accepted v45 schema");
+  assert.equal(SCHEMA_VERSION, 46, "legacy import contract targets the accepted v46 schema");
   assert.equal(LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION, SCHEMA_VERSION);
   assert.equal(LEGACY_IMPORT_PREVIEW_SCHEMA_VERSION, 1);
   assert.deepEqual(LEGACY_IMPORT_CHANGE_ACTIONS, ["create", "update", "delete", "preserve"]);
@@ -1559,7 +1559,7 @@ test("legacy corpus gsd truth preserves hierarchy evidence and refuses competing
           WHERE milestone_id = 'M001' AND slice_id = 'S02') AS junction_dependency
     `).get() as Record<string, unknown>;
     assert.deepEqual({ ...conflict }, {
-      schema_version: 45,
+      schema_version: 46,
       depends_json: '["S00"]',
       junction_dependency: "S99",
     });
@@ -2472,12 +2472,12 @@ test("legacy corpus capstone classifies database targets and changes without app
 
   assert.deepEqual(sourceRows("db-target-matrix"), [
     ["corrupt/.gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
-    ["current-v45/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
-    ["future-v46/.gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
+    ["current-v46/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["future-v47/.gsd/gsd.db", "gsd-sqlite-target", "unparsed"],
     ["historical-v30/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     ["historical-v34/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     ["historical-v43/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
-    ["historical-v44/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
+    ["historical-v45/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     ["unversioned-populated/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     ["wal-present/.gsd/gsd.db", "gsd-sqlite-target", "mapped"],
     ["wal-present/.gsd/gsd.db-shm", "gsd-sqlite-target", "preserved"],
@@ -2486,17 +2486,17 @@ test("legacy corpus capstone classifies database targets and changes without app
   assert.deepEqual(changeRows("db-target-matrix"), []);
   assert.deepEqual(diagnosisRows("db-target-matrix"), [
     ["diagnosis-corrupt-database", "corrupt-database", "blocker", "database-corrupt"],
-    ["diagnosis-future-v46", "future-schema-version", "blocker", "database-future-v46"],
+    ["diagnosis-future-v47", "future-schema-version", "blocker", "database-future-v47"],
     ["diagnosis-historical-v30", "historical-schema-version", "info", "database-historical-v30"],
     ["diagnosis-historical-v34", "historical-schema-version", "info", "database-historical-v34"],
     ["diagnosis-historical-v43", "historical-schema-version", "info", "database-historical-v43"],
-    ["diagnosis-historical-v44", "historical-schema-version", "info", "database-historical-v44"],
+    ["diagnosis-historical-v45", "historical-schema-version", "info", "database-historical-v45"],
     ["diagnosis-unversioned-populated", "unversioned-populated-database", "warning", "database-unversioned-populated"],
     ["diagnosis-wal-sidecars", "wal-sidecars-present", "warning", "database-wal-main"],
   ]);
   assert.deepEqual(oracle("db-target-matrix").resolutions, [
     { diagnosis_id: "diagnosis-corrupt-database", disposition: "unsupported" },
-    { diagnosis_id: "diagnosis-future-v46", disposition: "unsupported" },
+    { diagnosis_id: "diagnosis-future-v47", disposition: "unsupported" },
     {
       diagnosis_id: "diagnosis-historical-v30",
       disposition: "mapped",
@@ -2513,9 +2513,9 @@ test("legacy corpus capstone classifies database targets and changes without app
       target: { kind: "database-target", key: "historical-v43/.gsd/gsd.db" },
     },
     {
-      diagnosis_id: "diagnosis-historical-v44",
+      diagnosis_id: "diagnosis-historical-v45",
       disposition: "mapped",
-      target: { kind: "database-target", key: "historical-v44/.gsd/gsd.db" },
+      target: { kind: "database-target", key: "historical-v45/.gsd/gsd.db" },
     },
     {
       diagnosis_id: "diagnosis-unversioned-populated",
@@ -2543,12 +2543,12 @@ test("legacy corpus capstone classifies database targets and changes without app
     database.prepare("SELECT count(*) AS count FROM sqlite_master WHERE type = ? AND name = ?")
       .get(type, name)?.count === 1;
   const validTargetScenarios = [
-    "current-v45",
-    "future-v46",
+    "current-v46",
+    "future-v47",
     "historical-v30",
     "historical-v34",
     "historical-v43",
-    "historical-v44",
+    "historical-v45",
     "unversioned-populated",
   ];
   for (const scenario of validTargetScenarios) {
@@ -2560,19 +2560,19 @@ test("legacy corpus capstone classifies database targets and changes without app
       (database) => database.prepare("SELECT max(version) AS version FROM schema_version").get()?.version ?? 0,
     )])),
     {
-      "current-v45": 45,
-      "future-v46": 46,
+      "current-v46": 46,
+      "future-v47": 47,
       "historical-v30": 30,
       "historical-v34": 34,
       "historical-v43": 43,
-      "historical-v44": 44,
+      "historical-v45": 45,
       "unversioned-populated": 0,
     },
   );
   assert.equal(inspectTarget("historical-v30", (database) => objectExists(database, "table", "project_authority")), false);
   assert.equal(inspectTarget("historical-v34", (database) => objectExists(database, "table", "workflow_import_applications")), false);
   assert.equal(inspectTarget("historical-v43", (database) => objectExists(database, "trigger", "trg_workflow_lifecycle_reopen_authorization")), false);
-  assert.deepEqual(inspectTarget("current-v45", (database) => ({
+  assert.deepEqual(inspectTarget("current-v46", (database) => ({
     authority: objectExists(database, "table", "project_authority"),
     imports: objectExists(database, "table", "workflow_import_applications"),
     reopen: objectExists(database, "trigger", "trg_workflow_lifecycle_reopen_authorization"),
@@ -2655,7 +2655,7 @@ test("legacy corpus capstone classifies database targets and changes without app
         revision,
         authority_epoch
       FROM project_authority WHERE singleton = 1
-    `).get() }, { schema_version: 45, revision: 17, authority_epoch: 2 });
+    `).get() }, { schema_version: 46, revision: 17, authority_epoch: 2 });
     assert.equal(actionDatabase.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
     const baseDecisions = actionDatabase.prepare("SELECT * FROM decisions ORDER BY id").all()
       .map((row) => ({ ...row }));
@@ -2790,13 +2790,13 @@ test("legacy corpus capstone classifies database targets and changes without app
     ]),
     [
       [
-        "sha256:267072254d67b1c247f2d63bc7af21a9949d319b0d34b53349fdc2ddeeac1f06",
+        "sha256:f712d43219ebb62dc86387bceac68ac8b336d2683085dffa77e6830f190bee7f",
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-        "sha256:0c197e940845a6c31c43be95d5c05611df6097f8c4ddba6a6ba5a20989154488",
-        "sha256:1d8a9deb2e634a8bc0f5adc2534ab87cba4952d6af2452c20be9812aa97a35a6",
+        "sha256:b06e578466ad83cb973d01c9abe649fc6c0ae33171b957369f1f2709c2325edc",
+        "sha256:b48c73e29d930993a68a91afcd0055592b370124923ac51d970fe396332d1f6a",
       ],
       [
-        "sha256:6f645cd15496eb64888d60c6ce152c72f56a22c0f6ed0fc12bfa2711e11d2919",
+        "sha256:2a78444264ba66beca668ebd63bac360f4660eaee3f40404b4c768c4d0bd5f4f",
         "sha256:5ee816447ea03a7c8d1ffb391c2b49e7dc3e3cc6ec348c06c777a166c9f51099",
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
         "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",

@@ -14,7 +14,7 @@ import {
 } from "../../gsd-db.js";
 import { renderRoadmapFromDb } from "../../markdown-renderer.js";
 import { findMilestoneIds } from "../../milestone-ids.js";
-import { parseRoadmap } from "../../parsers-legacy.js";
+import { parseLegacyRoadmap as parseRoadmap } from "../../schemas/parsers.js";
 import { resolveMilestoneFile } from "../../paths.js";
 import { isClosedStatus, isSkippedForDispatch } from "../../status-guards.js";
 import type { GSDState } from "../../types.js";
@@ -44,6 +44,13 @@ function getSlicesReadyForDivergenceCheck(
   return ready;
 }
 
+// A `<!-- gsd:state-version=R:E -->` stamp is deliberately NOT used to skip
+// the comparison below. `project_authority.revision` is only advanced by the
+// domain-operation CAS; slice status/depends/sequence writes do not bump it,
+// so a stale projection can still carry the current stamp. The stamp is also a
+// content byte, not a provenance token — a hand-edited file keeps it. Per the
+// T008 invariant (markdown-renderer.ts), matching-stamp-but-diverging-content
+// IS drift, so every call compares content.
 function milestoneHasDivergence(
   basePath: string,
   milestoneId: string,

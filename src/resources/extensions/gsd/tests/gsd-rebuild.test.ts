@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { handleRebuild } from "../commands-maintenance.ts";
+import { getCurrentProjectStateVersion } from "../markdown-renderer.ts";
 import {
   closeDatabase,
   getTask,
@@ -157,7 +158,14 @@ test("handleRebuild re-renders missing task summary projections from DB", async 
     await handleRebuild(ctx, base);
 
     assert.equal(existsSync(summaryPath), true, "missing SUMMARY projection should be regenerated");
-    assert.equal(readFileSync(summaryPath, "utf-8"), "# T01 Summary\n\nRendered from DB.\n");
+    // T008: rendered projections carry the state-version stamp line; assert the
+    // exact stamped bytes (markdown-renderer.test.ts pattern) rather than
+    // stripping the stamp, keeping this a byte-exact re-render check.
+    const { revision, authorityEpoch } = getCurrentProjectStateVersion();
+    assert.equal(
+      readFileSync(summaryPath, "utf-8"),
+      `# T01 Summary\n\nRendered from DB.\n<!-- gsd:state-version=${revision}:${authorityEpoch} -->\n`,
+    );
     assert.match(notes.at(-1)?.message ?? "", /rebuilt markdown projections from the canonical DB/);
     assert.match(notes.at(-1)?.message ?? "", /Quarantined:\s+0/);
   } finally {

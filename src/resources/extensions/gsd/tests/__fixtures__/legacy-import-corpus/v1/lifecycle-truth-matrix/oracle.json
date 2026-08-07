@@ -5,8 +5,8 @@
   "importer_version": "v1-test",
   "base_project_revision": 0,
   "base_authority_epoch": 0,
-  "base_database_schema_version": 45,
-  "source_set_hash": "sha256:fe55e3037d0fa370a09ca12c4986da4b722767252e46b076c61eb9baef9addd3",
+  "base_database_schema_version": 46,
+  "source_set_hash": "sha256:2f63216eb40e9f40ba88263a401fbae4d12f3a8f55ad9d34273a2579f57da55d",
   "change_set_hash": "sha256:3a25ce3c5c4a599f8228487dc57bbd6a5850b245ddb65762eb8b41adee8ad0e9",
   "counts": {
     "create": 12,
@@ -22,7 +22,7 @@
       "path": ".gsd/gsd.db",
       "kind": "sqlite-database",
       "byte_size": 1224704,
-      "sha256": "sha256:bc3279d5d6539e110838d9d53f076472189193dfc8e51c1827d87789c633a86e",
+      "sha256": "sha256:afaaefb89399f2bc5ca192d6e9a841235acbda7846e2e4f4b48ae87fc02cb631",
       "parser_id": "gsd-sqlite-target",
       "parser_version": "1",
       "encoding": "binary",
@@ -187,172 +187,514 @@
     {
       "change_id": "change-all-slices-checked-complete",
       "action": "create",
-      "target": {"kind": "milestone-status", "key": "M002"},
-      "raw": {"source_id": "lifecycle-all-slices-checked", "locator": {"start_byte": 16, "end_byte": 78, "line": 3}, "value": "- [x] S01: First checked slice\n- [x] S02: Second checked slice", "sha256": "sha256:8ee0ffa031e2a5de3ea6b86a09cc214a126536eebac6d0c2a801d5508bab5698"},
+      "target": {
+        "kind": "milestone-status",
+        "key": "M002"
+      },
+      "raw": {
+        "source_id": "lifecycle-all-slices-checked",
+        "locator": {
+          "start_byte": 16,
+          "end_byte": 78,
+          "line": 3
+        },
+        "value": "- [x] S01: First checked slice\n- [x] S02: Second checked slice",
+        "sha256": "sha256:8ee0ffa031e2a5de3ea6b86a09cc214a126536eebac6d0c2a801d5508bab5698"
+      },
       "normalized": "complete",
-      "provenance": {"source_id": "lifecycle-all-slices-checked", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-all-slices-checked",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "all-roadmap-slices-checked"
     },
     {
       "change_id": "change-conflicting-structured-milestone-status-evidence",
       "action": "preserve",
-      "target": {"kind": "legacy-evidence", "key": "M001/structured-status"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 130, "end_byte": 138, "line": 5, "json_pointer": "/milestones/0/status"}, "value": "active", "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"},
-      "normalized": {"status": "active", "authority": "state-manifest"},
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-evidence",
+        "key": "M001/structured-status"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 130,
+          "end_byte": 138,
+          "line": 5,
+          "json_pointer": "/milestones/0/status"
+        },
+        "value": "active",
+        "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"
+      },
+      "normalized": {
+        "status": "active",
+        "authority": "state-manifest"
+      },
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "structured-lifecycle-conflict-evidence"
     },
     {
       "change_id": "change-conflicting-structured-slice-status-evidence",
       "action": "preserve",
-      "target": {"kind": "legacy-evidence", "key": "M001/S02/structured-status"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 603, "end_byte": 611, "line": 8, "json_pointer": "/slices/0/status"}, "value": "active", "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"},
-      "normalized": {"status": "active", "authority": "state-manifest"},
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-evidence",
+        "key": "M001/S02/structured-status"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 603,
+          "end_byte": 611,
+          "line": 8,
+          "json_pointer": "/slices/0/status"
+        },
+        "value": "active",
+        "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"
+      },
+      "normalized": {
+        "status": "active",
+        "authority": "state-manifest"
+      },
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "adopted-lifecycle-authority"
     },
     {
       "change_id": "change-dependency-column-preserved",
       "action": "preserve",
-      "target": {"kind": "legacy-evidence", "key": "M001/S02/depends-column"},
-      "raw": {"source_id": "lifecycle-dependency-database", "locator": {"start_byte": 118696, "end_byte": 118703}, "value": "[\"S00\"]", "sha256": "sha256:4b3f2c064a7a7f5d23f1efe7776e52ccc4a5cfe3627ed1735ceb26ffe32103b0"},
-      "normalized": {"representation": "database slices.depends", "value": ["S00"]},
-      "provenance": {"source_id": "lifecycle-dependency-database", "parser_id": "gsd-sqlite-target", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-evidence",
+        "key": "M001/S02/depends-column"
+      },
+      "raw": {
+        "source_id": "lifecycle-dependency-database",
+        "locator": {
+          "start_byte": 118696,
+          "end_byte": 118703
+        },
+        "value": "[\"S00\"]",
+        "sha256": "sha256:4b3f2c064a7a7f5d23f1efe7776e52ccc4a5cfe3627ed1735ceb26ffe32103b0"
+      },
+      "normalized": {
+        "representation": "database slices.depends",
+        "value": [
+          "S00"
+        ]
+      },
+      "provenance": {
+        "source_id": "lifecycle-dependency-database",
+        "parser_id": "gsd-sqlite-target",
+        "parser_version": "1"
+      },
       "reason_code": "dependency-conflict-raw-evidence"
     },
     {
       "change_id": "change-dependency-junction-preserved",
       "action": "preserve",
-      "target": {"kind": "legacy-evidence", "key": "M001/S02/dependency-junction"},
-      "raw": {"source_id": "lifecycle-dependency-database", "locator": {"start_byte": 180209, "end_byte": 180212}, "value": "S99", "sha256": "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba"},
-      "normalized": {"representation": "database slice_dependencies", "value": ["S99"]},
-      "provenance": {"source_id": "lifecycle-dependency-database", "parser_id": "gsd-sqlite-target", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-evidence",
+        "key": "M001/S02/dependency-junction"
+      },
+      "raw": {
+        "source_id": "lifecycle-dependency-database",
+        "locator": {
+          "start_byte": 180209,
+          "end_byte": 180212
+        },
+        "value": "S99",
+        "sha256": "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba"
+      },
+      "normalized": {
+        "representation": "database slice_dependencies",
+        "value": [
+          "S99"
+        ]
+      },
+      "provenance": {
+        "source_id": "lifecycle-dependency-database",
+        "parser_id": "gsd-sqlite-target",
+        "parser_version": "1"
+      },
       "reason_code": "dependency-conflict-raw-evidence"
     },
     {
       "change_id": "change-flat-checked-complete",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M001/S01/T02"},
-      "raw": {"source_id": "lifecycle-slice-plan", "locator": {"start_byte": 73, "end_byte": 119, "line": 4}, "value": "- [x] T02: Checked flat task without a summary", "sha256": "sha256:c373e455ba3e0f2741e39e7ced6acdcbc342c992dd3f8fd420c37ae2f2417b7d"},
+      "target": {
+        "kind": "task-status",
+        "key": "M001/S01/T02"
+      },
+      "raw": {
+        "source_id": "lifecycle-slice-plan",
+        "locator": {
+          "start_byte": 73,
+          "end_byte": 119,
+          "line": 4
+        },
+        "value": "- [x] T02: Checked flat task without a summary",
+        "sha256": "sha256:c373e455ba3e0f2741e39e7ced6acdcbc342c992dd3f8fd420c37ae2f2417b7d"
+      },
       "normalized": "complete",
-      "provenance": {"source_id": "lifecycle-slice-plan", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-slice-plan",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "flat-checkbox-complete"
     },
     {
       "change_id": "change-manifest-full-summary-preserved",
       "action": "create",
-      "target": {"kind": "task", "key": "M001/S02/T01", "field": "full_summary_md"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 1779, "end_byte": 1827, "line": 12, "json_pointer": "/tasks/0/full_summary_md"}, "value": "# Canonical summary\n\nFull Markdown retained.", "sha256": "sha256:b484a6e39ed3d4fde6bfb277be8cc37f6542aa4f76e5f71d16a0eff295ef27aa"},
+      "target": {
+        "kind": "task",
+        "key": "M001/S02/T01",
+        "field": "full_summary_md"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 1779,
+          "end_byte": 1827,
+          "line": 12,
+          "json_pointer": "/tasks/0/full_summary_md"
+        },
+        "value": "# Canonical summary\n\nFull Markdown retained.",
+        "sha256": "sha256:b484a6e39ed3d4fde6bfb277be8cc37f6542aa4f76e5f71d16a0eff295ef27aa"
+      },
       "normalized": "# Canonical summary\n\nFull Markdown retained.",
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "manifest-task-full-summary-preserved"
     },
     {
       "change_id": "change-manifest-narrative-preserved",
       "action": "create",
-      "target": {"kind": "task", "key": "M001/S02/T01", "field": "narrative"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 1557, "end_byte": 1606, "line": 12, "json_pointer": "/tasks/0/narrative"}, "value": "Canonical narrative retained from the manifest.", "sha256": "sha256:ee4c8662280b137f09c70e41c893a50a585e04ad015b41a803a8161073bf3fe2"},
+      "target": {
+        "kind": "task",
+        "key": "M001/S02/T01",
+        "field": "narrative"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 1557,
+          "end_byte": 1606,
+          "line": 12,
+          "json_pointer": "/tasks/0/narrative"
+        },
+        "value": "Canonical narrative retained from the manifest.",
+        "sha256": "sha256:ee4c8662280b137f09c70e41c893a50a585e04ad015b41a803a8161073bf3fe2"
+      },
       "normalized": "Canonical narrative retained from the manifest.",
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "manifest-task-narrative-preserved"
     },
     {
       "change_id": "change-manifest-skipped-cancelled",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M001/S02/T02"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 2230, "end_byte": 2239, "line": 13, "json_pointer": "/tasks/1/status"}, "value": "skipped", "sha256": "sha256:20cab521396d8cd705203732ffe15c16b7a96013900a5d43c22859fdd4723eb4"},
+      "target": {
+        "kind": "task-status",
+        "key": "M001/S02/T02"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 2230,
+          "end_byte": 2239,
+          "line": 13,
+          "json_pointer": "/tasks/1/status"
+        },
+        "value": "skipped",
+        "sha256": "sha256:20cab521396d8cd705203732ffe15c16b7a96013900a5d43c22859fdd4723eb4"
+      },
       "normalized": "cancelled",
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "legacy-skipped-means-cancelled"
     },
     {
       "change_id": "change-manifest-task-active",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M001/S02/T01"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 1521, "end_byte": 1529, "line": 12, "json_pointer": "/tasks/0/status"}, "value": "active", "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"},
+      "target": {
+        "kind": "task-status",
+        "key": "M001/S02/T01"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 1521,
+          "end_byte": 1529,
+          "line": 12,
+          "json_pointer": "/tasks/0/status"
+        },
+        "value": "active",
+        "sha256": "sha256:db0fb2bf5ebc424454c3e11b5ee8bfb43af24a52e561aa49e94143831dc6fd93"
+      },
       "normalized": "active",
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "manifest-task-status"
     },
     {
       "change_id": "change-markdown-full-summary-loss",
       "action": "preserve",
-      "target": {"kind": "legacy-artifact", "key": ".gsd/milestones/M001/slices/S02/S02-SUMMARY.md", "field": "full_summary_md"},
-      "raw": {"source_id": "lifecycle-adopted-summary", "locator": {"start_byte": 72, "end_byte": 160, "line": 5}, "value": "This Markdown contains a full task summary that cannot replace manifest full_summary_md.", "sha256": "sha256:fb7dc03242c2acc536f5b996619c4eb32fa11c8906410c85b3fde3d32a389321"},
-      "normalized": {"structured_value": null, "preservation": "verbatim-artifact"},
-      "provenance": {"source_id": "lifecycle-adopted-summary", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-artifact",
+        "key": ".gsd/milestones/M001/slices/S02/S02-SUMMARY.md",
+        "field": "full_summary_md"
+      },
+      "raw": {
+        "source_id": "lifecycle-adopted-summary",
+        "locator": {
+          "start_byte": 72,
+          "end_byte": 160,
+          "line": 5
+        },
+        "value": "This Markdown contains a full task summary that cannot replace manifest full_summary_md.",
+        "sha256": "sha256:fb7dc03242c2acc536f5b996619c4eb32fa11c8906410c85b3fde3d32a389321"
+      },
+      "normalized": {
+        "structured_value": null,
+        "preservation": "verbatim-artifact"
+      },
+      "provenance": {
+        "source_id": "lifecycle-adopted-summary",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "markdown-task-full-summary-md-loss"
     },
     {
       "change_id": "change-markdown-narrative-loss",
       "action": "preserve",
-      "target": {"kind": "legacy-artifact", "key": ".gsd/milestones/M001/slices/S01/tasks/T01/T01-PLAN.md", "field": "narrative"},
-      "raw": {"source_id": "lifecycle-nested-task-plan", "locator": {"start_byte": 105, "end_byte": 173, "line": 5}, "value": "Narrative written only in Markdown is not structured task narrative.", "sha256": "sha256:a41a860da45324c24e57490009e6c97a9f6480a66433769e60db62635f5122c4"},
-      "normalized": {"structured_value": null, "preservation": "verbatim-artifact"},
-      "provenance": {"source_id": "lifecycle-nested-task-plan", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-artifact",
+        "key": ".gsd/milestones/M001/slices/S01/tasks/T01/T01-PLAN.md",
+        "field": "narrative"
+      },
+      "raw": {
+        "source_id": "lifecycle-nested-task-plan",
+        "locator": {
+          "start_byte": 105,
+          "end_byte": 173,
+          "line": 5
+        },
+        "value": "Narrative written only in Markdown is not structured task narrative.",
+        "sha256": "sha256:a41a860da45324c24e57490009e6c97a9f6480a66433769e60db62635f5122c4"
+      },
+      "normalized": {
+        "structured_value": null,
+        "preservation": "verbatim-artifact"
+      },
+      "provenance": {
+        "source_id": "lifecycle-nested-task-plan",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "markdown-task-narrative-loss"
     },
     {
       "change_id": "change-milestone-summary-status-evidence",
       "action": "preserve",
-      "target": {"kind": "legacy-evidence", "key": "M001/summary-status"},
-      "raw": {"source_id": "lifecycle-milestone-summary", "locator": {"start_byte": 0, "end_byte": 14, "line": 1}, "value": "# M001 Summary", "sha256": "sha256:638a4458425aeda5b47c80a11bd9183766f6354b68417197c117c726400da234"},
-      "normalized": {"status": "complete", "authority": "summary-projection"},
-      "provenance": {"source_id": "lifecycle-milestone-summary", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "legacy-evidence",
+        "key": "M001/summary-status"
+      },
+      "raw": {
+        "source_id": "lifecycle-milestone-summary",
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 14,
+          "line": 1
+        },
+        "value": "# M001 Summary",
+        "sha256": "sha256:638a4458425aeda5b47c80a11bd9183766f6354b68417197c117c726400da234"
+      },
+      "normalized": {
+        "status": "complete",
+        "authority": "summary-projection"
+      },
+      "provenance": {
+        "source_id": "lifecycle-milestone-summary",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "milestone-summary-precedence"
     },
     {
       "change_id": "change-nested-checked-pending",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M001/S01/T01"},
-      "raw": {"source_id": "lifecycle-slice-plan", "locator": {"start_byte": 12, "end_byte": 72, "line": 3}, "value": "- [x] T01: Checked nested task without a same-parent summary", "sha256": "sha256:5341ffc42dbc9b6a861f419c6f3febd77051ac80cf35646184c8ce8524cff2be"},
+      "target": {
+        "kind": "task-status",
+        "key": "M001/S01/T01"
+      },
+      "raw": {
+        "source_id": "lifecycle-slice-plan",
+        "locator": {
+          "start_byte": 12,
+          "end_byte": 72,
+          "line": 3
+        },
+        "value": "- [x] T01: Checked nested task without a same-parent summary",
+        "sha256": "sha256:5341ffc42dbc9b6a861f419c6f3febd77051ac80cf35646184c8ce8524cff2be"
+      },
       "normalized": "pending",
-      "provenance": {"source_id": "lifecycle-slice-plan", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-slice-plan",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "nested-task-requires-matching-summary"
     },
     {
       "change_id": "change-parked-without-summary",
       "action": "create",
-      "target": {"kind": "milestone-status", "key": "M003"},
-      "raw": {"source_id": "lifecycle-parked-only", "locator": {"start_byte": 0, "end_byte": 13, "line": 1}, "value": "# M003 Parked", "sha256": "sha256:113f601af6645452a05a499c74e8ec4d4d1df9fafc91130aa66304a726a11949"},
+      "target": {
+        "kind": "milestone-status",
+        "key": "M003"
+      },
+      "raw": {
+        "source_id": "lifecycle-parked-only",
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 13,
+          "line": 1
+        },
+        "value": "# M003 Parked",
+        "sha256": "sha256:113f601af6645452a05a499c74e8ec4d4d1df9fafc91130aa66304a726a11949"
+      },
       "normalized": "parked",
-      "provenance": {"source_id": "lifecycle-parked-only", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-parked-only",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "parked-marker-without-summary"
     },
     {
       "change_id": "change-sketch-slice-pending",
       "action": "create",
-      "target": {"kind": "slice", "key": "M001/S03"},
-      "raw": {"source_id": "lifecycle-manifest", "locator": {"start_byte": 1343, "end_byte": 1344, "line": 9, "json_pointer": "/slices/1/is_sketch"}, "value": 1, "sha256": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"},
-      "normalized": {"status": "pending", "is_sketch": true, "task_count": 0},
-      "provenance": {"source_id": "lifecycle-manifest", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "target": {
+        "kind": "slice",
+        "key": "M001/S03"
+      },
+      "raw": {
+        "source_id": "lifecycle-manifest",
+        "locator": {
+          "start_byte": 1343,
+          "end_byte": 1344,
+          "line": 9,
+          "json_pointer": "/slices/1/is_sketch"
+        },
+        "value": 1,
+        "sha256": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+      },
+      "normalized": {
+        "status": "pending",
+        "is_sketch": true,
+        "task_count": 0
+      },
+      "provenance": {
+        "source_id": "lifecycle-manifest",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "sketch-slice-has-no-task-inference"
     },
     {
       "change_id": "change-unchecked-slice-summary-complete",
       "action": "create",
-      "target": {"kind": "slice-status", "key": "M004/S01"},
-      "raw": {"source_id": "lifecycle-upgrade-slice-summary", "locator": {"start_byte": 0, "end_byte": 13, "line": 1}, "value": "# S01 Summary", "sha256": "sha256:186ac59dc60100561b4a9b93f357eea7668a3a54a06bb0f9a1d9ea416cc1835f"},
+      "target": {
+        "kind": "slice-status",
+        "key": "M004/S01"
+      },
+      "raw": {
+        "source_id": "lifecycle-upgrade-slice-summary",
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 13,
+          "line": 1
+        },
+        "value": "# S01 Summary",
+        "sha256": "sha256:186ac59dc60100561b4a9b93f357eea7668a3a54a06bb0f9a1d9ea416cc1835f"
+      },
       "normalized": "complete",
-      "provenance": {"source_id": "lifecycle-upgrade-slice-summary", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-upgrade-slice-summary",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "all-tasks-complete-with-slice-summary"
     },
     {
       "change_id": "change-unchecked-task-summary-complete",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M004/S01/T01"},
-      "raw": {"source_id": "lifecycle-upgrade-task-summary", "locator": {"start_byte": 0, "end_byte": 13, "line": 1}, "value": "# T01 Summary", "sha256": "sha256:233010c732fe8de87192416de2b994b3ce9beebe46b21a65ed49d6c18fee0988"},
+      "target": {
+        "kind": "task-status",
+        "key": "M004/S01/T01"
+      },
+      "raw": {
+        "source_id": "lifecycle-upgrade-task-summary",
+        "locator": {
+          "start_byte": 0,
+          "end_byte": 13,
+          "line": 1
+        },
+        "value": "# T01 Summary",
+        "sha256": "sha256:233010c732fe8de87192416de2b994b3ce9beebe46b21a65ed49d6c18fee0988"
+      },
       "normalized": "complete",
-      "provenance": {"source_id": "lifecycle-upgrade-task-summary", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-upgrade-task-summary",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "matching-task-summary-attestation"
     },
     {
       "change_id": "change-upgraded-flat-task-complete",
       "action": "create",
-      "target": {"kind": "task-status", "key": "M004/S01/T02"},
-      "raw": {"source_id": "lifecycle-upgrade-plan", "locator": {"start_byte": 69, "end_byte": 97, "line": 4}, "value": "- [x] T02: Checked flat task", "sha256": "sha256:89c96a04308b2d9d0895d412bc4779fe7db42a534dc7b2495182b89b51836e45"},
+      "target": {
+        "kind": "task-status",
+        "key": "M004/S01/T02"
+      },
+      "raw": {
+        "source_id": "lifecycle-upgrade-plan",
+        "locator": {
+          "start_byte": 69,
+          "end_byte": 97,
+          "line": 4
+        },
+        "value": "- [x] T02: Checked flat task",
+        "sha256": "sha256:89c96a04308b2d9d0895d412bc4779fe7db42a534dc7b2495182b89b51836e45"
+      },
       "normalized": "complete",
-      "provenance": {"source_id": "lifecycle-upgrade-plan", "parser_id": "gsd-lifecycle-truth", "parser_version": "1"},
+      "provenance": {
+        "source_id": "lifecycle-upgrade-plan",
+        "parser_id": "gsd-lifecycle-truth",
+        "parser_version": "1"
+      },
       "reason_code": "flat-checkbox-complete"
     }
   ],
@@ -362,7 +704,11 @@
       "code": "projection-conflicts-with-adopted-lifecycle",
       "severity": "blocker",
       "source_id": "lifecycle-adopted-summary",
-      "locator": {"start_byte": 15, "end_byte": 70, "line": 3},
+      "locator": {
+        "start_byte": 15,
+        "end_byte": 70,
+        "line": 3
+      },
       "raw_value": "Projection claims the adopted active slice is complete.",
       "message": "A Markdown completion projection conflicts with adopted lifecycle authority."
     },
@@ -371,7 +717,11 @@
       "code": "checkbox-only-completion-advisory",
       "severity": "info",
       "source_id": "lifecycle-all-slices-checked",
-      "locator": {"start_byte": 16, "end_byte": 78, "line": 3},
+      "locator": {
+        "start_byte": 16,
+        "end_byte": 78,
+        "line": 3
+      },
       "raw_value": "- [x] S01: First checked slice\n- [x] S02: Second checked slice",
       "message": "All roadmap slice checkboxes imply completion but provide no milestone summary attestation."
     },
@@ -380,8 +730,14 @@
       "code": "slices-depends-vs-slice-dependencies-conflict",
       "severity": "blocker",
       "source_id": "lifecycle-dependency-database",
-      "locator": {"start_byte": 180209, "end_byte": 180212},
-      "raw_value": {"redacted": true, "sha256": "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba"},
+      "locator": {
+        "start_byte": 180209,
+        "end_byte": 180212
+      },
+      "raw_value": {
+        "redacted": true,
+        "sha256": "sha256:5c06606b31c31c3dfab03ce04ee502731830f6220178e10b5d006815de8b06ba"
+      },
       "message": "The database slices.depends column conflicts with the database slice_dependencies junction row; both representations are preserved."
     },
     {
@@ -389,7 +745,11 @@
       "code": "markdown-task-full-summary-md-loss",
       "severity": "warning",
       "source_id": "lifecycle-adopted-summary",
-      "locator": {"start_byte": 72, "end_byte": 160, "line": 5},
+      "locator": {
+        "start_byte": 72,
+        "end_byte": 160,
+        "line": 5
+      },
       "raw_value": "This Markdown contains a full task summary that cannot replace manifest full_summary_md.",
       "message": "Markdown summary prose has no structured full_summary_md representation and is preserved verbatim."
     },
@@ -398,7 +758,11 @@
       "code": "markdown-task-narrative-loss",
       "severity": "warning",
       "source_id": "lifecycle-nested-task-plan",
-      "locator": {"start_byte": 105, "end_byte": 173, "line": 5},
+      "locator": {
+        "start_byte": 105,
+        "end_byte": 173,
+        "line": 5
+      },
       "raw_value": "Narrative written only in Markdown is not structured task narrative.",
       "message": "Markdown narrative has no structured task narrative representation and is preserved verbatim."
     },
@@ -407,7 +771,11 @@
       "code": "incomplete-success-signal",
       "severity": "info",
       "source_id": "lifecycle-all-slices-checked",
-      "locator": {"start_byte": 16, "end_byte": 78, "line": 3},
+      "locator": {
+        "start_byte": 16,
+        "end_byte": 78,
+        "line": 3
+      },
       "raw_value": "- [x] S01: First checked slice\n- [x] S02: Second checked slice",
       "message": "Checkbox-only milestone success remains advisory because no summary exists."
     },
@@ -416,7 +784,11 @@
       "code": "slice-summary-upgrades-unchecked-roadmap",
       "severity": "info",
       "source_id": "lifecycle-unchecked-slice-roadmap",
-      "locator": {"start_byte": 16, "end_byte": 88, "line": 3},
+      "locator": {
+        "start_byte": 16,
+        "end_byte": 88,
+        "line": 3
+      },
       "raw_value": "- [ ] S01: Unchecked slice with complete children and a matching summary",
       "message": "The unchecked slice upgrades only because all tasks are complete and the matching slice summary exists."
     },
@@ -425,7 +797,11 @@
       "code": "projection-conflicts-with-adopted-lifecycle",
       "severity": "blocker",
       "source_id": "lifecycle-milestone-summary",
-      "locator": {"start_byte": 0, "end_byte": 14, "line": 1},
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 14,
+        "line": 1
+      },
       "raw_value": "# M001 Summary",
       "message": "The milestone summary projection conflicts with the structured active milestone status."
     },
@@ -434,7 +810,11 @@
       "code": "task-summary-parent-conflict",
       "severity": "blocker",
       "source_id": "lifecycle-wrong-parent-summary",
-      "locator": {"start_byte": 24, "end_byte": 84, "line": 3},
+      "locator": {
+        "start_byte": 24,
+        "end_byte": 84,
+        "line": 3
+      },
       "raw_value": "This summary belongs to S02/T01 and cannot complete S01/T01.",
       "message": "A summary under another slice cannot complete the checked nested task."
     },
@@ -443,21 +823,79 @@
       "code": "summary-overrides-unchecked-task",
       "severity": "info",
       "source_id": "lifecycle-upgrade-task-summary",
-      "locator": {"start_byte": 0, "end_byte": 13, "line": 1},
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 13,
+        "line": 1
+      },
       "raw_value": "# T01 Summary",
       "message": "The matching task summary completes the unchecked nested task."
     }
   ],
   "resolutions": [
-    {"diagnosis_id": "diagnosis-adopted-projection-conflict", "disposition": "requires-user"},
-    {"diagnosis_id": "diagnosis-checkbox-only-completion-advisory", "disposition": "mapped", "target": {"kind": "milestone-status", "key": "M002"}},
-    {"diagnosis_id": "diagnosis-dependency-representation-conflict", "disposition": "requires-user"},
-    {"diagnosis_id": "diagnosis-markdown-full-summary-loss", "disposition": "preserved", "target": {"kind": "legacy-artifact", "key": ".gsd/milestones/M001/slices/S02/S02-SUMMARY.md"}},
-    {"diagnosis_id": "diagnosis-markdown-narrative-loss", "disposition": "preserved", "target": {"kind": "legacy-artifact", "key": ".gsd/milestones/M001/slices/S01/tasks/T01/T01-PLAN.md"}},
-    {"diagnosis_id": "diagnosis-milestone-incomplete-success-signal", "disposition": "mapped", "target": {"kind": "milestone-status", "key": "M002"}},
-    {"diagnosis_id": "diagnosis-slice-summary-upgrade", "disposition": "mapped", "target": {"kind": "slice-status", "key": "M004/S01"}},
-    {"diagnosis_id": "diagnosis-structured-milestone-projection-conflict", "disposition": "requires-user"},
-    {"diagnosis_id": "diagnosis-task-summary-parent-conflict", "disposition": "requires-user"},
-    {"diagnosis_id": "diagnosis-task-summary-upgrade", "disposition": "mapped", "target": {"kind": "task-status", "key": "M004/S01/T01"}}
+    {
+      "diagnosis_id": "diagnosis-adopted-projection-conflict",
+      "disposition": "requires-user"
+    },
+    {
+      "diagnosis_id": "diagnosis-checkbox-only-completion-advisory",
+      "disposition": "mapped",
+      "target": {
+        "kind": "milestone-status",
+        "key": "M002"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-dependency-representation-conflict",
+      "disposition": "requires-user"
+    },
+    {
+      "diagnosis_id": "diagnosis-markdown-full-summary-loss",
+      "disposition": "preserved",
+      "target": {
+        "kind": "legacy-artifact",
+        "key": ".gsd/milestones/M001/slices/S02/S02-SUMMARY.md"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-markdown-narrative-loss",
+      "disposition": "preserved",
+      "target": {
+        "kind": "legacy-artifact",
+        "key": ".gsd/milestones/M001/slices/S01/tasks/T01/T01-PLAN.md"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-milestone-incomplete-success-signal",
+      "disposition": "mapped",
+      "target": {
+        "kind": "milestone-status",
+        "key": "M002"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-slice-summary-upgrade",
+      "disposition": "mapped",
+      "target": {
+        "kind": "slice-status",
+        "key": "M004/S01"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-structured-milestone-projection-conflict",
+      "disposition": "requires-user"
+    },
+    {
+      "diagnosis_id": "diagnosis-task-summary-parent-conflict",
+      "disposition": "requires-user"
+    },
+    {
+      "diagnosis_id": "diagnosis-task-summary-upgrade",
+      "disposition": "mapped",
+      "target": {
+        "kind": "task-status",
+        "key": "M004/S01/T01"
+      }
+    }
   ]
 }
