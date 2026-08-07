@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — 19/19 built; REVIEW AT CAP (3/3 cycles, all blocked) — awaiting human ruling
+Current wave: 3 of 4 — 21/21 built; review cycle 4 (cap raised to 4)
 Updated: 2026-08-05
 
 ## Waves
@@ -12,7 +12,7 @@ Updated: 2026-08-05
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
 | 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
-| 3 | consumers, evidence, command, docs (+T028, +T029-T036 fixes) | 19 | 19/19 | c1 blocked (4); c2 blocked (3, all c1 closed); c3 blocked (1, all c2 closed) — AT CAP |
+| 3 | consumers, evidence, command, docs (+T028, +T029-T038 fixes) | 21 | 21/21 | c1 blocked (4); c2 blocked (3); c3 blocked (1); c4 running (cap 4) |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
 ## In flight
@@ -24,6 +24,9 @@ Updated: 2026-08-05
 
 <!-- Anything a human should know: 2×-failed tasks, defective task files
      fixed mid-build, serialized file conflicts. -->
+- 2026-08-07 — the 39-file sweep found MORE than the review did. Cycle 3 named 15 RED tests in 4 files; sweeping every in-repo test importing a T011-touched module (auto-prompts, workspace-index, visualizer-data, github-sync/sync) found a 5th file with a 16th: right-sized-workflow-prompts.test.ts "complete-milestone prompt does not trust pass validation missing current summary coverage" — a validation-trust guard that would have shipped broken and burned cycle 4. Third time this sweep-before-authoring move has paid (T010 after 3 blocks, T029 after 1, here). GENERALIZABLE: when a task flips a read path, the set of tests it breaks is NOT the set it declares.
+- 2026-08-07 — T038 additionally found THREE tests passing VACUOUSLY (the silent form of the same defect): run-uat (n) and (q) returned null only because the wrapper found no candidates at all; right-sized's two "trusts passing validation" positives never had a SUMMARY to cover. All reseeded and proven killable. Running total of this defect class across the wave: 6 unfailable + 16 red + 3 vacuous.
+- 2026-08-07 — DISCLOSED, out of scope, NOT fixed — closeout must not count this as covered: complete-milestone-excerpt.test.ts "caps repeated inlined context around 20k chars" is unfailable and was unfailable at the review base. Removing the cap entirely (capPreamble → no-op) leaves it green, because the closer keeps CONTEXT/KNOWLEDGE on-demand so the fixture's bodies are never inlined (~7K measured against a 21K bound). Pre-existing, not a T011 surface.
 - 2026-08-06 — REVIEW CAP REACHED (max_review_cycles=3). All three cycles blocked; each cycle's findings were fully closed by the next, verified by independent probe, and each cycle then found a NEW instance of the same underlying risk. Attempts in full: cycle 1 — 7 pass / 4 fail (T010 AC2 two fail-open branches, T011 AC2 dispatch regression, T013 AC2 unsound stamp short-circuit, T014 AC1 unreachable command); fixed by T029-T033. Cycle 2 — all four confirmed closed by probe; 3 new findings (T029 AC4 six unfailable tests, T011 residue 3 RED + 3 vacuous tests, T032 help-menu regression); fixed by T034-T036. Cycle 3 — all three confirmed closed by probe; 1 new finding: 15 RED tests in four files, again attributable to T011 by single-file bisect against a27f96189^.
 - 2026-08-06 — THE STRUCTURAL CAUSE, now measured: `test:unit:compiled`'s glob is flat (`dist-test/src/tests/*.test.js`) and never descends into `src/tests/integration/`; no task Verify in this wave named those paths either. CI's separate `test:integration` job (ci.yml:246) DOES run them, so the branch is CI-RED at HEAD (84 tests, 69 pass, 15 fail — independently reproduced by the orchestrator). Affected: src/tests/integration/web-state-surfaces-contract.test.ts:37,:90 (from workspace-index.ts); prompt-budget-enforcement.test.ts x5, integration/run-uat.test.ts x6, complete-milestone-excerpt.test.ts x2 (from auto-prompts.ts). The run-uat six are live dispatch guards (human-experience UAT pause, browser-observable final-slice UAT). Reviewer's assessment: mechanical DB reseed of the exact shape T034 already executed, two disjoint fix tasks, NO design question.
 - 2026-08-06 — SIXTH appearance of the standing risk, and the first as RED rather than unfailable. Prior five: idle-recovery "lenient"; T013's forged-stamp no-drift test; auto-recovery's complete-milestone pair; verify-artifact-tightened's two #3607 tests; the six unfailable execute-task guards. Deleting a markdown fallback leaves tests that either go unfailable (invisible to every Verify) or red in a file no Verify runs. Any future wave that flips a read path must sweep the full test surface, integration globs included, not just the files it declares.
