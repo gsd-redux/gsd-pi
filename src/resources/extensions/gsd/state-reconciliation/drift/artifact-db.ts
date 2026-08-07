@@ -320,6 +320,26 @@ function milestoneIdAliases(
   return aliases;
 }
 
+/**
+ * Slice ids that a bare, PLAN-filename-derived id may legitimately resolve to.
+ *
+ * #1623: a flat-phase plan file only encodes a numeric index (`NN-MM-PLAN.md`),
+ * so the derived id is always bare (`S01`). DB rows, however, routinely carry a
+ * suffix — `S01-replan`, `S02-db-repair`, `S00-blocker` — and exact-equality
+ * membership flagged every one of them as `disk-slice-id-divergence`, pausing
+ * `/gsd auto` with no repair path short of hand-creating a bare placeholder
+ * slice. Accept the bare id itself or any id that extends it with a `-<suffix>`;
+ * the `-` separator keeps `S1` from matching `S10`.
+ */
+function knownSliceIdMatches(knownSliceIds: ReadonlySet<string>, sliceId: string): boolean {
+  if (knownSliceIds.has(sliceId)) return true;
+  const prefix = `${sliceId}-`;
+  for (const known of knownSliceIds) {
+    if (known.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 function detectDiskSliceIdDivergenceForMilestone(
   milestoneId: string,
   filesystemIds: string[],
@@ -343,7 +363,7 @@ function detectDiskSliceIdDivergenceForMilestone(
       if (!planMatch) continue;
       const planNum = parseInt(planMatch[1]!, 10);
       const sliceId = `S${String(planNum).padStart(2, "0")}`;
-      if (knownSliceIds.has(sliceId)) continue;
+      if (knownSliceIdMatches(knownSliceIds, sliceId)) continue;
       drifts.push({
         kind: "disk-slice-id-divergence",
         milestoneId,

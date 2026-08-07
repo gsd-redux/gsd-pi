@@ -2077,6 +2077,147 @@ test("#1565: unique-suffix DB milestone id resolves slices planned under the fil
   );
 });
 
+test("#1623: suffixed DB slice id satisfies the bare PLAN-filename slice id", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-suffixed-slice-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  writeFileSync(join(phaseDir, "01-01-PLAN.md"), "# Plan S01\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  // Replanning stored the slice with a suffix; the plan filename can only ever
+  // encode the bare numeric index, so exact-id matching flagged false drift.
+  insertSlice({ id: "S01-replan", milestoneId: "M001", title: "Slice", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.blockers.join("\n").includes("references unknown S01"),
+    false,
+    "suffixed slice id must satisfy the bare id derived from the plan filename",
+  );
+});
+
+test("#1623: bare plan slice id does not match a longer numeric slice id", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-bare-slice-prefix-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  writeFileSync(join(phaseDir, "01-01-PLAN.md"), "# Plan S01\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S010", milestoneId: "M001", title: "Slice", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(
+    result.blockers.join("\n").includes("references unknown S01"),
+    true,
+    "S010 is a different slice, not a suffixed alias of S01",
+  );
+});
+
+test("#1623: skipped slice does not produce unrepairable roadmap-divergence", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-skipped-roadmap-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  const roadmapPath = join(phaseDir, "01-ROADMAP.md");
+  // The rendered projection omits skipped slices, so S01 is absent by design.
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify skipped slices stay out of the divergence check",
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[]`",
+      "",
+    ].join("\n"),
+  );
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M001",
+    title: "Test",
+    status: "active",
+    planning: { vision: "Verify skipped slices stay out of the divergence check" },
+  });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true, result.ok ? "" : result.blockers.join("\n"));
+  assert.equal(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    false,
+    "a skipped slice missing from ROADMAP.md is the rendered contract, not drift",
+  );
+});
+
+test("#1623: stale roadmap row for a now-skipped slice is re-rendered away", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-skipped-roadmap-stale-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  const roadmapPath = join(phaseDir, "01-ROADMAP.md");
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify skipped slices are dropped from a stale projection",
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S01: Placeholder** `risk:medium` `depends:[]`",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[]`",
+      "",
+    ].join("\n"),
+  );
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M001",
+    title: "Test",
+    status: "active",
+    planning: { vision: "Verify skipped slices are dropped from a stale projection" },
+  });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true, result.ok ? "" : result.blockers.join("\n"));
+  const roadmap = readFileSync(roadmapPath, "utf-8");
+  assert.equal(roadmap.includes("S01: Placeholder"), false, "skipped slice is dropped");
+  assert.match(roadmap, /S02: Feature/);
+});
+
 // ─── #5707: caller closure (reconcileBeforeSpawn) ────────────────────────────
 
 test("ADR-017 (#5707): reconcileBeforeSpawn returns ok=true on clean reconciliation", async () => {
