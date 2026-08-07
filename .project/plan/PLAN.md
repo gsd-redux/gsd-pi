@@ -92,6 +92,9 @@ fix-doc items. Nothing in this wave deletes `parsers-legacy.ts`,
 | T031 | Revert the unsound drift stamp short-circuit; delete the test pinning its silent pass | T013 | src/resources/extensions/gsd/state-reconciliation/drift/roadmap.ts, drift/stale-render.ts, tests/state-reconciliation-drift.test.ts |
 | T032 | Route the shipped backup-restore command so /gsd db restore-backup is reachable | T014 | src/resources/extensions/gsd/commands/handlers/ops.ts, commands/catalog.ts, tests/db-restore-backup-routing.test.ts |
 | T033 | Re-key the legacy static proof and importer registry on parser symbols | T015, T016, T028 | scripts/legacy-state-path-proof.mjs, tests/parsers-legacy-importers.test.ts, src/tests/legacy-cleanup-gate.test.ts |
+| T034 | Repair the reassess/UAT dispatch tests T011 broke; restore the #1112 cache-race guard | T011, T030 | src/resources/extensions/gsd/tests/reassess-detection.test.ts, tests/uat-dispatch.test.ts, auto-prompts.ts |
+| T035 | Fix the help-menu coverage regression from the db subcommand registration | T032 | src/resources/extensions/gsd/commands/core.ts, tests/help-menu-coverage.test.ts |
+| T036 | Retire the obsolete execute-task checkbox and sibling-dir guards | T029 | src/resources/extensions/gsd/tests/verify-artifact-tightened.test.ts, artifact-verification.ts, docs/dev/state-db-cutover-milestone-decision.md |
 | T016 | Reconcile the parsers-legacy importer registry after wave-3 migration | T010, T011, T012, T013, T014, T028 | src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts |
 | T017 | Rewrite docs/dev/ci-cd-pipeline.md to document the manual npm-publish.yml reality | — | docs/dev/ci-cd-pipeline.md |
 | T018 | Downgrade ADR-004/-009/-011/-013/-036 status labels to audit-verified reality | — | docs/dev/ADR-004-*, ADR-009-*, ADR-011-*, ADR-013-*, ADR-036-* |
