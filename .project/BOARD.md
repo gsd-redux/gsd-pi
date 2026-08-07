@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — 19/19 done; review cycle 3 (final before cap)
+Current wave: 3 of 4 — 19/19 built; REVIEW AT CAP (3/3 cycles, all blocked) — awaiting human ruling
 Updated: 2026-08-05
 
 ## Waves
@@ -12,7 +12,7 @@ Updated: 2026-08-05
 |------|------|-------|------|--------|
 | 1 | risk burn-down | 4 | 4/4 | pass, 1 cycle (wave-1.cycle1.md) |
 | 2 | walking skeleton (+T024/T025/T026/T027 repairs) | 9 | 9/9 | pass, 2 cycles (wave-2.cycle2.md) |
-| 3 | consumers, evidence, command, docs (+T028, +T029-T036 fixes) | 19 | 19/19 | c1 blocked (4); c2 blocked (3, all c1 closed); c3 running |
+| 3 | consumers, evidence, command, docs (+T028, +T029-T036 fixes) | 19 | 19/19 | c1 blocked (4); c2 blocked (3, all c1 closed); c3 blocked (1, all c2 closed) — AT CAP |
 | 4 | timebox-gated deletions (separable) and closeout | 4 | 0/4 | — |
 
 ## In flight
@@ -24,6 +24,10 @@ Updated: 2026-08-05
 
 <!-- Anything a human should know: 2×-failed tasks, defective task files
      fixed mid-build, serialized file conflicts. -->
+- 2026-08-06 — REVIEW CAP REACHED (max_review_cycles=3). All three cycles blocked; each cycle's findings were fully closed by the next, verified by independent probe, and each cycle then found a NEW instance of the same underlying risk. Attempts in full: cycle 1 — 7 pass / 4 fail (T010 AC2 two fail-open branches, T011 AC2 dispatch regression, T013 AC2 unsound stamp short-circuit, T014 AC1 unreachable command); fixed by T029-T033. Cycle 2 — all four confirmed closed by probe; 3 new findings (T029 AC4 six unfailable tests, T011 residue 3 RED + 3 vacuous tests, T032 help-menu regression); fixed by T034-T036. Cycle 3 — all three confirmed closed by probe; 1 new finding: 15 RED tests in four files, again attributable to T011 by single-file bisect against a27f96189^.
+- 2026-08-06 — THE STRUCTURAL CAUSE, now measured: `test:unit:compiled`'s glob is flat (`dist-test/src/tests/*.test.js`) and never descends into `src/tests/integration/`; no task Verify in this wave named those paths either. CI's separate `test:integration` job (ci.yml:246) DOES run them, so the branch is CI-RED at HEAD (84 tests, 69 pass, 15 fail — independently reproduced by the orchestrator). Affected: src/tests/integration/web-state-surfaces-contract.test.ts:37,:90 (from workspace-index.ts); prompt-budget-enforcement.test.ts x5, integration/run-uat.test.ts x6, complete-milestone-excerpt.test.ts x2 (from auto-prompts.ts). The run-uat six are live dispatch guards (human-experience UAT pause, browser-observable final-slice UAT). Reviewer's assessment: mechanical DB reseed of the exact shape T034 already executed, two disjoint fix tasks, NO design question.
+- 2026-08-06 — SIXTH appearance of the standing risk, and the first as RED rather than unfailable. Prior five: idle-recovery "lenient"; T013's forged-stamp no-drift test; auto-recovery's complete-milestone pair; verify-artifact-tightened's two #3607 tests; the six unfailable execute-task guards. Deleting a markdown fallback leaves tests that either go unfailable (invisible to every Verify) or red in a file no Verify runs. Any future wave that flips a read path must sweep the full test surface, integration globs included, not just the files it declares.
+- 2026-08-06 — confirmed dead, milestone-scope, unowned: the compatibility wrapper's `fallbackCandidates` argument (uat-dispatch.ts) — both production callers pass a value provably `[]` whenever consulted. Also newly measured: the `detectStaleRenders` stub makes `markdown-renderer.test.ts:1571` unfailable (pre-existing, landed 2026-06-23).
 - 2026-08-06 — SCOPE DECISION PENDING for wave 4. T033 re-keyed the proof on parser symbols per user ruling; it now reports BLOCK with 8 offender files / 12 lines — the 7 relocated-symbol modules (artifact-verification, doctor-engine-checks, markdown-renderer, md-importer, migration-auto-check, drift/roadmap, drift/sketch-flag) plus state.ts. Every one of the 7 carries `Retired by: none` — NO TASK OWNS THEM. Wave 4 as planned assumes T022 clears the way for T020, but T020's zero-offender gate is now unreachable: either a successor milestone owns the 7, or wave 4 ships without T020. T033 also added a live-repo test pinning the proof RED so a future rename cannot quietly green it.
 - 2026-08-06 — coverage loss found by T029's coder and verified by probe, NOT a T029 defect: the `#1500` regression assertion ("execute-task accepts SUMMARY in stale sibling flat-phase dir") is now TAUTOLOGICAL — execute-task returns from the DB Attempt-readiness branch before any path resolution, so renaming the stale sibling SUMMARY still leaves the test green, and `allowSiblingTeamSuffixProjections` is dead for that unit type. Consequence of T010's conversion. Documented in-test rather than shipping a guard that reads as protecting #1500 when it cannot. Needs a ruling: restore sibling-dir resolution under DB authority, or retire #1500's guard explicitly.
 - 2026-08-06 — FOURTH instance of a silent verify-pass pinned as an asserted invariant: verify-artifact-tightened's two `#3607` tests opened with `closeDatabase()` + `assert.equal(isDbAvailable(), false)` and then asserted a checkbox PASSES verification. Prior three: idle-recovery "lenient", T013's forged-stamp no-drift test, auto-recovery's complete-milestone pair. All were green before the cutover touched them. The pre-cutover suite systematically documented permissiveness as intent.
