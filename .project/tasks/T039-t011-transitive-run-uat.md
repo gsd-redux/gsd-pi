@@ -3,12 +3,12 @@ id: T039
 title: Reseed the two transitively-reached run-uat tests T011 broke
 wave: 3
 deps: [T011, T038]
-status: pending
-agent: null
+status: in-progress
+agent: build_T039
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 5d92f1a453292af2c6db4fdfb7cbca4ca1fc6d14
+worktree: .worktrees/gsd-path-T039
+task_branch: gsd-path/T039
 files:
   - src/resources/extensions/gsd/tests/dispatch-run-uat-browser-tools.test.ts
   - src/resources/extensions/gsd/tests/run-uat-replay-cap.test.ts

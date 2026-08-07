@@ -3,12 +3,12 @@ id: T041
 title: Replace the ten silent catch blocks T014 added to commands-maintenance
 wave: 3
 deps: [T014, T032]
-status: pending
-agent: null
+status: in-progress
+agent: build_T041
 commit: null
-base: null
-worktree: null
-task_branch: null
+base: 5d92f1a453292af2c6db4fdfb7cbca4ca1fc6d14
+worktree: .worktrees/gsd-path-T041
+task_branch: gsd-path/T041
 files:
   - src/resources/extensions/gsd/commands-maintenance.ts
 ---
