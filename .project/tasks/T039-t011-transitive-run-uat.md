@@ -64,3 +64,65 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental
 ## Log
 
 - 2026-08-07 — created by planner from wave-3 review cycle 4
+- 2026-08-07 — coder. Reproduced both failures first: `dispatch-run-uat-browser-tools.test.ts:80`
+  `undefined !== 'stop'` and `run-uat-replay-cap.test.ts:55` `undefined !== 'dispatch'`
+  (6 pass / 2 fail across the Verify set).
+
+  **Diagnosis.** Both fixtures were markdown-only. Post-cutover the dispatch gate has
+  *no* markdown path left: `auto-dispatch.ts:916-921` calls
+  `uat-dispatch.checkNeedsRunUat(basePath, mid, prefs, await loadRoadmapCompletedSliceCandidates(...))`,
+  and `auto-prompts.ts:1676-1687` now reads `getMilestoneSlices(mid)` DB rows —
+  it returns `[]` when no DB is open, so *both* the authoritative and the
+  fallback argument were empty and the rule returned `null`. Fixture gap, not a
+  product defect.
+
+  **Fix (fixture-only, additive).** Both files: import
+  `{ closeDatabase, insertMilestone, insertSlice, isDbAvailable, openDatabase }`
+  from `../gsd-db.ts`, add a `seedSliceRows()` helper that opens `:memory:` and
+  inserts the milestone plus the slice rows the fixture's ROADMAP already
+  declares (S01 `complete`, S02 `pending` `depends:[S01]`), call it from the
+  scaffold, and `closeDatabase()` in teardown (`t.after` / `finally`). No
+  assertion added, removed, weakened, or reworded; test counts unchanged
+  (3 in these two files, 8 across the Verify set).
+
+  **Failability — four mutations, each applied to `auto-dispatch.ts`, run, then
+  reverted (`git hash-object` back to `981706481d94f0e421aee94fbfcc884891a39914`
+  after every one).**
+
+  | # | Mutation | Result |
+  |---|---|---|
+  | M1 | `:922` `if (!needsRunUat) return null;` → `if (!needsRunUat \|\| true) return null;` | **both RED** (1 pass / 2 fail) |
+  | M2 | `:943` `registeredTools,` → `registeredTools: undefined,` in the `getUatBrowserToolSupportError` call | **browser-tools RED only** (2 pass / 1 fail) |
+  | M3 | `:965` `if (attempts >= MAX_UAT_ATTEMPTS) {` → `if (false && attempts >= MAX_UAT_ATTEMPTS) {` | **replay-cap RED only** (2 pass / 1 fail) |
+  | M4 | `:923` `const { sliceId, uatType } = needsRunUat;` → `const { uatType } = needsRunUat; const sliceId = "S99";` | **both RED** (1 pass / 2 fail) |
+
+  So each test has a mutation that kills it *alone* and pins its own subject —
+  M2 the browser-tool preflight contract, M3 the three-attempt cap — plus M1/M4
+  covering the shared dispatch path.
+
+  **Not vacuous.** The failure mode this task warns about is a test that passes
+  because a candidate list is empty. That cannot be what happened here: both
+  tests assert *positive* outcomes (`'dispatch'` / `'stop'` with a specific
+  reason and `unitId` `M001/S01`), and an empty candidate list is exactly what
+  made them RED. M4 is the asymmetric probe — it changes nothing unless a
+  candidate is actually found and flows through as `S01`, and it turns both RED,
+  proving the seeded rows are load-bearing rather than decorative.
+
+  **Byte-identity.** `auto-prompts.ts` untouched: blob
+  `29af5990cee6d025b334fc40b46bf9fe87b14756` (sha256
+  `5c344a642629ce69a20cf55fa67e08862b1a05e6e56edfa7222248ff67c1c6b2`) before and
+  after — matching the review's required `29af5990c…`. `auto-dispatch.ts` blob
+  `981706481d94f0e421aee94fbfcc884891a39914` before and after all four mutations.
+  `git status --porcelain` shows only the two test files plus this task file.
+
+  **Verify** —
+  `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/dispatch-run-uat-browser-tools.test.ts src/resources/extensions/gsd/tests/run-uat-replay-cap.test.ts src/resources/extensions/gsd/tests/uat-dispatch.test.ts`
+  → `tests 8 / suites 0 / pass 8 / fail 0 / cancelled 0 / skipped 0 / todo 0`,
+  **exit 0**.
+
+  Note for the orchestrator: the pre-existing "stale native addon" warning
+  (`@opengsd/engine-darwin-arm64` lacks `SqliteFileIdentityLock` /
+  `ProjectionRootIdentityLock`) prints on every run here and is unrelated to
+  this task — see the review's Process finding on `build:native:test`.
+- 2026-08-07 — orchestrator Verify rerun (authoritative, isolated worktree): exit 0.
+  Diff scope check: declared files plus the task file; zero paths outside `files`.
