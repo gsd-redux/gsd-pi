@@ -16,7 +16,11 @@ import { renderRoadmapFromDb } from "../../markdown-renderer.js";
 import { findMilestoneIds } from "../../milestone-ids.js";
 import { parseRoadmap } from "../../parsers-legacy.js";
 import { resolveMilestoneFile } from "../../paths.js";
-import { isClosedStatus, isSkippedForDispatch } from "../../status-guards.js";
+import {
+  isClosedStatus,
+  isHiddenFromRoadmap,
+  isSkippedForDispatch,
+} from "../../status-guards.js";
 import type { GSDState } from "../../types.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";
 
@@ -37,6 +41,11 @@ function getSlicesReadyForDivergenceCheck(
 ): Set<string> {
   const ready = new Set<string>();
   for (const slice of dbSlices) {
+    // #1623: a skipped slice is never rendered into ROADMAP.md, so it can
+    // never satisfy the "ready slice must appear in the roadmap" rule. Treating
+    // it as ready made the drift unrepairable — re-rendering reproduced the
+    // same omission and /gsd auto paused after the reconciliation cap.
+    if (isHiddenFromRoadmap(slice.status)) continue;
     if (isClosedStatus(slice.status) || getSliceTasks(milestoneId, slice.id).length > 0) {
       ready.add(slice.id);
     }
@@ -60,7 +69,11 @@ function milestoneHasDivergence(
 
   const dbSlices = getMilestoneSlices(milestoneId);
   const dbSliceMap = new Map(dbSlices.map((s) => [s.id, s]));
-  const dbSliceOrder = new Map(dbSlices.map((s, index) => [s.id, index]));
+  // Sequence positions are compared against the *rendered* slice list, which
+  // omits skipped slices (#1623) — indexing the raw DB list would report a
+  // permanent off-by-N whenever a milestone contains a skipped slice.
+  const renderedSlices = dbSlices.filter((s) => !isHiddenFromRoadmap(s.status));
+  const dbSliceOrder = new Map(renderedSlices.map((s, index) => [s.id, index]));
   const readySliceIds = getSlicesReadyForDivergenceCheck(milestoneId, dbSlices);
   if (dbSlices.length > 0 && readySliceIds.size === 0) {
     return false;
@@ -72,6 +85,9 @@ function milestoneHasDivergence(
     roadmapSliceIds.add(roadmapSlice.id);
     const dbSlice = dbSliceMap.get(roadmapSlice.id);
     if (!dbSlice) return true; // Roadmap has a slice the DB doesn't.
+    // A stale roadmap row for a now-skipped slice: re-rendering removes it, so
+    // flagging this converges rather than looping.
+    if (isHiddenFromRoadmap(dbSlice.status)) return true;
     if (!readySliceIds.has(dbSlice.id)) continue;
     if (dbSliceOrder.get(dbSlice.id) !== i) return true;
     if (!arraysEqual(dbSlice.depends, roadmapSlice.depends)) return true;

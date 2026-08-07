@@ -12,7 +12,7 @@
 import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { createProjectionDirectorySync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning } from "./workflow-logger.js";
-import { isClosedStatus, toStatus } from "./status-guards.js";
+import { isClosedStatus, isHiddenFromRoadmap, toStatus } from "./status-guards.js";
 import { dirname, join } from "node:path";
 import {
   getAllMilestones,
@@ -568,7 +568,11 @@ export async function renderRoadmapFromDb(
     throw new Error(`milestone ${milestoneId} not found`);
   }
 
-  const slices = getMilestoneSlices(milestoneId).filter((slice) => slice.status !== "skipped");
+  // Shared with roadmap-divergence detection (#1623) so the projection and the
+  // drift check agree on which slices ROADMAP.md is expected to contain.
+  const slices = getMilestoneSlices(milestoneId).filter(
+    (slice) => !isHiddenFromRoadmap(slice.status),
+  );
 
   // Refuse to render a stub ROADMAP for an unplanned milestone (#852).
   // A milestone row created by gsd_milestone_generate_id / ensureMilestoneDbRow
