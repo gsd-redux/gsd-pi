@@ -572,10 +572,18 @@ test("refreshRecoveryDbForArtifact accepts canonical verify and route Result hea
     true,
     "a succeeded Result at verify is sufficient without SUMMARY or PLAN projections",
   );
+  // #1622: acceptance is read-only — the task row is never written here, so the
+  // result must say so instead of passing for a DB refresh.
   assert.deepEqual(
     refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", first),
-    { ok: true },
+    {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: "canonical Task Attempt verified at the verify stage (no DB write)",
+    },
   );
+  assert.equal(getTask("M001", "S01", "T01")?.status, "pending", "recovery must not advance the task row");
 
   closeDatabase();
   const second = makeTmpProject();
@@ -588,7 +596,12 @@ test("refreshRecoveryDbForArtifact accepts canonical verify and route Result hea
   );
   assert.deepEqual(
     refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", second),
-    { ok: true },
+    {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: "canonical Task Attempt verified at the route stage (no DB write)",
+    },
   );
 });
 

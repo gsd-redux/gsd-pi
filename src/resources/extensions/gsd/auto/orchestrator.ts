@@ -382,6 +382,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   // recovery to one attempt per stuck episode per run (reset on start/resume/
   // stop), mirroring the legacy Level-1-then-Level-2 escalation in phases.ts.
   private lastStuckRecoveryKey: string | null = null;
+  // #1622: the unit key whose last stuck recovery only *verified* canonical
+  // state without advancing its DB row. The re-dispatch such a recovery unblocks
+  // can land on exactly the state that got the unit stuck, so the next hard stop
+  // for this key must carry the operator recovery path instead of a bare
+  // stuck-loop reason the user can only answer by restarting auto-mode.
+  private lastReadOnlyRecoveryKey: string | null = null;
 
   public constructor(context: OrchestratorContext) {
     this.ctx = context.ctx;
@@ -886,12 +892,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
    * Returns `recovered: true` when recovery succeeded; the caller should re-loop
    * (return a skipped result) instead of stopping. A fatal refusal carries its
    * operator-actionable `blockedReason` so the hard-stop tells the user how to
-   * recover instead of only naming the dead end (#1622).
+   * recover instead of only naming the dead end (#1622). `outcome` carries what
+   * the refresh actually did so the journal cannot claim a DB write that never
+   * happened.
    */
   private tryStuckArtifactRecovery(
     unitType: string,
     unitId: string,
-  ): { recovered: boolean; blockedReason?: string } {
+  ): { recovered: boolean; outcome?: string; blockedReason?: string } {
     const key = buildDispatchKey(unitType, unitId);
     if (this.lastStuckRecoveryKey === key) return { recovered: false }; // already tried this episode
     const basePath = this.getLiveDispatchBasePath();
@@ -909,19 +917,53 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.dispatchHistory.clearOnRecovery();
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    return { recovered: true };
+    // #1622: a read-only refresh (execute-task: canonical Attempt verified, task
+    // row untouched) still earns one re-dispatch — the verify/route stages it
+    // unblocks do real work — but it is not proof the DB moved. Remember the key
+    // so the hard stop that follows a second failure names the recovery path.
+    const advanced = !refreshed.ok || refreshed.advanced !== false;
+    this.lastReadOnlyRecoveryKey = advanced ? null : key;
+    return {
+      recovered: true,
+      ...(refreshed.ok && refreshed.message ? { outcome: refreshed.message } : {}),
+    };
+  }
+
+  /**
+   * #1622: guidance appended to a hard stop for a unit whose last stuck recovery
+   * only verified canonical state. Without it the operator sees a bare
+   * `stuck-loop:` / finalized-repeat reason, restarts `gsd auto` — which clears
+   * the ring and the recovery key — and the whole verify→recover→re-dispatch
+   * round trip repeats invisibly.
+   */
+  private readOnlyRecoveryGuidance(unitType: string, unitId: string): string | null {
+    if (this.lastReadOnlyRecoveryKey !== buildDispatchKey(unitType, unitId)) return null;
+    return `stuck recovery for ${unitType} ${unitId} only verified canonical state on disk and did not advance its DB row, so re-running \`gsd auto\` will repeat this loop; reconcile the projection with \`gsd rebuild markdown\` then \`gsd recover\` (or resume the pending Task recovery action) before retrying.`;
+  }
+
+  /**
+   * Compose a hard-stop reason with whatever the stuck-recovery attempt learned:
+   * a fatal refusal's own message, else the read-only-recovery guidance (#1622).
+   */
+  private hardStopReason(
+    base: string,
+    recovery: { blockedReason?: string },
+    unitType: string,
+    unitId: string,
+  ): string {
+    const detail = recovery.blockedReason ?? this.readOnlyRecoveryGuidance(unitType, unitId);
+    return detail ? `${base} — ${detail}` : base;
   }
 
   private stuckRecovered(
     decision: { unitType: string; unitId: string },
     stateSnapshot: GSDState,
+    outcome: string,
   ): AutoAdvanceResult {
-    // execute-task recovery only *reads* the canonical Task Attempt — it never
-    // writes the task row — so claiming "DB refreshed" here misreported what
-    // happened and hid the projection drift behind a success line (#1622).
-    const outcome = decision.unitType === "execute-task"
-      ? "canonical Task Attempt state verified (no DB write)"
-      : "DB refreshed";
+    // The outcome comes from the refresh itself: execute-task recovery only
+    // *reads* the canonical Task Attempt, so claiming "DB refreshed" for it
+    // misreported what happened and hid the projection drift behind a success
+    // line (#1622).
     const recovered: AutoAdvanceResult = {
       kind: "skipped",
       reason: `stuck-recovery: ${decision.unitType} ${decision.unitId} artifact found on disk; ${outcome}`,
@@ -955,6 +997,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     // after a crash should see the dispatch history it had been accumulating.
     this.dispatchHistory.clearOnRecovery();
     this.lastStuckRecoveryKey = null;
+    this.lastReadOnlyRecoveryKey = null;
     this.lastDerivedPhase = null;
     this.status.phase = "running";
     this.bumpTransition();
@@ -1173,15 +1216,21 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         const finalizedRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
         if (finalizedRecovery.recovered) {
           this.clearPendingDispatch();
-          return this.stuckRecovered(decision, reconciliation.stateSnapshot);
+          return this.stuckRecovered(
+            decision,
+            reconciliation.stateSnapshot,
+            finalizedRecovery.outcome ?? "DB refreshed",
+          );
         }
         this.clearPendingDispatch();
-        const finalizedReason = `state did not advance after finalized ${decision.unitType} ${decision.unitId}`;
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: finalizedRecovery.blockedReason
-            ? `${finalizedReason} — ${finalizedRecovery.blockedReason}`
-            : finalizedReason,
+          reason: this.hardStopReason(
+            `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
+            finalizedRecovery,
+            decision.unitType,
+            decision.unitId,
+          ),
           action: "stop",
           stateSnapshot: reconciliation.stateSnapshot,
         };
@@ -1240,14 +1289,21 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         const stuckRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
         if (stuckRecovery.recovered) {
           this.clearPendingDispatch();
-          return this.stuckRecovered(decision, reconciliation.stateSnapshot);
+          return this.stuckRecovered(
+            decision,
+            reconciliation.stateSnapshot,
+            stuckRecovery.outcome ?? "DB refreshed",
+          );
         }
         this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: stuckRecovery.blockedReason
-            ? `stuck-loop: ${stuckVerdict.reason} — ${stuckRecovery.blockedReason}`
-            : `stuck-loop: ${stuckVerdict.reason}`,
+          reason: this.hardStopReason(
+            `stuck-loop: ${stuckVerdict.reason}`,
+            stuckRecovery,
+            decision.unitType,
+            decision.unitId,
+          ),
           action: "stop",
         };
         this.journalTransition({
@@ -1379,6 +1435,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       this.dispatchHistory.rehydrate();
     }
     this.lastStuckRecoveryKey = null;
+    this.lastReadOnlyRecoveryKey = null;
     // ADR-030: drop the prior "from" — the first advance after resume has no
     // edge to assert (avoids a false illegal-edge across the pause boundary).
     this.lastDerivedPhase = null;
@@ -1405,6 +1462,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       this.dispatchHistory.clearOnRecovery();
     }
     this.lastStuckRecoveryKey = null;
+    this.lastReadOnlyRecoveryKey = null;
     this.bumpTransition();
     this.journalTransition({ name: "stop", reason });
     this.notifyLifecycle({ name: "stop", detail: reason });

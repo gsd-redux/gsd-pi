@@ -44,6 +44,8 @@ import { AutoSession } from "../auto/session.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from "../db/milestone-leases.js";
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
+import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.js";
+import { internalExecutionInvocation } from "../execution-invocation.js";
 import { normalizeRealPath } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
 import { queryJournal } from "../journal.js";
@@ -202,6 +204,46 @@ function makeFixture(opts: FixtureOptions = {}): Fixture {
       try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
     },
   };
+}
+
+/**
+ * Seed the canonical Task Attempt that makes `verifyExpectedArtifact` report the
+ * fixture task as complete on disk while its DB row stays open — the #1622
+ * projection-drift shape that drives stuck recovery down the execute-task
+ * (read-only) branch.
+ */
+function seedSucceededTaskAttempt(base: string): void {
+  const workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) throw new Error("fixture lease claim failed");
+  const claim = recordDispatchClaim({
+    traceId: "read-only-recovery",
+    workerId,
+    milestoneLeaseToken: lease.token,
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+  });
+  assert.equal(claim.ok, true);
+  if (!claim.ok) throw new Error("fixture dispatch claim failed");
+  const attempt = claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:read-only-recovery:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken: lease.token,
+    coordinationDispatchId: claim.dispatchId,
+  });
+  settleTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:read-only-recovery:settle"),
+    attemptId: attempt.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "executor succeeded",
+    output: {},
+  });
 }
 
 function makeState(): GSDState {
@@ -1069,6 +1111,45 @@ test("stuck-loop: journal records the stuck-loop reason on advance-blocked", asy
   );
   assert.ok(stuckEntry, "journal must record an advance-blocked entry with the stuck-loop reason");
   assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
+test("#1622: execute-task stuck recovery reports the read-only outcome and names the recovery path on the next hard stop", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  seedSucceededTaskAttempt(f.base);
+
+  // Round 1: the ring saturates, but the canonical Attempt makes the artifact
+  // verify — stuck recovery takes the unit instead of hard-stopping.
+  const first: Awaited<ReturnType<typeof f.orchestrator.advance>>[] = [];
+  for (let i = 0; i < STUCK_WINDOW_SIZE; i++) first.push(await f.orchestrator.advance());
+  const recovered = first[STUCK_WINDOW_SIZE - 1];
+  assert.equal(recovered.kind, "skipped", JSON.stringify(recovered));
+  if (recovered.kind !== "skipped") return;
+  assert.equal(
+    recovered.reason,
+    "stuck-recovery: execute-task M001/S01/T01 artifact found on disk; " +
+      "canonical Task Attempt verified at the verify stage (no DB write)",
+    "the journal must not claim a DB refresh the execute-task branch never performed",
+  );
+
+  // Round 2: the recovery cleared the ring but wrote nothing, so the unit
+  // saturates it again. This time recovery is spent, and the hard stop must
+  // carry the operator recovery path instead of a bare stuck-loop verdict.
+  let blocked: Awaited<ReturnType<typeof f.orchestrator.advance>> | null = null;
+  for (let i = 0; i < STUCK_WINDOW_SIZE; i++) {
+    const result = await f.orchestrator.advance();
+    if (result.kind === "blocked") {
+      blocked = result;
+      break;
+    }
+  }
+  assert.ok(blocked, "the second saturation must hard-stop rather than recover again");
+  if (!blocked || blocked.kind !== "blocked") return;
+  assert.equal(blocked.action, "stop");
+  assert.ok(blocked.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${blocked.reason}`);
+  assert.match(blocked.reason, /did not advance its DB row/);
+  assert.match(blocked.reason, /gsd rebuild markdown/);
+  assert.match(blocked.reason, /gsd recover/);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

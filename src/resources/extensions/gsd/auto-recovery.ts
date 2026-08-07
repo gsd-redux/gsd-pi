@@ -114,8 +114,15 @@ export function _setGithubFinalizeFnForTests(
 
 // ─── Recovery DB refresh ──────────────────────────────────────────────────────
 
+/**
+ * The success arm carries `advanced: false` when the branch only *observed*
+ * canonical state and wrote nothing (#1622). Callers must not describe such a
+ * result as a DB refresh, and must not treat it as evidence that a re-dispatch
+ * will find different state than the one that got the unit stuck. `advanced`
+ * absent means the branch either reconciled the DB or had no DB work to do.
+ */
 export type ArtifactRecoveryDbRefreshResult =
-  | { ok: true }
+  | { ok: true; advanced?: boolean; reason?: string; message?: string }
   | { ok: false; fatal: boolean; message: string; reason: string };
 
 function closeoutProofRecoveryReason(reason: CloseoutProofFailureReason): string {
@@ -247,7 +254,19 @@ export function refreshRecoveryDbForArtifact(
         };
       }
     }
-    return { ok: true };
+    // #1622: unlike the plan-slice/complete-milestone branches below, nothing
+    // above writes the Task row — this branch only *reads* canonical Attempt
+    // readiness. Reconciling the row here would silently import a completion
+    // artifact the runtime deliberately refuses to trust (the doctor
+    // `artifact_db_status_divergence` check exists precisely to keep that an
+    // operator-invoked decision), so report the read-only outcome instead of an
+    // unqualified success and let callers describe what actually happened.
+    return {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: `canonical Task Attempt verified at the ${readiness} stage (no DB write)`,
+    };
   }
 
   if (!refreshWorkflowDatabaseFromDisk()) {

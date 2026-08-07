@@ -374,7 +374,9 @@ export async function runDispatch(
             return { action: "continue" };
           }
           ctx.ui.notify(
-            `Stuck recovery: artifact for ${unitType} ${unitId} found on disk. Invalidating caches.`,
+            `Stuck recovery: artifact for ${unitType} ${unitId} found on disk${
+              recoveryDb.message ? ` (${recoveryDb.message})` : ""
+            }. Invalidating caches.`,
             "info",
           );
           deps.invalidateAllCaches();
@@ -403,7 +405,9 @@ export async function runDispatch(
           const recoveryDb = refreshRecoveryDbForArtifact(unitType, unitId, s.basePath);
           if (recoveryDb.ok) {
             ctx.ui.notify(
-              `Stuck recovery: artifact for ${unitType} ${unitId} found on disk after cache invalidation. Continuing.`,
+              `Stuck recovery: artifact for ${unitType} ${unitId} found on disk after cache invalidation${
+                recoveryDb.message ? ` (${recoveryDb.message})` : ""
+              }. Continuing.`,
               "info",
             );
             loopState.recentUnits.length = 0;
