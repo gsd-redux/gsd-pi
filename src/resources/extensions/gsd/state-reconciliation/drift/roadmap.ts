@@ -58,7 +58,13 @@ function milestoneHasDivergence(
     return false;
   }
 
-  const dbSlices = getMilestoneSlices(milestoneId);
+  // Mirror renderRoadmapFromDb's filter (#1619): the ROADMAP projection omits
+  // skipped slices, so the detector must compare against the same view.
+  // Without this, a skipped slice counts as "ready" (skipped ∈
+  // RAW_CLOSED_STATUSES) but never appears in the rendered markdown, so the
+  // absence/order checks below report a divergence that re-rendering can never
+  // repair — reconcileBeforeDispatch then throws on every dispatch.
+  const dbSlices = getMilestoneSlices(milestoneId).filter((s) => s.status !== "skipped");
   const dbSliceMap = new Map(dbSlices.map((s) => [s.id, s]));
   const dbSliceOrder = new Map(dbSlices.map((s, index) => [s.id, index]));
   const readySliceIds = getSlicesReadyForDivergenceCheck(milestoneId, dbSlices);

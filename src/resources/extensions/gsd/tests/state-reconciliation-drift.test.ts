@@ -1384,6 +1384,61 @@ test("ADR-017 (#870): roadmap-divergence accepts recovered S00 blocker sequence"
   assert.equal(readFileSync(roadmapPath, "utf-8"), originalRoadmap);
 });
 
+test("ADR-017 (#1619): skipped slices are excluded from the divergence view", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-skipped-"));
+  const milestoneId = "M017";
+  const milestoneDir = join(base, ".gsd", "milestones", milestoneId);
+  const roadmapPath = join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  mkdirSync(milestoneDir, { recursive: true });
+  // The projection omits the skipped S00-blocker, so S01 renders first.
+  const originalRoadmap = [
+    `# ${milestoneId}: Blocker Skipped Milestone`,
+    "",
+    "**Vision:** Skipped blocker slice must not wedge reconciliation.",
+    "",
+    "## Slices",
+    "",
+    "- [ ] **S01: Source of truth contract** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+    "- [ ] **S02: Policy implementation** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+  ].join("\n");
+  writeFileSync(roadmapPath, originalRoadmap);
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: milestoneId,
+    title: "Blocker Skipped Milestone",
+    status: "queued",
+    planning: { vision: "Skipped blocker slice must not wedge reconciliation." },
+  });
+  insertSlice({ id: "S00-blocker", milestoneId, title: "Blocker placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 0 });
+  insertSlice({ id: "S01", milestoneId, title: "Source of truth contract", status: "pending", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId, title: "Policy implementation", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  // S01 is planned, so it counts as "ready" — without excluding the skipped
+  // S00-blocker its DB index (1) would never match its roadmap index (0).
+  insertTask({ id: "T01", sliceId: "S01", milestoneId, title: "Map policy inputs", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: milestoneId, title: "Blocker Skipped Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    false,
+    "a skipped slice omitted by the renderer must not report roadmap-divergence",
+  );
+  assert.equal(readFileSync(roadmapPath, "utf-8"), originalRoadmap);
+});
+
 test("ADR-017 (#5705): roadmap-divergence re-renders projection without syncing depends into DB", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-"));
   const milestoneDir = join(base, ".gsd", "phases", "01-test");
