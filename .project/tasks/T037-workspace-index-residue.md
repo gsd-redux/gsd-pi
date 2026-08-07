@@ -3,9 +3,9 @@ id: T037
 title: Reseed the workspace-index contract tests T011 broke
 wave: 3
 deps: [T011]
-status: in-progress
+status: done
 agent: build_T037
-commit: null
+commit: 97f49b67f45f9888f0950c4c9ec93074963ea1ce
 base: 0c202c67eb5968ed9a872fbded416e12e3d86f15
 worktree: .worktrees/gsd-path-T037
 task_branch: gsd-path/T037
