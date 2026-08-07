@@ -3,9 +3,9 @@ id: T039
 title: Reseed the two transitively-reached run-uat tests T011 broke
 wave: 3
 deps: [T011, T038]
-status: in-progress
+status: done
 agent: build_T039
-commit: null
+commit: 385952914e065509dcaece0adec296783e8316d8
 base: 5d92f1a453292af2c6db4fdfb7cbca4ca1fc6d14
 worktree: .worktrees/gsd-path-T039
 task_branch: gsd-path/T039
