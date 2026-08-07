@@ -3,9 +3,9 @@ id: T036
 title: Retire the obsolete execute-task checkbox and sibling-dir guards made unfailable by DB authority
 wave: 3
 deps: [T029]
-status: in-progress
+status: done
 agent: build_T036
-commit: null
+commit: b4c0bcfcb6c070e530011dbb02c6b13caad25e0d
 base: 274430a457936ca0d4cece15dc2f92359e2d7816
 worktree: .worktrees/gsd-path-T036
 task_branch: gsd-path/T036
