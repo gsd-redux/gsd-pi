@@ -97,6 +97,9 @@ fix-doc items. Nothing in this wave deletes `parsers-legacy.ts`,
 | T036 | Retire the obsolete execute-task checkbox and sibling-dir guards | T029 | src/resources/extensions/gsd/tests/verify-artifact-tightened.test.ts, artifact-verification.ts, docs/dev/state-db-cutover-milestone-decision.md |
 | T037 | Reseed the workspace-index contract tests T011 broke | T011 | src/tests/integration/web-state-surfaces-contract.test.ts |
 | T038 | Reseed the four auto-prompts test files T011 broke (14 RED) | T011, T030, T034 | src/resources/extensions/gsd/tests/prompt-budget-enforcement.test.ts, integration/run-uat.test.ts, complete-milestone-excerpt.test.ts, right-sized-workflow-prompts.test.ts |
+| T039 | Reseed the two transitively-reached run-uat tests T011 broke | T011, T038 | src/resources/extensions/gsd/tests/dispatch-run-uat-browser-tools.test.ts, run-uat-replay-cap.test.ts |
+| T040 | Resolve the #4289 stuck-recovery test against the fail-closed complete-milestone path | T029, T036 | src/resources/extensions/gsd/tests/journal-integration.test.ts, docs/dev/state-db-cutover-milestone-decision.md |
+| T041 | Replace the ten silent catch blocks T014 added to commands-maintenance | T014, T032 | src/resources/extensions/gsd/commands-maintenance.ts |
 | T016 | Reconcile the parsers-legacy importer registry after wave-3 migration | T010, T011, T012, T013, T014, T028 | src/resources/extensions/gsd/tests/parsers-legacy-importers.test.ts |
 | T017 | Rewrite docs/dev/ci-cd-pipeline.md to document the manual npm-publish.yml reality | — | docs/dev/ci-cd-pipeline.md |
 | T018 | Downgrade ADR-004/-009/-011/-013/-036 status labels to audit-verified reality | — | docs/dev/ADR-004-*, ADR-009-*, ADR-011-*, ADR-013-*, ADR-036-* |
