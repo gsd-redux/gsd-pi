@@ -4,7 +4,7 @@ project: gsd-pi
 milestone: state-db-cutover # set by the grill; names the archive directory at ship
 phase: build        # onboard | grill | research | synthesize | plan | build | review | shipped
                     # onboard only for brownfield projects; greenfield starts at grill
-status: blocked     # active | done | blocked
+status: active      # active | done | blocked
 branch: gsd-path/gsd-pi # bound once at build; reset for the next milestone
 archive: null       # persisted archive transaction path; never recomputed
 ---
@@ -39,3 +39,4 @@ it on completion. If this file and the artifacts disagree, the artifacts win
 - 2026-08-06 — build — wave-3 review cycle 1 blocked (7 pass / 4 fail); 5 fix tasks T029-T033 authored, dispatched and integrated (T029 blocked once on an orchestrator authoring error, repaired against a 24-file measured sweep). All 16 wave-3 tasks done. Legacy proof re-keyed on symbols per user ruling: now BLOCK with 8 offenders, and T020's deletion gate is unreachable until the 7 relocated-symbol modules are owned. Review cycle 2 dispatched.
 - 2026-08-06 — build — review cycle 2 blocked (3 findings; all 4 cycle-1 failures verified closed by probe). Fix tasks T034-T036 integrated: three RED tests on the branch (T011 residue, missed by T011's Verify and by cycle 1) repaired as fixture-only with the #1112 guard preserved; help-menu regression fixed; six unfailable execute-task guards retired with the consequence recorded as R5. Wave 3 now 19/19. Review cycle 3 dispatched — final cycle before max_review_cycles=3.
 - 2026-08-06 — build — REVIEW CAP REACHED. Cycle 3 blocked: all cycle-2 findings verified closed by probe, but 15 RED tests found in four files no cycle had swept, attributable to T011. Branch is CI-red (test:integration runs them; test:unit:compiled's glob does not). Build state set to blocked pending a human ruling on relax / redirect / raise-the-cap.
+- 2026-08-07 — build — USER RULING at the review cap: raise max_review_cycles 3→4 and fix. Rationale recorded: the branch is CI-red (test:integration runs the 15 failing tests; test:unit:compiled's flat glob does not), and the reviewer found no design question — a mechanical DB reseed of the shape T034 already executed. status blocked→active. Sweeping all 39 in-repo test files importing a T011-touched module BEFORE authoring the fix tasks, per the reviewer's instruction, so the contracts cover the measured break set rather than the known 15.
