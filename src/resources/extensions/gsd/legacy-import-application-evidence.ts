@@ -10,6 +10,7 @@ import {
 } from "./legacy-import-application.js";
 import {
   compileLegacyImportApplicationPlan,
+  legacyImportProjectionKind,
   type LegacyImportApplicationPlan,
 } from "./legacy-import-application-plan.js";
 import {
@@ -308,6 +309,7 @@ function validateDelivery(row: DbRow, plan: LegacyImportApplicationPlan): {
   const exactProjections = projections.length === plan.projectionKeys.length
     && plan.projectionKeys.every((projectionKey, index) => {
       const projection = projections[index];
+      const projectionKind = legacyImportProjectionKind(projectionKey);
       const predecessorId = projection?.["supersedes_projection_work_id"];
       let predecessorMatches = projection?.["predecessor_id"] === null;
       if (predecessorId !== null) {
@@ -315,7 +317,7 @@ function validateDelivery(row: DbRow, plan: LegacyImportApplicationPlan): {
           && projection?.["predecessor_id"] === predecessorId
           && projection?.["predecessor_project_id"] === row["project_id"]
           && projection?.["predecessor_key"] === projectionKey
-          && projection?.["predecessor_kind"] === "markdown"
+          && projection?.["predecessor_kind"] === projectionKind
           && Number(projection?.["predecessor_revision"]) < Number(row["resulting_revision"])
           && Number(projection?.["predecessor_epoch"]) <= Number(row["resulting_authority_epoch"]);
       }
@@ -323,7 +325,7 @@ function validateDelivery(row: DbRow, plan: LegacyImportApplicationPlan): {
           === `${operationId}:${String(index).padStart(4, "0")}`
         && projection["project_id"] === row["project_id"]
         && projection["projection_key"] === projectionKey
-        && projection["projection_kind"] === "markdown"
+        && projection["projection_kind"] === projectionKind
         && projection["source_project_revision"] === row["resulting_revision"]
         && projection["source_authority_epoch"] === row["resulting_authority_epoch"]
         && projection["renderer_version"] === "v1"

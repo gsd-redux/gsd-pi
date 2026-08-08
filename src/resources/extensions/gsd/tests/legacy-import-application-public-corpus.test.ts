@@ -32,6 +32,7 @@ import {
 } from "../legacy-import-application.ts";
 import {
   compileLegacyImportApplicationPlan,
+  legacyImportProjectionKind,
   type LegacyImportApplicationPlan,
   type LegacyImportApplicationPlanInstruction,
 } from "../legacy-import-application-plan.ts";
@@ -442,7 +443,7 @@ function assertDurableCommit(
   assert.deepEqual(projections, plan.projectionKeys.map((projectionKey, index) => ({
     projection_work_id: receipt.projectionWorkIds[index],
     projection_key: projectionKey,
-    projection_kind: "markdown",
+    projection_kind: legacyImportProjectionKind(projectionKey),
     renderer_version: "v1",
     source_project_revision: prepared.base.authority.revision + 1,
     source_authority_epoch: prepared.base.authority.authority_epoch,

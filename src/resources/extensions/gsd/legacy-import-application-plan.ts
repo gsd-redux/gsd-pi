@@ -758,6 +758,21 @@ function projections(
   return [...values.keys()];
 }
 
+/**
+ * Lifecycle projection keys must carry the same projection kind the canonical
+ * lifecycle domain operations enqueue, because trg_workflow_projection_lineage
+ * refuses to extend a (project, key) chain across a kind change. Importing
+ * lifecycle keys as "markdown" left post-import closeouts unable to enqueue
+ * their slice/task lifecycle projections (#1659).
+ */
+export function legacyImportProjectionKind(projectionKey: string): string {
+  if (!projectionKey.startsWith("lifecycle/")) return "markdown";
+  const segments = projectionKey.split("/").length;
+  if (segments === 2) return "milestone-lifecycle";
+  if (segments === 3) return "slice-lifecycle";
+  return "task-lifecycle";
+}
+
 export function compileLegacyImportApplicationPlan(value: unknown): LegacyImportApplicationPlan {
   if (!isStrictLegacyImportData(value)) {
     fail("LEGACY_IMPORT_APPLICATION_PREVIEW_INVALID", "legacy import compiler requires strict Preview data");
