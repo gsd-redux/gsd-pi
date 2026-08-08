@@ -522,6 +522,17 @@ export async function autoLoop(
       ...details,
     }),
   };
+  const pauseForTaskRecoveryAbort = async (reason: string): Promise<void> => {
+    if (!reason.startsWith("task-recovery-abort")) return;
+    ctx.ui.notify(
+      `Task recovery requires a verified repair before auto-mode can continue. ${reason}`,
+      "warning",
+    );
+    await deps.pauseAuto(ctx, pi, {
+      message: reason,
+      category: "unknown",
+    });
+  };
 
   while (s.active) {
     iteration++;
@@ -898,6 +909,7 @@ export async function autoLoop(
           if (customDispatchId !== null && !customDispatchSettled) {
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} after unit break`);
           }
+          await pauseForTaskRecoveryAbort(breakReason);
           finishIncompleteIteration({
             status: "stopped",
             reason: breakReason,
@@ -1610,6 +1622,7 @@ export async function autoLoop(
             markFailed: markDispatchFailed,
             logWriteFailure: logDispatchLedgerWriteFailure,
           }));
+        await pauseForTaskRecoveryAbort(breakReason);
         finishIncompleteIteration({
           status: "stopped",
           reason: breakReason,

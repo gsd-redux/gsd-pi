@@ -2293,11 +2293,15 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         workerId,
         milestoneLeaseToken: lease.token,
       });
+      let dispatchStatusAtPause: string | undefined;
       const deps = makeMockDeps({
         isDbAvailable: () => true,
         taskExecutionBoundary: async () => {
           if (action === "retry") s.active = false;
           return { action, reason: "task-recovery-abort" };
+        },
+        pauseAuto: async () => {
+          dispatchStatusAtPause = getLatestForUnit("M001/S01/T01")?.status;
         },
       });
 
@@ -2307,6 +2311,11 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         getLatestForUnit("M001/S01/T01")?.status,
         "failed",
         `${action} must not leave an active dispatch that blocks a later resume`,
+      );
+      assert.equal(
+        dispatchStatusAtPause,
+        action === "break" ? "failed" : undefined,
+        "a terminal recovery abort must settle its dispatch before pausing",
       );
       assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
     } finally {
@@ -4151,6 +4160,67 @@ test("autoLoop stops machine-terminal verification abort without pausing or publ
   } finally {
     mock.timers.reset();
   }
+});
+
+test("autoLoop pauses a predecessor task-recovery abort before any agent turn", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const notifications: string[] = [];
+  ctx.ui.notify = (message: string) => notifications.push(message);
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  let pauseReason: string | undefined;
+  let recoveryReads = 0;
+  const abortReason =
+    "task-recovery-abort (recoveryActionId: recovery-action-1; resume with gsd_task_recovery_resume)";
+
+  const deps = makeMockDeps({
+    taskExecutionBoundary: async (input, run, cutoverDeps) =>
+      runWithTaskExecutionAttempt({
+        ...input,
+        dispatchId: 41,
+        workerId: "worker-1",
+        milestoneLeaseToken: 7,
+      }, run, {
+        ...cutoverDeps,
+        readLatestTaskAttempt() {
+          return {
+            attemptId: "attempt-1",
+            resultId: "result-1",
+            attemptNumber: 1,
+            state: "settled",
+            outcome: "succeeded",
+            nextStage: "route",
+            coordinationDispatchId: 40,
+            workerId: "worker-1",
+            milestoneLeaseToken: 7,
+          };
+        },
+        readTaskRecoveryRoute() {
+          recoveryReads += 1;
+          return {
+            recoveryActionId: "recovery-action-1",
+            recoveryOwner: "agent",
+            action: "abort",
+            resumeAuthorized: false,
+          };
+        },
+      }),
+    pauseAuto: async (_ctx, _pi, errorContext) => {
+      pauseReason = errorContext?.message;
+      s.active = false;
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(pi.calls.length, 0, "the predecessor abort must stop before an agent turn");
+  assert.equal(recoveryReads, 1, "the durable predecessor abort must be read exactly once");
+  assert.equal(pauseReason, abortReason);
+  assert.match(notifications.join("\n"), /recoveryActionId: recovery-action-1/);
+  assert.match(notifications.join("\n"), /gsd_task_recovery_resume/);
 });
 
 test("autoLoop handles dispatch stop action", async (t) => {

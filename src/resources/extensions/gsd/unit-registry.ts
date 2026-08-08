@@ -333,6 +333,7 @@ export const UNIT_REGISTRY = {
     toolContract: {
       allowedGsdTools: [
         "gsd_task_complete",
+        "gsd_task_recovery_resume",
         "gsd_exec",
         "gsd_exec_search",
         "gsd_resume",

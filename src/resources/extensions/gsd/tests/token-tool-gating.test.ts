@@ -82,6 +82,7 @@ test("buildMinimalAutoGsdToolSet keeps unit-specific completion tools without al
     "lsp",
     "browser_click",
     "gsd_task_complete",
+    "gsd_task_recovery_resume",
     "gsd_complete_task",
     "gsd_exec",
     "gsd_exec_search",
@@ -98,11 +99,11 @@ test("buildMinimalAutoGsdToolSet keeps unit-specific completion tools without al
   assert.ok(result.includes("bash"));
   assert.ok(result.includes("read"));
   assert.ok(result.includes("gsd_task_complete"));
+  assert.ok(result.includes("gsd_task_recovery_resume"));
   assert.ok(result.includes("memory_query"));
   assert.ok(!result.includes("lsp"));
   assert.ok(!result.includes("browser_click"));
   assert.ok(!result.includes("gsd_complete_task"));
-  assert.ok(!result.includes("gsd_task_recovery_resume"));
   assert.ok(!result.includes("gsd_slice_complete"));
   assert.ok(!result.includes("gsd_complete_slice"));
 });
