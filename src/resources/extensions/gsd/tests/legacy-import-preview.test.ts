@@ -697,6 +697,36 @@ describe("legacy preview base snapshot", () => {
     );
   });
 
+  test("legacy preview base snapshot identifies assessments by their primary-key path", () => {
+    const fixture = sourceFixture({
+      readRows(rowSet) {
+        if (rowSet !== "assessments") return [];
+        return [
+          {
+            path: ".gsd/phases/01-foundation/T01-ASSESSMENT.md",
+            milestone_id: "M001",
+            slice_id: "S01",
+            task_id: "T01",
+            scope: "task",
+          },
+          {
+            path: ".gsd/phases/01-foundation/tasks/T01-ASSESSMENT.md",
+            milestone_id: "M001",
+            slice_id: "S01",
+            task_id: "T01",
+            scope: "task",
+          },
+        ];
+      },
+    });
+
+    const snapshot = captureLegacyImportBaseSnapshot(fixture);
+    assert.deepEqual(snapshot.rows.map((row) => row.identity), [
+      '{"path":".gsd/phases/01-foundation/T01-ASSESSMENT.md"}',
+      '{"path":".gsd/phases/01-foundation/tasks/T01-ASSESSMENT.md"}',
+    ]);
+  });
+
   test("legacy preview base snapshot rejects integers that cannot be hashed exactly", () => {
     const fixture = sourceFixture({
       readRows(rowSet) {

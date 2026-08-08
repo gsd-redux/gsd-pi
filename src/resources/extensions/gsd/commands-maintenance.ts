@@ -32,6 +32,7 @@ import {
   formatLegacyImportForwardRepairChoice,
   parseLegacyImportForwardRepairChoices,
 } from "./legacy-import-forward-repair-choice-token.js";
+import { LegacyImportBaseSnapshotError } from "./legacy-import-preview-base.js";
 import { LEGACY_IMPORT_RESTORE_ASSESSMENT_CONSENT_SCHEMA_VERSION, type LegacyImportRestoreAssessmentConsent } from "./legacy-import-restore-assessment.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
@@ -686,7 +687,11 @@ export async function handleRecover(
     );
     ctx.ui.notify(lines.join("\n"), "success");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    const details = err instanceof LegacyImportBaseSnapshotError
+      ? ` [${err.code}] context=${JSON.stringify(err.context)}`
+      : "";
+    const msg = `${message}${details}`;
     logWarning("command", `recover failed: ${msg}`);
     ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
   }
