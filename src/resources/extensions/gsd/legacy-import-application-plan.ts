@@ -362,7 +362,7 @@ function rowPatch(
       && (prepared.kind === "milestone" || prepared.kind === "slice" || prepared.kind === "task")
       && (
         typeof value !== "string"
-        || (normalizeCanonicalLifecycleStatus(value) ?? normalizeLegacyLifecycleStatus(value)) === null
+        || normalizeAnyLifecycleStatus(value) === null
       )
     ) {
       fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import hierarchy status is unsupported");
@@ -378,6 +378,10 @@ function rowPatch(
     patch[field] = normalizedValue;
   }
   return patch;
+}
+
+function normalizeAnyLifecycleStatus(value: string): CanonicalLifecycleStatus | null {
+  return normalizeCanonicalLifecycleStatus(value) ?? normalizeLegacyLifecycleStatus(value);
 }
 
 function lifecycleKind(kind: string, field: string | undefined): HierarchyKind | undefined {
@@ -412,7 +416,7 @@ function normalizedLifecycleStatus(value: LegacyImportValue): CanonicalLifecycle
   if (typeof candidate !== "string") {
     fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import lifecycle status is missing");
   }
-  const status = normalizeCanonicalLifecycleStatus(candidate) ?? normalizeLegacyLifecycleStatus(candidate);
+  const status = normalizeAnyLifecycleStatus(candidate);
   if (status === null) {
     fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import lifecycle status is unsupported");
   }
@@ -851,6 +855,35 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
       fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import update has no writable fields");
     }
     addRowClaim(rows, prepared, change.action, patch, change.change_id);
+  }
+
+  // #1657: an import that creates a hierarchy row must also mint its canonical
+  // lifecycle authority — execute-task and complete-slice hard-require
+  // workflow_item_lifecycles rows, so a recover-imported tree without them
+  // wedges auto mode at slice closeout. Derive an adoption for every hierarchy
+  // create that has no explicit lifecycle claim; explicit status evidence keeps
+  // authority. The status mapping mirrors the planning adoption seam
+  // (milestone-planning-persistence): terminal statuses adopt as-is, in-flight
+  // work adopts as "ready".
+  for (const row of rows.values()) {
+    if (row.action !== "create") continue;
+    const itemKind = lifecycleKind(row.targetKind, "status");
+    if (itemKind === undefined) continue;
+    if (lifecycleClaims.has(`${itemKind}\0${row.targetKey}`)) continue;
+    const status = row.values["status"];
+    const normalized = typeof status === "string"
+      ? normalizeAnyLifecycleStatus(status)
+      : null;
+    addLifecycleClaim(lifecycleClaims, {
+      action: "adopt-lifecycle",
+      lifecycleAction: "create",
+      targetKind: `${itemKind}-lifecycle`,
+      targetKey: row.targetKey,
+      itemKind,
+      ...lifecycleIdentity(itemKind, row.targetKey),
+      lifecycleStatus: normalized === "completed" || normalized === "cancelled" ? normalized : "ready",
+      changeIds: row.changeIds,
+    });
   }
 
   const rowValues = [...rows.values()];

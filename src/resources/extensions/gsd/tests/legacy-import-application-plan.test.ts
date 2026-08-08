@@ -221,7 +221,9 @@ describe("legacy import Application plan", () => {
     const task = planValue.instructions.find((entry) => (
       entry.action === "create" && entry.targetKind === "task"
     ));
-    const lifecycle = planValue.instructions.find((entry) => entry.action === "adopt-lifecycle");
+    const lifecycle = planValue.instructions.find((entry) => (
+      entry.action === "adopt-lifecycle" && entry.targetKind === "task-lifecycle"
+    ));
     assert.ok(task?.action === "create");
     assert.deepEqual(task.values, {
       description: "Store and reload a note.",
@@ -234,6 +236,17 @@ describe("legacy import Application plan", () => {
     });
     assert.ok(lifecycle?.action === "adopt-lifecycle");
     assert.equal(lifecycle.lifecycleStatus, "completed");
+    // #1657: hierarchy creates without explicit status evidence still mint
+    // lifecycle authority — terminal statuses adopt as-is, in-flight as ready.
+    const derived = planValue.instructions.filter((entry) => (
+      entry.action === "adopt-lifecycle" && entry.targetKind !== "task-lifecycle"
+    ));
+    assert.deepEqual(
+      derived.map((entry) => (entry.action === "adopt-lifecycle"
+        ? `${entry.targetKind}:${entry.targetKey}:${entry.lifecycleStatus}`
+        : "")),
+      ["milestone-lifecycle:M001:ready", "slice-lifecycle:M001/S01:completed"],
+    );
     assert.deepEqual(planValue.receiptCounts, input.preview.counts);
     assert.deepEqual(planValue.mutationCounts, {
       create: 4,
@@ -241,7 +254,7 @@ describe("legacy import Application plan", () => {
       delete: 0,
       replaceSliceDependencies: 0,
       deleteSliceDependencies: 0,
-      adoptLifecycle: 1,
+      adoptLifecycle: 3,
     });
     assert.deepEqual(planValue.accounting.changeIds, input.preview.changes.map((entry) => entry.change_id));
     assert.equal(JSON.stringify(planValue.eventFacts).includes("raw-task"), false);
@@ -305,6 +318,10 @@ describe("legacy import Application plan", () => {
       "create:M001/S02/T01",
       "replace-slice-dependencies:M001/S01",
       "replace-slice-dependencies:M001/S02",
+      "adopt-lifecycle:M001",
+      "adopt-lifecycle:M001/S01",
+      "adopt-lifecycle:M001/S02",
+      "adopt-lifecycle:M001/S02/T01",
       "preserve:.gsd/CONTEXT.md",
     ]);
     const dependency = planValue.instructions[5];
@@ -319,6 +336,10 @@ describe("legacy import Application plan", () => {
       "planning/m001/s01",
       "planning/m001/s02",
       "planning/m001/s02/t01",
+      "lifecycle/m001",
+      "lifecycle/m001/s01",
+      "lifecycle/m001/s02",
+      "lifecycle/m001/s02/t01",
     ]);
   });
 
