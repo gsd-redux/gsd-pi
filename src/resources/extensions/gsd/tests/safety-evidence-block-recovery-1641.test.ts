@@ -1,13 +1,19 @@
 // Project/App: gsd-pi
-// File Purpose: Tests closeout git action deferral policy for auto-mode units.
+// File Purpose: Regression for #1641 / #1649 — a blocking safety evidence
+// cross-reference mismatch must carry its sanctioned exit: the Task Attempt is
+// settled/routed through the canonical recovery seam (recovery action minted),
+// the pause notification surfaces the recoveryActionId + resume instruction,
+// and the finalize break reason never routes into the verified-task
+// publication boundary.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { postUnitPreVerification, shouldDeferCloseoutGitAction, type PostUnitContext } from "../auto-post-unit.ts";
+import { postUnitPreVerification, type PostUnitContext } from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
+import { decideFinalizeResult } from "../auto/workflow-kernel.ts";
 import {
   _getAdapter,
   closeDatabase,
@@ -18,13 +24,22 @@ import {
   openDatabase,
 } from "../gsd-db.ts";
 import { recordToolCall, recordToolResult, resetEvidence } from "../safety/evidence-collector.ts";
-import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import {
+  claimTaskAttempt,
+  isTaskAttemptAwaitingVerification,
+  readLatestTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
+import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
+import { readTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
 
-function settleCanonicalTaskForHostVerification(basePath: string): void {
+const TASK = { milestoneId: "M001", sliceId: "S01", taskId: "T01" } as const;
+
+function settleCanonicalTaskForHostVerification(basePath: string): string {
   const db = _getAdapter();
   assert.ok(db, "DB should be open before claiming canonical task authority");
-  const now = "2026-07-12T00:00:00.000Z";
+  const now = "2026-08-08T00:00:00.000Z";
   db.prepare(`
     INSERT INTO workers (
       worker_id, host, pid, started_at, version, last_heartbeat_at, status,
@@ -34,7 +49,7 @@ function settleCanonicalTaskForHostVerification(basePath: string): void {
   db.prepare(`
     INSERT INTO milestone_leases (
       milestone_id, worker_id, fencing_token, acquired_at, expires_at, status
-    ) VALUES ('M001', 'evidence-worker', 7, ?, '2099-07-12T00:00:00.000Z', 'held')
+    ) VALUES ('M001', 'evidence-worker', 7, ?, '2099-08-08T00:00:00.000Z', 'held')
   `).run(now);
   const dispatch = db.prepare(`
     INSERT INTO unit_dispatches (
@@ -49,19 +64,19 @@ function settleCanonicalTaskForHostVerification(basePath: string): void {
   `).run(now) as { lastInsertRowid: number | bigint };
   const claim = claimTaskAttempt({
     invocation: {
-      idempotencyKey: "fixture:evidence-xref:claim",
+      idempotencyKey: "fixture:evidence-block-1641:claim",
       sourceTransport: "internal",
       actorType: "agent",
       actorId: "evidence-worker",
     },
-    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    task: { ...TASK },
     workerId: "evidence-worker",
     milestoneLeaseToken: 7,
     coordinationDispatchId: Number(dispatch.lastInsertRowid),
   });
   settleTaskAttempt({
     invocation: {
-      idempotencyKey: "fixture:evidence-xref:settle",
+      idempotencyKey: "fixture:evidence-block-1641:settle",
       sourceTransport: "internal",
       actorType: "agent",
       actorId: "evidence-worker",
@@ -72,19 +87,11 @@ function settleCanonicalTaskForHostVerification(basePath: string): void {
     summary: "Executor result is ready for host evidence verification.",
     output: { verification: "npm test" },
   });
+  return claim.attemptId;
 }
 
-test("execute-task defers closeout git action until verification passes", () => {
-  assert.equal(shouldDeferCloseoutGitAction("execute-task"), true);
-});
-
-test("non execute-task units keep pre-verification closeout git action", () => {
-  assert.equal(shouldDeferCloseoutGitAction("plan-slice"), false);
-  assert.equal(shouldDeferCloseoutGitAction("complete-slice"), false);
-});
-
-test("blocking evidence-xref commits deferred execute-task work before pausing", async () => {
-  const base = makeTempRepo("gsd-evidence-xref-commit-before-pause-");
+test("blocking evidence-xref settles and routes the Attempt with a surfaced recoveryActionId (#1641/#1649)", async () => {
+  const base = makeTempRepo("gsd-evidence-block-1641-");
 
   try {
     writeFileSync(join(base, ".gitignore"), ".gsd/\n");
@@ -121,7 +128,12 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       verdict: "passed",
       durationMs: 10,
     });
-    settleCanonicalTaskForHostVerification(base);
+    const attemptId = settleCanonicalTaskForHostVerification(base);
+    assert.equal(
+      isTaskAttemptAwaitingVerification(readLatestTaskAttempt({ ...TASK })),
+      true,
+      "fixture Attempt must start in the awaiting-verification state",
+    );
 
     writeFileSync(join(base, "app.js"), "console.log('ready');\n");
     resetEvidence();
@@ -146,7 +158,6 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       stopAuto: async () => {},
       pauseAuto: async () => {
         pauseCalled = true;
-        assert.equal(git(base, "status", "--short"), "", "task work must be committed before pauseAuto runs");
       },
       updateProgressWidget: () => {},
     };
@@ -156,19 +167,53 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       skipWorktreeSync: true,
     });
 
-    // #1641 / #1649: the blocking branch now settles/routes the Attempt and
-    // returns the dedicated "safety-block" signal so finalize never enters the
-    // verified-task publication boundary.
+    // The blocking branch returns the dedicated safety-block signal and pauses.
     assert.equal(result, "safety-block");
     assert.equal(pauseCalled, true);
-    assert.ok(
-      notifications.some((message) => message.includes("claimed passing verification")),
-      `expected evidence-xref notification, got: ${notifications.join("\n")}`,
+
+    // The withheld verdict is durably recorded and the Attempt is routed out of
+    // the awaiting-verification wedge — a resume no longer replays the
+    // identical finalize sequence.
+    const verdict = readTaskTechnicalVerdict(attemptId);
+    assert.ok(verdict, "a host Technical Verdict must be recorded");
+    assert.equal(verdict.verdict, "fail");
+    assert.equal(
+      isTaskAttemptAwaitingVerification(readLatestTaskAttempt({ ...TASK })),
+      false,
+      "the Attempt must leave the awaiting-verification state",
     );
 
-    const commitMessage = git(base, "log", "-1", "--pretty=%B");
-    assert.match(commitMessage, /^feat: Added app entrypoint/m);
-    assert.match(commitMessage, /GSD-Task: S01\/T01/);
+    // The recovery action row exists — the sanctioned exit was minted.
+    const route = readTaskRecoveryRoute(attemptId);
+    assert.ok(route, "a recovery route must exist for the blocked Attempt");
+    assert.ok(route.recoveryActionId.length > 0, "recoveryActionId must be minted");
+    assert.equal(route.recoveryOwner, "agent");
+    assert.deepEqual(s.lastSafetyBlockRecovery, {
+      recoveryActionId: route.recoveryActionId,
+      resumeInstruction: 'resume with /gsd auto to re-run the task',
+    });
+
+    // The pause notification carries the recoveryActionId and a resume
+    // instruction, so the first pause already contains its sanctioned exit.
+    const blockingNotification = notifications.find((message) =>
+      message.includes("claimed passing verification"),
+    );
+    assert.ok(blockingNotification, `expected evidence-xref notification, got: ${notifications.join("\n")}`);
+    assert.ok(
+      blockingNotification.includes(route.recoveryActionId),
+      `notification must surface the recoveryActionId: ${blockingNotification}`,
+    );
+    assert.match(blockingNotification, /resume with (\/gsd auto|gsd_task_recovery_resume)/);
+    // The offending mismatch is surfaced (claimed vs recorded exit code).
+    assert.match(blockingNotification, /Claimed exitCode=0 but actual exitCode=1/);
+
+    // Finalize maps "safety-block" to a break reason that is NOT
+    // complete-and-break, so the loop stops before the verified-task
+    // publication boundary — the "Verified Task publication requires a passing
+    // host Technical Verdict" throw is unreachable on this path.
+    const safetyReason = `safety-evidence-block (recoveryActionId: ${route.recoveryActionId}; resume with /gsd auto to re-run the task)`;
+    const decision = decideFinalizeResult({ action: "break", reason: safetyReason });
+    assert.equal(decision.action, "stop");
   } finally {
     resetEvidence();
     closeDatabase();

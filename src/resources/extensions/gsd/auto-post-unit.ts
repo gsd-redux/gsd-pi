@@ -111,6 +111,10 @@ import {
   readLatestTaskAttempt,
 } from "./task-execution-domain-operation.js";
 import { isTaskExecutionReadyForHostVerification } from "./auto/task-execution-cutover.js";
+import {
+  routeEvidenceCrossReferenceBlock,
+  type EvidenceCrossReferenceBlockResult,
+} from "./auto-verification.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
@@ -1431,8 +1435,12 @@ async function runCloseoutGitAction(
  * - "dispatched" — a signal caused stop/pause
  * - "continue" — proceed normally
  * - "retry" — artifact verification failed, s.pendingVerificationRetry set for loop re-iteration
+ * - "safety-block" — blocking safety evidence mismatch; the Attempt was routed
+ *   through the canonical recovery seam (s.lastSafetyBlockRecovery carries the
+ *   recoveryActionId) and auto-mode paused. The finalize break must NOT enter
+ *   the verified-task publication boundary (#1641 / #1649).
  */
-export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue" | "retry"> {
+export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue" | "retry" | "safety-block"> {
   const { s, ctx, pi, stopAuto, pauseAuto } = pctx;
 
   // ── Parallel worker signal check ──
@@ -1867,16 +1875,68 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
 
                 const blockingMismatch = mismatches.find((mismatch) => mismatch.severity === "error");
                 if (blockingMismatch) {
-                  ctx.ui.notify(
-                    `Safety: task ${sTid} claimed passing verification that failed in recorded execution`,
-                    "error",
-                  );
                   const gitActionResult = await runCloseoutGitAction(pctx, s.currentUnit);
                   if (gitActionResult === "dispatched") {
+                    ctx.ui.notify(
+                      `Safety: task ${sTid} claimed passing verification that failed in recorded execution`,
+                      "error",
+                    );
                     return "dispatched";
                   }
+                  // #1641 / #1649: a safety refusal must carry its sanctioned exit.
+                  // Settle the withheld verdict and route the Attempt through the
+                  // canonical recovery seam so a recoveryActionId exists, the
+                  // awaiting-verification wedge ends, and the operator has a
+                  // supported way out — instead of a pure read that replays the
+                  // identical blocking pause on every resume.
+                  let routed: EvidenceCrossReferenceBlockResult | null = null;
+                  try {
+                    routed = routeEvidenceCrossReferenceBlock({
+                      attempt,
+                      basePath: s.basePath,
+                      mismatch: {
+                        command: blockingMismatch.claimed.command,
+                        claimedExitCode: blockingMismatch.claimed.exitCode,
+                        actualExitCode: blockingMismatch.actual?.exitCode ?? null,
+                        reason: blockingMismatch.reason,
+                      },
+                    });
+                  } catch (routeError) {
+                    debugLog("postUnit", {
+                      phase: "safety-evidence-xref-route",
+                      error: String(routeError),
+                    });
+                  }
+                  // Decide the operator's resume instruction once, on the routing
+                  // OUTCOME (what will actually happen next), and carry it to
+                  // both the notification and the finalize break reason.
+                  const resumeInstruction = routed
+                    ? routed.outcome === 'abort'
+                      ? 'resume with gsd_task_recovery_resume'
+                      : 'resume with /gsd auto to re-run the task'
+                    : null;
+                  s.lastSafetyBlockRecovery = routed && resumeInstruction
+                    ? { recoveryActionId: routed.recoveryActionId, resumeInstruction }
+                    : null;
+                  // Clear the persisted evidence file on the blocked path too, so a
+                  // retry cross-references fresh execution instead of replaying the
+                  // same stale rows indefinitely (#1641).
+                  try {
+                    clearEvidenceFromDisk(s.basePath, sMid, sSid, sTid);
+                  } catch (clearError) {
+                    debugLog("postUnit", { phase: "safety-evidence-clear", error: String(clearError) });
+                  }
+                  const mismatchDetail =
+                    `"${blockingMismatch.claimed.command.slice(0, 80)}" — ${blockingMismatch.reason}`;
+                  const exitInstruction = routed && resumeInstruction
+                    ? `Recovery routed (recoveryActionId: ${routed.recoveryActionId}); ${resumeInstruction}.`
+                    : "Recovery routing failed — see debug log; the safety block still stands.";
+                  ctx.ui.notify(
+                    `Safety: task ${sTid} claimed passing verification that failed in recorded execution (${mismatchDetail}). ${exitInstruction}`,
+                    "error",
+                  );
                   await pauseAuto(ctx, pi);
-                  return "dispatched";
+                  return "safety-block";
                 }
               }
             }
