@@ -1088,6 +1088,7 @@ const SKIP_EXACT = [
   ".gsd/auto.lock",
   ".gsd/metrics.json",
   ".gsd/state-manifest.json",
+  ".gsd/state.json",
   ".gsd/doctor-history.jsonl",
   ".gsd/event-log.jsonl",
 ];

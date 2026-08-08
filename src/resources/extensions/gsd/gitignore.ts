@@ -42,6 +42,7 @@ export const GSD_RUNTIME_PATTERNS = [
   ".gsd/metrics.json",
   ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
   ".gsd/state-manifest.json",
+  ".gsd/state.json",
   ".gsd/STATE.md",
   ".gsd/gsd.db*",
   ".gsd/journal/",
