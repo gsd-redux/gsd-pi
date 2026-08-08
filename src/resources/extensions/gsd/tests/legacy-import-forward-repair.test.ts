@@ -765,7 +765,7 @@ test("Forward Repair requires a choice when a field changed away from both base 
     },
     mutationCounts: {
       create: 0, update: 1, delete: 0,
-      replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0,
+      replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0, seedQualityGate: 0,
     },
     affectedTargets: [{ targetKind: "requirement", targetKey: "R001" }],
     eventFacts: {
@@ -776,7 +776,7 @@ test("Forward Repair requires a choice when a field changed away from both base 
       receiptCounts: { create: 0, update: 1, delete: 0, preserve: 0, unparsed: 0, unresolved: 0 },
       mutationCounts: {
         create: 0, update: 1, delete: 0,
-        replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0,
+        replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0, seedQualityGate: 0,
       },
       affectedTargetHashes: [identity],
       sourceCount: 0, diagnosisCount: 0, resolutionCount: 0, preserveCount: 0, unparsedCount: 0,

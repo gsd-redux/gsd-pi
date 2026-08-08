@@ -247,6 +247,15 @@ describe("legacy import Application plan", () => {
         : "")),
       ["milestone-lifecycle:M001:ready", "slice-lifecycle:M001/S01:completed"],
     );
+    // #1658: every created slice mints its companion Q8 gate — completed
+    // slices adopt the closed shape complete-slice would have left behind.
+    const gates = planValue.instructions.filter(
+      (entry): entry is Extract<typeof entry, { action: "seed-quality-gate" }> => entry.action === "seed-quality-gate",
+    );
+    assert.deepEqual(
+      gates.map((entry) => `${entry.targetKey}:${entry.gateStatus}`),
+      ["M001/S01:complete"],
+    );
     assert.deepEqual(planValue.receiptCounts, input.preview.counts);
     assert.deepEqual(planValue.mutationCounts, {
       create: 4,
@@ -255,6 +264,7 @@ describe("legacy import Application plan", () => {
       replaceSliceDependencies: 0,
       deleteSliceDependencies: 0,
       adoptLifecycle: 3,
+      seedQualityGate: 1,
     });
     assert.deepEqual(planValue.accounting.changeIds, input.preview.changes.map((entry) => entry.change_id));
     assert.equal(JSON.stringify(planValue.eventFacts).includes("raw-task"), false);
@@ -322,6 +332,8 @@ describe("legacy import Application plan", () => {
       "adopt-lifecycle:M001/S01",
       "adopt-lifecycle:M001/S02",
       "adopt-lifecycle:M001/S02/T01",
+      "seed-quality-gate:M001/S01",
+      "seed-quality-gate:M001/S02",
       "preserve:.gsd/CONTEXT.md",
     ]);
     const dependency = planValue.instructions[5];

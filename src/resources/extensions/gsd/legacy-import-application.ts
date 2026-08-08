@@ -558,6 +558,7 @@ const INSTRUCTION_RESULT_ACTIONS: ReadonlySet<string> = new Set([
   "replace-slice-dependencies",
   "delete-slice-dependencies",
   "adopt-lifecycle",
+  "seed-quality-gate",
   "preserve",
 ]);
 

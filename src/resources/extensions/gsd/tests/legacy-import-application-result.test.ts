@@ -312,6 +312,10 @@ const ASSESSMENT_PATH = ".gsd/milestones/M001/slices/S01/UAT.md";
 function seedAssessmentHierarchy(status = "pass"): void {
   db().prepare("INSERT INTO milestones (id, title) VALUES ('M001', 'Milestone')").run();
   db().prepare("INSERT INTO slices (milestone_id, id, title) VALUES ('M001', 'S01', 'Foundation')").run();
+  // #1658: an applied import seeds a Q8 companion gate per created slice, and
+  // target verification now asserts it exists.
+  db().prepare(`INSERT INTO quality_gates (milestone_id, slice_id, gate_id, scope, task_id, status)
+    VALUES ('M001', 'S01', 'Q8', 'slice', '', 'pending')`).run();
   db().prepare(`INSERT INTO assessments (path, milestone_id, slice_id, task_id, status, scope, full_content)
     VALUES (:path, 'M001', 'S01', NULL, :status, 'run-uat', '# UAT\n\nPass.')`).run({
     ":path": ASSESSMENT_PATH,
@@ -460,6 +464,7 @@ function planFor(
     replaceSliceDependencies: instructions.filter((entry) => entry.action === "replace-slice-dependencies").length,
     deleteSliceDependencies: instructions.filter((entry) => entry.action === "delete-slice-dependencies").length,
     adoptLifecycle: instructions.filter((entry) => entry.action === "adopt-lifecycle").length,
+    seedQualityGate: instructions.filter((entry) => entry.action === "seed-quality-gate").length,
   };
   const affectedTargets = instructions
     .filter((entry) => entry.action !== "preserve")

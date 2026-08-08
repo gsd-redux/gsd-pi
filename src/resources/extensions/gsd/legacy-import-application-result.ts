@@ -1,6 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Independent verification of canonical rows produced by one retained Import Application.
 
+import { getDb } from "./db/engine.js";
 import type { LegacyImportApplicationEvidence } from "./legacy-import-application-evidence.js";
 import type { LegacyImportApplicationPlanInstruction } from "./legacy-import-application-plan.js";
 import {
@@ -83,6 +84,22 @@ function instructionMatches(
       && candidate.value["slice_id"] === instruction.sliceId
       && candidate.value["task_id"] === instruction.taskId);
     return row?.value["lifecycle_status"] === instruction.lifecycleStatus;
+  }
+  if (instruction.action === "seed-quality-gate") {
+    // quality_gates is not a Preview base row set, so the seeded Q8 row is
+    // verified directly against the live database the snapshot was captured
+    // from. Only existence is asserted — post-import slice work legitimately
+    // moves the gate between pending and complete (reopen/complete), and the
+    // invariant complete-slice enforces is exactly-one row, not its status.
+    const row = getDb().prepare(`
+      SELECT 1 AS present FROM quality_gates
+      WHERE milestone_id = :milestone_id AND slice_id = :slice_id
+        AND gate_id = 'Q8' AND scope = 'slice' AND (task_id = '' OR task_id IS NULL)
+    `).get({
+      ":milestone_id": instruction.milestoneId,
+      ":slice_id": instruction.sliceId,
+    });
+    return Boolean(row);
   }
   if (instruction.action !== "create-decision-memory"
     && instruction.action !== "update-decision-memory"

@@ -1,6 +1,7 @@
 // Project/App: gsd-pi
-// File Purpose: Regression proof (#1657) that an applied legacy import mints canonical
-// lifecycle rows for every imported milestone, slice, and task.
+// File Purpose: Regression proof (#1657/#1658) that an applied legacy import mints canonical
+// companion authority — lifecycle rows for every imported hierarchy row and a Q8 quality
+// gate for every imported slice.
 
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -129,4 +130,34 @@ test("applied import mints lifecycle rows for every imported milestone, slice, a
     END
   `);
   assert.deepEqual(mismatched, []);
+
+  // #1658: gsd_slice_complete requires exactly one Q8 quality gate per slice,
+  // so every imported slice must carry the row the canonical seam would have
+  // seeded — pending while the slice is open, complete (verdict "omitted",
+  // since the import carries no readiness evidence) once the slice closed.
+  const gatelessSlices = rows(`
+    SELECT slice.milestone_id, slice.id FROM slices slice
+    LEFT JOIN quality_gates gate
+      ON gate.milestone_id = slice.milestone_id AND gate.slice_id = slice.id
+     AND gate.gate_id = 'Q8' AND (gate.task_id = '' OR gate.task_id IS NULL)
+    WHERE gate.gate_id IS NULL
+  `);
+  assert.deepEqual(gatelessSlices, []);
+  const wrongStateGates = rows(`
+    SELECT gate.milestone_id, gate.slice_id, gate.status, gate.verdict,
+           lifecycle.lifecycle_status
+    FROM quality_gates gate
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.item_kind = 'slice'
+     AND lifecycle.milestone_id = gate.milestone_id
+     AND lifecycle.slice_id = gate.slice_id
+     AND lifecycle.task_id IS NULL
+    WHERE gate.gate_id = 'Q8' AND (gate.task_id = '' OR gate.task_id IS NULL)
+      AND CASE
+        WHEN lifecycle.lifecycle_status = 'completed'
+          THEN gate.status != 'complete' OR gate.verdict != 'omitted'
+        ELSE gate.status != 'pending'
+      END
+  `);
+  assert.deepEqual(wrongStateGates, []);
 });
