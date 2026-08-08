@@ -237,6 +237,7 @@ import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
 import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
+import { formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop.js";
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
 import { clearSessionModelOverride } from "./session-model-override.js";
@@ -2598,6 +2599,19 @@ export async function startAuto(
     ctx.ui.notify(blockedStartMessage, "warning");
     debugLog("startAuto", { phase: "validation-blocked", base });
     return;
+  }
+
+  // ADR-047 §5: while an unacknowledged wedge record exists, auto-mode
+  // refuses to re-enter and reprints the exit instructions — restarting is no
+  // longer a silent counter reset. `/gsd auto --resume-wedge <id>` is the one
+  // sanctioned re-entry.
+  if (await ensureDbOpen(base)) {
+    const openWedge = getOpenWedge(normalizeRealPath(base) || base);
+    if (openWedge) {
+      ctx.ui.notify(`Auto-mode blocked — ${formatWedgeRefusalNotice(openWedge)}`, "error");
+      debugLog("startAuto", { phase: "wedge-blocked", wedgeId: openWedge.wedgeId, base });
+      return;
+    }
   }
 
   const freshStartAssessment = await (interruptedAssessment

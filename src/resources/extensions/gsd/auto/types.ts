@@ -94,8 +94,6 @@ export interface IterationContext {
 }
 
 export interface LoopState {
-  recentUnits: Array<{ key: string; error?: string }>;
-  stuckRecoveryAttempts: number;
   /** Consecutive finalize timeout count — stops auto-mode after threshold. */
   consecutiveFinalizeTimeouts: number;
   consecutiveDispatchCount?: Map<string, number>;
@@ -128,5 +126,3 @@ export interface IterationData {
   /** Internal planning-only preparation that must not reconcile a custom-engine step. */
   customEnginePreparation?: "task-replan";
 }
-
-export type WindowEntry = { key: string; error?: string };

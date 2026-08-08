@@ -1,0 +1,362 @@
+// Project/App: gsd-pi
+// File Purpose: ADR-047 auto-mode liveness backstop — DB-persisted block
+// signatures, trip-at-2 wedge records, and the explicit resume contract.
+
+import { createHash, randomUUID } from 'node:crypto';
+
+import { _getAdapter, isDbAvailable, transaction } from './gsd-db.js';
+import { getLatestForUnit } from './db/unit-dispatches.js';
+import { parseUnitId } from './unit-id.js';
+import { debugLog } from './debug-logger.js';
+
+/**
+ * ADR-047 trip rule: a block signature may not recur with unchanged inputs.
+ * There is no legitimate run in which a guard reads byte-identical inputs
+ * twice with dispatches in between, so the threshold is 2 (ADR-047 §3).
+ */
+export const LIVENESS_TRIP_THRESHOLD = 2;
+
+/** Signature guard id for completed-no-advance dispatches (ADR-047 §4). */
+export const COMPLETED_NO_ADVANCE_GUARD_ID = 'completed-no-advance';
+
+export interface BlockSignatureInput {
+  /** Stable project scope (realpath of the project root). */
+  scopeId: string;
+  /**
+   * Display-only guard/gate label carried into the wedge notice. Occurrence
+   * counting is keyed by (scope, unit type, unit id, input hash) alone — the
+   * hash already encodes everything the guard read (ADR-047 §3), so a label
+   * that embeds variable data cannot split the counter.
+   */
+  guardId: string;
+  unitType: string;
+  /** Target identity: milestone/slice/task compound id or 'orchestration'. */
+  unitId: string;
+  /** The raw payload the guard read; hashed to form the signature input. */
+  inputPayload: string;
+}
+
+export interface WedgeRecord {
+  wedgeId: string;
+  scopeId: string;
+  guardId: string;
+  unitType: string;
+  unitId: string;
+  inputHash: string;
+  occurrenceCount: number;
+  sanctionedExit: string;
+  forensicsPath: string | null;
+  createdAt: string;
+  acknowledgedAt: string | null;
+}
+
+export type RecordOutcomeResult =
+  | { tripped: false; count: number }
+  | { tripped: true; count: number; wedge: WedgeRecord };
+
+/** Stable content hash of the inputs the guard actually read. */
+export function hashBackstopInput(payload: string): string {
+  return createHash('sha256').update(payload, 'utf8').digest('hex');
+}
+
+/**
+ * Derive a display label for a guard from its reason text (the leading clause,
+ * slugged). DISPLAY-ONLY: occurrence counting is keyed by the input hash, so a
+ * label that embeds variable data cannot split the counter. Not reusing
+ * commands-gsd-core.ts slugify — that module eagerly imports the command/host
+ * layer, which this leaf DB module must not pull in.
+ */
+export function guardIdFromReason(reason: string): string {
+  const head = reason.split(/[:—\n]/)[0] ?? reason;
+  const slug = head
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug || 'unclassified-block';
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function rowToWedge(row: Record<string, unknown>): WedgeRecord {
+  return {
+    wedgeId: String(row['wedge_id']),
+    scopeId: String(row['scope_id']),
+    guardId: String(row['guard_id']),
+    unitType: String(row['unit_type']),
+    unitId: String(row['unit_id']),
+    inputHash: String(row['input_hash']),
+    occurrenceCount: Number(row['occurrence_count']),
+    sanctionedExit: String(row['sanctioned_exit']),
+    forensicsPath: row['forensics_path'] == null ? null : String(row['forensics_path']),
+    createdAt: String(row['created_at']),
+    acknowledgedAt: row['acknowledged_at'] == null ? null : String(row['acknowledged_at']),
+  };
+}
+
+/**
+ * Record a non-advancing dispatch outcome in the DB-persisted ledger.
+ *
+ * Interleaving-blind by construction: each (scope, unit type, unit id, input
+ * hash) has its own counter row, so other dispatches — same unit or not —
+ * between occurrences change nothing. A changed hash simply lands on a fresh
+ * row (state genuinely advanced); counters clear on acknowledged resume
+ * (ADR-047 §3).
+ *
+ * On trip, persists a wedge record carrying the sanctioned exit text. The
+ * backstop never mutates workflow state (ADR-047 §2) — surfacing and the
+ * exit-10 stop are the caller's job.
+ */
+export function recordNonAdvancingOutcome(
+  input: BlockSignatureInput,
+  options?: { sanctionedExit?: string; forensicsPath?: string | null },
+): RecordOutcomeResult {
+  if (!isDbAvailable()) return { tripped: false, count: 0 };
+  const inputHash = hashBackstopInput(input.inputPayload);
+  try {
+    return transaction(() => {
+      const db = _getAdapter()!;
+      const now = nowIso();
+      db.prepare(
+        `INSERT INTO liveness_block_signatures
+           (scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count, first_seen_at, last_seen_at)
+         VALUES (:scope, :guard, :utype, :uid, :hash, 1, :now, :now)
+         ON CONFLICT(scope_id, unit_type, unit_id, input_hash) DO UPDATE SET
+           occurrence_count = occurrence_count + 1,
+           guard_id = :guard,
+           last_seen_at = :now`,
+      ).run({
+        ':scope': input.scopeId,
+        ':guard': input.guardId,
+        ':utype': input.unitType,
+        ':uid': input.unitId,
+        ':hash': inputHash,
+        ':now': now,
+      });
+      const counted = db.prepare(
+        `SELECT occurrence_count FROM liveness_block_signatures
+         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
+      ).get({
+        ':scope': input.scopeId,
+        ':utype': input.unitType,
+        ':uid': input.unitId,
+        ':hash': inputHash,
+      }) as { occurrence_count: number } | undefined;
+      const count = counted?.occurrence_count ?? 1;
+
+      if (count < LIVENESS_TRIP_THRESHOLD) return { tripped: false, count };
+
+      // Reuse an already-open wedge for this signature rather than minting a
+      // duplicate — the resume contract keys acknowledgment off one id.
+      const open = db.prepare(
+        `SELECT * FROM liveness_wedge_records
+         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid
+           AND input_hash = :hash AND acknowledged_at IS NULL
+         ORDER BY created_at DESC LIMIT 1`,
+      ).get({
+        ':scope': input.scopeId,
+        ':utype': input.unitType,
+        ':uid': input.unitId,
+        ':hash': inputHash,
+      }) as Record<string, unknown> | undefined;
+      if (open) return { tripped: true, count, wedge: rowToWedge(open) };
+
+      const wedge: WedgeRecord = {
+        wedgeId: `W-${randomUUID().slice(0, 8)}`,
+        scopeId: input.scopeId,
+        guardId: input.guardId,
+        unitType: input.unitType,
+        unitId: input.unitId,
+        inputHash,
+        occurrenceCount: count,
+        sanctionedExit: options?.sanctionedExit ?? input.inputPayload.slice(0, 1000),
+        forensicsPath: options?.forensicsPath ?? null,
+        createdAt: now,
+        acknowledgedAt: null,
+      };
+      db.prepare(
+        `INSERT INTO liveness_wedge_records
+           (wedge_id, scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count,
+            sanctioned_exit, forensics_path, created_at, acknowledged_at)
+         VALUES (:wid, :scope, :guard, :utype, :uid, :hash, :count, :exit, :forensics, :now, NULL)`,
+      ).run({
+        ':wid': wedge.wedgeId,
+        ':scope': wedge.scopeId,
+        ':guard': wedge.guardId,
+        ':utype': wedge.unitType,
+        ':uid': wedge.unitId,
+        ':hash': wedge.inputHash,
+        ':count': wedge.occurrenceCount,
+        ':exit': wedge.sanctionedExit,
+        ':forensics': wedge.forensicsPath,
+        ':now': wedge.createdAt,
+      });
+      return { tripped: true, count, wedge };
+    });
+  } catch (err) {
+    // The backstop must never take the loop down with it — degrade to
+    // not-tripped and leave a diagnostic trail.
+    debugLog('livenessBackstop', {
+      phase: 'record-failed',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { tripped: false, count: 0 };
+  }
+}
+
+/** Oldest unacknowledged wedge record for the project scope, if any. */
+export function getOpenWedge(scopeId: string): WedgeRecord | null {
+  if (!isDbAvailable()) return null;
+  try {
+    const row = _getAdapter()!.prepare(
+      `SELECT * FROM liveness_wedge_records
+       WHERE scope_id = :scope AND acknowledged_at IS NULL
+       ORDER BY created_at ASC LIMIT 1`,
+    ).get({ ':scope': scopeId }) as Record<string, unknown> | undefined;
+    return row ? rowToWedge(row) : null;
+  } catch (err) {
+    debugLog('livenessBackstop', {
+      phase: 'get-open-wedge-failed',
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+export type AcknowledgeResult =
+  | { ok: true; wedge: WedgeRecord }
+  | { ok: false; reason: string };
+
+/**
+ * Acknowledge a wedge: marks the record acknowledged and clears the tripped
+ * signature's counter so auto-mode re-enters with a clean slate for that
+ * signature. Acknowledgment is always explicit (ADR-047 §5).
+ */
+export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeResult {
+  if (!isDbAvailable()) return { ok: false, reason: 'workflow database unavailable' };
+  try {
+    return transaction(() => {
+      const db = _getAdapter()!;
+      const row = db.prepare(
+        `SELECT * FROM liveness_wedge_records WHERE wedge_id = :wid AND scope_id = :scope`,
+      ).get({ ':wid': wedgeId, ':scope': scopeId }) as Record<string, unknown> | undefined;
+      if (!row) return { ok: false, reason: `no wedge record ${wedgeId} for this project` };
+      const wedge = rowToWedge(row);
+      if (wedge.acknowledgedAt) return { ok: true, wedge };
+      const now = nowIso();
+      db.prepare(
+        `UPDATE liveness_wedge_records SET acknowledged_at = :now WHERE wedge_id = :wid`,
+      ).run({ ':now': now, ':wid': wedgeId });
+      db.prepare(
+        `DELETE FROM liveness_block_signatures
+         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
+      ).run({
+        ':scope': wedge.scopeId,
+        ':utype': wedge.unitType,
+        ':uid': wedge.unitId,
+        ':hash': wedge.inputHash,
+      });
+      return { ok: true, wedge: { ...wedge, acknowledgedAt: now } };
+    });
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * Hash the DB rows a unit was dispatched to move (its target identity's
+ * milestone/slice/task rows). Used to detect completed-no-advance dispatches:
+ * a unit that returns while this hash is unchanged did zero target work
+ * (ADR-047 §4 — the #1626 zero-work re-dispatch class). Timestamp columns are
+ * excluded so bookkeeping touches don't mask a semantic no-advance.
+ */
+export function snapshotUnitTargetRows(unitType: string, unitId: string): string | null {
+  if (!isDbAvailable()) return null;
+  try {
+    const db = _getAdapter()!;
+    const { milestone, slice, task } = parseUnitId(unitId);
+    if (!milestone) return null;
+    const rows: unknown[] = [];
+    const strip = (r: Record<string, unknown>): Record<string, unknown> => {
+      const { created_at: _c, updated_at: _u, ...rest } = r;
+      return rest;
+    };
+    const collect = (sql: string, params: Record<string, unknown>): void => {
+      for (const r of db.prepare(sql).all(params) as Record<string, unknown>[]) {
+        rows.push(strip(r));
+      }
+    };
+    collect('SELECT * FROM milestones WHERE id = :m', { ':m': milestone });
+    if (slice && task) {
+      collect('SELECT * FROM slices WHERE milestone_id = :m AND id = :s ORDER BY id', { ':m': milestone, ':s': slice });
+      collect('SELECT * FROM tasks WHERE milestone_id = :m AND slice_id = :s AND id = :t ORDER BY id', { ':m': milestone, ':s': slice, ':t': task });
+    } else if (slice) {
+      collect('SELECT * FROM slices WHERE milestone_id = :m AND id = :s ORDER BY id', { ':m': milestone, ':s': slice });
+      collect('SELECT * FROM tasks WHERE milestone_id = :m AND slice_id = :s ORDER BY id', { ':m': milestone, ':s': slice });
+    } else {
+      collect('SELECT * FROM slices WHERE milestone_id = :m ORDER BY id', { ':m': milestone });
+    }
+    return hashBackstopInput(`${unitType}\n${JSON.stringify(rows)}`);
+  } catch (err) {
+    debugLog('livenessBackstop', {
+      phase: 'snapshot-failed',
+      unitType,
+      unitId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
+ * Latest dispatch-ledger error for a unit — the canonical failure payload the
+ * loop settled before routing a retry. The ledger keys rows by bare unit id
+ * with the unit type in its own column, so the lookup must use the bare id
+ * and require a unit_type match (another unit type's error on the same id
+ * must never feed this unit's signature).
+ */
+export function lookupLatestLedgerError(unitType: string, unitId: string): string | undefined {
+  try {
+    const row = getLatestForUnit(unitId);
+    if (!row || row.unit_type !== unitType) return undefined;
+    return row.error_summary ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The resume command for a wedge — the single sanctioned re-entry (ADR-047 §5). */
+export function wedgeResumeCommand(wedge: WedgeRecord): string {
+  return `/gsd auto --resume-wedge ${wedge.wedgeId}`;
+}
+
+/**
+ * Terminal notice emitted when the backstop trips. Routed through
+ * markBlockedStopReason → "Auto-mode blocked — …" so the headless host exits
+ * 10 and the acceptance-bed classifier reads it as a wedge.
+ */
+export function formatWedgeTripNotice(wedge: WedgeRecord): string {
+  return (
+    `liveness backstop tripped: ${wedge.guardId} recurred ${wedge.occurrenceCount}x with unchanged inputs ` +
+    `for ${wedge.unitType} ${wedge.unitId} (wedge ${wedge.wedgeId}). ` +
+    `Sanctioned exit: ${wedge.sanctionedExit} ` +
+    `After resolving, acknowledge with \`${wedgeResumeCommand(wedge)}\` to re-enter auto-mode.`
+  );
+}
+
+/**
+ * Refusal notice reprinted while an unacknowledged wedge record exists.
+ * Deliberately prefix-free: callers compose it under the canonical blocked
+ * stop-notice prefix ("Auto-mode blocked — …") so the headless host and the
+ * acceptance-bed classifier read the refusal as a blocked terminal notice.
+ */
+export function formatWedgeRefusalNotice(wedge: WedgeRecord): string {
+  return (
+    `wedged (${wedge.wedgeId}): ${wedge.guardId} recurred ${wedge.occurrenceCount}x with unchanged inputs ` +
+    `for ${wedge.unitType} ${wedge.unitId}. ` +
+    `Sanctioned exit: ${wedge.sanctionedExit} ` +
+    `Auto-mode will not re-enter until you acknowledge with \`${wedgeResumeCommand(wedge)}\`.`
+  );
+}

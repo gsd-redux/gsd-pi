@@ -45,7 +45,11 @@ Exit code: 0 = COMPLETED, 10 = WEDGED, 1 = INCONCLUSIVE/driver failure.
 - **WEDGED** — the engine itself blocked, paused, or looped: exit 10 and/or a pause
   notification naming one of its own guards (verification gate, attempt/recovery
   pause, dispatch guard, drift check, ...). `firstBlock` cites the engine's own
-  message — a wedge verdict is never just "didn't finish".
+  message — a wedge verdict is never just "didn't finish". The ADR-047 liveness
+  backstop's trip/refusal notices ("Auto-mode blocked — liveness backstop
+  tripped: ..." / "Auto-mode blocked — wedged (W-...): ...") flow under the same
+  `Auto-mode blocked` prefix, so the classifier recognizes them unchanged; the
+  resume path they print is `/gsd auto --resume-wedge <id>`.
 - **INCONCLUSIVE** — the bed could not attribute the outcome to the engine, most
   often a transcript bug (`fake-llm:` expectation mismatch or exhaustion). Fix the
   transcript in `buildTranscript()` and re-run; this is a bed defect, not a finding.

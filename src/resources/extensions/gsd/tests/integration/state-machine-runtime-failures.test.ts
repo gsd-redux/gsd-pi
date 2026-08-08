@@ -41,8 +41,6 @@ import {
 } from "../../auto/infra-errors.ts";
 
 // ── Stuck detection ──────────────────────────────────────────────────────
-import { detectStuck } from "../../auto/detect-stuck.ts";
-import type { WindowEntry } from "../../auto/types.ts";
 
 // ── Session constants ────────────────────────────────────────────────────
 import {
@@ -239,105 +237,6 @@ describe("infrastructure error detection", () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // SECTION 2: Stuck Detection
-// ─────────────────────────────────────────────────────────────────────────
-
-describe("stuck detection", () => {
-  test("Rule 1: same error repeated consecutively → stuck", () => {
-    const window: WindowEntry[] = [
-      { key: "M001/S01/T01", error: "Provider returned 500" },
-      { key: "M001/S01/T01", error: "Provider returned 500" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck, "same error twice should be stuck");
-    assert.ok(result?.reason.includes("Same error repeated"), "reason should mention error");
-  });
-
-  test("Rule 1: different errors are NOT stuck", () => {
-    const window: WindowEntry[] = [
-      { key: "M001/S01/T01", error: "Provider returned 500" },
-      { key: "M001/S01/T01", error: "Provider returned 429" },
-    ];
-    const result = detectStuck(window);
-    // Different errors → not stuck by Rule 1 (but might be by Rule 2 with more entries)
-    assert.equal(result, null, "different errors should not trigger Rule 1");
-  });
-
-  test("Rule 2: same unit 3 consecutive times → stuck", () => {
-    const window: WindowEntry[] = [
-      { key: "M001/S01/T01" },
-      { key: "M001/S01/T01" },
-      { key: "M001/S01/T01" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck, "same unit 3x should be stuck");
-    assert.ok(result?.reason.includes("3 consecutive times"), "reason should mention 3x");
-  });
-
-  test("Rule 2: 2 consecutive same units is NOT stuck", () => {
-    const window: WindowEntry[] = [
-      { key: "M001/S01/T01" },
-      { key: "M001/S01/T01" },
-    ];
-    const result = detectStuck(window);
-    assert.equal(result, null, "2x same unit is not stuck");
-  });
-
-  test("Rule 3: oscillation A→B→A→B → stuck", () => {
-    const window: WindowEntry[] = [
-      { key: "M001/S01/T01" },
-      { key: "M001/S01/T02" },
-      { key: "M001/S01/T01" },
-      { key: "M001/S01/T02" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck, "A→B→A→B should be stuck");
-    assert.ok(result?.reason.includes("Oscillation"), "reason should mention oscillation");
-  });
-
-  test("Rule 3: A→B→C→D is NOT oscillation", () => {
-    const window: WindowEntry[] = [
-      { key: "A" },
-      { key: "B" },
-      { key: "C" },
-      { key: "D" },
-    ];
-    assert.equal(detectStuck(window), null, "sequential progress is not stuck");
-  });
-
-  test("empty window returns null", () => {
-    assert.equal(detectStuck([]), null);
-  });
-
-  test("single entry returns null", () => {
-    assert.equal(detectStuck([{ key: "A" }]), null);
-  });
-
-  test("Rule 1 takes precedence over Rule 2 when both apply", () => {
-    const window: WindowEntry[] = [
-      { key: "A", error: "fail" },
-      { key: "A", error: "fail" },
-      { key: "A", error: "fail" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck);
-    // Rule 1 fires first (same error at indices 1,2)
-    assert.ok(result?.reason.includes("Same error repeated"));
-  });
-
-  test("errors on different keys are not stuck by Rule 1", () => {
-    const window: WindowEntry[] = [
-      { key: "A", error: "fail" },
-      { key: "B", error: "fail" },
-    ];
-    // Same error but different keys — Rule 1 compares errors regardless of key
-    const result = detectStuck(window);
-    // Rule 1 says "same error repeated consecutively" — it checks error strings
-    assert.ok(result?.stuck, "same error string on different keys still triggers Rule 1");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// SECTION 3: Session Management
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("session management", () => {
@@ -675,73 +574,6 @@ describe("graduated error recovery logic", () => {
 
 // ─────────────────────────────────────────────────────────────────────────
 // SECTION 8: Multi-Iteration Stuck Scenarios
-// ─────────────────────────────────────────────────────────────────────────
-
-describe("multi-iteration stuck scenarios", () => {
-  test("progressive window: normal → stuck after 3rd same unit", () => {
-    const window: WindowEntry[] = [];
-
-    window.push({ key: "A" });
-    assert.equal(detectStuck(window), null, "1 entry: not stuck");
-
-    window.push({ key: "A" });
-    assert.equal(detectStuck(window), null, "2 entries: not stuck yet");
-
-    window.push({ key: "A" });
-    assert.ok(detectStuck(window)?.stuck, "3 entries: stuck");
-  });
-
-  test("progressive window: oscillation builds up", () => {
-    const window: WindowEntry[] = [];
-
-    window.push({ key: "A" });
-    assert.equal(detectStuck(window), null);
-
-    window.push({ key: "B" });
-    assert.equal(detectStuck(window), null);
-
-    window.push({ key: "A" });
-    assert.equal(detectStuck(window), null, "3 entries A→B→A: not stuck yet");
-
-    window.push({ key: "B" });
-    assert.ok(detectStuck(window)?.stuck, "4 entries A→B→A→B: stuck");
-  });
-
-  test("mixed progress then stuck: A→B→C→C→C → stuck on C", () => {
-    const window: WindowEntry[] = [
-      { key: "A" },
-      { key: "B" },
-      { key: "C" },
-      { key: "C" },
-      { key: "C" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck, "3 consecutive C: stuck");
-    assert.ok(result?.reason.includes("C"), "reason should mention stuck unit");
-  });
-
-  test("error in middle of window does not false-positive", () => {
-    const window: WindowEntry[] = [
-      { key: "A" },
-      { key: "B", error: "transient failure" },
-      { key: "C" },
-      { key: "D" },
-    ];
-    assert.equal(detectStuck(window), null, "single error should not trigger stuck");
-  });
-
-  test("consecutive errors on different keys still triggers Rule 1", () => {
-    const window: WindowEntry[] = [
-      { key: "A", error: "Provider returned 503 Service Unavailable" },
-      { key: "B", error: "Provider returned 503 Service Unavailable" },
-    ];
-    const result = detectStuck(window);
-    assert.ok(result?.stuck, "same error on different keys: stuck by Rule 1");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// SECTION 9: State Consistency Under Concurrent DB Operations
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("state consistency under DB mutations", () => {

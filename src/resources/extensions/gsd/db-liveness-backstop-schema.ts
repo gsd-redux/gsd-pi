@@ -1,0 +1,47 @@
+// Project/App: gsd-pi
+// File Purpose: Liveness-backstop tables (ADR-047) — DB-persisted block-signature
+// counters and wedge records for the ADR-047 auto-mode liveness backstop.
+
+import type { DbAdapter } from './db-adapter.js';
+
+/**
+ * ADR-047: the backstop's ledger must survive process restarts — a restart
+ * was previously a silent counter reset (#1622, #1626 looped for hours).
+ * Occurrence counting is keyed by (scope, unit type, target identity, input
+ * hash): the hash already encodes everything the guard read (ADR §3), so a
+ * reason whose display label embeds variable data cannot split the counter.
+ * guard_id is display-only metadata carried for the wedge notice.
+ */
+export function createLivenessBackstopSchema(db: DbAdapter): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS liveness_block_signatures (
+      scope_id TEXT NOT NULL,
+      guard_id TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      unit_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      PRIMARY KEY (scope_id, unit_type, unit_id, input_hash)
+    );
+
+    CREATE TABLE IF NOT EXISTS liveness_wedge_records (
+      wedge_id TEXT PRIMARY KEY,
+      scope_id TEXT NOT NULL,
+      guard_id TEXT NOT NULL,
+      unit_type TEXT NOT NULL,
+      unit_id TEXT NOT NULL,
+      input_hash TEXT NOT NULL,
+      occurrence_count INTEGER NOT NULL,
+      sanctioned_exit TEXT NOT NULL,
+      forensics_path TEXT,
+      created_at TEXT NOT NULL,
+      acknowledged_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_liveness_wedges_open
+      ON liveness_wedge_records(scope_id)
+      WHERE acknowledged_at IS NULL;
+  `);
+}

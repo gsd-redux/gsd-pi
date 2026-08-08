@@ -38,7 +38,6 @@ export {
 
 // Re-export shared helpers.
 export {
-  persistStuckRecoveryAttempts,
   isSamePathLocal,
   isIsolatedWorktreeSession,
   _resolveReportBasePath,

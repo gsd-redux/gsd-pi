@@ -31,9 +31,9 @@ import {
   resetSessionTimeoutState,
   restoreTaskHostVerificationContext,
 } from "./unit-phase.js";
-import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
 import { markBlockedStopReason } from "../stop-notice.js";
+import { recordNonAdvancingOutcome } from "../auto-liveness-backstop.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import { resolveEngine } from "../engine-resolver.js";
@@ -44,7 +44,6 @@ import {
   markCompleted as markDispatchCompleted,
   markFailed as markDispatchFailed,
   getRecentForUnit as getRecentDispatchesForUnit,
-  getRecentUnitKeysForProjectRoot,
   markLatestActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
 import {
@@ -54,7 +53,6 @@ import {
   milestoneLeaseTtlSeconds,
 } from "../db/milestone-leases.js";
 import { heartbeatAutoWorker, getAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
-import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { scheduleSidecarQueue } from "../uok/execution-graph.js";
 import { normalizeRealPath } from "../paths.js";
@@ -197,17 +195,6 @@ function resolveCompletionStopFromOutcome(
   };
 }
 
-// ── Stuck detection persistence (#3704) ──────────────────────────────────
-// Phase C migration: stuck-state.json deleted in favor of DB-backed
-// equivalents. recentUnits is rebuilt from unit_dispatches (Phase B
-// ledger) on session start; stuckRecoveryAttempts persists in runtime_kv
-// under a stable project scope (soft state per the runtime_kv invariant). Single-host
-// SQLite WAL only — multi-host would need a real coordinator.
-//
-// When no worker is registered (DB unavailable, fresh project), both
-// helpers degrade to the empty-state fallback that #3704 already
-// tolerates — same behavior as a fresh session.
-const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
 const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
 const WORKER_HEARTBEAT_INTERVAL_MS = milestoneLeaseTtlSeconds() * 500;
@@ -225,50 +212,6 @@ const VERIFIED_TASK_PUBLICATION_DEPS = {
   publishVerifiedTaskCompletion,
   readLatestTaskAttempt,
 };
-
-function stableStuckStateScopeId(s: AutoSession): string {
-  return normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath));
-}
-
-function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; stuckRecoveryAttempts: number } {
-  const scopeId = stableStuckStateScopeId(s);
-  if (!scopeId) return { recentUnits: [], stuckRecoveryAttempts: 0 };
-  try {
-    // Scope the stuck window to the CURRENT session (trace_id) so stale
-    // finalize-retry entries from previous sessions don't fire detectStuck
-    // Rule 1 on the first iteration — killing auto-mode before any new
-    // dispatch runs (#852). A prior session's two consecutive finalize-retry
-    // failures would otherwise permanently block every new session.
-    //
-    // s.currentTraceId is only set inside the first loop iteration (line ~443),
-    // so at this call-site it is always null for a fresh session. Return []
-    // directly in that case — no prior dispatch has occurred in this session,
-    // so the stuck window is trivially empty and the DB query is skipped.
-    const recentUnits =
-      s.currentTraceId != null
-        ? getRecentUnitKeysForProjectRoot(scopeId, STUCK_WINDOW_SIZE, s.currentTraceId)
-        : [];
-    const stuckRecoveryAttempts =
-      getRuntimeKv<number>("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY) ?? 0;
-    return { recentUnits, stuckRecoveryAttempts };
-  } catch (err) {
-    debugLog("autoLoop", { phase: "load-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
-    return { recentUnits: [], stuckRecoveryAttempts: 0 };
-  }
-}
-
-function saveStuckState(s: AutoSession, state: LoopState): void {
-  const scopeId = stableStuckStateScopeId(s);
-  if (!scopeId) return;
-  // recentUnits is automatically derived from unit_dispatches by the
-  // dispatch ledger writes in openDispatchClaim — no separate persistence
-  // needed. Only the soft retry counter needs a runtime_kv row.
-  try {
-    setRuntimeKv("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY, state.stuckRecoveryAttempts);
-  } catch (err) {
-    debugLog("autoLoop", { phase: "save-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
-  }
-}
 
 function logDispatchLedgerWriteFailure(err: unknown): void {
   debugLog("autoLoop", {
@@ -488,13 +431,9 @@ export async function autoLoop(
   let iteration = 0;
   const dispatchContract = options?.dispatchContract ?? "legacy-direct";
   const unitDispatchDeps = createExecutionGraphUnitDispatchDeps();
-  // Load persisted stuck state so counters survive session restarts (#3704)
-  const persisted = loadStuckState(s);
   // Load persisted verification retry state so the exhausted-unit guard fires on restart (#651)
   hydrateCustomVerifyRetryCounts(s, { logFailure: logCustomVerifyRetryLoadFailure });
   const loopState: LoopState = {
-    recentUnits: persisted.recentUnits,
-    stuckRecoveryAttempts: persisted.stuckRecoveryAttempts,
     consecutiveFinalizeTimeouts: 0,
     consecutiveDispatchCount: new Map<string, number>(),
     lastDispatchedKey: null,
@@ -660,15 +599,11 @@ export async function autoLoop(
         recentErrorMessages,
       }, {
         emitIterationEnd: () => emitIterationEnd(),
-        saveStuckState: () => saveStuckState(s, loopState),
         logIterationComplete: () => debugLog("autoLoop", { phase: "iteration-complete", iteration }),
       });
     };
-    let stuckStatePersistedThisIteration = false;
     const finishIncompleteIteration = (details: Record<string, unknown>): void => {
       emitIterationEnd(details);
-      saveStuckState(s, loopState);
-      stuckStatePersistedThisIteration = true;
     };
 
     try {
@@ -1272,6 +1207,43 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
+            // ADR-047: transient-retry pauses (classifyFailure "retry" routes)
+            // previously looped invisibly — this branch neither incremented the
+            // error budget nor fed the liveness ledger, so a never-healing
+            // transient with identical text spun forever. Count them against
+            // the loop's EXISTING consecutive-error budget (reset by
+            // completeIteration on a genuinely advancing turn); exhaustion
+            // stops through the blocked path and records the outcome in the
+            // backstop ledger so a repeat exhaustion trips the wedge.
+            consecutiveErrors++;
+            const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
+            recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
+            const pausedDecision = decideIterationErrorRecovery({
+              consecutiveErrors,
+              recentErrorMessages,
+              currentErrorMessage: pausedMsg,
+            });
+            if (pausedDecision.action === "stop") {
+              recordNonAdvancingOutcome({
+                scopeId: normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath)) || s.basePath,
+                guardId: "transient-retry-exhausted",
+                unitType: "orchestration",
+                unitId: s.currentMilestoneId ?? "workflow",
+                inputPayload: pausedMsg,
+              });
+              ctx.ui.notify(pausedDecision.notifyMessage, "error");
+              await deps.stopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
+              finishTurn("stopped", "execution", pausedMsg);
+              finishIncompleteIteration({
+                status: "stopped",
+                reason: pausedMsg,
+                failureClass: "execution",
+              });
+              break;
+            }
+            if (pausedDecision.action === "invalidate-and-retry") {
+              deps.invalidateAllCaches();
+            }
             finishIncompleteIteration({
               status: "paused",
               reason: orchestrationResult.reason,
@@ -1776,7 +1748,6 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       completeIteration();
-      stuckStatePersistedThisIteration = true;
       finishTurn("completed");
       if (finalizeDecision.action === "complete-and-break") {
         if (!s.completionStopInProgress) {
@@ -1946,10 +1917,6 @@ export async function autoLoop(
         ctx.ui.notify(errorDecision.notifyMessage, "warning");
       }
       finishTurn(errorDecision.turnStatus, "execution", msg);
-    } finally {
-      if (!stuckStatePersistedThisIteration) {
-        saveStuckState(s, loopState);
-      }
     }
   }
 

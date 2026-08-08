@@ -350,7 +350,7 @@ test("deep project setup: pre-dispatch can run before the first milestone exists
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(stopped, false);
@@ -462,7 +462,7 @@ test("deep project setup: pre-dispatch takes precedence over an existing draft m
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -509,7 +509,7 @@ test("deep project setup: pending setup does not rewrite executing state to PROJ
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(paused, false);
@@ -563,7 +563,7 @@ test("deep project setup: pre-dispatch does not rewrite execution state to PROJE
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -621,7 +621,7 @@ test("deep project setup: pending project research cannot dispatch PROJECT/S01",
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -947,8 +947,6 @@ test("deep auto dispatch forces milestone checkpoints into plain chat", async (t
       midTitle: "Plain Chat Gate",
     },
     {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     },
   );

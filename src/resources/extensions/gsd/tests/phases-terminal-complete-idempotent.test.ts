@@ -175,8 +175,6 @@ async function runScenario(opts: {
     });
 
     const result = await runPreDispatch(ic, {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     });
 

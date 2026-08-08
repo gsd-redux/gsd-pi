@@ -59,12 +59,17 @@ import { isSkippedForDispatch } from "../status-guards.js";
 import { getErrorMessage } from "../error-utils.js";
 import { logWarning } from "../workflow-logger.js";
 import { normalizeRealPath } from "../paths.js";
+import { buildDispatchKey } from "./dispatch-key.js";
 import {
-  buildDispatchKey,
-  createDispatchHistory,
-  STUCK_WINDOW_SIZE,
-  type DispatchHistory,
-} from "./dispatch-history.js";
+  COMPLETED_NO_ADVANCE_GUARD_ID,
+  formatWedgeRefusalNotice,
+  formatWedgeTripNotice,
+  getOpenWedge,
+  guardIdFromReason,
+  lookupLatestLedgerError,
+  recordNonAdvancingOutcome,
+  snapshotUnitTargetRows,
+} from "../auto-liveness-backstop.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
@@ -371,9 +376,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   private seq = 0;
   private lastAdvanceKey: string | null = null;
   private lastFinalizedUnitKey: string | null = null;
-  // Dispatch History module (#482): the dispatch-decision window with
-  // cross-session DB rehydration and full detect-stuck rules.
-  private readonly dispatchHistory: DispatchHistory;
+  // ADR-047 liveness backstop: target-row hash captured at dispatch so
+  // completeActiveUnit can detect completed-no-advance outcomes, and the last
+  // decided unit so non-advancing outcomes carry their target identity.
+  private pendingTargetSnapshot: { unitType: string; unitId: string; hash: string } | null = null;
+  private lastDecisionUnit: { unitType: string; unitId: string } | null = null;
   // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
   // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
   // so the first advance of a session has no edge to assert.
@@ -396,16 +403,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.runtimeBasePath = context.runtimeBasePath;
     this.s = context.session;
     this.flowId = `auto-orchestrator-${Date.now()}`;
-    this.dispatchHistory = createDispatchHistory({
-      windowSize: STUCK_WINDOW_SIZE,
-      // Same stable scope the auto-loop uses for stuck-state persistence so
-      // rehydration reads the rows the dispatch ledger wrote for this project.
-      resolveScopeId: () =>
-        normalizeRealPath(
-          this.s.scope?.workspace.projectRoot ??
-            (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
-        ) || null,
-    });
+  }
+
+  /**
+   * Stable project scope for the liveness backstop — the same realpath scope
+   * the dispatch ledger uses, so signatures survive worktree adoption and
+   * process restarts.
+   */
+  private backstopScopeId(): string | null {
+    return normalizeRealPath(
+      this.s.scope?.workspace.projectRoot ??
+        (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
+    ) || null;
   }
 
   // ── Live base-path resolution (was the wiring factory's getLiveDispatchBasePath) ──
@@ -914,7 +923,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     }
     this.lastStuckRecoveryKey = key;
     invalidateAllCaches();
-    this.dispatchHistory.clearOnRecovery();
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     // #1622: a read-only refresh (execute-task: canonical Attempt verified, task
@@ -985,17 +993,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async start(_sessionContext: AutoSessionContext): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    // #852: a fresh user-triggered session must start with a clean stuck window.
-    // Cross-session rehydration at start() was removed because it caused false
-    // stuck-loop verdicts when prior sessions left consecutive finalize-retry
-    // entries in unit_dispatches — the new session would be killed before its
-    // first dispatch ran. Within-session stuck detection (accumulated through
-    // recordDispatch() calls during advance()) remains fully active and catches
-    // genuine stuck patterns after STUCK_WINDOW_SIZE dispatches.
-    //
-    // resume() retains cross-session rehydration: an interrupted session resuming
-    // after a crash should see the dispatch history it had been accumulating.
-    this.dispatchHistory.clearOnRecovery();
+    // ADR-047: cross-session liveness state lives in the DB-persisted
+    // block-signature ledger, not in-process — a restart resets nothing.
+    this.pendingTargetSnapshot = null;
     this.lastStuckRecoveryKey = null;
     this.lastReadOnlyRecoveryKey = null;
     this.lastDerivedPhase = null;
@@ -1006,9 +1006,91 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return { kind: "started" };
   }
 
+  /**
+   * ADR-047 liveness backstop wrapper. Re-entry is refused while an
+   * unacknowledged wedge record exists; every non-advancing advance outcome
+   * feeds the DB-persisted block-signature ledger, and a tripped signature
+   * converts the outcome into a surfaced, resumable hard stop.
+   */
   public async advance(): Promise<AutoAdvanceResult> {
+    const scopeId = this.backstopScopeId();
+    const openWedge = scopeId ? getOpenWedge(scopeId) : null;
+    if (openWedge) {
+      const blocked: AutoAdvanceResult = {
+        kind: "blocked",
+        reason: formatWedgeRefusalNotice(openWedge),
+        action: "stop",
+      };
+      this.journalTransition({
+        name: "advance-blocked",
+        reason: blocked.reason,
+        unitType: openWedge.unitType,
+        unitId: openWedge.unitId,
+      });
+      this.postAdvanceRecord(blocked);
+      return blocked;
+    }
+    return this.adjudicateLiveness(await this.advanceInner());
+  }
+
+  /**
+   * Feed the liveness ledger from the single seam where advance outcomes are
+   * adjudicated. Guard blocks and gate failures (kind "blocked"/"error")
+   * record a signature built from the guard's own reason payload; a dispatch
+   * (kind "advanced") snapshots the target rows so completeActiveUnit can
+   * detect completed-no-advance. Transient retry pauses (kind "paused") are
+   * not recorded here — the loop counts them against its existing
+   * consecutive-error budget and, on exhaustion, stops through the blocked
+   * path and records that exhaustion into this same ledger (ADR-047 gap fix).
+   */
+  private adjudicateLiveness(result: AutoAdvanceResult): AutoAdvanceResult {
+    const scopeId = this.backstopScopeId();
+    if (!scopeId) return result;
+
+    if (result.kind === "advanced") {
+      const { unitType, unitId } = result.unit;
+      const hash = snapshotUnitTargetRows(unitType, unitId);
+      this.pendingTargetSnapshot = hash ? { unitType, unitId, hash } : null;
+      return result;
+    }
+    if (result.kind !== "blocked" && result.kind !== "error") return result;
+
+    const reason = result.reason ?? "unclassified block";
+    const unit = this.lastDecisionUnit ?? {
+      unitType: "orchestration",
+      unitId: this.s.currentMilestoneId ?? "workflow",
+    };
+    const outcome = recordNonAdvancingOutcome({
+      scopeId,
+      guardId: guardIdFromReason(reason),
+      unitType: unit.unitType,
+      unitId: unit.unitId,
+      inputPayload: reason,
+    });
+    if (!outcome.tripped) return result;
+
+    const wedged: AutoAdvanceResult = {
+      kind: "blocked",
+      reason: formatWedgeTripNotice(outcome.wedge),
+      action: "stop",
+      ...(result.kind === "blocked" && result.stateSnapshot
+        ? { stateSnapshot: result.stateSnapshot }
+        : {}),
+    };
+    this.journalTransition({
+      name: "advance-blocked",
+      reason: wedged.reason,
+      unitType: unit.unitType,
+      unitId: unit.unitId,
+    });
+    this.postAdvanceRecord(wedged);
+    return wedged;
+  }
+
+  private async advanceInner(): Promise<AutoAdvanceResult> {
     debugCount("dispatches");
     const stopAdvanceTimer = debugTime("orchestrator-advance");
+    this.lastDecisionUnit = null;
     try {
       this.ensureLockOwnership();
       const uokGateContext = this.resolveUokGateContext();
@@ -1118,7 +1200,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
               this.status.phase = "stopped";
               this.status.activeUnit = undefined;
               this.lastAdvanceKey = null;
-              this.dispatchHistory.clearOnRecovery();
               this.bumpTransition();
               this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
               this.postAdvanceRecord(stopped);
@@ -1136,7 +1217,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           this.status.phase = "paused";
           this.status.activeUnit = undefined;
           this.lastAdvanceKey = null;
-          this.dispatchHistory.clearOnRecovery();
           this.bumpTransition();
           this.journalTransition({ name: "advance-blocked", reason: settlementBlock.reason });
           this.postAdvanceRecord(settlementBlock);
@@ -1152,7 +1232,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         this.status.phase = "stopped";
         this.status.activeUnit = undefined;
         this.lastAdvanceKey = null;
-        this.dispatchHistory.clearOnRecovery();
         this.bumpTransition();
         this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
         this.postAdvanceRecord(stopped);
@@ -1202,13 +1281,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return blocked;
       }
 
-      // Record every dispatch decision in the history window before pre-flight
-      // checks so the stuck-loop detector observes the full decision history
-      // (including decisions that idempotency would otherwise short-circuit).
-      // The window is capped at STUCK_WINDOW_SIZE and evicts oldest-first.
-      const nextKey = this.dispatchHistory.recordDispatch(decision.unitType, decision.unitId);
+      // ADR-047: remember the decided unit so any guard block below carries
+      // its target identity into the liveness ledger.
+      this.lastDecisionUnit = { unitType: decision.unitType, unitId: decision.unitId };
+      const nextKey = buildDispatchKey(decision.unitType, decision.unitId);
 
-      const matchingCount = this.dispatchHistory.countMatching(nextKey);
       if (this.lastFinalizedUnitKey === nextKey) {
         // #442: the unit re-dispatched immediately after finalizing may have
         // actually completed on disk with a stale DB. Verify + recover before
@@ -1245,12 +1322,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       }
 
       // Idempotency: same key as immediately previous successful advance.
-      // This is the soft, fast-path block kept from #5786. It only fires when
-      // the ring is NOT yet saturated for this key — once the ring is full of
-      // `nextKey`, the stuck-loop verdict takes precedence (see below). Both
-      // checks coexist: idempotency for the common immediate-repeat case,
-      // stuck-loop for the saturated-window case.
-      if (this.lastAdvanceKey === nextKey && matchingCount < STUCK_WINDOW_SIZE) {
+      // This is the soft, fast-path block kept from #5786 — the unit is still
+      // in flight, so re-polling is benign no matter how often it repeats.
+      // Genuine no-progress loops are the liveness backstop's job (ADR-047).
+      if (this.lastAdvanceKey === nextKey) {
         // Unit already active — benign no-op. Return skipped so the loop re-polls
         // without cancelling the in-flight unit (blocked+pause would force-cancel it).
         this.clearPendingDispatch();
@@ -1265,56 +1340,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return skipped;
       }
 
-      // Stuck-loop detection: consult the Dispatch History module's full
-      // detect-stuck rule set once the window is *full* — not only when a
-      // single key saturates it. Gating on a single key's saturation count
-      // (matchingCount >= STUCK_WINDOW_SIZE) let two-unit oscillations slip
-      // through forever: an execute-task ↔ complete-slice loop (a slice gate
-      // that keeps reopening the same task, #1225) fills the window with two
-      // alternating keys, so neither key ever reaches the saturation count and
-      // detect-stuck's oscillation/repeat rules were never even invoked. Firing
-      // on window saturation instead covers both shapes. Consecutive same-key
-      // re-advances (the benign pause/resume churn the old count gate guarded
-      // against) are already short-circuited above by the idempotency skip, and
-      // legitimate retry backoff is still suppressed inside detect-stuck via the
-      // dispatch ledger — a saturated window with no verdict means we are inside
-      // the unit's retry-backoff budget, so let the retry proceed.
-      const windowSaturated =
-        this.dispatchHistory.getRecentWindow().length >= STUCK_WINDOW_SIZE;
-      const stuckVerdict = windowSaturated ? this.dispatchHistory.detectStuck() : null;
-      if (stuckVerdict) {
-        // #442: before declaring a stuck loop, verify the unit didn't actually
-        // complete on disk (stale DB) and recover if so — legacy graduated
-        // stuck-recovery parity. Otherwise hard-stop with a diagnosable reason.
-        const stuckRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
-        if (stuckRecovery.recovered) {
-          this.clearPendingDispatch();
-          return this.stuckRecovered(
-            decision,
-            reconciliation.stateSnapshot,
-            stuckRecovery.outcome ?? "DB refreshed",
-          );
-        }
-        this.clearPendingDispatch();
-        const blocked: AutoAdvanceResult = {
-          kind: "blocked",
-          reason: this.hardStopReason(
-            `stuck-loop: ${stuckVerdict.reason}`,
-            stuckRecovery,
-            decision.unitType,
-            decision.unitId,
-          ),
-          action: "stop",
-        };
-        this.journalTransition({
-          name: "advance-blocked",
-          reason: blocked.reason,
-          unitType: decision.unitType,
-          unitId: decision.unitId,
-        });
-        this.postAdvanceRecord(blocked);
-        return blocked;
-      }
+      // ADR-047: the legacy detect-stuck rule set ("Rule 1" over the dispatch
+      // window) was deleted, not paralleled. Non-advancing outcomes now feed
+      // the DB-persisted block-signature ledger in adjudicateLiveness(), which
+      // trips at 2 identical-input occurrences, interleaving-blind — covering
+      // the repeat, oscillation, and zero-work re-dispatch shapes the window
+      // rules missed or double-reported.
 
       const contract = this.compileUnitToolContract(decision.unitType);
       if (!contract.ok) {
@@ -1397,7 +1428,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       if (result.kind === "stopped") {
         this.lastAdvanceKey = null;
         this.lastFinalizedUnitKey = null;
-        this.dispatchHistory.clearOnRecovery();
         this.status.activeUnit = undefined;
       }
       this.bumpTransition();
@@ -1426,14 +1456,8 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async resume(): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    // Preserve the dispatch-history window across an in-process resume so
-    // stuck-loop detection accumulates across pause/resume cycles rather than
-    // resetting each time (#572 regression). When the window is empty (fresh
-    // orchestrator resuming a prior session), rehydrate it from the DB
-    // dispatch ledger so cross-session re-dispatch loops are detected (#482).
-    if (this.dispatchHistory.getRecentWindow().length === 0) {
-      this.dispatchHistory.rehydrate();
-    }
+    // ADR-047: the DB-persisted signature ledger already spans pause/resume
+    // cycles and process restarts — no in-process window to rehydrate.
     this.lastStuckRecoveryKey = null;
     this.lastReadOnlyRecoveryKey = null;
     // ADR-030: drop the prior "from" — the first advance after resume has no
@@ -1456,11 +1480,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     this.lastDerivedPhase = null;
-    // Preserve the dispatch-history window on pause so stuck-loop detection
-    // accumulates across pause/resume cycles. Only clear on a hard stop.
-    if (reason !== "pause") {
-      this.dispatchHistory.clearOnRecovery();
-    }
+    this.pendingTargetSnapshot = null;
     this.lastStuckRecoveryKey = null;
     this.lastReadOnlyRecoveryKey = null;
     this.bumpTransition();
@@ -1479,6 +1499,39 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
       : null;
     if (activeUnitKey !== unitKey) return;
+
+    // ADR-047 §4: a unit that returned without moving any of the target rows
+    // it was dispatched to move is a non-advancing outcome — the hottest wedge
+    // class (#1626) never hits an explicit block surface. Hash the same rows
+    // captured at dispatch; an unchanged hash feeds the ledger and trips at 2.
+    const scopeId = this.backstopScopeId();
+    const snapshot = this.pendingTargetSnapshot;
+    this.pendingTargetSnapshot = null;
+    if (
+      scopeId &&
+      snapshot &&
+      buildDispatchKey(snapshot.unitType, snapshot.unitId) === unitKey
+    ) {
+      const current = snapshotUnitTargetRows(unit.unitType, unit.unitId);
+      if (current && current === snapshot.hash) {
+        const outcome = recordNonAdvancingOutcome({
+          scopeId,
+          guardId: COMPLETED_NO_ADVANCE_GUARD_ID,
+          unitType: unit.unitType,
+          unitId: unit.unitId,
+          inputPayload: current,
+        }, {
+          sanctionedExit:
+            `${unit.unitType} ${unit.unitId} completed without changing any of its target rows; ` +
+            `inspect the unit's summary and reconcile state (\`/gsd status\`, \`/gsd doctor\`) before re-running.`,
+        });
+        if (outcome.tripped) {
+          // Surface immediately; the wedge gate at the next advance() converts
+          // this into the terminal blocked stop (exit 10).
+          this.ctx.ui.notify(formatWedgeTripNotice(outcome.wedge), "error");
+        }
+      }
+    }
 
     this.status.activeUnit = undefined;
     this.lastAdvanceKey = null;
@@ -1499,6 +1552,27 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
       : null;
     if (activeUnitKey !== unitKey && this.lastFinalizedUnitKey !== unitKey) return;
+
+    // ADR-047 §4: a unit break/finalize failure is a non-advancing outcome.
+    // The signature input is the failure the loop just settled into the
+    // dispatch ledger — identical failure payloads twice mean the retry read
+    // the exact inputs that already failed.
+    const scopeId = this.backstopScopeId();
+    if (scopeId) {
+      const ledgerError = lookupLatestLedgerError(unit.unitType, unit.unitId);
+      recordNonAdvancingOutcome({
+        scopeId,
+        guardId: "finalize-retry",
+        unitType: unit.unitType,
+        unitId: unit.unitId,
+        inputPayload: ledgerError ?? "finalize-retry",
+      }, {
+        sanctionedExit:
+          `${unit.unitType} ${unit.unitId} failed finalize twice with identical inputs` +
+          (ledgerError ? `: ${ledgerError.slice(0, 300)}` : "") +
+          ` — fix the underlying failure before re-running.`,
+      });
+    }
 
     if (activeUnitKey === unitKey) {
       this.status.activeUnit = undefined;

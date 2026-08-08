@@ -250,6 +250,11 @@ export function parseHeadlessArgs(argv: string[]): HeadlessOptions {
         }
       } else if (arg === '--resume' && i + 1 < args.length) {
         options.resumeSession = args[++i]
+      } else if (arg === '--resume-wedge' && i + 1 < args.length) {
+        // ADR-047 wedge acknowledgment: consume the id here so the bare value
+        // positional cannot clobber the subcommand, then pass both through to
+        // the assembled `/gsd auto --resume-wedge <id>` verbatim.
+        options.commandArgs.push(arg, args[++i])
       } else if (arg === '--bare') {
         options.bare = true
       } else {

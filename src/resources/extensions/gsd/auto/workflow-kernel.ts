@@ -302,7 +302,12 @@ function isCompleteAndBreakReason(
   );
 }
 
-/** Strip per-attempt counter suffixes so detect-stuck Rule 1 can match repeats. */
+/**
+ * Strip per-attempt counter suffixes from ledger error summaries. Load-bearing
+ * for the ADR-047 backstop: the finalize-retry signature hashes this summary,
+ * so a changing "(attempt N/M)" suffix must not make identical failures read
+ * as different inputs.
+ */
 const FAILURE_DETAIL_ATTEMPT_SUFFIX_RE = /\s*\(attempt\s+\d+(?:\/\d+)?\)\.?$/i;
 
 function failureDetailForLedger(detail: string | undefined): string | undefined {

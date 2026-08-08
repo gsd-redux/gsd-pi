@@ -99,8 +99,6 @@ test("milestone transition archives completed units and rebuilds state", async (
         buildSnapshotOpts: () => ({}),
       },
     } as any, {
-      recentUnits: [{ key: "stale" }],
-      stuckRecoveryAttempts: 2,
       consecutiveFinalizeTimeouts: 0,
     });
 
