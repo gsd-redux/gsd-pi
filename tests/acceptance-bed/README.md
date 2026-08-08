@@ -5,7 +5,7 @@ take a tiny, already-planned one-milestone project all the way to completion?**
 
 It is the acceptance gate for the auto-mode stuck-state regression class tracked by
 wayfinder map **#1645** — the map's destination is this bed printing `COMPLETED`.
-On v1.13 it is expected to print `WEDGED`.
+With #1657–#1660 fixed it prints `COMPLETED` at HEAD (it printed `WEDGED` on v1.13).
 
 ## What it does
 
@@ -49,6 +49,25 @@ Exit code: 0 = COMPLETED, 10 = WEDGED, 1 = INCONCLUSIVE/driver failure.
 - **INCONCLUSIVE** — the bed could not attribute the outcome to the engine, most
   often a transcript bug (`fake-llm:` expectation mismatch or exhaustion). Fix the
   transcript in `buildTranscript()` and re-run; this is a bed defect, not a finding.
+
+## What the validate-milestone turns model
+
+`gsd_validate_milestone` fail-closes on stale evidence: every
+`verificationEvidence[].testedSourceRevision` must equal the source-content hash
+(`verification-source-integrity.ts`, tracked+untracked files minus `.gsd/**`)
+that the tool recomputes at validation time. A competent agent submits evidence
+from verification it ran against the milestone's final source state, so the bed
+precomputes that hash for the post-edit tree and scripts it into the
+validate-milestone turn.
+
+Two preconditions make the precomputed hash match the run-time recompute:
+
+- `ensureGitignore(projectDir)` is applied first, because auto bootstrap
+  (`auto-start.ts`) idempotently appends the GSD baseline block to the tracked
+  `.gitignore`; hashing before that mutation makes the evidence legitimately
+  stale (#1660).
+- `src/answer.js` is temporarily set to its post-task content while hashing
+  (task commits don't change the content hash; file contents do).
 
 ## Notes
 

@@ -240,6 +240,15 @@ async function computeTestedSourceRevision(dir) {
 	const mod = await import(
 		pathToFileURL(join(REPO_ROOT, "dist", "resources", "extensions", "gsd", "verification-source-integrity.js")).href
 	);
+	// Pre-apply the engine's idempotent `.gitignore` baseline (auto-start.ts runs
+	// ensureGitignore at bootstrap). Without this the tracked `.gitignore` mutates
+	// AFTER we hash, so validate-milestone's anti-stale-evidence check correctly
+	// rejects the precomputed revision (#1660). Same pattern as the tiny-milestone
+	// e2e, which calls ensureGitignore before snapshotting.
+	const gitignoreMod = await import(
+		pathToFileURL(join(REPO_ROOT, "dist", "resources", "extensions", "gsd", "gitignore.js")).href
+	);
+	gitignoreMod.ensureGitignore(dir);
 	writeFileSync(join(dir, "src", "answer.js"), READY_ANSWER);
 	const source = mod.captureVerificationSourceSnapshot([{ id: "project", cwd: dir }]);
 	writeFileSync(join(dir, "src", "answer.js"), PENDING_ANSWER);
