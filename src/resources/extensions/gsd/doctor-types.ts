@@ -19,6 +19,7 @@ export type DoctorIssueCode =
   | "tracked_runtime_files"
   | "legacy_slice_branches"
   | "stale_crash_lock"
+  | "stale_paused_session"
   | "stale_parallel_session"
   | "orphaned_completed_units"
   | "stale_hook_state"

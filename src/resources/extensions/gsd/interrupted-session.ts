@@ -93,6 +93,23 @@ function isStalePseudoMilestonePause(meta: PausedSessionMetadata): boolean {
  */
 export const PAUSED_SESSION_KV_KEY = "paused_session";
 
+/**
+ * Return the current active milestone when a standard auto-mode pause points
+ * at a different milestone. Such metadata is stale: replaying it would pin
+ * auto-mode to work that has already been superseded in the project queue.
+ */
+export function getSupersedingActiveMilestoneId(
+  meta: PausedSessionMetadata | null,
+  state: GSDState | null,
+): string | null {
+  if (meta?.activeEngineId && meta.activeEngineId !== "dev") return null;
+  const pausedMilestoneId = meta?.milestoneId;
+  const activeMilestoneId = state?.activeMilestone?.id;
+  return pausedMilestoneId && activeMilestoneId && pausedMilestoneId !== activeMilestoneId
+    ? activeMilestoneId
+    : null;
+}
+
 export function readPausedSessionMetadata(
   basePath: string,
 ): PausedSessionMetadata | null {

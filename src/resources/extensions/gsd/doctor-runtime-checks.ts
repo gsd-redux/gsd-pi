@@ -22,6 +22,12 @@ import {
   loadUnboundProjectionEvidence,
   previewUnboundProjectionEvidenceResolution,
 } from "./managed-projection-history.js";
+import {
+  getSupersedingActiveMilestoneId,
+  PAUSED_SESSION_KV_KEY,
+  type PausedSessionMetadata,
+} from "./interrupted-session.js";
+import { deleteRuntimeKv, getRuntimeKv } from "./db/runtime-kv.js";
 
 const MAX_UAT_ATTEMPTS = 3;
 
@@ -73,6 +79,43 @@ export async function checkRuntimeHealth(
         fixable: false,
       });
     }
+  }
+
+  // ── Stale paused session ──────────────────────────────────────────────
+  // A pause is only resumable while it targets the milestone that state
+  // derivation currently considers active. Keeping an older milestone in
+  // runtime_kv can otherwise pin every new /gsd auto invocation to work that
+  // has been superseded in the project queue (#1643).
+  try {
+    const pausedSession = getRuntimeKv<PausedSessionMetadata>(
+      "global",
+      "",
+      PAUSED_SESSION_KV_KEY,
+    );
+    if (pausedSession?.milestoneId) {
+      const state = await deriveState(basePath);
+      const activeMilestoneId = getSupersedingActiveMilestoneId(pausedSession, state);
+      if (activeMilestoneId) {
+        if (shouldFix("stale_paused_session")) {
+          deleteRuntimeKv("global", "", PAUSED_SESSION_KV_KEY);
+          fixesApplied.push(
+            `cleared stale paused session for ${pausedSession.milestoneId} (active milestone: ${activeMilestoneId})`,
+          );
+        } else {
+          issues.push({
+            severity: "error",
+            code: "stale_paused_session",
+            scope: "project",
+            unitId: "project",
+            message: `Paused auto-mode session targets ${pausedSession.milestoneId}, but the active milestone is ${activeMilestoneId}. The stale pause can pin auto-mode to the superseded milestone.`,
+            file: ".gsd/gsd.db",
+            fixable: true,
+          });
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — paused-session check failed
   }
 
   // ── Stale crash lock ──────────────────────────────────────────────────

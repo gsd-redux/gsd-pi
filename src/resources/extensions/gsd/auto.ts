@@ -29,6 +29,7 @@ import { parseUnitId } from "./unit-id.js";
 import type { GSDState } from "./types.js";
 import {
   assessInterruptedSession,
+  getSupersedingActiveMilestoneId,
   readPausedSessionMetadata,
   PAUSED_SESSION_KV_KEY,
   type InterruptedSessionAssessment,
@@ -2680,17 +2681,20 @@ export async function startAuto(
               }
             }
           }
-          const activeMilestoneId = freshStartAssessment.state?.activeMilestone?.id;
+          const supersedingActiveMilestoneId = getSupersedingActiveMilestoneId(
+            meta,
+            freshStartAssessment.state,
+          );
           if (!mDir || summaryIsTerminal) {
             clearPausedSession("paused-session DB cleanup failed (milestone gone/complete)");
             ctx.ui.notify(
               `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
               "info",
             );
-          } else if (activeMilestoneId && activeMilestoneId !== meta.milestoneId) {
+          } else if (supersedingActiveMilestoneId) {
             clearPausedSession("paused-session DB cleanup failed (milestone superseded)");
             ctx.ui.notify(
-              `Paused milestone ${meta.milestoneId} was superseded by ${activeMilestoneId}. Starting fresh.`,
+              `Paused milestone ${meta.milestoneId} was superseded by ${supersedingActiveMilestoneId}. Starting fresh.`,
               "info",
             );
           } else {
