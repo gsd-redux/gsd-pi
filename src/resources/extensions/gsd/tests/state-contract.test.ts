@@ -164,18 +164,23 @@ test('state-contract: flushManifest drains all writes before reporting a failure
     releaseContractWrite = resolve;
   });
   let contractWriteCompleted = false;
-  t.mock.method(fs.promises, 'writeFile', async (filePath, data, options) => {
-    const target = String(filePath);
-    if (target.includes('state-manifest.json.tmp.')) {
-      throw new Error('manifest write failed');
-    }
-    if (target.includes('state.json.tmp.')) {
-      markContractWriteStarted?.();
-      await contractWriteBlocked;
-      contractWriteCompleted = true;
-    }
-    return originalWriteFile(filePath, data, options);
-  });
+  type WriteFileArgs = Parameters<typeof fs.promises.writeFile>;
+  t.mock.method(
+    fs.promises,
+    'writeFile',
+    async (filePath: WriteFileArgs[0], data: WriteFileArgs[1], options: WriteFileArgs[2]) => {
+      const target = String(filePath);
+      if (target.includes('state-manifest.json.tmp.')) {
+        throw new Error('manifest write failed');
+      }
+      if (target.includes('state.json.tmp.')) {
+        markContractWriteStarted?.();
+        await contractWriteBlocked;
+        contractWriteCompleted = true;
+      }
+      return originalWriteFile(filePath, data, options);
+    },
+  );
 
   writeManifest(base);
   const flush = flushManifest(base);
@@ -188,7 +193,7 @@ test('state-contract: flushManifest drains all writes before reporting a failure
     flushOutcome,
     new Promise<'pending'>((resolve) => setImmediate(() => resolve('pending'))),
   ]);
-  releaseContractWrite();
+  releaseContractWrite?.();
 
   assert.equal(outcomeBeforeRelease, 'pending');
   await assert.rejects(flush, /manifest write failed/);
