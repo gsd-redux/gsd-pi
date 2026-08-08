@@ -98,6 +98,17 @@ test("Tool Contract compiles known Unit prompt and tool policy", () => {
   });
 });
 
+test("Tool Contract compiles the replan-task recovery Unit", () => {
+  const result = compileUnitToolContract("replan-task");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.contract.unitType, "replan-task");
+  assert.deepEqual(result.ok && result.contract.requiredWorkflowTools, ["gsd_replan_task"]);
+  assert.equal(result.ok && result.contract.contextMode, "planning");
+  assert.equal(result.ok && result.contract.toolsPolicy.mode, "workflow-only");
+  assert.deepEqual(result.ok && result.contract.promptContext.artifacts.inline, ["task-plan"]);
+});
+
 test("Tool Contract derives dispatch readiness from Unit workflow tools", () => {
   const error = getUnitWorkflowDispatchReadinessError({
     provider: "claude-code",

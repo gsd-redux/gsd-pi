@@ -43,6 +43,7 @@ const EXPECTED_KNOWN_UNIT_TYPES = [
   "complete-slice",
   "reassess-roadmap",
   "execute-task",
+  "replan-task",
   "reactive-execute",
   "run-uat",
   "gate-evaluate",
@@ -58,7 +59,7 @@ const EXPECTED_KNOWN_UNIT_TYPES = [
 
 // The contract table carried two keys KNOWN_UNIT_TYPES never had (variants)
 // and lacked two it did have (sidecars without contracts).
-const EXPECTED_CONTRACT_ONLY_TYPES = ["discuss-slice", "execute-task-simple", "replan-task"];
+const EXPECTED_CONTRACT_ONLY_TYPES = ["discuss-slice", "execute-task-simple"];
 const EXPECTED_CONTRACT_LESS_TYPES = ["triage-captures", "quick-task"];
 
 const EXPECTED_EXECUTE_TASK_SET = ["execute-task", "execute-task-simple", "reactive-execute"];

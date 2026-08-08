@@ -358,7 +358,7 @@ export function composeToolSurfaceInstructions(
   unitType: string,
   opts: ComposeToolSurfaceInstructionOptions,
 ): string {
-  // The manifest is optional here: three units (discuss-slice, replan-task,
+  // The manifest is optional here: two units (discuss-slice and
   // execute-task-simple) carry an enforced tool contract without one, and
   // returning early for them left their allowed set unadvertised.
   const manifest = resolveManifest(unitType);
