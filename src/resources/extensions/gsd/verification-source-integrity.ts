@@ -82,7 +82,11 @@ export function resolveVerificationRepositoryTargets(
   const taskTargets = task?.target_repositories?.length ? task.target_repositories : null;
   const sliceTargets = slice?.target_repositories?.length ? slice.target_repositories : null;
   const explicitIds = taskTargets ?? sliceTargets;
-  const requestedIds = explicitIds ?? defaultRepositoryTargets(registry);
+  const requestedIds = explicitIds ?? (
+    registry.mode === "parent" && registry.byId.has("project")
+      ? ["project"]
+      : defaultRepositoryTargets(registry)
+  );
   const repositories: RegisteredRepository[] = [];
   const missingRepositoryIds: string[] = [];
   const seen = new Set<string>();

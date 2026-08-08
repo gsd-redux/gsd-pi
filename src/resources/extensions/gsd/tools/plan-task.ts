@@ -259,6 +259,11 @@ export async function handlePlanTask(
           parentSlice.target_repositories,
           defaultTargets,
         );
+        let persistedTargetRepositories = repositoryRegistry.mode === "parent"
+          && params.targetRepositories === undefined
+          && !parentSlice.target_repositories?.length
+          ? []
+          : effectiveTargetRepositories;
         const repoValidationError = validateReferencedRepositories(effectiveTargetRepositories, repositoryRegistry);
         if (repoValidationError) {
           throw new PlanningGuardError(`validation failed: ${repoValidationError}`);
@@ -280,6 +285,7 @@ export async function handlePlanTask(
             : validatePathScopeForTargetRepositories(params, basePath, repositoryRegistry, storedTaskTargets);
           if (!storedPathScopeError) {
             effectiveTargetRepositories = storedTaskTargets;
+            persistedTargetRepositories = storedTaskTargets;
             pathScopeError = null;
           }
         }
@@ -306,7 +312,7 @@ export async function handlePlanTask(
           expectedOutput: params.expectedOutput,
           observabilityImpact: params.observabilityImpact ?? "",
           fullPlanMd: params.fullPlanMd,
-          targetRepositories: effectiveTargetRepositories,
+          targetRepositories: persistedTargetRepositories,
         });
         for (const gid of taskGates) {
           insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: params.taskId });

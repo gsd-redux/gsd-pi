@@ -11,6 +11,7 @@ import { afterEach, test } from "node:test";
 import {
   captureVerificationSourceSnapshot,
   confirmVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
   verificationSourceChanged,
 } from "../verification-source-integrity.js";
 
@@ -44,6 +45,27 @@ function capture(
 afterEach(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.clear();
+});
+
+test("parent-workspace verification defaults to the orchestration root", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-source-parent-workspace-"));
+  tempDirs.add(base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  mkdirSync(join(base, "frontend"));
+  mkdirSync(join(base, "backend"));
+
+  const resolved = resolveVerificationRepositoryTargets(base, {
+    workspace: {
+      mode: "parent",
+      repositories: {
+        frontend: { path: "frontend" },
+        backend: { path: "backend" },
+      },
+    },
+  }, null, null);
+
+  assert.deepEqual(resolved.repositories.map((repository) => repository.id), ["project"]);
+  assert.equal(resolved.explicitTargetsRequested, false);
 });
 
 test("source revision changes for staged, unstaged, and untracked content", () => {
