@@ -178,7 +178,14 @@ export function refreshRecoveryDbForArtifact(
   unitId: string,
   basePath: string,
 ): ArtifactRecoveryDbRefreshResult {
-  if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") return { ok: true };
+  if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") {
+    return {
+      ok: true,
+      advanced: false,
+      reason: `${unitType}-attempt-read-only-verified`,
+      message: `artifact verified on disk for ${unitType} ${unitId} (no DB write)`,
+    };
+  }
   if (!isDbAvailable()) {
     if (unitType === "execute-task") {
       return {
