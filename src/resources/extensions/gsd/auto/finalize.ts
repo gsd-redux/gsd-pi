@@ -166,6 +166,11 @@ export async function runFinalize(
   }
 
   const preResult = preResultGuard.value;
+  if (preResult === "evidence-xref-blocked") {
+    debugLog("autoLoop", { phase: "exit", reason: preResult });
+    clearFinalizingUnit();
+    return { action: "break", reason: preResult };
+  }
   if (preResult === "dispatched") {
     const dispatchedReason = s.lastGitActionFailure
       ? "git-closeout-failure"

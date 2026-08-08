@@ -110,6 +110,8 @@ import {
   isTaskAttemptAwaitingVerification,
   readLatestTaskAttempt,
 } from "./task-execution-domain-operation.js";
+import { recordTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
+import { recordFailureAndSelectRecovery } from "./task-recovery-domain-operation.js";
 import { isTaskExecutionReadyForHostVerification } from "./auto/task-execution-cutover.js";
 
 // ─── Path Comparison Helper ───────────────────────────────────────────────
@@ -1011,6 +1013,12 @@ export interface PreVerificationOpts {
   agentEndMessages?: unknown[];
 }
 
+export type PreVerificationResult =
+  | "dispatched"
+  | "continue"
+  | "retry"
+  | "evidence-xref-blocked";
+
 export interface PostUnitContext {
   s: AutoSession;
   ctx: ExtensionContext;
@@ -1431,8 +1439,9 @@ async function runCloseoutGitAction(
  * - "dispatched" — a signal caused stop/pause
  * - "continue" — proceed normally
  * - "retry" — artifact verification failed, s.pendingVerificationRetry set for loop re-iteration
+ * - "evidence-xref-blocked" — claimed evidence failed safety verification and was routed to recovery
  */
-export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue" | "retry"> {
+export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<PreVerificationResult> {
   const { s, ctx, pi, stopAuto, pauseAuto } = pctx;
 
   // ── Parallel worker signal check ──
@@ -1871,12 +1880,71 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                     `Safety: task ${sTid} claimed passing verification that failed in recorded execution`,
                     "error",
                   );
+                  if (!attempt.resultId) {
+                    logError("safety", "evidence-xref: settled Task Attempt Result identity is missing");
+                    await pauseAuto(ctx, pi);
+                    return "evidence-xref-blocked";
+                  }
+                  try {
+                    const actualMismatch = blockingMismatch.actual;
+                    const observedAt = new Date(actualMismatch?.timestamp ?? Date.now()).toISOString();
+                    const verdict = recordTaskTechnicalVerdict({
+                      invocation: internalExecutionInvocation(
+                        `internal:auto:attempt.verify:${attempt.attemptId}`,
+                      ),
+                      attemptId: attempt.attemptId,
+                      testedSourceRevision: "unavailable",
+                      verdict: "fail",
+                      rationale: blockingMismatch.reason,
+                      evidence: {
+                        evidenceClass: "command",
+                        commandOrTool: blockingMismatch.claimed.command,
+                        workingDirectory: s.basePath,
+                        startedAt: observedAt,
+                        endedAt: observedAt,
+                        exitCode: actualMismatch?.exitCode ?? 1,
+                        observation: "failed",
+                        durableOutputRef: `db://evidence-xref/${attempt.attemptId}`,
+                        environment: {
+                          verificationPolicy: "evidence-cross-reference",
+                          claimedExitCode: blockingMismatch.claimed.exitCode,
+                          actualExitCode: actualMismatch?.exitCode ?? null,
+                          toolCallId: actualMismatch?.toolCallId ?? null,
+                        },
+                      },
+                    });
+                    recordFailureAndSelectRecovery({
+                      invocation: internalExecutionInvocation(
+                        `internal:auto:attempt.route:${attempt.resultId}`,
+                      ),
+                      attemptId: attempt.attemptId,
+                      resultId: attempt.resultId,
+                      owner: "agent",
+                      classification: { failureKind: "verification-failed" },
+                      summary: "Claimed passing verification failed in recorded execution",
+                      evidence: {
+                        verdictId: verdict.verdictId,
+                        evidenceId: verdict.evidenceId,
+                        mismatch: blockingMismatch.reason,
+                      },
+                      rationale: "Route the blocking evidence cross-reference mismatch through durable Task recovery",
+                    });
+                    clearEvidenceFromDisk(s.basePath, sMid, sSid, sTid);
+                  } catch (e) {
+                    logError("safety", `evidence-xref recovery routing failed: ${String(e)}`);
+                    ctx.ui.notify(
+                      `Safety: task ${sTid} evidence mismatch could not be routed; auto-mode remains paused`,
+                      "error",
+                    );
+                    await pauseAuto(ctx, pi);
+                    return "evidence-xref-blocked";
+                  }
                   const gitActionResult = await runCloseoutGitAction(pctx, s.currentUnit);
                   if (gitActionResult === "dispatched") {
-                    return "dispatched";
+                    return "evidence-xref-blocked";
                   }
                   await pauseAuto(ctx, pi);
-                  return "dispatched";
+                  return "evidence-xref-blocked";
                 }
               }
             }

@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { postUnitPreVerification, shouldDeferCloseoutGitAction, type PostUnitContext } from "../auto-post-unit.ts";
@@ -17,8 +17,18 @@ import {
   insertVerificationEvidence,
   openDatabase,
 } from "../gsd-db.ts";
-import { recordToolCall, recordToolResult, resetEvidence } from "../safety/evidence-collector.ts";
-import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import {
+  recordToolCall,
+  recordToolResult,
+  resetEvidence,
+  saveEvidenceToDisk,
+} from "../safety/evidence-collector.ts";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
+import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
 
 function settleCanonicalTaskForHostVerification(basePath: string): void {
@@ -83,7 +93,7 @@ test("non execute-task units keep pre-verification closeout git action", () => {
   assert.equal(shouldDeferCloseoutGitAction("complete-slice"), false);
 });
 
-test("blocking evidence-xref commits deferred execute-task work before pausing", async () => {
+test("blocking evidence-xref routes recovery and clears evidence before pausing", async () => {
   const base = makeTempRepo("gsd-evidence-xref-commit-before-pause-");
 
   try {
@@ -127,6 +137,7 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
     resetEvidence();
     recordToolCall("call-1", "bash", { command: "npm test" });
     recordToolResult("call-1", "bash", "Command exited with code 1\nfailed\n", true);
+    saveEvidenceToDisk(base, "M001", "S01", "T01");
 
     const s = new AutoSession();
     s.active = true;
@@ -156,7 +167,7 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       skipWorktreeSync: true,
     });
 
-    assert.equal(result, "dispatched");
+    assert.equal(result, "evidence-xref-blocked");
     assert.equal(pauseCalled, true);
     assert.ok(
       notifications.some((message) => message.includes("claimed passing verification")),
@@ -166,6 +177,21 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
     const commitMessage = git(base, "log", "-1", "--pretty=%B");
     assert.match(commitMessage, /^feat: Added app entrypoint/m);
     assert.match(commitMessage, /GSD-Task: S01\/T01/);
+
+    const attempt = readLatestTaskAttempt({
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+    });
+    assert.equal(attempt?.nextStage, "route");
+    const recovery = attempt ? readTaskRecoveryRoute(attempt.attemptId) : null;
+    assert.equal(recovery?.action, "remediate");
+    assert.ok(recovery?.recoveryActionId, "blocking mismatch must mint a recovery action");
+    assert.equal(
+      existsSync(join(base, ".gsd", "safety", "evidence-M001-S01-T01.json")),
+      false,
+      "blocking mismatch must clear persisted evidence before pausing",
+    );
   } finally {
     resetEvidence();
     closeDatabase();

@@ -4162,6 +4162,38 @@ test("autoLoop stops machine-terminal verification abort without pausing or publ
   }
 });
 
+test("autoLoop stops an evidence-xref block before host verification or publication", async (t) => {
+  _resetPendingResolve();
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
+  t.after(() => mock.timers.reset());
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  let verificationCalls = 0;
+  let publicationCalls = 0;
+
+  const deps = makeMockDeps({
+    postUnitPreVerification: async () => "evidence-xref-blocked" as const,
+    runPostUnitVerification: async () => {
+      verificationCalls++;
+      return "continue" as const;
+    },
+    taskPublicationBoundary: async () => { publicationCalls++; },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+  await waitForMicrotasks(() => pi.calls.length === 1, "evidence-xref dispatch");
+  resolveAgentEnd(makeEvent());
+  await drainMicrotasks(100);
+  mock.timers.tick(30_000);
+  await loopPromise;
+
+  assert.equal(verificationCalls, 0);
+  assert.equal(publicationCalls, 0);
+});
+
 test("autoLoop pauses a predecessor task-recovery abort before any agent turn", async () => {
   _resetPendingResolve();
 
