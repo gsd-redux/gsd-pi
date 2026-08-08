@@ -446,8 +446,12 @@ function enqueueManifestWrite(filePath: string, json: string): void {
 /**
  * Queue current DB state for an async atomic write to .gsd/state-manifest.json,
  * plus the state contract v1 projection to .gsd/state.json (read by external
- * tools like GSD Workbench). Uses JSON.stringify with 2-space indent for git
- * three-way merge friendliness.
+ * tools like GSD Workbench). The contract deliberately tracks this write
+ * boundary: every skill step boundary uses writeManifest/writeManifestAndFlush,
+ * while placeholder milestone inserts, queue-order reconciliation, and out-of-
+ * band edits refresh on the next skill run as allowed by contract v1 rule 2 and
+ * ADR-0004. Uses JSON.stringify with 2-space indent for git three-way merge
+ * friendliness.
  */
 export function writeManifest(basePath: string): void {
   const manifest = snapshotState();
@@ -475,9 +479,14 @@ async function flushManifestByKey(key: string): Promise<void> {
  */
 export async function flushManifest(basePath: string): Promise<void> {
   const prefix = join(resolve(basePath), ".gsd") + sep;
-  await Promise.all(
-    Array.from(manifestWrites.keys(), (key) => (key.startsWith(prefix) ? flushManifestByKey(key) : null)),
+  const results = await Promise.allSettled(
+    Array.from(manifestWrites.keys())
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => flushManifestByKey(key)),
   );
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
 }
 
 export async function flushAllManifests(): Promise<void> {

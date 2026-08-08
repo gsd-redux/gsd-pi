@@ -3,10 +3,13 @@
 //
 // The contract (gsd-workbench docs/state-contract/v1.md) is a small, stable
 // JSON surface: readers accept any 1.x and ignore unknown fields. The skills
-// own the file; readers never write it. It is refreshed alongside every
-// state-manifest write, so it tracks the same mutation boundaries. `next` is
-// an approximate hint (stale-tolerant per the contract), not the dependency-
-// aware dispatch decision — that stays in state/derive/from-db.ts.
+// own the file; readers never write it. It deliberately tracks the state-
+// manifest write boundary: every skill step boundary funnels through
+// writeManifest/writeManifestAndFlush. Placeholder milestone inserts, queue-
+// order reconciliation, and out-of-band edits that bypass that boundary
+// refresh on the next skill run, as tolerated by contract v1 rule 2 and
+// ADR-0004. `next` is an approximate hint, not the dependency-aware dispatch
+// decision — that stays in state/derive/from-db.ts.
 
 import type { MilestoneRow } from "./db-milestone-artifact-rows.js";
 import type { SliceRow } from "./db-task-slice-rows.js";
@@ -68,8 +71,9 @@ function routeNext(active: MilestoneRow | null, phases: StateContractPhase[]): S
  * Pure — callers pass the already-snapshotted milestones/slices so the
  * contract file is always consistent with the manifest written beside it.
  * Rows must be ordered (snapshotState orders both by sequence).
- * Active milestone follows the canonical getActiveMilestoneFromDb rule:
- * first milestone that is not closed, parked, or deferred.
+ * Active milestone follows dispatch ordering: the first milestone in queue
+ * order for which isSkippedForDispatch returns false. This is the rule
+ * reflected by the contract's phases and next hint.
  */
 export function buildStateContract(
   milestones: MilestoneRow[],
