@@ -2680,10 +2680,17 @@ export async function startAuto(
               }
             }
           }
+          const activeMilestoneId = freshStartAssessment.state?.activeMilestone?.id;
           if (!mDir || summaryIsTerminal) {
             clearPausedSession("paused-session DB cleanup failed (milestone gone/complete)");
             ctx.ui.notify(
               `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
+              "info",
+            );
+          } else if (activeMilestoneId && activeMilestoneId !== meta.milestoneId) {
+            clearPausedSession("paused-session DB cleanup failed (milestone superseded)");
+            ctx.ui.notify(
+              `Paused milestone ${meta.milestoneId} was superseded by ${activeMilestoneId}. Starting fresh.`,
               "info",
             );
           } else {
