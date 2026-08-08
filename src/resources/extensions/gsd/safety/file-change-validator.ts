@@ -13,6 +13,7 @@
 
 import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
+import { isAbsolute, relative, resolve } from "node:path";
 import { normalizePlannedFileReference } from "../files.js";
 import { logWarning } from "../workflow-logger.js";
 
@@ -76,13 +77,24 @@ export function validateFileChanges(
   const actualFiles = getChangedFilesFromLastCommit(basePath);
   if (!actualFiles) return null;
 
+  const configuredProjectsDir = process.env.GSD_STATE_DIR
+    ? relative(resolve(basePath), resolve(process.env.GSD_STATE_DIR, "projects")).replaceAll("\\", "/")
+    : null;
+  const configuredProjectsPrefix = configuredProjectsDir
+    && configuredProjectsDir !== ".."
+    && !configuredProjectsDir.startsWith("../")
+    && !isAbsolute(configuredProjectsDir)
+    ? `${configuredProjectsDir.replace(/\/$/, "")}/`
+    : null;
+
   // Filter out GSD-internal paths — only validate project source files.
   const projectFiles = actualFiles.filter(
     (f) =>
       !f.startsWith(".gsd/") &&
       !f.startsWith(".gsd\\") &&
       !f.startsWith(".gsd-backups/") &&
-      !f.startsWith(".gsd-backups\\"),
+      !f.startsWith(".gsd-backups\\") &&
+      !(configuredProjectsPrefix && f.replaceAll("\\", "/").startsWith(configuredProjectsPrefix)),
   );
 
   // Normalize expected paths (strip leading ./ or /)

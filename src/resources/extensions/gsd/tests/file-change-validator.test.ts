@@ -156,6 +156,48 @@ test("validateFileChanges excludes .gsd-backups/ migration snapshots from unexpe
   );
 });
 
+test("validateFileChanges excludes the configured in-repo GSD state directory", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-file-change-validator-"));
+  const originalStateDir = process.env.GSD_STATE_DIR;
+  process.env.GSD_STATE_DIR = join(base, ".gsd-state");
+  t.after(() => {
+    if (originalStateDir === undefined) delete process.env.GSD_STATE_DIR;
+    else process.env.GSD_STATE_DIR = originalStateDir;
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const managedFile = join(
+    base,
+    ".gsd-state",
+    "projects",
+    "abc123",
+    "phases",
+    "02-new-milestone",
+    "S01-replan-T02-VERIFY.json",
+  );
+  mkdirSync(join(base, "src"), { recursive: true });
+  mkdirSync(join(managedFile, ".."), { recursive: true });
+
+  git(base, "init");
+  git(base, "config", "user.email", "test@example.com");
+  git(base, "config", "user.name", "Test User");
+
+  writeFileSync(join(base, "src", "app.ts"), "initial\n");
+  writeFileSync(managedFile, "{}\n");
+  git(base, "add", ".");
+  git(base, "commit", "-m", "initial");
+
+  writeFileSync(join(base, "src", "app.ts"), "updated\n");
+  writeFileSync(managedFile, '{"updated":true}\n');
+  git(base, "add", ".");
+  git(base, "commit", "-m", "task commit");
+
+  const audit = validateFileChanges(base, ["src/app.ts"], []);
+  assert.ok(audit, "audit should be produced");
+  assert.deepEqual(audit.unexpectedFiles, [], "configured GSD state must not trigger warnings");
+  assert.deepEqual(audit.actualFiles, ["src/app.ts"]);
+});
+
 test("GSD-managed .gitignore edit swept into a task commit is not flagged", (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-file-change-validator-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
