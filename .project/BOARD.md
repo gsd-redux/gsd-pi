@@ -3,7 +3,7 @@
 <!-- Maintained by the $gsd-path-build orchestrator. Human-readable summary;
      task-file frontmatter is the source of truth on any disagreement. -->
 
-Current wave: 3 of 4 — 24/24 DONE, gate PASS, SHIPPED to main 2026-08-07 (#1627). Wave 4 blocked until a RELEASE is cut.
+Current wave: 3 of 4 — 24/24 DONE, RELEASED as v1.13.0 on 2026-08-08. Wave 4 unblocks no earlier than 2026-10-07 (ADR-046: +60d AND +2 stable releases).
 Updated: 2026-08-05
 
 ## Waves
