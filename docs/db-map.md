@@ -1930,6 +1930,14 @@ not part of this legacy manifest surface. Restore and hierarchy-replacement
 paths now refuse to run when adopted lifecycle rows exist, preventing the
 legacy snapshot from deleting canonical history.
 
+`.gsd/state.json` is the GSD state contract v1 projection for external readers
+such as GSD Workbench. Its schema is owned by `gsd-workbench`'s
+`docs/state-contract/v1.md`; this repository writes contract `1.0.0` with flavor
+`pi` whenever it writes the legacy state manifest. The projection describes the
+active milestone and its slices and includes a deliberately approximate,
+stale-tolerant next-command hint. It is a local runtime projection, not a restore
+or worktree-merge input.
+
 `reconcileWorktreeDb` merges hidden-worktree legacy correctness rows back into the main
 DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
