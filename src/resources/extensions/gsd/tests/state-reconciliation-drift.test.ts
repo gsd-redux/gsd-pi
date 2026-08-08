@@ -123,11 +123,14 @@ test("ADR-017 (#5700): sketch-flag drift detected and repaired end-to-end", asyn
 
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 0, "post: flag cleared");
-  assert.equal(result.repaired.length, 1);
-  assert.equal(result.repaired[0]?.kind, "stale-sketch-flag");
-  if (result.repaired[0]?.kind === "stale-sketch-flag") {
-    assert.equal(result.repaired[0].mid, "M001");
-    assert.equal(result.repaired[0].sid, "S02");
+  // #1634: the fixture never renders ROADMAP.md, so the roadmap-missing
+  // handler also repairs on this pass — scope the assertion to the kind under
+  // test.
+  const sketchRepairs = result.repaired.filter((d) => d.kind === "stale-sketch-flag");
+  assert.equal(sketchRepairs.length, 1);
+  if (sketchRepairs[0]?.kind === "stale-sketch-flag") {
+    assert.equal(sketchRepairs[0].mid, "M001");
+    assert.equal(sketchRepairs[0].sid, "S02");
   }
 });
 
@@ -162,7 +165,7 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 1, "stub PLAN: flag stays set");
-  assert.equal(result.repaired.length, 0, "stub PLAN: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "stub PLAN: no repair");
 
   // A projection round-trip stub whose only task is a synthetic "Plan NN"
   // placeholder (migrate/transformer.buildTaskTitle) must also not clear it.
@@ -178,7 +181,7 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 1, "placeholder task: flag stays set");
-  assert.equal(result.repaired.length, 0, "placeholder task: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "placeholder task: no repair");
 
   // buildTaskTitle also emits `${phase} ${plan}` (e.g. "00 01") when the plan
   // frontmatter carries phase/plan. This projected placeholder must not clear
@@ -199,7 +202,7 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
     1,
     "phase/plan placeholder task: flag stays set",
   );
-  assert.equal(result.repaired.length, 0, "phase/plan placeholder task: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "phase/plan placeholder task: no repair");
 });
 
 test("T013: a state-version-stamped stub PLAN still does NOT clear the sketch flag", async (t) => {
@@ -243,7 +246,7 @@ test("T013: a state-version-stamped stub PLAN still does NOT clear the sketch fl
     1,
     "stamped stub PLAN: flag stays set (no stamp short-circuit)",
   );
-  assert.equal(result.repaired.length, 0, "stamped stub PLAN: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "stamped stub PLAN: no repair");
 });
 
 test("#1288: real tasks shaped like `word + number` still clear the sketch flag", async (t) => {
@@ -286,7 +289,7 @@ test("#1288: real tasks shaped like `word + number` still clear the sketch flag"
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 0, "real task titles: flag cleared");
-  assert.equal(result.repaired.length, 1, "real task titles: repaired once");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 1, "real task titles: repaired once");
 });
 
 test("ADR-017 (#5700): repair failure throws ReconciliationFailedError with shape", async () => {

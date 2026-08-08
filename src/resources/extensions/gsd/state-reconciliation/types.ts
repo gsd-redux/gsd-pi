@@ -15,6 +15,7 @@ export type DriftRecord =
   | { kind: "stale-worker"; lockPath: string; pid: number }
   | { kind: "unregistered-milestone"; milestoneId: string }
   | { kind: "roadmap-divergence"; milestoneId: string; sliceId?: string }
+  | { kind: "roadmap-missing"; milestoneId: string }
   | {
       kind: "disk-slice-id-divergence";
       milestoneId: string;

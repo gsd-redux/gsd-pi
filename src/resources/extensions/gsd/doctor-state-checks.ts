@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, lstatSync, readdirSync, readFileSync } from "nod
 import { join } from "node:path";
 
 import { loadFile, parseSummary, saveFile, parseTaskPlanMustHaves, countMustHavesMentionedInSummary } from "./files.js";
-import { getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { getMilestone, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTasksDir, legacyMilestonesDir, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile, relMilestonePath } from "./paths.js";
 import { findMilestoneIds } from "./milestone-ids.js";
 import { deriveState } from "./state.js";
@@ -183,13 +183,32 @@ export async function checkGsdStateHealth(
     const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
     const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
     if (!roadmapContent) {
+      // #1634: a missing ROADMAP with intact DB planning data is projection
+      // drift, not data loss — the DB is the authority. Repair by re-rendering,
+      // sharing the same predicate and repair as the roadmap-missing drift
+      // handler so doctor and reconciliation agree on what is fixable.
+      const dbMilestone = getMilestone(milestoneId);
+      const { isRoadmapRenderable } = await import("./state-reconciliation/drift/roadmap.js");
+      const renderable = dbMilestone !== null && isRoadmapRenderable(dbMilestone);
+      if (renderable && fix && shouldFix("missing_roadmap")) {
+        try {
+          const { renderRoadmapFromDb } = await import("./markdown-renderer.js");
+          const rendered = await renderRoadmapFromDb(basePath, milestoneId);
+          if (!("skipped" in rendered)) {
+            fixesApplied.push(`re-rendered missing ROADMAP.md for ${milestoneId} from the DB`);
+            continue;
+          }
+        } catch { /* non-fatal — report the issue below */ }
+      }
       issues.push({
         severity: "error",
         code: "missing_roadmap",
         scope: "milestone",
         unitId: milestoneId,
-        message: `Milestone ${milestoneId} is missing its ROADMAP.md file.`,
-        fixable: false,
+        message: renderable
+          ? `Milestone ${milestoneId} is missing its ROADMAP.md file. Its plan is intact in the DB — run /gsd sync (or gsd doctor --fix) to re-render it.`
+          : `Milestone ${milestoneId} is missing its ROADMAP.md file.`,
+        fixable: renderable,
       });
       continue;
     }

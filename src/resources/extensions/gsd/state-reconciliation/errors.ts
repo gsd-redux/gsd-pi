@@ -61,7 +61,10 @@ function formatMessage(opts: ReconciliationFailedErrorOptions): string {
   }
   if (opts.persistentDrift && opts.persistentDrift.length > 0) {
     const kinds = opts.persistentDrift.map((d) => d.kind).join(", ");
-    return `Reconciliation drift persisted after cap=2 passes: ${kinds}`;
+    // #1634: name a sanctioned exit. With converging repairs this cap is only
+    // reachable by a genuine bug, and the error used to be a dead end that
+    // blocked every dispatch with no repair route.
+    return `Reconciliation drift persisted after cap=2 passes: ${kinds}. Run \`/gsd sync\` to re-render projections from the DB (or \`/gsd doctor --fix\`), then \`/gsd auto\` to resume.`;
   }
   return "Reconciliation failed";
 }

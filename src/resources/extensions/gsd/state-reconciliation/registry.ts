@@ -11,7 +11,7 @@ import { mergeStateHandler } from "./drift/merge-state.js";
 import { externalMarkdownEditHandler } from "./drift/external-markdown-edit.js";
 import { externalPlanningEditHandler } from "./drift/external-planning-edit.js";
 import { unregisteredMilestoneHandler } from "./drift/project-md.js";
-import { roadmapDivergenceHandler } from "./drift/roadmap.js";
+import { roadmapDivergenceHandler, roadmapMissingHandler } from "./drift/roadmap.js";
 import { sketchFlagHandler } from "./drift/sketch-flag.js";
 import { staleRenderHandler } from "./drift/stale-render.js";
 import { staleWorkerHandler } from "./drift/stale-worker.js";
@@ -51,7 +51,11 @@ export const RECONCILIATION_REPAIR_PHASES: ReadonlyArray<ReconciliationRepairPha
   },
   {
     name: "re-project",
-    handlers: [staleRenderHandler, roadmapDivergenceHandler, completionTimestampHandler],
+    // roadmap-missing sits beside roadmap-divergence but cannot fight it:
+    // detection for ALL handlers runs before any repair, and both repairs
+    // invoke the same renderRoadmapFromDb, so a missing-file render can never
+    // create state the divergence repair would undo (#1634).
+    handlers: [staleRenderHandler, roadmapMissingHandler, roadmapDivergenceHandler, completionTimestampHandler],
   },
 ];
 
