@@ -318,6 +318,7 @@ try {
     'packages/pi-coding-agent/dist/index.js',
     'packages/pi-ai/bin/pi-ai.js',
     'packages/pi-ai/dist/cli.js',
+    'packages/native/dist/file-identity/index.js',
     'packages/daemon/bin/gsd-daemon.js',
     'packages/daemon/dist/cli.js',
     'packages/rpc-client/dist/index.js',
@@ -396,6 +397,30 @@ try {
     process.exit(1);
   }
   console.log(`    All ${getLinkablePackages().length} linkable packages are resolvable.`);
+
+  // Internal extension code imports this public subpath directly. Resolving it
+  // from the installed tarball catches both a missing exports-map entry and a
+  // package-staging/linking mismatch before the release reaches users.
+  console.log('==> Verifying packaged native file-identity subpath...');
+  try {
+    execFileSync(
+      process.execPath,
+      ['-e', "require.resolve('@gsd/native/file-identity')"],
+      {
+        cwd: installedRoot,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 15000,
+        maxBuffer: DEFAULT_MAX_BUFFER,
+      },
+    );
+    console.log('    @gsd/native/file-identity resolves from the installed tarball.');
+  } catch (err) {
+    console.log('ERROR: installed tarball cannot resolve @gsd/native/file-identity.');
+    if (err.stdout) console.log(err.stdout);
+    if (err.stderr) console.log(err.stderr);
+    process.exit(1);
+  }
 
   // --- Verify the packaged standalone web host resolves its runtime deps ---
   // pnpm lays top-level deps down as symlinks into a `.pnpm/` store, and
