@@ -28,6 +28,11 @@ import {
   snapshotUnitTargetRows,
   wedgeResumeCommand,
 } from '../auto-liveness-backstop.ts';
+import {
+  loopGuardIdsWithInstructions,
+  loopGuardRecoveryInstruction,
+  resolveLoopSanctionedExit,
+} from '../auto/loop-sanctioned-exits.ts';
 import { markBlockedStopReason } from '../stop-notice.ts';
 import { formatStopNoticePrefix } from '../stop-notice.ts';
 
@@ -294,6 +299,70 @@ test('ADR-047: default sanctioned exit preserves the complete payload', (t) => {
   assert.equal(tripped.tripped, true);
   if (!tripped.tripped) return;
   assert.equal(tripped.wedge.sanctionedExit, payload);
+});
+
+test('#1672: every loop guard instruction names a real recovery command', () => {
+  // Gap 4 (#1672): loop-level wedges used to persist "Resolve the reported
+  // condition" — a restart could only reprint that. Each guard id now carries
+  // its owner's published command, so a wedge names a reachable exit.
+  const commandPattern = /`(\/gsd [a-z][a-z -]*|gsd headless auto|gsd_task_recovery_resume)`|gsd_task_recovery_resume/;
+  for (const guardId of loopGuardIdsWithInstructions()) {
+    const instruction = loopGuardRecoveryInstruction(guardId);
+    assert.match(instruction, commandPattern, `${guardId} must name a real command`);
+    assert.doesNotMatch(instruction, /Resolve the reported condition/);
+  }
+  // Unknown guard ids still get an actionable triage pair, never generic text.
+  assert.match(loopGuardRecoveryInstruction('guard-that-does-not-exist'), commandPattern);
+});
+
+test('#1672: the composed loop sanctioned exit carries the guard payload', () => {
+  const exit = resolveLoopSanctionedExit({
+    guardId: 'finalize-retry',
+    unitType: 'execute-task',
+    unitId: 'M001/S01/T01',
+    failurePayload: 'roadmap has zero slices',
+  });
+  assert.match(exit, /finalize-retry blocked execute-task M001\/S01\/T01/);
+  assert.match(exit, /`\/gsd rebuild markdown`/, 'the finalize-retry owner names the projection repair');
+  assert.match(exit, /Failure: roadmap has zero slices/);
+
+  // A payload that only restates the guard id adds nothing and is omitted.
+  const bare = resolveLoopSanctionedExit({
+    guardId: 'memory-pressure',
+    unitType: 'orchestration',
+    unitId: 'workflow',
+    failurePayload: 'memory-pressure',
+  });
+  assert.doesNotMatch(bare, /Failure:/);
+  assert.match(bare, /`\/gsd auto`/);
+});
+
+test('#1672: a loop guard signature survives a database restart and trips at 2', (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  const exit = resolveLoopSanctionedExit({
+    guardId: 'max-iterations',
+    unitType: 'orchestration',
+    unitId: 'workflow',
+    failurePayload: 'max-iterations',
+  });
+  const record = () => recordNonAdvancingOutcome(
+    { ...sig('max-iterations', 'max-iterations', 'workflow'), unitType: 'orchestration' },
+    { sanctionedExit: exit },
+  );
+
+  assert.equal(record().tripped, false);
+  closeDatabase();
+  openDatabase(dbPath);
+
+  const tripped = record();
+  assert.equal(tripped.tripped, true, 'the restart must not reset the preflight counter');
+  if (!tripped.tripped) return;
+  assert.match(tripped.wedge.sanctionedExit, /`\/gsd status`/);
+  assert.match(formatWedgeRefusalNotice(tripped.wedge), /`\/gsd status`/);
 });
 
 test('hashBackstopInput is deterministic and payload-faithful', () => {

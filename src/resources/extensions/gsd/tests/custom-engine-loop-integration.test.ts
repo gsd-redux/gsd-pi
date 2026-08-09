@@ -917,6 +917,87 @@ describe("Custom engine loop integration", () => {
     assert.match(stopEntry ?? "", /requested retry 4 times without passing/);
   });
 
+  it("#1672: custom-engine verification retries reach the shared liveness ledger", async () => {
+    // Gap 1 (#1672): the custom-engine verification adapters used to call
+    // finishTurn with three arguments, so pendingLoopLiveness stayed unset and
+    // a verification retry could recur forever without a block signature.
+    // Every retry turn must now hand the adjudication boundary a guard id and
+    // an actionable sanctioned exit.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "retry-step" })], "retry-liveness");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "retry-liveness",
+      steps: [{
+        id: "retry-step",
+        name: "retry-step",
+        prompt: "Do retry-step",
+        produces: "retry-step/output.md",
+        verify: { policy: "shell-command", command: "exit 1" },
+      }],
+    }));
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeLoopSession({
+      activeEngineId: "custom",
+      activeRunDir: runDir,
+      basePath: runDir,
+    });
+    const adjudicated: Array<{ guardId: string; sanctionedExit?: string }> = [];
+    const deps = makeMockDeps({
+      adjudicateNonAdvancingOutcome: (_session, input) => {
+        adjudicated.push({ guardId: input.guardId, sanctionedExit: input.sanctionedExit });
+        return null;
+      },
+      stopAuto: async (_ctx, _pi, reason) => {
+        deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+        s.active = false;
+      },
+    });
+
+    const resolver = setInterval(() => {
+      if (_hasPendingResolveForTest()) {
+        resolveAgentEnd({ messages: [{ role: "assistant" }] });
+      }
+    }, 25);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        autoLoop(ctx, pi, s, deps),
+        new Promise((_, reject) =>
+          timeout = setTimeout(() => {
+            s.active = false;
+            resolveAgentEnd({ messages: [{ role: "assistant" }] });
+            reject(new Error(
+              `autoLoop did not stop; adjudicated=${JSON.stringify(adjudicated)}; log=${deps.callLog.join(",")}`,
+            ));
+          }, 3_000),
+        ),
+      ]);
+    } finally {
+      clearInterval(resolver);
+      if (timeout) clearTimeout(timeout);
+    }
+
+    const verifyOutcomes = adjudicated.filter(entry => entry.guardId === "custom-engine-verify");
+    assert.ok(
+      verifyOutcomes.length >= 2,
+      `every custom-engine verification retry must be ledger-fed; got ${JSON.stringify(adjudicated)}`,
+    );
+    for (const entry of verifyOutcomes) {
+      assert.match(
+        entry.sanctionedExit ?? "",
+        /`\/gsd (auto|forensics|status|doctor fix|rebuild markdown)`/,
+        "a custom-engine verification wedge must name a real recovery command",
+      );
+      assert.doesNotMatch(entry.sanctionedExit ?? "", /Resolve the reported condition/);
+    }
+  });
+
   it("two-step workflow drives both steps to complete and stops when isComplete fires", async () => {
     // Note (#4831): renamed from "GRAPH.yaml step stays pending when session
     // deactivates before reconcile" — the assertion body never proved the

@@ -117,6 +117,7 @@ import {
 import { handleCustomEngineReconcile } from "./workflow-custom-engine-reconcile.js";
 import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-reconcile-outcome.js";
 import { formatLeaseConflictNotice } from "./lease-conflict-notice.js";
+import { resolveLoopSanctionedExit } from "./loop-sanctioned-exits.js";
 import { setAutoOutcomeWidget, unitVerb } from "../auto-dashboard.js";
 import {
   isTaskExecutionReadyForHostVerification,
@@ -565,64 +566,6 @@ export async function autoLoop(
     };
     turnReporter.start();
 
-    const iterationDecision = decideWorkflowLoop({
-      active: s.active,
-      iteration,
-      maxIterations: MAX_LOOP_ITERATIONS,
-      hasCommandContext: true,
-      sessionLockValid: true,
-    });
-    if (iterationDecision.action === "stop" && iterationDecision.reason === "max-iterations") {
-      debugLog("autoLoop", {
-        phase: "exit",
-        reason: iterationDecision.reason,
-        iteration,
-      });
-      await deps.stopAuto(
-        ctx,
-        pi,
-        `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
-      );
-      finishTurn("stopped", "manual-attention", "max-iterations", "max-iterations");
-      break;
-    }
-
-    // ── Memory pressure check (#3331) ──
-    // Graceful shutdown before OOM killer sends SIGKILL.
-    if (shouldCheckMemoryPressure(iteration, MEMORY_CHECK_INTERVAL)) {
-      const mem = measureMemoryPressure();
-      debugLog("autoLoop", { phase: "memory-check", ...mem });
-      const memoryDecision = decideMemoryPressure({ ...mem, iteration });
-      if (memoryDecision.action === "stop") {
-        logWarning("dispatch", memoryDecision.warningMessage);
-        await deps.stopAuto(ctx, pi, memoryDecision.stopMessage);
-        finishTurn("stopped", "timeout", memoryDecision.turnError, "memory-pressure");
-        break;
-      }
-    }
-
-    const commandContextDecision = decideWorkflowLoop({
-      active: s.active,
-      iteration,
-      maxIterations: MAX_LOOP_ITERATIONS,
-      hasCommandContext: typeof s.cmdCtx?.newSession === "function",
-      sessionLockValid: true,
-    });
-    if (commandContextDecision.action === "stop" && commandContextDecision.reason === "missing-command-context") {
-      debugLog("autoLoop", { phase: "exit", reason: "no-cmdCtx" });
-      if (s.currentUnit) {
-        await deps.autoCommitUnit?.(
-          s.basePath,
-          s.currentUnit.type,
-          s.currentUnit.id,
-          ctx,
-        );
-      }
-      await deps.stopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
-      finishTurn("stopped", "manual-attention", commandContextDecision.reason, "missing-command-context");
-      break;
-    }
-
     let dispatchId: number | null = null;
     let dispatchSettled = false;
     let iterationEndEmitted = false;
@@ -647,7 +590,71 @@ export async function autoLoop(
       emitIterationEnd(details);
     };
 
+    // ── Shared adjudication boundary (ADR-047) ──────────────────────────────
+    // The try opens BEFORE the preflight exits (max-iteration, memory pressure,
+    // missing command context) so their pending block signatures reach the
+    // finally that adjudicates them. Breaking out of the loop from inside a try
+    // still runs its finally, so a preflight exit persists a wedge instead of
+    // silently recurring after every restart (#1672).
     try {
+      const iterationDecision = decideWorkflowLoop({
+        active: s.active,
+        iteration,
+        maxIterations: MAX_LOOP_ITERATIONS,
+        hasCommandContext: true,
+        sessionLockValid: true,
+      });
+      if (iterationDecision.action === "stop" && iterationDecision.reason === "max-iterations") {
+        debugLog("autoLoop", {
+          phase: "exit",
+          reason: iterationDecision.reason,
+          iteration,
+        });
+        await deps.stopAuto(
+          ctx,
+          pi,
+          `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
+        );
+        finishTurn("stopped", "manual-attention", "max-iterations", "max-iterations");
+        break;
+      }
+
+      // ── Memory pressure check (#3331) ──
+      // Graceful shutdown before OOM killer sends SIGKILL.
+      if (shouldCheckMemoryPressure(iteration, MEMORY_CHECK_INTERVAL)) {
+        const mem = (deps.measureMemoryPressure ?? measureMemoryPressure)();
+        debugLog("autoLoop", { phase: "memory-check", ...mem });
+        const memoryDecision = decideMemoryPressure({ ...mem, iteration });
+        if (memoryDecision.action === "stop") {
+          logWarning("dispatch", memoryDecision.warningMessage);
+          await deps.stopAuto(ctx, pi, memoryDecision.stopMessage);
+          finishTurn("stopped", "timeout", memoryDecision.turnError, "memory-pressure");
+          break;
+        }
+      }
+
+      const commandContextDecision = decideWorkflowLoop({
+        active: s.active,
+        iteration,
+        maxIterations: MAX_LOOP_ITERATIONS,
+        hasCommandContext: typeof s.cmdCtx?.newSession === "function",
+        sessionLockValid: true,
+      });
+      if (commandContextDecision.action === "stop" && commandContextDecision.reason === "missing-command-context") {
+        debugLog("autoLoop", { phase: "exit", reason: "no-cmdCtx" });
+        if (s.currentUnit) {
+          await deps.autoCommitUnit?.(
+            s.basePath,
+            s.currentUnit.type,
+            s.currentUnit.id,
+            ctx,
+          );
+        }
+        await deps.stopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
+        finishTurn("stopped", "manual-attention", commandContextDecision.reason, "missing-command-context");
+        break;
+      }
+
       // ── Blanket try/catch: one bad iteration must not kill the session
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
@@ -1205,9 +1212,35 @@ export async function autoLoop(
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
             if (orchestrationResult.reason === "idempotent advance: unit already active") {
+              // ADR-047 / #1672: the skip is benign only while a unit really is
+              // in flight. This loop executes units inside the iteration, so
+              // reaching advance() with no current unit means nothing is
+              // running and the active-unit marker is stale — the shape where
+              // an execution threw (one `iteration-error` recorded), the marker
+              // survived, and every later iteration took this skip silently
+              // until the session limit. Ledger-feed that case so the second
+              // identical stale skip trips the backstop; keep the exemption
+              // while s.currentUnit is set, where re-polling is the designed
+              // no-op and cancelling would kill live work.
               emitIterationEnd({ skipped: true });
               completeIteration();
-              finishTurn("skipped", "none", undefined, null);
+              if (s.currentUnit) {
+                finishTurn("skipped", "none", undefined, null);
+                continue;
+              }
+              const staleState = orchestrationResult.stateSnapshot;
+              finishTurn(
+                "skipped",
+                "none",
+                [
+                  orchestrationResult.reason,
+                  staleState?.phase,
+                  staleState?.activeMilestone?.id,
+                  staleState?.activeSlice?.id,
+                  staleState?.activeTask?.id,
+                ].join("|"),
+                "orchestration-stale-active-unit",
+              );
               continue;
             }
             const skipState = orchestrationResult.stateSnapshot;
@@ -1952,9 +1985,16 @@ export async function autoLoop(
           deps.adjudicateNonAdvancingOutcome ?? recordLoopNonAdvancingOutcome;
         const backstopReason = adjudicateNonAdvancingOutcome(s, {
           ...liveness,
-          sanctionedExit:
-            `${liveness.guardId} prevented ${liveness.unitType} ${liveness.unitId} from advancing. ` +
-            `Resolve the reported condition before resuming auto-mode.`,
+          // ADR-047 §5: the wedge must name the owning guard's real,
+          // state-mutating exit — not a generic "resolve the condition" —
+          // because the refusal notice after a restart can only reprint what
+          // was persisted here (#1672).
+          sanctionedExit: resolveLoopSanctionedExit({
+            guardId: liveness.guardId,
+            unitType: liveness.unitType,
+            unitId: liveness.unitId,
+            failurePayload: liveness.inputPayload,
+          }),
         });
         if (backstopReason) {
           ctx.ui.notify(backstopReason, "error");
