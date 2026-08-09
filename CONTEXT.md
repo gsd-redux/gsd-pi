@@ -261,7 +261,7 @@ Dispatch remains responsible for selecting the next Unit from reconciled state. 
 
   See `docs/dev/ADR-037-browser-engine-proven-resolution.md`.
 
-- Dispatch history deepens behind the **Dispatch History module**; the orchestrator's stuck window rehydrates from the `unit_dispatches` ledger across sessions, and stuck verdicts come from the single rules engine with retry-budget suppression. The #442 Phase 3 legacy-path deletion remains open — `runPreDispatch`/`runDispatch` are load-bearing for the auto-loop test harness and need a harness rewrite first. See `docs/dev/ADR-038-dispatch-history-deep-module.md`.
+- Auto-mode liveness is governed by `docs/dev/ADR-047-auto-mode-liveness-backstop.md`; it supersedes ADR-038's Dispatch History design.
 
 - Consent questions deepen behind the **Consent Question module**: per-kind fail policy at one policy point (`evaluateAskUserQuestionsRound`), classification-based pause promotion, unified cancellation. `user-input-boundary.ts` is gone; importers use `consent-question.ts` directly. See `docs/dev/ADR-039-consent-question-module.md`.
 

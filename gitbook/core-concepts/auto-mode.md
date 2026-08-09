@@ -255,9 +255,9 @@ require_slice_discussion: true
 
 Auto mode pauses before each slice, showing the plan for your approval before building.
 
-## Stuck Detection
+## Liveness Backstop
 
-GSD uses sliding-window analysis to detect stuck loops — not just "same unit dispatched twice" but also cycles like A→B→A→B. On detection, GSD retries once with a diagnostic prompt. If it fails again, auto mode stops with details so you can intervene.
+See the authoritative [Auto Mode liveness and recovery guide](../../docs/user-docs/auto-mode.md#liveness-backstop).
 
 ## Artifact Verification Retries
 
