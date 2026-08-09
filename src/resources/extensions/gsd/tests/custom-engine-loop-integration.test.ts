@@ -46,6 +46,10 @@ async function resolveNextAgentEnd(timeoutMs = 3_000): Promise<void> {
 
 afterEach(() => {
   _resetPendingResolve();
+  // Close the singleton workflow database while its temp dir still exists —
+  // closing it after the directory is gone raises a disk I/O error that leaves
+  // the stale handle installed for the next case.
+  try { closeDatabase(); } catch { /* nothing open, or already gone */ }
   for (const d of tmpDirs) {
     try { rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM — OS cleans up temp dirs */ }
   }
@@ -279,7 +283,10 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
 
 // ─── Tests ───────────────────────────────────────────────────────────────
 
-describe("Custom engine loop integration", () => {
+// concurrency 1: these cases share process-global state — the pending
+// agent_end resolver and the singleton workflow database — so two DB-backed
+// cases running at once would close each other's database mid-run.
+describe("Custom engine loop integration", { concurrency: 1 }, () => {
   it("threads custom-engine runGuards ids and budget inputs through adjudication", async () => {
     _resetPendingResolve();
     const runDir = makeTmpDir();
@@ -1076,23 +1083,9 @@ describe("Custom engine loop integration", () => {
     assert.equal(verifyOutcomes[0]?.tripped, false);
     assert.equal(verifyOutcomes[1]?.tripped, true, "identical engine evidence must trip at occurrence two");
 
-    const distinctScope = `${realpathSync(runDir)}:different-engine-evidence`;
-    const differentFirst = recordNonAdvancingOutcome({
-      scopeId: distinctScope,
-      guardId: "custom-engine-verify",
-      unitType: stopOutcome.unitType,
-      unitId: stopOutcome.unitId,
-      inputPayload: JSON.stringify({ policy: "shell-command", exitCode: 1 }),
-    });
-    const differentSecond = recordNonAdvancingOutcome({
-      scopeId: distinctScope,
-      guardId: "custom-engine-verify",
-      unitType: stopOutcome.unitType,
-      unitId: stopOutcome.unitId,
-      inputPayload: JSON.stringify({ policy: "shell-command", exitCode: 2 }),
-    });
-    assert.equal(differentFirst.tripped, false);
-    assert.equal(differentSecond.tripped, false, "changed engine evidence must not share a signature");
+    // Changed-evidence fidelity is proven through production in the #1674
+    // case below; synthesising payloads here would pass even if the loop
+    // collapsed distinct engine evidence.
     assert.equal(stopOutcome.guardId, "custom-engine-verify");
     assert.match(stopOutcome.sanctionedExit ?? "", /`\/gsd forensics`/);
     openDatabase(dbPath);
@@ -1104,6 +1097,385 @@ describe("Custom engine loop integration", () => {
       inputPayload: stopOutcome.inputPayload,
     }, stopOutcome.sanctionedExit ? { sanctionedExit: stopOutcome.sanctionedExit } : undefined);
     assert.equal(repeated.tripped, true, "the stop signature must survive database reopen as occurrence one");
+  });
+
+  it("#1674: differing custom verification content keeps distinct signatures through autoLoop", async (t) => {
+    // ADR-047 §3: a block signature hashes the inputs the guard actually read.
+    // Pattern verification reads the produced file's content, so two runs whose
+    // nonmatching content differs must persist different signatures (no false
+    // trip), while two runs with identical content must trip at occurrence two.
+    // Everything here is driven through autoLoop — the verification evidence is
+    // built by production custom verification and threaded by the loop.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "content-step" })], "content-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "content-fidelity",
+      steps: [{
+        id: "content-step",
+        name: "content-step",
+        prompt: "Do content-step",
+        produces: ["content-step/output.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "content-step"), { recursive: true });
+    const outputPath = join(runDir, "content-step", "output.md");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+    t.after(() => {
+      try { closeDatabase(); } catch { /* noop */ }
+    });
+
+    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+
+    const runWithContent = async (content: string): Promise<void> => {
+      writeFileSync(outputPath, content);
+      _resetPendingResolve();
+      const ctx = makeMockCtx();
+      const pi = makeMockPi();
+      const s = makeLoopSession({
+        activeEngineId: "custom",
+        activeRunDir: runDir,
+        basePath: runDir,
+      });
+      const deps = makeMockDeps({
+        adjudicateNonAdvancingOutcome: (_session, input) => {
+          const recorded = recordNonAdvancingOutcome({
+            scopeId: realpathSync(runDir),
+            guardId: input.guardId,
+            unitType: input.unitType,
+            unitId: input.unitId,
+            inputPayload: input.inputPayload,
+          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+          if (input.guardId === "custom-engine-verify") {
+            verifyOutcomes.push({
+              inputPayload: input.inputPayload,
+              count: recorded.count,
+              tripped: recorded.tripped,
+            });
+          }
+          return null;
+        },
+        pauseAuto: async () => {
+          s.active = false;
+        },
+        stopAuto: async (_ctx, _pi, reason) => {
+          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+          s.active = false;
+        },
+      });
+
+      const resolver = setInterval(() => {
+        if (_hasPendingResolveForTest()) {
+          resolveAgentEnd({ messages: [{ role: "assistant" }] });
+        }
+      }, 25);
+      let timeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          autoLoop(ctx, pi, s, deps),
+          new Promise((_, reject) =>
+            timeout = setTimeout(() => {
+              s.active = false;
+              resolveAgentEnd({ messages: [{ role: "assistant" }] });
+              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
+            }, 5_000),
+          ),
+        ]);
+      } finally {
+        clearInterval(resolver);
+        if (timeout) clearTimeout(timeout);
+      }
+    };
+
+    await runWithContent("bad-1\n");
+    await runWithContent("bad-2\n");
+    await runWithContent("bad-2\n");
+
+    assert.equal(
+      verifyOutcomes.length,
+      3,
+      "each pattern-mismatch pause must reach adjudication once",
+    );
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "distinct nonmatching content must produce distinct verification evidence",
+    );
+    assert.equal(verifyOutcomes[0]?.tripped, false);
+    assert.equal(
+      verifyOutcomes[0]?.count,
+      1,
+      "the first mismatch is occurrence one",
+    );
+    assert.equal(
+      verifyOutcomes[1]?.tripped,
+      false,
+      "changed content must not trip the backstop at occurrence two",
+    );
+    assert.equal(
+      verifyOutcomes[1]?.count,
+      1,
+      "changed content starts its own signature counter",
+    );
+    assert.equal(
+      payloads[1],
+      payloads[2],
+      "identical content must produce identical verification evidence",
+    );
+    assert.equal(
+      verifyOutcomes[2]?.tripped,
+      true,
+      "identical evidence must trip at occurrence two",
+    );
+  });
+
+  it("#1674: every output the content guard read stays in the signature through autoLoop", async (t) => {
+    // ADR-047 §3: the guard reads each `produces` entry in order before one of
+    // them fails, so all of those reads are signature inputs. Recording only the
+    // failing file collapsed "output a changed while b still fails" into the
+    // signature of "b fails" and falsely tripped the wedge at occurrence two.
+    // Driven entirely through autoLoop: production content verification builds
+    // the evidence and the loop threads it to adjudication.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "multi-step" })], "multi-output-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "multi-output-fidelity",
+      steps: [{
+        id: "multi-step",
+        name: "multi-step",
+        prompt: "Do multi-step",
+        produces: ["multi-step/a.md", "multi-step/b.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "multi-step"), { recursive: true });
+    const matchingPath = join(runDir, "multi-step", "a.md");
+    const failingPath = join(runDir, "multi-step", "b.md");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+    t.after(() => {
+      try { closeDatabase(); } catch { /* noop */ }
+    });
+
+    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+
+    const runWithMatchingOutput = async (matchingContent: string): Promise<void> => {
+      writeFileSync(matchingPath, matchingContent);
+      writeFileSync(failingPath, "bad\n");
+      _resetPendingResolve();
+      const ctx = makeMockCtx();
+      const pi = makeMockPi();
+      const s = makeLoopSession({
+        activeEngineId: "custom",
+        activeRunDir: runDir,
+        basePath: runDir,
+      });
+      const deps = makeMockDeps({
+        adjudicateNonAdvancingOutcome: (_session, input) => {
+          const recorded = recordNonAdvancingOutcome({
+            scopeId: realpathSync(runDir),
+            guardId: input.guardId,
+            unitType: input.unitType,
+            unitId: input.unitId,
+            inputPayload: input.inputPayload,
+          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+          if (input.guardId === "custom-engine-verify") {
+            verifyOutcomes.push({
+              inputPayload: input.inputPayload,
+              count: recorded.count,
+              tripped: recorded.tripped,
+            });
+          }
+          return null;
+        },
+        pauseAuto: async () => {
+          s.active = false;
+        },
+        stopAuto: async (_ctx, _pi, reason) => {
+          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+          s.active = false;
+        },
+      });
+
+      const resolver = setInterval(() => {
+        if (_hasPendingResolveForTest()) {
+          resolveAgentEnd({ messages: [{ role: "assistant" }] });
+        }
+      }, 25);
+      let timeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          autoLoop(ctx, pi, s, deps),
+          new Promise((_, reject) =>
+            timeout = setTimeout(() => {
+              s.active = false;
+              resolveAgentEnd({ messages: [{ role: "assistant" }] });
+              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
+            }, 5_000),
+          ),
+        ]);
+      } finally {
+        clearInterval(resolver);
+        if (timeout) clearTimeout(timeout);
+      }
+    };
+
+    await runWithMatchingOutput("ok-1\n");
+    await runWithMatchingOutput("ok-2\n");
+    await runWithMatchingOutput("ok-2\n");
+
+    assert.equal(verifyOutcomes.length, 3, "each mismatch pause must reach adjudication once");
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "a changed matching output must produce distinct evidence even though the same output fails",
+    );
+    assert.equal(verifyOutcomes[1]?.tripped, false, "a changed read must not trip the backstop");
+    assert.equal(verifyOutcomes[1]?.count, 1, "the changed read starts its own signature counter");
+    assert.equal(payloads[1], payloads[2], "identical reads must produce identical evidence");
+    assert.equal(verifyOutcomes[2]?.tripped, true, "identical reads must trip at occurrence two");
+  });
+
+  it("#1674: the loop composes host evidence over the policy read that preceded it", async (t) => {
+    // ADR-047 §3: one verification turn can read twice — the policy, then the
+    // host boundary's own decisive inputs (post-policy source drift here, and a
+    // second host call once interactive human review resolves the blocker).
+    // First-write-wins kept the stale policy read, so two different host
+    // decisions behind one policy failure shared a signature and tripped the
+    // wedge falsely at occurrence two. The host boundary is injected through its
+    // production seam so the loop's composition is what is under test; the stub
+    // mirrors the real boundary's post-policy source-drift path.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "compose-step" })], "compose-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "compose-fidelity",
+      steps: [{
+        id: "compose-step",
+        name: "compose-step",
+        prompt: "Do compose-step",
+        produces: ["compose-step/output.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "compose-step"), { recursive: true });
+    writeFileSync(join(runDir, "compose-step", "output.md"), "unchanged-failure\n");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+    t.after(() => {
+      try { closeDatabase(); } catch { /* noop */ }
+    });
+
+    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+
+    const runWithHostDecision = async (sourceRevisionAfter: string): Promise<void> => {
+      _resetPendingResolve();
+      const ctx = makeMockCtx();
+      const pi = makeMockPi();
+      const s = makeLoopSession({
+        activeEngineId: "custom",
+        activeRunDir: runDir,
+        basePath: runDir,
+      });
+      const deps = makeMockDeps({
+        customEngineHostVerificationBoundary: async (input) => {
+          await input.verifyPolicy();
+          input.recordHostEvidence?.({
+            path: "post-policy-source-drift",
+            attemptId: "attempt-compose",
+            sourceRevisionBefore: "sha256:before",
+            sourceRevisionAfter,
+          });
+          return "pause";
+        },
+        adjudicateNonAdvancingOutcome: (_session, input) => {
+          const recorded = recordNonAdvancingOutcome({
+            scopeId: realpathSync(runDir),
+            guardId: input.guardId,
+            unitType: input.unitType,
+            unitId: input.unitId,
+            inputPayload: input.inputPayload,
+          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+          if (input.guardId === "custom-engine-verify") {
+            verifyOutcomes.push({
+              inputPayload: input.inputPayload,
+              count: recorded.count,
+              tripped: recorded.tripped,
+            });
+          }
+          return null;
+        },
+        pauseAuto: async () => {
+          s.active = false;
+        },
+        stopAuto: async (_ctx, _pi, reason) => {
+          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+          s.active = false;
+        },
+      });
+
+      const resolver = setInterval(() => {
+        if (_hasPendingResolveForTest()) {
+          resolveAgentEnd({ messages: [{ role: "assistant" }] });
+        }
+      }, 25);
+      let timeout: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          autoLoop(ctx, pi, s, deps),
+          new Promise((_, reject) =>
+            timeout = setTimeout(() => {
+              s.active = false;
+              resolveAgentEnd({ messages: [{ role: "assistant" }] });
+              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
+            }, 5_000),
+          ),
+        ]);
+      } finally {
+        clearInterval(resolver);
+        if (timeout) clearTimeout(timeout);
+      }
+    };
+
+    await runWithHostDecision("sha256:after-1");
+    await runWithHostDecision("sha256:after-2");
+    await runWithHostDecision("sha256:after-2");
+
+    assert.equal(verifyOutcomes.length, 3, "each host pause must reach adjudication once");
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "a different host decision behind an identical policy read must produce distinct evidence",
+    );
+    assert.ok(
+      payloads[0]?.includes("sha256:after-1"),
+      `the composed payload must carry the host read; got ${payloads[0]}`,
+    );
+    assert.ok(
+      payloads[0]?.includes("content-heuristic"),
+      `the composed payload must keep the policy read it followed; got ${payloads[0]}`,
+    );
+    assert.equal(verifyOutcomes[1]?.tripped, false, "a changed host decision must not trip the backstop");
+    assert.equal(payloads[1], payloads[2], "identical reads must produce identical evidence");
+    assert.equal(verifyOutcomes[2]?.tripped, true, "identical reads must trip at occurrence two");
   });
 
   it("two-step workflow drives both steps to complete and stops when isComplete fires", async () => {

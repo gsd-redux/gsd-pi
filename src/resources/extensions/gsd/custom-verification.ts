@@ -18,6 +18,7 @@
  */
 
 import { logWarning } from "./workflow-logger.js";
+import { createHash } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -122,6 +123,15 @@ function handleContentHeuristic(
     return verificationResult("continue", { policy: "content-heuristic", reason: "no-outputs" });
   }
 
+  // ADR-047 §3: the block signature hashes the inputs this guard actually read,
+  // and with several outputs it reads several files before one of them fails.
+  // Recording only the failing file collapses "output a changed but b still
+  // fails" into the signature of "b fails", which falsely trips the liveness
+  // backstop at occurrence two (#1674). Every content read this guard performed
+  // is kept, in `produces` order, as a digest — bounded payload, stable hash for
+  // identical inputs, one-to-one with the bytes that were read.
+  const reads: Array<{ path: string; digest: string }> = [];
+
   for (const relPath of produces) {
     const absPath = resolve(runDir, relPath);
     // Path traversal guard
@@ -130,6 +140,7 @@ function handleContentHeuristic(
         policy: "content-heuristic",
         failure: "path-outside-run-directory",
         path: relPath,
+        ...(reads.length > 0 ? { reads } : {}),
       });
     }
 
@@ -139,6 +150,7 @@ function handleContentHeuristic(
         policy: "content-heuristic",
         failure: "missing-file",
         path: relPath,
+        ...(reads.length > 0 ? { reads } : {}),
       });
     }
 
@@ -152,6 +164,7 @@ function handleContentHeuristic(
           path: relPath,
           actualSize: stat.size,
           minimumSize: verify.minSize,
+          ...(reads.length > 0 ? { reads } : {}),
         });
       }
     }
@@ -159,6 +172,10 @@ function handleContentHeuristic(
     // 3. Pattern match check (with timeout guard against ReDoS)
     if (verify.pattern !== undefined) {
       const content = readFileSync(absPath, "utf-8");
+      reads.push({
+        path: relPath,
+        digest: createHash("sha256").update(content, "utf8").digest("hex"),
+      });
       try {
         if (!new RegExp(verify.pattern).test(content)) {
           return verificationResult("pause", {
@@ -166,6 +183,7 @@ function handleContentHeuristic(
             failure: "pattern-mismatch",
             path: relPath,
             pattern: verify.pattern,
+            reads,
           });
         }
       } catch (e) {
@@ -175,6 +193,7 @@ function handleContentHeuristic(
           failure: "invalid-pattern",
           path: relPath,
           pattern: verify.pattern,
+          reads,
           error: (e as Error).message,
         });
       }

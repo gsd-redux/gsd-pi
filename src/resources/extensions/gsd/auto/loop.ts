@@ -110,9 +110,11 @@ import { handleCustomEngineDispatchOutcome } from "./workflow-custom-engine-disp
 import { buildCustomEngineIterationData } from "./workflow-custom-engine-iteration.js";
 import { handleCustomEngineVerifyRetry } from "./workflow-custom-engine-retry.js";
 import {
+  composeVerificationInputPayload,
   handleCustomEngineTaskVerifyOutcome,
   handleCustomEngineVerifyPause,
   handleCustomEngineVerifyRetryOutcome,
+  type VerificationRead,
 } from "./workflow-custom-engine-verify-outcome.js";
 import { handleCustomEngineReconcile } from "./workflow-custom-engine-reconcile.js";
 import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-reconcile-outcome.js";
@@ -128,6 +130,7 @@ import {
   requestCustomTaskHumanReviewFromUi,
   resolvePendingCustomTaskHumanReview,
   runCustomEngineHostVerification,
+  type HostVerificationEvidence,
 } from "./custom-task-host-verification.js";
 import {
   claimTaskAttempt,
@@ -1004,13 +1007,23 @@ export async function autoLoop(
           });
         }
         const hostVerification = deps.customEngineHostVerificationBoundary ?? runCustomEngineHostVerification;
-        let verificationInputPayload: string | undefined;
+        // ADR-047 §3: the signature must hash every input this turn read, in read
+        // order. Host verification can decide without ever reaching the policy
+        // (stored verdict, recovery route, missing repository, source drift),
+        // after catching a policy error, or a second time once interactive human
+        // review resolved the blocker. Each read appends here and
+        // composeVerificationInputPayload orders them, so a later decisive read
+        // can never be shadowed by an earlier one (#1674).
+        const verificationReads: VerificationRead[] = [];
         const verificationInput = {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           basePath: s.basePath,
           preferences: prefs,
           humanReviewPolicy,
+          recordHostEvidence: (evidence: HostVerificationEvidence) => {
+            verificationReads.push({ source: "host", evidence });
+          },
           verifyPolicy: async () => {
             if (policy.verifyWithEvidence) {
               const result = await policy.verifyWithEvidence(
@@ -1018,11 +1031,11 @@ export async function autoLoop(
                 iterData.unitId,
                 { basePath: s.basePath },
               );
-              verificationInputPayload = result.inputPayload;
+              verificationReads.push({ source: "policy", evidence: result.inputPayload });
               return result.outcome;
             }
             const outcome = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
-            verificationInputPayload = JSON.stringify({ outcome });
+            verificationReads.push({ source: "policy", evidence: JSON.stringify({ outcome }) });
             return outcome;
           },
         };
@@ -1057,7 +1070,10 @@ export async function autoLoop(
             });
           }
         }
-        verificationInputPayload ??= JSON.stringify({ outcome: verifyResult });
+        const verificationInputPayload = composeVerificationInputPayload({
+          outcome: verifyResult,
+          reads: verificationReads,
+        });
         if (iterData.unitType === "execute-task" && (verifyResult === "retry" || verifyResult === "abort")) {
           const verifyFlow = handleCustomEngineTaskVerifyOutcome({
             outcome: verifyResult,
@@ -1385,7 +1401,15 @@ export async function autoLoop(
 
           if (orchestrationResult.kind !== "advanced") {
             s.pendingOrchestrationDispatch = null;
-            finishTurn("skipped", "none", "unknown orchestration outcome", "orchestration-unknown-outcome");
+            // ADR-047 §3: the decisive input here is the unexpected outcome
+            // kind, so hash it rather than the constant label (#1674).
+            finishTurn(
+              "skipped",
+              "none",
+              "unknown orchestration outcome",
+              "orchestration-unknown-outcome",
+              JSON.stringify({ kind: orchestrationResult.kind }),
+            );
             continue;
           }
           const pendingDispatch = s.pendingOrchestrationDispatch;
