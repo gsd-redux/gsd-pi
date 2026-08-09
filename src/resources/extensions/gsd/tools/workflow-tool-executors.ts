@@ -1888,7 +1888,14 @@ export async function executePlanMilestone(
             return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
           }
 
-          if (activeAutoWorkerId) {
+          if (isAutoActive()) {
+            // Active auto without a worker row (e.g. after a setup-race pause
+            // detached it) cannot reclaim here, and the one-shot claim path
+            // below is skipped while auto is active. Fail closed instead of
+            // planning against a lease we do not own.
+            if (!activeAutoWorkerId) {
+              return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+            }
             const reclaimed = claimMilestoneLease(activeAutoWorkerId, params.milestoneId);
             if (!reclaimed.ok) {
               return milestoneLeaseConflictResult(params.milestoneId, reclaimed.byWorker, reclaimed.expiresAt);

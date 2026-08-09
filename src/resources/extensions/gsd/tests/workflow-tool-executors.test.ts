@@ -1260,6 +1260,39 @@ test("executePlanMilestone reclaims a same-process holder after active auto resu
   }
 });
 
+test("executePlanMilestone refuses a same-process holder when active auto has no worker row", async () => {
+  const base = makeTmpBase();
+  autoSession.reset();
+  try {
+    openTestDb(base);
+    seedMilestone("M081", "Detached auto worker");
+    const holderWorker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
+    const heldLease = claimMilestoneLease(holderWorker, "M081");
+    assert.equal(heldLease.ok, true);
+    const heldToken = heldLease.ok ? heldLease.token : -1;
+
+    // A setup-race pause detaches the worker from the session while auto stays
+    // active; there is nothing to reclaim with, so planning must fail closed.
+    autoSession.active = true;
+    autoSession.workerId = null;
+
+    const result = await inProjectDir(base, () => executePlanMilestone(validMilestonePlan("M081"), base));
+
+    assert.equal(result.isError, true);
+    assert.equal(result.details?.error, "milestone_lease_conflict");
+    const surviving = getMilestoneLease("M081");
+    assert.ok(surviving, "holder lease must survive the refused plan call");
+    assert.equal(surviving.worker_id, holderWorker);
+    assert.equal(surviving.fencing_token, heldToken);
+    assert.equal(surviving.status, "held");
+    assert.equal(getAutoWorker(holderWorker)?.status, "active");
+  } finally {
+    autoSession.reset();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("executePlanMilestone takes over a stale same-process lease via reentry instead of waiting for TTL", async () => {
   const base = makeTmpBase();
   autoSession.reset();
