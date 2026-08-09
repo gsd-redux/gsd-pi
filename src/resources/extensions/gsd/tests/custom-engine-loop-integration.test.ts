@@ -8,7 +8,7 @@
 
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -19,6 +19,8 @@ import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 import { writeGraph, readGraph, type WorkflowGraph, type GraphStep } from "../graph.ts";
 import { SourceObservationStore } from "../source-observations.js";
+import { closeDatabase, openDatabase } from "../gsd-db.js";
+import { recordNonAdvancingOutcome } from "../auto-liveness-backstop.js";
 import { stringify } from "yaml";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -917,7 +919,7 @@ describe("Custom engine loop integration", () => {
     assert.match(stopEntry ?? "", /requested retry 4 times without passing/);
   });
 
-  it("#1672: custom-engine verification retries reach the shared liveness ledger", async () => {
+  it("#1672: custom-engine stop persists its signature before database teardown", async (t) => {
     // Gap 1 (#1672): the custom-engine verification adapters used to call
     // finishTurn with three arguments, so pendingLoopLiveness stayed unset and
     // a verification retry could recur forever without a block signature.
@@ -947,15 +949,37 @@ describe("Custom engine loop integration", () => {
       activeRunDir: runDir,
       basePath: runDir,
     });
-    const adjudicated: Array<{ guardId: string; sanctionedExit?: string }> = [];
+    const dbPath = join(runDir, ".gsd", "gsd.db");
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(dbPath);
+    t.after(() => {
+      try { closeDatabase(); } catch { /* noop */ }
+    });
+    let stopOutcome: {
+      guardId: string;
+      unitType: string;
+      unitId: string;
+      inputPayload: string;
+      sanctionedExit?: string;
+    } | undefined;
     const deps = makeMockDeps({
       adjudicateNonAdvancingOutcome: (_session, input) => {
-        adjudicated.push({ guardId: input.guardId, sanctionedExit: input.sanctionedExit });
+        if (input.inputPayload === "custom-engine-verify-retry-exhausted") {
+          stopOutcome = input;
+        }
+        recordNonAdvancingOutcome({
+          scopeId: realpathSync(runDir),
+          guardId: input.guardId,
+          unitType: input.unitType,
+          unitId: input.unitId,
+          inputPayload: input.inputPayload,
+        }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
         return null;
       },
       stopAuto: async (_ctx, _pi, reason) => {
         deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
         s.active = false;
+        closeDatabase();
       },
     });
 
@@ -973,7 +997,7 @@ describe("Custom engine loop integration", () => {
             s.active = false;
             resolveAgentEnd({ messages: [{ role: "assistant" }] });
             reject(new Error(
-              `autoLoop did not stop; adjudicated=${JSON.stringify(adjudicated)}; log=${deps.callLog.join(",")}`,
+              `autoLoop did not stop; log=${deps.callLog.join(",")}`,
             ));
           }, 3_000),
         ),
@@ -983,19 +1007,18 @@ describe("Custom engine loop integration", () => {
       if (timeout) clearTimeout(timeout);
     }
 
-    const verifyOutcomes = adjudicated.filter(entry => entry.guardId === "custom-engine-verify");
-    assert.ok(
-      verifyOutcomes.length >= 2,
-      `every custom-engine verification retry must be ledger-fed; got ${JSON.stringify(adjudicated)}`,
-    );
-    for (const entry of verifyOutcomes) {
-      assert.match(
-        entry.sanctionedExit ?? "",
-        /`\/gsd (auto|forensics|status|doctor fix|rebuild markdown)`/,
-        "a custom-engine verification wedge must name a real recovery command",
-      );
-      assert.doesNotMatch(entry.sanctionedExit ?? "", /Resolve the reported condition/);
-    }
+    assert.ok(stopOutcome, "the exhausted custom-engine verification stop must reach adjudication");
+    assert.equal(stopOutcome.guardId, "custom-engine-verify");
+    assert.match(stopOutcome.sanctionedExit ?? "", /`\/gsd forensics`/);
+    openDatabase(dbPath);
+    const repeated = recordNonAdvancingOutcome({
+      scopeId: realpathSync(runDir),
+      guardId: stopOutcome.guardId,
+      unitType: stopOutcome.unitType,
+      unitId: stopOutcome.unitId,
+      inputPayload: stopOutcome.inputPayload,
+    }, stopOutcome.sanctionedExit ? { sanctionedExit: stopOutcome.sanctionedExit } : undefined);
+    assert.equal(repeated.tripped, true, "the stop signature must survive database reopen as occurrence one");
   });
 
   it("two-step workflow drives both steps to complete and stops when isComplete fires", async () => {

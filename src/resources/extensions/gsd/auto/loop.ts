@@ -411,34 +411,38 @@ async function closeOutCrashedUnit(
   err: unknown,
 ): Promise<void> {
   const summary = formatDispatchExceptionSummary({ error: err });
-  abortActiveUnitTurn(ctx);
   try {
-    emitOpenUnitEndForUnit(
-      s.basePath,
-      iterData.unitType,
-      iterData.unitId,
-      "cancelled",
-      {
-        message: summary,
-        category: "unit-exception",
-        isTransient: false,
-      },
-    );
-    writeUnitRuntimeRecord(
-      s.basePath,
-      iterData.unitType,
-      iterData.unitId,
-      s.currentUnit?.startedAt ?? Date.now(),
-      {
-        phase: "crashed",
-        lastProgressAt: Date.now(),
-        lastProgressKind: "unit-exception",
-      },
-    );
-  } catch (closeoutErr) {
-    logWarning("dispatch", `unit crash closeout failed: ${closeoutErr instanceof Error ? closeoutErr.message : String(closeoutErr)}`);
+    abortActiveUnitTurn(ctx);
+    try {
+      emitOpenUnitEndForUnit(
+        s.basePath,
+        iterData.unitType,
+        iterData.unitId,
+        "cancelled",
+        {
+          message: summary,
+          category: "unit-exception",
+          isTransient: false,
+        },
+      );
+      writeUnitRuntimeRecord(
+        s.basePath,
+        iterData.unitType,
+        iterData.unitId,
+        s.currentUnit?.startedAt ?? Date.now(),
+        {
+          phase: "crashed",
+          lastProgressAt: Date.now(),
+          lastProgressKind: "unit-exception",
+        },
+      );
+    } catch (closeoutErr) {
+      logWarning("dispatch", `unit crash closeout failed: ${closeoutErr instanceof Error ? closeoutErr.message : String(closeoutErr)}`);
+    }
+    await snapshotCrashedUnitWork(ctx, s, deps, iterData);
+  } finally {
+    s.clearCurrentUnit();
   }
-  await snapshotCrashedUnitWork(ctx, s, deps, iterData);
 }
 
 /**
@@ -542,6 +546,20 @@ export async function autoLoop(
       unitType: string;
       unitId: string;
     } | null = null;
+    let pendingStopAuto: {
+      reason?: string;
+      options?: StopAutoOptions;
+    } | null = null;
+    const deferStopAuto: LoopDeps["stopAuto"] = async (_ctx, _pi, reason, options) => {
+      pendingStopAuto = { reason, options };
+    };
+    const iterationDeps = new Proxy(deps, {
+      get(target, property, receiver) {
+        return property === "stopAuto"
+          ? deferStopAuto
+          : Reflect.get(target, property, receiver);
+      },
+    });
     const finishTurn = (
       status: "completed" | "failed" | "paused" | "stopped" | "skipped" | "retry",
       failureClass: "none" | "unknown" | "manual-attention" | "timeout" | "execution" | "verification" | "closeout" | "git" = "none",
@@ -610,7 +628,7 @@ export async function autoLoop(
           reason: iterationDecision.reason,
           iteration,
         });
-        await deps.stopAuto(
+        await deferStopAuto(
           ctx,
           pi,
           `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
@@ -627,7 +645,7 @@ export async function autoLoop(
         const memoryDecision = decideMemoryPressure({ ...mem, iteration });
         if (memoryDecision.action === "stop") {
           logWarning("dispatch", memoryDecision.warningMessage);
-          await deps.stopAuto(ctx, pi, memoryDecision.stopMessage);
+          await deferStopAuto(ctx, pi, memoryDecision.stopMessage);
           finishTurn("stopped", "timeout", memoryDecision.turnError, "memory-pressure");
           break;
         }
@@ -650,7 +668,7 @@ export async function autoLoop(
             ctx,
           );
         }
-        await deps.stopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
+        await deferStopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
         finishTurn("stopped", "manual-attention", commandContextDecision.reason, "missing-command-context");
         break;
       }
@@ -696,7 +714,16 @@ export async function autoLoop(
         break;
       }
 
-      const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
+      const ic: IterationContext = {
+        ctx,
+        pi,
+        s,
+        deps: iterationDeps,
+        prefs,
+        iteration,
+        flowId,
+        nextSeq,
+      };
       journalReporter.emit("iteration-start", { iteration });
       let iterData: IterationData;
 
@@ -733,7 +760,7 @@ export async function autoLoop(
         if (engineState.isComplete) {
           finishTurn("completed", "none", undefined, null);
           emitIterationEnd({ status: "completed", reason: "custom-engine-complete" });
-          await deps.stopAuto(ctx, pi, "Workflow complete");
+          await deferStopAuto(ctx, pi, "Workflow complete");
           break;
         }
 
@@ -745,7 +772,7 @@ export async function autoLoop(
         const dispatchFlow = await handleCustomEngineDispatchOutcome({
           decision: engineDispatchDecision,
           deps: {
-            stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+            stopAuto: reason => deferStopAuto(ctx, pi, reason),
           },
         });
         if (dispatchFlow.action === "break") {
@@ -801,11 +828,11 @@ export async function autoLoop(
             "stopped",
             "manual-attention",
             guardsResult.reason,
-            guardsResult.reason === "stop-guard-error" ? "stop-guard-error" : "guard-break",
+            guardsResult.reason,
           );
           finishIncompleteIteration({
             status: "stopped",
-            reason: "guard-break",
+            reason: guardsResult.reason,
             unitType: iterData.unitType,
             unitId: iterData.unitId,
             failureClass: "manual-attention",
@@ -1029,7 +1056,7 @@ export async function autoLoop(
             unitId: iterData.unitId,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
-              stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+              stopAuto: reason => deferStopAuto(ctx, pi, reason),
               reportPause: details => phaseReporter.report("custom-engine", "pause", details),
               finishTurn,
             },
@@ -1072,7 +1099,7 @@ export async function autoLoop(
             outcome: retryOutcome,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
-              stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+              stopAuto: reason => deferStopAuto(ctx, pi, reason),
               reportPause: details => phaseReporter.report("custom-engine", "pause", details),
               finishTurn,
             },
@@ -1132,7 +1159,7 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           deps: {
-            stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+            stopAuto: reason => deferStopAuto(ctx, pi, reason),
             pauseAuto: () => deps.pauseAuto(ctx, pi),
             report: (action, details) => phaseReporter.report("custom-engine", action, details),
             finishTurn,
@@ -1198,7 +1225,7 @@ export async function autoLoop(
               // Carry the blocked marker: the headless host picks its exit code
               // from the reason string, so an unmarked blocked stop exits 0 and
               // reports success over a milestone that never closed.
-              await deps.stopAuto(ctx, pi, markBlockedStopReason(blockMessage));
+              await deferStopAuto(ctx, pi, markBlockedStopReason(blockMessage));
               finishTurn("stopped", "manual-attention", "orchestration-blocked", null);
             }
             finishIncompleteIteration({
@@ -1213,15 +1240,11 @@ export async function autoLoop(
             s.pendingOrchestrationDispatch = null;
             if (orchestrationResult.reason === "idempotent advance: unit already active") {
               // ADR-047 / #1672: the skip is benign only while a unit really is
-              // in flight. This loop executes units inside the iteration, so
-              // reaching advance() with no current unit means nothing is
-              // running and the active-unit marker is stale — the shape where
-              // an execution threw (one `iteration-error` recorded), the marker
-              // survived, and every later iteration took this skip silently
-              // until the session limit. Ledger-feed that case so the second
-              // identical stale skip trips the backstop; keep the exemption
-              // while s.currentUnit is set, where re-polling is the designed
-              // no-op and cancelling would kill live work.
+              // in flight. Crash closeout clears the session marker, so reaching
+              // advance() with no current unit means nothing is running and the
+              // durable active-unit marker is stale. Ledger-feed that case so
+              // the second identical skip trips the backstop; keep the exemption
+              // while s.currentUnit is set, where re-polling is the designed no-op.
               emitIterationEnd({ skipped: true });
               completeIteration();
               if (s.currentUnit) {
@@ -1277,7 +1300,7 @@ export async function autoLoop(
             });
             if (pausedDecision.action === "stop") {
               ctx.ui.notify(pausedDecision.notifyMessage, "error");
-              await deps.stopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
+              await deferStopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
               finishTurn("stopped", "execution", pausedMsg, "transient-retry-exhausted");
               finishIncompleteIteration({
                 status: "stopped",
@@ -1320,9 +1343,9 @@ export async function autoLoop(
             );
             completionStop ??= resolveCompletionStopFromState(orchestrationResult.stateSnapshot);
             if (completionStop) {
-              await deps.stopAuto(ctx, pi, completionStop.reason, completionStop.options);
+              await deferStopAuto(ctx, pi, completionStop.reason, completionStop.options);
             } else {
-              await deps.stopAuto(
+              await deferStopAuto(
                 ctx,
                 pi,
                 orchestrationResult.reason,
@@ -1431,11 +1454,11 @@ export async function autoLoop(
               "stopped",
               "manual-attention",
               guardsResult.reason,
-              guardsResult.reason === "stop-guard-error" ? "stop-guard-error" : "guard-break",
+              guardsResult.reason,
             );
             finishIncompleteIteration({
               status: "stopped",
-              reason: "guard-break",
+              reason: guardsResult.reason,
               unitType: iterData.unitType,
               unitId: iterData.unitId,
               failureClass: "manual-attention",
@@ -1506,7 +1529,7 @@ export async function autoLoop(
             const msg = leaseConflictNotice(iterData, retryLease.reason);
             ctx.ui.notify(msg, "error");
             finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
-            await deps.stopAuto(ctx, pi, msg);
+            await deferStopAuto(ctx, pi, msg);
             break;
           }
         }
@@ -1515,7 +1538,7 @@ export async function autoLoop(
         const msg = leaseConflictNotice(iterData, leaseBeforeClaim.reason);
         ctx.ui.notify(msg, "error");
         finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
-        await deps.stopAuto(ctx, pi, msg);
+        await deferStopAuto(ctx, pi, msg);
         break;
       }
 
@@ -1558,7 +1581,7 @@ export async function autoLoop(
           const msg = leaseConflictNotice(iterData, leaseRecovery.reason);
           ctx.ui.notify(msg, "error");
           finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
-          await deps.stopAuto(ctx, pi, msg);
+          await deferStopAuto(ctx, pi, msg);
           break;
         }
       }
@@ -1567,7 +1590,7 @@ export async function autoLoop(
           const msg = leaseConflictNotice(iterData, "dispatch claim still failed after stale-lease recovery");
           ctx.ui.notify(msg, "error");
           finishTurn("stopped", "execution", msg, "dispatch-claim-stale-lease");
-          await deps.stopAuto(ctx, pi, msg);
+          await deferStopAuto(ctx, pi, msg);
           break;
         }
         finishTurn("skipped", "execution", dispatchDecision.reason, "dispatch-claim-skip");
@@ -1893,7 +1916,7 @@ export async function autoLoop(
           `${infraDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
           "error",
         );
-        await deps.stopAuto(ctx, pi, infraDecision.stopMessage);
+        await deferStopAuto(ctx, pi, infraDecision.stopMessage);
         finishTurn(infraDecision.turnStatus, infraDecision.failureClass, msg, "infrastructure-error");
         break;
       }
@@ -1928,7 +1951,7 @@ export async function autoLoop(
             "error",
           );
           finishTurn("stopped", "timeout", msg, "credential-cooldown-exhausted");
-          await deps.stopAuto(ctx, pi, cooldownDecision.stopMessage);
+          await deferStopAuto(ctx, pi, cooldownDecision.stopMessage);
           break;
         }
 
@@ -1962,7 +1985,7 @@ export async function autoLoop(
           `${errorDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
           "error",
         );
-        await deps.stopAuto(ctx, pi, errorDecision.stopMessage);
+        await deferStopAuto(ctx, pi, errorDecision.stopMessage);
         finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error-exhausted");
         break;
       }
@@ -1998,9 +2021,16 @@ export async function autoLoop(
         });
         if (backstopReason) {
           ctx.ui.notify(backstopReason, "error");
-          await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+          pendingStopAuto = { reason: markBlockedStopReason(backstopReason) };
           s.active = false;
         }
+      }
+      if (pendingStopAuto) {
+        const stop = pendingStopAuto as {
+          reason?: string;
+          options?: StopAutoOptions;
+        };
+        await deps.stopAuto(ctx, pi, stop.reason, stop.options);
       }
     }
   }

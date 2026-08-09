@@ -29,10 +29,18 @@ const GUARD_SANCTIONED_EXITS: Record<string, string> = {
     "This auto session has no command context to dispatch into. Re-run `/gsd auto` from an interactive `gsd` session, or run `gsd headless auto` for automation.",
   "session-lock-lost":
     "Another GSD session took the workflow session lock. Inspect the holder with `/gsd status`, stop that session, then re-run `/gsd auto`.",
-  "guard-break":
-    "A dispatch guard stopped the run. Repair the flagged state with `/gsd doctor fix`; if markdown drifted from the DB, run `/gsd rebuild markdown` first, then re-run `/gsd auto`.",
+  "user-backtrack":
+    "The backtrack directive was applied and auto mode paused. Re-run `/gsd auto` to continue from the updated workflow state.",
+  "user-stop":
+    "The stop directive was honored and marked executed. Re-run `/gsd auto` when you are ready to continue.",
   "stop-guard-error":
     "A dispatch guard failed while evaluating. Repair workflow state with `/gsd doctor fix`, read the failure with `/gsd forensics`, then re-run `/gsd auto`.",
+  "budget-halt":
+    "The configured budget ceiling halted auto mode. Raise or remove `budget_ceiling` in `.gsd/PREFERENCES.md`, then re-run `/gsd auto`.",
+  "budget-pause":
+    "The configured budget ceiling paused auto mode. Resume with `/gsd auto` to override and continue.",
+  "context-window":
+    "The context window reached its configured pause threshold. Run `/gsd auto` to continue in a fresh session.",
   "unit-break":
     "The unit stopped with a terminal failure. If its task recovery aborted, resume it with `gsd_task_recovery_resume` using the recoveryActionId named in the failure; otherwise fix the reported failure and re-run `/gsd auto`.",
   "unit-retry":

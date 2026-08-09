@@ -4560,9 +4560,18 @@ test("#1672: preflight exits persist a block signature that survives a restart",
     const s = preflight.session();
     openLoopDatabase(t, s);
     const dbPath = join(s.basePath, ".gsd", "gsd.db");
-    const deps = makeMockDeps({ adjudicateNonAdvancingOutcome: undefined, ...preflight.deps });
+    const deps = makeMockDeps({
+      adjudicateNonAdvancingOutcome: undefined,
+      ...preflight.deps,
+      stopAuto: async (_ctx, _pi, reason) => {
+        deps.callLog.push(`stopAuto:${reason ?? ""}`);
+        s.active = false;
+        closeDatabase();
+      },
+    });
 
     await autoLoop(ctx, pi, s, deps);
+    openDatabase(dbPath);
     const first = getOpenWedge(realpathSync(s.basePath));
     assert.equal(first.ok, true);
     assert.equal(
@@ -4571,12 +4580,10 @@ test("#1672: preflight exits persist a block signature that survives a restart",
       `${preflight.name}: the first preflight exit must not trip`,
     );
 
-    // Simulated restart: drop and reopen the workflow DB between runs.
-    closeDatabase();
-    openDatabase(dbPath);
     s.active = true;
 
     await autoLoop(ctx, pi, s, deps);
+    openDatabase(dbPath);
     const second = getOpenWedge(realpathSync(s.basePath));
     assert.equal(second.ok, true);
     const wedge = second.ok ? second.wedge : null;
@@ -4643,10 +4650,7 @@ test("#1672: the max-iteration preflight exit persists a block signature across 
   assert.doesNotMatch(wedge!.sanctionedExit, /Resolve the reported condition/);
 });
 
-test("#1672: a stale active-unit skip cannot spin unrecorded", async (t) => {
-  // Gap 3 (#1672): with the active-unit marker left behind by a thrown
-  // execution and nothing in flight, this skip used to be exempt from
-  // adjudication and spun to the session limit recording nothing.
+test("#1672: crash closeout makes following active-unit skips ledger-visible", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -4654,13 +4658,22 @@ test("#1672: a stale active-unit skip cannot spin unrecorded", async (t) => {
   ctx.ui.notify = () => {};
   const pi = makeMockPi();
   let advanceCalls = 0;
+  let executionStarted = false;
+  const currentUnitsAtAdvance: Array<string | null> = [];
   const s = makeLoopSession({
     currentMilestoneId: "M001",
-    currentUnit: null,
     orchestration: {
       start: async () => ({ kind: "stopped" as const, reason: "unused" }),
       advance: async () => {
         advanceCalls++;
+        currentUnitsAtAdvance.push(s.currentUnit?.id ?? null);
+        if (advanceCalls === 1) {
+          return {
+            kind: "advanced" as const,
+            unit: { unitType: "plan-slice", unitId: "M001/S01" },
+            stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+          };
+        }
         return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
       },
       completeActiveUnit: async () => {},
@@ -4673,6 +4686,11 @@ test("#1672: a stale active-unit skip cannot spin unrecorded", async (t) => {
   openLoopDatabase(t, s);
   const deps = makeMockDeps({
     adjudicateNonAdvancingOutcome: undefined,
+    taskExecutionBoundary: async () => {
+      executionStarted = true;
+      s.setCurrentUnit({ type: "plan-slice", id: "M001/S01", startedAt: Date.now() });
+      throw new Error("unit execution crashed");
+    },
     stopAuto: async (_ctx, _pi, reason) => {
       deps.callLog.push(`stopAuto:${reason ?? ""}`);
       s.active = false;
@@ -4681,7 +4699,13 @@ test("#1672: a stale active-unit skip cannot spin unrecorded", async (t) => {
 
   await autoLoop(ctx, pi, s, deps);
 
-  assert.equal(advanceCalls, 2, "the second stale skip must trip the backstop, not spin");
+  assert.equal(executionStarted, true);
+  assert.deepEqual(
+    currentUnitsAtAdvance,
+    [null, null, null],
+    "crash closeout must clear the execution marker before both idempotent skips",
+  );
+  assert.equal(advanceCalls, 3, "the second post-crash skip must trip the backstop, not spin");
   const stopEntry = deps.callLog.find(entry => entry.startsWith("stopAuto:"));
   assert.match(stopEntry ?? "", /^stopAuto:Blocked: /, "a tripped stale skip stops through the blocked path");
   const wedgeResult = getOpenWedge(realpathSync(s.basePath));

@@ -315,6 +315,23 @@ test('#1672: every loop guard instruction names a real recovery command', () => 
   assert.match(loopGuardRecoveryInstruction('guard-that-does-not-exist'), commandPattern);
 });
 
+test('#1672: every runGuards break reason retains its recovery command', () => {
+  const expectedCommands: Array<[string, RegExp]> = [
+    ['user-backtrack', /`\/gsd auto`/],
+    ['user-stop', /`\/gsd auto`/],
+    ['stop-guard-error', /`\/gsd forensics`/],
+    ['budget-halt', /`\/gsd auto`/],
+    ['budget-pause', /`\/gsd auto`/],
+    ['context-window', /`\/gsd auto`/],
+  ];
+  const mappedGuardIds = new Set(loopGuardIdsWithInstructions());
+
+  for (const [guardId, expectedCommand] of expectedCommands) {
+    assert.equal(mappedGuardIds.has(guardId), true, `${guardId} must have an explicit mapping`);
+    assert.match(loopGuardRecoveryInstruction(guardId), expectedCommand, guardId);
+  }
+});
+
 test('#1672: the composed loop sanctioned exit carries the guard payload', () => {
   const exit = resolveLoopSanctionedExit({
     guardId: 'finalize-retry',
