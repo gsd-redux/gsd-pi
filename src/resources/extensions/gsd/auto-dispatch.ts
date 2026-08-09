@@ -1087,7 +1087,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // Deep mode stage gate: workflow preferences not yet captured.
     // This used to dispatch an agent unit, but the step is deterministic
     // defaults-writing. Keep it in-process so missing preferences cannot loop
-    // on the same no-input unit until stuck detection fires.
+    // on the same no-input unit until the liveness backstop trips.
     name: "deep: pre-planning (no workflow prefs) → workflow-preferences",
     match: async ({ state, basePath, prefs }) => {
       if (prefs?.planning_depth !== "deep") return null;

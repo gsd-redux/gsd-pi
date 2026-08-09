@@ -1,6 +1,6 @@
 /**
  * state-machine-runtime-failures.test.ts — Tests for auto-loop runtime failures,
- * infrastructure errors, stuck detection, session management, merge conflicts,
+ * infrastructure errors, session management, merge conflicts,
  * concurrent access, and race conditions.
  *
  * These tests use mocked LoopDeps and AutoSession to exercise the auto-loop
@@ -9,14 +9,13 @@
  * Coverage gaps filled:
  * 1. Infrastructure error detection and immediate stop (ENOSPC, ENOMEM, etc.)
  * 2. Consecutive error graduated recovery (1st → retry, 2nd → cache flush, 3rd → stop)
- * 3. Stuck detection: same error repeated, same unit 3x, oscillation A↔B
- * 4. Session lock validation: compromised, pid-mismatch, missing-metadata
- * 5. Session creation timeout (NEW_SESSION_TIMEOUT_MS = 30s)
- * 6. MergeConflictError stops auto-loop
- * 7. Max iteration safety valve
- * 8. s.active race: pause signal during unit execution
- * 9. Filesystem mutation during dispatch cycle
- * 10. Worktree disappearance detection
+ * 3. Session lock validation: compromised, pid-mismatch, missing-metadata
+ * 4. Session creation timeout (NEW_SESSION_TIMEOUT_MS = 120s)
+ * 5. MergeConflictError stops auto-loop
+ * 6. Max iteration safety valve
+ * 7. s.active race: pause signal during unit execution
+ * 8. Filesystem mutation during dispatch cycle
+ * 9. Worktree disappearance detection
  */
 
 // GSD State Machine Runtime Failure Tests
@@ -39,8 +38,6 @@ import {
   isInfrastructureError,
   INFRA_ERROR_CODES,
 } from "../../auto/infra-errors.ts";
-
-// ── Stuck detection ──────────────────────────────────────────────────────
 
 // ── Session constants ────────────────────────────────────────────────────
 import {
@@ -236,7 +233,7 @@ describe("infrastructure error detection", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 2: Stuck Detection
+// SECTION 2: Session Management
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("session management", () => {
@@ -303,7 +300,7 @@ describe("session management", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 4: Session Lock Validation
+// SECTION 3: Session Lock Validation
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("session lock validation", () => {
@@ -345,7 +342,7 @@ describe("session lock validation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 5: MergeConflictError
+// SECTION 4: MergeConflictError
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("MergeConflictError handling", () => {
@@ -395,7 +392,7 @@ describe("MergeConflictError handling", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 6: Filesystem Race Conditions
+// SECTION 5: Filesystem Race Conditions
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("filesystem race conditions", () => {
@@ -530,7 +527,7 @@ describe("filesystem race conditions", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 7: Graduated Error Recovery in Auto-Loop
+// SECTION 6: Graduated Error Recovery in Auto-Loop
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("graduated error recovery logic", () => {
@@ -573,7 +570,7 @@ describe("graduated error recovery logic", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// SECTION 8: Multi-Iteration Stuck Scenarios
+// SECTION 7: State Consistency Under DB Mutations
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("state consistency under DB mutations", () => {

@@ -15,7 +15,6 @@ export const LIFECYCLE_SHADOW_SOURCE_FILES = Object.freeze({
   eligibility: "src/resources/extensions/gsd/parallel-eligibility.ts",
   dispatch: "src/resources/extensions/gsd/dispatch-guard.ts",
   resolver: "src/resources/extensions/gsd/auto-dispatch.ts",
-  retry: "src/resources/extensions/gsd/auto/detect-stuck.ts",
   state: "src/resources/extensions/gsd/state/derive/from-db.ts",
   validation: "src/resources/extensions/gsd/milestone-validation-verdict.ts",
   gate: "scripts/lifecycle-shadow-no-cutover-gate.mjs",
@@ -60,13 +59,6 @@ const DECISION_IMPORT_POLICY = Object.freeze({
       "./gsd-db.js#getMilestone",
       "./status-guards.js#isClosedStatus",
       "./worktree.js#detectWorktreeName",
-    ]),
-  },
-  retry: {
-    required: new Set(["../db/unit-dispatches.js#getLatestForUnit"]),
-    approved: new Set([
-      "./dispatch-key.js#parseDispatchKey",
-      "../db/unit-dispatches.js#getLatestForUnit",
     ]),
   },
   state: {
@@ -663,12 +655,6 @@ export function analyzeLifecycleShadowSources(sources) {
       DECISION_IMPORT_POLICY.dispatch,
     )],
     ["dispatch-resolver-no-canonical-read", () => analyzeResolveDispatchBoundary(sources.resolver)],
-    ["retry-ledger-authority", () => analyzeDecisionBoundary(
-      SOURCE_FILES.retry,
-      sources.retry,
-      ["retryBudgetSuppresses", "rowInsideRetryBudget"],
-      DECISION_IMPORT_POLICY.retry,
-    )],
     ["state-derivation-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.state,
       sources.state,

@@ -113,19 +113,13 @@ Replace the path with the exact global bin directory from your pnpm error messag
 
 **Fix:** Inspect the blocker file and `/gsd status`. If work is still required, use the appropriate explicit recovery path such as retrying the failed Attempt, reopening a terminal task, or replanning the task before depending on later slice or milestone artifacts.
 
-### Auto mode stops with "Loop detected"
+### Auto mode stops with a liveness wedge
 
-**Cause:** The sliding-window detector found a repeated dispatch pattern that did not recover after the diagnostic retry. Missing expected artifacts usually surface through the bounded 3-attempt artifact verification retry path instead.
+**Symptoms:** Auto mode reports a wedge id, the guard that blocked, and a sanctioned recovery command. Re-running `/gsd auto` prints the same notice instead of entering the loop. This can also follow repeated `already-active` dispatch-claim skips.
 
-**Fix:** Check the task plan for clarity. If the plan is ambiguous, refine it manually, then `/gsd auto` to resume.
+**Cause:** The same guard or non-advancing outcome read byte-identical inputs twice. The wedge is stored in the workflow database, so interleaved dispatches and process restarts do not clear it.
 
-### Auto mode pauses after repeated `already-active` dispatch claims
-
-**Symptoms:** Auto mode repeatedly skips dispatch with reason `already-active`, then pauses with a message that manual recovery is required.
-
-**Cause:** GSD treats 3 consecutive `already-active` claim skips for the same unit as a stuck claim path and pauses auto mode instead of retrying forever.
-
-**Fix:** Resolve the underlying active-claim/worker state (usually with `/gsd doctor` or `/gsd doctor fix`), then run `/gsd auto` or `/gsd resume`.
+**Fix:** Apply the sanctioned recovery printed in the wedge notice. For an `already-active` claim, resolve the underlying active-claim or worker state, usually with `/gsd doctor` or `/gsd doctor fix`. Then run the exact `/gsd auto --resume-wedge <id>` command from the notice to acknowledge the wedge and retry. A wrong or incomplete recovery re-trips on the second unchanged occurrence.
 
 ### Auto mode pauses after a timeout or finalize failure
 

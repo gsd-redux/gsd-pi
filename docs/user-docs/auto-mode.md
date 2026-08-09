@@ -230,17 +230,15 @@ For a single-repository task, or a parent workspace task where no repository has
 
 Transient git failures such as `.git/index.lock` contention still use the short git retry path. If a parent workspace partially committed some repositories before another repository's hook rejected the commit, GSD pauses instead of re-running the task, because redoing the task could duplicate work that is already committed in the successful repositories.
 
-### Stuck Detection
+### Liveness Backstop
 
-GSD uses a sliding-window analysis to detect stuck loops. Instead of a simple "same unit dispatched twice" counter, the detector examines recent dispatch history for repeated patterns — catching cycles like A→B→A→B as well as single-unit repeats. On detection, GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops so you can intervene.
+GSD records every non-advancing auto-mode outcome in the project database using the guard, target unit, and a hash of the inputs that guard read. A second occurrence with the same hash trips a persisted wedge even when other units ran between the two occurrences or the process restarted.
 
-The sliding-window approach reduces false positives on legitimate retries (e.g., verification failures that self-correct) while catching genuine stuck loops faster.
+When a wedge trips, auto mode stops with blocked exit code 10, prints the guard and its sanctioned recovery, and refuses to re-enter while the wedge remains unacknowledged. Apply the printed recovery first, then run `/gsd auto --resume-wedge <id>` to acknowledge that wedge, clear its counter, and re-enter auto mode. The backstop never repairs workflow state itself; an ineffective recovery trips again on the second unchanged occurrence.
 
 ### Consecutive Dispatch Blocker
 
-Auto mode also enforces a same-unit consecutive dispatch cap for `complete-milestone`, `validate-milestone`, and `research-slice`. The loop allows two consecutive dispatches of the same unit in the same phase and stops before a third attempt with a repeat-cap warning that instructs you to run `/gsd resume` after intervention.
-
-Auto mode also tracks consecutive dispatch-claim skips with reason `already-active`. If the same unit claim returns `already-active` 3 times in a row, auto mode pauses and surfaces a manual-recovery warning instead of spinning indefinitely on claim retries.
+Auto mode also retains a last-resort same-unit consecutive dispatch cap for every unit type. If that cap is reached, auto mode stops with a repeat-cap warning that instructs you to run `/gsd resume` after intervention. Repeated non-advancing outcomes, including `already-active` claim skips, normally trip the database-persisted liveness backstop first.
 
 ### Artifact Verification Retries
 
@@ -360,7 +358,7 @@ The auto-loop is structured as a linear phase pipeline rather than recursive dis
 2. **Dispatch** — execute the unit with a focused prompt
 3. **Post-Unit** — close out the unit, update caches, run cleanup
 4. **Verification** — optional validation gate (lint, test, etc.)
-5. **Stuck Detection** — sliding-window pattern analysis
+5. **Liveness Backstop** — persist and adjudicate non-advancing outcomes
 
 This linear flow is easier to debug, uses less memory (no recursive call stack), and provides cleaner error recovery since each phase has well-defined entry and exit conditions.
 

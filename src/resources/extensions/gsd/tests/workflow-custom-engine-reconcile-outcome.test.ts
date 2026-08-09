@@ -22,7 +22,7 @@ function makeDeps(): {
       calls.push(["pauseAuto"]);
     },
     report: (action, details) => calls.push(["report", action, details]),
-    finishTurn: (status, failureClass, error) => calls.push(["finishTurn", status, failureClass, error]),
+    finishTurn: (status, failureClass, error, guardId) => calls.push(["finishTurn", status, failureClass, error, guardId]),
   };
   return { deps, calls };
 }
@@ -43,7 +43,7 @@ test("handleCustomEngineReconcileOutcome stops completed workflow", async () => 
   assert.deepEqual(calls, [
     ["stopAuto", "Workflow complete"],
     ["report", "milestone-complete", { unitType: "execute-task", unitId: "T01" }],
-    ["finishTurn", "completed", undefined, undefined],
+    ["finishTurn", "completed", "none", undefined, null],
   ]);
 });
 
@@ -63,7 +63,7 @@ test("handleCustomEngineReconcileOutcome pauses for manual attention", async () 
   assert.deepEqual(calls, [
     ["pauseAuto"],
     ["report", "pause", { unitType: "verify-slice", unitId: "S01" }],
-    ["finishTurn", "paused", "manual-attention", undefined],
+    ["finishTurn", "paused", "manual-attention", undefined, "custom-engine-reconcile"],
   ]);
 });
 
@@ -84,7 +84,7 @@ test("handleCustomEngineReconcileOutcome stops with reconcile reason", async () 
   assert.deepEqual(calls, [
     ["stopAuto", "blocked"],
     ["report", "stop", { unitType: "complete-slice", unitId: "S01", reason: "blocked" }],
-    ["finishTurn", "stopped", "manual-attention", "blocked"],
+    ["finishTurn", "stopped", "manual-attention", "blocked", "custom-engine-reconcile"],
   ]);
 });
 
@@ -103,6 +103,6 @@ test("handleCustomEngineReconcileOutcome continues after completed unit", async 
   assert.deepEqual(flow, { action: "continue" });
   assert.deepEqual(calls, [
     ["report", "continue", { unitType: "research-slice", unitId: "S01" }],
-    ["finishTurn", "completed", undefined, undefined],
+    ["finishTurn", "completed", "none", undefined, null],
   ]);
 });

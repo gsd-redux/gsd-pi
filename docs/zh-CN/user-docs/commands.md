@@ -7,6 +7,7 @@
 | `/gsd` | Step mode：一次执行一个工作单元，并在每步之间暂停 |
 | `/gsd next` | 显式 Step mode（与 `/gsd` 相同） |
 | `/gsd auto` | 自动模式：research、plan、execute、commit，然后重复 |
+| `/gsd auto --resume-wedge <id>` | 在执行获准的恢复操作后，确认指定的 liveness wedge 并重新进入自动模式 |
 | `/gsd quick` | 在不经过完整 planning 开销的情况下，执行一个带 GSD 保证的 quick task（原子提交、状态跟踪） |
 | `/gsd stop` | 优雅地停止自动模式 |
 | `/gsd pause` | 暂停自动模式（保留状态，可用 `/gsd auto` 恢复） |

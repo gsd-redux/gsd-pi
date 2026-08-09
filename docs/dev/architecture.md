@@ -173,7 +173,7 @@ Model routing (complexity classification, budget pressure, routing history, capa
 
 ## Key Modules
 
-> The auto-mode kernel lives under the `auto/` subdirectory (`auto/orchestrator.ts`, `auto/loop.ts`, `auto/phases.ts`, `auto/pre-dispatch.ts`, `auto/dispatch.ts`, `auto/finalize.ts`, `auto/detect-stuck.ts`, `auto/dispatch-key.ts`, `auto/dispatch-history.ts`, and `workflow-kernel.ts`). Pre-dispatch invariants are enforced by the `uok/` deep module (`uok/flags.ts`, `uok/gate-runner.ts`) wired into the orchestrator. The flat `auto-*.ts` modules below are the older, surrounding surface.
+> The auto-mode kernel lives under the `auto/` subdirectory (`auto/orchestrator.ts`, `auto/loop.ts`, `auto/phases.ts`, `auto/pre-dispatch.ts`, `auto/dispatch.ts`, `auto/finalize.ts`, `auto/dispatch-key.ts`, and `workflow-kernel.ts`). Pre-dispatch invariants are enforced by the `uok/` deep module (`uok/flags.ts`, `uok/gate-runner.ts`) wired into the orchestrator. The flat `auto-*.ts` modules below are the older, surrounding surface.
 
 | Module | Purpose |
 |--------|---------|
@@ -181,7 +181,7 @@ Model routing (complexity classification, budget pressure, routing history, capa
 | `auto/session.ts` | `AutoSession` class — all mutable auto-mode state in one encapsulated instance |
 | `auto-dispatch.ts` | Declarative dispatch table (phase → unit mapping) |
 | `auto/dispatch-key.ts` | Completed-key checks, skip loop detection, key eviction |
-| `auto/detect-stuck.ts` | Stuck loop recovery and unit retry escalation |
+| `auto-liveness-backstop.ts` | DB-persisted non-advancing outcome signatures, wedge records, and explicit acknowledgment |
 | `auto-start.ts` | Fresh-start bootstrap — git/state init, crash lock detection, worktree setup |
 | `auto-post-unit.ts` | Post-unit processing — commit, doctor, state rebuild, hooks |
 | `auto-verification.ts` | Post-unit verification gate (lint/test/typecheck with auto-fix retries) |

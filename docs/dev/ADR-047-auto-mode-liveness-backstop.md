@@ -43,7 +43,7 @@ Ledger entries are not limited to explicit guard blocks. Any dispatch outcome th
 
 ### 5. Resume contract: explicit acknowledgment, Rule 1 deleted
 
-On trip, the backstop persists a **wedge record** — id, signature, occurrence count, the sanctioned exit for that guard, forensics bundle path — and auto exits with the existing blocked exit code (10). While an unacknowledged wedge record exists, `gsd auto` **refuses to re-enter** and reprints the exit instructions; restarting is no longer a silent counter reset. One explicit command (working name `gsd auto --resume-wedge <id>`; exact surface decided at implementation) acknowledges the wedge, clears that signature's counter, and re-enters. A correct repair changes the input hash and the backstop stays quiet; a wrong one re-trips at 2.
+On trip, the backstop persists a **wedge record** — id, signature, occurrence count, the sanctioned exit for that guard, forensics bundle path — and auto exits with the existing blocked exit code (10). While an unacknowledged wedge record exists, `gsd auto` **refuses to re-enter** and reprints the exit instructions; restarting is no longer a silent counter reset. The explicit command `gsd auto --resume-wedge <id>` acknowledges the wedge, clears that signature's counter, and re-enters. A correct repair changes the input hash and the backstop stays quiet; a wrong one re-trips at 2.
 
 Acknowledgment is always explicit — from a human, or from an orchestrator knowingly passing the flag. Headless runs do **not** auto-acknowledge: exit code 10 already means "blocked, human needed," and a wedge is exactly that.
 
@@ -53,8 +53,8 @@ Acknowledgment is always explicit — from a human, or from an orchestrator know
 
 - Every current and future wedge converts into: at most 2 identical blocked dispatches, then a persisted, surfaced, resumable pause with the sanctioned exit named. The failure mode "auto mode silently loops/hangs forever" ceases to exist as a class.
 - The six per-family fix tickets ([#1649](https://github.com/open-gsd/gsd-pi/issues/1649)–[#1654](https://github.com/open-gsd/gsd-pi/issues/1654)) implement the *exits* — settling terminal Attempts, unblocking repair tools in unit scopes, converging drift repair, scoping verification, preserving projections, expiring stale pause pins. The backstop makes their absence visible instead of fatal.
-- Implementation surface (expected): the auto dispatch loop and its ledger, a small DB table for signatures/wedge records, the `gsd auto` entry gate, removal of Rule 1, and the resume flag. Guards themselves are untouched.
-- A deterministic regression harness can now be specified against the seam: inject a guard that blocks with fixed inputs and assert trip-at-2, oscillation detection, restart persistence, and re-entry refusal.
+- The implementation lives in the auto dispatch loop and DB-backed signature/wedge ledger, the `gsd auto` entry gate, and the resume flag. Rule 1 and its dispatch-history module are removed; guards remain responsible for their own state-mutating exits.
+- The deterministic [acceptance bed](../../tests/acceptance-bed/README.md) exercises trip-at-2, interleaving-blind detection, restart persistence, and re-entry refusal at this seam.
 
 ## Rejected alternatives
 

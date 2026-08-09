@@ -65,7 +65,9 @@ function isUnhandledPhaseWarning(dispatchResult: DispatchAction): dispatchResult
 export { isUnhandledPhaseWarning };
 
 /**
- * Phase 3: Dispatch resolution — resolve next unit, stuck detection, pre-dispatch hooks.
+ * Phase 3: Dispatch resolution — resolve the next unit, then run local guards
+ * and pre-dispatch hooks. Non-advancing outcomes are adjudicated centrally by
+ * the DB-persisted liveness backstop.
  * Returns break/continue to control the loop, or next with IterationData on success.
  */
 export async function runDispatch(

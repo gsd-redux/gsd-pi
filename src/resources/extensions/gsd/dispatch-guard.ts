@@ -26,10 +26,9 @@ type ConsecutiveDispatchState = Pick<
  *
  * Applies to all unit types. The first dispatch for a unit/phase pair starts
  * a counter, phase changes reset tracking, and dispatch is blocked once the
- * counter reaches `CONSECUTIVE_SAME_UNIT_CAP` (5). The cap is intentionally
- * above the stuck-detection hard-stop threshold (4 consecutive dispatches) so
- * that stuck detection always fires first; this guard acts as a last-resort
- * safety net for edge cases where stuck detection is suppressed.
+ * counter reaches `CONSECUTIVE_SAME_UNIT_CAP` (5). This remains a last-resort
+ * local safety net; the DB-persisted liveness backstop normally trips first
+ * when repeated dispatches produce identical non-advancing outcomes.
  *
  * Side effects: mutates `state.consecutiveDispatchCount`,
  * `state.lastDispatchedKey`, and `state.lastDispatchPhase`.

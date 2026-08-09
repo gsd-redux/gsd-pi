@@ -16,11 +16,11 @@ test("Task verification abort is machine-terminal without a pause", () => {
 
   const flow = handleCustomEngineTaskVerifyOutcome({
     outcome: "abort",
-    finishTurn: (status, failureClass, error) => calls.push([status, failureClass, error]),
+    finishTurn: (status, failureClass, error, guardId) => calls.push([status, failureClass, error, guardId]),
   });
 
   assert.deepEqual(flow, { action: "break" });
-  assert.deepEqual(calls, [["stopped", "verification", "custom-engine-task-verify-abort"]]);
+  assert.deepEqual(calls, [["stopped", "verification", "custom-engine-task-verify-abort", "custom-engine-task-verify"]]);
 });
 
 test("Task verification retry directly re-enters the loop", () => {
@@ -28,11 +28,11 @@ test("Task verification retry directly re-enters the loop", () => {
 
   const flow = handleCustomEngineTaskVerifyOutcome({
     outcome: "retry",
-    finishTurn: (status, failureClass, error) => calls.push([status, failureClass, error]),
+    finishTurn: (status, failureClass, error, guardId) => calls.push([status, failureClass, error, guardId]),
   });
 
   assert.deepEqual(flow, { action: "continue" });
-  assert.deepEqual(calls, [["retry", "verification", "custom-engine-task-verify-retry"]]);
+  assert.deepEqual(calls, [["retry", "verification", "custom-engine-task-verify-retry", "custom-engine-task-verify"]]);
 });
 
 function makeDeps(): {
@@ -48,7 +48,7 @@ function makeDeps(): {
       calls.push(["stopAuto", reason]);
     },
     reportPause: details => calls.push(["reportPause", details]),
-    finishTurn: (status, failureClass, error) => calls.push(["finishTurn", status, failureClass, error]),
+    finishTurn: (status, failureClass, error, guardId) => calls.push(["finishTurn", status, failureClass, error, guardId]),
   };
   return { deps, calls };
 }
@@ -66,7 +66,7 @@ test("handleCustomEngineVerifyPause pauses and reports unit details", async () =
   assert.deepEqual(calls, [
     ["pauseAuto"],
     ["reportPause", { unitType: "execute-task", unitId: "T01" }],
-    ["finishTurn", "paused", "manual-attention", "custom-engine-verify-pause"],
+    ["finishTurn", "paused", "manual-attention", "custom-engine-verify-pause", "custom-engine-verify"],
   ]);
 });
 
@@ -81,7 +81,7 @@ test("handleCustomEngineVerifyRetryOutcome pauses after recovery pause", async (
   assert.deepEqual(flow, { action: "break" });
   assert.deepEqual(calls, [
     ["pauseAuto"],
-    ["finishTurn", "paused", "manual-attention", "recovery-pause"],
+    ["finishTurn", "paused", "manual-attention", "recovery-pause", "custom-engine-verify"],
   ]);
 });
 
@@ -101,7 +101,7 @@ test("handleCustomEngineVerifyRetryOutcome stops after recovery stop", async () 
   assert.deepEqual(flow, { action: "break" });
   assert.deepEqual(calls, [
     ["stopAuto", "Recovery failed"],
-    ["finishTurn", "stopped", "manual-attention", "recovery-stop"],
+    ["finishTurn", "stopped", "manual-attention", "recovery-stop", "custom-engine-verify"],
   ]);
 });
 
@@ -115,6 +115,6 @@ test("handleCustomEngineVerifyRetryOutcome continues for retry", async () => {
 
   assert.deepEqual(flow, { action: "continue" });
   assert.deepEqual(calls, [
-    ["finishTurn", "retry", undefined, undefined],
+    ["finishTurn", "retry", "manual-attention", undefined, "custom-engine-verify"],
   ]);
 });
