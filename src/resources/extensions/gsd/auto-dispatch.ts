@@ -1767,6 +1767,38 @@ export const DISPATCH_RULES: DispatchRule[] = [
         !existsSync(projectionTaskPlanPath) &&
         !tasksEmbeddedInSlicePlan
       ) {
+        // #1640: a fresh worktree created after an incomplete-milestone
+        // teardown starts with no .gsd markdown (the tree is gitignored), even
+        // though the authoritative DB rows for the active slice survive. The
+        // DB is the single source of truth and the PLAN projection is always
+        // re-renderable from it, so heal the gap here instead of stopping
+        // (#1520) or burning plan-slice retries (#909). renderPlanFromDb
+        // resolves the existing descriptor dir via resolveMilestonePath /
+        // targetSliceFile, so the heal lands beside the phase's other
+        // artifacts rather than at a hardcoded canonical path.
+        let planRenderError: string | null = null;
+        if (!resolveSliceFile(artifactBasePath, mid, sid, "PLAN")) {
+          try {
+            const { renderPlanFromDb } = await import("./markdown-renderer.js");
+            const rendered = await renderPlanFromDb(artifactBasePath, mid, sid);
+            process.stderr.write(
+              `gsd-projection-heal: re-rendered missing slice PLAN for ${unitId} from the DB at ${rendered.planPath}\n`,
+            );
+          } catch (err) {
+            // Fail loud below: a DB that genuinely lacks the slice rows is a
+            // real error, and the stop diagnosis reports it verbatim.
+            planRenderError = err instanceof Error ? err.message : String(err);
+            logWarning(
+              "dispatch",
+              `slice PLAN re-render from DB failed for ${unitId}: ${planRenderError}`,
+            );
+          }
+          if (slicePlanHasEmbeddedTasks(artifactBasePath, mid, sid)) {
+            session?.missingTaskPlanRetryCount?.delete(unitId);
+            // PLAN restored — fall through to the normal execute-task rule.
+            return null;
+          }
+        }
         // #1520: if the slice plan with embedded tasks exists at the original
         // project root but not in the active worktree, the root→worktree state
         // projection is broken or stale. Re-planning the slice cannot repair a
@@ -1783,7 +1815,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           session?.missingTaskPlanRetryCount?.delete(unitId);
           return {
             action: "stop",
-            reason: `${unitId}: the slice plan with embedded tasks exists at the project root but is missing from the active worktree — the root→worktree state projection is broken or stale, and re-planning cannot fix that. Run /gsd doctor to repair the projection, then run /gsd auto to resume.`,
+            reason: `${unitId}: the slice plan with embedded tasks exists at the project root but is missing from the active worktree, and re-rendering it from the workflow database failed${planRenderError ? ` (${planRenderError})` : ""} — re-planning cannot fix a projection gap. Run /gsd rebuild markdown to restore projections from the authoritative DB, then run /gsd auto to resume.`,
             level: "error",
           };
         }
