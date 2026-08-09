@@ -10,6 +10,11 @@ import type { AuditWarning, RuntimeError, VerificationCheck, VerificationResult 
 import { DEFAULT_COMMAND_TIMEOUT_MS } from "./constants.js";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
 import { normalizePythonCommand } from "./python-resolver.js";
+import {
+  isWorkflowSurfaceAliasTool,
+  isWorkflowToolSurfaceName,
+  stripMcpToolPrefix,
+} from "./workflow-tool-surface.js";
 
 /** Maximum bytes of stdout/stderr to retain per command (10 KB). */
 const MAX_OUTPUT_BYTES = 10 * 1024;
@@ -91,6 +96,11 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
       const validation = validateVerificationCommand(normalized);
       if (validation.ok) {
         commands.push(normalized);
+      } else if (isGsdWorkflowToolInvocation(normalized)) {
+        // A GSD tool name describes tool-verified evidence, not a runnable
+        // shell command — route to the task-plan-prose fallback instead of
+        // executing exit-127 noise that false-fails the task (#1628).
+        hasTaskPlanProse = true;
       } else if (validation.reason === "does not look like a runnable command") {
         hasTaskPlanProse = true;
       } else if (splitUnquotedStatements(normalized).some(s => !isLikelyCommand(s))) {
@@ -584,10 +594,58 @@ export function isLikelyCommand(cmd: string): boolean {
 }
 
 /**
+ * A verify line whose first word names a GSD workflow tool (e.g.
+ * `gsd_exec_search limit 1 query D023`) can never run in a shell — executing
+ * it yields exit 127 "command not found" and false-fails a task whose
+ * substance already passed (#1628). Tool names come from the canonical
+ * workflow tool surface (including MCP-prefixed and alias forms); the
+ * reserved `gsd_*` namespace also covers planner-written near-tool names.
+ * The bare `gsd` CLI is deliberately not matched — `gsd status` is a real
+ * shell command.
+ */
+export function isGsdWorkflowToolInvocation(candidate: string): boolean {
+  const firstToken = candidate.trim().replace(INTERPRETER_PREFIX_RE, "").split(/\s+/)[0] ?? "";
+  if (!firstToken) return false;
+  const baseName = stripMcpToolPrefix(firstToken);
+  if (isWorkflowToolSurfaceName(baseName) || isWorkflowSurfaceAliasTool(baseName)) return true;
+  return /^gsd_[a-z0-9_]+$/i.test(baseName);
+}
+
+/**
+ * Find the first verify line that names a GSD workflow tool, for plan-time
+ * rejection (#1628). Returns null when every line is tool-name-free.
+ */
+export function findGsdToolInvocationInVerify(verify: string): string | null {
+  return verify
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .find((line) => isGsdWorkflowToolInvocation(line)) ?? null;
+}
+
+/**
+ * Plan-time guard (#1628): throw when a task verify names a GSD workflow tool,
+ * so tool-name verifies never persist and never reach the gate as exit-127
+ * noise. Shared by gsd_plan_task and gsd_replan_task.
+ */
+export function assertVerifyIsShellCheckable(verify: string): void {
+  const toolVerifyLine = findGsdToolInvocationInVerify(verify);
+  if (toolVerifyLine) {
+    throw new Error(
+      `verify must be a shell command, not a GSD tool invocation: "${toolVerifyLine}" — ` +
+      "use a shell-checkable command, or describe the tool-verified outcome as prose",
+    );
+  }
+}
+
+/**
  * Validate a command string for obvious shell injection patterns.
  * Returns the command unchanged if safe, or null if suspicious.
  */
 export function validateVerificationCommand(cmd: string): { ok: true } | { ok: false; reason: string } {
+  if (isGsdWorkflowToolInvocation(cmd)) {
+    return { ok: false, reason: "names a GSD workflow tool, which cannot run as a shell command" };
+  }
   if (hasUnsafeShellSyntax(cmd)) {
     return { ok: false, reason: "contains shell control syntax such as `||` fallbacks, redirects, semicolons, backticks, or command substitution" };
   }

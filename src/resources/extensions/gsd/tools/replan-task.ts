@@ -8,6 +8,19 @@ import {
 import { invalidateStateCache } from "../state.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
+import { assertVerifyIsShellCheckable } from "../verification-gate.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import {
+  createRepositoryRegistryFromPreferences,
+  defaultRepositoryTargets,
+  deriveRepositoryTargetsFromPlannedPaths,
+  type RepositoryRegistry,
+} from "../repository-registry.js";
+import {
+  resolveEffectiveTargetRepositories,
+  validateReferencedRepositories,
+  validateRepositoryTargetIds,
+} from "./plan-task.js";
 import { renderPlanFromDb, renderTaskPlanFromDb } from "../markdown-renderer.js";
 import { resolveMilestonePath, resolveSlicePath } from "../paths.js";
 import { flushWorkflowProjections } from "../projection-flush.js";
@@ -36,6 +49,8 @@ export interface ReplanTaskParams {
   verify: string;
   inputs: string[];
   expectedOutput: string[];
+  /** Repository id(s) this task touches (parent workspace); recomputed from planned paths when omitted. */
+  targetRepositories?: string[];
   reworkBriefRef?: string;
   fullPlanMd?: string;
   actorName?: string;
@@ -57,11 +72,15 @@ function validateParams(params: ReplanTaskParams): ReplanTaskParams {
   if (!isNonEmptyString(params?.description)) throw new Error("description is required");
   if (!isNonEmptyString(params?.estimate)) throw new Error("estimate is required");
   if (!isNonEmptyString(params?.verify)) throw new Error("verify is required");
+  assertVerifyIsShellCheckable(params.verify);
   return {
     ...params,
     files: validateStringArray(params.files, "files"),
     inputs: validateStringArray(params.inputs, "inputs"),
     expectedOutput: validateStringArray(params.expectedOutput, "expectedOutput"),
+    ...(params.targetRepositories !== undefined
+      ? { targetRepositories: validateRepositoryTargetIds("targetRepositories", params.targetRepositories) }
+      : {}),
   };
 }
 
@@ -83,6 +102,23 @@ export async function handleReplanTask(
   } catch (err) {
     return { error: `validation failed: ${(err as Error).message}` };
   }
+
+  let repositoryRegistry: RepositoryRegistry;
+  try {
+    const loaded = loadEffectiveGSDPreferences(basePath);
+    repositoryRegistry = createRepositoryRegistryFromPreferences(basePath, loaded?.preferences);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { error: `validation failed: ${message}` };
+  }
+
+  const defaultTargets = defaultRepositoryTargets(repositoryRegistry);
+  // Replan recomputes repository targets from the replanned paths so a row
+  // fossilized with the old parent-mode fan-out default heals on replan (#1630).
+  const derivedTargets = deriveRepositoryTargetsFromPlannedPaths(
+    repositoryRegistry,
+    [...params.files, ...params.expectedOutput],
+  );
 
   let operationStatus: "committed" | "replayed";
   try {
@@ -151,6 +187,17 @@ export async function handleReplanTask(
           );
         }
 
+        const effectiveTargetRepositories = resolveEffectiveTargetRepositories(
+          params.targetRepositories,
+          parentSlice.target_repositories,
+          defaultTargets,
+          derivedTargets,
+        );
+        const repoValidationError = validateReferencedRepositories(effectiveTargetRepositories, repositoryRegistry);
+        if (repoValidationError) {
+          throw new PlanningGuardError(`validation failed: ${repoValidationError}`);
+        }
+
         upsertTaskPlanning(params.milestoneId, params.sliceId, params.taskId, {
           title: params.title,
           description: params.description,
@@ -160,6 +207,7 @@ export async function handleReplanTask(
           inputs: params.inputs,
           expectedOutput: params.expectedOutput,
           fullPlanMd: params.fullPlanMd,
+          targetRepositories: effectiveTargetRepositories,
         });
         insertReplanHistory({
           milestoneId: params.milestoneId,

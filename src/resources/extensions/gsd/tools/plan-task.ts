@@ -1,4 +1,5 @@
 import { clearParseCache } from "../files.js";
+import { assertVerifyIsShellCheckable } from "../verification-gate.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
@@ -22,7 +23,12 @@ import { appendEvent } from "../workflow-events.js";
 import { logWarning } from "../workflow-logger.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { validatePathOnlyPlanningFields, validatePlanningPathScope } from "../planning-path-scope.js";
-import { createRepositoryRegistryFromPreferences, defaultRepositoryTargets, type RepositoryRegistry } from "../repository-registry.js";
+import {
+  createRepositoryRegistryFromPreferences,
+  defaultRepositoryTargets,
+  deriveRepositoryTargetsFromPlannedPaths,
+  type RepositoryRegistry,
+} from "../repository-registry.js";
 import type { GateId } from "../types.js";
 import {
   executePlanningDomainOperation,
@@ -59,7 +65,7 @@ export interface PlanTaskResult {
   taskPlanPath: string;
 }
 
-function validateRepositoryTargetIds(field: string, value: unknown): string[] {
+export function validateRepositoryTargetIds(field: string, value: unknown): string[] {
   const ids = validateStringArray(value, field);
   if (ids.length === 0) throw new Error(`${field} must include at least one repository id when provided`);
   const deduped = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
@@ -67,7 +73,7 @@ function validateRepositoryTargetIds(field: string, value: unknown): string[] {
   return deduped;
 }
 
-function validateReferencedRepositories(
+export function validateReferencedRepositories(
   targetRepositories: string[] | undefined,
   registry: RepositoryRegistry,
 ): string | null {
@@ -106,13 +112,18 @@ function validatePathScopeForTargetRepositories(
   );
 }
 
-function resolveEffectiveTargetRepositories(
+export function resolveEffectiveTargetRepositories(
   taskTargetRepositories: string[] | undefined,
   sliceTargetRepositories: string[] | undefined,
   defaultTargets: string[],
+  derivedTargets: string[] | null,
 ): string[] {
   if (taskTargetRepositories) return taskTargetRepositories;
   if (sliceTargetRepositories?.length) return sliceTargetRepositories;
+  // Defaulted parent-mode targets must follow where the task's files actually
+  // live — otherwise verification fans out to child repos the task never
+  // touched and can never pass (#1630).
+  if (derivedTargets?.length) return derivedTargets;
   return defaultTargets;
 }
 
@@ -124,6 +135,7 @@ function validateParams(params: PlanTaskParams): PlanTaskParams {
   if (!isNonEmptyString(params?.description)) throw new Error("description is required");
   if (!isNonEmptyString(params?.estimate)) throw new Error("estimate is required");
   if (!isNonEmptyString(params?.verify)) throw new Error("verify is required");
+  assertVerifyIsShellCheckable(params.verify);
   if (params.observabilityImpact !== undefined && !isNonEmptyString(params.observabilityImpact)) {
     throw new Error("observabilityImpact must be a non-empty string when provided");
   }
@@ -176,6 +188,10 @@ export async function handlePlanTask(
   }
 
   const defaultTargets = defaultRepositoryTargets(repositoryRegistry);
+  const derivedTargets = deriveRepositoryTargetsFromPlannedPaths(
+    repositoryRegistry,
+    [...params.files, ...params.expectedOutput],
+  );
 
   let operationStatus: "committed" | "replayed";
   try {
@@ -258,6 +274,7 @@ export async function handlePlanTask(
           params.targetRepositories,
           parentSlice.target_repositories,
           defaultTargets,
+          derivedTargets,
         );
         const repoValidationError = validateReferencedRepositories(effectiveTargetRepositories, repositoryRegistry);
         if (repoValidationError) {
