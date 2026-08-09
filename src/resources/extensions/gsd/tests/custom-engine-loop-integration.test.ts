@@ -116,6 +116,7 @@ function makeLoopSession(overrides?: Record<string, unknown>) {
     originalBasePath: "",
     currentMilestoneId: null,
     currentUnit: null,
+    unitExecutionInFlight: false,
     currentUnitRouting: null,
     sourceObservations: new SourceObservationStore(),
     completedUnits: [],
@@ -279,6 +280,51 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
 // ─── Tests ───────────────────────────────────────────────────────────────
 
 describe("Custom engine loop integration", () => {
+  it("threads custom-engine runGuards ids and budget inputs through adjudication", async () => {
+    _resetPendingResolve();
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "guarded-step" })], "guarded-workflow");
+    writeGraph(runDir, graph);
+    writeDefinition(runDir, graph.steps, "guarded-workflow");
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeLoopSession({
+      activeEngineId: "custom",
+      activeRunDir: runDir,
+      basePath: runDir,
+    });
+    let adjudicated: { guardId: string; inputPayload: string } | undefined;
+    const deps = makeMockDeps({
+      loadEffectiveGSDPreferences: () => ({
+        preferences: { budget_ceiling: 5, budget_enforcement: "pause" },
+      } as any),
+      getLedger: () => ({ units: [{}] } as any),
+      getProjectTotals: () => ({ cost: 10 } as any),
+      getNewBudgetAlertLevel: () => 100,
+      getBudgetAlertLevel: () => 100,
+      getBudgetEnforcementAction: () => "pause",
+      adjudicateNonAdvancingOutcome: (_session, input) => {
+        adjudicated = { guardId: input.guardId, inputPayload: input.inputPayload };
+        return null;
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+
+    assert.equal(adjudicated?.guardId, "budget-pause");
+    assert.deepEqual(JSON.parse(adjudicated!.inputPayload), {
+      budgetCeiling: 5,
+      totalCost: 10,
+      budgetPct: 2,
+      enforcement: "pause",
+      effectiveAction: "pause",
+      hookAction: null,
+      newBudgetAlertLevel: 100,
+      thresholdPct: 100,
+    });
+  });
+
   it("dispatches a 3-step workflow through autoLoop and all steps complete", async () => {
     _resetPendingResolve();
 
@@ -962,8 +1008,12 @@ describe("Custom engine loop integration", () => {
       inputPayload: string;
       sanctionedExit?: string;
     } | undefined;
+    const verifyOutcomes: Array<{ guardId: string; inputPayload: string }> = [];
     const deps = makeMockDeps({
       adjudicateNonAdvancingOutcome: (_session, input) => {
+        if (input.guardId === "custom-engine-verify") {
+          verifyOutcomes.push({ guardId: input.guardId, inputPayload: input.inputPayload });
+        }
         if (input.inputPayload === "custom-engine-verify-retry-exhausted") {
           stopOutcome = input;
         }
@@ -1008,6 +1058,11 @@ describe("Custom engine loop integration", () => {
     }
 
     assert.ok(stopOutcome, "the exhausted custom-engine verification stop must reach adjudication");
+    assert.equal(verifyOutcomes.length, 4, "every verification retry, including exhaustion, must reach adjudication");
+    assert.deepEqual(
+      verifyOutcomes.slice(0, 3).map((outcome) => outcome.inputPayload),
+      ["custom-engine-verify", "custom-engine-verify", "custom-engine-verify"],
+    );
     assert.equal(stopOutcome.guardId, "custom-engine-verify");
     assert.match(stopOutcome.sanctionedExit ?? "", /`\/gsd forensics`/);
     openDatabase(dbPath);

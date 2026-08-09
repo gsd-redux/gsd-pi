@@ -76,7 +76,7 @@ export interface UnitResult {
 
 export type PhaseResult<T = void> =
   | { action: "continue" }
-  | { action: "break"; reason: string }
+  | { action: "break"; reason: string; inputPayload?: string }
   | { action: "retry"; reason: string; data?: T }
   | { action: "next"; data: T }
 

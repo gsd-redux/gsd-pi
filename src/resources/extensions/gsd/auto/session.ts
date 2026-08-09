@@ -156,6 +156,7 @@ export class AutoSession {
 
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
+  unitExecutionInFlight = false;
   currentTraceId: string | null = null;
   currentTurnId: string | null = null;
   currentUnitRouting: UnitRouting | null = null;
@@ -392,6 +393,7 @@ export class AutoSession {
 
     // Unit
     this.clearCurrentUnit();
+    this.unitExecutionInFlight = false;
     this.toolSurfaceSnapshot = null;
     this.currentTraceId = null;
     this.currentTurnId = null;

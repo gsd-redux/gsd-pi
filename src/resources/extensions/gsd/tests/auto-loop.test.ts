@@ -62,6 +62,7 @@ import {
 } from "../db/writers/lifecycle-commands.js";
 import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.js";
 import { handleReplanTask } from "../tools/replan-task.js";
+import { appendCapture, markCaptureResolved } from "../captures.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1565,6 +1566,7 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
     originalBasePath: "",
     currentMilestoneId: "M001",
     currentUnit: null,
+    unitExecutionInFlight: false,
     currentUnitRouting: null,
     sourceObservations: new SourceObservationStore(),
     completedUnits: [],
@@ -4478,6 +4480,39 @@ test("ADR-047: repeated orchestration skips trip the persisted backstop at the l
   assert.ok(wedgeResult.ok && wedgeResult.wedge, "the skip wedge must be persisted");
 });
 
+test("#1672: dev runGuards preserves semantic ids and capture inputs through adjudication", async (t) => {
+  const adjudicated: Array<{ guardId: string; inputPayload: string }> = [];
+
+  for (const text of ["stop after first failure", "stop after second failure"]) {
+    _resetPendingResolve();
+    const ctx = makeMockCtx();
+    ctx.ui.setStatus = () => {};
+    const pi = makeMockPi();
+    const s = makeLoopSession();
+    openLoopDatabase(t, s);
+    const captureId = appendCapture(s.basePath, text);
+    markCaptureResolved(s.basePath, captureId, "stop", "halt", text, "M001");
+    const deps = makeMockDeps({
+      adjudicateNonAdvancingOutcome: (_session, input) => {
+        adjudicated.push({ guardId: input.guardId, inputPayload: input.inputPayload });
+        return null;
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+    closeDatabase();
+  }
+
+  assert.deepEqual(adjudicated.map((entry) => entry.guardId), ["user-stop", "user-stop"]);
+  assert.notEqual(
+    adjudicated[0]!.inputPayload,
+    adjudicated[1]!.inputPayload,
+    "distinct stop captures must hash distinct guard inputs",
+  );
+  assert.equal(JSON.parse(adjudicated[0]!.inputPayload)[0].text, "stop after first failure");
+  assert.equal(JSON.parse(adjudicated[1]!.inputPayload)[0].text, "stop after second failure");
+});
+
 test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t) => {
   _resetPendingResolve();
 
@@ -4560,11 +4595,16 @@ test("#1672: preflight exits persist a block signature that survives a restart",
     const s = preflight.session();
     openLoopDatabase(t, s);
     const dbPath = join(s.basePath, ".gsd", "gsd.db");
+    const stopCalls: Array<{
+      active: boolean;
+      options: Parameters<LoopDeps["stopAuto"]>[3];
+    }> = [];
     const deps = makeMockDeps({
       adjudicateNonAdvancingOutcome: undefined,
       ...preflight.deps,
-      stopAuto: async (_ctx, _pi, reason) => {
+      stopAuto: async (_ctx, _pi, reason, options) => {
         deps.callLog.push(`stopAuto:${reason ?? ""}`);
+        stopCalls.push({ active: s.active, options });
         s.active = false;
         closeDatabase();
       },
@@ -4596,6 +4636,12 @@ test("#1672: preflight exits persist a block signature that survives a restart",
       `${preflight.name}: the wedge must name its owning guard's real recovery command`,
     );
     assert.doesNotMatch(wedge!.sanctionedExit, /Resolve the reported condition/);
+    if (preflight.name === "missing-command-context") {
+      assert.deepEqual(stopCalls.at(-1), {
+        active: true,
+        options: { preserveWorktree: true },
+      });
+    }
     closeDatabase();
   }
 });
@@ -4718,6 +4764,70 @@ test("#1672: crash closeout makes following active-unit skips ledger-visible", a
   assert.doesNotMatch(wedge!.sanctionedExit, /Resolve the reported condition/);
 });
 
+test("#1672: finalize exceptions make following active-unit skips ledger-visible", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.notify = () => {};
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  let inFlightDuringFinalize = false;
+  const inFlightAtAdvance: boolean[] = [];
+  const s = makeLoopSession({
+    currentMilestoneId: "M001",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        advanceCalls++;
+        inFlightAtAdvance.push(s.unitExecutionInFlight);
+        if (advanceCalls === 1) {
+          return {
+            kind: "advanced" as const,
+            unit: { unitType: "plan-slice", unitId: "M001/S01" },
+            stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+          };
+        }
+        return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+      },
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+      getStatus: () => ({ phase: "running" as const, transitionCount: 1 }),
+    } satisfies AutoOrchestrationModule,
+  });
+  openLoopDatabase(t, s);
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
+    taskExecutionBoundary: async () => {
+      s.setCurrentUnit({ type: "plan-slice", id: "M001/S01", startedAt: Date.now() });
+      return { action: "next" as const, data: { unitStartedAt: Date.now() } };
+    },
+    postUnitPreVerification: async () => {
+      inFlightDuringFinalize = s.unitExecutionInFlight;
+      throw new Error("post-unit verification crashed");
+    },
+    stopAuto: async (_ctx, _pi, reason) => {
+      deps.callLog.push(`stopAuto:${reason ?? ""}`);
+      s.active = false;
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(inFlightDuringFinalize, true);
+  assert.deepEqual(inFlightAtAdvance, [false, false, false]);
+  assert.equal(s.currentUnit?.id, "M001/S01", "the test must retain the stale marker from finalize failure");
+  assert.equal(advanceCalls, 3, "the second stale skip must trip despite the stale currentUnit marker");
+  const wedgeResult = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(wedgeResult.ok, true);
+  const wedge = wedgeResult.ok ? wedgeResult.wedge : null;
+  assert.ok(wedge);
+  assert.equal(wedge!.guardId, "orchestration-stale-active-unit");
+  assert.equal(wedge!.occurrenceCount, 2);
+});
+
 test("autoLoop does not pause on repeated idempotent advance skips while a unit is in flight", async () => {
   _resetPendingResolve();
 
@@ -4731,6 +4841,7 @@ test("autoLoop does not pause on repeated idempotent advance skips while a unit 
     // A unit really is executing: re-polling is the designed no-op, so this
     // skip stays exempt from the liveness ledger (#1672).
     currentUnit: { type: "execute-task", id: "M001/S01/T01", startedAt: Date.now() },
+    unitExecutionInFlight: true,
     orchestration: {
       start: async () => ({ kind: "stopped" as const, reason: "unused" }),
       advance: async () => {

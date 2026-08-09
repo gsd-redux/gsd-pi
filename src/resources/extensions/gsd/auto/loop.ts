@@ -550,8 +550,9 @@ export async function autoLoop(
       reason?: string;
       options?: StopAutoOptions;
     } | null = null;
+    let ownsUnitExecution = false;
     const deferStopAuto: LoopDeps["stopAuto"] = async (_ctx, _pi, reason, options) => {
-      pendingStopAuto = { reason, options };
+      pendingStopAuto ??= { reason, options };
     };
     const iterationDeps = new Proxy(deps, {
       get(target, property, receiver) {
@@ -565,6 +566,7 @@ export async function autoLoop(
       failureClass: "none" | "unknown" | "manual-attention" | "timeout" | "execution" | "verification" | "closeout" | "git" = "none",
       error: string | undefined,
       guardId: string | null,
+      inputPayload?: string,
     ): void => {
       turnReporter.finish({
         unitType: observedUnitType,
@@ -576,7 +578,7 @@ export async function autoLoop(
       if (guardId) {
         pendingLoopLiveness = {
           guardId,
-          inputPayload: error ?? guardId,
+          inputPayload: inputPayload ?? error ?? guardId,
           unitType: observedUnitType ?? "orchestration",
           unitId: observedUnitId ?? s.currentMilestoneId ?? "workflow",
         };
@@ -829,6 +831,7 @@ export async function autoLoop(
             "manual-attention",
             guardsResult.reason,
             guardsResult.reason,
+            guardsResult.inputPayload,
           );
           finishIncompleteIteration({
             status: "stopped",
@@ -866,6 +869,8 @@ export async function autoLoop(
         }
         let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
         try {
+          s.unitExecutionInFlight = true;
+          ownsUnitExecution = true;
           unitPhaseResult = await runWithWorkerHeartbeat(
             s,
             workerHeartbeatDeps,
@@ -1239,15 +1244,9 @@ export async function autoLoop(
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
             if (orchestrationResult.reason === "idempotent advance: unit already active") {
-              // ADR-047 / #1672: the skip is benign only while a unit really is
-              // in flight. Crash closeout clears the session marker, so reaching
-              // advance() with no current unit means nothing is running and the
-              // durable active-unit marker is stale. Ledger-feed that case so
-              // the second identical skip trips the backstop; keep the exemption
-              // while s.currentUnit is set, where re-polling is the designed no-op.
               emitIterationEnd({ skipped: true });
               completeIteration();
-              if (s.currentUnit) {
+              if (s.unitExecutionInFlight) {
                 finishTurn("skipped", "none", undefined, null);
                 continue;
               }
@@ -1455,6 +1454,7 @@ export async function autoLoop(
               "manual-attention",
               guardsResult.reason,
               guardsResult.reason,
+              guardsResult.inputPayload,
             );
             finishIncompleteIteration({
               status: "stopped",
@@ -1606,6 +1606,8 @@ export async function autoLoop(
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
       try {
+        s.unitExecutionInFlight = true;
+        ownsUnitExecution = true;
         unitPhaseResult = await runWithWorkerHeartbeat(
           s,
           workerHeartbeatDeps,
@@ -1997,6 +1999,10 @@ export async function autoLoop(
       }
       finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error");
     } finally {
+      if (ownsUnitExecution) {
+        s.unitExecutionInFlight = false;
+      }
+      let backstopReason: string | null = null;
       if (pendingLoopLiveness) {
         const liveness = pendingLoopLiveness as {
           guardId: string;
@@ -2006,7 +2012,7 @@ export async function autoLoop(
         };
         const adjudicateNonAdvancingOutcome =
           deps.adjudicateNonAdvancingOutcome ?? recordLoopNonAdvancingOutcome;
-        const backstopReason = adjudicateNonAdvancingOutcome(s, {
+        backstopReason = adjudicateNonAdvancingOutcome(s, {
           ...liveness,
           // ADR-047 §5: the wedge must name the owning guard's real,
           // state-mutating exit — not a generic "resolve the condition" —
@@ -2021,8 +2027,7 @@ export async function autoLoop(
         });
         if (backstopReason) {
           ctx.ui.notify(backstopReason, "error");
-          pendingStopAuto = { reason: markBlockedStopReason(backstopReason) };
-          s.active = false;
+          pendingStopAuto ??= { reason: markBlockedStopReason(backstopReason) };
         }
       }
       if (pendingStopAuto) {
@@ -2031,6 +2036,9 @@ export async function autoLoop(
           options?: StopAutoOptions;
         };
         await deps.stopAuto(ctx, pi, stop.reason, stop.options);
+      }
+      if (backstopReason) {
+        s.active = false;
       }
     }
   }

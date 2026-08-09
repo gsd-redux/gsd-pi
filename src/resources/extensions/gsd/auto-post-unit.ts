@@ -1687,8 +1687,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             // Without the flag, subsequent hooks (triage,
             // DB writes) would keep running against a conflicted main
             // checkout after the loop was already told to stop.
-            const { stopAuto } = await import("./auto.js");
-            await stopAuto(ctx, undefined, `slice-merge-conflict on ${sid}`);
+            await stopAuto(ctx, pi, `slice-merge-conflict on ${sid}`);
             sliceMergeStopped = true;
             return;
           }
@@ -1698,8 +1697,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           // Non-conflict failures (dirty main, rev-walk error, etc.) can
           // leave the checkout in an unexpected state. Stop auto-mode so
           // the next slice doesn't dispatch on top of it.
-          const { stopAuto } = await import("./auto.js");
-          await stopAuto(ctx, undefined, `slice-merge-error on ${sid}`);
+          await stopAuto(ctx, pi, `slice-merge-error on ${sid}`);
           sliceMergeStopped = true;
         }
       });
