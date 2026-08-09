@@ -470,7 +470,11 @@ function isBareSuffixedMilestoneAlias(left: string, right: string): boolean {
   );
 }
 
-function milestoneIdsDispatchCompatible(left: string, right: string): boolean {
+// Exported for the paused-session resume validation in auto.ts (#1643): the
+// same bare-vs-suffixed normalization (#1317) that the dispatch mismatch guard
+// applies must be used when deciding whether a paused milestone was superseded,
+// or alias ids would false-mismatch and discard a legitimately resumable pause.
+export function milestoneIdsDispatchCompatible(left: string, right: string): boolean {
   return left === right || isBareSuffixedMilestoneAlias(left, right);
 }
 

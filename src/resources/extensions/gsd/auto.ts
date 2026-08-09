@@ -198,7 +198,7 @@ import {
   verifyExpectedArtifact,
 } from "./auto-recovery.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
-import { resolveDispatch, DISPATCH_RULES } from "./auto-dispatch.js";
+import { resolveDispatch, DISPATCH_RULES, milestoneIdsDispatchCompatible } from "./auto-dispatch.js";
 import { getErrorMessage } from "./error-utils.js";
 import { recoverFailedMigration } from "./migrate-external.js";
 import { initRegistry, convertDispatchRules } from "./rule-registry.js";
@@ -585,6 +585,44 @@ function handlePausedSessionResumeRecovery(
   state.pausedUnitType = null;
   state.pausedUnitId = null;
   return { skippedReplay: false };
+}
+
+/**
+ * Route a paused-session resume against current project state (#1643 / #1654).
+ *
+ * The pre-existing checks only discarded the pin when the paused milestone was
+ * gone or closed. A milestone that is still open but no longer the project's
+ * active milestone (superseded — e.g. a new milestone reordered ahead of it)
+ * passed both checks, got pinned into `session.currentMilestoneId`, and then
+ * every dispatch iteration hit the milestone-mismatch guard and stopped —
+ * a permanent wedge with no field escape short of hand-editing the
+ * `paused_session` runtime_kv row. Per ADR-047 the guard stays; this makes the
+ * exit reachable by never restoring a superseded pin in the first place.
+ *
+ * Id comparison uses the dispatch guard's own normalization
+ * (`milestoneIdsDispatchCompatible`, #1317) so bare-vs-suffixed aliases of the
+ * same milestone never count as superseded.
+ */
+export type PausedSessionResumeRoute =
+  | { route: "restore" }
+  | { route: "discard"; reason: "missing" | "terminal" }
+  | { route: "adopt-active"; activeMilestoneId: string };
+
+export function routePausedSessionResume(args: {
+  milestoneDirExists: boolean;
+  summaryIsTerminal: boolean;
+  pausedMilestoneId: string;
+  activeMilestoneId: string | null | undefined;
+}): PausedSessionResumeRoute {
+  if (!args.milestoneDirExists) return { route: "discard", reason: "missing" };
+  if (args.summaryIsTerminal) return { route: "discard", reason: "terminal" };
+  if (
+    args.activeMilestoneId
+    && !milestoneIdsDispatchCompatible(args.activeMilestoneId, args.pausedMilestoneId)
+  ) {
+    return { route: "adopt-active", activeMilestoneId: args.activeMilestoneId };
+  }
+  return { route: "restore" };
 }
 
 export function _handlePausedSessionResumeRecoveryForTest(
@@ -2694,10 +2732,29 @@ export async function startAuto(
               }
             }
           }
-          if (!mDir || summaryIsTerminal) {
+          const resumeRoute = routePausedSessionResume({
+            milestoneDirExists: !!mDir,
+            summaryIsTerminal,
+            pausedMilestoneId: meta.milestoneId,
+            activeMilestoneId: freshStartAssessment.state?.activeMilestone?.id ?? null,
+          });
+          if (resumeRoute.route === "discard") {
             clearPausedSession("paused-session DB cleanup failed (milestone gone/complete)");
             ctx.ui.notify(
-              `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
+              `Paused milestone ${meta.milestoneId} is ${resumeRoute.reason === "missing" ? "missing" : "already complete"}. Starting fresh.`,
+              "info",
+            );
+          } else if (resumeRoute.route === "adopt-active") {
+            // #1643: the paused milestone is still open but a different
+            // milestone is now the project's active one. Restoring the stale
+            // pin would wedge every iteration on the dispatch mismatch guard,
+            // so clear the row and adopt the active milestone (mirroring
+            // shouldAdoptActiveMilestone semantics in auto/orchestrator.ts).
+            clearPausedSession("paused-session DB cleanup failed (milestone superseded)");
+            s.currentMilestoneId = resumeRoute.activeMilestoneId;
+            s.milestoneLeaseToken = null;
+            ctx.ui.notify(
+              `Paused milestone ${meta.milestoneId} was superseded — ${resumeRoute.activeMilestoneId} is now the project's active milestone. Adopting ${resumeRoute.activeMilestoneId}; ${meta.milestoneId} remains open for later dispatch.`,
               "info",
             );
           } else {
