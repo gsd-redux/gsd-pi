@@ -50,6 +50,10 @@ import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
 import { queryJournal } from "../journal.js";
 import { invalidateAllCaches } from "../cache.js";
 import { invalidateStateCache } from "../state.js";
+import {
+  COMPLETED_NO_ADVANCE_GUARD_ID,
+  getOpenWedge,
+} from "../auto-liveness-backstop.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture builder
@@ -671,13 +675,20 @@ test("completeActiveUnit clears in-flight idempotency and stops stale same-unit 
   if (first.kind !== "advanced") throw new Error("expected first advance");
 
   await f.orchestrator.completeActiveUnit(first.unit);
+  const beforeRepeat = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(beforeRepeat.ok, true);
+  assert.equal(beforeRepeat.ok ? beforeRepeat.wedge : null, null, "one occurrence must not trip");
   const second = await f.orchestrator.advance();
 
   assert.equal(f.orchestrator.getStatus().activeUnit, undefined);
   assert.equal(second.kind, "blocked");
   if (second.kind !== "blocked") throw new Error("expected stale same-unit block");
   assert.equal(second.action, "stop");
-  assert.equal(second.reason, "state did not advance after finalized execute-task M001/S01/T01");
+  assert.match(second.reason, /liveness backstop tripped/);
+  const wedge = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(wedge.ok, true);
+  assert.equal(wedge.ok ? wedge.wedge?.guardId : null, COMPLETED_NO_ADVANCE_GUARD_ID);
+  assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
   assert.ok(f.journalNames().includes("unit-finalized"));
 });
 
@@ -696,7 +707,7 @@ test("ADR-047: finalized-repeat guard does not run legacy graduated recovery", a
   const second = await f.orchestrator.advance();
   assert.equal(second.kind, "blocked");
   if (second.kind !== "blocked") throw new Error("expected finalized-repeat guard block");
-  assert.equal(second.reason, "state did not advance after finalized plan-milestone M001");
+  assert.match(second.reason, /completed-no-advance/);
   assert.ok(f.journalNames().includes("advance-blocked"));
 });
 
@@ -757,7 +768,7 @@ test("completeActiveUnit guard survives an intervening advance and blocks X→Y�
   assert.equal(third.kind, "blocked");
   if (third.kind !== "blocked") throw new Error("expected X→Y→X re-dispatch to be blocked");
   assert.equal(third.action, "stop");
-  assert.equal(third.reason, "state did not advance after finalized execute-task M001/S01/T01");
+  assert.match(third.reason, /completed-no-advance/);
 });
 
 test("retryActiveUnit clears in-flight idempotency without marking the unit finalized", async (t) => {
@@ -1319,6 +1330,7 @@ test("decideOrchestratorDispatch keeps blocking stale milestone worktree scope",
     reason:
       'Dispatch milestone mismatch: context mid "M002" does not match session.currentMilestoneId "M001". The active worktree/session and derived project state disagree; recover, park, or discard the stranded milestone before continuing.',
     action: "pause",
+    guardId: "dispatch-rule-stop",
   });
   assert.equal((session as { currentMilestoneId: string }).currentMilestoneId, "M001");
 });
@@ -1394,6 +1406,7 @@ test("decideOrchestratorDispatch blocks a non-slice verification retry without D
     kind: "blocked",
     reason: "Cannot dispatch validate-milestone M001: workflow DB is unavailable.",
     action: "stop",
+    guardId: "dispatch-authority",
   });
   assert.equal(
     (session as unknown as { pendingVerificationRetryDispatch: unknown }).pendingVerificationRetryDispatch,
@@ -1541,6 +1554,7 @@ test("decideOrchestratorDispatch preserves stop reason as a blocked decision", a
       kind: "blocked",
       reason: "remediation blocker",
       action: "pause",
+      guardId: "dispatch-rule-stop",
     });
   } finally {
     resetRegistry();

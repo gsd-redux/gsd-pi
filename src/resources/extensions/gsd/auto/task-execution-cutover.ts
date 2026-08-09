@@ -21,6 +21,7 @@ import type {
 import { classifyFailure } from "../recovery-classification.js";
 import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
+import type { TaskTechnicalVerdictSnapshot } from "../task-verification-domain-operation.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
 
 export interface TaskExecutionCutoverInput {
@@ -41,9 +42,38 @@ export interface TaskExecutionCutoverDeps {
     TaskRecoveryRouteSnapshot,
     "recoveryActionId" | "action" | "recoveryOwner" | "resumeAuthorized"
   > | null;
+  readTaskTechnicalVerdict(attemptId: string): TaskTechnicalVerdictSnapshot | null;
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
   routeTaskFailure(input: RouteFailureInput): TaskRecoveryReceipt;
+}
+
+function routeStoredTechnicalFailure(
+  input: TaskExecutionCutoverInput,
+  attempt: TaskExecutionAttemptSnapshot,
+  verdict: TaskTechnicalVerdictSnapshot,
+  deps: TaskExecutionCutoverDeps,
+): TaskRecoveryReceipt {
+  if (!attempt.resultId) throw new Error("Host verification Attempt Result is missing");
+  if (verdict.verdict === "pass") {
+    throw new Error("Task recovery cannot route a passing Technical Verdict");
+  }
+  return deps.routeTaskFailure({
+    invocation: internalExecutionInvocation(`internal:auto:attempt.route:${attempt.resultId}`),
+    attemptId: attempt.attemptId,
+    resultId: attempt.resultId,
+    owner: "agent",
+    classification: { failureKind: "verification-failed" },
+    summary: "Built-in host verification did not pass",
+    evidence: {
+      unitType: input.unitType,
+      unitId: input.unitId,
+      verdictId: verdict.verdictId,
+      evidenceId: verdict.evidenceId,
+      verdict: verdict.verdict,
+    },
+    rationale: "Route built-in host verification through the durable recovery policy",
+  });
 }
 
 export interface VerifiedTaskPublicationDeps {
@@ -400,7 +430,14 @@ export async function runWithTaskExecutionAttempt(
     if (predecessor.nextStage === "route") {
       if (predecessor.outcome === "succeeded") {
         const recovery = deps.readTaskRecoveryRoute(predecessor.attemptId);
-        if (recovery?.recoveryOwner !== "agent") {
+        if (!recovery) {
+          const verdict = deps.readTaskTechnicalVerdict(predecessor.attemptId);
+          if (!verdict) {
+            throw new Error("Task recovery route is missing its failed Technical Verdict");
+          }
+          return applyRecoveryDecision(routeStoredTechnicalFailure(input, predecessor, verdict, deps));
+        }
+        if (recovery.recoveryOwner !== "agent") {
           return { action: "next", data: {} };
         }
         if (recovery.action === "abort" && !recovery.resumeAuthorized) {

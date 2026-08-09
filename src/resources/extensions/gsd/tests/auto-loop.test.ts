@@ -1411,6 +1411,7 @@ function makeMockDeps(
   const callLog: string[] = [];
 
   const baseDeps: LoopDeps = {
+    adjudicateNonAdvancingOutcome: () => null,
     taskExecutionBoundary: async (_input, run) => run(),
     taskPublicationBoundary: async () => {},
     lockBase: () => "/tmp/test-lock",
@@ -1642,6 +1643,29 @@ test("autoLoop exits when s.active is set to false", async (t) => {
     !deps.callLog.includes("deriveState"),
     "loop should not have iterated",
   );
+});
+
+test("stop-guard-error is adjudicated by the shared loop liveness boundary", async (t) => {
+  _resetPendingResolve();
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  openLoopDatabase(t, s);
+  mkdirSync(join(s.basePath, ".gsd", "CAPTURES.md"));
+  const deps = makeMockDeps({ adjudicateNonAdvancingOutcome: undefined });
+
+  await autoLoop(ctx, pi, s, deps);
+  const first = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(first.ok, true);
+  assert.equal(first.ok ? first.wedge : null, null, "first guard failure must not trip");
+
+  await autoLoop(ctx, pi, s, deps);
+  const second = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(second.ok, true);
+  assert.equal(second.ok ? second.wedge?.guardId : null, "stop-guard-error");
+  assert.equal(second.ok ? second.wedge?.occurrenceCount : null, 2);
+  assert.ok(deps.callLog.includes("stopAuto"));
 });
 
 test("autoLoop aborts the active unit turn when dispatch crashes", async () => {
@@ -2805,7 +2829,7 @@ test("autoLoop marks transition merge complete before postflight recovery stop",
   assert.equal(mergeCalls, 1, "postflight recovery stop must not re-run an already completed transition merge");
 });
 
-test("autoLoop pauses when provider readiness cancels before dispatch", async () => {
+test("autoLoop pauses when provider readiness cancels before dispatch", async (t) => {
   _resetPendingResolve();
 
   const notifications: Array<{ message: string; level?: string }> = [];
@@ -2822,6 +2846,7 @@ test("autoLoop pauses when provider readiness cancels before dispatch", async ()
 
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
   const deps = makeMockDeps({
     selectAndApplyModel: async () => ({
       routing: null,
@@ -4435,6 +4460,7 @@ test("ADR-047: repeated orchestration skips trip the persisted backstop at the l
   });
 
   const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
     resolveDispatch: async () => {
       deps.callLog.push("resolveDispatch");
       return { action: "skip" as const, reason: "gate-marker-drift" as const };
@@ -4459,6 +4485,20 @@ test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t)
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
+  const stateSnapshot = await makeMockDeps().deriveState();
+  s.orchestration = {
+    start: async () => ({ kind: "started" as const }),
+    advance: async () => ({
+      kind: "advanced" as const,
+      unit: { unitType: "execute-task", unitId: "M001/S01/T01" },
+      stateSnapshot,
+    }),
+    completeActiveUnit: async () => {},
+    retryActiveUnit: async () => {},
+    resume: async () => ({ kind: "resumed" as const }),
+    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+    getStatus: () => ({ phase: "running" as const, transitionCount: 1 }),
+  } satisfies AutoOrchestrationModule;
   mkdirSync(join(s.basePath, ".gsd"), { recursive: true });
   openDatabase(join(s.basePath, ".gsd", "gsd.db"));
   t.after(() => {
@@ -4466,6 +4506,7 @@ test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t)
     rmSync(s.basePath, { recursive: true, force: true });
   });
   const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
     runPreDispatchHooks: () => ({ firedHooks: ["skip-execute"], action: "skip" }),
   });
 
@@ -4475,7 +4516,7 @@ test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t)
   const wedgeResult = getOpenWedge(realpathSync(s.basePath));
   assert.equal(wedgeResult.ok, true);
   assert.ok(wedgeResult.ok && wedgeResult.wedge, "the pre-dispatch hook skip wedge must be persisted");
-  if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "dispatch-skip");
+  if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "pre-dispatch-hook-skip");
 });
 
 test("autoLoop does not pause on repeated idempotent advance skips", async () => {
@@ -4539,6 +4580,7 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
   openDatabase(dbPath);
   let stopReason = "";
   const deps1 = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
     stopAuto: async (_ctx, _pi, reason) => {
       deps1.callLog.push("stopAuto");
       stopReason = reason ?? "";
@@ -4554,7 +4596,7 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
     const wedgeResult = getOpenWedge(realpathSync(s1.basePath));
     assert.equal(wedgeResult.ok, true);
     assert.ok(wedgeResult.ok && wedgeResult.wedge, "second identical pause must persist a wedge");
-    if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "transient");
+    if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "orchestration-transient-pause");
   } finally {
     try { closeDatabase(); } catch { /* noop */ }
     rmSync(s1.basePath, { recursive: true, force: true });
@@ -7456,7 +7498,7 @@ test("autoLoop skips rate-limit delay when min_request_interval_ms is 0 (default
 });
 
 // ─── #4850: pre-send model-policy block is non-retryable ────────────────────
-test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retryable error", async () => {
+test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retryable error", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -7466,6 +7508,7 @@ test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retr
 
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
 
   const journalEvents: Array<{ eventType: string; data?: any }> = [];
   let pauseAutoCalls = 0;

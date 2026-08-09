@@ -69,22 +69,6 @@ export function hashBackstopInput(payload: string): string {
   return createHash('sha256').update(payload, 'utf8').digest('hex');
 }
 
-/**
- * Derive a stable guard identity from its reason text (the leading clause,
- * slugged). Not reusing
- * commands-gsd-core.ts slugify — that module eagerly imports the command/host
- * layer, which this leaf DB module must not pull in.
- */
-export function guardIdFromReason(reason: string): string {
-  const head = reason.split(/[:—\n]/)[0] ?? reason;
-  const slug = head
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-  return slug || 'unclassified-block';
-}
-
 function nowIso(): string {
   return new Date().toISOString();
 }

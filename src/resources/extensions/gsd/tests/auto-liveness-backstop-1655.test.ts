@@ -23,7 +23,6 @@ import {
   formatWedgeRefusalNotice,
   formatWedgeTripNotice,
   getOpenWedge,
-  guardIdFromReason,
   hashBackstopInput,
   recordNonAdvancingOutcome,
   snapshotUnitTargetRows,
@@ -297,12 +296,7 @@ test('ADR-047: default sanctioned exit preserves the complete payload', (t) => {
   assert.equal(tripped.wedge.sanctionedExit, payload);
 });
 
-test('guardIdFromReason and hashBackstopInput are deterministic and payload-faithful', () => {
-  assert.equal(
-    guardIdFromReason('Pre-dispatch health gate: projection drift detected'),
-    guardIdFromReason('Pre-dispatch health gate: totally different detail'),
-    'guard id comes from the leading clause, not the volatile detail',
-  );
+test('hashBackstopInput is deterministic and payload-faithful', () => {
   assert.notEqual(
     hashBackstopInput('verdict payload 1'),
     hashBackstopInput('verdict payload 2'),

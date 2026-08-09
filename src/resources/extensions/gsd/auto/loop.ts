@@ -35,7 +35,6 @@ import { debugLog } from "../debug-logger.js";
 import { markBlockedStopReason } from "../stop-notice.js";
 import {
   formatWedgeTripNotice,
-  guardIdFromReason,
   recordNonAdvancingOutcome,
 } from "../auto-liveness-backstop.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
@@ -136,6 +135,7 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
+import { readTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
@@ -207,6 +207,7 @@ const TASK_EXECUTION_CUTOVER_DEPS = {
   readLatestTaskAttempt,
   readTaskAttempt,
   readTaskRecoveryRoute,
+  readTaskTechnicalVerdict,
   routeTaskFailure: recordFailureAndSelectRecovery,
   settleTaskAttempt,
 };
@@ -534,10 +535,17 @@ export async function autoLoop(
         s.currentTurnId = null;
       },
     });
+    let pendingLoopLiveness: {
+      guardId: string;
+      inputPayload: string;
+      unitType: string;
+      unitId: string;
+    } | null = null;
     const finishTurn = (
       status: "completed" | "failed" | "paused" | "stopped" | "skipped" | "retry",
       failureClass: "none" | "unknown" | "manual-attention" | "timeout" | "execution" | "verification" | "closeout" | "git" = "none",
-      error?: string,
+      error: string | undefined,
+      guardId: string | null,
     ): void => {
       turnReporter.finish({
         unitType: observedUnitType,
@@ -546,6 +554,14 @@ export async function autoLoop(
         failureClass,
         error,
       });
+      if (guardId) {
+        pendingLoopLiveness = {
+          guardId,
+          inputPayload: error ?? guardId,
+          unitType: observedUnitType ?? "orchestration",
+          unitId: observedUnitId ?? s.currentMilestoneId ?? "workflow",
+        };
+      }
     };
     turnReporter.start();
 
@@ -567,7 +583,7 @@ export async function autoLoop(
         pi,
         `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
       );
-      finishTurn("stopped", "manual-attention", "max-iterations");
+      finishTurn("stopped", "manual-attention", "max-iterations", "max-iterations");
       break;
     }
 
@@ -580,7 +596,7 @@ export async function autoLoop(
       if (memoryDecision.action === "stop") {
         logWarning("dispatch", memoryDecision.warningMessage);
         await deps.stopAuto(ctx, pi, memoryDecision.stopMessage);
-        finishTurn("stopped", "timeout", memoryDecision.turnError);
+        finishTurn("stopped", "timeout", memoryDecision.turnError, "memory-pressure");
         break;
       }
     }
@@ -603,7 +619,7 @@ export async function autoLoop(
         );
       }
       await deps.stopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
-      finishTurn("stopped", "manual-attention", commandContextDecision.reason);
+      finishTurn("stopped", "manual-attention", commandContextDecision.reason, "missing-command-context");
       break;
     }
 
@@ -669,7 +685,7 @@ export async function autoLoop(
         },
       });
       if (sessionLockOutcome.action === "stop" && sessionLockOutcome.reason === "session-lock-lost") {
-        finishTurn("stopped", "manual-attention", sessionLockOutcome.reason);
+        finishTurn("stopped", "manual-attention", sessionLockOutcome.reason, "session-lock-lost");
         break;
       }
 
@@ -708,7 +724,7 @@ export async function autoLoop(
           isComplete: engineState.isComplete,
         });
         if (engineState.isComplete) {
-          finishTurn("completed");
+          finishTurn("completed", "none", undefined, null);
           emitIterationEnd({ status: "completed", reason: "custom-engine-complete" });
           await deps.stopAuto(ctx, pi, "Workflow complete");
           break;
@@ -726,7 +742,7 @@ export async function autoLoop(
           },
         });
         if (dispatchFlow.action === "break") {
-          finishTurn("stopped", "manual-attention", "custom-engine-dispatch-stop");
+          finishTurn("stopped", "manual-attention", "custom-engine-dispatch-stop", "custom-engine-dispatch-stop");
           finishIncompleteIteration({
             status: "stopped",
             reason: "custom-engine-dispatch-stop",
@@ -735,14 +751,14 @@ export async function autoLoop(
           break;
         }
         if (dispatchFlow.action === "continue") {
-          finishTurn("skipped");
+          finishTurn("skipped", "none", "custom-engine-dispatch-skip", "custom-engine-dispatch-skip");
           emitIterationEnd({ status: "skipped", reason: "custom-engine-dispatch-skip" });
           continue;
         }
 
         // dispatch.action === "dispatch"
         if (dispatch.action !== "dispatch") {
-          finishTurn("skipped");
+          finishTurn("skipped", "none", "custom-engine-dispatch-mismatch", "custom-engine-dispatch-mismatch");
           emitIterationEnd({ status: "skipped", reason: "custom-engine-dispatch-mismatch" });
           continue;
         }
@@ -774,7 +790,12 @@ export async function autoLoop(
           unitId: iterData.unitId,
         });
         if (guardsResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "guard-break");
+          finishTurn(
+            "stopped",
+            "manual-attention",
+            guardsResult.reason,
+            guardsResult.reason === "stop-guard-error" ? "stop-guard-error" : "guard-break",
+          );
           finishIncompleteIteration({
             status: "stopped",
             reason: "guard-break",
@@ -877,7 +898,7 @@ export async function autoLoop(
             unitId: iterData.unitId,
             failureClass: "execution",
           });
-          finishTurn("stopped", "execution", breakReason);
+          finishTurn("stopped", "execution", breakReason, "unit-break");
           break;
         }
         if (unitPhaseResult.action === "retry") {
@@ -896,7 +917,7 @@ export async function autoLoop(
             unitType: iterData.unitType,
             unitId: iterData.unitId,
           });
-          finishTurn("retry", "execution", unitPhaseResult.reason);
+          finishTurn("retry", "execution", unitPhaseResult.reason, "unit-retry");
           continue;
         }
 
@@ -915,12 +936,12 @@ export async function autoLoop(
               unitType: iterData.unitType,
               unitId: iterData.unitId,
             });
-            finishTurn("retry", "verification", "custom-engine-task-replan-not-durable");
+            finishTurn("retry", "verification", "custom-engine-task-replan-not-durable", "custom-engine-task-replan");
             continue;
           }
           deps.clearUnitTimeout();
           completeIteration();
-          finishTurn("completed");
+          finishTurn("completed", "none", undefined, null);
           continue;
         }
 
@@ -1165,13 +1186,13 @@ export async function autoLoop(
               }, {
                 expectedCurrentUnit: null,
               });
-              finishTurn("paused", "manual-attention", "orchestration-blocked");
+              finishTurn("paused", "manual-attention", "orchestration-blocked", null);
             } else {
               // Carry the blocked marker: the headless host picks its exit code
               // from the reason string, so an unmarked blocked stop exits 0 and
               // reports success over a milestone that never closed.
               await deps.stopAuto(ctx, pi, markBlockedStopReason(blockMessage));
-              finishTurn("stopped", "manual-attention", "orchestration-blocked");
+              finishTurn("stopped", "manual-attention", "orchestration-blocked", null);
             }
             finishIncompleteIteration({
               status: orchestrationResult.action === "pause" ? "paused" : "stopped",
@@ -1183,13 +1204,10 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
-            // Idempotent re-poll skips are benign (an active unit is still running).
-            // The orchestrator's own stuck-window detection handles the truly-stuck case.
-            // Do not count these toward the consecutive-skip streak.
             if (orchestrationResult.reason === "idempotent advance: unit already active") {
               emitIterationEnd({ skipped: true });
               completeIteration();
-              finishTurn("skipped");
+              finishTurn("skipped", "none", undefined, null);
               continue;
             }
             const skipState = orchestrationResult.stateSnapshot;
@@ -1200,29 +1218,9 @@ export async function autoLoop(
               skipState?.activeSlice?.id,
               skipState?.activeTask?.id,
             ].join("|");
-            const backstopReason = recordLoopNonAdvancingOutcome(s, {
-              guardId: guardIdFromReason(orchestrationResult.reason),
-              unitType: "orchestration",
-              unitId: s.currentMilestoneId ?? "workflow",
-              inputPayload: skipKey,
-              sanctionedExit:
-                `Orchestration skipped without advancing state: ${orchestrationResult.reason}. ` +
-                `Inspect \`/gsd status\` and repair the named guard before resuming.`,
-            });
-            if (backstopReason) {
-              ctx.ui.notify(backstopReason, "error");
-              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
-              finishTurn("stopped", "manual-attention", orchestrationResult.reason);
-              finishIncompleteIteration({
-                status: "stopped",
-                reason: backstopReason,
-                failureClass: "manual-attention",
-              });
-              break;
-            }
             emitIterationEnd({ skipped: true });
             completeIteration();
-            finishTurn("skipped");
+            finishTurn("skipped", "none", skipKey, "orchestration-skip");
             continue;
           }
 
@@ -1238,26 +1236,6 @@ export async function autoLoop(
             // backstop ledger so a repeat exhaustion trips the wedge.
             consecutiveErrors++;
             const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
-            const backstopReason = recordLoopNonAdvancingOutcome(s, {
-              guardId: guardIdFromReason(pausedMsg),
-              unitType: "orchestration",
-              unitId: s.currentMilestoneId ?? "workflow",
-              inputPayload: pausedMsg,
-              sanctionedExit:
-                `Auto-mode paused without advancing state: ${pausedMsg}. ` +
-                `Resolve the underlying failure before resuming.`,
-            });
-            if (backstopReason) {
-              ctx.ui.notify(backstopReason, "error");
-              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
-              finishTurn("stopped", "execution", pausedMsg);
-              finishIncompleteIteration({
-                status: "stopped",
-                reason: backstopReason,
-                failureClass: "execution",
-              });
-              break;
-            }
             recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
             const pausedDecision = decideIterationErrorRecovery({
               consecutiveErrors,
@@ -1267,7 +1245,7 @@ export async function autoLoop(
             if (pausedDecision.action === "stop") {
               ctx.ui.notify(pausedDecision.notifyMessage, "error");
               await deps.stopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
-              finishTurn("stopped", "execution", pausedMsg);
+              finishTurn("stopped", "execution", pausedMsg, "transient-retry-exhausted");
               finishIncompleteIteration({
                 status: "stopped",
                 reason: pausedMsg,
@@ -1282,7 +1260,7 @@ export async function autoLoop(
               status: "paused",
               reason: orchestrationResult.reason,
             });
-            finishTurn("skipped");
+            finishTurn("skipped", "execution", pausedMsg, "orchestration-transient-pause");
             continue;
           }
 
@@ -1292,7 +1270,7 @@ export async function autoLoop(
               message: orchestrationResult.reason,
               category: "unknown",
             });
-            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`);
+            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`, null);
             finishIncompleteIteration({
               status: "paused",
               reason: orchestrationResult.reason,
@@ -1311,30 +1289,24 @@ export async function autoLoop(
             if (completionStop) {
               await deps.stopAuto(ctx, pi, completionStop.reason, completionStop.options);
             } else {
-              const backstopReason = orchestrationResult.terminalOutcome
-                ? null
-                : recordLoopNonAdvancingOutcome(s, {
-                    guardId: guardIdFromReason(orchestrationResult.reason),
-                    unitType: "orchestration",
-                    unitId: s.currentMilestoneId ?? "workflow",
-                    inputPayload: orchestrationResult.reason,
-                    sanctionedExit:
-                      `Orchestration stopped without reaching a terminal outcome: ${orchestrationResult.reason}. ` +
-                      `Inspect \`/gsd status\` and repair the stopping condition before resuming.`,
-                  });
               await deps.stopAuto(
                 ctx,
                 pi,
-                backstopReason ? markBlockedStopReason(backstopReason) : orchestrationResult.reason,
+                orchestrationResult.reason,
               );
             }
-            finishTurn("stopped", "manual-attention", "orchestration-stopped");
+            finishTurn(
+              "stopped",
+              "manual-attention",
+              orchestrationResult.reason,
+              completionStop || orchestrationResult.terminalOutcome ? null : "orchestration-stop",
+            );
             break;
           }
 
           if (orchestrationResult.kind !== "advanced") {
             s.pendingOrchestrationDispatch = null;
-            finishTurn("skipped");
+            finishTurn("skipped", "none", "unknown orchestration outcome", "orchestration-unknown-outcome");
             continue;
           }
           const pendingDispatch = s.pendingOrchestrationDispatch;
@@ -1378,35 +1350,20 @@ export async function autoLoop(
               "info",
             );
             s.pendingOrchestrationDispatch = null;
-            const backstopReason = recordLoopNonAdvancingOutcome(s, {
-              guardId: "pre-dispatch-hook-skip",
-              unitType: iterData.unitType,
-              unitId: iterData.unitId,
-              inputPayload: JSON.stringify({
+            observedUnitType = iterData.unitType;
+            observedUnitId = iterData.unitId;
+            emitIterationEnd({ skipped: true });
+            completeIteration();
+            finishTurn(
+              "skipped",
+              "none",
+              JSON.stringify({
                 firedHooks: preDispatchResult.firedHooks,
                 unitType: iterData.unitType,
                 unitId: iterData.unitId,
               }),
-              sanctionedExit:
-                `Pre-dispatch hooks skipped ${iterData.unitType} ${iterData.unitId}. ` +
-                `Disable or update the named hook before resuming.`,
-            });
-            if (backstopReason) {
-              ctx.ui.notify(backstopReason, "error");
-              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
-              finishIncompleteIteration({
-                status: "stopped",
-                reason: backstopReason,
-                unitType: iterData.unitType,
-                unitId: iterData.unitId,
-                failureClass: "manual-attention",
-              });
-              finishTurn("stopped", "manual-attention", "pre-dispatch-hook-skip");
-              break;
-            }
-            emitIterationEnd({ skipped: true });
-            completeIteration();
-            finishTurn("skipped");
+              "pre-dispatch-hook-skip",
+            );
             continue;
           }
           if (preDispatchResult.action === "replace") {
@@ -1437,7 +1394,12 @@ export async function autoLoop(
             unitId: iterData.unitId,
           });
           if (guardsResult.action === "break") {
-            finishTurn("stopped", "manual-attention", "guard-break");
+            finishTurn(
+              "stopped",
+              "manual-attention",
+              guardsResult.reason,
+              guardsResult.reason === "stop-guard-error" ? "stop-guard-error" : "guard-break",
+            );
             finishIncompleteIteration({
               status: "stopped",
               reason: "guard-break",
@@ -1453,7 +1415,7 @@ export async function autoLoop(
             message: ORCHESTRATION_MISSING_REASON,
             category: "unknown",
           });
-          finishTurn("paused", "manual-attention", "orchestration-missing");
+          finishTurn("paused", "manual-attention", ORCHESTRATION_MISSING_REASON, "orchestration-missing");
           finishIncompleteIteration({
             status: "paused",
             reason: ORCHESTRATION_MISSING_REASON,
@@ -1510,7 +1472,7 @@ export async function autoLoop(
           } else {
             const msg = leaseConflictNotice(iterData, retryLease.reason);
             ctx.ui.notify(msg, "error");
-            finishTurn("stopped", "execution", msg);
+            finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
             await deps.stopAuto(ctx, pi, msg);
             break;
           }
@@ -1519,7 +1481,7 @@ export async function autoLoop(
       if (leaseBeforeClaim.kind === "blocked" || leaseBeforeClaim.kind === "failed") {
         const msg = leaseConflictNotice(iterData, leaseBeforeClaim.reason);
         ctx.ui.notify(msg, "error");
-        finishTurn("stopped", "execution", msg);
+        finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
         await deps.stopAuto(ctx, pi, msg);
         break;
       }
@@ -1562,42 +1524,20 @@ export async function autoLoop(
         } else {
           const msg = leaseConflictNotice(iterData, leaseRecovery.reason);
           ctx.ui.notify(msg, "error");
-          finishTurn("stopped", "execution", msg);
+          finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
           await deps.stopAuto(ctx, pi, msg);
           break;
         }
       }
       if (dispatchDecision.action === "skip") {
-        const backstopReason = recordLoopNonAdvancingOutcome(s, {
-          guardId: "dispatch-claim-skip",
-          unitType: iterData.unitType,
-          unitId: iterData.unitId,
-          inputPayload: dispatchDecision.reason,
-          sanctionedExit:
-            `Dispatch claim for ${iterData.unitType} ${iterData.unitId} was skipped: ${dispatchDecision.reason}. ` +
-            `Resolve the active claim or lease before resuming.`,
-        });
-        if (backstopReason) {
-          ctx.ui.notify(backstopReason, "error");
-          finishTurn("stopped", "execution", dispatchDecision.reason);
-          finishIncompleteIteration({
-            status: "stopped",
-            reason: backstopReason,
-            unitType: iterData.unitType,
-            unitId: iterData.unitId,
-            failureClass: "execution",
-          });
-          await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
-          break;
-        }
         if (dispatchDecision.reason === "stale-lease") {
           const msg = leaseConflictNotice(iterData, "dispatch claim still failed after stale-lease recovery");
           ctx.ui.notify(msg, "error");
-          finishTurn("stopped", "execution", msg);
+          finishTurn("stopped", "execution", msg, "dispatch-claim-stale-lease");
           await deps.stopAuto(ctx, pi, msg);
           break;
         }
-        finishTurn("skipped", "execution", dispatchDecision.reason);
+        finishTurn("skipped", "execution", dispatchDecision.reason, "dispatch-claim-skip");
         finishIncompleteIteration({
           status: "skipped",
           reason: dispatchDecision.reason,
@@ -1685,7 +1625,7 @@ export async function autoLoop(
           unitId: iterData.unitId,
           failureClass: "execution",
         });
-        finishTurn("stopped", "execution", breakReason);
+        finishTurn("stopped", "execution", breakReason, "unit-break");
         break;
       }
       if (unitPhaseResult.action === "retry") {
@@ -1701,7 +1641,7 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
         });
-        finishTurn("retry", "execution", unitPhaseResult.reason);
+        finishTurn("retry", "execution", unitPhaseResult.reason, "unit-retry");
         continue;
       }
 
@@ -1785,7 +1725,7 @@ export async function autoLoop(
           unitId: iterData.unitId,
           failureClass: finalizeDecision.failureClass,
         });
-        finishTurn("stopped", finalizeDecision.failureClass, finalizeDecision.turnError);
+        finishTurn("stopped", finalizeDecision.failureClass, finalizeDecision.turnError, "finalize-break");
         break;
       }
       if (finalizeDecision.action === "retry") {
@@ -1806,7 +1746,7 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
         });
-        finishTurn("retry");
+        finishTurn("retry", "closeout", finalizeDecision.ledgerErrorSummary, "finalize-retry");
         continue;
       }
 
@@ -1831,7 +1771,7 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       completeIteration();
-      finishTurn("completed");
+      finishTurn("completed", "none", undefined, null);
       if (finalizeDecision.action === "complete-and-break") {
         if (!s.completionStopInProgress) {
           s.preserveStepSurfaceAfterLoopExit = true;
@@ -1889,7 +1829,7 @@ export async function autoLoop(
         observedUnitType = loopErr.unitType;
         observedUnitId = loopErr.unitId;
         await deps.pauseAuto(ctx, pi);
-        finishTurn(policyDecision.turnStatus, policyDecision.failureClass, msg);
+        finishTurn(policyDecision.turnStatus, policyDecision.failureClass, msg, "model-policy-dispatch");
         // Do NOT increment consecutiveErrors — the failure is configuration,
         // not a transient runtime fault.
         break;
@@ -1921,7 +1861,7 @@ export async function autoLoop(
           "error",
         );
         await deps.stopAuto(ctx, pi, infraDecision.stopMessage);
-        finishTurn(infraDecision.turnStatus, infraDecision.failureClass, msg);
+        finishTurn(infraDecision.turnStatus, infraDecision.failureClass, msg, "infrastructure-error");
         break;
       }
 
@@ -1954,14 +1894,14 @@ export async function autoLoop(
             `${cooldownDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
             "error",
           );
-          finishTurn("stopped", "timeout", msg);
+          finishTurn("stopped", "timeout", msg, "credential-cooldown-exhausted");
           await deps.stopAuto(ctx, pi, cooldownDecision.stopMessage);
           break;
         }
 
         ctx.ui.notify(cooldownDecision.notifyMessage, "warning");
         await new Promise(resolve => setTimeout(resolve, cooldownDecision.waitMs));
-        finishTurn("retry", "timeout", msg);
+        finishTurn("retry", "timeout", msg, "credential-cooldown");
         finishIncompleteIteration({
           status: "retry",
           reason: "cooldown-retry",
@@ -1990,7 +1930,7 @@ export async function autoLoop(
           "error",
         );
         await deps.stopAuto(ctx, pi, errorDecision.stopMessage);
-        finishTurn(errorDecision.turnStatus, "execution", msg);
+        finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error-exhausted");
         break;
       }
       if (errorDecision.action === "invalidate-and-retry") {
@@ -1999,7 +1939,29 @@ export async function autoLoop(
       } else {
         ctx.ui.notify(errorDecision.notifyMessage, "warning");
       }
-      finishTurn(errorDecision.turnStatus, "execution", msg);
+      finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error");
+    } finally {
+      if (pendingLoopLiveness) {
+        const liveness = pendingLoopLiveness as {
+          guardId: string;
+          inputPayload: string;
+          unitType: string;
+          unitId: string;
+        };
+        const adjudicateNonAdvancingOutcome =
+          deps.adjudicateNonAdvancingOutcome ?? recordLoopNonAdvancingOutcome;
+        const backstopReason = adjudicateNonAdvancingOutcome(s, {
+          ...liveness,
+          sanctionedExit:
+            `${liveness.guardId} prevented ${liveness.unitType} ${liveness.unitId} from advancing. ` +
+            `Resolve the reported condition before resuming auto-mode.`,
+        });
+        if (backstopReason) {
+          ctx.ui.notify(backstopReason, "error");
+          await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+          s.active = false;
+        }
+      }
     }
   }
 

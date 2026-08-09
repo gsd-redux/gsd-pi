@@ -76,6 +76,16 @@ type PauseAutoFn = (
  * can access private functions from auto.ts without exporting them.
  */
 export interface LoopDeps {
+  adjudicateNonAdvancingOutcome?: (
+    session: AutoSession,
+    input: {
+      guardId: string;
+      unitType: string;
+      unitId: string;
+      inputPayload: string;
+      sanctionedExit?: string;
+    },
+  ) => string | null;
   taskExecutionBoundary?: (
     input: TaskExecutionCutoverInput,
     run: () => Promise<UnitPhaseResult>,

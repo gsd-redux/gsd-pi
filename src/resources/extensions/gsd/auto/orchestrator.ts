@@ -63,7 +63,6 @@ import {
   formatWedgeRefusalNotice,
   formatWedgeTripNotice,
   getOpenWedge,
-  guardIdFromReason,
   lookupLatestLedgerError,
   recordNonAdvancingOutcome,
   snapshotUnitTargetRows,
@@ -127,7 +126,7 @@ export interface OrchestratorContext {
 
 /** Result type of a single dispatch decision. */
 export type DispatchDecision =
-  | { kind: "blocked"; reason: string; action: "pause" | "stop" }
+  | { kind: "blocked"; reason: string; action: "pause" | "stop"; guardId: string }
   | { kind: "skipped"; reason: string }
   | { unitType: string; unitId: string; reason: string; preconditions: string[] }
   | null;
@@ -213,6 +212,7 @@ export async function decideOrchestratorDispatch(
         kind: "blocked",
         reason: state.nextAction || "No active milestone. Run /gsd unpark <id> or create a new milestone.",
         action: "stop",
+        guardId: "no-active-milestone",
       };
     }
   }
@@ -265,7 +265,7 @@ export async function decideOrchestratorDispatch(
   if (session && pendingRetry && active) {
     const authorityBlocker = getDispatchAuthorityBlocker(pendingRetry.unitType, pendingRetry.unitId);
     if (authorityBlocker) {
-      return { kind: "blocked", reason: authorityBlocker, action: "stop" };
+      return { kind: "blocked", reason: authorityBlocker, action: "stop", guardId: "dispatch-authority" };
     }
     const alreadyClosedReason = getDispatchAlreadyClosedReason(
       pendingRetry.unitType,
@@ -316,6 +316,7 @@ export async function decideOrchestratorDispatch(
       kind: "blocked",
       reason: action.reason,
       action: action.level === "warning" ? "pause" : "stop",
+      guardId: "dispatch-rule-stop",
     };
   }
   if (action.action !== "dispatch") {
@@ -379,6 +380,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   // decided unit so non-advancing outcomes carry their target identity.
   private pendingTargetSnapshot: { unitType: string; unitId: string; hash: string } | null = null;
   private lastDecisionUnit: { unitType: string; unitId: string } | null = null;
+  private pendingLivenessInput: {
+    guardId: string;
+    inputPayload: string;
+    sanctionedExit?: string;
+  } | null = null;
   private pendingBackstopFailure: string | null = null;
   // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
   // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
@@ -923,6 +929,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return this.adjudicateLiveness(await this.advanceInner());
   }
 
+  private withLivenessInput<T extends AutoAdvanceResult>(
+    result: T,
+    input: { guardId: string; inputPayload?: string; sanctionedExit?: string },
+  ): T {
+    this.pendingLivenessInput = {
+      guardId: input.guardId,
+      inputPayload: input.inputPayload ?? ("reason" in result ? result.reason : input.guardId),
+      ...(input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : {}),
+    };
+    return result;
+  }
+
   /**
    * Feed the liveness ledger from the single seam where advance outcomes are
    * adjudicated. Guard blocks and gate failures (kind "blocked"/"error")
@@ -934,6 +952,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
    * path and records that exhaustion into this same ledger (ADR-047 gap fix).
    */
   private adjudicateLiveness(result: AutoAdvanceResult): AutoAdvanceResult {
+    if (this.pendingBackstopFailure) return this.backstopFailure(this.pendingBackstopFailure);
     const scopeId = this.backstopScopeId();
     if (!scopeId) return result;
 
@@ -944,20 +963,28 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       this.pendingTargetSnapshot = snapshot.hash ? { unitType, unitId, hash: snapshot.hash } : null;
       return result;
     }
-    if (result.kind !== "blocked" && result.kind !== "error") return result;
+    if (result.kind !== "blocked" && result.kind !== "error" && result.kind !== "skipped") return result;
 
-    const reason = result.reason ?? "unclassified block";
+    const livenessInput = this.pendingLivenessInput;
+    this.pendingLivenessInput = null;
+    if (!livenessInput) {
+      return result.kind === "skipped"
+        ? result
+        : this.backstopFailure("semantic guard did not provide a stable identity");
+    }
     const unit = this.lastDecisionUnit ?? {
       unitType: "orchestration",
       unitId: this.s.currentMilestoneId ?? "workflow",
     };
     const outcome = recordNonAdvancingOutcome({
       scopeId,
-      guardId: guardIdFromReason(reason),
+      guardId: livenessInput.guardId,
       unitType: unit.unitType,
       unitId: unit.unitId,
-      inputPayload: reason,
-    });
+      inputPayload: livenessInput.inputPayload,
+    }, livenessInput.sanctionedExit
+      ? { sanctionedExit: livenessInput.sanctionedExit }
+      : undefined);
     if ('error' in outcome) return this.backstopFailure(outcome.error);
     if (!outcome.tripped) return result;
 
@@ -994,6 +1021,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     debugCount("dispatches");
     const stopAdvanceTimer = debugTime("orchestrator-advance");
     this.lastDecisionUnit = null;
+    this.pendingLivenessInput = null;
     try {
       this.ensureLockOwnership();
       const uokGateContext = this.resolveUokGateContext();
@@ -1012,7 +1040,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         const blocked: AutoAdvanceResult = { kind: "blocked", reason: staleMsg, action: "pause" };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "resource-version-guard" });
       }
       await this.emitUokGate({
         ...uokGateContext,
@@ -1041,7 +1069,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "pre-dispatch-health-gate" });
       }
       if (gate.kind === "threw") {
         await this.emitUokGate({
@@ -1076,7 +1104,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "state-reconciliation" });
       }
 
       const reconciledPhase = reconciliation.stateSnapshot.phase;
@@ -1123,7 +1151,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           this.bumpTransition();
           this.journalTransition({ name: "advance-blocked", reason: settlementBlock.reason });
           this.postAdvanceRecord(settlementBlock);
-          return settlementBlock;
+          return this.withLivenessInput(settlementBlock, { guardId: "milestone-settlement" });
         }
         const terminalOutcome = noRemainingUnitsOutcome(reconciliation.stateSnapshot);
         const stopped: AutoAdvanceResult = {
@@ -1162,7 +1190,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: decision.guardId });
       }
 
       const priorSliceBlocker = this.findPriorSliceCompletionBlocker(decision.unitType, decision.unitId);
@@ -1181,7 +1209,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "prior-slice-completion" });
       }
 
       // ADR-047: remember the decided unit so any guard block below carries
@@ -1191,20 +1219,31 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
       if (this.lastFinalizedUnitKey === nextKey) {
         this.clearPendingDispatch();
-        const blocked: AutoAdvanceResult = {
-          kind: "blocked",
+        const current = snapshotUnitTargetRows(decision.unitType, decision.unitId);
+        if (!current.ok || !current.hash) {
+          this.pendingBackstopFailure = current.ok
+            ? `target snapshot unavailable for finalized ${decision.unitType} ${decision.unitId}`
+            : current.error;
+        }
+        const skipped: AutoAdvanceResult = {
+          kind: "skipped",
           reason: `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
-          action: "stop",
           stateSnapshot: reconciliation.stateSnapshot,
         };
         this.journalTransition({
-          name: "advance-blocked",
-          reason: blocked.reason,
+          name: "advance-skipped",
+          reason: skipped.reason,
           unitType: decision.unitType,
           unitId: decision.unitId,
         });
-        this.postAdvanceRecord(blocked);
-        return blocked;
+        this.postAdvanceRecord(skipped);
+        return this.withLivenessInput(skipped, {
+          guardId: COMPLETED_NO_ADVANCE_GUARD_ID,
+          inputPayload: current.ok && current.hash ? current.hash : skipped.reason,
+          sanctionedExit:
+            `${decision.unitType} ${decision.unitId} completed without changing any of its target rows; ` +
+            `inspect the unit's summary and reconcile state (\`/gsd status\`, \`/gsd doctor\`) before re-running.`,
+        });
       }
 
       // Idempotency: same key as immediately previous successful advance.
@@ -1249,7 +1288,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "unit-tool-contract" });
       }
 
       const worktree = await this.prepareWorktreeForUnit(decision.unitType, decision.unitId);
@@ -1268,7 +1307,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "unit-worktree-preparation" });
       }
 
       this.status.activeUnit = { unitType: decision.unitType, unitId: decision.unitId };
@@ -1297,11 +1336,17 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         unitType: this.status.activeUnit?.unitType,
         unitId: this.status.activeUnit?.unitId,
       });
-      const result: AutoAdvanceResult = recovery.action === "retry"
-        ? { kind: "paused", reason: recovery.reason }
-        : recovery.action === "escalate"
-          ? { kind: "error", reason: recovery.reason }
-          : { kind: "stopped", reason: recovery.reason };
+      let result: AutoAdvanceResult;
+      if (recovery.action === "retry") {
+        result = { kind: "paused", reason: recovery.reason };
+      } else if (recovery.action === "escalate") {
+        result = this.withLivenessInput(
+          { kind: "error", reason: recovery.reason },
+          { guardId: "advance-exception" },
+        );
+      } else {
+        result = { kind: "stopped", reason: recovery.reason };
+      }
 
       if (result.kind === "paused") {
         this.status.phase = "paused";

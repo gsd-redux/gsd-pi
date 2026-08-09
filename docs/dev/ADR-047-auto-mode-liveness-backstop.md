@@ -31,7 +31,7 @@ On trip: persist the evidence, name the guard, print the sanctioned exit, stop. 
 
 ### 3. Block signature and trip rule
 
-**Signature** = (guard/gate id, unit type, target identity — milestone/slice/task — hash of the inputs the guard actually read: verdict payload, drift record, failing command + exit code). Building the signature from what the guard *read* rather than what the dispatcher *labeled* eliminates the #1564 false-positive class by construction.
+**Signature** = (guard/gate id, unit type, target identity — milestone/slice/task — hash of the inputs the guard actually read: verdict payload, drift record, failing command + exit code). The guard/gate id is a stable literal owned by the semantic guard; mutable reason text contributes only to the input payload and never defines identity. Building the signature from what the guard *read* rather than what the dispatcher *labeled* eliminates the #1564 false-positive class by construction.
 
 **Trip rule:** per-signature occurrence count ≥ 2 with an identical input hash, **interleaving-blind** — other dispatches between occurrences do not reset anything. This is what makes A-B-A-B oscillations (#1623, #1634) visible; a consecutive-only rule never fires on them. There is no legitimate run in which a guard reads byte-identical inputs twice with dispatches in between, so threshold 2 is safe.
 

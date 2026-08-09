@@ -86,6 +86,16 @@ interface CutoverDeps {
     action: "retry" | "repair" | "remediate" | "replan" | "abort" | "clarify" | "pause";
     resumeAuthorized?: boolean;
   } | null;
+  readTaskTechnicalVerdict(attemptId: string): {
+    attemptId: string;
+    verdictId: string;
+    evidenceId: string;
+    verdict: "pass" | "fail" | "inconclusive";
+    testedSourceRevision: string;
+    nextStage: "verify" | "route";
+    operationId: string;
+    resultingRevision: number;
+  } | null;
   claimTaskAttempt(input: {
     invocation: {
       idempotencyKey: string;
@@ -250,6 +260,9 @@ function fakeDomain() {
     readTaskRecoveryRoute(attemptId) {
       calls.push({ name: "read-recovery", value: attemptId });
       return { recoveryActionId: "recovery-action-1", recoveryOwner: "agent", action: "retry" };
+    },
+    readTaskTechnicalVerdict() {
+      return null;
     },
     claimTaskAttempt(claim) {
       calls.push({ name: "claim", value: claim });
@@ -1134,6 +1147,61 @@ test("an unresumed verification abort stops before a replacement claim", async (
   assert.equal(domain.claims.length, 0);
 });
 
+test("a failed stored verdict with no route is routed before replacement execution", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+  let ran = false;
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return null;
+    },
+    readTaskTechnicalVerdict(attemptId) {
+      return {
+        attemptId,
+        verdictId: "verdict-1",
+        evidenceId: "evidence-1",
+        verdict: "fail",
+        testedSourceRevision: "unavailable",
+        nextStage: "route",
+        operationId: "verdict-operation-1",
+        resultingRevision: 4,
+      };
+    },
+    routeTaskFailure(route) {
+      domain.routes.push(route);
+      return { status: "committed", action: "repair", recoveryActionId: "recovery-action-1" };
+    },
+  });
+
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-repair" });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+  assert.equal(domain.routes.length, 1);
+  assert.deepEqual(domain.routes[0].evidence, {
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    verdictId: "verdict-1",
+    evidenceId: "evidence-1",
+    verdict: "fail",
+  });
+});
+
 test("an explicitly resumed verification abort claims one lineage-linked Attempt", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
@@ -1167,45 +1235,67 @@ test("an explicitly resumed verification abort claims one lineage-linked Attempt
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
 });
 
-for (const [label, recovery] of [
-  ["a user-owned verification route", {
-    recoveryActionId: "recovery-action-1",
-    recoveryOwner: "user" as const,
-    action: "clarify" as const,
-  }],
-  ["a missing verification route", null],
-] as const) {
-  test(`${label} resumes verification without executing again`, async () => {
-    const { runWithTaskExecutionAttempt } = await subject();
-    const domain = fakeDomain();
-    domain.attempts.push({
-      attemptId: "attempt-1",
-      resultId: "result-1",
-      attemptNumber: 1,
-      state: "settled",
-      outcome: "succeeded",
-      nextStage: "route",
-      coordinationDispatchId: 40,
-      workerId: "worker-1",
-      milestoneLeaseToken: 7,
-    });
-    let ran = false;
-
-    const result = await runWithTaskExecutionAttempt(input(), async () => {
-      ran = true;
-      return { action: "next", data: {} };
-    }, {
-      ...domain.deps,
-      readTaskRecoveryRoute() {
-        return recovery;
-      },
-    });
-
-    assert.deepEqual(result, { action: "next", data: {} });
-    assert.equal(ran, false);
-    assert.equal(domain.claims.length, 0);
+test("a user-owned verification route resumes verification without executing again", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
   });
-}
+  let ran = false;
+
+  const result = await runWithTaskExecutionAttempt(input(), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, {
+    ...domain.deps,
+    readTaskRecoveryRoute() {
+      return {
+        recoveryActionId: "recovery-action-1",
+        recoveryOwner: "user",
+        action: "clarify",
+      };
+    },
+  });
+
+  assert.deepEqual(result, { action: "next", data: {} });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+});
+
+test("a missing verification route and verdict fails closed", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const domain = fakeDomain();
+  domain.attempts.push({
+    attemptId: "attempt-1",
+    resultId: "result-1",
+    attemptNumber: 1,
+    state: "settled",
+    outcome: "succeeded",
+    nextStage: "route",
+    coordinationDispatchId: 40,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+  });
+
+  await assert.rejects(runWithTaskExecutionAttempt(input(), async () => ({
+    action: "next",
+    data: {},
+  }), {
+    ...domain.deps,
+    readTaskRecoveryRoute: () => null,
+    readTaskTechnicalVerdict: () => null,
+  }), /missing its failed Technical Verdict/);
+
+  assert.equal(domain.claims.length, 0);
+});
 
 test("a retry claim links the immediately preceding settled Attempt", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
