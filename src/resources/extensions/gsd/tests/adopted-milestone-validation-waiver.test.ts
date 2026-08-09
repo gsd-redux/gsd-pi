@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -31,6 +31,7 @@ import {
   readDomainOperationFence,
   upsertQualityGate,
 } from "../gsd-db.ts";
+import { openWorkflowDatabase } from "../db-workspace.ts";
 import { handleCompleteMilestone } from "../tools/complete-milestone.ts";
 import { handleValidateMilestone } from "../tools/validate-milestone.ts";
 import { deriveStateFromDb } from "../state.ts";
@@ -389,6 +390,28 @@ test("legacy skipped status cannot bypass adopted canonical authorization", () =
 
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.reason, "validation-not-pass");
+});
+
+test("closeout consistency snapshots the repo when .gsd links to an external store", async () => {
+  const savedCwd = process.cwd();
+  const basePath = makeFixture();
+  const storeRoot = mkdtempSync(join(tmpdir(), "gsd-adopted-validation-store-"));
+  tempDirs.add(storeRoot);
+
+  try {
+    closeDatabase();
+
+    const externalGsd = join(storeRoot, "project");
+    renameSync(join(basePath, ".gsd"), externalGsd);
+    symlinkSync(externalGsd, join(basePath, ".gsd"), process.platform === "win32" ? "junction" : "dir");
+    assert.equal(openWorkflowDatabase(basePath).ok, true);
+
+    process.chdir(basePath);
+    await recordPassingValidation(basePath, "test/milestone.validate/symlinked-store");
+    assert.deepEqual(checkCloseoutConsistencyGate("M001", { allowOpenMilestone: true }), { ok: true });
+  } finally {
+    process.chdir(savedCwd);
+  }
 });
 
 test("adopted legacy skipped status is not terminal while canonical lifecycle remains open", async () => {

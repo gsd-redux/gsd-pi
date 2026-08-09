@@ -33,6 +33,7 @@ import {
 } from "./db/milestone-closeout-readiness.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { captureMilestoneVerificationSourceRevision } from "./verification-source-integrity.js";
+import { resolveRepositoryProjectRoot } from "./repository-registry.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
 
@@ -81,7 +82,10 @@ function isFileBackedDbPath(path: string | null): boolean {
 function artifactBasePathFromDb(): string | undefined {
   const dbPath = getWorkflowDatabasePath();
   if (!isFileBackedDbPath(dbPath)) return undefined;
-  return dirname(dirname(dbPath!));
+  const dbBasePath = dirname(dirname(dbPath!));
+  return existsSync(join(dbBasePath, ".git"))
+    ? dbBasePath
+    : resolveRepositoryProjectRoot(process.cwd());
 }
 
 function allSlicesHaveCloseoutSummaryEvidence(milestoneId: string, artifactBasePath: string): boolean {
