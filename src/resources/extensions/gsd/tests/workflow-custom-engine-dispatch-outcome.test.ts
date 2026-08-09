@@ -18,7 +18,7 @@ test("handleCustomEngineDispatchOutcome stops auto on stop decision", async () =
     },
   });
 
-  assert.deepEqual(flow, { action: "break" });
+  assert.deepEqual(flow, { action: "break", inputPayload: "done" });
   assert.deepEqual(calls, [["stopAuto", "done"]]);
 });
 

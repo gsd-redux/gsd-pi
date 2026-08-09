@@ -28,6 +28,18 @@ import { rewriteCommandWithRtk } from "../shared/rtk.js";
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause" | "abort";
 
+export interface CustomVerificationResult {
+  outcome: VerificationOutcome;
+  inputPayload: string;
+}
+
+function verificationResult(
+  outcome: VerificationOutcome,
+  evidence: Record<string, unknown>,
+): CustomVerificationResult {
+  return { outcome, inputPayload: JSON.stringify(evidence) };
+}
+
 /**
  * Run custom verification for a specific step in a workflow run.
  *
@@ -44,17 +56,24 @@ export function runCustomVerification(
   runDir: string,
   stepId: string,
 ): VerificationOutcome {
+  return runCustomVerificationWithEvidence(runDir, stepId).outcome;
+}
+
+export function runCustomVerificationWithEvidence(
+  runDir: string,
+  stepId: string,
+): CustomVerificationResult {
   const def = readFrozenDefinition(runDir);
 
   const step = def.steps.find((s: StepDefinition) => s.id === stepId);
   if (!step) {
     // Step not found in definition — nothing to verify, continue
-    return "continue";
+    return verificationResult("continue", { policy: "none", reason: "step-not-found", stepId });
   }
 
   if (!step.verify) {
     // No verification policy configured — passthrough
-    return "continue";
+    return verificationResult("continue", { policy: "none", reason: "not-configured", stepId });
   }
 
   return dispatchPolicy(runDir, step, step.verify);
@@ -67,19 +86,18 @@ function dispatchPolicy(
   runDir: string,
   step: StepDefinition,
   verify: VerifyPolicy,
-): VerificationOutcome {
+): CustomVerificationResult {
   switch (verify.policy) {
     case "content-heuristic":
       return handleContentHeuristic(runDir, step, verify);
     case "shell-command":
       return handleShellCommand(runDir, verify);
     case "prompt-verify":
-      return "pause";
+      return verificationResult("pause", { policy: "prompt-verify" });
     case "human-review":
-      return "pause";
+      return verificationResult("pause", { policy: "human-review" });
     default:
-      // Unknown policy — safe default is pause
-      return "pause";
+      return verificationResult("pause", { policy: "unknown" });
   }
 }
 
@@ -98,29 +116,43 @@ function handleContentHeuristic(
   runDir: string,
   step: StepDefinition,
   verify: { policy: "content-heuristic"; minSize?: number; pattern?: string },
-): VerificationOutcome {
+): CustomVerificationResult {
   const produces = step.produces;
   if (!produces || produces.length === 0) {
-    return "continue";
+    return verificationResult("continue", { policy: "content-heuristic", reason: "no-outputs" });
   }
 
   for (const relPath of produces) {
     const absPath = resolve(runDir, relPath);
     // Path traversal guard
     if (!absPath.startsWith(resolve(runDir) + sep) && absPath !== resolve(runDir)) {
-      return "pause";
+      return verificationResult("pause", {
+        policy: "content-heuristic",
+        failure: "path-outside-run-directory",
+        path: relPath,
+      });
     }
 
     // 1. File existence
     if (!existsSync(absPath)) {
-      return "pause";
+      return verificationResult("pause", {
+        policy: "content-heuristic",
+        failure: "missing-file",
+        path: relPath,
+      });
     }
 
     // 2. Minimum size check
     if (verify.minSize !== undefined) {
       const stat = statSync(absPath);
       if (stat.size < verify.minSize) {
-        return "pause";
+        return verificationResult("pause", {
+          policy: "content-heuristic",
+          failure: "below-minimum-size",
+          path: relPath,
+          actualSize: stat.size,
+          minimumSize: verify.minSize,
+        });
       }
     }
 
@@ -129,16 +161,27 @@ function handleContentHeuristic(
       const content = readFileSync(absPath, "utf-8");
       try {
         if (!new RegExp(verify.pattern).test(content)) {
-          return "pause";
+          return verificationResult("pause", {
+            policy: "content-heuristic",
+            failure: "pattern-mismatch",
+            path: relPath,
+            pattern: verify.pattern,
+          });
         }
       } catch (e) {
         logWarning("engine", `content-heuristic regex failed: ${(e as Error).message}`);
-        return "pause";
+        return verificationResult("pause", {
+          policy: "content-heuristic",
+          failure: "invalid-pattern",
+          path: relPath,
+          pattern: verify.pattern,
+          error: (e as Error).message,
+        });
       }
     }
   }
 
-  return "continue";
+  return verificationResult("continue", { policy: "content-heuristic", reason: "checks-passed" });
 }
 
 /**
@@ -156,14 +199,18 @@ function handleContentHeuristic(
 function handleShellCommand(
   runDir: string,
   verify: { policy: "shell-command"; command: string },
-): VerificationOutcome {
+): CustomVerificationResult {
   // Guard: reject commands containing shell expansion patterns that suggest injection
   const dangerousPatterns = /\$\(|`|;\s*(rm|curl|wget|nc|bash|sh|eval)\b/;
   if (dangerousPatterns.test(verify.command)) {
     console.warn(
       `custom-verification: shell-command contains suspicious pattern, skipping: ${verify.command}`,
     );
-    return "pause";
+    return verificationResult("pause", {
+      policy: "shell-command",
+      command: verify.command,
+      failure: "suspicious-command",
+    });
   }
 
   const rewrittenCommand = rewriteCommandWithRtk(verify.command);
@@ -176,8 +223,20 @@ function handleShellCommand(
   });
 
   if (result.status === 0) {
-    return "continue";
+    return verificationResult("continue", {
+      policy: "shell-command",
+      command: verify.command,
+      exitCode: result.status,
+      signal: result.signal,
+      error: result.error?.message ?? null,
+    });
   }
 
-  return "retry";
+  return verificationResult("retry", {
+    policy: "shell-command",
+    command: verify.command,
+    exitCode: result.status,
+    signal: result.signal,
+    error: result.error?.message ?? null,
+  });
 }

@@ -15,6 +15,7 @@ export interface HandleCustomEngineReconcileOutcomeDeps {
     failureClass: "none" | "manual-attention",
     error: string | undefined,
     guardId: string | null,
+    inputPayload?: string,
   ) => void;
 }
 
@@ -40,7 +41,7 @@ export async function handleCustomEngineReconcileOutcome(input: {
   if (decision.action === "pause") {
     await input.deps.pauseAuto();
     input.deps.report("pause", details);
-    input.deps.finishTurn("paused", "manual-attention", undefined, "custom-engine-reconcile");
+    input.deps.finishTurn("paused", "manual-attention", input.outcome.reason, "custom-engine-reconcile", input.outcome.reason);
     return { action: "break" };
   }
   if (decision.action === "stop") {
@@ -49,7 +50,7 @@ export async function handleCustomEngineReconcileOutcome(input: {
       ...details,
       reason: input.outcome.reason,
     });
-    input.deps.finishTurn("stopped", "manual-attention", input.outcome.reason, "custom-engine-reconcile");
+    input.deps.finishTurn("stopped", "manual-attention", input.outcome.reason, "custom-engine-reconcile", input.outcome.reason);
     return { action: "break" };
   }
 

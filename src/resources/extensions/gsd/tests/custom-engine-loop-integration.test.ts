@@ -608,7 +608,7 @@ describe("Custom engine loop integration", () => {
     assert.equal(turnResults.length, 1);
     assert.equal(turnResults[0].status, "stopped");
     assert.equal(turnResults[0].failureClass, "manual-attention");
-    assert.match(turnResults[0].error ?? "", /custom-engine-dispatch-stop/);
+    assert.match(turnResults[0].error ?? "", /Workflow blocked: no pending steps are ready/);
     assert.ok(
       deps.callLog.includes("journal:iteration-end"),
       `blocked workflow should emit iteration-end; log=${deps.callLog.join(",")}`,
@@ -1008,22 +1008,30 @@ describe("Custom engine loop integration", () => {
       inputPayload: string;
       sanctionedExit?: string;
     } | undefined;
-    const verifyOutcomes: Array<{ guardId: string; inputPayload: string }> = [];
+    const verifyOutcomes: Array<{
+      guardId: string;
+      inputPayload: string;
+      count: number;
+      tripped: boolean;
+    }> = [];
     const deps = makeMockDeps({
       adjudicateNonAdvancingOutcome: (_session, input) => {
-        if (input.guardId === "custom-engine-verify") {
-          verifyOutcomes.push({ guardId: input.guardId, inputPayload: input.inputPayload });
-        }
-        if (input.inputPayload === "custom-engine-verify-retry-exhausted") {
-          stopOutcome = input;
-        }
-        recordNonAdvancingOutcome({
+        const recorded = recordNonAdvancingOutcome({
           scopeId: realpathSync(runDir),
           guardId: input.guardId,
           unitType: input.unitType,
           unitId: input.unitId,
           inputPayload: input.inputPayload,
         }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+        if (input.guardId === "custom-engine-verify") {
+          verifyOutcomes.push({
+            guardId: input.guardId,
+            inputPayload: input.inputPayload,
+            count: recorded.count,
+            tripped: recorded.tripped,
+          });
+          stopOutcome = input;
+        }
         return null;
       },
       stopAuto: async (_ctx, _pi, reason) => {
@@ -1059,10 +1067,32 @@ describe("Custom engine loop integration", () => {
 
     assert.ok(stopOutcome, "the exhausted custom-engine verification stop must reach adjudication");
     assert.equal(verifyOutcomes.length, 4, "every verification retry, including exhaustion, must reach adjudication");
-    assert.deepEqual(
-      verifyOutcomes.slice(0, 3).map((outcome) => outcome.inputPayload),
-      ["custom-engine-verify", "custom-engine-verify", "custom-engine-verify"],
-    );
+    const retryEvidence = verifyOutcomes.slice(0, 3).map((outcome) => JSON.parse(outcome.inputPayload));
+    assert.deepEqual(retryEvidence, [
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+    ]);
+    assert.equal(verifyOutcomes[0]?.tripped, false);
+    assert.equal(verifyOutcomes[1]?.tripped, true, "identical engine evidence must trip at occurrence two");
+
+    const distinctScope = `${realpathSync(runDir)}:different-engine-evidence`;
+    const differentFirst = recordNonAdvancingOutcome({
+      scopeId: distinctScope,
+      guardId: "custom-engine-verify",
+      unitType: stopOutcome.unitType,
+      unitId: stopOutcome.unitId,
+      inputPayload: JSON.stringify({ policy: "shell-command", exitCode: 1 }),
+    });
+    const differentSecond = recordNonAdvancingOutcome({
+      scopeId: distinctScope,
+      guardId: "custom-engine-verify",
+      unitType: stopOutcome.unitType,
+      unitId: stopOutcome.unitId,
+      inputPayload: JSON.stringify({ policy: "shell-command", exitCode: 2 }),
+    });
+    assert.equal(differentFirst.tripped, false);
+    assert.equal(differentSecond.tripped, false, "changed engine evidence must not share a signature");
     assert.equal(stopOutcome.guardId, "custom-engine-verify");
     assert.match(stopOutcome.sanctionedExit ?? "", /`\/gsd forensics`/);
     openDatabase(dbPath);

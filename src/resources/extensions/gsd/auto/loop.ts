@@ -778,7 +778,13 @@ export async function autoLoop(
           },
         });
         if (dispatchFlow.action === "break") {
-          finishTurn("stopped", "manual-attention", "custom-engine-dispatch-stop", "custom-engine-dispatch-stop");
+          finishTurn(
+            "stopped",
+            "manual-attention",
+            dispatchFlow.inputPayload,
+            "custom-engine-dispatch-stop",
+            dispatchFlow.inputPayload,
+          );
           finishIncompleteIteration({
             status: "stopped",
             reason: "custom-engine-dispatch-stop",
@@ -998,13 +1004,27 @@ export async function autoLoop(
           });
         }
         const hostVerification = deps.customEngineHostVerificationBoundary ?? runCustomEngineHostVerification;
+        let verificationInputPayload: string | undefined;
         const verificationInput = {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           basePath: s.basePath,
           preferences: prefs,
           humanReviewPolicy,
-          verifyPolicy: () => policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath }),
+          verifyPolicy: async () => {
+            if (policy.verifyWithEvidence) {
+              const result = await policy.verifyWithEvidence(
+                iterData.unitType,
+                iterData.unitId,
+                { basePath: s.basePath },
+              );
+              verificationInputPayload = result.inputPayload;
+              return result.outcome;
+            }
+            const outcome = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
+            verificationInputPayload = JSON.stringify({ outcome });
+            return outcome;
+          },
         };
         let verifyResult = await hostVerification(verificationInput);
         if (verifyResult === "pause" &&
@@ -1037,9 +1057,11 @@ export async function autoLoop(
             });
           }
         }
+        verificationInputPayload ??= JSON.stringify({ outcome: verifyResult });
         if (iterData.unitType === "execute-task" && (verifyResult === "retry" || verifyResult === "abort")) {
           const verifyFlow = handleCustomEngineTaskVerifyOutcome({
             outcome: verifyResult,
+            inputPayload: verificationInputPayload,
             finishTurn,
           });
           const reason = verifyResult === "abort"
@@ -1059,6 +1081,7 @@ export async function autoLoop(
           const verifyFlow = await handleCustomEngineVerifyPause({
             unitType: iterData.unitType,
             unitId: iterData.unitId,
+            inputPayload: verificationInputPayload,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
               stopAuto: reason => deferStopAuto(ctx, pi, reason),
@@ -1102,6 +1125,7 @@ export async function autoLoop(
           });
           const retryFlow = await handleCustomEngineVerifyRetryOutcome({
             outcome: retryOutcome,
+            inputPayload: verificationInputPayload,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
               stopAuto: reason => deferStopAuto(ctx, pi, reason),
@@ -2027,7 +2051,16 @@ export async function autoLoop(
         });
         if (backstopReason) {
           ctx.ui.notify(backstopReason, "error");
-          pendingStopAuto ??= { reason: markBlockedStopReason(backstopReason) };
+          const queuedStop = pendingStopAuto as {
+            reason?: string;
+            options?: StopAutoOptions;
+          } | null;
+          pendingStopAuto = {
+            reason: markBlockedStopReason(
+              [queuedStop?.reason, backstopReason].filter((reason): reason is string => Boolean(reason)).join("\n"),
+            ),
+            options: queuedStop?.options,
+          };
         }
       }
       if (pendingStopAuto) {

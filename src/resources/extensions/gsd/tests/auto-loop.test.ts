@@ -37,6 +37,8 @@ import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 import { _getAdapter, openDatabase, closeDatabase, getTask, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
 import { getOpenWedge } from "../auto-liveness-backstop.js";
+import { isBlockedStopReason, stopNoticeKind } from "../stop-notice.js";
+import { mapStatusToExitCode } from "../../../../headless-events.ts";
 import { registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, milestoneLeaseTtlSeconds } from "../db/milestone-leases.js";
 import { getLatestForUnit, recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
@@ -4597,6 +4599,7 @@ test("#1672: preflight exits persist a block signature that survives a restart",
     const dbPath = join(s.basePath, ".gsd", "gsd.db");
     const stopCalls: Array<{
       active: boolean;
+      reason: string | undefined;
       options: Parameters<LoopDeps["stopAuto"]>[3];
     }> = [];
     const deps = makeMockDeps({
@@ -4604,7 +4607,7 @@ test("#1672: preflight exits persist a block signature that survives a restart",
       ...preflight.deps,
       stopAuto: async (_ctx, _pi, reason, options) => {
         deps.callLog.push(`stopAuto:${reason ?? ""}`);
-        stopCalls.push({ active: s.active, options });
+        stopCalls.push({ active: s.active, reason, options });
         s.active = false;
         closeDatabase();
       },
@@ -4637,10 +4640,13 @@ test("#1672: preflight exits persist a block signature that survives a restart",
     );
     assert.doesNotMatch(wedge!.sanctionedExit, /Resolve the reported condition/);
     if (preflight.name === "missing-command-context") {
-      assert.deepEqual(stopCalls.at(-1), {
-        active: true,
-        options: { preserveWorktree: true },
-      });
+      const stop = stopCalls.at(-1);
+      assert.equal(stop?.active, true);
+      assert.deepEqual(stop?.options, { preserveWorktree: true });
+      assert.equal(isBlockedStopReason(stop?.reason), true);
+      assert.equal(stopNoticeKind(stop?.reason), "blocked");
+      assert.equal(mapStatusToExitCode(stopNoticeKind(stop?.reason)), 10);
+      assert.match(stop?.reason ?? "", /Auto-mode has no command context for dispatch\./);
     }
     closeDatabase();
   }
