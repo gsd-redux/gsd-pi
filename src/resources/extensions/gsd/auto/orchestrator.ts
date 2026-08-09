@@ -24,8 +24,6 @@ import { reconcileBeforeDispatch } from "../state-reconciliation.js";
 import { isLegalEdge, IllegalPhaseTransitionError } from "../state-transition-matrix.js";
 import { hasPendingDeepStage, resolveDispatch } from "../auto-dispatch.js";
 import { classifyFailure } from "../recovery-classification.js";
-import { verifyExpectedArtifact, refreshRecoveryDbForArtifact } from "../auto-recovery.js";
-import { invalidateAllCaches } from "../cache.js";
 import { compileUnitToolContract } from "../tool-contract.js";
 import { createWorktreeSafetyModule } from "../worktree-safety.js";
 import { repairAutoWorktreeSafetyFailure } from "../auto-worktree-repair.js";
@@ -381,20 +379,11 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   // decided unit so non-advancing outcomes carry their target identity.
   private pendingTargetSnapshot: { unitType: string; unitId: string; hash: string } | null = null;
   private lastDecisionUnit: { unitType: string; unitId: string } | null = null;
+  private pendingBackstopFailure: string | null = null;
   // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
   // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
   // so the first advance of a session has no edge to assert.
   private lastDerivedPhase: Phase | null = null;
-  // #442: the unit key we last attempted graduated stuck-recovery for. Bounds
-  // recovery to one attempt per stuck episode per run (reset on start/resume/
-  // stop), mirroring the legacy Level-1-then-Level-2 escalation in phases.ts.
-  private lastStuckRecoveryKey: string | null = null;
-  // #1622: the unit key whose last stuck recovery only *verified* canonical
-  // state without advancing its DB row. The re-dispatch such a recovery unblocks
-  // can land on exactly the state that got the unit stuck, so the next hard stop
-  // for this key must carry the operator recovery path instead of a bare
-  // stuck-loop reason the user can only answer by restarting auto-mode.
-  private lastReadOnlyRecoveryKey: string | null = null;
 
   public constructor(context: OrchestratorContext) {
     this.ctx = context.ctx;
@@ -886,118 +875,13 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
   // ── Lifecycle verbs ──────────────────────────────────────────────────────
 
-  /**
-   * #442: graduated stuck recovery, ported from the legacy
-   * auto/phases.ts:runDispatch path that Phase 3 retires. The ring-buffer
-   * hard-stops (stuck-loop saturation and finalized-repeat) would otherwise
-   * KILL a unit that actually completed on disk but whose DB row is still
-   * stale. Before hard-stopping, verify the expected artifact exists; if so,
-   * refresh the DB from it, invalidate caches and reset the dispatch ring so
-   * the next advance picks the correct next unit. Bounded to one attempt per
-   * stuck key per episode (reset on lifecycle + genuine finalize) to avoid an
-   * unbounded recover→re-saturate→recover loop — mirrors the legacy
-   * Level-1-recover-then-Level-2-hard-stop escalation.
-   *
-   * Returns `recovered: true` when recovery succeeded; the caller should re-loop
-   * (return a skipped result) instead of stopping. A fatal refusal carries its
-   * operator-actionable `blockedReason` so the hard-stop tells the user how to
-   * recover instead of only naming the dead end (#1622). `outcome` carries what
-   * the refresh actually did so the journal cannot claim a DB write that never
-   * happened.
-   */
-  private tryStuckArtifactRecovery(
-    unitType: string,
-    unitId: string,
-  ): { recovered: boolean; outcome?: string; blockedReason?: string } {
-    const key = buildDispatchKey(unitType, unitId);
-    if (this.lastStuckRecoveryKey === key) return { recovered: false }; // already tried this episode
-    const basePath = this.getLiveDispatchBasePath();
-    if (!verifyExpectedArtifact(unitType, unitId, basePath)) return { recovered: false };
-    const refreshed = refreshRecoveryDbForArtifact(unitType, unitId, basePath);
-    // Fatal failures cannot be recovered — hard-stop. Non-fatal (e.g. plan-slice
-    // DB refresh hiccup) still fall through: invalidating caches and resetting
-    // the ring gives the next advance a clean slate to pick up the correct state,
-    // mirroring the legacy Level-1 "continue" escalation path.
-    if (!refreshed.ok && refreshed.fatal) {
-      return { recovered: false, blockedReason: refreshed.message };
-    }
-    this.lastStuckRecoveryKey = key;
-    invalidateAllCaches();
-    this.lastAdvanceKey = null;
-    this.lastFinalizedUnitKey = null;
-    // #1622: a read-only refresh (execute-task: canonical Attempt verified, task
-    // row untouched) still earns one re-dispatch — the verify/route stages it
-    // unblocks do real work — but it is not proof the DB moved. Remember the key
-    // so the hard stop that follows a second failure names the recovery path.
-    const advanced = !refreshed.ok || refreshed.advanced !== false;
-    this.lastReadOnlyRecoveryKey = advanced ? null : key;
-    return {
-      recovered: true,
-      ...(refreshed.ok && refreshed.message ? { outcome: refreshed.message } : {}),
-    };
-  }
-
-  /**
-   * #1622: guidance appended to a hard stop for a unit whose last stuck recovery
-   * only verified canonical state. Without it the operator sees a bare
-   * `stuck-loop:` / finalized-repeat reason, restarts `gsd auto` — which clears
-   * the ring and the recovery key — and the whole verify→recover→re-dispatch
-   * round trip repeats invisibly.
-   */
-  private readOnlyRecoveryGuidance(unitType: string, unitId: string): string | null {
-    if (this.lastReadOnlyRecoveryKey !== buildDispatchKey(unitType, unitId)) return null;
-    return `stuck recovery for ${unitType} ${unitId} only verified canonical state on disk and did not advance its DB row, so re-running \`gsd auto\` will repeat this loop; reconcile the projection with \`gsd rebuild markdown\` then \`gsd recover\` (or resume the pending Task recovery action) before retrying.`;
-  }
-
-  /**
-   * Compose a hard-stop reason with whatever the stuck-recovery attempt learned:
-   * a fatal refusal's own message, else the read-only-recovery guidance (#1622).
-   */
-  private hardStopReason(
-    base: string,
-    recovery: { blockedReason?: string },
-    unitType: string,
-    unitId: string,
-  ): string {
-    const detail = recovery.blockedReason ?? this.readOnlyRecoveryGuidance(unitType, unitId);
-    return detail ? `${base} — ${detail}` : base;
-  }
-
-  private stuckRecovered(
-    decision: { unitType: string; unitId: string },
-    stateSnapshot: GSDState,
-    outcome: string,
-  ): AutoAdvanceResult {
-    // The outcome comes from the refresh itself: execute-task recovery only
-    // *reads* the canonical Task Attempt, so claiming "DB refreshed" for it
-    // misreported what happened and hid the projection drift behind a success
-    // line (#1622).
-    const recovered: AutoAdvanceResult = {
-      kind: "skipped",
-      reason: `stuck-recovery: ${decision.unitType} ${decision.unitId} artifact found on disk; ${outcome}`,
-      stateSnapshot,
-    };
-    this.status.phase = "running";
-    this.status.activeUnit = undefined;
-    this.bumpTransition();
-    this.journalTransition({
-      name: "advance-skipped",
-      reason: recovered.reason,
-      unitType: decision.unitType,
-      unitId: decision.unitId,
-    });
-    this.postAdvanceRecord(recovered);
-    return recovered;
-  }
-
   public async start(_sessionContext: AutoSessionContext): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     // ADR-047: cross-session liveness state lives in the DB-persisted
     // block-signature ledger, not in-process — a restart resets nothing.
     this.pendingTargetSnapshot = null;
-    this.lastStuckRecoveryKey = null;
-    this.lastReadOnlyRecoveryKey = null;
+    this.pendingBackstopFailure = null;
     this.lastDerivedPhase = null;
     this.status.phase = "running";
     this.bumpTransition();
@@ -1013,8 +897,14 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
    * converts the outcome into a surfaced, resumable hard stop.
    */
   public async advance(): Promise<AutoAdvanceResult> {
+    if (this.pendingBackstopFailure) {
+      return this.backstopFailure(this.pendingBackstopFailure);
+    }
     const scopeId = this.backstopScopeId();
-    const openWedge = scopeId ? getOpenWedge(scopeId) : null;
+    if (!scopeId) return this.backstopFailure('project scope unavailable');
+    const openWedgeResult = getOpenWedge(scopeId);
+    if (!openWedgeResult.ok) return this.backstopFailure(openWedgeResult.error);
+    const openWedge = openWedgeResult.wedge;
     if (openWedge) {
       const blocked: AutoAdvanceResult = {
         kind: "blocked",
@@ -1049,8 +939,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
     if (result.kind === "advanced") {
       const { unitType, unitId } = result.unit;
-      const hash = snapshotUnitTargetRows(unitType, unitId);
-      this.pendingTargetSnapshot = hash ? { unitType, unitId, hash } : null;
+      const snapshot = snapshotUnitTargetRows(unitType, unitId);
+      if (!snapshot.ok) return this.backstopFailure(snapshot.error);
+      this.pendingTargetSnapshot = snapshot.hash ? { unitType, unitId, hash: snapshot.hash } : null;
       return result;
     }
     if (result.kind !== "blocked" && result.kind !== "error") return result;
@@ -1067,6 +958,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       unitId: unit.unitId,
       inputPayload: reason,
     });
+    if ('error' in outcome) return this.backstopFailure(outcome.error);
     if (!outcome.tripped) return result;
 
     const wedged: AutoAdvanceResult = {
@@ -1085,6 +977,17 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     });
     this.postAdvanceRecord(wedged);
     return wedged;
+  }
+
+  private backstopFailure(detail: string): AutoAdvanceResult {
+    const blocked: AutoAdvanceResult = {
+      kind: "blocked",
+      reason: `liveness backstop unavailable: ${detail}. Repair the workflow database with \`/gsd doctor --fix\` before resuming auto-mode.`,
+      action: "stop",
+    };
+    this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
+    this.postAdvanceRecord(blocked);
+    return blocked;
   }
 
   private async advanceInner(): Promise<AutoAdvanceResult> {
@@ -1287,27 +1190,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       const nextKey = buildDispatchKey(decision.unitType, decision.unitId);
 
       if (this.lastFinalizedUnitKey === nextKey) {
-        // #442: the unit re-dispatched immediately after finalizing may have
-        // actually completed on disk with a stale DB. Verify + recover before
-        // hard-stopping (legacy graduated stuck-recovery parity).
-        const finalizedRecovery = this.tryStuckArtifactRecovery(decision.unitType, decision.unitId);
-        if (finalizedRecovery.recovered) {
-          this.clearPendingDispatch();
-          return this.stuckRecovered(
-            decision,
-            reconciliation.stateSnapshot,
-            finalizedRecovery.outcome ?? "DB refreshed",
-          );
-        }
         this.clearPendingDispatch();
         const blocked: AutoAdvanceResult = {
           kind: "blocked",
-          reason: this.hardStopReason(
-            `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
-            finalizedRecovery,
-            decision.unitType,
-            decision.unitId,
-          ),
+          reason: `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
           action: "stop",
           stateSnapshot: reconciliation.stateSnapshot,
         };
@@ -1456,10 +1342,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   public async resume(): Promise<AutoAdvanceResult> {
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
+    this.pendingBackstopFailure = null;
     // ADR-047: the DB-persisted signature ledger already spans pause/resume
     // cycles and process restarts — no in-process window to rehydrate.
-    this.lastStuckRecoveryKey = null;
-    this.lastReadOnlyRecoveryKey = null;
     // ADR-030: drop the prior "from" — the first advance after resume has no
     // edge to assert (avoids a false illegal-edge across the pause boundary).
     this.lastDerivedPhase = null;
@@ -1481,8 +1366,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.lastFinalizedUnitKey = null;
     this.lastDerivedPhase = null;
     this.pendingTargetSnapshot = null;
-    this.lastStuckRecoveryKey = null;
-    this.lastReadOnlyRecoveryKey = null;
     this.bumpTransition();
     this.journalTransition({ name: "stop", reason });
     this.notifyLifecycle({ name: "stop", detail: reason });
@@ -1513,19 +1396,23 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       buildDispatchKey(snapshot.unitType, snapshot.unitId) === unitKey
     ) {
       const current = snapshotUnitTargetRows(unit.unitType, unit.unitId);
-      if (current && current === snapshot.hash) {
+      if (!current.ok) {
+        this.pendingBackstopFailure = current.error;
+      } else if (current.hash && current.hash === snapshot.hash) {
         const outcome = recordNonAdvancingOutcome({
           scopeId,
           guardId: COMPLETED_NO_ADVANCE_GUARD_ID,
           unitType: unit.unitType,
           unitId: unit.unitId,
-          inputPayload: current,
+          inputPayload: current.hash,
         }, {
           sanctionedExit:
             `${unit.unitType} ${unit.unitId} completed without changing any of its target rows; ` +
             `inspect the unit's summary and reconcile state (\`/gsd status\`, \`/gsd doctor\`) before re-running.`,
         });
-        if (outcome.tripped) {
+        if ('error' in outcome) {
+          this.pendingBackstopFailure = outcome.error;
+        } else if (outcome.tripped) {
           // Surface immediately; the wedge gate at the next advance() converts
           // this into the terminal blocked stop (exit 10).
           this.ctx.ui.notify(formatWedgeTripNotice(outcome.wedge), "error");
@@ -1536,8 +1423,6 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.status.activeUnit = undefined;
     this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = unitKey;
-    // Genuine progress — re-enable graduated stuck recovery for future episodes.
-    this.lastStuckRecoveryKey = null;
     this.bumpTransition();
     this.journalTransition({
       name: "unit-finalized",
@@ -1560,7 +1445,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     const scopeId = this.backstopScopeId();
     if (scopeId) {
       const ledgerError = lookupLatestLedgerError(unit.unitType, unit.unitId);
-      recordNonAdvancingOutcome({
+      const outcome = recordNonAdvancingOutcome({
         scopeId,
         guardId: "finalize-retry",
         unitType: unit.unitType,
@@ -1572,6 +1457,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           (ledgerError ? `: ${ledgerError.slice(0, 300)}` : "") +
           ` — fix the underlying failure before re-running.`,
       });
+      if ('error' in outcome) this.pendingBackstopFailure = outcome.error;
     }
 
     if (activeUnitKey === unitKey) {

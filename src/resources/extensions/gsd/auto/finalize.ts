@@ -187,8 +187,11 @@ export async function runFinalize(
     // entered. Carry the recoveryActionId so the sanctioned exit reaches the
     // journal, the dispatch ledger, and the operator (mirrors #1593).
     const safetyRecovery = s.lastSafetyBlockRecovery;
+    const recoveryId = safetyRecovery?.recoveryActionId
+      ? `recoveryActionId: ${safetyRecovery.recoveryActionId}; `
+      : "";
     const safetyReason = safetyRecovery
-      ? `safety-evidence-block (recoveryActionId: ${safetyRecovery.recoveryActionId}; ${safetyRecovery.resumeInstruction})`
+      ? `safety-evidence-block (${recoveryId}${safetyRecovery.resumeInstruction})`
       : "safety-evidence-block";
     debugLog("autoLoop", { phase: "exit", reason: safetyReason });
     clearFinalizingUnit();

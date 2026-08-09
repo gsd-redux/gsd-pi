@@ -20,7 +20,13 @@ import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdic
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { hasPendingMilestoneSubjectiveUat } from "./milestone-subjective-uat-domain-operation.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices, getTaskVerificationEvidence } from "./gsd-db.js";
+import {
+  getMilestoneSlices,
+  getSliceTasks,
+  getTask,
+  getTaskVerificationEvidence,
+  isDbAvailable,
+} from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
@@ -374,7 +380,10 @@ export function routeEvidenceCrossReferenceBlock(input: {
   if (!routed) {
     throw new Error("Safety evidence cross-reference routing did not record a recovery action");
   }
-  return { ...(routed as { recoveryActionId: string; action: TaskRecoveryReceipt["action"] }), outcome };
+  return {
+    ...(routed as { recoveryActionId: string; action: TaskRecoveryReceipt["action"] }),
+    outcome,
+  };
 }
 
 function invalidateStoredHostPass(

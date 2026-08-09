@@ -11,7 +11,11 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { postUnitPreVerification, type PostUnitContext } from "../auto-post-unit.ts";
+import {
+  postUnitPreVerification,
+  resolveEvidenceRoutePresentation,
+  type PostUnitContext,
+} from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
 import { decideFinalizeResult } from "../auto/workflow-kernel.ts";
 import {
@@ -30,8 +34,13 @@ import {
   readLatestTaskAttempt,
   settleTaskAttempt,
 } from "../task-execution-domain-operation.ts";
-import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
-import { readTaskTechnicalVerdict } from "../task-verification-domain-operation.ts";
+import { readTaskRecoveryRoute, recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
+import {
+  invalidateTaskTechnicalPass,
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.ts";
+import { routeEvidenceCrossReferenceBlock } from "../auto-verification.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
 
 const TASK = { milestoneId: "M001", sliceId: "S01", taskId: "T01" } as const;
@@ -219,4 +228,53 @@ test("blocking evidence-xref settles and routes the Attempt with a surfaced reco
     closeDatabase();
     cleanup(base);
   }
+});
+
+test("evidence routing failure surfaces a supported retry instruction", (t) => {
+  const base = makeTempRepo("gsd-evidence-route-rollback-");
+  t.after(() => {
+    closeDatabase();
+    cleanup(base);
+  });
+  openDatabase(":memory:");
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Task", status: "complete" });
+  const attemptId = settleCanonicalTaskForHostVerification(base);
+  const attempt = readLatestTaskAttempt({ ...TASK });
+  assert.ok(attempt);
+
+  assert.throws(() => routeEvidenceCrossReferenceBlock({
+    attempt: attempt!,
+    basePath: base,
+    mismatch: {
+      command: "npm test",
+      claimedExitCode: 0,
+      actualExitCode: 1,
+      reason: "Claimed exitCode=0 but actual exitCode=1",
+    },
+    taskAuthority: {
+      readLatestTaskAttempt,
+      readTaskTechnicalVerdict,
+      recordTaskTechnicalVerdict,
+      invalidateTaskTechnicalPass,
+      routeTaskFailure: ((..._args: Parameters<typeof recordFailureAndSelectRecovery>) => {
+        throw new Error("injected route failure");
+      }) as typeof recordFailureAndSelectRecovery,
+    },
+  }), /injected route failure/);
+
+  const verdict = readTaskTechnicalVerdict(attemptId);
+  assert.ok(verdict, "the failing verdict remains durable when routing fails");
+  assert.equal(
+    isTaskAttemptAwaitingVerification(readLatestTaskAttempt({ ...TASK })),
+    false,
+    "the persisted failing verdict must advance the Attempt out of verification",
+  );
+  const presentation = resolveEvidenceRoutePresentation(null, "injected route failure");
+  assert.deepEqual(presentation.recovery, {
+    resumeInstruction: "resume with /gsd auto to retry evidence recovery routing",
+  });
+  assert.match(presentation.exitInstruction, /injected route failure/);
+  assert.match(presentation.exitInstruction, /resume with \/gsd auto/);
 });

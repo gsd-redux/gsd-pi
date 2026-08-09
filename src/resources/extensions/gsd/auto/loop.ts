@@ -33,7 +33,11 @@ import {
 } from "./unit-phase.js";
 import { debugLog } from "../debug-logger.js";
 import { markBlockedStopReason } from "../stop-notice.js";
-import { recordNonAdvancingOutcome } from "../auto-liveness-backstop.js";
+import {
+  formatWedgeTripNotice,
+  guardIdFromReason,
+  recordNonAdvancingOutcome,
+} from "../auto-liveness-backstop.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import { resolveEngine } from "../engine-resolver.js";
@@ -195,8 +199,6 @@ function resolveCompletionStopFromOutcome(
   };
 }
 
-const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
-const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
 const WORKER_HEARTBEAT_INTERVAL_MS = milestoneLeaseTtlSeconds() * 500;
 const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
@@ -212,6 +214,32 @@ const VERIFIED_TASK_PUBLICATION_DEPS = {
   publishVerifiedTaskCompletion,
   readLatestTaskAttempt,
 };
+
+function recordLoopNonAdvancingOutcome(
+  s: AutoSession,
+  input: {
+    guardId: string;
+    unitType: string;
+    unitId: string;
+    inputPayload: string;
+    sanctionedExit?: string;
+  },
+): string | null {
+  const scopeId = normalizeRealPath(
+    s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath),
+  ) || s.basePath;
+  const result = recordNonAdvancingOutcome({
+    scopeId,
+    guardId: input.guardId,
+    unitType: input.unitType,
+    unitId: input.unitId,
+    inputPayload: input.inputPayload,
+  }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+  if ('error' in result) {
+    return `liveness backstop unavailable: ${result.error}. Repair the workflow database with \`/gsd doctor --fix\` before resuming auto-mode.`;
+  }
+  return result.tripped ? formatWedgeTripNotice(result.wedge) : null;
+}
 
 function logDispatchLedgerWriteFailure(err: unknown): void {
   debugLog("autoLoop", {
@@ -441,9 +469,6 @@ export async function autoLoop(
   };
   let consecutiveErrors = 0;
   let consecutiveCooldowns = 0;
-  let consecutiveAlreadyActiveSkips = 0;
-  let consecutiveOrchestrationSkips = 0;
-  let lastOrchestrationSkipKey: string | null = null;
   const recentErrorMessages: string[] = [];
   const workerHeartbeatDeps = {
     heartbeatAutoWorker,
@@ -1175,23 +1200,22 @@ export async function autoLoop(
               skipState?.activeSlice?.id,
               skipState?.activeTask?.id,
             ].join("|");
-            consecutiveOrchestrationSkips = skipKey === lastOrchestrationSkipKey
-              ? consecutiveOrchestrationSkips + 1
-              : 1;
-            lastOrchestrationSkipKey = skipKey;
-            if (consecutiveOrchestrationSkips >= MAX_CONSECUTIVE_ORCHESTRATION_SKIPS) {
-              const msg = `Orchestration skipped ${consecutiveOrchestrationSkips} consecutive attempts without progress. Pausing auto-mode for manual recovery.`;
-              ctx.ui.notify(msg, "error");
-              await deps.pauseAuto(ctx, pi, {
-                message: msg,
-                category: "unknown",
-              }, {
-                expectedCurrentUnit: null,
-              });
-              finishTurn("paused", "manual-attention", orchestrationResult.reason ?? "orchestration-skipped");
+            const backstopReason = recordLoopNonAdvancingOutcome(s, {
+              guardId: guardIdFromReason(orchestrationResult.reason),
+              unitType: "orchestration",
+              unitId: s.currentMilestoneId ?? "workflow",
+              inputPayload: skipKey,
+              sanctionedExit:
+                `Orchestration skipped without advancing state: ${orchestrationResult.reason}. ` +
+                `Inspect \`/gsd status\` and repair the named guard before resuming.`,
+            });
+            if (backstopReason) {
+              ctx.ui.notify(backstopReason, "error");
+              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+              finishTurn("stopped", "manual-attention", orchestrationResult.reason);
               finishIncompleteIteration({
-                status: "paused",
-                reason: orchestrationResult.reason ?? "orchestration-skipped",
+                status: "stopped",
+                reason: backstopReason,
                 failureClass: "manual-attention",
               });
               break;
@@ -1201,9 +1225,6 @@ export async function autoLoop(
             finishTurn("skipped");
             continue;
           }
-
-          consecutiveOrchestrationSkips = 0;
-          lastOrchestrationSkipKey = null;
 
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
@@ -1217,6 +1238,26 @@ export async function autoLoop(
             // backstop ledger so a repeat exhaustion trips the wedge.
             consecutiveErrors++;
             const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
+            const backstopReason = recordLoopNonAdvancingOutcome(s, {
+              guardId: guardIdFromReason(pausedMsg),
+              unitType: "orchestration",
+              unitId: s.currentMilestoneId ?? "workflow",
+              inputPayload: pausedMsg,
+              sanctionedExit:
+                `Auto-mode paused without advancing state: ${pausedMsg}. ` +
+                `Resolve the underlying failure before resuming.`,
+            });
+            if (backstopReason) {
+              ctx.ui.notify(backstopReason, "error");
+              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+              finishTurn("stopped", "execution", pausedMsg);
+              finishIncompleteIteration({
+                status: "stopped",
+                reason: backstopReason,
+                failureClass: "execution",
+              });
+              break;
+            }
             recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
             const pausedDecision = decideIterationErrorRecovery({
               consecutiveErrors,
@@ -1224,13 +1265,6 @@ export async function autoLoop(
               currentErrorMessage: pausedMsg,
             });
             if (pausedDecision.action === "stop") {
-              recordNonAdvancingOutcome({
-                scopeId: normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath)) || s.basePath,
-                guardId: "transient-retry-exhausted",
-                unitType: "orchestration",
-                unitId: s.currentMilestoneId ?? "workflow",
-                inputPayload: pausedMsg,
-              });
               ctx.ui.notify(pausedDecision.notifyMessage, "error");
               await deps.stopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
               finishTurn("stopped", "execution", pausedMsg);
@@ -1277,7 +1311,22 @@ export async function autoLoop(
             if (completionStop) {
               await deps.stopAuto(ctx, pi, completionStop.reason, completionStop.options);
             } else {
-              await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+              const backstopReason = orchestrationResult.terminalOutcome
+                ? null
+                : recordLoopNonAdvancingOutcome(s, {
+                    guardId: guardIdFromReason(orchestrationResult.reason),
+                    unitType: "orchestration",
+                    unitId: s.currentMilestoneId ?? "workflow",
+                    inputPayload: orchestrationResult.reason,
+                    sanctionedExit:
+                      `Orchestration stopped without reaching a terminal outcome: ${orchestrationResult.reason}. ` +
+                      `Inspect \`/gsd status\` and repair the stopping condition before resuming.`,
+                  });
+              await deps.stopAuto(
+                ctx,
+                pi,
+                backstopReason ? markBlockedStopReason(backstopReason) : orchestrationResult.reason,
+              );
             }
             finishTurn("stopped", "manual-attention", "orchestration-stopped");
             break;
@@ -1329,6 +1378,32 @@ export async function autoLoop(
               "info",
             );
             s.pendingOrchestrationDispatch = null;
+            const backstopReason = recordLoopNonAdvancingOutcome(s, {
+              guardId: "pre-dispatch-hook-skip",
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              inputPayload: JSON.stringify({
+                firedHooks: preDispatchResult.firedHooks,
+                unitType: iterData.unitType,
+                unitId: iterData.unitId,
+              }),
+              sanctionedExit:
+                `Pre-dispatch hooks skipped ${iterData.unitType} ${iterData.unitId}. ` +
+                `Disable or update the named hook before resuming.`,
+            });
+            if (backstopReason) {
+              ctx.ui.notify(backstopReason, "error");
+              await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+              finishIncompleteIteration({
+                status: "stopped",
+                reason: backstopReason,
+                unitType: iterData.unitType,
+                unitId: iterData.unitId,
+                failureClass: "manual-attention",
+              });
+              finishTurn("stopped", "manual-attention", "pre-dispatch-hook-skip");
+              break;
+            }
             emitIterationEnd({ skipped: true });
             completeIteration();
             finishTurn("skipped");
@@ -1493,25 +1568,34 @@ export async function autoLoop(
         }
       }
       if (dispatchDecision.action === "skip") {
+        const backstopReason = recordLoopNonAdvancingOutcome(s, {
+          guardId: "dispatch-claim-skip",
+          unitType: iterData.unitType,
+          unitId: iterData.unitId,
+          inputPayload: dispatchDecision.reason,
+          sanctionedExit:
+            `Dispatch claim for ${iterData.unitType} ${iterData.unitId} was skipped: ${dispatchDecision.reason}. ` +
+            `Resolve the active claim or lease before resuming.`,
+        });
+        if (backstopReason) {
+          ctx.ui.notify(backstopReason, "error");
+          finishTurn("stopped", "execution", dispatchDecision.reason);
+          finishIncompleteIteration({
+            status: "stopped",
+            reason: backstopReason,
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            failureClass: "execution",
+          });
+          await deps.stopAuto(ctx, pi, markBlockedStopReason(backstopReason));
+          break;
+        }
         if (dispatchDecision.reason === "stale-lease") {
-          consecutiveAlreadyActiveSkips = 0;
           const msg = leaseConflictNotice(iterData, "dispatch claim still failed after stale-lease recovery");
           ctx.ui.notify(msg, "error");
           finishTurn("stopped", "execution", msg);
           await deps.stopAuto(ctx, pi, msg);
           break;
-        }
-        if (dispatchDecision.reason === "already-active" || dispatchDecision.reason === "already_active") {
-          consecutiveAlreadyActiveSkips++;
-          if (consecutiveAlreadyActiveSkips >= MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS) {
-            const msg = `Dispatch claim for ${iterData.unitType} ${iterData.unitId} remained already-active for ${consecutiveAlreadyActiveSkips} consecutive attempts. Pausing auto-mode for manual recovery.`;
-            ctx.ui.notify(msg, "error");
-            await deps.pauseAuto(ctx, pi);
-            finishTurn("paused", "manual-attention", msg);
-            break;
-          }
-        } else {
-          consecutiveAlreadyActiveSkips = 0;
         }
         finishTurn("skipped", "execution", dispatchDecision.reason);
         finishIncompleteIteration({
@@ -1522,7 +1606,6 @@ export async function autoLoop(
         });
         continue;
       }
-      consecutiveAlreadyActiveSkips = 0;
       dispatchId = dispatchDecision.dispatchId;
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;

@@ -2643,13 +2643,26 @@ export async function startAuto(
   // refuses to re-enter and reprints the exit instructions — restarting is no
   // longer a silent counter reset. `/gsd auto --resume-wedge <id>` is the one
   // sanctioned re-entry.
-  if (await ensureDbOpen(base)) {
-    const openWedge = getOpenWedge(normalizeRealPath(base) || base);
-    if (openWedge) {
-      ctx.ui.notify(`Auto-mode blocked — ${formatWedgeRefusalNotice(openWedge)}`, "error");
-      debugLog("startAuto", { phase: "wedge-blocked", wedgeId: openWedge.wedgeId, base });
-      return;
-    }
+  if (!(await ensureDbOpen(base))) {
+    ctx.ui.notify(
+      "Auto-mode blocked — liveness backstop unavailable: workflow database could not be opened. Run `/gsd doctor --fix` before retrying.",
+      "error",
+    );
+    return;
+  }
+  const openWedgeResult = getOpenWedge(normalizeRealPath(base) || base);
+  if (!openWedgeResult.ok) {
+    ctx.ui.notify(
+      `Auto-mode blocked — liveness backstop unavailable: ${openWedgeResult.error}. Run \`/gsd doctor --fix\` before retrying.`,
+      "error",
+    );
+    return;
+  }
+  const openWedge = openWedgeResult.wedge;
+  if (openWedge) {
+    ctx.ui.notify(`Auto-mode blocked — ${formatWedgeRefusalNotice(openWedge)}`, "error");
+    debugLog("startAuto", { phase: "wedge-blocked", wedgeId: openWedge.wedgeId, base });
+    return;
   }
 
   const freshStartAssessment = await (interruptedAssessment

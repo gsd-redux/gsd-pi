@@ -116,6 +116,30 @@ import {
   type EvidenceCrossReferenceBlockResult,
 } from "./auto-verification.js";
 
+export function resolveEvidenceRoutePresentation(
+  routed: EvidenceCrossReferenceBlockResult | null,
+  routeFailure: string | null,
+): {
+  recovery: { recoveryActionId?: string; resumeInstruction: string };
+  exitInstruction: string;
+} {
+  let resumeInstruction = "resume with /gsd auto to retry evidence recovery routing";
+  if (routed?.outcome === "abort") {
+    resumeInstruction = "resume with gsd_task_recovery_resume";
+  } else if (routed) {
+    resumeInstruction = "resume with /gsd auto to re-run the task";
+  }
+  return {
+    recovery: {
+      ...(routed ? { recoveryActionId: routed.recoveryActionId } : {}),
+      resumeInstruction,
+    },
+    exitInstruction: routed
+      ? `Recovery routed (recoveryActionId: ${routed.recoveryActionId}); ${resumeInstruction}.`
+      : `Recovery routing did not commit (${routeFailure ?? "unknown failure"}); ${resumeInstruction}.`,
+  };
+}
+
 // ─── Path Comparison Helper ───────────────────────────────────────────────
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
 function isSamePathLocal(a: string, b: string): boolean {
@@ -1890,6 +1914,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   // supported way out — instead of a pure read that replays the
                   // identical blocking pause on every resume.
                   let routed: EvidenceCrossReferenceBlockResult | null = null;
+                  let routeFailure: string | null = null;
                   try {
                     routed = routeEvidenceCrossReferenceBlock({
                       attempt,
@@ -1902,22 +1927,14 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                       },
                     });
                   } catch (routeError) {
+                    routeFailure = routeError instanceof Error ? routeError.message : String(routeError);
                     debugLog("postUnit", {
                       phase: "safety-evidence-xref-route",
-                      error: String(routeError),
+                      error: routeFailure,
                     });
                   }
-                  // Decide the operator's resume instruction once, on the routing
-                  // OUTCOME (what will actually happen next), and carry it to
-                  // both the notification and the finalize break reason.
-                  const resumeInstruction = routed
-                    ? routed.outcome === 'abort'
-                      ? 'resume with gsd_task_recovery_resume'
-                      : 'resume with /gsd auto to re-run the task'
-                    : null;
-                  s.lastSafetyBlockRecovery = routed && resumeInstruction
-                    ? { recoveryActionId: routed.recoveryActionId, resumeInstruction }
-                    : null;
+                  const routePresentation = resolveEvidenceRoutePresentation(routed, routeFailure);
+                  s.lastSafetyBlockRecovery = routePresentation.recovery;
                   // Clear the persisted evidence file on the blocked path too, so a
                   // retry cross-references fresh execution instead of replaying the
                   // same stale rows indefinitely (#1641).
@@ -1928,11 +1945,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                   }
                   const mismatchDetail =
                     `"${blockingMismatch.claimed.command.slice(0, 80)}" — ${blockingMismatch.reason}`;
-                  const exitInstruction = routed && resumeInstruction
-                    ? `Recovery routed (recoveryActionId: ${routed.recoveryActionId}); ${resumeInstruction}.`
-                    : "Recovery routing failed — see debug log; the safety block still stands.";
                   ctx.ui.notify(
-                    `Safety: task ${sTid} claimed passing verification that failed in recorded execution (${mismatchDetail}). ${exitInstruction}`,
+                    `Safety: task ${sTid} claimed passing verification that failed in recorded execution (${mismatchDetail}). ${routePresentation.exitInstruction}`,
                     "error",
                   );
                   await pauseAuto(ctx, pi);

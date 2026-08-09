@@ -193,7 +193,7 @@ export class AutoSession {
    * `safety-evidence-block` break reason so the sanctioned exit reaches the
    * journal, the dispatch ledger, and the operator.
    */
-  lastSafetyBlockRecovery: { recoveryActionId: string; resumeInstruction: string } | null = null;
+  lastSafetyBlockRecovery: { recoveryActionId?: string; resumeInstruction: string } | null = null;
   readonly verificationRetryCount = new Map<string, number>();
   readonly verificationRetryFailureHashes = new Map<string, string>();
   readonly exhaustedVerificationUnits = new Set<string>();

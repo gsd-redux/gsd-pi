@@ -55,6 +55,18 @@ function sig(guardId: string, payload: string, unitId = 'M001/S01/T01') {
   };
 }
 
+function readOpenWedge() {
+  const result = getOpenWedge(SCOPE);
+  assert.equal(result.ok, true, 'open-wedge read should succeed');
+  return result.ok ? result.wedge : null;
+}
+
+function readTargetSnapshot(unitType: string, unitId: string): string | null {
+  const result = snapshotUnitTargetRows(unitType, unitId);
+  assert.equal(result.ok, true, 'target-row snapshot should succeed');
+  return result.ok ? result.hash : null;
+}
+
 test('ADR-047: trips at 2 occurrences with identical input hash', (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
@@ -63,7 +75,7 @@ test('ADR-047: trips at 2 occurrences with identical input hash', (t) => {
   const first = recordNonAdvancingOutcome(sig('drift-guard', 'verdict: fail — drift record X'));
   assert.equal(first.tripped, false);
   assert.equal(first.count, 1);
-  assert.equal(getOpenWedge(SCOPE), null, 'no wedge before the threshold');
+  assert.equal(readOpenWedge(), null, 'no wedge before the threshold');
 
   const second = recordNonAdvancingOutcome(sig('drift-guard', 'verdict: fail — drift record X'));
   assert.equal(second.tripped, true);
@@ -75,7 +87,7 @@ test('ADR-047: trips at 2 occurrences with identical input hash', (t) => {
   assert.equal(second.wedge.occurrenceCount, 2);
   assert.equal(second.wedge.acknowledgedAt, null);
 
-  const open = getOpenWedge(SCOPE);
+  const open = readOpenWedge();
   assert.ok(open, 'wedge record persisted');
   assert.equal(open!.wedgeId, second.wedge.wedgeId);
 });
@@ -89,7 +101,7 @@ test('ADR-047: NO trip when the input hash changes — counter resets to 1', (t)
   const changed = recordNonAdvancingOutcome(sig('drift-guard', 'payload B'));
   assert.equal(changed.tripped, false, 'changed inputs mean state advanced — no trip');
   assert.equal(changed.count, 1, 'hash change resets the counter');
-  assert.equal(getOpenWedge(SCOPE), null);
+  assert.equal(readOpenWedge(), null);
 
   // The new hash then trips on ITS second identical occurrence.
   const retrip = recordNonAdvancingOutcome(sig('drift-guard', 'payload B'));
@@ -142,7 +154,7 @@ test('ADR-047: re-entry refusal until acknowledged resume; resume clears the cou
   if (!tripped.tripped) return;
 
   // Unacknowledged wedge blocks re-entry.
-  const open = getOpenWedge(SCOPE);
+  const open = readOpenWedge();
   assert.ok(open, 'entry gates read this record to refuse re-entry');
   assert.match(formatWedgeRefusalNotice(open!), /--resume-wedge/);
 
@@ -159,7 +171,7 @@ test('ADR-047: re-entry refusal until acknowledged resume; resume clears the cou
   // Explicit acknowledgment clears the wedge AND that signature's counter.
   const ack = acknowledgeWedge(SCOPE, tripped.wedge.wedgeId);
   assert.equal(ack.ok, true);
-  assert.equal(getOpenWedge(SCOPE), null, 'acknowledged wedge no longer blocks re-entry');
+  assert.equal(readOpenWedge(), null, 'acknowledged wedge no longer blocks re-entry');
 
   const fresh = recordNonAdvancingOutcome(sig('verify-gate', 'failing command exit 1'));
   assert.equal(fresh.tripped, false, 'acknowledged resume cleared the counter');
@@ -197,9 +209,9 @@ test('ADR-047: completed-no-advance — target-row hash is stable until a target
   insertSlice({ id: 'S01', milestoneId: 'M001', title: 'S', status: 'active', depends: [] });
   insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'task', status: 'pending' });
 
-  const atDispatch = snapshotUnitTargetRows('execute-task', 'M001/S01/T01');
+  const atDispatch = readTargetSnapshot('execute-task', 'M001/S01/T01');
   assert.ok(atDispatch, 'snapshot available when DB rows exist');
-  const unchanged = snapshotUnitTargetRows('execute-task', 'M001/S01/T01');
+  const unchanged = readTargetSnapshot('execute-task', 'M001/S01/T01');
   assert.equal(unchanged, atDispatch, 'zero-work completion leaves the hash identical');
 
   // Two identical completed-no-advance outcomes trip like any other signature.
@@ -214,21 +226,18 @@ test('ADR-047: completed-no-advance — target-row hash is stable until a target
   assert.equal(record().tripped, true);
 
   updateTaskStatus('M001', 'S01', 'T01', 'complete');
-  const afterAdvance = snapshotUnitTargetRows('execute-task', 'M001/S01/T01');
+  const afterAdvance = readTargetSnapshot('execute-task', 'M001/S01/T01');
   assert.notEqual(afterAdvance, atDispatch, 'a moved target row changes the hash');
 });
 
-test('ADR-047 gap-2: occurrence counting is keyed by input hash — differing guard labels cannot split the counter', (t) => {
+test('ADR-047: stable guard identity isolates identical payloads from different guards', (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, '.gsd', 'gsd.db'));
 
-  // Same unit, byte-identical payload, but a display label that embeds
-  // variable data (a per-occurrence path). Under a guard-keyed counter these
-  // would mint fresh rows forever and never reach the threshold.
   const first = recordNonAdvancingOutcome({
     scopeId: SCOPE,
-    guardId: 'blocked-at-tmp-run-0001',
+    guardId: 'source-integrity-guard',
     unitType: 'execute-task',
     unitId: 'M001/S01/T01',
     inputPayload: 'identical guard reading',
@@ -236,27 +245,56 @@ test('ADR-047 gap-2: occurrence counting is keyed by input hash — differing gu
   assert.equal(first.tripped, false);
   const second = recordNonAdvancingOutcome({
     scopeId: SCOPE,
-    guardId: 'blocked-at-tmp-run-0002',
+    guardId: 'tool-contract-guard',
     unitType: 'execute-task',
     unitId: 'M001/S01/T01',
     inputPayload: 'identical guard reading',
   });
-  assert.equal(second.tripped, true, 'identical payloads must trip regardless of guard label');
-  assert.equal(second.count, 2);
-  if (!second.tripped) return;
-  assert.equal(second.wedge.guardId, 'blocked-at-tmp-run-0002', 'guard id is display-only metadata');
+  assert.equal(second.tripped, false, 'different stable guards must own separate counters');
+  assert.equal(second.count, 1);
+});
 
-  // Acknowledgment clears the hash-keyed counter row.
-  assert.equal(acknowledgeWedge(SCOPE, second.wedge.wedgeId).ok, true);
-  const fresh = recordNonAdvancingOutcome({
-    scopeId: SCOPE,
-    guardId: 'blocked-at-tmp-run-0003',
-    unitType: 'execute-task',
-    unitId: 'M001/S01/T01',
-    inputPayload: 'identical guard reading',
-  });
-  assert.equal(fresh.tripped, false);
-  assert.equal(fresh.count, 1);
+test('ADR-047: changing a guard input clears its superseded hash rows', (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  assert.equal(recordNonAdvancingOutcome(sig('drift-guard', 'payload A')).tripped, false);
+  assert.equal(recordNonAdvancingOutcome(sig('drift-guard', 'payload B')).tripped, false);
+  const returnedToA = recordNonAdvancingOutcome(sig('drift-guard', 'payload A'));
+
+  assert.equal(returnedToA.tripped, false, 'A→B→A must not increment the stale A row');
+  assert.equal(returnedToA.count, 1);
+});
+
+test('ADR-047: unavailable storage is an explicit failure and never a not-tripped success', (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+  closeDatabase();
+
+  const recorded = recordNonAdvancingOutcome(sig('drift-guard', 'payload'));
+  assert.ok('error' in recorded, 'ledger write failure must be explicit');
+
+  const wedge = getOpenWedge(SCOPE);
+  assert.equal(wedge.ok, false, 'open-wedge read failure must be explicit');
+
+  const snapshot = snapshotUnitTargetRows('execute-task', 'M001/S01/T01');
+  assert.equal(snapshot.ok, false, 'snapshot failure must be explicit');
+});
+
+test('ADR-047: default sanctioned exit preserves the complete payload', (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+  const payload = `${'x'.repeat(1200)} state-mutating exit: /gsd doctor --fix`;
+
+  recordNonAdvancingOutcome(sig('long-payload-guard', payload));
+  const tripped = recordNonAdvancingOutcome(sig('long-payload-guard', payload));
+
+  assert.equal(tripped.tripped, true);
+  if (!tripped.tripped) return;
+  assert.equal(tripped.wedge.sanctionedExit, payload);
 });
 
 test('guardIdFromReason and hashBackstopInput are deterministic and payload-faithful', () => {

@@ -146,7 +146,6 @@ export async function checkGsdStateHealth(
   for (const milestone of milestoneEntries) {
     const milestoneId = milestone.id;
     const milestonePath = resolveMilestonePath(basePath, milestoneId);
-    if (!milestonePath) continue;
 
     // Validate milestone title for delimiter characters that break state documents.
     const milestoneTitleIssue = validateTitle(milestone.title);
@@ -212,6 +211,7 @@ export async function checkGsdStateHealth(
       });
       continue;
     }
+    if (!milestonePath) continue;
 
     // Slices come from the DB (ADR-017): the roadmap projection is display only.
     type NormSlice = RoadmapSliceEntry & { pending?: boolean; skipped?: boolean };

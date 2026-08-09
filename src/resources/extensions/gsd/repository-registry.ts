@@ -3,8 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
-import { normalizePlannedFileReference } from "./files.js";
-import { shouldValidatePlanningPathReference } from "./pre-execution-checks.js";
+import { extractPlanningPathReference } from "./pre-execution-checks.js";
 import type { GSDPreferences, WorkspacePreferences, WorkspaceRepositoryPreference } from "./preferences-types.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { resolveGsdPathContract } from "./paths.js";
@@ -59,10 +58,11 @@ export function deriveRepositoryTargetsFromPlannedPaths(
 
   const targets: string[] = [];
   for (const raw of plannedReferences) {
-    if (!shouldValidatePlanningPathReference(raw)) continue;
-    const trimmed = normalizePlannedFileReference(raw);
-    if (!trimmed) continue;
-    const absolute = isAbsolute(trimmed) ? resolve(trimmed) : resolve(registry.projectRoot, trimmed);
+    const plannedPath = extractPlanningPathReference(raw);
+    if (!plannedPath) continue;
+    const absolute = isAbsolute(plannedPath)
+      ? resolve(plannedPath)
+      : resolve(registry.projectRoot, plannedPath);
     let matched: RegisteredRepository | undefined;
     for (const child of children) {
       const rel = relative(child.root, absolute);

@@ -220,9 +220,7 @@ test("#1634: doctor re-renders a missing ROADMAP from the DB when fixing, and re
 
   openDatabase(join(base, ".gsd", "gsd.db"));
   seedPlannedMilestone();
-  // Doctor only audits milestones whose dir exists on disk (field case #1634:
-  // the dirs existed but ROADMAP.md was never rendered).
-  mkdirSync(join(base, ".gsd", "phases", "01-test"), { recursive: true });
+  // Worktree teardown removed the projection directory as well as ROADMAP.md.
 
   // Report-only run: the issue is now fixable and names the repair.
   const issues: DoctorIssue[] = [];

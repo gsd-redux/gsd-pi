@@ -3,10 +3,11 @@
 // owns the block-signature and wedge-record write SQL so the backstop logic in
 // auto-liveness-backstop.ts stays a read/orchestration module.
 
-import { getDb } from "../engine.js";
+import { getDb, transaction } from "../engine.js";
 
 export interface LivenessSignatureKey {
   scopeId: string;
+  guardId: string;
   unitType: string;
   unitId: string;
   inputHash: string;
@@ -18,36 +19,37 @@ export interface LivenessSignatureKey {
  */
 export function upsertLivenessBlockSignature(
   key: LivenessSignatureKey,
-  guardId: string,
   now: string,
 ): number {
-  const db = getDb();
-  db.prepare(
-    `INSERT INTO liveness_block_signatures
-       (scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count, first_seen_at, last_seen_at)
-     VALUES (:scope, :guard, :utype, :uid, :hash, 1, :now, :now)
-     ON CONFLICT(scope_id, unit_type, unit_id, input_hash) DO UPDATE SET
-       occurrence_count = occurrence_count + 1,
-       guard_id = :guard,
-       last_seen_at = :now`,
-  ).run({
-    ':scope': key.scopeId,
-    ':guard': guardId,
-    ':utype': key.unitType,
-    ':uid': key.unitId,
-    ':hash': key.inputHash,
-    ':now': now,
+  return transaction(() => {
+    const db = getDb();
+    const signatureParams = {
+      ':scope': key.scopeId,
+      ':guard': key.guardId,
+      ':utype': key.unitType,
+      ':uid': key.unitId,
+      ':hash': key.inputHash,
+    };
+    db.prepare(
+      `DELETE FROM liveness_block_signatures
+       WHERE scope_id = :scope AND guard_id = :guard
+         AND unit_type = :utype AND unit_id = :uid AND input_hash <> :hash`,
+    ).run(signatureParams);
+    db.prepare(
+      `INSERT INTO liveness_block_signatures
+         (scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count, first_seen_at, last_seen_at)
+       VALUES (:scope, :guard, :utype, :uid, :hash, 1, :now, :now)
+       ON CONFLICT(scope_id, guard_id, unit_type, unit_id, input_hash) DO UPDATE SET
+         occurrence_count = occurrence_count + 1,
+         last_seen_at = :now`,
+    ).run({ ...signatureParams, ':now': now });
+    const counted = db.prepare(
+      `SELECT occurrence_count FROM liveness_block_signatures
+       WHERE scope_id = :scope AND guard_id = :guard
+         AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
+    ).get(signatureParams) as { occurrence_count: number } | undefined;
+    return counted?.occurrence_count ?? 1;
   });
-  const counted = db.prepare(
-    `SELECT occurrence_count FROM liveness_block_signatures
-     WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
-  ).get({
-    ':scope': key.scopeId,
-    ':utype': key.unitType,
-    ':uid': key.unitId,
-    ':hash': key.inputHash,
-  }) as { occurrence_count: number } | undefined;
-  return counted?.occurrence_count ?? 1;
 }
 
 export interface LivenessWedgeInsert {
@@ -99,9 +101,11 @@ export function acknowledgeLivenessWedgeRecord(
   ).run({ ':now': now, ':wid': wedgeId });
   db.prepare(
     `DELETE FROM liveness_block_signatures
-     WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
+     WHERE scope_id = :scope AND guard_id = :guard
+       AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
   ).run({
     ':scope': signature.scopeId,
+    ':guard': signature.guardId,
     ':utype': signature.unitType,
     ':uid': signature.unitId,
     ':hash': signature.inputHash,

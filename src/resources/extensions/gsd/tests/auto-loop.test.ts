@@ -1,7 +1,7 @@
 // Project/App: gsd-pi
 // File Purpose: Auto-loop execution, dispatch, recovery, and cancellation regression tests.
 
-import test, { mock } from "node:test";
+import test, { mock, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -1608,6 +1608,15 @@ function makeLoopSession(overrides?: Partial<Record<string, unknown>>) {
   } as any;
 }
 
+function openLoopDatabase(t: TestContext, s: ReturnType<typeof makeLoopSession>): void {
+  mkdirSync(join(s.basePath, ".gsd"), { recursive: true });
+  openDatabase(join(s.basePath, ".gsd", "gsd.db"));
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(s.basePath, { recursive: true, force: true });
+  });
+}
+
 /** Create a temp project root suitable for loop-mechanics tests. */
 function makeLoopTestBase(prefix: string): string {
   const base = mkdtempSync(join(tmpdir(), prefix));
@@ -2661,7 +2670,7 @@ test("autoLoop refreshes its milestone lease while an execute-task call is pendi
   }
 });
 
-test("autoLoop stops before success notification when postflight stash restore needs recovery", async () => {
+test("autoLoop stops before success notification when postflight stash restore needs recovery", async (t) => {
   _resetPendingResolve();
 
   const notifications: Array<{ msg: string; level: string }> = [];
@@ -2672,6 +2681,7 @@ test("autoLoop stops before success notification when postflight stash restore n
   };
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
   let stopReason = "";
 
   const deps = makeMockDeps({
@@ -2728,7 +2738,7 @@ test("autoLoop stops before success notification when postflight stash restore n
   );
 });
 
-test("autoLoop marks transition merge complete before postflight recovery stop", async () => {
+test("autoLoop marks transition merge complete before postflight recovery stop", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2736,6 +2746,7 @@ test("autoLoop marks transition merge complete before postflight recovery stop",
   ctx.ui.notify = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
   let mergeCalls = 0;
   let stopReason = "";
 
@@ -3291,7 +3302,7 @@ test("autoLoop pauses once when orchestration reports reconciliation drift error
   assert.equal(s.pendingOrchestrationDispatch, null, "no orchestration dispatch should remain pending");
 });
 
-test("autoLoop retries next iteration when orchestration reports paused", async () => {
+test("autoLoop retries next iteration when orchestration reports paused", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -3316,6 +3327,7 @@ test("autoLoop retries next iteration when orchestration reports paused", async 
       getStatus: () => ({ phase: "running" as const, transitionCount: advanceCalls }),
     },
   });
+  openLoopDatabase(t, s);
 
   const journalEvents: Array<{ eventType: string; data?: any }> = [];
   const deps = makeMockDeps({
@@ -3818,13 +3830,14 @@ test("autoLoop journals iteration-end when unit phase breaks after cancelled uni
   });
 });
 
-test("autoLoop journals iteration-end when dispatch skips the current unit", async () => {
+test("autoLoop journals iteration-end when dispatch skips the current unit", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
   const journalEvents: Array<{ eventType: string; data?: any }> = [];
 
   const deps = makeMockDeps({
@@ -4355,6 +4368,7 @@ test("autoLoop handles dispatch skip action by continuing", async (t) => {
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
+  openLoopDatabase(t, s);
   const journalEvents: Array<{ eventType: string; data?: any }> = [];
 
   let dispatchCallCount = 0;
@@ -4406,13 +4420,19 @@ test("autoLoop handles dispatch skip action by continuing", async (t) => {
   );
 });
 
-test("autoLoop pauses after repeated orchestration skips", async () => {
+test("ADR-047: repeated orchestration skips trip the persisted backstop at the loop boundary", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
+  mkdirSync(join(s.basePath, ".gsd"), { recursive: true });
+  openDatabase(join(s.basePath, ".gsd", "gsd.db"));
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(s.basePath, { recursive: true, force: true });
+  });
 
   const deps = makeMockDeps({
     resolveDispatch: async () => {
@@ -4424,9 +4444,38 @@ test("autoLoop pauses after repeated orchestration skips", async () => {
   await autoLoop(ctx, pi, s, deps);
 
   const dispatchCalls = deps.callLog.filter((c) => c === "resolveDispatch");
-  assert.equal(dispatchCalls.length, 3, "persistent orchestration skips should pause before the runaway cap");
-  assert.equal(deps.callLog.includes("pauseAuto"), true, "persistent orchestration skips should pause auto-mode");
-  assert.equal(deps.callLog.includes("stopAuto"), false, "persistent orchestration skips should not hit the max-iteration stop");
+  assert.equal(dispatchCalls.length, 2, "the second identical skip must trip the backstop");
+  assert.equal(deps.callLog.includes("pauseAuto"), false);
+  assert.equal(deps.callLog.includes("stopAuto"), true, "a tripped skip must stop through the blocked path");
+  const wedgeResult = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(wedgeResult.ok, true);
+  assert.ok(wedgeResult.ok && wedgeResult.wedge, "the skip wedge must be persisted");
+});
+
+test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  mkdirSync(join(s.basePath, ".gsd"), { recursive: true });
+  openDatabase(join(s.basePath, ".gsd", "gsd.db"));
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(s.basePath, { recursive: true, force: true });
+  });
+  const deps = makeMockDeps({
+    runPreDispatchHooks: () => ({ firedHooks: ["skip-execute"], action: "skip" }),
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(deps.callLog.includes("stopAuto"), true);
+  const wedgeResult = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(wedgeResult.ok, true);
+  assert.ok(wedgeResult.ok && wedgeResult.wedge, "the pre-dispatch hook skip wedge must be persisted");
+  if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "dispatch-skip");
 });
 
 test("autoLoop does not pause on repeated idempotent advance skips", async () => {
@@ -4462,7 +4511,7 @@ test("autoLoop does not pause on repeated idempotent advance skips", async () =>
   assert.equal(deps.callLog.includes("stopAuto"), false, "idempotent advance skips must not reach the max-iteration stop");
 });
 
-test("ADR-047 #1655: never-healing identical transient pauses exhaust the error budget, stop blocked, and feed the backstop ledger", async () => {
+test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundary", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -4484,9 +4533,6 @@ test("ADR-047 #1655: never-healing identical transient pauses exhaust the error 
     return session;
   };
 
-  // Session 1: identical transient pauses must exhaust the EXISTING
-  // consecutive-error budget and stop through the blocked path — previously
-  // this branch neither counted nor recorded, so the loop spun forever.
   const s1 = makePausedSession();
   mkdirSync(join(s1.basePath, ".gsd"), { recursive: true });
   const dbPath = join(s1.basePath, ".gsd", "gsd.db");
@@ -4503,77 +4549,16 @@ test("ADR-047 #1655: never-healing identical transient pauses exhaust the error 
   try {
     await autoLoop(ctx, pi, s1, deps1);
 
-    assert.equal(deps1.callLog.includes("stopAuto"), true, "budget exhaustion must stop, not loop forever");
+    assert.equal(deps1.callLog.includes("stopAuto"), true, "the second pause must stop, not loop forever");
     assert.match(stopReason, /^Blocked: /, "the stop must carry the blocked marker (exit 10 in headless)");
-    assert.equal(getOpenWedge(realpathSync(s1.basePath)), null, "first exhaustion records but does not trip");
-
-    // Session 2 over the same DB: the recorded exhaustion signature survives
-    // the restart, so an identical second exhaustion trips the wedge.
-    const s2 = makePausedSession();
-    s2.basePath = s1.basePath;
-    const deps2 = makeMockDeps({
-      stopAuto: async () => {
-        deps2.callLog.push("stopAuto");
-        s2.active = false;
-      },
-    });
-    await autoLoop(ctx, pi, s2, deps2);
-
-    const wedge = getOpenWedge(realpathSync(s1.basePath));
-    assert.ok(wedge, "second identical exhaustion must trip the liveness backstop");
-    assert.equal(wedge!.guardId, "transient-retry-exhausted");
+    const wedgeResult = getOpenWedge(realpathSync(s1.basePath));
+    assert.equal(wedgeResult.ok, true);
+    assert.ok(wedgeResult.ok && wedgeResult.wedge, "second identical pause must persist a wedge");
+    if (wedgeResult.ok && wedgeResult.wedge) assert.equal(wedgeResult.wedge.guardId, "transient");
   } finally {
     try { closeDatabase(); } catch { /* noop */ }
     rmSync(s1.basePath, { recursive: true, force: true });
   }
-});
-
-test("autoLoop skip streak survives sidecar iteration without resetting", async () => {
-  _resetPendingResolve();
-
-  const ctx = makeMockCtx();
-  ctx.ui.setStatus = () => {};
-  const pi = makeMockPi();
-  let advanceCalls = 0;
-  const s = makeLoopSession({ currentMilestoneId: "M001" });
-  s.orchestration = {
-    start: async () => ({ kind: "stopped" as const, reason: "unused" }),
-    advance: async () => {
-      advanceCalls++;
-      if (advanceCalls === 2) {
-        // Inject a sidecar so the *next* iteration takes the sidecar path rather than
-        // calling orchestration.advance() — which must NOT reset the skip streak.
-        s.sidecarQueue.push({
-          kind: "hook" as const,
-          unitType: "run-uat",
-          unitId: "M001/S01/T01/review",
-          prompt: "review",
-        });
-      }
-      return { kind: "skipped" as const, reason: "gate-marker-drift" };
-    },
-    completeActiveUnit: async () => {},
-    retryActiveUnit: async () => {},
-    resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
-    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
-    getStatus: () => ({ phase: "running" as const, transitionCount: advanceCalls }),
-  } satisfies AutoOrchestrationModule;
-
-  const deps = makeMockDeps();
-  const loopPromise = autoLoop(ctx, pi, s, deps);
-
-  // Wait for the sidecar unit to call newSession (pi.calls grows)
-  await waitForMicrotasks(() => pi.calls.length >= 1, "sidecar unit to start");
-  resolveAgentEnd(makeEvent()); // resolve the sidecar unit
-
-  await loopPromise;
-
-  // Skip 1 (call 1) + sidecar iteration (no advance) + skip 3 (call 3, matches key) → pause.
-  // The old reset at the dispatch boundary would have zeroed the counter during the sidecar,
-  // requiring 3 more skips (calls 3,4,5) before pausing. With the fix, 3 total → call 3.
-  assert.equal(advanceCalls, 3, "skip streak must survive the sidecar iteration: pause on the 3rd total skip");
-  assert.ok(deps.callLog.includes("pauseAuto"), "persistent skips must still pause after an interleaved sidecar");
-  assert.equal(deps.callLog.includes("stopAuto"), false, "must not hit the max-iteration stop");
 });
 
 test("autoLoop drains sidecar queue after postUnitPostVerification enqueues items", async (t) => {

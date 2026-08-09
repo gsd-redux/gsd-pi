@@ -7,10 +7,8 @@ import type { DbAdapter } from './db-adapter.js';
 /**
  * ADR-047: the backstop's ledger must survive process restarts — a restart
  * was previously a silent counter reset (#1622, #1626 looped for hours).
- * Occurrence counting is keyed by (scope, unit type, target identity, input
- * hash): the hash already encodes everything the guard read (ADR §3), so a
- * reason whose display label embeds variable data cannot split the counter.
- * guard_id is display-only metadata carried for the wedge notice.
+ * Occurrence counting is keyed by stable guard identity, target identity, and
+ * the hash of what that guard read (ADR §3).
  */
 export function createLivenessBackstopSchema(db: DbAdapter): void {
   db.exec(`
@@ -23,7 +21,7 @@ export function createLivenessBackstopSchema(db: DbAdapter): void {
       occurrence_count INTEGER NOT NULL DEFAULT 1,
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
-      PRIMARY KEY (scope_id, unit_type, unit_id, input_hash)
+      PRIMARY KEY (scope_id, guard_id, unit_type, unit_id, input_hash)
     );
 
     CREATE TABLE IF NOT EXISTS liveness_wedge_records (

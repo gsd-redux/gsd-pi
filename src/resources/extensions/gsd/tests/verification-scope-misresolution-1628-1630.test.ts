@@ -256,6 +256,11 @@ describe("repository target derivation (issue #1630)", () => {
       deriveRepositoryTargetsFromPlannedPaths(registry, ["infra/main.hcl", join(base, "backend", "src", "server.ts")]),
       ["project", "backend"],
     );
+    assert.deepEqual(
+      deriveRepositoryTargetsFromPlannedPaths(registry, ["Update `frontend/src/app.ts` for the feature"]),
+      ["frontend"],
+      "prose-annotated planned paths must use the shared path extractor",
+    );
   });
 
   test("derivation abstains outside parent mode or without usable paths", () => {

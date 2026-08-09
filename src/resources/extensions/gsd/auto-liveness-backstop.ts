@@ -14,7 +14,6 @@ import {
 } from './gsd-db.js';
 import { getLatestForUnit } from './db/unit-dispatches.js';
 import { parseUnitId } from './unit-id.js';
-import { debugLog } from './debug-logger.js';
 
 /**
  * ADR-047 trip rule: a block signature may not recur with unchanged inputs.
@@ -29,12 +28,7 @@ export const COMPLETED_NO_ADVANCE_GUARD_ID = 'completed-no-advance';
 export interface BlockSignatureInput {
   /** Stable project scope (realpath of the project root). */
   scopeId: string;
-  /**
-   * Display-only guard/gate label carried into the wedge notice. Occurrence
-   * counting is keyed by (scope, unit type, unit id, input hash) alone — the
-   * hash already encodes everything the guard read (ADR-047 §3), so a label
-   * that embeds variable data cannot split the counter.
-   */
+  /** Stable guard/gate identity included in the persisted signature. */
   guardId: string;
   unitType: string;
   /** Target identity: milestone/slice/task compound id or 'orchestration'. */
@@ -59,7 +53,16 @@ export interface WedgeRecord {
 
 export type RecordOutcomeResult =
   | { tripped: false; count: number }
-  | { tripped: true; count: number; wedge: WedgeRecord };
+  | { tripped: true; count: number; wedge: WedgeRecord }
+  | { tripped: false; count: 0; error: string };
+
+export type OpenWedgeResult =
+  | { ok: true; wedge: WedgeRecord | null }
+  | { ok: false; error: string };
+
+export type UnitTargetSnapshotResult =
+  | { ok: true; hash: string | null }
+  | { ok: false; error: string };
 
 /** Stable content hash of the inputs the guard actually read. */
 export function hashBackstopInput(payload: string): string {
@@ -67,9 +70,8 @@ export function hashBackstopInput(payload: string): string {
 }
 
 /**
- * Derive a display label for a guard from its reason text (the leading clause,
- * slugged). DISPLAY-ONLY: occurrence counting is keyed by the input hash, so a
- * label that embeds variable data cannot split the counter. Not reusing
+ * Derive a stable guard identity from its reason text (the leading clause,
+ * slugged). Not reusing
  * commands-gsd-core.ts slugify — that module eagerly imports the command/host
  * layer, which this leaf DB module must not pull in.
  */
@@ -106,11 +108,9 @@ function rowToWedge(row: Record<string, unknown>): WedgeRecord {
 /**
  * Record a non-advancing dispatch outcome in the DB-persisted ledger.
  *
- * Interleaving-blind by construction: each (scope, unit type, unit id, input
- * hash) has its own counter row, so other dispatches — same unit or not —
- * between occurrences change nothing. A changed hash simply lands on a fresh
- * row (state genuinely advanced); counters clear on acknowledged resume
- * (ADR-047 §3).
+ * Interleaving-blind by construction: each stable guard and target owns its
+ * current input-hash row. Changing that guard's hash clears the superseded row;
+ * unrelated guards and targets do not disturb each other (ADR-047 §3).
  *
  * On trip, persists a wedge record carrying the sanctioned exit text. The
  * backstop never mutates workflow state (ADR-047 §2) — surfacing and the
@@ -120,15 +120,22 @@ export function recordNonAdvancingOutcome(
   input: BlockSignatureInput,
   options?: { sanctionedExit?: string; forensicsPath?: string | null },
 ): RecordOutcomeResult {
-  if (!isDbAvailable()) return { tripped: false, count: 0 };
+  if (!isDbAvailable()) {
+    return { tripped: false, count: 0, error: 'workflow database unavailable' };
+  }
   const inputHash = hashBackstopInput(input.inputPayload);
   try {
     return transaction(() => {
       const db = _getAdapter()!;
       const now = nowIso();
       const count = upsertLivenessBlockSignature(
-        { scopeId: input.scopeId, unitType: input.unitType, unitId: input.unitId, inputHash },
-        input.guardId,
+        {
+          scopeId: input.scopeId,
+          guardId: input.guardId,
+          unitType: input.unitType,
+          unitId: input.unitId,
+          inputHash,
+        },
         now,
       );
 
@@ -138,11 +145,13 @@ export function recordNonAdvancingOutcome(
       // duplicate — the resume contract keys acknowledgment off one id.
       const open = db.prepare(
         `SELECT * FROM liveness_wedge_records
-         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid
+         WHERE scope_id = :scope AND guard_id = :guard
+           AND unit_type = :utype AND unit_id = :uid
            AND input_hash = :hash AND acknowledged_at IS NULL
          ORDER BY created_at DESC LIMIT 1`,
       ).get({
         ':scope': input.scopeId,
+        ':guard': input.guardId,
         ':utype': input.unitType,
         ':uid': input.unitId,
         ':hash': inputHash,
@@ -157,7 +166,7 @@ export function recordNonAdvancingOutcome(
         unitId: input.unitId,
         inputHash,
         occurrenceCount: count,
-        sanctionedExit: options?.sanctionedExit ?? input.inputPayload.slice(0, 1000),
+        sanctionedExit: options?.sanctionedExit ?? input.inputPayload,
         forensicsPath: options?.forensicsPath ?? null,
         createdAt: now,
         acknowledgedAt: null,
@@ -166,32 +175,26 @@ export function recordNonAdvancingOutcome(
       return { tripped: true, count, wedge };
     });
   } catch (err) {
-    // The backstop must never take the loop down with it — degrade to
-    // not-tripped and leave a diagnostic trail.
-    debugLog('livenessBackstop', {
-      phase: 'record-failed',
+    return {
+      tripped: false,
+      count: 0,
       error: err instanceof Error ? err.message : String(err),
-    });
-    return { tripped: false, count: 0 };
+    };
   }
 }
 
 /** Oldest unacknowledged wedge record for the project scope, if any. */
-export function getOpenWedge(scopeId: string): WedgeRecord | null {
-  if (!isDbAvailable()) return null;
+export function getOpenWedge(scopeId: string): OpenWedgeResult {
+  if (!isDbAvailable()) return { ok: false, error: 'workflow database unavailable' };
   try {
     const row = _getAdapter()!.prepare(
       `SELECT * FROM liveness_wedge_records
        WHERE scope_id = :scope AND acknowledged_at IS NULL
        ORDER BY created_at ASC LIMIT 1`,
     ).get({ ':scope': scopeId }) as Record<string, unknown> | undefined;
-    return row ? rowToWedge(row) : null;
+    return { ok: true, wedge: row ? rowToWedge(row) : null };
   } catch (err) {
-    debugLog('livenessBackstop', {
-      phase: 'get-open-wedge-failed',
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -218,7 +221,13 @@ export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeR
       const now = nowIso();
       acknowledgeLivenessWedgeRecord(
         wedgeId,
-        { scopeId: wedge.scopeId, unitType: wedge.unitType, unitId: wedge.unitId, inputHash: wedge.inputHash },
+        {
+          scopeId: wedge.scopeId,
+          guardId: wedge.guardId,
+          unitType: wedge.unitType,
+          unitId: wedge.unitId,
+          inputHash: wedge.inputHash,
+        },
         now,
       );
       return { ok: true, wedge: { ...wedge, acknowledgedAt: now } };
@@ -235,12 +244,12 @@ export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeR
  * (ADR-047 §4 — the #1626 zero-work re-dispatch class). Timestamp columns are
  * excluded so bookkeeping touches don't mask a semantic no-advance.
  */
-export function snapshotUnitTargetRows(unitType: string, unitId: string): string | null {
-  if (!isDbAvailable()) return null;
+export function snapshotUnitTargetRows(unitType: string, unitId: string): UnitTargetSnapshotResult {
+  if (!isDbAvailable()) return { ok: false, error: 'workflow database unavailable' };
   try {
     const db = _getAdapter()!;
     const { milestone, slice, task } = parseUnitId(unitId);
-    if (!milestone) return null;
+    if (!milestone) return { ok: true, hash: null };
     const rows: unknown[] = [];
     const strip = (r: Record<string, unknown>): Record<string, unknown> => {
       const { created_at: _c, updated_at: _u, ...rest } = r;
@@ -261,15 +270,9 @@ export function snapshotUnitTargetRows(unitType: string, unitId: string): string
     } else {
       collect('SELECT * FROM slices WHERE milestone_id = :m ORDER BY id', { ':m': milestone });
     }
-    return hashBackstopInput(`${unitType}\n${JSON.stringify(rows)}`);
+    return { ok: true, hash: hashBackstopInput(`${unitType}\n${JSON.stringify(rows)}`) };
   } catch (err) {
-    debugLog('livenessBackstop', {
-      phase: 'snapshot-failed',
-      unitType,
-      unitId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return null;
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

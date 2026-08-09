@@ -681,13 +681,7 @@ test("completeActiveUnit clears in-flight idempotency and stops stale same-unit 
   assert.ok(f.journalNames().includes("unit-finalized"));
 });
 
-test("#442: finalized-repeat recovers (skipped) when the unit's artifact already exists on disk", async (t) => {
-  // plan-milestone's expected artifact is the ROADMAP, which the fixture
-  // already writes — so verifyExpectedArtifact returns true. This is the legacy
-  // stuck-recovery scenario (unit completed on disk, DB row stale): instead of
-  // the finalized-repeat HARD-STOP, #442 verify-and-recover should refresh +
-  // skip so the loop can progress. plan-milestone is deliberately NOT one of
-  // the DB-refreshing unit types, so the recovery stays side-effect-light.
+test("ADR-047: finalized-repeat guard does not run legacy graduated recovery", async (t) => {
   const f = makeFixture({
     dispatch: () => ({ action: "dispatch", unitType: "plan-milestone", unitId: "M001", prompt: "p" }),
   });
@@ -700,10 +694,23 @@ test("#442: finalized-repeat recovers (skipped) when the unit's artifact already
   await f.orchestrator.completeActiveUnit(first.unit);
 
   const second = await f.orchestrator.advance();
-  assert.equal(second.kind, "skipped", "should recover via artifact verification, not hard-stop");
-  if (second.kind !== "skipped") throw new Error("expected skipped recovery");
-  assert.match(second.reason, /stuck-recovery/);
-  assert.ok(f.journalNames().includes("advance-skipped"));
+  assert.equal(second.kind, "blocked");
+  if (second.kind !== "blocked") throw new Error("expected finalized-repeat guard block");
+  assert.equal(second.reason, "state did not advance after finalized plan-milestone M001");
+  assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
+test("ADR-047: unavailable liveness storage fails the advance boundary closed", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  closeDatabase();
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") throw new Error(`expected blocked, got ${result.kind}`);
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /liveness backstop unavailable/i);
 });
 
 test("completeActiveUnit allows a different next unit to advance", async (t) => {
