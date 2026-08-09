@@ -176,8 +176,8 @@ test("blocking evidence-xref settles and routes the Attempt with a surfaced reco
       skipWorktreeSync: true,
     });
 
-    // The blocking branch returns the dedicated safety-block signal and pauses.
-    assert.equal(result, "safety-block");
+    // The blocking branch returns the dedicated evidence-xref-blocked signal and pauses.
+    assert.equal(result, "evidence-xref-blocked");
     assert.equal(pauseCalled, true);
 
     // The withheld verdict is durably recorded and the Attempt is routed out of
@@ -216,7 +216,7 @@ test("blocking evidence-xref settles and routes the Attempt with a surfaced reco
     // The offending mismatch is surfaced (claimed vs recorded exit code).
     assert.match(blockingNotification, /Claimed exitCode=0 but actual exitCode=1/);
 
-    // Finalize maps "safety-block" to a break reason that is NOT
+    // Finalize maps "evidence-xref-blocked" to a break reason that is NOT
     // complete-and-break, so the loop stops before the verified-task
     // publication boundary — the "Verified Task publication requires a passing
     // host Technical Verdict" throw is unreachable on this path.

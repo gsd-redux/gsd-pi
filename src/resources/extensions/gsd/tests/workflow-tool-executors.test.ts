@@ -17,7 +17,7 @@ import {
   upsertRequirement,
   getAllMilestones,
 } from "../gsd-db.ts";
-import { registerAutoWorker } from "../db/auto-workers.ts";
+import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease, getMilestoneLease } from "../db/milestone-leases.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
 import { autoSession } from "../auto-runtime-state.ts";
@@ -1225,12 +1225,14 @@ test("executePlanMilestone proceeds without re-claiming when in-process auto hol
   }
 });
 
-test("executePlanMilestone refuses a same-process holder when active auto does not own it", async () => {
+test("executePlanMilestone reclaims a same-process holder after active auto resumes in a milestone worktree", async () => {
   const base = makeTmpBase();
   autoSession.reset();
   try {
     openTestDb(base);
     seedMilestone("M080", "Same-process holder");
+    const worktree = join(base, ".gsd-worktrees", "M080");
+    mkdirSync(worktree, { recursive: true });
     const staleWorker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
     const heldLease = claimMilestoneLease(staleWorker, "M080");
     assert.equal(heldLease.ok, true);
@@ -1239,15 +1241,51 @@ test("executePlanMilestone refuses a same-process holder when active auto does n
     autoSession.active = true;
     autoSession.workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
 
-    const result = await inProjectDir(base, () => executePlanMilestone(validMilestonePlan("M080"), base));
+    const result = await inProjectDir(worktree, () => executePlanMilestone(validMilestonePlan("M080"), worktree));
+
+    assert.equal(result.isError, undefined,
+      `same-process auto resume must not conflict with its prior worker ID: ${result.content?.[0]?.text}`);
+    const surviving = getMilestoneLease("M080");
+    assert.ok(surviving, "reclaimed lease must remain held by active auto");
+    assert.equal(surviving.worker_id, autoSession.workerId);
+    assert.ok(surviving.fencing_token > heldToken,
+      "same-process resume must bump the fencing token when reclaiming the lease");
+    assert.equal(surviving.status, "held");
+    assert.equal(autoSession.milestoneLeaseToken, surviving.fencing_token);
+    assert.equal(getAutoWorker(staleWorker)?.status, "stopping");
+  } finally {
+    autoSession.reset();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executePlanMilestone refuses a same-process holder when active auto has no worker row", async () => {
+  const base = makeTmpBase();
+  autoSession.reset();
+  try {
+    openTestDb(base);
+    seedMilestone("M081", "Detached auto worker");
+    const holderWorker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
+    const heldLease = claimMilestoneLease(holderWorker, "M081");
+    assert.equal(heldLease.ok, true);
+    const heldToken = heldLease.ok ? heldLease.token : -1;
+
+    // A setup-race pause detaches the worker from the session while auto stays
+    // active; there is nothing to reclaim with, so planning must fail closed.
+    autoSession.active = true;
+    autoSession.workerId = null;
+
+    const result = await inProjectDir(base, () => executePlanMilestone(validMilestonePlan("M081"), base));
 
     assert.equal(result.isError, true);
     assert.equal(result.details?.error, "milestone_lease_conflict");
-    const surviving = getMilestoneLease("M080");
-    assert.ok(surviving, "same-process holder lease must remain after conflict");
-    assert.equal(surviving.worker_id, staleWorker);
+    const surviving = getMilestoneLease("M081");
+    assert.ok(surviving, "holder lease must survive the refused plan call");
+    assert.equal(surviving.worker_id, holderWorker);
     assert.equal(surviving.fencing_token, heldToken);
     assert.equal(surviving.status, "held");
+    assert.equal(getAutoWorker(holderWorker)?.status, "active");
   } finally {
     autoSession.reset();
     closeDatabase();

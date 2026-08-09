@@ -217,6 +217,7 @@ const DOCTOR_FIX_HINTS: Partial<Record<DoctorIssueCode, string>> = {
   db_unavailable:
     "The workflow database could not be opened — state derivation is degraded. Restart the session; if it persists, run `/gsd doctor` from the project root.",
   stale_crash_lock: "Run `/gsd doctor fix` to clear the stale lock, then `/gsd auto` to resume.",
+  stale_paused_session: "Run `/gsd doctor fix` to clear the stale pause, then `/gsd auto` to resume the active milestone.",
   stale_parallel_session: "Run `/gsd doctor fix` to clear the stale session registration.",
   unresolved_git_conflicts:
     "Resolve the conflict markers, commit, then re-run `/gsd auto`.",

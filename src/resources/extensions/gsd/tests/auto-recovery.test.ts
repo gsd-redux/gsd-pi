@@ -501,6 +501,28 @@ test("resolveExpectedArtifactPath returns correct path for all slice-level types
   }
 });
 
+test("refreshRecoveryDbForArtifact reports unsupported unit recovery as read-only (#1662)", () => {
+  const units = [
+    ["research-slice", "M001/S01"],
+    ["validate-milestone", "M001"],
+    ["plan-milestone", "M001"],
+    ["complete-slice", "M001/S01"],
+    ["run-uat", "M001/S01"],
+  ] as const;
+
+  for (const [unitType, unitId] of units) {
+    assert.deepEqual(
+      refreshRecoveryDbForArtifact(unitType, unitId, process.cwd()),
+      {
+        ok: true,
+        advanced: false,
+        reason: `${unitType}-attempt-read-only-verified`,
+        message: `artifact verified on disk for ${unitType} ${unitId} (no DB write)`,
+      },
+    );
+  }
+});
+
 test("refreshRecoveryDbForArtifact treats missing execute-task DB rows as fatal mismatches", () => {
   makeTmpProject();
 

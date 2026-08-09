@@ -178,7 +178,7 @@ export async function runFinalize(
     clearFinalizingUnit();
     return { action: "break", reason: dispatchedReason };
   }
-  if (preResult === "safety-block") {
+  if (preResult === "evidence-xref-blocked") {
     // A blocking safety evidence mismatch withheld the verdict and routed the
     // Attempt through the canonical recovery seam (#1641 / #1649). The reason
     // is deliberately NOT a complete-and-break reason: decideFinalizeResult

@@ -6,6 +6,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runGSDDoctor } from "../doctor.ts";
+import { checkRuntimeHealth } from "../doctor-runtime-checks.ts";
+import { invalidateAllCaches } from "../cache.ts";
+import {
+  closeDatabase,
+  insertMilestone,
+  openDatabase,
+  setMilestoneQueueOrder,
+} from "../gsd-db.ts";
+import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.ts";
+import {
+  PAUSED_SESSION_KV_KEY,
+  type PausedSessionMetadata,
+} from "../interrupted-session.ts";
+import type { DoctorIssue } from "../doctor-types.ts";
 
 function runGit(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -71,6 +85,81 @@ test("doctor fix resets run-uat counters at the dispatch cap", async (t) => {
     "doctor --fix resets the blocked counter even when the current displayed scope has advanced",
   );
   assert.equal(existsSync(counterPath), false);
+});
+
+test("doctor reports and repairs a paused session superseded by the active milestone", async (t) => {
+  const dir = createGitProject();
+  t.after(() => {
+    closeDatabase();
+    invalidateAllCaches();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const pausedMilestoneId = "M016-5b17xo";
+  const activeMilestoneId = "M018-6b0xxe";
+  for (const milestoneId of [pausedMilestoneId, activeMilestoneId]) {
+    const milestoneDir = join(dir, ".gsd", "milestones", milestoneId);
+    mkdirSync(milestoneDir, { recursive: true });
+    writeFileSync(join(milestoneDir, `${milestoneId}-CONTEXT.md`), `# ${milestoneId}\n`);
+  }
+
+  openDatabase(join(dir, ".gsd", "gsd.db"));
+  insertMilestone({ id: pausedMilestoneId, title: "Superseded milestone", status: "active" });
+  insertMilestone({ id: activeMilestoneId, title: "Current milestone", status: "active" });
+  setMilestoneQueueOrder([activeMilestoneId, pausedMilestoneId]);
+  setRuntimeKv("global", "", PAUSED_SESSION_KV_KEY, {
+    milestoneId: pausedMilestoneId,
+    originalBasePath: dir,
+  } satisfies PausedSessionMetadata);
+  invalidateAllCaches();
+
+  const issues: DoctorIssue[] = [];
+  const fixesApplied: string[] = [];
+  await checkRuntimeHealth(dir, issues, fixesApplied, () => false);
+
+  const issue = issues.find((candidate) => candidate.code === "stale_paused_session");
+  assert.ok(issue, "doctor reports the stale paused-session row");
+  assert.equal(issue.severity, "error");
+  assert.equal(issue.fixable, true);
+  assert.match(issue.message, new RegExp(pausedMilestoneId));
+  assert.match(issue.message, new RegExp(activeMilestoneId));
+  assert.ok(
+    getRuntimeKv("global", "", PAUSED_SESSION_KV_KEY),
+    "read-only doctor preserves paused-session metadata",
+  );
+
+  const fixIssues: DoctorIssue[] = [];
+  await checkRuntimeHealth(
+    dir,
+    fixIssues,
+    fixesApplied,
+    (code) => code === "stale_paused_session",
+  );
+
+  assert.equal(getRuntimeKv("global", "", PAUSED_SESSION_KV_KEY), null);
+  assert.ok(
+    fixesApplied.some((fix) => fix.includes(`cleared stale paused session for ${pausedMilestoneId}`)),
+  );
+  assert.equal(fixIssues.some((candidate) => candidate.code === "stale_paused_session"), false);
+
+  setRuntimeKv("global", "", PAUSED_SESSION_KV_KEY, {
+    activeEngineId: "custom-workflow",
+    milestoneId: pausedMilestoneId,
+    originalBasePath: dir,
+  } satisfies PausedSessionMetadata);
+  const customWorkflowIssues: DoctorIssue[] = [];
+  await checkRuntimeHealth(
+    dir,
+    customWorkflowIssues,
+    fixesApplied,
+    (code) => code === "stale_paused_session",
+  );
+  assert.equal(
+    customWorkflowIssues.some((candidate) => candidate.code === "stale_paused_session"),
+    false,
+    "doctor leaves custom-workflow pause metadata to its dedicated resume path",
+  );
+  assert.ok(getRuntimeKv("global", "", PAUSED_SESSION_KV_KEY));
 });
 
 test("doctor surfaces unresolved projection evidence with recovery instructions", async (t) => {

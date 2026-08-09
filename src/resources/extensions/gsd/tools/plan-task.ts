@@ -276,6 +276,17 @@ export async function handlePlanTask(
           defaultTargets,
           derivedTargets,
         );
+        // #1656: in a parent workspace, a task with nothing explicit and nothing
+        // derivable from its planned paths must not fossilize the fan-out default
+        // into its row. Storing no targets lets verification resolve to the
+        // orchestration root instead. Derived targets (#1630) are concrete, so
+        // they are still persisted.
+        let persistedTargetRepositories = repositoryRegistry.mode === "parent"
+          && params.targetRepositories === undefined
+          && !parentSlice.target_repositories?.length
+          && !derivedTargets?.length
+          ? []
+          : effectiveTargetRepositories;
         const repoValidationError = validateReferencedRepositories(effectiveTargetRepositories, repositoryRegistry);
         if (repoValidationError) {
           throw new PlanningGuardError(`validation failed: ${repoValidationError}`);
@@ -297,6 +308,7 @@ export async function handlePlanTask(
             : validatePathScopeForTargetRepositories(params, basePath, repositoryRegistry, storedTaskTargets);
           if (!storedPathScopeError) {
             effectiveTargetRepositories = storedTaskTargets;
+            persistedTargetRepositories = storedTaskTargets;
             pathScopeError = null;
           }
         }
@@ -323,7 +335,7 @@ export async function handlePlanTask(
           expectedOutput: params.expectedOutput,
           observabilityImpact: params.observabilityImpact ?? "",
           fullPlanMd: params.fullPlanMd,
-          targetRepositories: effectiveTargetRepositories,
+          targetRepositories: persistedTargetRepositories,
         });
         for (const gid of taskGates) {
           insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: params.taskId });

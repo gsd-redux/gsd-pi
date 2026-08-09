@@ -89,7 +89,16 @@ export function resolveVerificationRepositoryTargets(
   const derivedIds = explicitIds
     ? null
     : deriveRepositoryTargetsFromPlannedPaths(registry, task?.files ?? []);
-  const requestedIds = explicitIds ?? derivedIds ?? defaultRepositoryTargets(registry);
+  // Nothing derivable either (no task, or no path-shaped planned files): a
+  // parent workspace verifies the orchestration root rather than fanning out
+  // across every child repository (#1656).
+  const parentWorkspaceFallback = registry.mode === "parent" && registry.byId.has("project")
+    ? ["project"]
+    : null;
+  const requestedIds = explicitIds
+    ?? derivedIds
+    ?? parentWorkspaceFallback
+    ?? defaultRepositoryTargets(registry);
   const repositories: RegisteredRepository[] = [];
   const missingRepositoryIds: string[] = [];
   const seen = new Set<string>();

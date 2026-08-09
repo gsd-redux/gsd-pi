@@ -2745,6 +2745,10 @@ export async function startAuto(
               }
             }
           }
+          // #1643 / #1644 share this seam: `routePausedSessionResume` subsumes
+          // `getSupersedingActiveMilestoneId` here — it discards a missing or
+          // terminal pin and, instead of merely starting fresh on a superseded
+          // pin, adopts the project's current active milestone.
           const resumeRoute = routePausedSessionResume({
             milestoneDirExists: !!mDir,
             summaryIsTerminal,

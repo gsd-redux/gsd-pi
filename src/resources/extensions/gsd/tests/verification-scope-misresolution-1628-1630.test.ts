@@ -284,14 +284,16 @@ describe("repository target derivation (issue #1630)", () => {
     assert.deepEqual(resolved.repositories.map((repo) => repo.id), ["frontend"]);
   });
 
-  test("stored explicit targets and no-task resolution keep their existing behavior", () => {
+  test("stored explicit targets win, and no-task resolution scopes to the orchestration root", () => {
     const explicit = fakeTaskRow({ files: ["infra/main.hcl"], target_repositories: ["backend"] });
     const resolvedExplicit = resolveVerificationRepositoryTargets(base, PARENT_WORKSPACE_PREFS, explicit, null);
     assert.deepEqual(resolvedExplicit.repositories.map((repo) => repo.id), ["backend"]);
     assert.equal(resolvedExplicit.explicitTargetsRequested, true);
 
+    // #1656: with nothing explicit and nothing derivable, a parent workspace
+    // verifies the orchestration root instead of fanning out to every child.
     const resolvedDefault = resolveVerificationRepositoryTargets(base, PARENT_WORKSPACE_PREFS, null, null);
-    assert.deepEqual(resolvedDefault.repositories.map((repo) => repo.id), ["frontend", "backend"]);
+    assert.deepEqual(resolvedDefault.repositories.map((repo) => repo.id), ["project"]);
   });
 });
 

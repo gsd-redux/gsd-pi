@@ -110,6 +110,8 @@ import {
   isTaskAttemptAwaitingVerification,
   readLatestTaskAttempt,
 } from "./task-execution-domain-operation.js";
+import { recordTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
+import { recordFailureAndSelectRecovery } from "./task-recovery-domain-operation.js";
 import { isTaskExecutionReadyForHostVerification } from "./auto/task-execution-cutover.js";
 import {
   routeEvidenceCrossReferenceBlock,
@@ -1039,6 +1041,12 @@ export interface PreVerificationOpts {
   agentEndMessages?: unknown[];
 }
 
+export type PreVerificationResult =
+  | "dispatched"
+  | "continue"
+  | "retry"
+  | "evidence-xref-blocked";
+
 export interface PostUnitContext {
   s: AutoSession;
   ctx: ExtensionContext;
@@ -1459,12 +1467,12 @@ async function runCloseoutGitAction(
  * - "dispatched" — a signal caused stop/pause
  * - "continue" — proceed normally
  * - "retry" — artifact verification failed, s.pendingVerificationRetry set for loop re-iteration
- * - "safety-block" — blocking safety evidence mismatch; the Attempt was routed
- *   through the canonical recovery seam (s.lastSafetyBlockRecovery carries the
- *   recoveryActionId) and auto-mode paused. The finalize break must NOT enter
- *   the verified-task publication boundary (#1641 / #1649).
+ * - "evidence-xref-blocked" — blocking safety evidence mismatch; the Attempt was
+ *   routed through the canonical recovery seam (s.lastSafetyBlockRecovery carries
+ *   the recoveryActionId) and auto-mode paused. The finalize break must NOT enter
+ *   the verified-task publication boundary (#1641 / #1642 / #1649).
  */
-export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<"dispatched" | "continue" | "retry" | "safety-block"> {
+export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreVerificationOpts): Promise<PreVerificationResult> {
   const { s, ctx, pi, stopAuto, pauseAuto } = pctx;
 
   // ── Parallel worker signal check ──
@@ -1897,14 +1905,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
 
                 const blockingMismatch = mismatches.find((mismatch) => mismatch.severity === "error");
                 if (blockingMismatch) {
-                  const gitActionResult = await runCloseoutGitAction(pctx, s.currentUnit);
-                  if (gitActionResult === "dispatched") {
-                    ctx.ui.notify(
-                      `Safety: task ${sTid} claimed passing verification that failed in recorded execution`,
-                      "error",
-                    );
-                    return "dispatched";
-                  }
                   // #1641 / #1649: a safety refusal must carry its sanctioned exit.
                   // Settle the withheld verdict and route the Attempt through the
                   // canonical recovery seam so a recoveryActionId exists, the
@@ -1947,8 +1947,17 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
                     `Safety: task ${sTid} claimed passing verification that failed in recorded execution (${mismatchDetail}). ${routePresentation.exitInstruction}`,
                     "error",
                   );
+                  // Commit the unit's work before pausing so the blocked Attempt
+                  // is never resumed against an uncommitted tree (#1649). The
+                  // Attempt is already settled and routed above, so a git
+                  // closeout that pauses on its own still exits through the
+                  // safety break reason carrying the recoveryActionId.
+                  const gitActionResult = await runCloseoutGitAction(pctx, s.currentUnit);
+                  if (gitActionResult === "dispatched") {
+                    return "evidence-xref-blocked";
+                  }
                   await pauseAuto(ctx, pi);
-                  return "safety-block";
+                  return "evidence-xref-blocked";
                 }
               }
             }

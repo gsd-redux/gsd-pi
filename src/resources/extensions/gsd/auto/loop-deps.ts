@@ -13,7 +13,11 @@ import type { GSDPreferences } from "../preferences.js";
 import type { GSDState } from "../types.js";
 import type { SessionLockStatus } from "../session-lock.js";
 import type { CloseoutOptions } from "../auto-unit-closeout.js";
-import type { PostUnitContext, PreVerificationOpts } from "../auto-post-unit.js";
+import type {
+  PostUnitContext,
+  PreVerificationOpts,
+  PreVerificationResult,
+} from "../auto-post-unit.js";
 import type {
   VerificationContext,
   VerificationResult,
@@ -341,7 +345,7 @@ export interface LoopDeps {
   postUnitPreVerification: (
     pctx: PostUnitContext,
     opts?: PreVerificationOpts,
-  ) => Promise<"dispatched" | "continue" | "retry" | "safety-block">;
+  ) => Promise<PreVerificationResult>;
   runPostUnitVerification: (
     vctx: VerificationContext,
     pauseAuto: PauseAutoFn,

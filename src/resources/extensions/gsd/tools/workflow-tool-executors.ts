@@ -1873,16 +1873,37 @@ export async function executePlanMilestone(
       const heldLease = getMilestoneLease(params.milestoneId);
       if (heldLease?.status === "held" && Date.parse(heldLease.expires_at) > Date.now()) {
         const holder = getAutoWorker(heldLease.worker_id);
-        // Let the one-shot claim path recover stale same-process worker rows.
+        // Let one-shot and resumed-auto claim paths recover stale
+        // same-process worker rows.
         const projectRoot = normalizeRealPath(basePath);
-        const isOurAutoLease = isAutoActive() && heldLease.worker_id === autoSession.workerId;
-        const holderIsOneShotReentrantPeer = !isAutoActive()
-          && !!holder
+        const activeAutoWorkerId = isAutoActive() ? autoSession.workerId : null;
+        const activeAutoWorker = activeAutoWorkerId ? getAutoWorker(activeAutoWorkerId) : null;
+        const isOurAutoLease = !!activeAutoWorkerId && heldLease.worker_id === activeAutoWorkerId;
+        const holderIsReentrantPeer = !!holder
           && holder.host === hostname()
           && holder.pid === process.pid
-          && holder.project_root_realpath === projectRoot;
-        if (holder?.status === "active" && !isOurAutoLease && !holderIsOneShotReentrantPeer) {
-          return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+          && holder.project_root_realpath === (activeAutoWorker?.project_root_realpath ?? projectRoot);
+        if (holder?.status === "active" && !isOurAutoLease) {
+          if (!holderIsReentrantPeer) {
+            return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+          }
+
+          if (isAutoActive()) {
+            // Active auto without a worker row (e.g. after a setup-race pause
+            // detached it) cannot reclaim here, and the one-shot claim path
+            // below is skipped while auto is active. Fail closed instead of
+            // planning against a lease we do not own.
+            if (!activeAutoWorkerId) {
+              return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+            }
+            const reclaimed = claimMilestoneLease(activeAutoWorkerId, params.milestoneId);
+            if (!reclaimed.ok) {
+              return milestoneLeaseConflictResult(params.milestoneId, reclaimed.byWorker, reclaimed.expiresAt);
+            }
+            autoSession.currentMilestoneId = params.milestoneId;
+            autoSession.milestoneLeaseToken = reclaimed.token;
+            markWorkerStopping(heldLease.worker_id);
+          }
         }
       }
     }

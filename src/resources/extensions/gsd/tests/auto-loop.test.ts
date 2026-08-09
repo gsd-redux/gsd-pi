@@ -39,7 +39,7 @@ import { _getAdapter, openDatabase, closeDatabase, getTask, insertMilestone, ins
 import { getOpenWedge } from "../auto-liveness-backstop.js";
 import { isBlockedStopReason, stopNoticeKind } from "../stop-notice.js";
 import { mapStatusToExitCode } from "../../../../headless-events.ts";
-import { registerAutoWorker } from "../db/auto-workers.js";
+import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, milestoneLeaseTtlSeconds } from "../db/milestone-leases.js";
 import { getLatestForUnit, recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
@@ -4129,6 +4129,38 @@ test("autoLoop stops machine-terminal verification abort without pausing or publ
   }
 });
 
+test("autoLoop stops an evidence-xref block before host verification or publication", async (t) => {
+  _resetPendingResolve();
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 10_000 });
+  t.after(() => mock.timers.reset());
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  let verificationCalls = 0;
+  let publicationCalls = 0;
+
+  const deps = makeMockDeps({
+    postUnitPreVerification: async () => "evidence-xref-blocked" as const,
+    runPostUnitVerification: async () => {
+      verificationCalls++;
+      return "continue" as const;
+    },
+    taskPublicationBoundary: async () => { publicationCalls++; },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+  await waitForMicrotasks(() => pi.calls.length === 1, "evidence-xref dispatch");
+  resolveAgentEnd(makeEvent());
+  await drainMicrotasks(100);
+  mock.timers.tick(30_000);
+  await loopPromise;
+
+  assert.equal(verificationCalls, 0);
+  assert.equal(publicationCalls, 0);
+});
+
 test("autoLoop pauses a predecessor task-recovery abort before any agent turn", async () => {
   _resetPendingResolve();
 
@@ -5494,9 +5526,17 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
   _resetPendingResolve();
 
   const basePath = makeLoopTestBase("gsd-paused-setup-race-");
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+  openDatabase(join(basePath, ".gsd", "gsd.db"));
   t.after(() => {
+    closeDatabase();
     rmSync(basePath, { recursive: true, force: true });
   });
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  const workerId = registerAutoWorker({ projectRootRealpath: realpathSync(basePath) });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
 
   const ctx = {
     ...makeMockCtx(),
@@ -5520,6 +5560,9 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
     originalBasePath: basePath,
     paused: false,
     active: true,
+    currentMilestoneId: "M001",
+    workerId,
+    milestoneLeaseToken: lease.token,
     cmdCtx: {
       newSession: () => {
         s.paused = true;
@@ -5535,8 +5578,8 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
   const result = await runUnitPhase(
     { ctx, pi, s, deps, prefs: undefined, iteration: 1, flowId: "flow-paused-setup", nextSeq: () => ++seq },
     {
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
+      unitType: "plan-milestone",
+      unitId: "M001",
       prompt: "do work",
       finalPrompt: "do work",
       pauseAfterUatDispatch: false,
@@ -5557,12 +5600,17 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
       isRetry: false,
       previousTier: undefined,
     },
+    // ADR-047 deleted the Rule 1 stuck window (`recentUnits`/`stuckRecoveryAttempts`).
     { consecutiveFinalizeTimeouts: 0 },
   );
 
   assert.equal(result.action, "break");
   assert.equal((result as any).reason, "pause-during-setup");
   assert.equal(deps.callLog.includes("stopAuto"), false);
+  assert.equal(s.workerId, null, "setup cancellation must detach the abandoned worker from the session");
+  assert.equal(s.milestoneLeaseToken, null, "setup cancellation must clear the abandoned lease token");
+  assert.equal(getAutoWorker(workerId)?.status, "stopping");
+  assert.equal(getMilestoneLease("M001")?.status, "released");
 });
 
 test("runUnitPhase remembers aborted milestone closeout for same-unit resume", async (t) => {
