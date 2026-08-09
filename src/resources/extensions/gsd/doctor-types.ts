@@ -94,6 +94,8 @@ export type DoctorIssueCode =
   | "memories_fts_rebuild_missing"
   | "projection_drift"
   | "unresolved_projection_evidence"
+  // Pre-#1659 legacy import remediation (#1661)
+  | "lifecycle_projection_wrong_kind"
   // Milestone filesystem/DB drift (#4996)
   | "orphan_milestone_dir"
   | "orphan_milestone_db"

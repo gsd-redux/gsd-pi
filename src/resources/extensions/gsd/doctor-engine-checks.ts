@@ -7,8 +7,10 @@ import {
   getAllMilestones,
   getMilestoneSlices,
   getSliceTasks,
+  findWrongKindLifecycleProjectionHeads,
   isDbAvailable,
   isMemoriesFtsAvailable,
+  repairWrongKindLifecycleProjections,
   _getAdapter,
 } from "./gsd-db.js";
 import { MEMORIES_FTS_REBUILT_KEY } from "./db-memory-fts-schema.js";
@@ -355,6 +357,50 @@ function staleArtifactPruneMessage(row: ArtifactRow): string {
     : `pruned stale flat-phase artifact row ${row.path}`;
 }
 
+/**
+ * Detects (and under repair, heals) lifecycle/* projection heads that carry a
+ * non-canonical kind — the durable signature of a project imported by a build
+ * older than the #1659 fix, which enqueued every imported projection as
+ * "markdown". trg_workflow_projection_lineage makes kind immutable per chain,
+ * so such a head wedges slice/task closeout ("projection work must extend the
+ * current logical target head") until the kind is rewritten (#1661).
+ * Exported for direct testing.
+ */
+export function checkLifecycleProjectionKinds(
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+  repair: boolean,
+): void {
+  let heads = findWrongKindLifecycleProjectionHeads();
+  if (heads.length === 0) return;
+  if (repair) {
+    try {
+      for (const repaired of repairWrongKindLifecycleProjections()) {
+        fixesApplied.push(
+          `rewrote projection kind for ${repaired.projectionKey} (${repaired.projectionKind} → ${repaired.expectedKind}) — pre-#1659 legacy import remediation`,
+        );
+      }
+      heads = findWrongKindLifecycleProjectionHeads();
+    } catch {
+      // Non-fatal — fall through and report the unrepaired heads below.
+    }
+  }
+  for (const head of heads) {
+    issues.push({
+      severity: "error",
+      code: "lifecycle_projection_wrong_kind",
+      scope: "project",
+      unitId: head.projectionKey,
+      message:
+        `Projection head ${head.projectionKey} carries kind "${head.projectionKind}" but the canonical lifecycle writer enqueues "${head.expectedKind}". ` +
+        `This project was imported by a pre-#1659 build; slice/task closeout will abort with "projection work must extend the current logical target head" until repaired. ` +
+        `Run \`gsd doctor --fix\` to rewrite the projection chain to its canonical kind.`,
+      file: ".gsd/gsd.db",
+      fixable: true,
+    });
+  }
+}
+
 export async function checkEngineHealth(
   basePath: string,
   issues: DoctorIssue[],
@@ -404,6 +450,14 @@ export async function checkEngineHealth(
         }
       } catch {
         // Non-fatal — memory FTS health check failed
+      }
+
+      // Pre-#1659 legacy import remediation (#1661): wrong-kind lifecycle
+      // projection heads wedge closeout; detect always, rewrite under --fix.
+      try {
+        checkLifecycleProjectionKinds(issues, fixesApplied, options?.repair === true);
+      } catch {
+        // Non-fatal — lifecycle projection kind check failed
       }
 
       // a. Orphaned tasks (task.slice_id points to non-existent slice)

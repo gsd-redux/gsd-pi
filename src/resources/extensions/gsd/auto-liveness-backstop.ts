@@ -4,7 +4,14 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-import { _getAdapter, isDbAvailable, transaction } from './gsd-db.js';
+import {
+  _getAdapter,
+  acknowledgeLivenessWedgeRecord,
+  insertLivenessWedgeRecord,
+  isDbAvailable,
+  transaction,
+  upsertLivenessBlockSignature,
+} from './gsd-db.js';
 import { getLatestForUnit } from './db/unit-dispatches.js';
 import { parseUnitId } from './unit-id.js';
 import { debugLog } from './debug-logger.js';
@@ -119,32 +126,11 @@ export function recordNonAdvancingOutcome(
     return transaction(() => {
       const db = _getAdapter()!;
       const now = nowIso();
-      db.prepare(
-        `INSERT INTO liveness_block_signatures
-           (scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count, first_seen_at, last_seen_at)
-         VALUES (:scope, :guard, :utype, :uid, :hash, 1, :now, :now)
-         ON CONFLICT(scope_id, unit_type, unit_id, input_hash) DO UPDATE SET
-           occurrence_count = occurrence_count + 1,
-           guard_id = :guard,
-           last_seen_at = :now`,
-      ).run({
-        ':scope': input.scopeId,
-        ':guard': input.guardId,
-        ':utype': input.unitType,
-        ':uid': input.unitId,
-        ':hash': inputHash,
-        ':now': now,
-      });
-      const counted = db.prepare(
-        `SELECT occurrence_count FROM liveness_block_signatures
-         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
-      ).get({
-        ':scope': input.scopeId,
-        ':utype': input.unitType,
-        ':uid': input.unitId,
-        ':hash': inputHash,
-      }) as { occurrence_count: number } | undefined;
-      const count = counted?.occurrence_count ?? 1;
+      const count = upsertLivenessBlockSignature(
+        { scopeId: input.scopeId, unitType: input.unitType, unitId: input.unitId, inputHash },
+        input.guardId,
+        now,
+      );
 
       if (count < LIVENESS_TRIP_THRESHOLD) return { tripped: false, count };
 
@@ -176,23 +162,7 @@ export function recordNonAdvancingOutcome(
         createdAt: now,
         acknowledgedAt: null,
       };
-      db.prepare(
-        `INSERT INTO liveness_wedge_records
-           (wedge_id, scope_id, guard_id, unit_type, unit_id, input_hash, occurrence_count,
-            sanctioned_exit, forensics_path, created_at, acknowledged_at)
-         VALUES (:wid, :scope, :guard, :utype, :uid, :hash, :count, :exit, :forensics, :now, NULL)`,
-      ).run({
-        ':wid': wedge.wedgeId,
-        ':scope': wedge.scopeId,
-        ':guard': wedge.guardId,
-        ':utype': wedge.unitType,
-        ':uid': wedge.unitId,
-        ':hash': wedge.inputHash,
-        ':count': wedge.occurrenceCount,
-        ':exit': wedge.sanctionedExit,
-        ':forensics': wedge.forensicsPath,
-        ':now': wedge.createdAt,
-      });
+      insertLivenessWedgeRecord(wedge);
       return { tripped: true, count, wedge };
     });
   } catch (err) {
@@ -246,18 +216,11 @@ export function acknowledgeWedge(scopeId: string, wedgeId: string): AcknowledgeR
       const wedge = rowToWedge(row);
       if (wedge.acknowledgedAt) return { ok: true, wedge };
       const now = nowIso();
-      db.prepare(
-        `UPDATE liveness_wedge_records SET acknowledged_at = :now WHERE wedge_id = :wid`,
-      ).run({ ':now': now, ':wid': wedgeId });
-      db.prepare(
-        `DELETE FROM liveness_block_signatures
-         WHERE scope_id = :scope AND unit_type = :utype AND unit_id = :uid AND input_hash = :hash`,
-      ).run({
-        ':scope': wedge.scopeId,
-        ':utype': wedge.unitType,
-        ':uid': wedge.unitId,
-        ':hash': wedge.inputHash,
-      });
+      acknowledgeLivenessWedgeRecord(
+        wedgeId,
+        { scopeId: wedge.scopeId, unitType: wedge.unitType, unitId: wedge.unitId, inputHash: wedge.inputHash },
+        now,
+      );
       return { ok: true, wedge: { ...wedge, acknowledgedAt: now } };
     });
   } catch (err) {

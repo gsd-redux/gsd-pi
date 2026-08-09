@@ -763,15 +763,11 @@ function projections(
  * lifecycle domain operations enqueue, because trg_workflow_projection_lineage
  * refuses to extend a (project, key) chain across a kind change. Importing
  * lifecycle keys as "markdown" left post-import closeouts unable to enqueue
- * their slice/task lifecycle projections (#1659).
+ * their slice/task lifecycle projections (#1659). The key-family → kind
+ * mapping lives in projection-identity.ts as the single authority (#1661);
+ * this alias is the import surface's name for it.
  */
-export function legacyImportProjectionKind(projectionKey: string): string {
-  if (!projectionKey.startsWith("lifecycle/")) return "markdown";
-  const segments = projectionKey.split("/").length;
-  if (segments === 2) return "milestone-lifecycle";
-  if (segments === 3) return "slice-lifecycle";
-  return "task-lifecycle";
-}
+export { canonicalProjectionKind as legacyImportProjectionKind } from "./projection-identity.js";
 
 export function compileLegacyImportApplicationPlan(value: unknown): LegacyImportApplicationPlan {
   if (!isStrictLegacyImportData(value)) {

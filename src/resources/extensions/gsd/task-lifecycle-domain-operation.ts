@@ -9,6 +9,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { TASK_LIFECYCLE_PROJECTION_KIND } from "./projection-identity.js";
 import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
 import {
   adoptOrTransitionLifecycle,
@@ -134,7 +135,7 @@ function mutation(
     }],
     projections: [{
       projectionKey: `lifecycle/${entityId}`.toLowerCase(),
-      projectionKind: "task-lifecycle",
+      projectionKind: TASK_LIFECYCLE_PROJECTION_KIND,
       rendererVersion: "1",
     }],
   };
