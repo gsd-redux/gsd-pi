@@ -31,7 +31,10 @@ import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
 } from "../task-recovery-domain-operation.js";
-import { recordTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
 import { captureVerificationSourceSnapshot } from "../verification-source-integrity.js";
 
@@ -427,6 +430,7 @@ function canonicalDeps(): CutoverDeps {
     readLatestTaskAttempt,
     readTaskAttempt,
     readTaskRecoveryRoute,
+    readTaskTechnicalVerdict,
     claimTaskAttempt,
     settleTaskAttempt,
     routeTaskFailure(route) {

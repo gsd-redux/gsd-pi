@@ -4485,7 +4485,7 @@ test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t)
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const s = makeLoopSession();
-  const stateSnapshot = await makeMockDeps().deriveState();
+  const stateSnapshot = await makeMockDeps().deriveState(s.basePath);
   s.orchestration = {
     start: async () => ({ kind: "started" as const }),
     advance: async () => ({

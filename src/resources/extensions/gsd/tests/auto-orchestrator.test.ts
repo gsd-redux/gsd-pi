@@ -719,7 +719,7 @@ test("ADR-047: unavailable liveness storage fails the advance boundary closed", 
   const result = await f.orchestrator.advance();
 
   assert.equal(result.kind, "blocked");
-  if (result.kind !== "blocked") throw new Error(`expected blocked, got ${result.kind}`);
+  if (result.kind !== "blocked") throw new Error("expected a blocked advance");
   assert.equal(result.action, "stop");
   assert.match(result.reason, /liveness backstop unavailable/i);
 });
