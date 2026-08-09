@@ -163,6 +163,11 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
   const callLog: string[] = [];
 
   const baseDeps: LoopDeps = {
+    // These loop-integration cases run against a bare temp run dir with no
+    // workflow DB, so the ADR-047 backstop would fail closed on its first
+    // non-advancing turn and stop the loop before the behaviour under test.
+    // Backstop adjudication has its own coverage in auto-loop.test.ts.
+    adjudicateNonAdvancingOutcome: () => null,
     lockBase: () => "/tmp/test-lock",
     buildSnapshotOpts: () => ({}),
     stopAuto: async (_ctx, _pi, reason) => {
