@@ -37,7 +37,7 @@ import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 import { _getAdapter, openDatabase, closeDatabase, getTask, insertMilestone, insertSlice, insertTask } from "../gsd-db.js";
-import { registerAutoWorker } from "../db/auto-workers.js";
+import { getAutoWorker, registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, milestoneLeaseTtlSeconds } from "../db/milestone-leases.js";
 import { getLatestForUnit, recordDispatchClaim, markCanceled } from "../db/unit-dispatches.js";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.js";
@@ -5461,9 +5461,17 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
   _resetPendingResolve();
 
   const basePath = makeLoopTestBase("gsd-paused-setup-race-");
+  mkdirSync(join(basePath, ".gsd"), { recursive: true });
+  openDatabase(join(basePath, ".gsd", "gsd.db"));
   t.after(() => {
+    closeDatabase();
     rmSync(basePath, { recursive: true, force: true });
   });
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  const workerId = registerAutoWorker({ projectRootRealpath: realpathSync(basePath) });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
 
   const ctx = {
     ...makeMockCtx(),
@@ -5487,6 +5495,9 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
     originalBasePath: basePath,
     paused: false,
     active: true,
+    currentMilestoneId: "M001",
+    workerId,
+    milestoneLeaseToken: lease.token,
     cmdCtx: {
       newSession: () => {
         s.paused = true;
@@ -5502,8 +5513,8 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
   const result = await runUnitPhase(
     { ctx, pi, s, deps, prefs: undefined, iteration: 1, flowId: "flow-paused-setup", nextSeq: () => ++seq },
     {
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
+      unitType: "plan-milestone",
+      unitId: "M001",
       prompt: "do work",
       finalPrompt: "do work",
       pauseAfterUatDispatch: false,
@@ -5524,12 +5535,16 @@ test("runUnitPhase treats setup-race cancellations as pause-induced when session
       isRetry: false,
       previousTier: undefined,
     },
-    { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+    { recentUnits: [{ key: "plan-milestone/M001" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
   );
 
   assert.equal(result.action, "break");
   assert.equal((result as any).reason, "pause-during-setup");
   assert.equal(deps.callLog.includes("stopAuto"), false);
+  assert.equal(s.workerId, null, "setup cancellation must detach the abandoned worker from the session");
+  assert.equal(s.milestoneLeaseToken, null, "setup cancellation must clear the abandoned lease token");
+  assert.equal(getAutoWorker(workerId)?.status, "stopping");
+  assert.equal(getMilestoneLease("M001")?.status, "released");
 });
 
 test("runUnitPhase remembers aborted milestone closeout for same-unit resume", async (t) => {

@@ -25,6 +25,8 @@ import {
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 import { isDbAvailable, getTask } from "../gsd-db.js";
 import { getLatestForUnit } from "../db/unit-dispatches.js";
+import { markWorkerStopping } from "../db/auto-workers.js";
+import { releaseMilestoneLease } from "../db/milestone-leases.js";
 import type { MinimalModelRegistry } from "../context-budget.js";
 import { parseUnitId } from "../unit-id.js";
 import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
@@ -617,6 +619,29 @@ export async function runUnitPhase(
           category: "aborted" as const,
           isTransient: true,
         };
+        // pauseAuto normally owns coordination cleanup, but this setup race can
+        // observe paused state without that cleanup path completing.
+        const abandonedWorkerId = s.workerId;
+        if (unitType === "plan-milestone" && abandonedWorkerId) {
+          try {
+            if (s.currentMilestoneId && s.milestoneLeaseToken) {
+              releaseMilestoneLease(
+                abandonedWorkerId,
+                s.currentMilestoneId,
+                s.milestoneLeaseToken,
+              );
+            }
+          } catch (err) {
+            logWarning("engine", `setup pause lease cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          try {
+            markWorkerStopping(abandonedWorkerId);
+          } catch (err) {
+            logWarning("engine", `setup pause worker cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          s.workerId = null;
+          s.milestoneLeaseToken = null;
+        }
         await deps.autoCommitUnit?.(s.basePath, unitType, unitId, ctx);
         await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, pauseContext);
         return { action: "break", reason: "pause-during-setup" };
