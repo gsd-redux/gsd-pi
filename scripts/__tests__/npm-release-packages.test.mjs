@@ -144,11 +144,17 @@ test("workspace packages are ordered so dependencies publish first", () => {
   const indexByName = new Map(packages.map((pkg, index) => [pkg.name, index]));
 
   for (const pkg of packages) {
-    for (const dependency of pkg.deps) {
-      assert.ok(
-        indexByName.get(dependency) < indexByName.get(pkg.name),
-        `${dependency} must publish before ${pkg.name}`,
-      );
+    const manifest = JSON.parse(
+      readFileSync(path.join(repoRoot, pkg.dir, "package.json"), "utf8"),
+    );
+    for (const field of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+      for (const dependency of Object.keys(manifest[field] ?? {})) {
+        if (!indexByName.has(dependency)) continue;
+        assert.ok(
+          indexByName.get(dependency) < indexByName.get(pkg.name),
+          `${dependency} must publish before ${pkg.name}`,
+        );
+      }
     }
   }
 });
