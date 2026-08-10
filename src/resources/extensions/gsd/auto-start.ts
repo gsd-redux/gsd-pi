@@ -1040,6 +1040,10 @@ export async function bootstrapAutoSession(
   deps: BootstrapDeps,
   interrupted: InterruptedSessionAssessment,
 ): Promise<boolean> {
+  // A failed bootstrap can return without the normal stop/reset path. Do not
+  // let its process-wide isolation failure poison the next independent run.
+  s.isolationDegraded = false;
+
   const {
     shouldUseWorktreeIsolation,
     registerSigtermHandler,
