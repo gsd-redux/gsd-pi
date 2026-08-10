@@ -105,8 +105,29 @@ export class Markdown implements Component {
 	}
 
 	setText(text: string): void {
+		if (this.text === text) return; // skip if unchanged
 		this.text = text;
 		this.invalidate();
+	}
+
+	/** Returns the current text content. */
+	getText(): string {
+		return this.text;
+	}
+
+	/**
+	 * Get the cached line count for a given width without full rendering.
+	 * Returns the cached line count if width matches, otherwise falls back
+	 * to render() and caches the result. This avoids full markdown lexer
+	 * passes during streaming — critical for pinned-zone row counting.
+	 */
+	getLineCount(width: number): number {
+		if (this.cachedLines && this.cachedWidth === width) {
+			return this.cachedLines.length;
+		}
+		// Width changed or cache miss — render and cache
+		this.render(width);
+		return this.cachedLines?.length ?? 0;
 	}
 
 	invalidate(): void {

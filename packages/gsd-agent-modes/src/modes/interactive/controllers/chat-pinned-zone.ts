@@ -38,6 +38,10 @@ export function findLatestPinnableText(contentBlocks: Array<any>): string {
 // Sum rendered line counts of segments that appear strictly after the given
 // content-block index. Used to decide whether a pinnable text block has
 // scrolled out of the viewport and therefore warrants mirroring.
+//
+// Performance: uses getLineCount() for Markdown components to avoid full
+// markdown lexer passes on every streaming delta. The cached line count
+// is only recomputed when the width changes (rare during streaming).
 export function rowsRenderedAfterContentIndex(
 	contentIndex: number,
 	width: number,
@@ -47,7 +51,8 @@ export function rowsRenderedAfterContentIndex(
 	for (const seg of streamState.renderedSegments) {
 		try {
 			if (seg.kind === "text-run" && seg.startIndex > contentIndex) {
-				rows += seg.component.render(width).length;
+				// Use cached line count — avoids full render + lexer pass
+				rows += (seg.component as any).getLineCount?.(width) ?? seg.component.render(width).length;
 			} else if (seg.kind === "tool" && seg.contentIndex > contentIndex) {
 				rows += seg.component.render(width).length;
 			}

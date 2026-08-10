@@ -124,6 +124,41 @@ export function getTextFromContentBlocks(
 	return parts.join("\n\n");
 }
 
+/**
+ * Calculate the total character length of text in content blocks WITHOUT
+ * creating a new string. Used as a fast O(1) cache check before calling
+ * getTextFromContentBlocks which allocates a new string each time.
+ *
+ * Returns the length of the string that getTextFromContentBlocks would
+ * produce (including "\n\n" separators between parts).
+ */
+export function getTextLengthFromContentBlocks(
+	blocks: Array<any>,
+	startIndex: number,
+	endIndex: number,
+	contentType: "text" | "thinking" = "text",
+): number {
+	let totalLength = 0;
+	let partCount = 0;
+	for (let i = startIndex; i <= endIndex && i < blocks.length; i++) {
+		const block = blocks[i];
+		if (contentType === "text" && block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
+			totalLength += block.text.trim().length;
+			partCount++;
+		} else if (
+			contentType === "thinking"
+			&& block?.type === "thinking"
+			&& typeof block.thinking === "string"
+			&& block.thinking.trim()
+		) {
+			totalLength += block.thinking.trim().length;
+			partCount++;
+		}
+	}
+	// Add "\n\n" separators between parts
+	return totalLength + (partCount > 1 ? (partCount - 1) * 2 : 0);
+}
+
 export function filterRedundantDiscussTextRuns(
 	desired: DesiredSegment[],
 	blocks: Array<any>,

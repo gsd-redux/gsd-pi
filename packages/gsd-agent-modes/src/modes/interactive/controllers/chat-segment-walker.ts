@@ -12,6 +12,7 @@ import {
 	filterRedundantDiscussTextRuns,
 	getProvisionalPreToolPrunePlan,
 	getTextFromContentBlocks,
+	getTextLengthFromContentBlocks,
 	isProvisionalPreToolProse,
 	isSubTurnTextReplacement,
 	shouldSuppressRedundantHandoffText,
@@ -127,13 +128,28 @@ export function runSegmentWalker(
 	timestampFormat: TimestampFormat,
 ): void {
 	const blocks = host.streamingMessage.content;
-	// Only prune provisional pre-tool prose after post-tool prose exists,
-	// so MCP tool-only windows do not blank the assistant content.
-	const { shouldPrune: shouldPruneProvisionalPreToolProse } =
-		getProvisionalPreToolPrunePlan(host.streamingMessage);
-	let desired = buildDesiredSegmentsForMessage(host.streamingMessage, {
-		hideThinkingBlock: host.hideThinkingBlock,
-	});
+
+	// Cache buildDesiredSegmentsForMessage result — the segment structure
+	// only changes when contentBlocks.length changes (new content blocks
+	// arrive). During streaming of the same block, the structure is stable
+	// and we skip the O(n) iteration over all blocks.
+	const blockCount = blocks.length;
+	let desired: ReturnType<typeof buildDesiredSegmentsForMessage>;
+	let shouldPruneProvisionalPreToolProse = false;
+	if (
+		rs._desiredSegmentsCache?.count === blockCount
+		&& rs._desiredSegmentsCache?.hideThinkingBlock === host.hideThinkingBlock
+	) {
+		desired = rs._desiredSegmentsCache.segments;
+	} else {
+		const { shouldPrune: pruneFlag } =
+			getProvisionalPreToolPrunePlan(host.streamingMessage);
+		shouldPruneProvisionalPreToolProse = pruneFlag;
+		desired = buildDesiredSegmentsForMessage(host.streamingMessage, {
+			hideThinkingBlock: host.hideThinkingBlock,
+		});
+		rs._desiredSegmentsCache = { count: blockCount, hideThinkingBlock: host.hideThinkingBlock, segments: desired };
+	}
 	desired = filterRedundantDiscussTextRuns(desired, blocks);
 
 	// Claude Code MCP can emit provisional pre-tool prose that gets
@@ -240,6 +256,7 @@ export function runSegmentWalker(
 					contentType: seg.contentType,
 					component: comp,
 					cachedText: segmentText,
+					cachedTextLength: segmentText.length,
 				});
 				host.streamingComponent = comp;
 				reconcileChatTurnConnections(host.chatContainer.children);
@@ -249,6 +266,9 @@ export function runSegmentWalker(
 
 	// Update all trailing text-run segments with the latest message so
 	// streaming text grows in place.
+	// Optimization: use getTextLengthFromContentBlocks as a fast O(1) cache
+	// check to avoid allocating new strings via getTextFromContentBlocks on
+	// every streaming delta.
 	for (const seg of rs.renderedSegments) {
 		if (seg.kind === "text-run") {
 			// Find corresponding desired segment to get current endIndex
@@ -259,8 +279,11 @@ export function runSegmentWalker(
 				seg.endIndex = d.endIndex;
 				seg.component.setRange({ startIndex: seg.startIndex, endIndex: seg.endIndex });
 			}
-			const newText = getTextFromContentBlocks(blocks, seg.startIndex, seg.endIndex, seg.contentType);
-			if (newText !== seg.cachedText) {
+			// Fast length check — skip string allocation if unchanged
+			const newLength = getTextLengthFromContentBlocks(blocks, seg.startIndex, seg.endIndex, seg.contentType);
+			if (newLength !== seg.cachedTextLength) {
+				seg.cachedTextLength = newLength;
+				const newText = getTextFromContentBlocks(blocks, seg.startIndex, seg.endIndex, seg.contentType);
 				seg.cachedText = newText;
 				seg.component.updateContent(host.streamingMessage);
 			}
@@ -377,6 +400,7 @@ export function rebuildSegmentsOnMessageEnd(
 			contentType: seg.contentType,
 			component: comp,
 			cachedText: segmentText,
+			cachedTextLength: segmentText.length,
 		});
 		host.streamingComponent = comp;
 	}

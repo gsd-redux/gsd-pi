@@ -18,6 +18,10 @@ export interface ContentRange {
  * Component that renders a complete assistant message, or a sub-range of its content[].
  * When `range` is provided, only content[startIndex..endIndex] (inclusive) is rendered.
  * Non-text/thinking blocks within the range are silently skipped.
+ *
+ * Streaming optimization: during incremental updates, existing Markdown instances
+ * are reused when their text hasn't changed. Only the last text/thinking block
+ * gets its text updated via setText(), avoiding full re-parse of unchanged content.
  */
 export class AssistantMessageComponent extends Container {
 	private contentContainer: Container;
@@ -29,6 +33,12 @@ export class AssistantMessageComponent extends Container {
 	private showMetadata: boolean;
 	private renderCache = new RenderCache();
 	private renderVersion = 0;
+
+	/**
+	 * Track Markdown instances by their content key so we can reuse them
+	 * during incremental streaming updates. Key = `${type}:${textHash}`.
+	 */
+	private markdownInstances = new Map<string, Markdown>();
 
 	constructor(
 		message?: AssistantMessage,
@@ -74,6 +84,9 @@ export class AssistantMessageComponent extends Container {
 	override invalidate(): void {
 		super.invalidate();
 		this.clearRenderCache();
+		// Clear markdown instance cache on invalidation (e.g. window resize)
+		// so that stale width caches are discarded.
+		this.markdownInstances.clear();
 		if (this.lastMessage) {
 			this.updateContent(this.lastMessage);
 		}
@@ -99,9 +112,6 @@ export class AssistantMessageComponent extends Container {
 		this.lastMessage = message;
 		this.clearRenderCache();
 
-		// Clear content container
-		this.contentContainer.clear();
-
 		const start = this.range?.startIndex ?? 0;
 		const end = this.range?.endIndex ?? message.content.length - 1;
 		const slice = message.content.slice(start, end + 1);
@@ -117,36 +127,79 @@ export class AssistantMessageComponent extends Container {
 		// manual thinking toggle every turn.
 		const shouldCapThinking = hasTextContent || hasToolContent || message.provider === "claude-code";
 
-		// Render content in order; non-text/thinking blocks are silently skipped
+		// Reconcile: reuse existing instances, update changed text, remove stale ones.
+		// We rebuild the children list to maintain correct ordering.
+		const newChildren: Array<Markdown | Spacer> = [];
+		const usedKeys = new Set<string>();
+
 		for (let i = 0; i < slice.length; i++) {
 			const content = slice[i];
+			const key = `${content.type}:${i}`;
+
 			if (content.type === "text" && content.text.trim()) {
-				// Assistant text messages with no background - trim the text
-				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme));
+				const trimmedText = content.text.trim();
+				const existing = this.markdownInstances.get(key);
+				if (existing && existing.getText() === trimmedText) {
+					// Text unchanged — reuse instance as-is
+					newChildren.push(existing);
+					usedKeys.add(key);
+				} else if (existing) {
+					// Text changed — update in place (Markdown cache handles delta)
+					existing.setText(trimmedText);
+					newChildren.push(existing);
+					usedKeys.add(key);
+				} else {
+					// New instance
+					const md = new Markdown(trimmedText, 1, 0, this.markdownTheme);
+					this.markdownInstances.set(key, md);
+					newChildren.push(md);
+					usedKeys.add(key);
+				}
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				if (this.hideThinkingBlock) continue;
-				// Add spacing only when another visible assistant content block follows.
-				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
-				const hasVisibleContentAfter = slice
-					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
+				const trimmedText = content.thinking.trim();
+				const existing = this.markdownInstances.get(key);
+				if (existing && existing.getText() === trimmedText) {
+					newChildren.push(existing);
+					usedKeys.add(key);
+				} else if (existing) {
+					existing.setText(trimmedText);
+					newChildren.push(existing);
+					usedKeys.add(key);
+				} else {
+					const hasVisibleContentAfter = slice
+						.slice(i + 1)
+						.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
-				const thinkingMarkdown = new Markdown(content.thinking.trim(), 1, 0, this.markdownTheme, {
-					color: (text: string) => theme.fg("thinkingText", text),
-					italic: true,
-				});
-				// Keep visible chat output readable when thinking traces are long.
-				// Tool-bearing turns can stream text in a later assistant message.
-				if (shouldCapThinking) {
-					thinkingMarkdown.maxLines = 8;
-				}
-				this.contentContainer.addChild(thinkingMarkdown);
-				if (hasVisibleContentAfter) {
-					this.contentContainer.addChild(new Spacer(1));
+					const thinkingMarkdown = new Markdown(trimmedText, 1, 0, this.markdownTheme, {
+						color: (text: string) => theme.fg("thinkingText", text),
+						italic: true,
+					});
+					if (shouldCapThinking) {
+						thinkingMarkdown.maxLines = 8;
+					}
+					this.markdownInstances.set(key, thinkingMarkdown);
+					newChildren.push(thinkingMarkdown);
+					usedKeys.add(key);
+
+					if (hasVisibleContentAfter) {
+						newChildren.push(new Spacer(1));
+					}
 				}
 			}
 		}
+
+		// Remove instances that are no longer in use
+		for (const key of Array.from(this.markdownInstances.keys())) {
+			if (!usedKeys.has(key)) {
+				this.markdownInstances.delete(key);
+			}
+		}
+
+		// In-place patch: avoid contentContainer.clear() + rebuild which
+		// destroys the Box cache and triggers N invalidateCache() calls.
+		// Instead, patch children in place (update text, add/remove as needed).
+		this.patchContainerChildren(newChildren);
 
 		// Metadata (errors, timestamp): gated on showMetadata so ranged instances stay clean
 		// until chat-controller explicitly enables it on the last segment at message_end.
@@ -171,6 +224,62 @@ export class AssistantMessageComponent extends Container {
 				}
 			}
 
+		}
+	}
+
+	/**
+	 * Patch container children in-place instead of clear() + rebuild.
+	 *
+	 * Strategy:
+	 * 1. Match newChildren to existing children by component reference (same instance).
+	 * 2. For children that exist in both: ensure correct order via re-parenting.
+	 * 3. For children only in newChildren: insert at correct position.
+	 * 4. For children only in existing: remove them.
+	 *
+	 * This avoids Box.invalidateCache() calls on every streaming delta,
+	 * keeping the Box cache warm and avoiding unnecessary re-layout.
+	 */
+	private patchContainerChildren(newChildren: Array<Markdown | Spacer>): void {
+		const existing = this.contentContainer.children as Array<Markdown | Spacer>;
+		const existingSet = new Set(existing);
+		const newSet = new Set(newChildren);
+
+		// Children to remove (in existing but not in new)
+		const toRemove = existing.filter((c) => !newSet.has(c));
+		// Children to add (in new but not in existing)
+		const toAdd = newChildren.filter((c) => !existingSet.has(c));
+		// Children that exist in both — need to check ordering
+		const shared = newChildren.filter((c) => existingSet.has(c));
+
+		// Remove stale children (from end to avoid index shifting)
+		for (const child of toRemove) {
+			this.contentContainer.removeChild(child);
+		}
+
+		// Insert new children at their correct positions
+		// Find the insertion point by looking at the last shared child before the gap
+		let insertIdx = 0;
+		for (let i = 0; i < newChildren.length; i++) {
+			const child = newChildren[i];
+			if (existingSet.has(child)) {
+				// Shared child — ensure it's at the right position
+				const currentIdx = this.contentContainer.children.indexOf(child);
+				if (currentIdx !== i) {
+					// Re-order: remove and re-insert at correct position
+					this.contentContainer.removeChild(child);
+					this.contentContainer.children.splice(i, 0, child);
+					// Don't invalidate — just reorder in-place
+				}
+				insertIdx = i + 1;
+			} else {
+				// New child — insert at this position
+				this.contentContainer.children.splice(i, 0, child);
+			}
+		}
+
+		// Invalidate Box cache only once (not N times per addChild)
+		if (toRemove.length > 0 || toAdd.length > 0 || shared.length > 0) {
+			(this.contentContainer as any).invalidateCache?.();
 		}
 	}
 
