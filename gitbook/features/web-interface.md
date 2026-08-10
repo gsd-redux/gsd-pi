@@ -44,7 +44,7 @@ This exposes terminal and file APIs to any client that can reach the server unle
 
 ## Local Architecture
 
-Each selected project gets its own local bridge and one `gsd --mode rpc` child process. The web server exchanges newline-delimited JSON commands and events with that child over standard input and output, while server-sent events deliver live updates to the browser. The `?project=` query parameter selects a local project path and falls back to `GSD_WEB_PROJECT_CWD` when omitted.
+See the authoritative [Web Interface architecture guide](../../docs/user-docs/web-interface.md#architecture).
 
 ## Platform Notes
 
