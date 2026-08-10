@@ -324,11 +324,14 @@ try {
     'packages/rpc-client/dist/index.js',
     'packages/mcp-server/bin/gsd-mcp-server.js',
     'packages/mcp-server/dist/cli.js',
-    'packages/cloud-mcp-gateway/bin/gsd-cloud-mcp-gateway.js',
-    'packages/cloud-mcp-gateway/dist/cli.js',
     'scripts/link-workspace-packages.cjs',
     'integrations/hermes/plugin.yaml',
     'dist/web/standalone/server.js',
+  ];
+
+  const retiredProductPrefixes = [
+    'packages/cloud-mcp-gateway/',
+    'packages/gsd-cloud/',
   ];
 
   let missing = false;
@@ -342,6 +345,12 @@ try {
   if (missing) {
     console.log('ERROR: Critical files missing from tarball.');
     process.exit(1);
+  }
+  for (const prefix of retiredProductPrefixes) {
+    if ([...packedFiles].some((file) => file.startsWith(prefix))) {
+      console.log(`ERROR: Retired product payload is still packed: ${prefix}`);
+      process.exit(1);
+    }
   }
   console.log('    Critical files present.');
 
@@ -582,8 +591,8 @@ try {
     process.exit(1);
   }
 
-  // --- Verify packaged non-linkable CLIs resolve their root-provided deps ---
-  console.log('==> Verifying packaged daemon/cloud dependency resolution...');
+  // --- Verify packaged non-linkable CLI resolves its root-provided deps ---
+  console.log('==> Verifying packaged daemon dependency resolution...');
   try {
     const daemonHelpOutput = execFileSync(process.execPath, [join(installedRoot, 'packages', 'daemon', 'bin', 'gsd-daemon.js'), '--help'], {
       cwd: installDir,
@@ -596,24 +605,9 @@ try {
       console.log('ERROR: gsd-daemon --help returned unexpected output.');
       process.exit(1);
     }
-    execFileSync(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `await import(${JSON.stringify('file://' + join(installedRoot, 'packages', 'cloud-mcp-gateway', 'dist', 'server.js').replace(/\\/g, '/'))});`,
-      ],
-      {
-        cwd: installDir,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 15000,
-        maxBuffer: DEFAULT_MAX_BUFFER,
-      },
-    );
-    console.log('    daemon and cloud gateway package deps resolve.');
+    console.log('    daemon package deps resolve.');
   } catch (err) {
-    console.log('ERROR: packaged daemon/cloud dependency resolution failed after install.');
+    console.log('ERROR: packaged daemon dependency resolution failed after install.');
     if (err.stdout) console.log(err.stdout);
     if (err.stderr) console.log(err.stderr);
     process.exit(1);

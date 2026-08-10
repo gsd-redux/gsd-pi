@@ -483,9 +483,6 @@ node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs \
 pnpm exec tsx --test \
   src/resources/extensions/gsd/tests/workflow-tool-executors.test.ts \
   packages/mcp-server/src/workflow-tools.test.ts \
-  packages/gsd-cloud/src/cloud-runtime.test.ts \
-  packages/gsd-cloud/src/executors/gsd-pi-executor.test.ts \
-  packages/gsd-cloud/src/executors/mcp-stdio-client.test.ts \
   src/resources/extensions/gsd/tests/db-lifecycle-foundation.test.ts \
   src/resources/extensions/gsd/tests/domain-operation.test.ts \
   src/resources/extensions/gsd/tests/single-writer-invariant.test.ts

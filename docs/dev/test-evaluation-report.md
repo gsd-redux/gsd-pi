@@ -18,7 +18,6 @@ Generated: 2026-06-20T21:30:18.157Z
 
 | Area | Untested / Total | Critical untested |
 |------|----------------:|------------------:|
-| pkg:cloud-mcp-gateway | 0 / 8 | 0 |
 | pkg:contracts | 0 / 3 | 0 |
 | pkg:daemon | 0 / 27 | 0 |
 | pkg:gsd-agent-core | 0 / 33 | 0 |

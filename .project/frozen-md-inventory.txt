@@ -25,7 +25,6 @@ CONTEXT.md
 CONTRIBUTING.md
 README.md
 VISION.md
-apps/gsd-cloud-monitor/README.md
 docker/README.md
 docs/README.md
 docs/agents/domain.md
@@ -172,7 +171,6 @@ docs/dev/extending-pi/25-slash-command-subcommand-patterns.md
 docs/dev/extending-pi/26-extension-manifest-spec.md
 docs/dev/extending-pi/27-testing-extensions.md
 docs/dev/extending-pi/README.md
-docs/dev/gsd-cloud-publish-runbook.md
 docs/dev/hermes-integration-plan.md
 docs/dev/lifecycle-command-integration-runbook.md
 docs/dev/new-milestone-discuss-flow.md
@@ -258,7 +256,6 @@ docs/user-docs/auto-mode.md
 docs/user-docs/captures-triage.md
 docs/user-docs/claude-code-auth-compliance.md
 docs/user-docs/claude-code-subscription.md
-docs/user-docs/cloud-mcp-gateway.md
 docs/user-docs/commands.md
 docs/user-docs/configuration.md
 docs/user-docs/cost-management.md
@@ -356,9 +353,6 @@ integrations/hermes/docs/setup.md
 integrations/hermes/docs/upstream-hermes-pr.md
 integrations/hermes/tests/fixtures/minimal-project/.gsd/STATE.md
 native/README.md
-packages/cloud-mcp-gateway/README.md
-packages/gsd-cloud/README.md
-packages/gsd-cloud/e2e/README.md
 packages/mcp-server/README.md
 packages/pi-agent-core/CHANGELOG.md
 packages/pi-agent-core/README.md

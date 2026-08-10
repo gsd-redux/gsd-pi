@@ -3,7 +3,7 @@
 //
 // Why this exists: the publish list used to be hardcoded in build-native.yml as
 // "@opengsd/contracts @opengsd/rpc-client @opengsd/mcp-server", which silently
-// omitted @opengsd/cloud-mcp-gateway and @opengsd/daemon — so two releases went
+// omitted publishable workspace packages — so two releases went
 // out with those packages missing from npm. This module derives the set from
 // each package's own manifest so adding a publishable package can never again be
 // forgotten by an out-of-date list.

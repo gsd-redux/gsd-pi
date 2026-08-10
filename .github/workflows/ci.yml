@@ -234,8 +234,8 @@ jobs:
           GSD_SKIP_NATIVE_PACKAGE_TESTS: ${{ needs.fast-gates.outputs.portability-changed == 'true' && '0' || '1' }}
         run: pnpm run test:packages:compiled
 
-      - name: Run cloud package tests
-        run: pnpm run test:cloud-packages
+      - name: Run daemon package tests
+        run: pnpm run test:daemon
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install chromium

@@ -1,6 +1,5 @@
 // Project/App: gsd-pi
-// File Purpose: Guard the npm release publish set against the drift that left
-// @opengsd/cloud-mcp-gateway and @opengsd/daemon unpublished for two releases.
+// File Purpose: Guard the npm release publish set and dependency order.
 
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
@@ -22,11 +21,11 @@ const {
 } = require("../lib/npm-release-packages.cjs");
 const repoRoot = path.resolve(fileURLToPath(import.meta.url), "../../..");
 
-test("required npm set includes the previously-missing leaf packages", () => {
+test("required npm set keeps daemon and excludes retired cloud products", () => {
   const names = getRequiredNpmPackageNames();
-  // The exact packages whose absence caused the broken releases.
-  assert.ok(names.includes("@opengsd/cloud-mcp-gateway"), "cloud-mcp-gateway must be published");
   assert.ok(names.includes("@opengsd/daemon"), "daemon must be published");
+  assert.ok(!names.includes("@opengsd/cloud-mcp-gateway"), "retired cloud gateway must not be published");
+  assert.ok(!names.includes("@opengsd/gsd-cloud"), "retired cloud agent must not be published");
 });
 
 test("required npm set = root + engines + every publishConfig workspace package", () => {
@@ -37,7 +36,6 @@ test("required npm set = root + engines + every publishConfig workspace package"
     "@opengsd/contracts",
     "@opengsd/rpc-client",
     "@opengsd/mcp-server",
-    "@opengsd/cloud-mcp-gateway",
     "@opengsd/daemon",
   ]) {
     assert.ok(names.includes(expected), `${expected} must be in the required npm set`);

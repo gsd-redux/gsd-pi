@@ -540,27 +540,13 @@ gsd --mode mcp
 
 The server registers all tools from the agent session and maps MCP `tools/list` and `tools/call` requests to GSD tool definitions. It runs until the transport closes.
 
-MCP mode also exposes the GSD workflow adapter tools used by headless and cloud runtimes:
+MCP mode also exposes the GSD workflow adapter tools used by headless runtimes:
 
 - Session control tools: `gsd_execute`, `gsd_status`, `gsd_result`, `gsd_cancel`, `gsd_resolve_blocker`
 - Project state and read-only tools: `gsd_query`, `gsd_progress`, `gsd_roadmap`, `gsd_history`, `gsd_doctor`, `gsd_captures`, `gsd_knowledge`, `gsd_graph`
 - Interactive form tool: `ask_user_questions`
 
 For an auto-mode run, call `gsd_execute` first with an absolute `projectDir`. It returns a `sessionId`; poll `gsd_status` with that `sessionId` until the run finishes, then call `gsd_result` for accumulated output or `gsd_cancel` to stop it. If a client loses the `sessionId`, `gsd_status` can fall back to `projectDir`, or omit both fields only when this MCP server tracks exactly one session. The read-only project tools read `.gsd/` directly and do not require an active session.
-
-## Cloud MCP Gateway Runtime
-
-`gsd-cloud-mcp-gateway` starts an HTTP gateway for remote MCP clients. `gsd-daemon cloud` pairs and connects a local runtime to that gateway.
-
-```bash
-GSD_CLOUD_USER_TOKEN="replace-with-a-long-random-token" gsd-cloud-mcp-gateway --port 8787
-gsd-daemon cloud status
-gsd-daemon cloud pair --gateway "https://gateway.example.com" --code "PAIRING_CODE" --runtime-name "Laptop"
-gsd-daemon cloud connect --verbose
-gsd-daemon cloud disconnect
-```
-
-See [Cloud MCP Gateway](./cloud-mcp-gateway.md) for the full operator setup flow, token model, ports, and failure modes.
 
 ## In-Session Update
 

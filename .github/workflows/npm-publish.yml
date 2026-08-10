@@ -108,7 +108,7 @@ jobs:
         run: pnpm run build:core
 
       # The main @opengsd/gsd-pi tarball bundles packages/*/dist via its `files`
-      # globs, so an unbuilt workspace package (e.g. gsd-cloud) ships broken
+      # globs, so an unbuilt workspace package ships broken
       # inside this dev tarball too — guard the built dist before publishing.
       - name: Verify workspace packages are built
         run: node scripts/verify-workspace-dist.cjs
