@@ -3386,6 +3386,52 @@ test("autoLoop retries next iteration when orchestration reports paused", async 
   assert.ok(pausedIterationEnd, "orchestration paused must emit iteration-end to close the iteration journal");
 });
 
+test("#1674: unknown orchestration outcomes hash the kind the loop read", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const unexpectedKinds = ["future-a", "future-b"];
+  const payloads: string[] = [];
+  let advanceCalls = 0;
+  const s = makeLoopSession({
+    currentMilestoneId: "M002",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        const kind = unexpectedKinds[advanceCalls++];
+        if (kind) return { kind } as any;
+        return { kind: "stopped" as const, reason: "done" };
+      },
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      getStatus: () => ({ phase: "running" as const, transitionCount: advanceCalls }),
+    },
+  });
+  t.after(() => rmSync(s.basePath, { recursive: true, force: true }));
+
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: (_session, outcome) => {
+      if (outcome.guardId === "orchestration-unknown-outcome") {
+        payloads.push(outcome.inputPayload);
+      }
+      return null;
+    },
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.deepEqual(payloads.map((payload) => JSON.parse(payload)), [
+    { kind: "future-a" },
+    { kind: "future-b" },
+  ]);
+  assert.notEqual(payloads[0], payloads[1]);
+});
+
 test("autoLoop consumes pending orchestration dispatch without advancing twice", async () => {
   _resetPendingResolve();
 
