@@ -127,10 +127,9 @@ function handleContentHeuristic(
   // and with several outputs it reads several files before one of them fails.
   // Recording only the failing file collapses "output a changed but b still
   // fails" into the signature of "b fails", which falsely trips the liveness
-  // backstop at occurrence two (#1674). Every content read this guard performed
-  // is kept, in `produces` order, as a digest — bounded payload, stable hash for
-  // identical inputs, one-to-one with the bytes that were read.
-  const reads: Array<{ path: string; digest: string }> = [];
+  // backstop at occurrence two (#1674). Each check is kept in `produces` order,
+  // with sizes for metadata reads and digests for content reads.
+  const reads: Array<{ path: string; exists: boolean; size?: number; digest?: string }> = [];
 
   for (const relPath of produces) {
     const absPath = resolve(runDir, relPath);
@@ -150,13 +149,20 @@ function handleContentHeuristic(
         policy: "content-heuristic",
         failure: "missing-file",
         path: relPath,
-        ...(reads.length > 0 ? { reads } : {}),
+        reads: [...reads, { path: relPath, exists: false }],
       });
     }
+
+    const read: { path: string; exists: true; size?: number; digest?: string } = {
+      path: relPath,
+      exists: true,
+    };
+    reads.push(read);
 
     // 2. Minimum size check
     if (verify.minSize !== undefined) {
       const stat = statSync(absPath);
+      read.size = stat.size;
       if (stat.size < verify.minSize) {
         return verificationResult("pause", {
           policy: "content-heuristic",
@@ -164,7 +170,7 @@ function handleContentHeuristic(
           path: relPath,
           actualSize: stat.size,
           minimumSize: verify.minSize,
-          ...(reads.length > 0 ? { reads } : {}),
+          reads,
         });
       }
     }
@@ -172,10 +178,7 @@ function handleContentHeuristic(
     // 3. Pattern match check (with timeout guard against ReDoS)
     if (verify.pattern !== undefined) {
       const content = readFileSync(absPath, "utf-8");
-      reads.push({
-        path: relPath,
-        digest: createHash("sha256").update(content, "utf8").digest("hex"),
-      });
+      read.digest = createHash("sha256").update(content, "utf8").digest("hex");
       try {
         if (!new RegExp(verify.pattern).test(content)) {
           return verificationResult("pause", {

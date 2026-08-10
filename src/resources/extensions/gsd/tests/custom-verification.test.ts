@@ -99,6 +99,7 @@ describe("content-heuristic policy", () => {
       policy: "content-heuristic",
       failure: "missing-file",
       path: "report.md",
+      reads: [{ path: "report.md", exists: false }],
     });
   });
 

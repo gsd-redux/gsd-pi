@@ -19,6 +19,7 @@ import {
   composeVerificationInputPayload,
   type VerificationRead,
 } from "../auto/workflow-custom-engine-verify-outcome.js";
+import { recordNonAdvancingOutcome } from "../auto-liveness-backstop.js";
 import { runCustomVerificationWithEvidence } from "../custom-verification.js";
 import { resolveTaskRecoveryResumeBasePath } from "../bootstrap/dynamic-tools.js";
 import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.js";
@@ -301,7 +302,8 @@ test("#1674: host verification evidence keeps distinct policy errors and stored 
 
   assert.equal(firstEvidence.length, 2);
   assert.equal(firstEvidence[0]?.path, "policy-error");
-  assert.equal(firstEvidence[0]?.attemptId, first.attemptId);
+  assert.equal(firstEvidence[0]?.attemptId, undefined);
+  assert.equal(firstEvidence[0]?.verdict, undefined);
   assert.match(firstEvidence[0]?.errorMessage ?? "", /runner A unavailable/);
   assert.equal(firstEvidence[0]?.recovery?.owner, "agent");
   assert.equal(firstEvidence[0]?.recovery?.action, "remediate");
@@ -332,6 +334,159 @@ test("#1674: host verification evidence keeps distinct policy errors and stored 
   );
 });
 
+test("#1674: identical fresh policy errors trip at two without minted identifiers", async () => {
+  const { basePath, attemptId: firstAttemptId } = createFixture();
+  let attemptId = firstAttemptId;
+
+  const runPolicyError = async (message: string): Promise<{
+    payload: string;
+    recorded: ReturnType<typeof recordNonAdvancingOutcome>;
+  }> => {
+    await stage(basePath, `custom/policy-error/${attemptId}`);
+    const reads: VerificationRead[] = [];
+    const outcome = await runCustomEngineHostVerification({
+      unitType: "execute-task",
+      basePath,
+      unitId: "M001/S01/T01",
+      verifyPolicy: async () => { throw new Error(message); },
+      recordHostEvidence: (evidence) => reads.push({ source: "host", evidence }),
+    });
+    const payload = composeVerificationInputPayload({ outcome, reads });
+    return {
+      payload,
+      recorded: recordNonAdvancingOutcome({
+        scopeId: basePath,
+        guardId: "custom-engine-verify",
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        inputPayload: payload,
+      }),
+    };
+  };
+
+  const first = await runPolicyError("verification runner unavailable");
+  attemptId = claimRetry(attemptId, 2);
+  const second = await runPolicyError("verification runner unavailable");
+  attemptId = claimRetry(attemptId, 3);
+  const changed = await runPolicyError("verification runner returned malformed output");
+
+  assert.equal(first.payload, second.payload, "fresh retries with identical inputs must hash identically");
+  assert.equal(first.recorded.tripped, false);
+  assert.equal(second.recorded.tripped, true, "identical fresh failures must trip at occurrence two");
+  assert.notEqual(changed.payload, second.payload, "a changed policy error must change the payload");
+  assert.equal(changed.recorded.tripped, false);
+});
+
+test("#1674: identical missing-repository failures trip at two", async () => {
+  const { basePath, attemptId: firstAttemptId } = createFixture();
+  db().prepare(`
+    UPDATE tasks SET target_repositories = :targets
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run({ ":targets": JSON.stringify(["missing-repository"]) });
+  let attemptId = firstAttemptId;
+
+  const runMissingRepository = async (): Promise<{
+    payload: string;
+    recorded: ReturnType<typeof recordNonAdvancingOutcome>;
+  }> => {
+    await stage(basePath, `custom/missing-repository/${attemptId}`);
+    const reads: VerificationRead[] = [];
+    const outcome = await runCustomEngineHostVerification({
+      unitType: "execute-task",
+      basePath,
+      unitId: "M001/S01/T01",
+      verifyPolicy: async () => { throw new Error("missing repositories must bypass policy"); },
+      recordHostEvidence: (evidence) => reads.push({ source: "host", evidence }),
+    });
+    const payload = composeVerificationInputPayload({ outcome, reads });
+    return {
+      payload,
+      recorded: recordNonAdvancingOutcome({
+        scopeId: basePath,
+        guardId: "custom-engine-verify",
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        inputPayload: payload,
+      }),
+    };
+  };
+
+  const first = await runMissingRepository();
+  attemptId = claimRetry(attemptId, 2);
+  const second = await runMissingRepository();
+
+  assert.equal(first.payload, second.payload);
+  assert.equal(first.recorded.tripped, false);
+  assert.equal(second.recorded.tripped, true);
+});
+
+test("#1674: post-policy failures include the selected recovery route", async () => {
+  const { basePath, attemptId: firstAttemptId } = createFixture();
+  writeFileSync(join(basePath, "DEFINITION.yaml"), [
+    "version: 1",
+    "name: post-policy-route",
+    "steps:",
+    "  - id: step-1",
+    "    name: step-1",
+    "    prompt: Do step-1",
+    "    produces: output.md",
+    "    verify:",
+    "      policy: content-heuristic",
+    "      pattern: '^ok'",
+    "",
+  ].join("\n"));
+  writeFileSync(join(basePath, "output.md"), "not-ok\n");
+  let attemptId = firstAttemptId;
+
+  const runPolicyFailure = async (): Promise<{
+    payload: string;
+    route: HostVerificationEvidence["recovery"];
+    recorded: ReturnType<typeof recordNonAdvancingOutcome>;
+  }> => {
+    await stage(basePath, `custom/post-policy/${attemptId}`);
+    const reads: VerificationRead[] = [];
+    const outcome = await runCustomEngineHostVerification({
+      unitType: "execute-task",
+      basePath,
+      unitId: "M001/S01/T01",
+      verifyPolicy: async () => {
+        const result = runCustomVerificationWithEvidence(basePath, "step-1");
+        reads.push({ source: "policy", evidence: result.inputPayload });
+        return result.outcome;
+      },
+      recordHostEvidence: (evidence) => reads.push({ source: "host", evidence }),
+    });
+    const payload = composeVerificationInputPayload({ outcome, reads });
+    const hostRead = reads.at(-1);
+    assert.ok(hostRead?.source === "host");
+    assert.equal(hostRead.evidence.path, "post-policy-failed");
+    return {
+      payload,
+      route: hostRead.evidence.recovery,
+      recorded: recordNonAdvancingOutcome({
+        scopeId: basePath,
+        guardId: "custom-engine-verify",
+        unitType: "execute-task",
+        unitId: "M001/S01/T01",
+        inputPayload: payload,
+      }),
+    };
+  };
+
+  const first = await runPolicyFailure();
+  attemptId = claimRetry(attemptId, 2);
+  const second = await runPolicyFailure();
+  attemptId = claimRetry(attemptId, 3);
+  const exhausted = await runPolicyFailure();
+
+  assert.deepEqual(first.route, { owner: "agent", action: "remediate", status: "committed" });
+  assert.equal(first.payload, second.payload, "the same policy read and route must hash identically");
+  assert.equal(second.recorded.tripped, true);
+  assert.deepEqual(exhausted.route, { owner: "agent", action: "abort", status: "committed" });
+  assert.notEqual(exhausted.payload, second.payload, "a different selected route must change the payload");
+  assert.equal(exhausted.recorded.tripped, false);
+});
+
 test("#1674: host verification evidence names both revisions on stored-pass source drift", async () => {
   const { basePath, attemptId } = createFixture();
   await stage(basePath);
@@ -355,6 +510,7 @@ test("#1674: host verification evidence names both revisions on stored-pass sour
 
   assert.equal(evidence.length, 1);
   assert.equal(evidence[0]?.path, "stored-pass-source-drift");
+  assert.equal(evidence[0]?.verdict?.verdictId, readTaskTechnicalVerdict(attemptId)?.supersedesVerdictId);
   assert.equal(evidence[0]?.failureKind, "verification-drift");
   assert.equal(evidence[0]?.sourceRevisionBefore, passedRevision);
   assert.match(evidence[0]?.sourceRevisionAfter ?? "", /^sha256:/);
@@ -408,6 +564,10 @@ test("#1674: a human-review resolution composes a different signature than the p
   });
   assert.equal(paused, "pause");
   const policyFailurePayload = composeVerificationInputPayload({ outcome: paused, reads });
+  const freshHumanReviewRead = reads[1];
+  assert.ok(freshHumanReviewRead?.source === "host");
+  assert.equal(freshHumanReviewRead.evidence.attemptId, undefined);
+  assert.equal(freshHumanReviewRead.evidence.verdict, undefined);
 
   assert.equal(await resolvePendingCustomTaskHumanReview({
     unitId: "M001/S01/T01",
@@ -473,6 +633,8 @@ test("#1674: post-policy source drift carries both revisions into distinct evide
   const first = await driftEvidence("export const verified = 1;\n");
   assert.equal(first.length, 1, "the post-policy source-drift decision must report the inputs it read");
   assert.equal(first[0]?.path, "post-policy-source-drift");
+  assert.equal(first[0]?.attemptId, undefined);
+  assert.equal(first[0]?.verdict, undefined);
   assert.match(first[0]?.sourceRevisionBefore ?? "", /^sha256:/);
   assert.match(first[0]?.sourceRevisionAfter ?? "", /^sha256:/);
   assert.notEqual(

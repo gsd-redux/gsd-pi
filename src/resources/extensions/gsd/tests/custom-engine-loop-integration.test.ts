@@ -49,7 +49,7 @@ afterEach(() => {
   // Close the singleton workflow database while its temp dir still exists —
   // closing it after the directory is gone raises a disk I/O error that leaves
   // the stale handle installed for the next case.
-  try { closeDatabase(); } catch { /* nothing open, or already gone */ }
+  closeDatabase();
   for (const d of tmpDirs) {
     try { rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM — OS cleans up temp dirs */ }
   }
@@ -279,6 +279,78 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
   };
 
   return { ...baseDeps, ...overrides, callLog };
+}
+
+interface VerificationObservation {
+  inputPayload: string;
+  count: number;
+  tripped: boolean;
+}
+
+async function runVerificationScenario(input: {
+  runDir: string;
+  mutateFiles: () => void;
+  observations: VerificationObservation[];
+  hostBoundary?: NonNullable<LoopDeps["customEngineHostVerificationBoundary"]>;
+}): Promise<void> {
+  input.mutateFiles();
+  _resetPendingResolve();
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const session = makeLoopSession({
+    activeEngineId: "custom",
+    activeRunDir: input.runDir,
+    basePath: input.runDir,
+  });
+  const deps = makeMockDeps({
+    ...(input.hostBoundary ? { customEngineHostVerificationBoundary: input.hostBoundary } : {}),
+    adjudicateNonAdvancingOutcome: (_session, outcome) => {
+      const recorded = recordNonAdvancingOutcome({
+        scopeId: realpathSync(input.runDir),
+        guardId: outcome.guardId,
+        unitType: outcome.unitType,
+        unitId: outcome.unitId,
+        inputPayload: outcome.inputPayload,
+      }, outcome.sanctionedExit ? { sanctionedExit: outcome.sanctionedExit } : undefined);
+      if (outcome.guardId === "custom-engine-verify") {
+        input.observations.push({
+          inputPayload: outcome.inputPayload,
+          count: recorded.count,
+          tripped: recorded.tripped,
+        });
+      }
+      return null;
+    },
+    pauseAuto: async () => {
+      session.active = false;
+    },
+    stopAuto: async (_ctx, _pi, reason) => {
+      deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+      session.active = false;
+    },
+  });
+
+  const resolver = setInterval(() => {
+    if (_hasPendingResolveForTest()) {
+      resolveAgentEnd({ messages: [{ role: "assistant" }] });
+    }
+  }, 25);
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      autoLoop(ctx, pi, session, deps),
+      new Promise((_, reject) =>
+        timeout = setTimeout(() => {
+          session.active = false;
+          resolveAgentEnd({ messages: [{ role: "assistant" }] });
+          reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
+        }, 5_000),
+      ),
+    ]);
+  } finally {
+    clearInterval(resolver);
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────
@@ -1099,7 +1171,7 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
     assert.equal(repeated.tripped, true, "the stop signature must survive database reopen as occurrence one");
   });
 
-  it("#1674: differing custom verification content keeps distinct signatures through autoLoop", async (t) => {
+  it("#1674: differing custom verification content keeps distinct signatures through autoLoop", async () => {
     // ADR-047 §3: a block signature hashes the inputs the guard actually read.
     // Pattern verification reads the produced file's content, so two runs whose
     // nonmatching content differs must persist different signatures (no false
@@ -1127,70 +1199,15 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
 
     mkdirSync(join(runDir, ".gsd"), { recursive: true });
     openDatabase(join(runDir, ".gsd", "gsd.db"));
-    t.after(() => {
-      try { closeDatabase(); } catch { /* noop */ }
-    });
 
-    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+    const verifyOutcomes: VerificationObservation[] = [];
 
     const runWithContent = async (content: string): Promise<void> => {
-      writeFileSync(outputPath, content);
-      _resetPendingResolve();
-      const ctx = makeMockCtx();
-      const pi = makeMockPi();
-      const s = makeLoopSession({
-        activeEngineId: "custom",
-        activeRunDir: runDir,
-        basePath: runDir,
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => writeFileSync(outputPath, content),
+        observations: verifyOutcomes,
       });
-      const deps = makeMockDeps({
-        adjudicateNonAdvancingOutcome: (_session, input) => {
-          const recorded = recordNonAdvancingOutcome({
-            scopeId: realpathSync(runDir),
-            guardId: input.guardId,
-            unitType: input.unitType,
-            unitId: input.unitId,
-            inputPayload: input.inputPayload,
-          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
-          if (input.guardId === "custom-engine-verify") {
-            verifyOutcomes.push({
-              inputPayload: input.inputPayload,
-              count: recorded.count,
-              tripped: recorded.tripped,
-            });
-          }
-          return null;
-        },
-        pauseAuto: async () => {
-          s.active = false;
-        },
-        stopAuto: async (_ctx, _pi, reason) => {
-          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
-          s.active = false;
-        },
-      });
-
-      const resolver = setInterval(() => {
-        if (_hasPendingResolveForTest()) {
-          resolveAgentEnd({ messages: [{ role: "assistant" }] });
-        }
-      }, 25);
-      let timeout: NodeJS.Timeout | undefined;
-      try {
-        await Promise.race([
-          autoLoop(ctx, pi, s, deps),
-          new Promise((_, reject) =>
-            timeout = setTimeout(() => {
-              s.active = false;
-              resolveAgentEnd({ messages: [{ role: "assistant" }] });
-              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
-            }, 5_000),
-          ),
-        ]);
-      } finally {
-        clearInterval(resolver);
-        if (timeout) clearTimeout(timeout);
-      }
     };
 
     await runWithContent("bad-1\n");
@@ -1236,7 +1253,7 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
     );
   });
 
-  it("#1674: every output the content guard read stays in the signature through autoLoop", async (t) => {
+  it("#1674: every output the content guard read stays in the signature through autoLoop", async () => {
     // ADR-047 §3: the guard reads each `produces` entry in order before one of
     // them fails, so all of those reads are signature inputs. Recording only the
     // failing file collapsed "output a changed while b still fails" into the
@@ -1265,71 +1282,18 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
 
     mkdirSync(join(runDir, ".gsd"), { recursive: true });
     openDatabase(join(runDir, ".gsd", "gsd.db"));
-    t.after(() => {
-      try { closeDatabase(); } catch { /* noop */ }
-    });
 
-    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+    const verifyOutcomes: VerificationObservation[] = [];
 
     const runWithMatchingOutput = async (matchingContent: string): Promise<void> => {
-      writeFileSync(matchingPath, matchingContent);
-      writeFileSync(failingPath, "bad\n");
-      _resetPendingResolve();
-      const ctx = makeMockCtx();
-      const pi = makeMockPi();
-      const s = makeLoopSession({
-        activeEngineId: "custom",
-        activeRunDir: runDir,
-        basePath: runDir,
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {
+          writeFileSync(matchingPath, matchingContent);
+          writeFileSync(failingPath, "bad\n");
+        },
+        observations: verifyOutcomes,
       });
-      const deps = makeMockDeps({
-        adjudicateNonAdvancingOutcome: (_session, input) => {
-          const recorded = recordNonAdvancingOutcome({
-            scopeId: realpathSync(runDir),
-            guardId: input.guardId,
-            unitType: input.unitType,
-            unitId: input.unitId,
-            inputPayload: input.inputPayload,
-          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
-          if (input.guardId === "custom-engine-verify") {
-            verifyOutcomes.push({
-              inputPayload: input.inputPayload,
-              count: recorded.count,
-              tripped: recorded.tripped,
-            });
-          }
-          return null;
-        },
-        pauseAuto: async () => {
-          s.active = false;
-        },
-        stopAuto: async (_ctx, _pi, reason) => {
-          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
-          s.active = false;
-        },
-      });
-
-      const resolver = setInterval(() => {
-        if (_hasPendingResolveForTest()) {
-          resolveAgentEnd({ messages: [{ role: "assistant" }] });
-        }
-      }, 25);
-      let timeout: NodeJS.Timeout | undefined;
-      try {
-        await Promise.race([
-          autoLoop(ctx, pi, s, deps),
-          new Promise((_, reject) =>
-            timeout = setTimeout(() => {
-              s.active = false;
-              resolveAgentEnd({ messages: [{ role: "assistant" }] });
-              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
-            }, 5_000),
-          ),
-        ]);
-      } finally {
-        clearInterval(resolver);
-        if (timeout) clearTimeout(timeout);
-      }
     };
 
     await runWithMatchingOutput("ok-1\n");
@@ -1349,7 +1313,58 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
     assert.equal(verifyOutcomes[2]?.tripped, true, "identical reads must trip at occurrence two");
   });
 
-  it("#1674: the loop composes host evidence over the policy read that preceded it", async (t) => {
+  it("#1674: min-size evidence includes every preceding size read through autoLoop", async () => {
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "size-step" })], "multi-size-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "multi-size-fidelity",
+      steps: [{
+        id: "size-step",
+        name: "size-step",
+        prompt: "Do size-step",
+        produces: ["size-step/a.md", "size-step/b.md"],
+        verify: { policy: "content-heuristic", minSize: 5 },
+      }],
+    }));
+    mkdirSync(join(runDir, "size-step"), { recursive: true });
+    const passingPath = join(runDir, "size-step", "a.md");
+    const failingPath = join(runDir, "size-step", "b.md");
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+
+    const observations: VerificationObservation[] = [];
+    const runWithPassingSize = async (content: string): Promise<void> => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {
+          writeFileSync(passingPath, content);
+          writeFileSync(failingPath, "x");
+        },
+        observations,
+      });
+    };
+
+    await runWithPassingSize("1234567890");
+    await runWithPassingSize("12345678901");
+    await runWithPassingSize("12345678901");
+
+    assert.equal(observations.length, 3);
+    const payloads = observations.map((outcome) => outcome.inputPayload);
+    assert.notEqual(payloads[0], payloads[1], "changing a preceding size read must change evidence");
+    assert.deepEqual(JSON.parse(payloads[1] ?? "{}").reads, [
+      { path: "size-step/a.md", exists: true, size: 11 },
+      { path: "size-step/b.md", exists: true, size: 1 },
+    ]);
+    assert.equal(observations[1]?.tripped, false);
+    assert.equal(payloads[1], payloads[2]);
+    assert.equal(observations[2]?.tripped, true);
+  });
+
+  it("#1674: the loop composes host evidence over the policy read that preceded it", async () => {
     // ADR-047 §3: one verification turn can read twice — the policy, then the
     // host boundary's own decisive inputs (post-policy source drift here, and a
     // second host call once interactive human review resolves the blocker).
@@ -1379,79 +1394,24 @@ describe("Custom engine loop integration", { concurrency: 1 }, () => {
 
     mkdirSync(join(runDir, ".gsd"), { recursive: true });
     openDatabase(join(runDir, ".gsd", "gsd.db"));
-    t.after(() => {
-      try { closeDatabase(); } catch { /* noop */ }
-    });
 
-    const verifyOutcomes: Array<{ inputPayload: string; count: number; tripped: boolean }> = [];
+    const verifyOutcomes: VerificationObservation[] = [];
 
     const runWithHostDecision = async (sourceRevisionAfter: string): Promise<void> => {
-      _resetPendingResolve();
-      const ctx = makeMockCtx();
-      const pi = makeMockPi();
-      const s = makeLoopSession({
-        activeEngineId: "custom",
-        activeRunDir: runDir,
-        basePath: runDir,
-      });
-      const deps = makeMockDeps({
-        customEngineHostVerificationBoundary: async (input) => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {},
+        observations: verifyOutcomes,
+        hostBoundary: async (input) => {
           await input.verifyPolicy();
           input.recordHostEvidence?.({
             path: "post-policy-source-drift",
-            attemptId: "attempt-compose",
             sourceRevisionBefore: "sha256:before",
             sourceRevisionAfter,
           });
           return "pause";
         },
-        adjudicateNonAdvancingOutcome: (_session, input) => {
-          const recorded = recordNonAdvancingOutcome({
-            scopeId: realpathSync(runDir),
-            guardId: input.guardId,
-            unitType: input.unitType,
-            unitId: input.unitId,
-            inputPayload: input.inputPayload,
-          }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
-          if (input.guardId === "custom-engine-verify") {
-            verifyOutcomes.push({
-              inputPayload: input.inputPayload,
-              count: recorded.count,
-              tripped: recorded.tripped,
-            });
-          }
-          return null;
-        },
-        pauseAuto: async () => {
-          s.active = false;
-        },
-        stopAuto: async (_ctx, _pi, reason) => {
-          deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
-          s.active = false;
-        },
       });
-
-      const resolver = setInterval(() => {
-        if (_hasPendingResolveForTest()) {
-          resolveAgentEnd({ messages: [{ role: "assistant" }] });
-        }
-      }, 25);
-      let timeout: NodeJS.Timeout | undefined;
-      try {
-        await Promise.race([
-          autoLoop(ctx, pi, s, deps),
-          new Promise((_, reject) =>
-            timeout = setTimeout(() => {
-              s.active = false;
-              resolveAgentEnd({ messages: [{ role: "assistant" }] });
-              reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
-            }, 5_000),
-          ),
-        ]);
-      } finally {
-        clearInterval(resolver);
-        if (timeout) clearTimeout(timeout);
-      }
     };
 
     await runWithHostDecision("sha256:after-1");

@@ -34,13 +34,8 @@ import {
 } from "../verification-source-integrity.js";
 
 /**
- * The decisive inputs a host-verification path actually read before returning
- * without a policy verdict (ADR-047 §3). The custom-engine verification
- * signature falls back to hashing the disposition alone when `verifyPolicy` was
- * never reached (or threw), so distinct host failures with the same disposition
- * would otherwise collapse into one signature and falsely trip at occurrence
- * two (#1674). Each path reports the identity it read; the loop hashes it
- * alongside the outcome.
+ * The stable decisive inputs a non-advancing host-verification path actually
+ * read (ADR-047 §3). The loop hashes each emission alongside the outcome.
  */
 export interface HostVerificationEvidence {
   path:
@@ -54,8 +49,9 @@ export interface HostVerificationEvidence {
     | "missing-repository"
     | "policy-error"
     | "post-policy-source-drift"
-    | "post-policy-human-review";
-  attemptId: string;
+    | "post-policy-human-review"
+    | "post-policy-failed";
+  attemptId?: string;
   /** Identity of the stored technical verdict this path read. */
   verdict?: { verdictId: string; evidenceId: string; verdict: string };
   /** Identity of the recovery blocker this path read. */
@@ -471,6 +467,11 @@ async function runCustomTaskHostVerification(
     );
   }
   if (existing) {
+    const storedVerdict = {
+      verdictId: existing.verdictId,
+      evidenceId: existing.evidenceId,
+      verdict: existing.verdict,
+    };
     const current = captureVerificationSourceSnapshot(targets);
     if (current.ok && current.snapshot.aggregateRevision === existing.testedSourceRevision) {
       return "continue";
@@ -513,11 +514,7 @@ async function runCustomTaskHostVerification(
       emitRouted({
         path: "stored-pass-source-drift",
         attemptId: attempt.attemptId,
-        verdict: {
-          verdictId: invalidated.verdictId,
-          evidenceId: invalidated.evidenceId,
-          verdict: "inconclusive",
-        },
+        verdict: storedVerdict,
         failureKind: "verification-drift",
         sourceRevisionBefore: existing.testedSourceRevision,
         sourceRevisionAfter: currentSourceRevision,
@@ -553,8 +550,7 @@ async function runCustomTaskHostVerification(
       undefined,
       emitRouted({
         path: "missing-repository",
-        attemptId: attempt.attemptId,
-        verdict: { ...recorded, verdict: "inconclusive" },
+        failureKind: "verification-failed",
         missingRepositoryIds: resolved.missingRepositoryIds,
         errorMessage: before.error,
       }),
@@ -602,8 +598,7 @@ async function runCustomTaskHostVerification(
       undefined,
       emitRouted({
         path: "policy-error",
-        attemptId: attempt.attemptId,
-        verdict: { ...recorded, verdict: "inconclusive" },
+        failureKind: "verification-failed",
         sourceRevisionBefore: before.snapshot.aggregateRevision,
         errorMessage: error instanceof Error ? error.message : String(error),
       }),
@@ -651,8 +646,7 @@ async function runCustomTaskHostVerification(
       { ...recorded, verdict },
       emitRouted({
         path: "post-policy-human-review",
-        attemptId: attempt.attemptId,
-        verdict: { ...recorded, verdict },
+        failureKind: "verification-failed",
         sourceRevisionBefore: before.snapshot.aggregateRevision,
       }),
     );
@@ -668,15 +662,25 @@ async function runCustomTaskHostVerification(
       undefined,
       emitRouted({
         path: "post-policy-source-drift",
-        attemptId: attempt.attemptId,
-        verdict: { ...recorded, verdict },
+        failureKind: "verification-failed",
         sourceRevisionBefore: before.snapshot.aggregateRevision,
         sourceRevisionAfter: after.ok ? after.snapshot.aggregateRevision : "unavailable",
         ...(captureError ? { errorMessage: captureError } : {}),
       }),
     );
   }
-  return routeFailedVerification(attempt, { ...recorded, verdict });
+  return routeFailedVerification(
+    attempt,
+    { ...recorded, verdict },
+    "verification-failed",
+    undefined,
+    emitRouted({
+      path: "post-policy-failed",
+      failureKind: "verification-failed",
+      sourceRevisionBefore: before.snapshot.aggregateRevision,
+      sourceRevisionAfter: after.ok ? after.snapshot.aggregateRevision : "unavailable",
+    }),
+  );
 }
 
 export async function runCustomEngineHostVerification(
