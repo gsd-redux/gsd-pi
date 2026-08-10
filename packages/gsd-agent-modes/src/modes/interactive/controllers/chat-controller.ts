@@ -269,7 +269,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// Defer runSegmentWalker + updatePinnedMessageZone + render
 				// into a single debounced batch. This reduces CPU churn by
 				// ~50x: instead of executing segment walker + pinned zone
-				// on every token delta, they run once per 20ms window.
+				// on every token delta, they run once per 50ms window.
 				rs.scheduleDebouncedStreamingWork(host, timestampFormat, contentBlocks);
 			}
 			break;
