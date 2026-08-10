@@ -3526,4 +3526,157 @@ export function registerWorkflowTools(
       });
     },
   );
+
+  // ─── PR #1613: Canonical read tools for requirements and decisions ───────
+  //
+  // Read-only access to the canonical GSD database state. These tools
+  // return the DB truth, not projections (REQUIREMENTS.md, DECISIONS.md).
+  // Error contracts: db_unavailable, not_found, query_error.
+
+  const requirementListSchema = z.object({
+    projectDir: z.string().optional(),
+    class: z.string().optional(),
+    status: z.string().optional(),
+    milestoneId: z.string().optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  });
+
+  server.tool(
+    "gsd_requirement_list",
+    "List requirements from the GSD database. Returns canonical store (never stale). Use instead of parsing REQUIREMENTS.md.",
+    {
+      projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+      class: z.string().optional().describe("Filter by class: core-capability, primary-user-loop, launchability, continuity, failure-visibility, integration, quality-attribute, operability, admin/support, compliance/security, differentiator, constraint, anti-feature."),
+      status: z.string().optional().describe("Filter by status (e.g. 'active', 'validated', 'deferred')."),
+      milestoneId: z.string().optional().describe("Filter to requirements owned by or supporting a specific milestone."),
+      limit: z.number().int().min(1).max(500).optional().describe("Maximum results (default 200, max 500)."),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(requirementListSchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { queryRequirementsWithLimit } = await importWorkflowRuntimeModule<any>(
+          "../../../src/resources/extensions/gsd/context-store.js",
+        );
+        const limit = Math.min(params.limit ?? 200, 500);
+        const results = queryRequirementsWithLimit({
+          class: params.class ?? undefined,
+          status: params.status ?? undefined,
+          milestoneId: params.milestoneId ?? undefined,
+          limit,
+        });
+        const filtered = params.class ? results.filter((r: any) => r.class === params.class) : results;
+        return {
+          content: [{ type: "text" as const, text: `Found ${filtered.length} requirement(s).` }],
+          details: { operation: "list_requirements", count: filtered.length, requirements: filtered },
+        };
+      });
+    },
+  );
+
+  const requirementGetSchema = z.object({
+    projectDir: z.string().optional(),
+    id: z.string(),
+  });
+
+  server.tool(
+    "gsd_requirement_get",
+    "Fetch a single requirement by ID from the GSD database. Returns the full row or error (not_found / db_unavailable).",
+    {
+      projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+      id: z.string().describe("Requirement ID (e.g. 'R021')."),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(requirementGetSchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { getRequirementByIdStrict } = await importWorkflowRuntimeModule<any>(
+          "../../../src/resources/extensions/gsd/context-store.js",
+        );
+        const req = getRequirementByIdStrict(params.id);
+        if (!req) {
+          return {
+            content: [{ type: "text" as const, text: `Requirement ${params.id} not found.` }],
+            details: { operation: "get_requirement", id: params.id, error: "not_found" },
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: `Requirement ${req.id}: ${req.description}` }],
+          details: { operation: "get_requirement", id: req.id, requirement: req },
+        };
+      });
+    },
+  );
+
+  const decisionListSchema = z.object({
+    projectDir: z.string().optional(),
+    scope: z.string().optional(),
+    milestoneId: z.string().optional(),
+    includeSuperseded: z.boolean().optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+  });
+
+  server.tool(
+    "gsd_decision_list",
+    "List decisions from the GSD database. Returns canonical store (never stale). Use instead of parsing DECISIONS.md.",
+    {
+      projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+      scope: z.string().optional().describe("Filter by scope (exact match)."),
+      milestoneId: z.string().optional().describe("Filter by milestone ID in when_context."),
+      includeSuperseded: z.boolean().optional().describe("Include superseded decisions (default false)."),
+      limit: z.number().int().min(1).max(500).optional().describe("Maximum results (default 200, max 500)."),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(decisionListSchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { queryDecisionsWithLimit } = await importWorkflowRuntimeModule<any>(
+          "../../../src/resources/extensions/gsd/context-store.js",
+        );
+        const limit = Math.min(params.limit ?? 200, 500);
+        const results = queryDecisionsWithLimit({
+          scope: params.scope ?? undefined,
+          milestoneId: params.milestoneId ?? undefined,
+          includeSuperseded: params.includeSuperseded ?? false,
+          limit,
+        });
+        return {
+          content: [{ type: "text" as const, text: `Found ${results.length} decision(s).` }],
+          details: { operation: "list_decisions", count: results.length, decisions: results },
+        };
+      });
+    },
+  );
+
+  const decisionGetSchema = z.object({
+    projectDir: z.string().optional(),
+    id: z.string(),
+    includeSuperseded: z.boolean().optional(),
+  });
+
+  server.tool(
+    "gsd_decision_get",
+    "Fetch a single decision by ID from the GSD database. Returns the full row or error (not_found / db_unavailable).",
+    {
+      projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+      id: z.string().describe("Decision ID (e.g. 'D007')."),
+      includeSuperseded: z.boolean().optional().describe("Include superseded decisions (default false)."),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(decisionGetSchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { getDecisionByIdStrict } = await importWorkflowRuntimeModule<any>(
+          "../../../src/resources/extensions/gsd/context-store.js",
+        );
+        const decision = getDecisionByIdStrict(params.id, params.includeSuperseded ?? false);
+        if (!decision) {
+          return {
+            content: [{ type: "text" as const, text: `Decision ${params.id} not found.` }],
+            details: { operation: "get_decision", id: params.id, error: "not_found" },
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: `Decision ${decision.id}: ${decision.decision}` }],
+          details: { operation: "get_decision", id: decision.id, decision },
+        };
+      });
+    },
+  );
 }
