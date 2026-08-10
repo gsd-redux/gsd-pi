@@ -12,6 +12,7 @@ import type { Decision, DecisionMadeBy, Requirement } from "./types.js";
 export interface DecisionQueryOpts {
 	milestoneId?: string;
 	scope?: string;
+	includeSuperseded?: boolean;
 }
 
 export interface RequirementQueryOpts {
