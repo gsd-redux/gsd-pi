@@ -20,11 +20,19 @@ class FakeRpcChild extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
   exitCode: number | null = null;
+  signalCode: NodeJS.Signals | null = null;
+  killSignals: NodeJS.Signals[] = [];
+  exitOnSignals = new Set<NodeJS.Signals>(["SIGTERM", "SIGKILL"]);
 
   kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
+    this.killSignals.push(signal);
+    if (!this.exitOnSignals.has(signal)) {
+      return true;
+    }
     if (this.exitCode === null) {
       this.exitCode = 0;
     }
+    this.signalCode = signal;
     queueMicrotask(() => {
       this.emit("exit", this.exitCode, signal);
     });
@@ -223,6 +231,50 @@ function createHarness(onCommand: (command: any, harness: ReturnType<typeof crea
   };
 
   return harness;
+}
+
+function createReadyHarness(sessionId: string): ReturnType<typeof createHarness> {
+  return createHarness((command, current) => {
+    assert.equal(command.type, "get_state");
+    current.emit({
+      id: command.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        sessionId,
+        thinkingLevel: "off",
+        isStreaming: false,
+        isCompacting: false,
+        steeringMode: "all",
+        followUpMode: "all",
+        autoCompactionEnabled: false,
+        autoRetryEnabled: false,
+        retryInProgress: false,
+        retryAttempt: 0,
+        messageCount: 0,
+        pendingMessageCount: 0,
+      },
+    });
+  });
+}
+
+function configureHarnessForFixture(
+  fixture: ReturnType<typeof makeWorkspaceFixture>,
+  harness: ReturnType<typeof createHarness>,
+): void {
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn: harness.spawn,
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getAutoDashboardData: () => fakeAutoDashboardData(),
+    getOnboardingNeeded: () => false,
+  });
 }
 
 async function readSseEvents(response: Response, count: number): Promise<any[]> {
@@ -658,6 +710,100 @@ test("bridge command/runtime failures are inspectable and redact secret material
   assert.equal(snapshot.phase, "failed");
   assert.equal(snapshot.lastError?.afterSessionAttachment, true);
   assert.doesNotMatch(snapshot.lastError?.message ?? "", /sk-after-attach-12345|sk-test-command-secret-9999/);
+});
+
+test("bridge startup failure terminates the spawned RPC child", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const harness = createHarness((command, current) => {
+    assert.equal(command.type, "get_state");
+    current.emit({
+      id: command.id,
+      type: "response",
+      command: "get_state",
+      success: false,
+      error: "startup failed",
+    });
+  });
+
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn: harness.spawn,
+    indexWorkspace: async () => fakeWorkspaceIndex(),
+    getAutoDashboardData: () => fakeAutoDashboardData(),
+    getOnboardingNeeded: () => false,
+  });
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  await assert.rejects(bridge.getProjectBridgeService().ensureStarted(), /startup failed/);
+  assert.deepEqual(harness.child?.killSignals, ["SIGTERM"]);
+});
+
+test("late exit from a failed RPC child does not clear its ready replacement", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const harness = createReadyHarness("sess-replacement");
+  configureHarnessForFixture(fixture, harness);
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const failedChild = harness.child!;
+
+  failedChild.emit("error", new Error("first child failed"));
+  await service.ensureStarted();
+  assert.equal(harness.spawnCalls, 2);
+  assert.equal(service.getSnapshot().phase, "ready");
+
+  failedChild.emit("exit", 1, null);
+
+  assert.equal(service.getSnapshot().phase, "ready");
+  const response = await service.sendInput({ type: "get_state" });
+  assert.equal(response?.success, true);
+});
+
+test("auth refresh owns the start gate through SIGKILL fallback", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const harness = createReadyHarness("sess-auth-refresh");
+  configureHarnessForFixture(fixture, harness);
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const originalChild = harness.child!;
+  originalChild.exitOnSignals.delete("SIGTERM");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  const refresh = service.refreshAuth();
+  const concurrentInput = service.sendInput({ type: "get_state" });
+  await Promise.resolve();
+
+  const spawnCallsBeforeTermination = harness.spawnCalls;
+  assert.deepEqual(originalChild.killSignals, ["SIGTERM"]);
+
+  t.mock.timers.tick(2_000);
+  const [, response] = await Promise.all([refresh, concurrentInput]);
+
+  assert.equal(spawnCallsBeforeTermination, 1);
+  assert.deepEqual(originalChild.killSignals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(harness.spawnCalls, 2);
+  assert.equal(response?.success, true);
+  assert.equal(service.getSnapshot().phase, "ready");
 });
 
 // ---------------------------------------------------------------------------

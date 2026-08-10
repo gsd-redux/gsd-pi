@@ -2,10 +2,6 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { join, dirname } from "node:path";
 
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts";
-import { decodeCloudProjectRef, isCloudProjectRef } from "../../../../src/web/cloud-transport.ts";
-import { getCloudSessionFromRequest } from "../../../lib/cloud-auth.ts";
-import { buildCloudFsTree, cloudFsReadFile, cloudFsStat, cloudFsWriteFile, type CloudFsContext } from "../../../lib/cloud-fs.ts";
-import { cloudModeLocalRouteGuard, isCloudMode } from "../../../lib/cloud-mode.ts";
 import { resolveSecurePath } from "../../../lib/secure-path.ts";
 
 export const runtime = "nodejs";
@@ -38,167 +34,6 @@ interface FileNode {
   name: string;
   type: "file" | "directory";
   children?: FileNode[];
-}
-
-// ─── Cloud mode (ADR-047) ────────────────────────────────────────────────────
-//
-// In cloud mode the file browser proxies the gateway's /internal/fs endpoint
-// (readdir/read/stat for every role, write for non-viewers). Paths are
-// project-relative on the remote device: the "gsd" root maps to the `.gsd`
-// prefix, the "project" root to "". Move/delete/create are not part of the
-// relay contract and return 404.
-
-function sortFileNodes(nodes: FileNode[]): void {
-  nodes.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-/** Pure (no-disk) equivalent of resolveSecurePath's validation for remote paths. */
-function validateCloudRelativePath(pathParam: string): string | null {
-  if (pathParam.startsWith("/") || pathParam.startsWith("\\")) return null;
-  if (pathParam.includes("..")) return null;
-  return pathParam;
-}
-
-function cloudRootPrefix(rootParam: RootMode): string {
-  return rootParam === "gsd" ? ".gsd" : "";
-}
-
-interface CloudFsRequestContext {
-  context: CloudFsContext;
-  role: string;
-}
-
-/** Resolve the cloud fs context from the request, or return an error Response. */
-function resolveCloudFsContext(request: Request): CloudFsRequestContext | Response {
-  const session = getCloudSessionFromRequest(request);
-  if (!session) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  const projectCwd = requireProjectCwd(request);
-  if (!isCloudProjectRef(projectCwd)) {
-    return Response.json({ error: "No project selected" }, { status: 400 });
-  }
-  const ref = decodeCloudProjectRef(projectCwd);
-  // The fs envelope must address the device OWNER (the gateway verifies
-  // runtime ownership); owner-only deployments carry no owner claim, so fall
-  // back to the session subject.
-  return {
-    context: { owner: session.owner ?? session.sub, deviceId: ref.deviceId, projectAlias: ref.alias },
-    role: ref.role,
-  };
-}
-
-function mapCloudFsError(err: unknown, pathParam: string, headers: Record<string, string>): Response {
-  const status = (err as { status?: number }).status;
-  const message = err instanceof Error ? err.message : String(err);
-  if (status === 404) {
-    return Response.json({ error: `File not found: ${pathParam}` }, { status: 404, headers });
-  }
-  if (status === 403) {
-    return Response.json({ error: message }, { status: 403, headers });
-  }
-  if (status === 500) {
-    // The cloud-fs client explicitly classifies a daemon-side failure as 500;
-    // preserve it instead of masking it as a generic gateway error.
-    return Response.json({ error: `Cloud file operation failed: ${message}` }, { status: 500, headers });
-  }
-  // Gateway-level failure (device offline, timeout, unauthorized) or unknown.
-  return Response.json({ error: `Cloud file operation failed: ${message}` }, { status: 502, headers });
-}
-
-async function handleCloudGet(request: Request, rootParam: RootMode, pathParam: string | null): Promise<Response> {
-  const resolved = resolveCloudFsContext(request);
-  if (resolved instanceof Response) return resolved;
-  const { context } = resolved;
-  const headers = { "Cache-Control": "no-store" };
-  const prefix = cloudRootPrefix(rootParam);
-
-  // Mode A: directory tree
-  if (!pathParam) {
-    const skipDirs = rootParam === "project" ? PROJECT_SKIP_DIRS : undefined;
-    const maxDepth = rootParam === "project" ? MAX_PROJECT_DEPTH : Infinity;
-    try {
-      const tree = await buildCloudFsTree(context, prefix, { skipDirs, maxDepth });
-      return Response.json({ tree }, { headers });
-    } catch (err) {
-      return mapCloudFsError(err, prefix || "/", headers);
-    }
-  }
-
-  // Mode B: file content
-  const relPath = validateCloudRelativePath(pathParam);
-  if (!relPath) {
-    const label = rootParam === "project" ? "project root" : ".gsd/";
-    return Response.json(
-      { error: `Invalid path: path must be relative within ${label} and cannot contain '..' or start with '/'` },
-      { status: 400, headers },
-    );
-  }
-  const remotePath = prefix ? `${prefix}/${relPath}` : relPath;
-
-  try {
-    const stat = await cloudFsStat(context, remotePath);
-    if (stat.isDirectory) {
-      return Response.json(
-        { error: `Path is a directory, not a file: ${pathParam}` },
-        { status: 400, headers },
-      );
-    }
-    if (stat.size > MAX_FILE_SIZE) {
-      return Response.json(
-        { error: `File too large: ${pathParam} (${stat.size} bytes, max ${MAX_FILE_SIZE})` },
-        { status: 413, headers },
-      );
-    }
-    const { content, mtime } = await cloudFsReadFile(context, remotePath);
-    return Response.json({ content, mtime }, { headers });
-  } catch (err) {
-    return mapCloudFsError(err, pathParam, headers);
-  }
-}
-
-async function handleCloudPost(request: Request, rootParam: string, pathParam: unknown, content: string, expectedMtime: number | null): Promise<Response> {
-  const resolved = resolveCloudFsContext(request);
-  if (resolved instanceof Response) return resolved;
-  const { context, role } = resolved;
-
-  if (role === "viewer") {
-    return Response.json({ error: "Viewer role cannot write files" }, { status: 403 });
-  }
-
-  if (typeof pathParam !== "string" || pathParam.length === 0) {
-    return Response.json(
-      { error: "Missing or invalid path: must be a non-empty string" },
-      { status: 400 },
-    );
-  }
-
-  const relPath = validateCloudRelativePath(pathParam);
-  if (!relPath) {
-    const label = rootParam === "project" ? "project root" : ".gsd/";
-    return Response.json(
-      { error: `Invalid path: path must be relative within ${label} and cannot contain '..' or start with '/'` },
-      { status: 400 },
-    );
-  }
-  const prefix = cloudRootPrefix(rootParam as RootMode);
-  const remotePath = prefix ? `${prefix}/${relPath}` : relPath;
-
-  try {
-    const result = await cloudFsWriteFile(context, remotePath, content, expectedMtime);
-    if (result.conflict) {
-      return Response.json(
-        { conflict: true, currentContent: result.currentContent, currentMtime: result.currentMtime },
-        { status: 409 },
-      );
-    }
-  } catch (err) {
-    return mapCloudFsError(err, pathParam, {});
-  }
-  return Response.json({ success: true });
 }
 
 function getGsdRoot(projectCwd: string): string {
@@ -235,7 +70,10 @@ function buildTree(dirPath: string, skipDirs?: Set<string>, depth = 0, maxDepth 
     }
   }
 
-  sortFileNodes(nodes);
+  nodes.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
 
   return nodes;
 }
@@ -250,10 +88,6 @@ export async function GET(request: Request): Promise<Response> {
       { error: `Invalid root: must be "gsd" or "project"` },
       { status: 400 },
     );
-  }
-
-  if (isCloudMode()) {
-    return handleCloudGet(request, rootParam, pathParam);
   }
 
   const projectCwd = requireProjectCwd(request);
@@ -318,11 +152,10 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { path: pathParam, content, root: rootParam = "gsd", expectedMtime } = body as {
+  const { path: pathParam, content, root: rootParam = "gsd" } = body as {
     path?: string;
     content?: unknown;
     root?: string;
-    expectedMtime?: unknown;
   };
 
   if (rootParam !== "gsd" && rootParam !== "project") {
@@ -343,16 +176,6 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(
       { error: `Content too large: ${Buffer.byteLength(content, "utf-8")} bytes exceeds max ${MAX_FILE_SIZE}` },
       { status: 413 },
-    );
-  }
-
-  if (isCloudMode()) {
-    return handleCloudPost(
-      request,
-      rootParam,
-      pathParam,
-      content,
-      typeof expectedMtime === "number" && Number.isFinite(expectedMtime) ? expectedMtime : null,
     );
   }
 
@@ -388,9 +211,6 @@ export async function POST(request: Request): Promise<Response> {
 
 /** PATCH — move/rename a file or directory */
 export async function PATCH(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
-
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -480,9 +300,6 @@ export async function PATCH(request: Request): Promise<Response> {
 
 /** DELETE — delete a file or directory */
 export async function DELETE(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
-
   const { searchParams } = new URL(request.url);
   const pathParam = searchParams.get("path");
   const rootParam = (searchParams.get("root") ?? "gsd") as RootMode;
@@ -534,9 +351,6 @@ export async function DELETE(request: Request): Promise<Response> {
 
 /** PUT — create a new file or directory */
 export async function PUT(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
-
   let body: Record<string, unknown>;
   try {
     body = await request.json();

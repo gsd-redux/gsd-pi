@@ -6,7 +6,6 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "
 import { Menu, X } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { Sidebar, MilestoneExplorer, CollapsedMilestoneSidebar } from "@/components/gsd/sidebar"
-import type { NavItem } from "@/lib/workspace-nav"
 import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
 import { StatusBar } from "@/components/gsd/status-bar"
@@ -14,7 +13,6 @@ import { FocusedPanel } from "@/components/gsd/focused-panel"
 import { OnboardingGate } from "@/components/gsd/onboarding-gate"
 import { CommandSurface } from "@/components/gsd/command-surface"
 import { DevOverridesProvider } from "@/lib/dev-overrides"
-import { isCloudModeClient } from "@/lib/cloud-client"
 import { ProjectStoreManagerProvider, useProjectStoreManager } from "@/lib/project-store-manager"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
@@ -71,16 +69,7 @@ function viewStorageKey(projectCwd: string): string {
   return `gsd-active-view:${projectCwd}`
 }
 
-interface WorkspaceNavProps {
-  /**
-   * Nav entries supplied by the host app, rendered after the built-in
-   * workspace views. The SaaS host uses this for surfaces that only exist
-   * there, so nothing cloud-specific has to be edited into this file.
-   */
-  extraItems?: NavItem[]
-}
-
-function WorkspaceChrome({ extraItems }: WorkspaceNavProps) {
+function WorkspaceChrome() {
   const [activeView, setActiveView] = useState("dashboard")
   const [isTerminalExpanded, setIsTerminalExpanded] = useState(false)
   const [terminalHeight, setTerminalHeight] = useState(300)
@@ -432,7 +421,7 @@ function WorkspaceChrome({ extraItems }: WorkspaceNavProps) {
         )}
         data-testid="mobile-nav-drawer"
       >
-        <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} extraItems={extraItems} mobile />
+        <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} mobile />
       </div>
 
       {/* Mobile milestone drawer */}
@@ -462,7 +451,7 @@ function WorkspaceChrome({ extraItems }: WorkspaceNavProps) {
       <div className="flex flex-1 overflow-hidden">
         {/* Desktop sidebar — hidden on mobile */}
         <div className="hidden md:flex">
-          <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} extraItems={extraItems} />
+          <Sidebar activeView={activeView} onViewChange={isConnecting ? () => {} : handleViewChange} isConnecting={isConnecting} />
         </div>
 
         <div className="flex flex-1 flex-col overflow-hidden">
@@ -600,19 +589,19 @@ function WorkspaceChrome({ extraItems }: WorkspaceNavProps) {
   )
 }
 
-export function GSDAppShell({ extraItems }: WorkspaceNavProps) {
+export function GSDAppShell() {
   // Extract the auth token from the URL fragment on first render.
   // Must happen before any API calls fire.
   getAuthToken()
 
   return (
     <ProjectStoreManagerProvider>
-      <ProjectAwareWorkspace extraItems={extraItems} />
+      <ProjectAwareWorkspace />
     </ProjectStoreManagerProvider>
   )
 }
 
-function ProjectAwareWorkspace({ extraItems }: WorkspaceNavProps) {
+function ProjectAwareWorkspace() {
   const manager = useProjectStoreManager()
   const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
   const activeStore = activeProjectCwd ? manager.getActiveStore() : null
@@ -649,10 +638,6 @@ function ProjectAwareWorkspace({ extraItems }: WorkspaceNavProps) {
   // being cached for later reuse — the server must stay alive.  Only send
   // the shutdown beacon when the page is truly being discarded.
   useEffect(() => {
-    // Cloud mode (ADR-047): the server is a shared SaaS host — there is no
-    // per-tab local server to shut down, so the exit hook is not registered.
-    if (isCloudModeClient()) return
-
     const handlePageHide = (event: PageTransitionEvent) => {
       if (event.persisted) {
         // Page is entering bfcache (tab switch, app backgrounding) — keep
@@ -681,7 +666,7 @@ function ProjectAwareWorkspace({ extraItems }: WorkspaceNavProps) {
   return (
     <GSDWorkspaceProvider store={activeStore}>
       <DevOverridesProvider>
-        <WorkspaceChrome extraItems={extraItems} />
+        <WorkspaceChrome />
       </DevOverridesProvider>
     </GSDWorkspaceProvider>
   )

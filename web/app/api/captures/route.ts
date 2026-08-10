@@ -1,7 +1,6 @@
 import { collectCapturesData, resolveCaptureAction } from "../../../../src/web/captures-service.ts"
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts"
 import type { CaptureResolveRequest } from "../../../lib/knowledge-captures-types.ts"
-import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -15,8 +14,6 @@ const VALID_CLASSIFICATIONS = new Set([
 ])
 
 export async function GET(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const projectCwd = requireProjectCwd(request);
     const payload = await collectCapturesData(projectCwd)
@@ -40,8 +37,6 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     let body: unknown
     try {

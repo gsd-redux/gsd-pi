@@ -3,7 +3,6 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { webPreferencesPath } from "../../../../src/app-paths.ts";
 import { discoverProjects } from "../../../../src/web/project-discovery-service.ts";
-import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,8 +30,6 @@ function expandTilde(p: string): string {
  * Response:     { "devRoot": "/resolved/path", "projects": [...] }
  */
 export async function POST(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const rawDevRoot = typeof body.devRoot === "string" ? body.devRoot.trim() : "";
