@@ -1339,7 +1339,7 @@ descriptive — self-labeled historical snapshot (2026-05-18); header honestly d
 
 | Claim | Type | Verdict | Evidence |
 |-------|------|---------|----------|
-| "gsd --web [--host --port --allowed-origins]; web/Dockerfile.cloud image" | command | verified | src/cli.ts:110,417 (--web); web/Dockerfile.cloud exists |
+| "gsd --web [--host --port --allowed-origins]" | command | verified | src/cli.ts:110,417 (--web) |
 
 ## Doc: docs/user-docs/working-in-teams.md
 
@@ -1611,7 +1611,7 @@ descriptive — step-mode concepts (headless next verified in commands docs).
 
 | Claim | Type | Verdict | Evidence |
 |-------|------|---------|----------|
-| "gsd --web + Dockerfile.cloud" | command | verified | src/cli.ts:110,417; web/Dockerfile.cloud exists |
+| "gsd --web" | command | verified | src/cli.ts:110,417 |
 
 ## Doc: gitbook/features/workflow-templates.md
 

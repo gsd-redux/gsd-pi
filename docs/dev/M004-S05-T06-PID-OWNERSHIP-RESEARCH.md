@@ -90,8 +90,8 @@ timestamps, or PID-only ownership.
    untouched. Never turn age into proof of death.
 6. To reclaim, hard-link the observed intent inode to a unique recovery-claim
    path, repeat the ownership check, verify the public intent still has the
-   claim's device/inode, then unlink it. This is the cloud-runtime pattern and
-   closes the check/unlink replacement-owner race.
+   claim's device/inode, then unlink it. This is the retained live-restore
+   recovery-claim pattern and closes the check/unlink replacement-owner race.
 7. Immediately before every intent transition and cleanup, require the same
    nonce and process-start identity already required at acquisition.
 

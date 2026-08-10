@@ -84,6 +84,7 @@ The long-running state-DB refactor is stuck mid-flight. Two state paths coexist 
 
 <!-- Verbatim user corrections from playback and later phases. Append-only.
      These are the highest-signal intent data in the file. -->
-- 2026-08-01 (paraphrased after retirement): finish the state-DB cutover, modularize extensions, ship separately sequenced product work, and kill dead scaffolding — narrowed in round 2 to: "state-DB cutover"
-- 2026-08-01 (paraphrased after retirement): the unused legacy remote-product code was declared dead and queued for separate cleanup
+- 2026-08-01: "finish the state-DB cutover, modularize extensions, ship cloud phase N, kill dead scaffolding" — narrowed in round 2 to: "state-DB cutover"
+- 2026-08-01: "gsd-cloud in this repo should be considered dead for now we need to plan to clean all old code out"
 - 2026-08-01: "none" (no frozen surfaces — state-DB refactor and extension modularization may both be touched as needed, though modularization stays out of scope)
+- 2026-08-10: The separately scoped unused legacy Cloud v1 cleanup completed. The 2026-08-01 quotes above are retained as provenance and no longer describe current scope.
