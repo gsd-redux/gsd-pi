@@ -2,7 +2,6 @@ import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { unprotectCloudDeviceToken } from './cloud-token.js';
 import type { DaemonConfig, LogLevel } from './types.js';
 
 const VALID_LOG_LEVELS: ReadonlySet<string> = new Set(['debug', 'info', 'warn', 'error']);
@@ -18,7 +17,6 @@ function expandTilde(p: string): string {
 /** Default config values when no file is present or fields are missing. */
 function defaults(): DaemonConfig {
   return {
-    cloud: undefined,
     discord: undefined,
     projects: { scan_roots: [] },
     log: {
@@ -49,23 +47,6 @@ export function validateConfig(raw: unknown): DaemonConfig {
 
   if (raw == null || typeof raw !== 'object') return def;
   const obj = raw as Record<string, unknown>;
-
-  // --- discord ---
-  let cloud: DaemonConfig['cloud'] = undefined;
-  if (obj['cloud'] != null && typeof obj['cloud'] === 'object') {
-    const c = obj['cloud'] as Record<string, unknown>;
-    const encryptedDeviceToken = typeof c['device_token_encrypted'] === 'string'
-      ? unprotectCloudDeviceToken(c['device_token_encrypted'])
-      : undefined;
-    const deviceToken = typeof c['device_token'] === 'string' ? c['device_token'] : encryptedDeviceToken;
-    cloud = {
-      gateway_url: typeof c['gateway_url'] === 'string' ? c['gateway_url'] : '',
-      ...(deviceToken ? { device_token: deviceToken } : {}),
-      ...(typeof c['runtime_id'] === 'string' ? { runtime_id: c['runtime_id'] } : {}),
-      ...(typeof c['runtime_name'] === 'string' ? { runtime_name: c['runtime_name'] } : {}),
-      ...(typeof c['enabled'] === 'boolean' ? { enabled: c['enabled'] } : {}),
-    };
-  }
 
   // --- discord ---
   let discord: DaemonConfig['discord'] = undefined;
@@ -127,7 +108,6 @@ export function validateConfig(raw: unknown): DaemonConfig {
   }
 
   return {
-    cloud,
     discord,
     projects: { scan_roots: scanRoots },
     log: { file: logFile, level: logLevel, max_size_mb: maxSizeMb },

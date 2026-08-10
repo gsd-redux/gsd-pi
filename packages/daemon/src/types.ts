@@ -29,13 +29,6 @@ export interface LogEntry {
  * Top-level daemon configuration, loaded from YAML.
  */
 export interface DaemonConfig {
-  cloud?: {
-    gateway_url: string;
-    device_token?: string;
-    runtime_id?: string;
-    runtime_name?: string;
-    enabled?: boolean;
-  };
   discord?: {
     token: string;
     guild_id: string;
