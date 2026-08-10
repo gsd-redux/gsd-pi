@@ -172,7 +172,6 @@ repo:
 | Surface | What it reads | Evidence |
 |---|---|---|
 | `@opengsd/mcp-server` | Raw `.gsd/STATE.md` contents returned to MCP clients; milestone `SUMMARY` **existence** as a completion signal; `.gsd/` artifact parsing (STATE.md, milestone ROADMAPs, slice PLANs) in its graph build | `packages/mcp-server/src/server.ts:278`, `:308`, `:1486` |
-| `packages/daemon` | `.gsd/STATE.md` text and milestone `SUMMARY` existence via the local tool executor | `packages/daemon/src/local-tool-executor.ts:285`, `:322` |
 | `integrations/hermes` (Python) | Requires `.gsd/` with `STATE.md` present; an absent/empty `STATE.md` is documented as the cause of an empty snapshot | `integrations/hermes/docs/setup.md:35`, `:235`; fixture `integrations/hermes/tests/fixtures/minimal-project/.gsd/STATE.md` |
 
 Because the format is frozen and the stamp is ignore-safe, none of these
