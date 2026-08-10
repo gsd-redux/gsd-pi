@@ -45,7 +45,7 @@ and updates the status docs. It changes no production code.
    shipped, the gate split-retirement (old gate →
    `gate:lifecycle-shadow-no-cutover`), the evidence-gated deletions, and
    the remaining deferred items (canonical lifecycle read-authority cutover
-   under M003/D005; Phase 5 DB split; gsd-cloud cleanup — all explicitly
+   under M003/D005; Phase 5 DB split; separately sequenced product cleanup — all explicitly
    OUT of this milestone per INTENT vetoes).
 3. Update `CONTEXT.md` (canonical context doc per `docs/agents/domain.md`):
    state layer is DB-authoritative; files are stamped read-only

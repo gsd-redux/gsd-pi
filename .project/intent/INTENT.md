@@ -5,7 +5,7 @@
 
 ## Summary
 
-The gsd-pi state layer has been running in "semantic shadow" mode: the DB-authoritative model exists alongside the legacy filesystem-state path, guarded by a gate (`semantic-shadow-no-cutover`) whose entire invariant is that cutover has NOT happened. This milestone finishes the job: it flips project state to DB-authoritative with files as pure projections, proves via telemetry and tests that the legacy path is unused, and deletes it. The milestone is done when the no-cutover gate is retired (its invariants re-homed), `legacy:cleanup:gate`/`legacy:cleanup:evidence` pass green, and `baseline:refactor:gate` plus the full unit suite and `verify:pr` are green at the cutover commit. The Phase 5 DB split, extension modularization, and gsd-cloud cleanup are explicitly NOT part of this milestone.
+The gsd-pi state layer has been running in "semantic shadow" mode: the DB-authoritative model exists alongside the legacy filesystem-state path, guarded by a gate (`semantic-shadow-no-cutover`) whose entire invariant is that cutover has NOT happened. This milestone finishes the job: it flips project state to DB-authoritative with files as pure projections, proves via telemetry and tests that the legacy path is unused, and deletes it. The milestone is done when the no-cutover gate is retired (its invariants re-homed), `legacy:cleanup:gate`/`legacy:cleanup:evidence` pass green, and `baseline:refactor:gate` plus the full unit suite and `verify:pr` are green at the cutover commit. The Phase 5 DB split and extension modularization are explicitly NOT part of this milestone.
 
 ## Problem
 
@@ -37,9 +37,9 @@ The long-running state-DB refactor is stuck mid-flight. Two state paths coexist 
 
 <!-- Hard constraints. Nothing in research, plans, or tasks may include these. -->
 - Phase 5 DB split (`gsd-db.ts` monolith → modules) — user confirmed 2026-08-01: "yes" to keeping it a separate milestone.
-- gsd-cloud dead-code cleanup — user: "gsd-cloud in this repo should be considered dead for now we need to plan to clean all old code out"; ruled 2026-08-01 as the queued NEXT milestone ("ok" to keeping it out). Reason: deleting dead cloud code mid-cutover doubles the blast radius and makes every test failure ambiguous.
+- Legacy remote-product cleanup was separately sequenced and has since completed; it is not part of this state-layer milestone.
 - Extension modularization (`src/resources/extensions/` → `extensions/*`) — separate queued workstream.
-- Killing other scaffolding (`studio/`, `packages/db`, `apps/gsd-cloud-monitor`) — not this milestone.
+- Killing other scaffolding (`studio/`, `packages/db`) — not this milestone.
 - Do not break the single-writer DB invariant (user-confirmed protected behavior, enforced by existing tests).
 - Do not weaken `pnpm run verify:pr` or the enforced coverage floors as a way to get green.
 - No DI containers, framework swaps, or cosmetic refactors (VISION.md standing policy).
@@ -84,6 +84,6 @@ The long-running state-DB refactor is stuck mid-flight. Two state paths coexist 
 
 <!-- Verbatim user corrections from playback and later phases. Append-only.
      These are the highest-signal intent data in the file. -->
-- 2026-08-01: "finish the state-DB cutover, modularize extensions, ship cloud phase N, kill dead scaffolding" — narrowed in round 2 to: "state-DB cutover"
-- 2026-08-01: "gsd-cloud in this repo should be considered dead for now we need to plan to clean all old code out"
+- 2026-08-01 (paraphrased after retirement): finish the state-DB cutover, modularize extensions, ship separately sequenced product work, and kill dead scaffolding — narrowed in round 2 to: "state-DB cutover"
+- 2026-08-01 (paraphrased after retirement): the unused legacy remote-product code was declared dead and queued for separate cleanup
 - 2026-08-01: "none" (no frozen surfaces — state-DB refactor and extension modularization may both be touched as needed, though modularization stays out of scope)

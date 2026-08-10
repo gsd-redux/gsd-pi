@@ -4,7 +4,7 @@
 
 Milestone: state-DB cutover in `src/resources/extensions/gsd` — DB-authoritative
 project state, files as pure projections, evidence-gated legacy-path deletion.
-Hard vetoes honored throughout: no DB split, no gsd-cloud cleanup, no extension
+Hard vetoes honored throughout: no DB split, no separately sequenced product cleanup, no extension
 modularization, no DI/framework swaps, single-writer invariant holds,
 `verify:pr` is never weakened (the successor gate ADDS to it).
 

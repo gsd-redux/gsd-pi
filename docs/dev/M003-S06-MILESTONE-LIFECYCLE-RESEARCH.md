@@ -276,10 +276,9 @@ projection suppression.
   replaying a mutation or advancing database authority. Recovery and every
   compensation write recheck the exact completion operation before and after
   delivery, including completion-to-completion-to-reopen races.
-- Both cloud execution paths now preserve the gateway request ID as private MCP
-  metadata. The linked daemon and standalone `@opengsd/gsd-cloud` runtime use
-  the same `io.opengsd/idempotency-key` contract without exposing identity in
-  public tool arguments.
+- MCP lifecycle execution preserves the request ID as private metadata through
+  the `io.opengsd/idempotency-key` contract without exposing identity in public
+  tool arguments.
 
 1. **Characterize and RED the contract.** Add a Milestone capstone matrix for
    validate, complete, and reopen: deep hierarchy, terminal aliases, cancelled

@@ -368,7 +368,7 @@ gsd --mode mcp
 
 服务会注册 agent 会话中的全部工具，并把 MCP 的 `tools/list` 与 `tools/call` 请求映射到 GSD 的工具定义上。连接会一直保持，直到底层 transport 关闭。
 
-MCP 模式也会暴露 headless 和 cloud runtime 使用的 GSD workflow adapter 工具：
+MCP 模式也会暴露供 headless 和 MCP 客户端使用的 GSD workflow adapter 工具：
 
 - 会话控制工具：`gsd_execute`、`gsd_status`、`gsd_result`、`gsd_cancel`、`gsd_resolve_blocker`
 - 项目状态和只读工具：`gsd_query`、`gsd_progress`、`gsd_roadmap`、`gsd_history`、`gsd_doctor`、`gsd_captures`、`gsd_knowledge`、`gsd_graph`

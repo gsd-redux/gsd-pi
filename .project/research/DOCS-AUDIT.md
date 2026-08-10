@@ -5,17 +5,18 @@
 
 Repo root: /Users/jeremymcspadden/github/open-gsd/gsd-pi
 Audited: 2026-07-14 (worktree HEAD ade9db0e4cb7c69440000fa81630091f56dbdcd1)
+Updated: 2026-08-10 to remove entries for retired legacy remote-product documentation.
 Alignment mode: no — no prior .project/ pipeline artifacts; INTENT/SYNTHESIS/BOARD/STATE not checked
 
 ## Summary
 
 | Verdict | Count |
 |---------|-------|
-| verified | 149 |
+| verified | 141 |
 | stale | 67 |
 | aspirational | 0 |
 | unverifiable | 10 |
-| descriptive docs (no testable claims) | 279 |
+| descriptive docs (no testable claims) | 277 |
 
 Worst drift: docs/dev/ci-cd-pipeline.md still describes an automatic Dev → Test → Prod dist-tag promotion pipeline, but .github/workflows/pipeline.yml now only rebuilds the CI builder image and its header states publishing lives in the manual npm-publish.yml workflow — a contributor following the doc would wait for promotions that never happen.
 
@@ -163,12 +164,6 @@ descriptive — draft/WIP implementation plan; self-labeled status, no independe
 ## Doc: VISION.md
 
 descriptive — vision/principles and project-history narrative; no testable claims (external history links not audited).
-
-## Doc: apps/gsd-cloud-monitor/README.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "./script/build_and_run.sh builds and launches the app" | command | verified | apps/gsd-cloud-monitor/script/build_and_run.sh exists |
 
 ## Doc: docker/README.md
 
@@ -322,10 +317,6 @@ descriptive — decision record with self-labeled status; no independently testa
 descriptive — decision record with self-labeled status; no independently testable claims extracted.
 
 ## Doc: docs/dev/ADR-019-unify-tui-style-system.md
-
-descriptive — decision record with self-labeled status; no independently testable claims extracted.
-
-## Doc: docs/dev/ADR-020-cloud-mcp-gateway-local-runtime.md
 
 descriptive — decision record with self-labeled status; no independently testable claims extracted.
 
@@ -642,12 +633,6 @@ descriptive — index of the 26 research essays (links verified present).
 | "Merged PRs auto-promote Dev → Test → Prod via dist-tags (publishes gsd-pi@<ver>-dev.<sha> @dev automatically)" | feature | stale | .github/workflows/pipeline.yml header: 'npm publishing lives in one trusted manual workflow (npm-publish.yml)'; pipeline.yml only rebuilds the CI builder image; npm-publish.yml is workflow_dispatch (manual) |
 | "npm run test:fixtures / node tests/fixtures/record.ts" | command | stale | test:fixtures absent from package.json; tests/fixtures/ does not exist |
 
-## Doc: docs/dev/cloud-live-e2e-runbook.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "npx @opengsd/gsd-cloud@latest login/status/stop/disconnect commands" | command | verified | packages/gsd-cloud/package.json bin gsd-cloud; commands documented in packages/gsd-cloud/README.md and exercised by packages/gsd-cloud/e2e |
-
 ## Doc: docs/dev/context-and-hooks/01-the-context-pipeline.md
 
 descriptive — deep-reference on pi context/hooks; no upstream-name drift detected (marker scan clean).
@@ -800,13 +785,6 @@ descriptive — extension API guide; no drift markers detected.
 ## Doc: docs/dev/extending-pi/README.md
 
 descriptive — extension API guide; no drift markers detected.
-
-## Doc: docs/dev/gsd-cloud-publish-runbook.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "pnpm --filter @opengsd/gsd-cloud run build/test/validate:tarball; gh workflow run npm-publish.yml" | command | verified | packages/gsd-cloud/package.json:40-41 scripts present; .github/workflows/npm-publish.yml exists |
-| "@opengsd/gsd-cloud deps exactly ws, yaml" | config | verified | packages/gsd-cloud/package.json dependencies = [ws, yaml] |
 
 ## Doc: docs/dev/hermes-integration-plan.md
 
@@ -1217,12 +1195,6 @@ descriptive — self-labeled historical snapshot (2026-05-18); header honestly d
 |-------|------|---------|----------|
 | "Claude Code CLI provider integration" | feature | verified | src/resources/extensions/claude-code-cli/ present with tests |
 | "curl -fsSL https://claude.ai/install.sh \| bash installer" | command | unverifiable | third-party installer; not checkable from repo |
-
-## Doc: docs/user-docs/cloud-mcp-gateway.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "gsd-cloud-mcp-gateway and gsd-daemon binaries, pairing flow" | command | verified | packages/cloud-mcp-gateway/package.json bin gsd-cloud-mcp-gateway; packages/daemon/package.json bins gsd-daemon/gsd-mcp |
 
 ## Doc: docs/user-docs/commands.md
 
@@ -1775,24 +1747,6 @@ descriptive — test fixture data.
 |-------|------|---------|----------|
 | "npm run build:native / build:native:dev / test:native; crates engine/grep/ast" | command | verified | package.json scripts present; native/crates/{engine,grep,ast} exist; git2 0.20 vendored in engine/Cargo.toml:43 |
 
-## Doc: packages/cloud-mcp-gateway/README.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "Local smoke flow: build -w @opengsd/cloud-mcp-gateway, node packages/cloud-mcp-gateway/dist/cli.js --port, daemon pair/connect" | command | verified | bin gsd-cloud-mcp-gateway in package.json; packages/daemon exists with gsd-daemon bin |
-
-## Doc: packages/gsd-cloud/README.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "Runtime deps only ws and yaml; npx @opengsd/gsd-cloud login/status/connect/stop/disconnect" | config | verified | packages/gsd-cloud/package.json deps=[ws,yaml], bin gsd-cloud |
-
-## Doc: packages/gsd-cloud/e2e/README.md
-
-| Claim | Type | Verdict | Evidence |
-|-------|------|---------|----------|
-| "pnpm --filter @opengsd/gsd-cloud run test:e2e runs gateway+CLI loopback E2E" | command | verified | packages/gsd-cloud/package.json:41 test:e2e script |
-
 ## Doc: packages/mcp-server/README.md
 
 | Claim | Type | Verdict | Evidence |
@@ -2223,10 +2177,6 @@ descriptive — historical execution plan; status tracked in plans/README.md.
 descriptive — historical execution plan; status tracked in plans/README.md.
 
 ## Doc: plans/020-cloud-pairing-http-timeouts.md
-
-descriptive — historical execution plan; status tracked in plans/README.md.
-
-## Doc: plans/022-gsd-cloud-pairing-ssrf-tests.md
 
 descriptive — historical execution plan; status tracked in plans/README.md.
 

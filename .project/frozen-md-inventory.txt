@@ -134,7 +134,6 @@ docs/dev/building-coding-agents/25-designing-for-non-technical-users-vibe-coders
 docs/dev/building-coding-agents/26-cross-cutting-themes-where-all-4-models-converge.md
 docs/dev/building-coding-agents/README.md
 docs/dev/ci-cd-pipeline.md
-docs/dev/cloud-live-e2e-runbook.md
 docs/dev/context-and-hooks/01-the-context-pipeline.md
 docs/dev/context-and-hooks/02-hook-reference.md
 docs/dev/context-and-hooks/03-context-injection-patterns.md

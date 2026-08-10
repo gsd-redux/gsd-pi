@@ -75,6 +75,6 @@ Questions assigned: RESEARCH Q2 — "What telemetry exists today to prove legacy
 ## Dead ends
 
 - `worktree-registry` as a module — exists only as the test name `auto-worktree-registry.test.ts` (wired into `baseline:refactor:phase0`, `package.json:81`); it tests the per-process auto-worktree *session* registry that replaced the `originalBase` singleton (`auto-worktree-session-registry.ts`), not a cross-worktree/cross-process DB writer registry. Cross-process coordination lives in the v24 lease tables instead.
-- Remote/field telemetry endpoints — repo grep of `src/` for telemetry upload/analytics endpoints found nothing runtime; the only "telemetry" app is `apps/gsd-cloud-monitor` (Swift, one commit, unwired, and gsd-cloud is vetoed/dead for this milestone).
+- Remote/field telemetry endpoints — repo grep of `src/` for telemetry upload/analytics endpoints found no runtime implementation; the former unwired telemetry UI was retired separately.
 - `legacy.markdownFallbackUsed` implementation — searched repo-wide; exists only in the plan-of-plans doc. Recorded as Finding 1 (stale doc claim) rather than implemented-but-mislabeled code.
 - `scripts/refactor-baseline.mjs` as a telemetry source — it is a read-only metrics/dashboard harness (file hashes, contract surfaces, prompt sizes) and reports the five legacy counters from the same in-memory layer; it adds no independent usage evidence.
