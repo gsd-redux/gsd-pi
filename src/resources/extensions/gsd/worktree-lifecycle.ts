@@ -792,13 +792,18 @@ export function _enterMilestoneCore(
     getIsolationMode(basePath);
 
   if (s.isolationDegraded) {
-    if (mode === "worktree") {
+    if (mode === "worktree" || mode === "branch") {
       try {
         lifecycleEnterBranchMode(deps, basePath, milestoneId);
         s.basePath = basePath;
         rebuildGitService(s, deps);
         invalidateAllCaches();
-        ctx.notify(isolationDegradedFallbackGuidance(milestoneId), "warning");
+        if (mode === "branch") s.isolationDegraded = false;
+        if (mode === "worktree") {
+          ctx.notify(isolationDegradedFallbackGuidance(milestoneId), "warning");
+        } else {
+          ctx.notify(`Recovered branch isolation on milestone/${milestoneId}.`, "info");
+        }
         return { ok: true, mode: "branch", path: basePath };
       } catch (err) {
         debugLog("WorktreeLifecycle", {

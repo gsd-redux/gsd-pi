@@ -277,9 +277,44 @@ test("enterMilestone honors stranded branch recovery instead of recreating the w
   );
 });
 
-test("enterMilestone returns ok:false reason:isolation-degraded when session degraded", () => {
-  const s = makeSession({ isolationDegraded: true });
-  const deps = makeDeps({ getIsolationMode: () => "branch" });
+test("enterMilestone retries branch isolation when session is degraded", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "branch" });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+
+  const s = makeSession({
+    basePath: base,
+    originalBasePath: base,
+    isolationDegraded: true,
+  });
+  const deps = makeDeps();
+  const ctx = makeCtx();
+  const lifecycle = new WorktreeLifecycle(s, deps);
+
+  const result = lifecycle.enterMilestone("M001", ctx);
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.mode, "branch");
+    assert.equal(result.path, base);
+  }
+  assert.equal(s.isolationDegraded, false);
+  assert.equal(s.basePath, base);
+  assert.equal(s.milestoneLeaseToken, null);
+});
+
+test("enterMilestone remains degraded when branch isolation retry fails", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "branch" });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+  rmSync(join(base, ".git"), { recursive: true, force: true });
+
+  const s = makeSession({
+    basePath: base,
+    originalBasePath: base,
+    isolationDegraded: true,
+  });
+  const deps = makeDeps();
   const ctx = makeCtx();
   const lifecycle = new WorktreeLifecycle(s, deps);
 
@@ -289,8 +324,7 @@ test("enterMilestone returns ok:false reason:isolation-degraded when session deg
   if (!result.ok) {
     assert.equal(result.reason, "isolation-degraded");
   }
-  assert.equal(s.basePath, "/project");
-  assert.equal(s.milestoneLeaseToken, null);
+  assert.equal(s.isolationDegraded, true);
 });
 
 test("enterMilestone falls back to branch mode when session is degraded in worktree isolation", (t) => {
