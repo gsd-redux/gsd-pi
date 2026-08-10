@@ -86,11 +86,11 @@ test("syncVersionSurfaces rewrites internal deps to the stamped prerelease versi
       `${JSON.stringify({ name: "@opengsd/gsd-pi", version: "1.0.2" }, null, 2)}\n`,
     );
 
-    mkdirSync(join(root, "packages", "mcp-server"), { recursive: true });
+    mkdirSync(join(root, "packages", "rpc-client"), { recursive: true });
     writeFileSync(
-      join(root, "packages", "mcp-server", "package.json"),
+      join(root, "packages", "rpc-client", "package.json"),
       `${JSON.stringify({
-        name: "@opengsd/mcp-server",
+        name: "@opengsd/rpc-client",
         version: "1.0.2",
       }, null, 2)}\n`,
     );
@@ -102,19 +102,19 @@ test("syncVersionSurfaces rewrites internal deps to the stamped prerelease versi
         name: "@opengsd/daemon",
         version: "1.0.2",
         dependencies: {
-          "@opengsd/mcp-server": "^1.0.2",
+          "@opengsd/rpc-client": "^1.0.2",
         },
       }, null, 2)}\n`,
     );
 
     syncVersionSurfaces(root, devVersion);
 
-    const mcpServer = JSON.parse(readFileSync(join(root, "packages", "mcp-server", "package.json"), "utf8"));
+    const rpcClient = JSON.parse(readFileSync(join(root, "packages", "rpc-client", "package.json"), "utf8"));
     const daemon = JSON.parse(readFileSync(join(root, "packages", "daemon", "package.json"), "utf8"));
 
-    assert.equal(mcpServer.version, devVersion);
+    assert.equal(rpcClient.version, devVersion);
     assert.equal(daemon.version, devVersion);
-    assert.equal(daemon.dependencies["@opengsd/mcp-server"], "workspace:*");
+    assert.equal(daemon.dependencies["@opengsd/rpc-client"], "workspace:*");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
