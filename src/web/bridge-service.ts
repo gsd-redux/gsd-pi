@@ -891,20 +891,55 @@ function destroyChildStreams(child: Partial<SpawnedRpcChild> | null | undefined)
 
 async function terminateRpcChild(child: SpawnedRpcChild): Promise<void> {
   child.removeAllListeners();
-  await new Promise<void>((resolveTermination) => {
-    const forceKill = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-      resolveTermination();
-    }, 2_000);
-    child.once("exit", () => {
-      clearTimeout(forceKill);
-      resolveTermination();
+  try {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+
+    await new Promise<void>((resolve, reject) => {
+      let forceKill: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (forceKill) clearTimeout(forceKill);
+        child.off("exit", onExit);
+        child.off("close", onExit);
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const onExit = () => finish();
+      const sendSignal = (signal: NodeJS.Signals) => {
+        try {
+          const delivered = child.kill(signal);
+          if (!delivered) {
+            if (child.exitCode !== null || child.signalCode !== null) {
+              finish();
+            } else {
+              finish(new Error(`Failed to send ${signal} to RPC bridge`));
+            }
+          }
+        } catch (error) {
+          finish(new Error(`Failed to send ${signal} to RPC bridge`, { cause: error }));
+        }
+      };
+
+      child.once("exit", onExit);
+      child.once("close", onExit);
+      forceKill = setTimeout(() => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          finish();
+          return;
+        }
+        sendSignal("SIGKILL");
+      }, 2_000);
+      sendSignal("SIGTERM");
     });
-    child.kill("SIGTERM");
-  });
-  destroyChildStreams(child);
+  } finally {
+    destroyChildStreams(child);
+  }
 }
 
 function getBridgeDeps(): BridgeServiceDeps {
@@ -1376,6 +1411,9 @@ export class BridgeService {
   private startPromise: Promise<void> | null = null;
   private refreshPromise: Promise<void> | null = null;
   private authRefreshPromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
+  private lifecycleError: Error | null = null;
+  private disposed = false;
   private requestCounter = 0;
   private stderrBuffer = "";
   private snapshot: BridgeRuntimeSnapshot;
@@ -1415,11 +1453,11 @@ export class BridgeService {
   }
 
   async ensureStarted(): Promise<void> {
-    if (this.authRefreshPromise) return await this.authRefreshPromise;
-    await this.ensureStartedInternal();
+    await this.runWhenReady(() => undefined);
   }
 
   private async ensureStartedInternal(): Promise<void> {
+    this.assertAvailable();
     if (this.process && this.snapshot.phase === "ready") return;
     if (this.startPromise) return await this.startPromise;
 
@@ -1431,18 +1469,43 @@ export class BridgeService {
     }
   }
 
+  private async runWhenReady<T>(operation: () => T | Promise<T>): Promise<T> {
+    while (true) {
+      this.assertAvailable();
+      const authRefresh = this.authRefreshPromise;
+      if (authRefresh) {
+        await authRefresh;
+        continue;
+      }
+
+      await this.ensureStartedInternal();
+      this.assertAvailable();
+      if (this.authRefreshPromise) continue;
+      return await operation();
+    }
+  }
+
+  private assertAvailable(): void {
+    if (this.disposed) {
+      throw new Error("RPC bridge disposed");
+    }
+    if (this.lifecycleError) {
+      throw this.lifecycleError;
+    }
+  }
+
   async sendInput(input: BridgeInput): Promise<RpcResponse | null> {
-    await this.ensureStarted();
-    if (!this.process?.stdin) {
-      throw new Error(this.snapshot.lastError?.message || "RPC bridge is not connected");
-    }
-
     if (isRpcExtensionUiResponse(input)) {
-      this.process.stdin.write(serializeJsonLine(input));
-      return null;
+      return await this.runWhenReady(() => {
+        if (!this.process?.stdin) {
+          throw new Error(this.snapshot.lastError?.message || "RPC bridge is not connected");
+        }
+        this.process.stdin.write(serializeJsonLine(input));
+        return null;
+      });
     }
 
-    const response = sanitizeRpcResponse(await this.requestResponse(input));
+    const response = sanitizeRpcResponse(await this.runWhenReady(() => this.requestResponse(input)));
     this.snapshot.lastCommandType = input.type;
     this.snapshot.updatedAt = nowIso();
 
@@ -1469,6 +1532,7 @@ export class BridgeService {
   }
 
   async refreshAuth(): Promise<void> {
+    this.assertAvailable();
     if (this.authRefreshPromise) {
       return await this.authRefreshPromise;
     }
@@ -1485,16 +1549,17 @@ export class BridgeService {
       await this.startPromise;
     }
 
+    this.assertAvailable();
     if (this.process && this.snapshot.phase === "ready") {
       await this.resetProcessForAuthRefresh();
     }
 
+    this.assertAvailable();
     await this.ensureStartedInternal();
   }
 
   private async resetProcessForAuthRefresh(): Promise<void> {
     const child = this.process;
-    this.process = null;
     this.detachStdoutReader?.();
     this.detachStdoutReader = null;
     this.stderrBuffer = "";
@@ -1506,7 +1571,19 @@ export class BridgeService {
     this.pendingRequests.clear();
 
     if (child) {
-      await terminateRpcChild(child);
+      try {
+        await terminateRpcChild(child);
+      } catch (error) {
+        const lifecycleError = error instanceof Error ? error : new Error(String(error));
+        this.lifecycleError = lifecycleError;
+        this.snapshot.phase = "failed";
+        this.recordError(lifecycleError, "ready");
+        this.broadcastStatus();
+        throw lifecycleError;
+      }
+      if (this.process === child) {
+        this.process = null;
+      }
     }
 
     this.snapshot.phase = "idle";
@@ -1551,8 +1628,9 @@ export class BridgeService {
   }
 
   private async sendTerminalCommand(command: BridgeTerminalCommand): Promise<void> {
-    await this.ensureStarted();
-    const response = sanitizeRpcResponse(await this.requestResponse(command));
+    const response = sanitizeRpcResponse(
+      await this.runWhenReady(() => this.requestResponse(command)),
+    );
     if (!response.success) {
       this.recordError(response.error, this.snapshot.phase, { commandType: command.type });
       this.broadcastStatus();
@@ -1561,6 +1639,14 @@ export class BridgeService {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
+    if (!this.disposePromise) {
+      this.disposePromise = this.disposeInternal();
+    }
+    await this.disposePromise;
+  }
+
+  private async disposeInternal(): Promise<void> {
     this.detachStdoutReader?.();
     this.detachStdoutReader = null;
     this.subscribers.clear();
@@ -1570,10 +1656,16 @@ export class BridgeService {
       pending.reject(new Error("RPC bridge disposed"));
     }
     this.pendingRequests.clear();
+    const lifecycle = this.authRefreshPromise ?? this.startPromise;
+    if (lifecycle) {
+      await lifecycle.catch(() => {});
+    }
     if (this.process) {
       const proc = this.process;
-      this.process = null;
       await terminateRpcChild(proc);
+      if (this.process === proc) {
+        this.process = null;
+      }
     }
     this.snapshot.phase = "idle";
     this.snapshot.connectionCount = 0;
@@ -1581,6 +1673,7 @@ export class BridgeService {
   }
 
   private async startInternal(): Promise<void> {
+    this.assertAvailable();
     this.snapshot.phase = "starting";
     this.snapshot.startedAt = nowIso();
     this.snapshot.updatedAt = this.snapshot.startedAt;
@@ -1624,6 +1717,7 @@ export class BridgeService {
 
     try {
       await Promise.race([this.refreshState(true), timeout]);
+      this.assertAvailable();
       this.snapshot.phase = "ready";
       this.snapshot.updatedAt = nowIso();
       this.snapshot.lastError = null;
@@ -1631,15 +1725,26 @@ export class BridgeService {
     } catch (error) {
       this.detachStdoutReader?.();
       this.detachStdoutReader = null;
-      if (this.process === child) {
-        this.process = null;
-      }
       for (const pending of this.pendingRequests.values()) {
         clearTimeout(pending.timeout);
         pending.reject(error instanceof Error ? error : new Error(String(error)));
       }
       this.pendingRequests.clear();
-      await terminateRpcChild(child);
+      try {
+        await terminateRpcChild(child);
+      } catch (terminationError) {
+        const lifecycleError = terminationError instanceof Error
+          ? terminationError
+          : new Error(String(terminationError));
+        this.lifecycleError = lifecycleError;
+        this.snapshot.phase = "failed";
+        this.recordError(lifecycleError, "starting");
+        this.broadcastStatus();
+        throw lifecycleError;
+      }
+      if (this.process === child) {
+        this.process = null;
+      }
       this.snapshot.phase = "failed";
       this.recordError(error, "starting");
       this.broadcastStatus();

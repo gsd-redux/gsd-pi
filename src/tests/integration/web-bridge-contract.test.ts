@@ -23,9 +23,13 @@ class FakeRpcChild extends EventEmitter {
   signalCode: NodeJS.Signals | null = null;
   killSignals: NodeJS.Signals[] = [];
   exitOnSignals = new Set<NodeJS.Signals>(["SIGTERM", "SIGKILL"]);
+  failedSignals = new Set<NodeJS.Signals>();
 
   kill(signal: NodeJS.Signals = "SIGTERM"): boolean {
     this.killSignals.push(signal);
+    if (this.failedSignals.has(signal)) {
+      return false;
+    }
     if (!this.exitOnSignals.has(signal)) {
       return true;
     }
@@ -185,28 +189,37 @@ function fakeWorkspaceIndex() {
   };
 }
 
-function createHarness(onCommand: (command: any, harness: ReturnType<typeof createHarness>) => void) {
+function createHarness(
+  onCommand: (
+    command: any,
+    harness: ReturnType<typeof createHarness>,
+    child: FakeRpcChild,
+  ) => void,
+) {
   let spawnCalls = 0;
   let child: FakeRpcChild | null = null;
+  const children: FakeRpcChild[] = [];
   const commands: any[] = [];
 
   const harness = {
     spawn(command: string, args: readonly string[], options: Record<string, unknown>) {
       spawnCalls += 1;
-      child = new FakeRpcChild();
-      attachJsonLineReader(child.stdin, (line) => {
+      const spawnedChild = new FakeRpcChild();
+      child = spawnedChild;
+      children.push(spawnedChild);
+      attachJsonLineReader(spawnedChild.stdin, (line) => {
         const parsed = JSON.parse(line);
         commands.push(parsed);
-        onCommand(parsed, harness);
+        onCommand(parsed, harness, spawnedChild);
       });
       void command;
       void args;
       void options;
       return child as any;
     },
-    emit(payload: unknown) {
-      if (!child) throw new Error("fake child not started");
-      child.stdout.write(serializeJsonLine(payload));
+    emit(payload: unknown, target = child) {
+      if (!target) throw new Error("fake child not started");
+      target.stdout.write(serializeJsonLine(payload));
     },
     stderr(text: string) {
       if (!child) throw new Error("fake child not started");
@@ -227,6 +240,9 @@ function createHarness(onCommand: (command: any, harness: ReturnType<typeof crea
     },
     get child() {
       return child;
+    },
+    get children() {
+      return children;
     },
   };
 
@@ -786,7 +802,7 @@ test("auth refresh owns the start gate through SIGKILL fallback", async (t) => {
   const service = bridge.getProjectBridgeService();
   await service.ensureStarted();
   const originalChild = harness.child!;
-  originalChild.exitOnSignals.delete("SIGTERM");
+  originalChild.exitOnSignals.clear();
   t.mock.timers.enable({ apis: ["setTimeout"] });
 
   const refresh = service.refreshAuth();
@@ -797,6 +813,14 @@ test("auth refresh owns the start gate through SIGKILL fallback", async (t) => {
   assert.deepEqual(originalChild.killSignals, ["SIGTERM"]);
 
   t.mock.timers.tick(2_000);
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(harness.spawnCalls, 1);
+  originalChild.exitCode = 0;
+  originalChild.signalCode = "SIGKILL";
+  originalChild.emit("exit", 0, "SIGKILL");
   const [, response] = await Promise.all([refresh, concurrentInput]);
 
   assert.equal(spawnCallsBeforeTermination, 1);
@@ -804,6 +828,142 @@ test("auth refresh owns the start gate through SIGKILL fallback", async (t) => {
   assert.equal(harness.spawnCalls, 2);
   assert.equal(response?.success, true);
   assert.equal(service.getSnapshot().phase, "ready");
+});
+
+test("operation awaiting startup joins an auth-refresh replacement", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  let initialStartupCommand: any;
+  const harness = createHarness((command, current, child) => {
+    if (child === current.children[0]) {
+      initialStartupCommand ??= command;
+      return;
+    }
+
+    current.emit({
+      id: command.id,
+      type: "response",
+      command: "get_state",
+      success: true,
+      data: {
+        sessionId: "sess-after-refresh",
+        thinkingLevel: "off",
+        isStreaming: false,
+        isCompacting: false,
+        steeringMode: "all",
+        followUpMode: "all",
+        autoCompactionEnabled: false,
+        autoRetryEnabled: false,
+        retryInProgress: false,
+        retryAttempt: 0,
+        messageCount: 0,
+        pendingMessageCount: 0,
+      },
+    }, child);
+  });
+  configureHarnessForFixture(fixture, harness);
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  const input = service.sendInput({ type: "get_state" });
+  assert.ok(initialStartupCommand);
+
+  const refresh = service.refreshAuth();
+  harness.emit({
+    id: initialStartupCommand.id,
+    type: "response",
+    command: "get_state",
+    success: true,
+    data: {
+      sessionId: "sess-before-refresh",
+      thinkingLevel: "off",
+      isStreaming: false,
+      isCompacting: false,
+      steeringMode: "all",
+      followUpMode: "all",
+      autoCompactionEnabled: false,
+      autoRetryEnabled: false,
+      retryInProgress: false,
+      retryAttempt: 0,
+      messageCount: 0,
+      pendingMessageCount: 0,
+    },
+  }, harness.children[0]);
+
+  const [response] = await Promise.all([input, refresh]);
+
+  assert.equal(harness.spawnCalls, 2);
+  assert.equal(response?.success, true);
+  assert.equal(service.getSnapshot().activeSessionId, "sess-after-refresh");
+});
+
+test("dispose during auth refresh prevents a replacement child", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const harness = createReadyHarness("sess-dispose-refresh");
+  configureHarnessForFixture(fixture, harness);
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const originalChild = harness.child!;
+  originalChild.exitOnSignals.clear();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  const refreshResult = service.refreshAuth().catch((error) => error as Error);
+  const disposal = service.dispose();
+  let disposed = false;
+  void disposal.then(() => {
+    disposed = true;
+  });
+
+  t.mock.timers.tick(2_000);
+  await Promise.resolve();
+
+  assert.equal(disposed, false);
+  assert.equal(harness.spawnCalls, 1);
+  originalChild.exitCode = 0;
+  originalChild.signalCode = "SIGKILL";
+  originalChild.emit("exit", 0, "SIGKILL");
+
+  await disposal;
+  const refreshError = await refreshResult;
+  assert.match(refreshError.message, /disposed/i);
+  await assert.rejects(service.ensureStarted(), /disposed/i);
+  assert.equal(harness.spawnCalls, 1);
+  assert.equal(service.getSnapshot().phase, "idle");
+});
+
+test("auth refresh fails loudly when SIGKILL cannot be delivered", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const harness = createReadyHarness("sess-kill-failure");
+  configureHarnessForFixture(fixture, harness);
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const originalChild = harness.child!;
+  originalChild.exitOnSignals.clear();
+  originalChild.failedSignals.add("SIGKILL");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  const refresh = service.refreshAuth();
+  t.mock.timers.tick(2_000);
+
+  await assert.rejects(refresh, /SIGKILL/);
+  assert.equal(harness.spawnCalls, 1);
+  originalChild.failedSignals.delete("SIGKILL");
+  originalChild.exitOnSignals.add("SIGTERM");
 });
 
 // ---------------------------------------------------------------------------
