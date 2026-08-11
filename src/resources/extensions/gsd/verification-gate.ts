@@ -15,6 +15,7 @@ import {
   isWorkflowToolSurfaceName,
   stripMcpToolPrefix,
 } from "./workflow-tool-surface.js";
+import { detectPackageManager, buildScriptCommand } from "./package-manager.js";
 
 /** Maximum bytes of stdout/stderr to retain per command (10 KB). */
 const MAX_OUTPUT_BYTES = 10 * 1024;
@@ -144,10 +145,11 @@ export function discoverCommands(options: DiscoverCommandsOptions): DiscoveredCo
       const raw = readFileSync(pkgPath, "utf-8");
       const pkg = JSON.parse(raw);
       if (pkg && typeof pkg === "object" && pkg.scripts && typeof pkg.scripts === "object") {
+        const pm = detectPackageManager(options.cwd) ?? "npm";
         const commands: string[] = [];
         for (const key of PACKAGE_SCRIPT_KEYS) {
           if (typeof pkg.scripts[key] === "string") {
-            commands.push(`npm run ${key}`);
+            commands.push(buildScriptCommand(pm, key));
           }
         }
         if (commands.length > 0) {

@@ -12,6 +12,7 @@ import { dirname, join, parse as parsePath } from "node:path";
 import { homedir } from "node:os";
 import { gsdRoot } from "./paths.js";
 import { gsdHome } from "./gsd-home.js";
+import { detectPackageManager, buildScriptCommand } from "./package-manager.js";
 
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
@@ -758,17 +759,6 @@ function detectXcodePlatforms(basePath: string): XcodePlatform[] {
   return [...platforms];
 }
 
-// ─── Package Manager Detection ──────────────────────────────────────────────────
-
-function detectPackageManager(basePath: string): string | undefined {
-  if (existsSync(join(basePath, "pnpm-lock.yaml"))) return "pnpm";
-  if (existsSync(join(basePath, "yarn.lock"))) return "yarn";
-  if (existsSync(join(basePath, "bun.lockb")) || existsSync(join(basePath, "bun.lock"))) return "bun";
-  if (existsSync(join(basePath, "package-lock.json"))) return "npm";
-  if (existsSync(join(basePath, "package.json"))) return "npm";
-  return undefined;
-}
-
 // ─── Verification Command Detection ─────────────────────────────────────────────
 
 /**
@@ -781,29 +771,28 @@ function detectVerificationCommands(
   packageManager?: string,
 ): string[] {
   const commands: string[] = [];
-  const pm = packageManager ?? "npm";
-  const run = pm === "npm" ? "npm run" : pm === "yarn" ? "yarn" : pm === "bun" ? "bun run" : `${pm} run`;
+  const pm = (packageManager ?? "npm") as "npm" | "pnpm" | "yarn" | "bun";
 
   if (detectedFiles.includes("package.json")) {
     const scripts = readPackageJsonScripts(basePath);
     if (scripts) {
       // Test commands (highest priority)
       if (scripts.test && scripts.test !== "echo \"Error: no test specified\" && exit 1") {
-        commands.push(pm === "npm" ? "npm test" : `${pm} test`);
+        commands.push(buildScriptCommand(pm, "test"));
       }
       // Build commands
       if (scripts.build) {
-        commands.push(`${run} build`);
+        commands.push(buildScriptCommand(pm, "build"));
       }
       // Lint commands
       if (scripts.lint) {
-        commands.push(`${run} lint`);
+        commands.push(buildScriptCommand(pm, "lint"));
       }
       // Typecheck commands
       if (scripts.typecheck) {
-        commands.push(`${run} typecheck`);
+        commands.push(buildScriptCommand(pm, "typecheck"));
       } else if (scripts.tsc) {
-        commands.push(`${run} tsc`);
+        commands.push(buildScriptCommand(pm, "tsc"));
       }
     }
   }

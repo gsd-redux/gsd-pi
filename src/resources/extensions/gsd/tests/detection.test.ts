@@ -467,7 +467,7 @@ test("detectProjectSignals: pnpm uses pnpm commands", (t) => {
   writeFileSync(join(dir, "pnpm-lock.yaml"), "", "utf-8");
   const signals = detectProjectSignals(dir);
   assert.ok(signals.verificationCommands.includes("pnpm test"));
-  assert.ok(signals.verificationCommands.includes("pnpm run build"));
+  assert.ok(signals.verificationCommands.includes("pnpm build"));
 });
 
 test("detectProjectSignals: Ruby project with rspec", (t) => {

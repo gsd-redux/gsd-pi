@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { detectPythonExecutable } from "./python-resolver.js";
 import { projectRootFromWorktreePath } from "./worktree-root.js";
+import { detectPackageManager, buildScriptCommand } from "./package-manager.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -456,7 +457,7 @@ function checkGitRemote(basePath: string): EnvironmentCheckResult | null {
 
 /**
  * Check if the project build passes (opt-in slow check, use --build flag).
- * Runs npm run build and reports failure as env_build.
+ * Runs the build script using the detected package manager.
  */
 function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
   const pkgPath = join(basePath, "package.json");
@@ -467,12 +468,14 @@ function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
     const buildScript = pkg.scripts?.build;
     if (!buildScript) return null;
 
-    const result = tryExec("npm run build 2>&1", basePath);
+    const pm = detectPackageManager(basePath) ?? "npm";
+    const buildCmd = buildScriptCommand(pm, "build");
+    const result = tryExec(`${buildCmd} 2>&1`, basePath);
     if (result === null) {
       return {
         name: "build",
         status: "error",
-        message: "Build failed — npm run build exited non-zero",
+        message: `Build failed — ${buildCmd} exited non-zero`,
         detail: "Fix build errors before dispatching work",
       };
     }
@@ -484,7 +487,7 @@ function checkBuildHealth(basePath: string): EnvironmentCheckResult | null {
 
 /**
  * Check if tests pass (opt-in slow check, use --test flag).
- * Runs npm test and reports failures as env_test.
+ * Runs the test script using the detected package manager.
  */
 function checkTestHealth(basePath: string): EnvironmentCheckResult | null {
   const pkgPath = join(basePath, "package.json");
@@ -496,12 +499,14 @@ function checkTestHealth(basePath: string): EnvironmentCheckResult | null {
     // Skip if no test script or the default placeholder
     if (!testScript || testScript.includes("no test specified")) return null;
 
-    const result = tryExec("npm test 2>&1", basePath);
+    const pm = detectPackageManager(basePath) ?? "npm";
+    const testCmd = buildScriptCommand(pm, "test");
+    const result = tryExec(`${testCmd} 2>&1`, basePath);
     if (result === null) {
       return {
         name: "test",
         status: "warning",
-        message: "Tests failing — npm test exited non-zero",
+        message: `Tests failing — ${testCmd} exited non-zero`,
         detail: "Fix failing tests before shipping",
       };
     }

@@ -185,6 +185,102 @@ describe("verification-gate: discovery", () => {
     assert.equal(result.source, "package-json");
   });
 
+  test("pnpm-lock.yaml present → uses pnpm commands", () => {
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        scripts: {
+          typecheck: "tsc --noEmit",
+          lint: "eslint .",
+          test: "vitest",
+        },
+      }),
+    );
+    writeFileSync(join(tmp, "pnpm-lock.yaml"), "lockfileVersion: 9.0");
+    const result = discoverCommands({ cwd: tmp });
+    assert.deepStrictEqual(result.commands, [
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm test",
+    ]);
+    assert.equal(result.source, "package-json");
+  });
+
+  test("yarn.lock present → uses yarn commands", () => {
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        scripts: {
+          typecheck: "tsc --noEmit",
+          lint: "eslint .",
+          test: "vitest",
+        },
+      }),
+    );
+    writeFileSync(join(tmp, "yarn.lock"), "# yarn lockfile v1");
+    const result = discoverCommands({ cwd: tmp });
+    assert.deepStrictEqual(result.commands, [
+      "yarn typecheck",
+      "yarn lint",
+      "yarn test",
+    ]);
+    assert.equal(result.source, "package-json");
+  });
+
+  test("bun.lockb present → uses bun commands", () => {
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        scripts: {
+          typecheck: "tsc --noEmit",
+          test: "bun test",
+        },
+      }),
+    );
+    writeFileSync(join(tmp, "bun.lockb"), "binary");
+    const result = discoverCommands({ cwd: tmp });
+    assert.deepStrictEqual(result.commands, [
+      "bun typecheck",
+      "bun test",
+    ]);
+    assert.equal(result.source, "package-json");
+  });
+
+  test("packageManager field in package.json → uses specified manager", () => {
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        packageManager: "pnpm@9.12.2",
+        scripts: {
+          typecheck: "tsc --noEmit",
+          lint: "eslint .",
+        },
+      }),
+    );
+    const result = discoverCommands({ cwd: tmp });
+    assert.deepStrictEqual(result.commands, [
+      "pnpm typecheck",
+      "pnpm lint",
+    ]);
+    assert.equal(result.source, "package-json");
+  });
+
+  test("lock file takes precedence over packageManager field", () => {
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({
+        packageManager: "npm@10.0.0",  // says npm
+        scripts: {
+          typecheck: "tsc --noEmit",
+        },
+      }),
+    );
+    writeFileSync(join(tmp, "pnpm-lock.yaml"), "lockfileVersion: 9.0");  // but has pnpm lock
+    const result = discoverCommands({ cwd: tmp });
+    assert.deepStrictEqual(result.commands, ["pnpm typecheck"]);
+    assert.equal(result.source, "package-json");
+  });
+
   test("taskPlanVerify with single command (no &&)", () => {
     const result = discoverCommands({
       taskPlanVerify: "npm test",

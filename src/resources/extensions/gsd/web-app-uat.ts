@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { resolveAmbientBrowserEngineResolution, type BrowserEngineResolution } from "../browser-tools/engine/selection.js";
 import { detectWebApp } from "../browser-tools/web-app-detect.js";
 import { UAT_MODE_POLICIES, type UatType } from "./uat-policy.js";
+import { detectPackageManager, buildScriptCommand } from "./package-manager.js";
 
 export { detectWebApp };
 
@@ -40,10 +41,11 @@ export function hasPlaywrightTestDependency(projectRoot: string): boolean {
 export function findPlaywrightTestScript(projectRoot: string): string | null {
   const pkg = readPackageJson(projectRoot);
   if (!pkg?.scripts) return null;
+  const pm = detectPackageManager(projectRoot) ?? "npm";
   for (const [name, value] of Object.entries(pkg.scripts)) {
     if (typeof value !== "string") continue;
     if (/\bplaywright\s+test\b/.test(value)) {
-      return `npm run ${name}`;
+      return buildScriptCommand(pm, name);
     }
   }
   return null;
