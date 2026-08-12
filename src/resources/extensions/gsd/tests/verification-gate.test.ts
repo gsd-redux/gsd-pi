@@ -240,8 +240,8 @@ describe("verification-gate: discovery", () => {
     writeFileSync(join(tmp, "bun.lockb"), "binary");
     const result = discoverCommands({ cwd: tmp });
     assert.deepStrictEqual(result.commands, [
-      "bun typecheck",
-      "bun test",
+      "bun run typecheck",
+      "bun run test",
     ]);
     assert.equal(result.source, "package-json");
   });

@@ -3,7 +3,7 @@
  */
 
 import { describe, test, beforeEach, afterEach } from "node:test";
-import assert from "node:assert";
+import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -119,11 +119,11 @@ describe("package-manager: buildScriptCommand", () => {
     assert.equal(buildScriptCommand("yarn", "typecheck"), "yarn typecheck");
   });
 
-  test("bun test → bun test (implicit run)", () => {
-    assert.equal(buildScriptCommand("bun", "test"), "bun test");
+  test("bun test → bun run test (explicit run)", () => {
+    assert.equal(buildScriptCommand("bun", "test"), "bun run test");
   });
 
-  test("bun build → bun build (implicit run)", () => {
-    assert.equal(buildScriptCommand("bun", "build"), "bun build");
+  test("bun build → bun run build (explicit run)", () => {
+    assert.equal(buildScriptCommand("bun", "build"), "bun run build");
   });
 });
