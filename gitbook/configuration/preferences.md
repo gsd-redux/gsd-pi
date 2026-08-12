@@ -183,7 +183,7 @@ Verification commands must be simple executable commands. Shell piping (`|`) is 
 
 For task-level `verify` commands (`taskPlanVerify`), GSD splits checks on newlines. `&&` chains stay within a single shell invocation, so commands such as `cd path && npm test` preserve directory context.
 
-When `verification_commands` is empty and no task-level `verify` command is available, GSD can auto-discover project checks. JavaScript projects use `package.json` scripts in this order: `typecheck`, `lint`, `test`. Python projects use the `python-project` discovery source and run `python3 -m pytest` when GSD finds explicit pytest evidence: `pytest.ini`, a pytest configuration section in `pyproject.toml` such as `[tool.pytest.ini_options]`, or files matching pytest's default test file patterns (`test_*.py` or `*_test.py`) under `tests/`.
+For the authoritative project-check discovery order and package-manager command forms, see [Configuration — Verification](../../docs/user-docs/configuration.md#verification).
 
 ### `workspace`
 

@@ -1,10 +1,6 @@
 /**
  * Package Manager Detection — Shared utilities for detecting and using
  * the correct package manager in a project.
- *
- * Used by:
- * - verification-gate.ts (command discovery for task verification)
- * - detection.ts (project signals for onboarding)
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -21,7 +17,7 @@ export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
  * 3. Fallback to npm if package.json exists
  *
  * @param cwd - Project root directory
- * @returns Detected package manager, or undefined if no package.json
+ * @returns Detected package manager, or undefined if no supported marker exists
  */
 export function detectPackageManager(cwd: string): PackageManager | undefined {
   // Lock files take precedence — they reflect actual installed state
