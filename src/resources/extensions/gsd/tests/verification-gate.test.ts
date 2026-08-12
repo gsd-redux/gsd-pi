@@ -111,7 +111,7 @@ describe("verification-gate: discovery", () => {
     assert.deepStrictEqual(result.commands, [
       "npm run typecheck",
       "npm run lint",
-      "npm run test",
+      "npm test",
     ]);
     assert.equal(result.source, "package-json");
   });
@@ -169,7 +169,7 @@ describe("verification-gate: discovery", () => {
     assert.equal(result.source, "task-plan");
   });
 
-  test("package.json with only test script → returns only npm run test", () => {
+  test("package.json with only test script → returns only npm test", () => {
     writeFileSync(
       join(tmp, "package.json"),
       JSON.stringify({
@@ -181,7 +181,7 @@ describe("verification-gate: discovery", () => {
       }),
     );
     const result = discoverCommands({ cwd: tmp });
-    assert.deepStrictEqual(result.commands, ["npm run test"]);
+    assert.deepStrictEqual(result.commands, ["npm test"]);
     assert.equal(result.source, "package-json");
   });
 
@@ -324,7 +324,7 @@ describe("verification-gate: discovery", () => {
     });
     // Prose should be rejected, so it falls through to package.json
     assert.equal(result.source, "package-json");
-    assert.deepStrictEqual(result.commands, ["npm run test"]);
+    assert.deepStrictEqual(result.commands, ["npm test"]);
   });
 
   test("non-ASCII prose taskPlanVerify is rejected, falls through to package.json", () => {
@@ -339,7 +339,7 @@ describe("verification-gate: discovery", () => {
     });
     // Non-ASCII prose should be rejected, so it falls through to package.json
     assert.equal(result.source, "package-json");
-    assert.deepStrictEqual(result.commands, ["npm run test"]);
+    assert.deepStrictEqual(result.commands, ["npm test"]);
   });
 
   test("prose taskPlanVerify with no fallback checks → source task-plan-prose", () => {
@@ -812,8 +812,8 @@ test("gate execution uses cwd for spawnSync", () => {
     });
 
     assert.equal(result.checks.length, 2);
-    assert.equal(result.checks[0].command, "[frontend] npm run test");
-    assert.equal(result.checks[1].command, "[backend] npm run test");
+    assert.equal(result.checks[0].command, "[frontend] npm test");
+    assert.equal(result.checks[1].command, "[backend] npm test");
     assert.equal(result.discoverySource, "package-json");
   });
 });
