@@ -1355,7 +1355,7 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(result, "retry");
     assert.equal(pauseAutoMock.mock.callCount(), 0);
     assert.equal(s.pendingVerificationRetry?.unitId, "M001/S01/T01");
-    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /npm run test/);
+    assert.match(s.pendingVerificationRetry?.failureContext ?? "", /npm test/);
   });
 
   test("completed execute-task verification failure still retries", async () => {
