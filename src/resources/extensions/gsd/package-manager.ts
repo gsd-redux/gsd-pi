@@ -48,9 +48,9 @@ export function detectPackageManager(cwd: string): PackageManager | undefined {
 }
 
 /**
- * Build a command to run a package.json script.
+ * Build a canonical command to run a package.json script.
  *
- * - npm: `npm run <script>` (except `npm test` for test script)
+ * - npm: `npm run <script>`
  * - pnpm/yarn: `<pm> <script>` (implicit run is idiomatic)
  * - bun: `bun run <script>` (avoids collisions with built-in commands)
  *
@@ -62,8 +62,6 @@ export function detectPackageManager(cwd: string): PackageManager | undefined {
  */
 export function buildScriptCommand(pm: PackageManager, script: string): string {
   if (pm === "npm") {
-    // npm test is a builtin shorthand
-    if (script === "test") return "npm test";
     return `npm run ${script}`;
   }
   if (pm === "bun") return `bun run ${script}`;

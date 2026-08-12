@@ -91,8 +91,8 @@ describe("package-manager: detectPackageManager", () => {
 });
 
 describe("package-manager: buildScriptCommand", () => {
-  test("npm test → npm test (builtin shorthand)", () => {
-    assert.equal(buildScriptCommand("npm", "test"), "npm test");
+  test("npm test → npm run test (canonical form)", () => {
+    assert.equal(buildScriptCommand("npm", "test"), "npm run test");
   });
 
   test("npm lint → npm run lint", () => {
