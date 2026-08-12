@@ -50,11 +50,12 @@ export function detectPackageManager(cwd: string): PackageManager | undefined {
 /**
  * Build a canonical command to run a package.json script.
  *
- * - npm: `npm run <script>`
+ * - npm: `npm test` for the test script, otherwise `npm run <script>`
  * - pnpm/yarn: `<pm> <script>` (implicit run is idiomatic)
  * - bun: `bun run <script>` (avoids collisions with built-in commands)
  *
- * This matches the patterns allowed by write-gate.ts BASH_VERIFICATION_RE.
+ * This matches the project’s package-manager conventions and the verification
+ * rules used when interpreting shell commands.
  *
  * @param pm - Package manager to use
  * @param script - Script name from package.json
@@ -62,6 +63,7 @@ export function detectPackageManager(cwd: string): PackageManager | undefined {
  */
 export function buildScriptCommand(pm: PackageManager, script: string): string {
   if (pm === "npm") {
+    if (script === "test") return "npm test";
     return `npm run ${script}`;
   }
   if (pm === "bun") return `bun run ${script}`;

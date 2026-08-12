@@ -771,7 +771,10 @@ function detectVerificationCommands(
   packageManager?: string,
 ): string[] {
   const commands: string[] = [];
-  const pm = (packageManager ?? "npm") as "npm" | "pnpm" | "yarn" | "bun";
+  const normalizedPackageManager = packageManager === "npm" || packageManager === "pnpm" || packageManager === "yarn" || packageManager === "bun"
+    ? packageManager
+    : "npm";
+  const pm = normalizedPackageManager as "npm" | "pnpm" | "yarn" | "bun";
 
   if (detectedFiles.includes("package.json")) {
     const scripts = readPackageJsonScripts(basePath);
