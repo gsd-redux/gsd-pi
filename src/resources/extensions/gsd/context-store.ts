@@ -17,6 +17,7 @@ export interface DecisionQueryOpts {
 }
 
 export interface RequirementQueryOpts {
+	class?: string;
 	milestoneId?: string;
 	sliceId?: string;
 	status?: string;
@@ -756,6 +757,11 @@ export function queryRequirementsWithLimit(
 		params[":status"] = opts.status;
 	}
 
+	if (opts?.class) {
+		clauses.push("class = :class");
+		params[":class"] = opts.class;
+	}
+
 	// LIMIT applied at SQL level (never after materialization)
 	const limit = Math.min(opts?.limit ?? 200, 500);
 	const sql = `SELECT * FROM requirements WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT :limit`;
@@ -793,6 +799,7 @@ export function queryDecisionsWithLimit(
 		"category = 'architecture'",
 		"json_valid(structured_fields)",
 		"json_extract(structured_fields, '$.sourceDecisionId') IS NOT NULL",
+		"IFNULL(json_extract(structured_fields, '$.deleted'), 0) != 1",
 	];
 	const params: Record<string, unknown> = {};
 

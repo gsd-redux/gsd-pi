@@ -2800,12 +2800,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 			const { queryRequirementsWithLimit } = await import(
 				"../context-store.js"
 			);
-			const filtered = await withCanonicalReadAdapter(
+			const results = await withCanonicalReadAdapter(
 				basePath,
 				async (adapter) => {
 					const limit = Math.min(params.limit ?? 200, 500);
-					const results = queryRequirementsWithLimit(
+					return queryRequirementsWithLimit(
 						{
+							class: params.class ?? undefined,
 							status: params.status ?? undefined,
 							milestoneId: params.milestoneId ?? undefined,
 							sliceId: params.sliceId ?? undefined,
@@ -2813,11 +2814,6 @@ export function registerDbTools(pi: ExtensionAPI): void {
 						},
 						adapter,
 					);
-
-					// JS-level class filter (not in DB query)
-					return params.class
-						? results.filter((r: any) => r.class === params.class)
-						: results;
 				},
 			);
 
@@ -2825,13 +2821,13 @@ export function registerDbTools(pi: ExtensionAPI): void {
 				content: [
 					{
 						type: "text" as const,
-						text: `Found ${filtered.length} requirement(s).`,
+						text: `Found ${results.length} requirement(s).`,
 					},
 				],
 				details: {
 					operation: "list_requirements",
-					count: filtered.length,
-					requirements: filtered,
+					count: results.length,
+					requirements: results,
 				} as any,
 			};
 		} catch (err) {

@@ -2829,16 +2829,16 @@ export function registerWorkflowTools(
           const limit = Math.min(params.limit ?? 200, 500);
           const results = queryRequirementsWithLimit(
             {
+              class: params.class ?? undefined,
               status: params.status ?? undefined,
               milestoneId: params.milestoneId ?? undefined,
               limit,
             },
             adapter,
           );
-          const filtered = params.class ? results.filter((r: any) => r.class === params.class) : results;
           return {
-            content: [{ type: "text" as const, text: `Found ${filtered.length} requirement(s).` }],
-            details: { operation: "list_requirements", count: filtered.length, requirements: filtered },
+            content: [{ type: "text" as const, text: `Found ${results.length} requirement(s).` }],
+            details: { operation: "list_requirements", count: results.length, requirements: results },
           };
         });
       } catch (err) {
