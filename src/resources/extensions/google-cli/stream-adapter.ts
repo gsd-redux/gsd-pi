@@ -285,9 +285,9 @@ function runCli(plan: GoogleCliRunPlan, options?: SimpleStreamOptions): Promise<
 function emitText(stream: AssistantMessageEventStream, message: AssistantMessage, text: string): void {
 	stream.push({ type: "start", partial: { ...message, content: [] } });
 	if (text) {
-		stream.push({ type: "text_start", contentIndex: 0, partial: message });
-		stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: message });
-		stream.push({ type: "text_end", contentIndex: 0, content: text, partial: message });
+		stream.push({ type: "text_start", contentIndex: 0 });
+		stream.push({ type: "text_delta", contentIndex: 0, delta: text });
+		stream.push({ type: "text_end", contentIndex: 0, content: text });
 	}
 	stream.push({ type: "done", reason: "stop", message });
 	stream.end(message);

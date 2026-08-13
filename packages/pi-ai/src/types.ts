@@ -408,22 +408,21 @@ export interface Context {
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
-	| { type: "text_start"; contentIndex: number; partial: AssistantMessage }
-	| { type: "text_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "text_end"; contentIndex: number; content: string; partial: AssistantMessage }
-	| { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
-	| { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
-	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
-	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
+	| { type: "text_start"; contentIndex: number }
+	| { type: "text_delta"; contentIndex: number; delta: string }
+	| { type: "text_end"; contentIndex: number; content: string }
+	| { type: "thinking_start"; contentIndex: number }
+	| { type: "thinking_delta"; contentIndex: number; delta: string }
+	| { type: "thinking_end"; contentIndex: number; content: string }
+	| { type: "toolcall_start"; contentIndex: number }
+	| { type: "toolcall_delta"; contentIndex: number; delta: string }
 	| {
 			type: "toolcall_end";
 			contentIndex: number;
 			toolCall: ToolCall;
-			partial: AssistantMessage;
 			malformedArguments?: boolean;
 	  }
-	| { type: "server_tool_use"; contentIndex: number; partial: AssistantMessage }
+	| { type: "server_tool_use"; contentIndex: number }
 	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 

@@ -54,7 +54,7 @@ describe.skipIf(!oauthToken)("Anthropic OAuth tool name normalization", () => {
 
 		for await (const event of s) {
 			if (event.type === "toolcall_end") {
-				const toolCall = event.partial.content[event.contentIndex];
+				const toolCall = event.toolCall;
 				if (toolCall.type === "toolCall") {
 					toolCallName = toolCall.name;
 				}
@@ -95,7 +95,7 @@ describe.skipIf(!oauthToken)("Anthropic OAuth tool name normalization", () => {
 
 		for await (const event of s) {
 			if (event.type === "toolcall_end") {
-				const toolCall = event.partial.content[event.contentIndex];
+				const toolCall = event.toolCall;
 				if (toolCall.type === "toolCall") {
 					toolCallName = toolCall.name;
 				}
@@ -138,7 +138,7 @@ describe.skipIf(!oauthToken)("Anthropic OAuth tool name normalization", () => {
 
 		for await (const event of s) {
 			if (event.type === "toolcall_end") {
-				const toolCall = event.partial.content[event.contentIndex];
+				const toolCall = event.toolCall;
 				if (toolCall.type === "toolCall") {
 					toolCallName = toolCall.name;
 				}
@@ -189,7 +189,7 @@ describe.skipIf(!oauthToken)("Anthropic OAuth tool name normalization", () => {
 
 		for await (const event of s) {
 			if (event.type === "toolcall_end") {
-				const toolCall = event.partial.content[event.contentIndex];
+				const toolCall = event.toolCall;
 				if (toolCall.type === "toolCall") {
 					toolCallName = toolCall.name;
 				}

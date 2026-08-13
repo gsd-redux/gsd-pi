@@ -218,7 +218,7 @@ describe("PartialMessageBuilder — MCP tool name normalization", () => {
 		assert.ok(event, "event should not be null");
 		assert.equal(event!.type, "toolcall_start");
 		if (event!.type === "toolcall_start") {
-			const toolCall = (event.partial.content[event.contentIndex] as any);
+			const toolCall = (builder.message.content[event.contentIndex] as any);
 			assert.equal(toolCall.name, "gsd_plan_milestone");
 			assert.equal(toolCall.mcpServer, "gsd-workflow");
 		}
@@ -234,7 +234,7 @@ describe("PartialMessageBuilder — MCP tool name normalization", () => {
 
 		assert.ok(event);
 		if (event!.type === "toolcall_start") {
-			const toolCall = (event.partial.content[event.contentIndex] as any);
+			const toolCall = (builder.message.content[event.contentIndex] as any);
 			assert.equal(toolCall.name, "Bash");
 			assert.equal(toolCall.mcpServer, undefined);
 		}

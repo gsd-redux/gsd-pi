@@ -57,7 +57,8 @@ function extractDeltaContext(
 	}
 	if (event.type === "toolcall_delta") {
 		// Extract tool name and file paths from the partial message
-		const partial = event.partial;
+		// Content block is now accessed from message_update.message
+		const partial = event.message;
 		const contentBlock = partial?.content?.[event.contentIndex];
 		const toolName = contentBlock && "name" in contentBlock ? (contentBlock as any).name : undefined;
 

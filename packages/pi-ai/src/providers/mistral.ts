@@ -88,7 +88,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 				payload = nextPayload as ChatCompletionStreamRequest;
 			}
 			const mistralStream = await mistral.chat.stream(payload, buildRequestOptions(model, options));
-			stream.push({ type: "start", partial: output });
+			stream.push({ type: "start" , partial: output});
 			await consumeChatStream(model, output, stream, mistralStream);
 
 			if (options?.signal?.aborted) {
@@ -296,7 +296,6 @@ async function consumeChatStream(
 				type: "text_end",
 				contentIndex: blockIndex(),
 				content: block.text,
-				partial: output,
 			});
 			return;
 		}
@@ -305,7 +304,6 @@ async function consumeChatStream(
 				type: "thinking_end",
 				contentIndex: blockIndex(),
 				content: block.thinking,
-				partial: output,
 			});
 		}
 	};
@@ -342,14 +340,13 @@ async function consumeChatStream(
 						finishCurrentBlock(currentBlock);
 						currentBlock = { type: "text", text: "" };
 						output.content.push(currentBlock);
-						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+						stream.push({ type: "text_start", contentIndex: blockIndex() });
 					}
 					currentBlock.text += textDelta;
 					stream.push({
 						type: "text_delta",
 						contentIndex: blockIndex(),
 						delta: textDelta,
-						partial: output,
 					});
 					continue;
 				}
@@ -365,14 +362,13 @@ async function consumeChatStream(
 						finishCurrentBlock(currentBlock);
 						currentBlock = { type: "thinking", thinking: "" };
 						output.content.push(currentBlock);
-						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+						stream.push({ type: "thinking_start", contentIndex: blockIndex() });
 					}
 					currentBlock.thinking += thinkingDelta;
 					stream.push({
 						type: "thinking_delta",
 						contentIndex: blockIndex(),
 						delta: thinkingDelta,
-						partial: output,
 					});
 					continue;
 				}
@@ -383,14 +379,13 @@ async function consumeChatStream(
 						finishCurrentBlock(currentBlock);
 						currentBlock = { type: "text", text: "" };
 						output.content.push(currentBlock);
-						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+						stream.push({ type: "text_start", contentIndex: blockIndex() });
 					}
 					currentBlock.text += textDelta;
 					stream.push({
 						type: "text_delta",
 						contentIndex: blockIndex(),
 						delta: textDelta,
-						partial: output,
 					});
 				}
 			}
@@ -427,7 +422,7 @@ async function consumeChatStream(
 				};
 				output.content.push(block);
 				toolBlocksByKey.set(key, output.content.length - 1);
-				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+				stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1 });
 			}
 
 			const argsDelta =
@@ -440,7 +435,6 @@ async function consumeChatStream(
 				type: "toolcall_delta",
 				contentIndex: toolBlocksByKey.get(key)!,
 				delta: argsDelta,
-				partial: output,
 			});
 		}
 	}
@@ -458,7 +452,6 @@ async function consumeChatStream(
 			type: "toolcall_end",
 			contentIndex: index,
 			toolCall: toolBlock,
-			partial: output,
 		});
 	}
 }

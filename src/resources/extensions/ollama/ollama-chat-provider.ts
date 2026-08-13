@@ -77,10 +77,10 @@ export function streamOllamaChat(
 				currentBlockType = type;
 				if (type === "text") {
 					output.content.push({ type: "text", text: "" });
-					stream.push({ type: "text_start", contentIndex, partial: output });
+					stream.push({ type: "text_start", contentIndex });
 				} else {
 					output.content.push({ type: "thinking", thinking: "" });
-					stream.push({ type: "thinking_start", contentIndex, partial: output });
+					stream.push({ type: "thinking_start", contentIndex });
 				}
 			}
 
@@ -88,10 +88,10 @@ export function streamOllamaChat(
 				if (currentBlockType === null) return;
 				if (currentBlockType === "text") {
 					const block = output.content[contentIndex] as TextContent;
-					stream.push({ type: "text_end", contentIndex, content: block.text, partial: output });
+					stream.push({ type: "text_end", contentIndex, content: block.text });
 				} else {
 					const block = output.content[contentIndex] as ThinkingContent;
-					stream.push({ type: "thinking_end", contentIndex, content: block.thinking, partial: output });
+					stream.push({ type: "thinking_end", contentIndex, content: block.thinking });
 				}
 				currentBlockType = null;
 			}
@@ -104,10 +104,10 @@ export function streamOllamaChat(
 				}
 				if (type === "text") {
 					(output.content[contentIndex] as TextContent).text += text;
-					stream.push({ type: "text_delta", contentIndex, delta: text, partial: output });
+					stream.push({ type: "text_delta", contentIndex, delta: text });
 				} else {
 					(output.content[contentIndex] as ThinkingContent).thinking += text;
-					stream.push({ type: "thinking_delta", contentIndex, delta: text, partial: output });
+					stream.push({ type: "thinking_delta", contentIndex, delta: text });
 				}
 			}
 
@@ -128,19 +128,17 @@ export function streamOllamaChat(
 						arguments: tc.function.arguments,
 					};
 					output.content.push(toolCall);
-					stream.push({ type: "toolcall_start", contentIndex, partial: output });
+					stream.push({ type: "toolcall_start", contentIndex });
 					// Emit a delta with the serialized arguments (convention: start/delta/end)
 					stream.push({
 						type: "toolcall_delta",
 						contentIndex,
 						delta: JSON.stringify(tc.function.arguments),
-						partial: output,
 					});
 					stream.push({
 						type: "toolcall_end",
 						contentIndex,
 						toolCall,
-						partial: output,
 					});
 				}
 				output.stopReason = "toolUse";

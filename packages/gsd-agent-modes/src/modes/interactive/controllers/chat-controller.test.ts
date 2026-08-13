@@ -182,14 +182,14 @@ test("handleAgentEvent: message_end keeps question segments when final payload m
 	await handleAgentEvent(host, {
 		type: "message_update",
 		message: first,
-		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: prior, partial: first },
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: prior },
 	} as any);
 
 	const replaced = makeMessage([{ type: "text", text: waitAck }]);
 	await handleAgentEvent(host, {
 		type: "message_update",
 		message: replaced,
-		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: waitAck, partial: replaced },
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: waitAck },
 	} as any);
 
 	const final = makeMessage([
@@ -231,7 +231,7 @@ test("handleAgentEvent: suppresses redundant holding-here sub-turn after discuss
 	await handleAgentEvent(host, {
 		type: "message_update",
 		message: first,
-		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: prior, partial: first },
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: prior },
 	} as any);
 
 	// Claude Code can replace sub-turn text at the same content index.
@@ -239,7 +239,7 @@ test("handleAgentEvent: suppresses redundant holding-here sub-turn after discuss
 	await handleAgentEvent(host, {
 		type: "message_update",
 		message: replaced,
-		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: waitAck, partial: replaced },
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: waitAck },
 	} as any);
 
 	const final = makeMessage([
@@ -757,7 +757,7 @@ test("handleAgentEvent: Claude Code MCP post-tool text does not erase user-facin
 	await handleAgentEvent(host, {
 		type: "message_update",
 		message: first,
-		assistantMessageEvent: { type: "server_tool_use", contentIndex: 1, partial: first },
+		assistantMessageEvent: { type: "server_tool_use", contentIndex: 1 },
 	} as any);
 
 	assert.match(stripAnsi(chatContainer.render(100).join("\n")), /still waiting on your actual answer/);

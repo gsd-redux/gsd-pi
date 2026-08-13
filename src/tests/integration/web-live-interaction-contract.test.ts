@@ -665,7 +665,7 @@ test("(e) SSE emits message_update with text delta → streamingAssistantText ac
   harness.emit({
     type: "message_update",
     message: { role: "assistant", content: [] },
-    assistantMessageEvent: { type: "text_delta", delta: "streamed text", contentIndex: 0, partial: {} },
+    assistantMessageEvent: { type: "text_delta", delta: "streamed text", contentIndex: 0 },
   });
 
   const events = await readSseEvents(response, 2); // bridge_status + message_update

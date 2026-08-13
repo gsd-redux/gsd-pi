@@ -87,6 +87,7 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 	};
 
 	const s = await stream(model, context, options);
+	let content: any[] = [];
 	let hasToolStart = false;
 	let hasToolDelta = false;
 	let hasToolEnd = false;
@@ -95,7 +96,7 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 	for await (const event of s) {
 		if (event.type === "toolcall_start") {
 			hasToolStart = true;
-			const toolCall = event.partial.content[event.contentIndex];
+			const toolCall = content[event.contentIndex];
 			index = event.contentIndex;
 			expect(toolCall.type).toBe("toolCall");
 			if (toolCall.type === "toolCall") {
@@ -105,7 +106,7 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 		}
 		if (event.type === "toolcall_delta") {
 			hasToolDelta = true;
-			const toolCall = event.partial.content[event.contentIndex];
+			const toolCall = content[event.contentIndex];
 			expect(event.contentIndex).toBe(index);
 			expect(toolCall.type).toBe("toolCall");
 			if (toolCall.type === "toolCall") {
@@ -121,7 +122,7 @@ async function handleToolCall<TApi extends Api>(model: Model<TApi>, options?: St
 		}
 		if (event.type === "toolcall_end") {
 			hasToolEnd = true;
-			const toolCall = event.partial.content[event.contentIndex];
+			const toolCall = content[event.contentIndex];
 			expect(event.contentIndex).toBe(index);
 			expect(toolCall.type).toBe("toolCall");
 			if (toolCall.type === "toolCall") {

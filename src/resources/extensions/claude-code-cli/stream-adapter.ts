@@ -809,7 +809,7 @@ export function pushWorkflowMcpReadinessProgressEvent(input: {
 		contentIndex = partial.content.length;
 		state.contentIndex = contentIndex;
 		partial.content.push({ type: "text", text: "" });
-		stream.push({ type: "text_start", contentIndex, partial });
+		stream.push({ type: "text_start", contentIndex });
 	}
 
 	const block = partial.content[contentIndex];
@@ -817,7 +817,7 @@ export function pushWorkflowMcpReadinessProgressEvent(input: {
 
 	const delta = block.text.length === 0 ? message : `\n${message}`;
 	block.text += delta;
-	stream.push({ type: "text_delta", contentIndex, delta, partial });
+	stream.push({ type: "text_delta", contentIndex, delta });
 }
 
 function emitConcurrentClaudeCodeProcessWarning(input: {
@@ -2755,7 +2755,7 @@ async function pumpSdkMessages(
 							if (assistantEvent) {
 								stream.push(assistantEvent);
 								if (assistantEvent.type === "toolcall_start") {
-									const toolBlock = assistantEvent.partial.content[assistantEvent.contentIndex];
+									const toolBlock = builder.message.content[assistantEvent.contentIndex];
 									if (toolBlock?.type === "toolCall") {
 										try {
 											await onExternalToolCall?.(toolBlock);
@@ -2829,7 +2829,7 @@ async function pumpSdkMessages(
 								if (!extResult) continue;
 								const suppressDuplicateUnavailable = shouldSuppressDuplicateToolUnavailableBlock(
 									block,
-									target.partial.content,
+									builder.message.content,
 								);
 								// Push synthetic completion events with result attached so the
 								// chat-controller can update pending ToolExecutionComponents.
@@ -2843,7 +2843,7 @@ async function pumpSdkMessages(
 											type: "toolcall_end",
 											contentIndex: target.contentIndex,
 											toolCall: block,
-											partial: target.partial,
+											
 										});
 										(block as ToolCallWithExternalResult).externalResult = extResult;
 										emittedExternalToolResultIds.add(block.id);
@@ -2861,7 +2861,7 @@ async function pumpSdkMessages(
 										type: "toolcall_end",
 										contentIndex: target.contentIndex,
 										toolCall: block,
-										partial: target.partial,
+										
 									});
 									emittedExternalToolResultIds.add(block.id);
 								} else if (block.type === "serverToolUse") {
@@ -2880,7 +2880,7 @@ async function pumpSdkMessages(
 									stream.push({
 										type: "server_tool_use",
 										contentIndex: target.contentIndex,
-										partial: target.partial,
+										
 									});
 									emittedExternalToolResultIds.add(block.id);
 								}

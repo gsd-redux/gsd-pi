@@ -81,7 +81,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 			}
 			const googleStream = await client.models.generateContentStream(params);
 
-			stream.push({ type: "start", partial: output });
+			stream.push({ type: "start" , partial: output});
 			let currentBlock: TextContent | ThinkingContent | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
@@ -105,25 +105,23 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 											type: "text_end",
 											contentIndex: blocks.length - 1,
 											content: currentBlock.text,
-											partial: output,
 										});
 									} else {
 										stream.push({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
 											content: currentBlock.thinking,
-											partial: output,
 										});
 									}
 								}
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
-									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+									stream.push({ type: "thinking_start", contentIndex: blockIndex() });
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
-									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+									stream.push({ type: "text_start", contentIndex: blockIndex() });
 								}
 							}
 							if (currentBlock.type === "thinking") {
@@ -136,7 +134,6 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
-									partial: output,
 								});
 							} else {
 								currentBlock.text += part.text;
@@ -148,7 +145,6 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 									type: "text_delta",
 									contentIndex: blockIndex(),
 									delta: part.text,
-									partial: output,
 								});
 							}
 						}
@@ -160,14 +156,12 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 										type: "text_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.text,
-										partial: output,
 									});
 								} else {
 									stream.push({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
 										content: currentBlock.thinking,
-										partial: output,
 									});
 								}
 								currentBlock = null;
@@ -190,14 +184,13 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 							};
 
 							output.content.push(toolCall);
-							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex() });
 							stream.push({
 								type: "toolcall_delta",
 								contentIndex: blockIndex(),
 								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
 							});
-							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall });
 						}
 					}
 				}
@@ -236,14 +229,12 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 						type: "text_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.text,
-						partial: output,
 					});
 				} else {
 					stream.push({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
 						content: currentBlock.thinking,
-						partial: output,
 					});
 				}
 			}

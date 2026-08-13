@@ -254,9 +254,9 @@ function makeEvent(
 	type: "text_delta" | "thinking_delta" | "toolcall_delta",
 	contentIndex: number,
 	delta: string,
-	partial: AssistantMessage,
+	
 ): AssistantMessageEvent {
-	return { type, contentIndex, delta, partial: { ...partial } };
+	return { type, contentIndex, delta };
 }
 
 // ============================================================================

@@ -397,7 +397,7 @@ async function streamAssistantResponse(
 				partialMessage = event.partial;
 				context.messages.push(partialMessage);
 				addedPartial = true;
-				await emit({ type: "message_start", message: { ...partialMessage } });
+				await emit({ type: "message_start", message: partialMessage });
 				break;
 
 			case "text_start":
@@ -410,12 +410,13 @@ async function streamAssistantResponse(
 			case "toolcall_delta":
 			case "toolcall_end":
 				if (partialMessage) {
-					partialMessage = event.partial;
+					// partialMessage is already updated locally by individual delta events
+					// (text_delta appends to text, thinking_delta to thinking, etc.)
 					context.messages[context.messages.length - 1] = partialMessage;
 					await emit({
 						type: "message_update",
 						assistantMessageEvent: event,
-						message: { ...partialMessage },
+						message: partialMessage,
 					});
 				}
 				break;

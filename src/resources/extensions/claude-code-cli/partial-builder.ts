@@ -201,16 +201,16 @@ export class PartialMessageBuilder {
 
 				if (block.type === "text") {
 					this.partial.content.push({ type: "text", text: "" });
-					return { type: "text_start", contentIndex, partial: this.partial };
+					return { type: "text_start", contentIndex };
 				}
 				if (block.type === "thinking") {
 					this.partial.content.push({ type: "thinking", thinking: "" });
-					return { type: "thinking_start", contentIndex, partial: this.partial };
+					return { type: "thinking_start", contentIndex };
 				}
 				if (block.type === "tool_use") {
 					this.toolJsonAccum.set(streamIndex, "");
 					this.partial.content.push(toolCallFromBlock(block.id, block.name, {}));
-					return { type: "toolcall_start", contentIndex, partial: this.partial };
+					return { type: "toolcall_start", contentIndex };
 				}
 				if (block.type === "server_tool_use") {
 					this.partial.content.push({
@@ -219,7 +219,7 @@ export class PartialMessageBuilder {
 						name: block.name,
 						input: block.input,
 					});
-					return { type: "server_tool_use", contentIndex, partial: this.partial };
+					return { type: "server_tool_use", contentIndex };
 				}
 				return null;
 			}
@@ -234,17 +234,17 @@ export class PartialMessageBuilder {
 				if (delta.type === "text_delta" && typeof delta.text === "string") {
 					const existing = this.partial.content[contentIndex] as TextContent;
 					existing.text += delta.text;
-					return { type: "text_delta", contentIndex, delta: delta.text, partial: this.partial };
+					return { type: "text_delta", contentIndex, delta: delta.text };
 				}
 				if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
 					const existing = this.partial.content[contentIndex] as ThinkingContent;
 					existing.thinking += delta.thinking;
-					return { type: "thinking_delta", contentIndex, delta: delta.thinking, partial: this.partial };
+					return { type: "thinking_delta", contentIndex, delta: delta.thinking };
 				}
 				if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
 					const accum = (this.toolJsonAccum.get(streamIndex) ?? "") + delta.partial_json;
 					this.toolJsonAccum.set(streamIndex, accum);
-					return { type: "toolcall_delta", contentIndex, delta: delta.partial_json, partial: this.partial };
+					return { type: "toolcall_delta", contentIndex, delta: delta.partial_json };
 				}
 				return null;
 			}
@@ -256,10 +256,10 @@ export class PartialMessageBuilder {
 				const block = this.partial.content[contentIndex];
 
 				if (block.type === "text") {
-					return { type: "text_end", contentIndex, content: block.text, partial: this.partial };
+					return { type: "text_end", contentIndex, content: block.text };
 				}
 				if (block.type === "thinking") {
-					return { type: "thinking_end", contentIndex, content: block.thinking, partial: this.partial };
+					return { type: "thinking_end", contentIndex, content: block.thinking };
 				}
 				if (block.type === "toolCall") {
 					const jsonStr = this.toolJsonAccum.get(streamIndex) ?? "{}";
@@ -277,10 +277,10 @@ export class PartialMessageBuilder {
 							// malformation explicitly so downstream consumers can
 							// distinguish this from a healthy tool completion (#2574).
 							block.arguments = { _raw: jsonStr };
-							return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true };
+							return { type: "toolcall_end", contentIndex, toolCall: block, malformedArguments: true };
 						}
 					}
-					return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial };
+					return { type: "toolcall_end", contentIndex, toolCall: block };
 				}
 				return null;
 			}

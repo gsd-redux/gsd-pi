@@ -122,26 +122,22 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 										stream.push({
 											type: "text_end",
 											contentIndex: blocks.length - 1,
-											content: currentBlock.text,
-											partial: output,
-										});
+											content: currentBlock.text,});
 									} else {
 										stream.push({
 											type: "thinking_end",
 											contentIndex: blockIndex(),
-											content: currentBlock.thinking,
-											partial: output,
-										});
+											content: currentBlock.thinking,});
 									}
 								}
 								if (isThinking) {
 									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
 									output.content.push(currentBlock);
-									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+									stream.push({ type: "thinking_start", contentIndex: blockIndex()});
 								} else {
 									currentBlock = { type: "text", text: "" };
 									output.content.push(currentBlock);
-									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+									stream.push({ type: "text_start", contentIndex: blockIndex()});
 								}
 							}
 							if (currentBlock.type === "thinking") {
@@ -153,9 +149,7 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 								stream.push({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
-									delta: part.text,
-									partial: output,
-								});
+									delta: part.text,});
 							} else {
 								currentBlock.text += part.text;
 								currentBlock.textSignature = retainThoughtSignature(
@@ -165,9 +159,7 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 								stream.push({
 									type: "text_delta",
 									contentIndex: blockIndex(),
-									delta: part.text,
-									partial: output,
-								});
+									delta: part.text,});
 							}
 						}
 
@@ -177,16 +169,12 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 									stream.push({
 										type: "text_end",
 										contentIndex: blockIndex(),
-										content: currentBlock.text,
-										partial: output,
-									});
+										content: currentBlock.text,});
 								} else {
 									stream.push({
 										type: "thinking_end",
 										contentIndex: blockIndex(),
-										content: currentBlock.thinking,
-										partial: output,
-									});
+										content: currentBlock.thinking,});
 								}
 								currentBlock = null;
 							}
@@ -207,14 +195,12 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 							};
 
 							output.content.push(toolCall);
-							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex()});
 							stream.push({
 								type: "toolcall_delta",
 								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
-							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+								delta: JSON.stringify(toolCall.arguments),});
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall});
 						}
 					}
 				}
@@ -252,16 +238,12 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 					stream.push({
 						type: "text_end",
 						contentIndex: blockIndex(),
-						content: currentBlock.text,
-						partial: output,
-					});
+						content: currentBlock.text,});
 				} else {
 					stream.push({
 						type: "thinking_end",
 						contentIndex: blockIndex(),
-						content: currentBlock.thinking,
-						partial: output,
-					});
+						content: currentBlock.thinking,});
 				}
 			}
 

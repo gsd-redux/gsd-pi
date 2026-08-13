@@ -333,7 +333,7 @@ async function streamWithDeltas(
 
 		if (block.type === "thinking") {
 			partial.content = [...partial.content, { type: "thinking", thinking: "" }];
-			stream.push({ type: "thinking_start", contentIndex: index, partial: { ...partial } });
+			stream.push({ type: "thinking_start", contentIndex: index });
 			for (const chunk of splitStringByTokenSize(block.thinking, minTokenSize, maxTokenSize)) {
 				await scheduleChunk(chunk, tokensPerSecond);
 				if (signal?.aborted) {
@@ -343,20 +343,19 @@ async function streamWithDeltas(
 					return;
 				}
 				(partial.content[index] as ThinkingContent).thinking += chunk;
-				stream.push({ type: "thinking_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+				stream.push({ type: "thinking_delta", contentIndex: index, delta: chunk });
 			}
 			stream.push({
 				type: "thinking_end",
 				contentIndex: index,
-				content: block.thinking,
-				partial: { ...partial },
+				content: block.thinking
 			});
 			continue;
 		}
 
 		if (block.type === "text") {
 			partial.content = [...partial.content, { type: "text", text: "" }];
-			stream.push({ type: "text_start", contentIndex: index, partial: { ...partial } });
+			stream.push({ type: "text_start", contentIndex: index });
 			for (const chunk of splitStringByTokenSize(block.text, minTokenSize, maxTokenSize)) {
 				await scheduleChunk(chunk, tokensPerSecond);
 				if (signal?.aborted) {
@@ -366,9 +365,9 @@ async function streamWithDeltas(
 					return;
 				}
 				(partial.content[index] as TextContent).text += chunk;
-				stream.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+				stream.push({ type: "text_delta", contentIndex: index, delta: chunk });
 			}
-			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
+			stream.push({ type: "text_end", contentIndex: index, content: block.text });
 			continue;
 		}
 
@@ -382,7 +381,7 @@ async function streamWithDeltas(
 		}
 
 		partial.content = [...partial.content, { type: "toolCall", id: block.id, name: block.name, arguments: {} }];
-		stream.push({ type: "toolcall_start", contentIndex: index, partial: { ...partial } });
+		stream.push({ type: "toolcall_start", contentIndex: index });
 		for (const chunk of splitStringByTokenSize(JSON.stringify(block.arguments), minTokenSize, maxTokenSize)) {
 			await scheduleChunk(chunk, tokensPerSecond);
 			if (signal?.aborted) {
@@ -391,10 +390,10 @@ async function streamWithDeltas(
 				stream.end(aborted);
 				return;
 			}
-			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
+			stream.push({ type: "toolcall_delta", contentIndex: index, delta: chunk });
 		}
 		(partial.content[index] as ToolCall).arguments = block.arguments;
-		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: { ...partial } });
+		stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block });
 	}
 
 	if (message.stopReason === "error" || message.stopReason === "aborted") {

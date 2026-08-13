@@ -271,8 +271,9 @@ describe("stream-adapter — Claude Code internal sub-turns (#337)", () => {
 		]) {
 			const result = handleClaudeCodePartialStreamEvent(builder, event as any, "claude-opus-4-8");
 			builder = result.builder;
-			if (result.assistantEvent && "partial" in result.assistantEvent) {
-				contentLengths.push(result.assistantEvent.partial.content.length);
+			// builder.message is the local AssistantMessage accumulator (not event.partial)
+			if (builder && result.assistantEvent) {
+				contentLengths.push(builder.message.content.length);
 			}
 		}
 
