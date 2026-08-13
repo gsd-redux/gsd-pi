@@ -14,10 +14,10 @@ import { registerDbTools } from "../bootstrap/db-tools.ts";
 import { registerWorkflowTools } from "../../../../../packages/mcp-server/src/workflow-tools.ts";
 import {
   closeDatabase,
+  getDb,
   openDatabase,
 } from "../mcp-bridge.ts";
-import { insertRequirement } from "../gsd-db.ts";
-import { getDbPath } from "../gsd-db.ts";
+import { insertRequirement, getDbPath } from "../gsd-db.ts";
 import { resolveProjectRootDbPath } from "../db-workspace.ts";
 import { invalidateAllCaches } from "../cache.ts";
 
@@ -87,6 +87,11 @@ function mcpTool(tools: McpTool[], name: string): McpTool {
   return found;
 }
 
+function readError(result: Record<string, unknown>): string | undefined {
+  const details = result.details as Record<string, unknown> | undefined;
+  return typeof details?.error === "string" ? (details.error as string) : undefined;
+}
+
 function seedRequirement(id: string, description: string): void {
   insertRequirement({
     id,
@@ -110,6 +115,8 @@ test("canonical read tools: missing DB returns db_unavailable and does not creat
     const native = makeNativeTools();
     const mcp = makeMcpTools();
     const dbPath = resolveProjectRootDbPath(base);
+
+    assert.equal(existsSync(dbPath), false, "fixture starts without gsd.db");
 
     const nativeList = await nativeTool(native, "gsd_requirement_list").execute(
       "call-1",
@@ -233,6 +240,91 @@ test("canonical read tools: native and MCP read the same canonical requirement r
     assert.equal(mcpRequirement?.id, "R777");
     assert.equal(nativeRequirement?.description, "Parity requirement");
     assert.equal(mcpRequirement?.description, "Parity requirement");
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: empty valid DB returns consistent empty list semantics", async () => {
+  const base = makeProjectBase("gsd-canonical-empty-db");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+
+    const nativeList = await nativeTool(native, "gsd_decision_list").execute(
+      "call-5",
+      { limit: 20 },
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const mcpList = await mcpTool(mcp, "gsd_decision_list").handler({
+      projectDir: base,
+      limit: 20,
+    });
+
+    const nativeDetails = nativeList.details as { count?: number; error?: string } | undefined;
+    const mcpDetails = mcpList.details as { count?: number; error?: string } | undefined;
+
+    assert.equal(nativeDetails?.error, undefined);
+    assert.equal(mcpDetails?.error, undefined);
+    assert.equal(nativeDetails?.count, 0);
+    assert.equal(mcpDetails?.count, 0);
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: unknown ID returns not_found for native and MCP", async () => {
+  const base = makeProjectBase("gsd-canonical-unknown-id");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+
+    const nativeGet = await nativeTool(native, "gsd_requirement_get").execute(
+      "call-6",
+      { id: "R999" },
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const mcpGet = await mcpTool(mcp, "gsd_requirement_get").handler({
+      projectDir: base,
+      id: "R999",
+    });
+
+    assert.equal(readError(nativeGet), "not_found");
+    assert.equal(readError(mcpGet), "not_found");
+  } finally {
+    cleanup([base]);
+  }
+});
+
+test("canonical read parity: corrupt requirements table returns query_error for native and MCP", async () => {
+  const base = makeProjectBase("gsd-canonical-query-error-parity");
+  try {
+    const native = makeNativeTools();
+    const mcp = makeMcpTools();
+
+    openDatabase(resolveProjectRootDbPath(base));
+    const db = getDb();
+    db.prepare("DROP TABLE requirements").run();
+
+    const nativeReqList = await nativeTool(native, "gsd_requirement_list").execute(
+      "call-7",
+      {},
+      undefined,
+      undefined,
+      { cwd: base },
+    );
+    const mcpReqList = await mcpTool(mcp, "gsd_requirement_list").handler({ projectDir: base });
+
+    assert.equal(readError(nativeReqList), "query_error");
+    assert.equal(readError(mcpReqList), "query_error");
   } finally {
     cleanup([base]);
   }

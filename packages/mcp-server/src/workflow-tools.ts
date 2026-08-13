@@ -1311,6 +1311,38 @@ async function runSerializedCanonicalReadOperation<T>(
   });
 }
 
+function mapCanonicalReadError(
+  operation: "list_decisions" | "get_decision" | "list_requirements" | "get_requirement",
+  message: string,
+  id?: string,
+): { content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> } {
+  const dbUnavailable = message.includes("db_unavailable") || message.includes("not available");
+  const details: Record<string, unknown> = {
+    operation,
+    ...(id ? { id } : {}),
+    error: dbUnavailable ? "db_unavailable" : "query_error",
+  };
+  if (!dbUnavailable) {
+    details.message = message;
+  }
+
+  const actionLabel = operation === "list_decisions"
+    ? "listing decisions"
+    : operation === "get_decision"
+      ? "fetching decision"
+      : operation === "list_requirements"
+        ? "listing requirements"
+        : "fetching requirement";
+
+  return {
+    content: [{
+      type: "text" as const,
+      text: dbUnavailable ? "Error: GSD database is not available." : `Error ${actionLabel}: ${message}`,
+    }],
+    details,
+  };
+}
+
 async function enforceWorkflowWriteGate(
   toolName: string,
   projectDir: string,
@@ -2668,16 +2700,8 @@ export function registerWorkflowTools(
           };
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const dbUnavailable = msg.includes("db_unavailable");
-        return {
-          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error listing decisions: ${msg}` }],
-          details: {
-            operation: "list_decisions",
-            error: dbUnavailable ? "db_unavailable" : "query_error",
-            ...(dbUnavailable ? {} : { message: msg }),
-          },
-        };
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("list_decisions", message);
       }
     },
   );
@@ -2720,17 +2744,8 @@ export function registerWorkflowTools(
           };
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const dbUnavailable = msg.includes("db_unavailable");
-        return {
-          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error fetching decision: ${msg}` }],
-          details: {
-            operation: "get_decision",
-            id: params.id,
-            error: dbUnavailable ? "db_unavailable" : "query_error",
-            ...(dbUnavailable ? {} : { message: msg }),
-          },
-        };
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("get_decision", message, params.id);
       }
     },
   );
@@ -2842,16 +2857,8 @@ export function registerWorkflowTools(
           };
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const dbUnavailable = msg.includes("db_unavailable");
-        return {
-          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error listing requirements: ${msg}` }],
-          details: {
-            operation: "list_requirements",
-            error: dbUnavailable ? "db_unavailable" : "query_error",
-            ...(dbUnavailable ? {} : { message: msg }),
-          },
-        };
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("list_requirements", message);
       }
     },
   );
@@ -2888,17 +2895,8 @@ export function registerWorkflowTools(
           };
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const dbUnavailable = msg.includes("db_unavailable");
-        return {
-          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error fetching requirement: ${msg}` }],
-          details: {
-            operation: "get_requirement",
-            id: params.id,
-            error: dbUnavailable ? "db_unavailable" : "query_error",
-            ...(dbUnavailable ? {} : { message: msg }),
-          },
-        };
+        const message = err instanceof Error ? err.message : String(err);
+        return mapCanonicalReadError("get_requirement", message, params.id);
       }
     },
   );
