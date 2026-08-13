@@ -251,7 +251,7 @@ test("canonical read parity: empty valid DB returns consistent empty list semant
     const native = makeNativeTools();
     const mcp = makeMcpTools();
 
-    openDatabase(resolveProjectRootDbPath(base));
+    assert.ok(openDatabase(resolveProjectRootDbPath(base)), "fixture database should open successfully");
 
     const nativeList = await nativeTool(native, "gsd_decision_list").execute(
       "call-5",
@@ -283,7 +283,7 @@ test("canonical read parity: unknown ID returns not_found for native and MCP", a
     const native = makeNativeTools();
     const mcp = makeMcpTools();
 
-    openDatabase(resolveProjectRootDbPath(base));
+    assert.ok(openDatabase(resolveProjectRootDbPath(base)), "fixture database should open successfully");
 
     const nativeGet = await nativeTool(native, "gsd_requirement_get").execute(
       "call-6",
