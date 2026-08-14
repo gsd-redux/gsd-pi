@@ -87,6 +87,11 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleDoctor(trimmed.replace(/^doctor\s*/, "").trim(), ctx, pi);
     return true;
   }
+  if (trimmed === "copilot-models" || trimmed.startsWith("copilot-models ")) {
+    const { handleCopilotModels } = await import("./copilot-models.js");
+    await handleCopilotModels(trimmed.replace(/^copilot-models\s*/, "").trim(), ctx);
+    return true;
+  }
   if (trimmed === "logs" || trimmed.startsWith("logs ")) {
     await handleLogs(trimmed.replace(/^logs\s*/, "").trim(), ctx);
     return true;

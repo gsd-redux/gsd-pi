@@ -97,6 +97,10 @@ const ALLOWED_FILES: Record<string, string> = {
     "canonical-provider tiebreakers (ADR-012)",
   "src/provider-migrations.ts":
     "transport-specific default-provider migration target (ADR-012)",
+  "src/resources/extensions/gsd/commands/handlers/copilot-models.ts":
+    "github-copilot-specific live model catalog check — needs transport identity, not API shape",
+  "src/resources/extensions/gsd/copilot-model-catalog.ts":
+    "github-copilot-only fetch gate — the whole module exists to talk to the Copilot /models endpoint",
 };
 
 function shouldScan(path: string): boolean {
