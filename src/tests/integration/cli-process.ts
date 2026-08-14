@@ -13,8 +13,8 @@ export type RunResult = {
   timedOut: boolean;
 };
 
-export const projectRoot = process.cwd();
-export const loaderPath = join(projectRoot, "dist", "loader.js");
+const projectRoot = process.cwd();
+const loaderPath = join(projectRoot, "dist", "loader.js");
 
 export function ensureBuiltLoader(): void {
   if (!existsSync(loaderPath)) {

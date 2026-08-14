@@ -22,17 +22,13 @@ import {
   resolveSystemRtkPath,
 } from "./rtk-shared.js";
 
-export const RTK_VERSION = "0.33.1";
+const RTK_VERSION = "0.33.1";
 export const GSD_SKIP_RTK_INSTALL_ENV = "GSD_SKIP_RTK_INSTALL";
 export {
   GSD_RTK_DISABLED_ENV,
   GSD_RTK_PATH_ENV,
-  RTK_TELEMETRY_DISABLED_ENV,
-  applyRtkProcessEnv,
   buildRtkEnv,
   getManagedRtkDir,
-  getRtkBinaryName,
-  isRtkEnabled,
   prependPathEntry,
 };
 
@@ -57,7 +53,7 @@ export interface EnsureRtkResult {
   reason?: string;
 }
 
-export function getManagedRtkPath(
+function getManagedRtkPath(
   platform: NodeJS.Platform = process.platform,
   targetDir: string = getManagedRtkDir(),
 ): string {

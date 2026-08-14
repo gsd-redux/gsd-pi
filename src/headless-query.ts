@@ -125,7 +125,7 @@ type HeadlessQueryModules = Awaited<ReturnType<typeof loadExtensionModules>>
  * reach this seam, so match on its stable `name` contract rather than
  * instanceof.
  */
-export function isSchemaTooNewErrorLike(err: unknown): err is Error {
+function isSchemaTooNewErrorLike(err: unknown): err is Error {
   return err instanceof Error && err.name === 'GSDSchemaTooNewError'
 }
 

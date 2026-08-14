@@ -144,7 +144,7 @@ function syncBinary(installedCli: string, targetPath: string, platform: NodeJS.P
 /**
  * Resolve the gsd-browser binary installed by the active global package manager.
  */
-export function resolveGlobalGsdBrowserCliPath(
+function resolveGlobalGsdBrowserCliPath(
   options: { env?: NodeJS.ProcessEnv; argv1?: string; platform?: NodeJS.Platform } = {},
 ): string | null {
   const env = options.env ?? process.env
@@ -175,7 +175,7 @@ export function resolveGlobalGsdBrowserCliPath(
 /**
  * Resolve the gsd-browser binary that wins on PATH (`command -v` / `where`).
  */
-export function resolveGsdBrowserOnPath(
+function resolveGsdBrowserOnPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string | null {

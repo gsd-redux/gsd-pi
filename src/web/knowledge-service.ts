@@ -38,7 +38,7 @@ export async function collectKnowledgeData(projectCwdOverride?: string): Promise
  * 2. **Table**: `## Title` followed by a markdown table with rows matching
  *    `| K001 |`, `| P001 |`, or `| L001 |` patterns
  */
-export function parseKnowledgeFile(content: string): KnowledgeEntry[] {
+function parseKnowledgeFile(content: string): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = []
   let freeformCounter = 0
 

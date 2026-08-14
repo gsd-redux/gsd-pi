@@ -9,7 +9,7 @@
 import chalk from 'chalk'
 
 /** Dim "[gsd] " line tag that prefixes CLI banner lines. */
-export function gsdTag(): string {
+function gsdTag(): string {
   return chalk.dim('[gsd] ')
 }
 
@@ -19,7 +19,7 @@ export function warn(text: string): string {
 }
 
 /** A dim "what to do next" hint fragment. */
-export function hint(text: string): string {
+function hint(text: string): string {
   return chalk.dim(text)
 }
 

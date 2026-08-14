@@ -1967,7 +1967,7 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
  * reclaiming its spawned RPC child process. Use when a project is no longer
  * served (e.g. its last SSE subscriber disconnected).
  */
-export async function disposeProjectBridge(projectCwd: string): Promise<void> {
+async function disposeProjectBridge(projectCwd: string): Promise<void> {
   const resolvedPath = resolve(projectCwd);
   const service = projectBridgeRegistry.get(resolvedPath);
   if (!service) return;
@@ -2027,7 +2027,7 @@ export function requireProjectCwd(request: Request): string {
   return cwd;
 }
 
-export class NoProjectError extends Error {
+class NoProjectError extends Error {
   constructor() {
     super("No project selected");
     this.name = "NoProjectError";
@@ -2478,7 +2478,7 @@ export function buildBridgeFailureResponse(commandType: string, error: unknown):
   };
 }
 
-export async function refreshProjectBridgeAuth(projectCwd?: string): Promise<void> {
+async function refreshProjectBridgeAuth(projectCwd?: string): Promise<void> {
   const bridge = projectCwd ? getProjectBridgeServiceForCwd(projectCwd) : getProjectBridgeService();
   await bridge.refreshAuth();
 }
@@ -2487,7 +2487,7 @@ registerOnboardingBridgeAuthRefresher(async () => {
   await refreshProjectBridgeAuth();
 });
 
-export function emitProjectLiveStateInvalidation(
+function emitProjectLiveStateInvalidation(
   descriptor: BridgeLiveStateInvalidationDescriptor,
   projectCwd?: string,
 ): BridgeLiveStateInvalidationEvent {

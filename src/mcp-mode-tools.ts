@@ -2,7 +2,7 @@ import type { McpToolDef } from "./mcp-server.js";
 
 export type WorkflowMcpAdapterToolLoader = () => Promise<McpToolDef[]>;
 
-export async function loadWorkflowMcpAdapterTools(): Promise<McpToolDef[]> {
+async function loadWorkflowMcpAdapterTools(): Promise<McpToolDef[]> {
 	const { createWorkflowMcpAdapterToolDefs } = await import("@opengsd/mcp-server");
 	return createWorkflowMcpAdapterToolDefs();
 }

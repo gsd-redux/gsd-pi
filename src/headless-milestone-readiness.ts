@@ -161,7 +161,7 @@ export function captureMilestoneExecutionSnapshot(basePath: string): MilestoneEx
   }
 }
 
-export function findExecutableMilestoneInDb(
+function findExecutableMilestoneInDb(
   basePath: string,
   options: { changedSince?: MilestoneExecutionSnapshot } = {},
 ): string | null {

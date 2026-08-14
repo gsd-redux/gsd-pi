@@ -32,7 +32,7 @@ const EXCLUDED_DIRS = new Set(["node_modules", ".git"]);
  * Returns `null` when the file is missing or unreadable.
  * Individual fields return `null` when the corresponding line isn't found.
  */
-export function readProjectProgress(projectPath: string): ProjectProgressInfo | null {
+function readProjectProgress(projectPath: string): ProjectProgressInfo | null {
   try {
     const content = readFileSync(join(projectPath, ".gsd", "STATE.md"), "utf-8");
     const lines = content.split("\n");

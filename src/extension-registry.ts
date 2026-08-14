@@ -68,7 +68,7 @@ function isManifest(data: unknown): data is ExtensionManifest {
 
 // ─── Registry Path ──────────────────────────────────────────────────────────
 
-export function getRegistryPath(): string {
+function getRegistryPath(): string {
   return join(appRoot, "extensions", "registry.json");
 }
 
@@ -90,7 +90,7 @@ export function loadRegistry(): ExtensionRegistry {
   }
 }
 
-export function saveRegistry(registry: ExtensionRegistry): void {
+function saveRegistry(registry: ExtensionRegistry): void {
   const filePath = getRegistryPath();
   try {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -113,7 +113,7 @@ export function isExtensionEnabled(registry: ExtensionRegistry, id: string): boo
 
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
-export function enableExtension(registry: ExtensionRegistry, id: string): void {
+function enableExtension(registry: ExtensionRegistry, id: string): void {
   const entry = registry.entries[id];
   if (entry) {
     entry.enabled = true;
@@ -128,7 +128,7 @@ export function enableExtension(registry: ExtensionRegistry, id: string): void {
  * Disable an extension. Returns an error string if the extension is core (cannot disable),
  * or null on success.
  */
-export function disableExtension(
+function disableExtension(
   registry: ExtensionRegistry,
   id: string,
   manifest: ExtensionManifest | null,
@@ -180,7 +180,7 @@ export function readManifestFromEntryPath(entryPath: string): ExtensionManifest 
 // ─── Discovery ──────────────────────────────────────────────────────────────
 
 /** Scan all subdirectories of extensionsDir for manifests. Returns a Map<id, manifest>. */
-export function discoverAllManifests(extensionsDir: string): Map<string, ExtensionManifest> {
+function discoverAllManifests(extensionsDir: string): Map<string, ExtensionManifest> {
   const manifests = new Map<string, ExtensionManifest>();
   if (!existsSync(extensionsDir)) return manifests;
 

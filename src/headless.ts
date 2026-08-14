@@ -146,7 +146,7 @@ export interface ResumeSessionResult {
  * Exact id match is preferred over prefix match.
  * Returns `{ session }` on unique match or `{ error }` on 0/ambiguous matches.
  */
-export function resolveResumeSession(sessions: SessionInfo[], prefix: string): ResumeSessionResult {
+function resolveResumeSession(sessions: SessionInfo[], prefix: string): ResumeSessionResult {
   // Exact match takes priority
   const exact = sessions.find(s => s.id === prefix)
   if (exact) {

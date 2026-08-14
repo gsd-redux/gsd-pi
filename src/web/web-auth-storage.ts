@@ -57,7 +57,7 @@ function parseStoredCredentialData(content: string | undefined): StoredCredentia
   }
 }
 
-export class FileOnboardingAuthStorage implements OnboardingAuthStorage {
+class FileOnboardingAuthStorage implements OnboardingAuthStorage {
   private data: StoredCredentialData = {};
   private readonly authPath: string;
 

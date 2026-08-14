@@ -816,7 +816,7 @@ async function runCustomOpenAIFlow(
 
 // ─── Web Search Provider Step ─────────────────────────────────────────────────
 
-export async function runWebSearchStep(
+async function runWebSearchStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
@@ -897,7 +897,7 @@ export async function runWebSearchStep(
 
 // ─── Tool API Keys Step ───────────────────────────────────────────────────────
 
-export async function runToolKeysStep(
+async function runToolKeysStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
@@ -940,7 +940,7 @@ export async function runToolKeysStep(
 
 // ─── Remote Questions Step ────────────────────────────────────────────────────
 
-export async function runRemoteQuestionsStep(
+async function runRemoteQuestionsStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,

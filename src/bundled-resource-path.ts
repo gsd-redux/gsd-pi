@@ -9,7 +9,7 @@ export function resolvePackageRoot(importUrl: string): string {
   return resolve(moduleDir, "..");
 }
 
-export function hasCompleteBundledResources(
+function hasCompleteBundledResources(
   resourcesDir: string,
   fileExists: FileExists = existsSync,
 ): boolean {
@@ -28,14 +28,14 @@ export function resolveBundledResourcesDirFromPackageRoot(
     : srcResources;
 }
 
-export function resolveBundledResourcesDir(
+function resolveBundledResourcesDir(
   importUrl: string,
   fileExists: FileExists = existsSync,
 ): string {
   return resolveBundledResourcesDirFromPackageRoot(resolvePackageRoot(importUrl), fileExists);
 }
 
-export function resolveBundledResource(
+function resolveBundledResource(
   importUrl: string,
   ...segments: string[]
 ): string {
@@ -62,7 +62,7 @@ export function resolveBundledGsdExtensionModule(
  * raw `.ts` resource modules via jiti. Those modules are shipped under
  * `src/resources/**`, not next to the compiled entry point.
  */
-export function resolveBundledSourceResource(
+function resolveBundledSourceResource(
   importUrl: string,
   ...segments: string[]
 ): string {

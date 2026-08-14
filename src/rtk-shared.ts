@@ -29,7 +29,7 @@ export function getPathValue(env: NodeJS.ProcessEnv): string | undefined {
   return pathKey ? env[pathKey] : env.PATH;
 }
 
-export function resolvePathCandidates(pathValue: string | undefined): string[] {
+function resolvePathCandidates(pathValue: string | undefined): string[] {
   if (!pathValue) return [];
   return pathValue
     .split(delimiter)

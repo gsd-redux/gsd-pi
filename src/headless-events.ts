@@ -263,7 +263,7 @@ export function shouldRestartHeadlessRun(summary: HeadlessRunSummary): boolean {
 
 export const FIRE_AND_FORGET_METHODS = new Set(['notify', 'setStatus', 'setWidget', 'setTitle', 'set_editor_text'])
 
-export const QUICK_COMMANDS = new Set([
+const QUICK_COMMANDS = new Set([
   'status', 'queue', 'history', 'hooks', 'export', 'stop', 'pause',
   'capture', 'skip', 'undo', 'knowledge', 'config', 'prefs',
   'cleanup', 'migrate', 'doctor', 'remote', 'help', 'steer',

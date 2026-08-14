@@ -34,11 +34,11 @@ export interface AnswerInjectorStats {
   secretsProvided: number
 }
 
-export function normalizeQuestionId(id: string): string {
+function normalizeQuestionId(id: string): string {
   return id.trim().toLowerCase().replace(/[-\s]+/g, '_').replace(/_confirm$/, '')
 }
 
-export function findConfiguredQuestionAnswer(
+function findConfiguredQuestionAnswer(
   questions: Record<string, string | string[]> | undefined,
   questionId: string,
 ): { key: string; answer: string | string[] } | undefined {

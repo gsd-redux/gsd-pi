@@ -379,7 +379,5 @@ export {
   handleMerge,
   handleClean,
   handleRemove,
-  handleStatusBanner,
   handleWorktreeFlag,
-  getWorktreeStatus,
 }

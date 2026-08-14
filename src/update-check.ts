@@ -17,7 +17,7 @@ const GSD_BROWSER_CACHE_FILE = join(appRoot, '.update-check-gsd-browser')
 const NPM_PACKAGE_NAME = GSD_PI_PACKAGE_NAME
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
 const FETCH_TIMEOUT_MS = 5000
-export const DEFAULT_REGISTRY_URL = `https://registry.npmjs.org/@opengsd%2fgsd-pi/latest`
+const DEFAULT_REGISTRY_URL = `https://registry.npmjs.org/@opengsd%2fgsd-pi/latest`
 export const GSD_BROWSER_REGISTRY_URL = `https://registry.npmjs.org/@opengsd%2fgsd-browser/latest`
 
 interface UpdateCheckCache {
@@ -302,7 +302,7 @@ const PROMPT_TIMEOUT_MS = 30_000
  *
  * Returns true if an update was performed, false otherwise.
  */
-export async function checkAndPromptForUpdates(options: UpdateCheckOptions = {}): Promise<boolean> {
+async function checkAndPromptForUpdates(options: UpdateCheckOptions = {}): Promise<boolean> {
   const currentVersion = options.currentVersion || process.env.GSD_VERSION || '0.0.0'
   const cachePath = options.cachePath || CACHE_FILE
   const registryUrl = options.registryUrl || DEFAULT_REGISTRY_URL

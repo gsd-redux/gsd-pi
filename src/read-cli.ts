@@ -17,7 +17,7 @@ import { readProgress } from '@opengsd/mcp-server/readers/state'
 import { resolveBundledGsdExtensionModule } from './bundled-resource-path.js'
 import { resolveGsdAgentExtensionsDir, shouldUseAgentExtensionsDir } from './headless-query.js'
 
-export const INTEGRATION_VERSION = 1
+const INTEGRATION_VERSION = 1
 
 // Extension modules are .ts files loaded via jiti (not compiled to .js) — the
 // same constraint as headless-query (#1137). Used only for the read-only
@@ -41,7 +41,7 @@ const gsdExtensionPath = (...segments: string[]) => {
  * SchemaTooNewError) by its stable `name` contract — the error crosses a
  * jiti module-instance boundary to reach this seam.
  */
-export function isSchemaTooNewErrorLike(err: unknown): err is Error {
+function isSchemaTooNewErrorLike(err: unknown): err is Error {
   return err instanceof Error && err.name === 'GSDSchemaTooNewError'
 }
 
@@ -85,7 +85,7 @@ async function loadSchemaPreflight(): Promise<ReadCliSchemaPreflight> {
  * when the recorded schema version is newer than this binary supports. A
  * missing or unreadable DB keeps the existing degraded markdown behavior.
  */
-export async function assertProjectDbSchemaSupported(
+async function assertProjectDbSchemaSupported(
   dbPath: string,
   preflight?: ReadCliSchemaPreflight,
 ): Promise<void> {

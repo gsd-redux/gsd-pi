@@ -157,7 +157,7 @@ export function readInstanceRegistry(registryPath = WEB_INSTANCES_PATH): WebInst
   }
 }
 
-export function writeInstanceRegistry(registry: WebInstanceRegistry, registryPath = WEB_INSTANCES_PATH): void {
+function writeInstanceRegistry(registry: WebInstanceRegistry, registryPath = WEB_INSTANCES_PATH): void {
   writeFileSync(registryPath, JSON.stringify(registry, null, 2), 'utf8')
 }
 
@@ -314,7 +314,7 @@ async function loadResourceBootstrap(): Promise<ResourceBootstrapLike> {
   }
 }
 
-export function resolveWebHostBootstrap(options: {
+function resolveWebHostBootstrap(options: {
   packageRoot?: string
   existsSync?: (path: string) => boolean
 } = {}): WebHostBootstrap {
@@ -351,7 +351,7 @@ export function resolveWebHostBootstrap(options: {
   }
 }
 
-export async function reserveWebPort(host = DEFAULT_HOST): Promise<number> {
+async function reserveWebPort(host = DEFAULT_HOST): Promise<number> {
   return await new Promise<number>((resolvePort, reject) => {
     const server = createServer()
     server.unref()
