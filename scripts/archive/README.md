@@ -37,6 +37,9 @@ all tracked files excluding `CHANGELOG.md`; plus a relative-import scan of
   tool key wizard). Zero references outside its own file.
 - `verify-s04.sh` — one-off S04 milestone verification (npm pack tarball
   install smoke test). Zero references outside its own file.
+- `live-regression-benchmark.ts` — manual quick-command idle-timer
+  benchmark. `test:live-regression` now runs `tests/live-regression/run.ts`.
+  Zero references outside its own file and the 032a/045 audit notes.
 
 Kept despite looking stale (referenced, so not eligible to move):
 

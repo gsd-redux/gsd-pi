@@ -24,7 +24,7 @@
  *
  * Run:
  *   GSD_SMOKE_BINARY="$(pwd)/dist/loader.js" \
- *     node --experimental-strip-types tests/live-regression/benchmark.ts
+ *     node --experimental-strip-types scripts/archive/live-regression-benchmark.ts
  */
 import { execFileSync, spawnSync } from "child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";

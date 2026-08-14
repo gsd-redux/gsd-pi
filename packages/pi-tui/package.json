@@ -23,8 +23,7 @@
   "dependencies": {
     "@gsd/native": "workspace:*",
     "get-east-asian-width": "1.6.0",
-    "marked": "15.0.12",
-    "@sinclair/typebox": "^0.34.41"
+    "marked": "15.0.12"
   },
   "devDependencies": {
     "@xterm/headless": "5.5.0",
