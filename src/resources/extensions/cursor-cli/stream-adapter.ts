@@ -385,7 +385,7 @@ export function streamViaCursorAgent(
 			const ensureStart = () => {
 				if (streamStarted) return;
 				streamStarted = true;
-				stream.push({ type: "start" });
+				stream.push({ type: "start", partial: partialMessage() });
 			};
 			const handleLine = (line: string): void => {
 				const parsed = parseCursorAgentLine(line);
@@ -410,9 +410,8 @@ export function streamViaCursorAgent(
 					toolCalls.set(parsed.toolCall.id, parsed.toolCall);
 					content.push(parsed.toolCall);
 					const index = text ? content.length : content.length - 1;
-					const partial = partialMessage();
-					stream.push({ type: "toolcall_start", contentIndex: index, partial });
-					stream.push({ type: "toolcall_end", contentIndex: index, toolCall: parsed.toolCall, partial });
+					stream.push({ type: "toolcall_start", contentIndex: index });
+					stream.push({ type: "toolcall_end", contentIndex: index, toolCall: parsed.toolCall });
 					return;
 				}
 				if (parsed.type === "tool_result") {
@@ -439,7 +438,7 @@ export function streamViaCursorAgent(
 				emitDone(stream, finalMessage, text);
 				return;
 			}
-			if (textStarted) stream.push({ type: "text_end", contentIndex: 0, content: text, partial: finalMessage });
+			if (textStarted) stream.push({ type: "text_end", contentIndex: 0, content: text });
 			stream.push({ type: "done", reason: "stop", message: finalMessage });
 			stream.end(finalMessage);
 		} catch (error) {

@@ -2754,7 +2754,7 @@ async function pumpSdkMessages(
 							const assistantEvent = result.assistantEvent;
 							if (assistantEvent) {
 								stream.push(assistantEvent);
-								if (assistantEvent.type === "toolcall_start") {
+								if (assistantEvent.type === "toolcall_start" && builder) {
 									const toolBlock = builder.message.content[assistantEvent.contentIndex];
 									if (toolBlock?.type === "toolCall") {
 										try {
@@ -2829,7 +2829,7 @@ async function pumpSdkMessages(
 								if (!extResult) continue;
 								const suppressDuplicateUnavailable = shouldSuppressDuplicateToolUnavailableBlock(
 									block,
-									builder.message.content,
+									target.partial.content,
 								);
 								// Push synthetic completion events with result attached so the
 								// chat-controller can update pending ToolExecutionComponents.
@@ -2843,7 +2843,7 @@ async function pumpSdkMessages(
 											type: "toolcall_end",
 											contentIndex: target.contentIndex,
 											toolCall: block,
-											
+
 										});
 										(block as ToolCallWithExternalResult).externalResult = extResult;
 										emittedExternalToolResultIds.add(block.id);
@@ -2861,7 +2861,7 @@ async function pumpSdkMessages(
 										type: "toolcall_end",
 										contentIndex: target.contentIndex,
 										toolCall: block,
-										
+
 									});
 									emittedExternalToolResultIds.add(block.id);
 								} else if (block.type === "serverToolUse") {
@@ -2880,7 +2880,7 @@ async function pumpSdkMessages(
 									stream.push({
 										type: "server_tool_use",
 										contentIndex: target.contentIndex,
-										
+
 									});
 									emittedExternalToolResultIds.add(block.id);
 								}

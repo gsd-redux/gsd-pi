@@ -14,7 +14,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
-import type { AssistantMessageEvent } from "@gsd/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent } from "@gsd/pi-ai";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,7 @@ function buildInterruptContent(rule: Rule): string {
  */
 function extractDeltaContext(
 	event: AssistantMessageEvent,
+	streamPartial: AssistantMessage | null,
 ): { delta: string; context: TtsrMatchContext } | null {
 	if (event.type === "text_delta") {
 		return {
@@ -57,9 +58,8 @@ function extractDeltaContext(
 	}
 	if (event.type === "toolcall_delta") {
 		// Extract tool name and file paths from the partial message
-		// Content block is now accessed from message_update.message
-		const partial = event.message;
-		const contentBlock = partial?.content?.[event.contentIndex];
+		// accumulated on the stream's start event.
+		const contentBlock = streamPartial?.content?.[event.contentIndex];
 		const toolName = contentBlock && "name" in contentBlock ? (contentBlock as any).name : undefined;
 
 		// Try to extract file paths from partial JSON arguments
@@ -119,14 +119,20 @@ export default function (pi: ExtensionAPI) {
 		if (!manager) return;
 		manager.resetBuffer();
 		pendingViolation = null;
+		streamPartial = null;
 	});
 
 	// ── message_update: check delta against rules ───────────────────────
+	let streamPartial: AssistantMessage | null = null;
 	pi.on("message_update", async (event, ctx) => {
 		if (!manager || !manager.hasRules()) return;
 		if (pendingViolation) return; // Already matched, waiting for agent_end
 
-		const extracted = extractDeltaContext(event.assistantMessageEvent);
+		const messageEvent = event.assistantMessageEvent;
+		if (messageEvent.type === "start") {
+			streamPartial = messageEvent.partial;
+		}
+		const extracted = extractDeltaContext(messageEvent, streamPartial);
 		if (!extracted) return;
 
 		const { delta, context } = extracted;
