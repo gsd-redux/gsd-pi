@@ -208,8 +208,8 @@ test("verification-evidence: formatEvidenceTable returns markdown table with cor
   assert.ok(lines[0].includes("Verdict"), "header should have Verdict column");
   assert.ok(lines[0].includes("Duration"), "header should have Duration column");
 
-  // Separator row
-  assert.ok(lines[1].includes("---|"), "should have separator row");
+  // Separator row — spaced pipes per markdownlint MD055/MD056
+  assert.ok(lines[1].includes("--- |"), "should have separator row");
 
   // Data rows
   assert.equal(lines.length, 4, "header + separator + 2 data rows");

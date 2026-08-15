@@ -179,7 +179,8 @@ describe('db-writer', () => {
     assert.ok(md.startsWith('# Decisions Register\n'), 'starts with H1 header');
     assert.ok(md.includes('<!-- Append-only'), 'contains HTML comment block');
     assert.ok(md.includes('| # | When | Scope'), 'contains table header');
-    assert.ok(md.includes('|---|------|-------'), 'contains separator row');
+    assert.ok(md.includes('| --- | --- |'), 'contains spaced separator row (markdownlint MD055/MD056)');
+    assert.ok(!md.includes('|---|'), 'does not emit unspaced separator rows');
     assert.ok(md.includes('| Made By |'), 'contains Made By column header');
   });
 

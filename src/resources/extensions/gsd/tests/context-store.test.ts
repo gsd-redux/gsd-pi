@@ -284,7 +284,7 @@ describe("context-store: formatDecisionsForPrompt", () => {
 
     // Should be a markdown table
     assert.match(result, /^\| # \| When \| Scope/, 'has table header');
-    assert.match(result, /\|---\|/, 'has separator row');
+    assert.match(result, /\| --- \|/, 'has spaced separator row (markdownlint MD055/MD056)');
     assert.match(result, /\| D001 \|/, 'has D001 row');
     assert.match(result, /\| D002 \|/, 'has D002 row');
     const lines = result.split('\n');
