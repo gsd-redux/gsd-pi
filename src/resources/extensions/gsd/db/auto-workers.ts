@@ -262,6 +262,23 @@ function isWorkerProcessAlive(candidate: Pick<AutoWorkerRow, "host" | "pid">): b
  *
  * Returns null if no stale worker exists for this project root.
  */
+/**
+ * Stale-worker detection scope (#1773): active workers, plus workers already
+ * marked `stopping` that still own a running dispatch — a stopping worker can
+ * strand its dispatches just as permanently as an active one.
+ */
+const STALE_WORKER_STATUS_SCOPE_SQL = `(
+  status = 'active'
+  OR (
+    status = 'stopping'
+    AND EXISTS (
+      SELECT 1 FROM unit_dispatches dispatch
+      WHERE dispatch.worker_id = workers.worker_id
+        AND dispatch.status = 'running'
+    )
+  )
+)`;
+
 export function findStaleWorkerForProject(
   projectRootRealpath: string,
 ): AutoWorkerRow | null {
@@ -275,7 +292,7 @@ export function findStaleWorkerForProject(
             last_heartbeat_at, status, project_root_realpath
      FROM workers
      WHERE project_root_realpath = :project_root
-       AND status = 'active'
+       AND ${STALE_WORKER_STATUS_SCOPE_SQL}
      ORDER BY started_at DESC
      LIMIT 1`,
   ).get({ ":project_root": projectRootRealpath }) as AutoWorkerRow | undefined;
@@ -286,7 +303,7 @@ export function findStaleWorkerForProject(
             last_heartbeat_at, status, project_root_realpath
      FROM workers
      WHERE project_root_realpath = :project_root
-       AND status = 'active'
+       AND ${STALE_WORKER_STATUS_SCOPE_SQL}
        AND last_heartbeat_at < :cutoff
      ORDER BY started_at DESC
      LIMIT 1`,
@@ -300,7 +317,7 @@ export function findStaleWorkerForProject(
     `SELECT worker_id, host, pid, started_at, version,
             last_heartbeat_at, status, project_root_realpath
      FROM workers
-     WHERE status = 'active'
+     WHERE ${STALE_WORKER_STATUS_SCOPE_SQL}
        AND last_heartbeat_at < :cutoff
      ORDER BY started_at DESC`,
   ).all({ ":cutoff": cutoffIso }) as unknown as AutoWorkerRow[];

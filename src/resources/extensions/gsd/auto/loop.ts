@@ -49,7 +49,7 @@ import {
   markCompleted as markDispatchCompleted,
   markFailed as markDispatchFailed,
   getRecentForUnit as getRecentDispatchesForUnit,
-  markLatestActiveForWorkerCanceled,
+  markActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
 import {
   claimMilestoneLease,
@@ -1670,7 +1670,7 @@ export async function autoLoop(
       if (leaseBeforeClaim.kind === "blocked" && leaseBeforeClaim.holderWorkerId) {
         const holderWorkerId = leaseBeforeClaim.holderWorkerId;
         if (isDeadLocalLeaseHolder(holderWorkerId, s.canonicalProjectRoot)) {
-          markLatestActiveForWorkerCanceled(holderWorkerId, "crash-recovered");
+          markActiveForWorkerCanceled(holderWorkerId, "crash-recovered");
           markWorkerCrashed(holderWorkerId);
           forceReleaseLeasesForWorker(holderWorkerId);
           const retryLease = ensureDispatchLease(s, iterData.mid, {

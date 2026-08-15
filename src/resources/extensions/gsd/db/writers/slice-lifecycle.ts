@@ -530,6 +530,10 @@ export function completeSliceHierarchy(
   const rationale = readiness
     ? "Operational Readiness section populated in slice summary"
     : "Operational Readiness section left empty — recorded as omitted";
+  // Self-heal a missing slice-scope Q8 row before enforcing the precondition
+  // (#1679): slices that reached completion via replan/reopen paths never had
+  // the companion gate seeded, and throwing here permanently blocked closeout.
+  ensurePendingSliceQ8(context, slice);
   const q8Rows = getDb().prepare(`
     SELECT status FROM quality_gates
     WHERE milestone_id = :milestone_id AND slice_id = :slice_id

@@ -233,7 +233,7 @@ import {
   getTask,
 } from "./gsd-db.js";
 import { checkpointWorkflowDatabase, closeWorkflowDatabase } from "./db-workspace.js";
-import { markLatestActiveForWorkerCanceled } from "./db/unit-dispatches.js";
+import { markActiveForWorkerCanceled } from "./db/unit-dispatches.js";
 import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
 import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
@@ -792,7 +792,7 @@ function closeOutSignalInterruptedUnit(currentBasePath: string): void {
   }
 
   try {
-    if (s.workerId) markLatestActiveForWorkerCanceled(s.workerId, "signal-exit");
+    if (s.workerId) markActiveForWorkerCanceled(s.workerId, "signal-exit");
   } catch (err) {
     logWarning("engine", `signal dispatch cleanup failed: ${getErrorMessage(err)}`, { file: "auto.ts" });
   }

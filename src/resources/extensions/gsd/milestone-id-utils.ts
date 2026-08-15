@@ -23,7 +23,13 @@ export function findMilestoneIds(basePath: string): string[] {
       .filter((entry) => entry.isDirectory())
       .map((entry) => {
         const match = entry.name.match(/^(M\d+(?:-[a-z0-9]{6})?)/);
-        return match ? match[1] : entry.name;
+        if (match) return match[1];
+        // Flat-phase layout: `01-some-slug` directories carry the canonical
+        // M001-form ID; returning the raw dirname orphans every ID-keyed
+        // lookup (dispatch sweep, orphan detection) against the milestone.
+        const flatPhase = entry.name.match(/^(\d+)-/);
+        if (flatPhase) return `M${flatPhase[1]!.padStart(3, "0")}`;
+        return entry.name;
       })
       .sort(milestoneIdSort);
   } catch {

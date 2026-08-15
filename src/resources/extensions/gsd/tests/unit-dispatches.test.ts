@@ -22,7 +22,7 @@ import {
   markStuck,
   markPaused,
   markCanceled,
-  markLatestActiveForWorkerCanceled,
+  markActiveForWorkerCanceled,
   getRecentForUnit,
   getLatestForUnit,
   getActiveForWorker,
@@ -249,7 +249,7 @@ test("markStuck and markCanceled set their respective statuses", (t) => {
   assert.equal(getLatestForUnit("M001/S01/T01")!.status, "canceled");
 });
 
-test("markLatestActiveForWorkerCanceled cancels only the latest active dispatch for a worker", (t) => {
+test("markActiveForWorkerCanceled cancels every active dispatch for a worker (#1773)", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   const { workerId, leaseToken } = setup(base);
@@ -260,7 +260,6 @@ test("markLatestActiveForWorkerCanceled cancels only the latest active dispatch 
   });
   assert.equal(first.ok, true);
   if (!first.ok) return;
-  markCompleted(first.dispatchId);
 
   const second = recordDispatchClaim({
     traceId: "tc-2", workerId, milestoneLeaseToken: leaseToken,
@@ -270,12 +269,14 @@ test("markLatestActiveForWorkerCanceled cancels only the latest active dispatch 
   if (!second.ok) return;
   markRunning(second.dispatchId);
 
-  assert.equal(markLatestActiveForWorkerCanceled(workerId, "signal-exit"), true);
-  assert.equal(getLatestForUnit("M001/S01")!.status, "completed");
+  // Both the claimed and the running row are canceled — sweeping only the
+  // latest leaves the older orphan wedged forever.
+  assert.equal(markActiveForWorkerCanceled(workerId, "signal-exit"), true);
+  assert.equal(getLatestForUnit("M001/S01")!.status, "canceled");
   const latest = getLatestForUnit("M001/S01/T01")!;
   assert.equal(latest.status, "canceled");
   assert.equal(latest.exit_reason, "signal-exit");
-  assert.equal(markLatestActiveForWorkerCanceled(workerId, "signal-exit"), false);
+  assert.equal(markActiveForWorkerCanceled(workerId, "signal-exit"), false);
 });
 
 test("terminal transitions do not overwrite an already terminal dispatch", (t) => {

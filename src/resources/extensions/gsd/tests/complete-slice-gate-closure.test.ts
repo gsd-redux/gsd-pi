@@ -159,6 +159,24 @@ describe("complete-slice closes complete-slice-owned gates", () => {
     assert.equal(q8.verdict, "omitted");
   });
 
+  test("a missing Q8 row self-heals instead of blocking closeout (#1679)", async () => {
+    // Replan/reopen-era slices can reach completion without the seeded Q8
+    // companion row; completion must seed it and proceed, not throw.
+    const { _getAdapter } = await import("../gsd-db.ts");
+    _getAdapter()!.prepare(
+      "DELETE FROM quality_gates WHERE milestone_id = 'M001' AND slice_id = 'S01' AND gate_id = 'Q8'",
+    ).run();
+
+    const params = makeValidSliceParams({ operationalReadiness: "" });
+    const result = await handleCompleteSlice(params, basePath);
+    assert.ok(!("error" in result), `handler failed: ${(result as any).error}`);
+
+    const gates = getGateResults("M001", "S01", "slice");
+    const q8Rows = gates.filter((g) => g.gate_id === "Q8");
+    assert.equal(q8Rows.length, 1, "exactly one Q8 row after self-heal");
+    assert.equal(q8Rows[0]!.status, "complete");
+  });
+
   test("Q8 also closes when operationalReadiness is omitted entirely", async () => {
     // A model that doesn't pass operationalReadiness at all must still
     // move Q8 out of 'pending' — leaving it pending produces the stall.
