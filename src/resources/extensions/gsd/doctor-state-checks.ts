@@ -334,6 +334,10 @@ export async function checkGsdStateHealth(
       }
 
       const tasksDir = resolveTasksDir(basePath, milestoneId, slice.id);
+      // True when resolveSlicePath() fell back to the phase dir (flat-phase, no
+      // slices/<SID>/ subdir), which makes tasksDir a single directory shared by
+      // every slice in the milestone rather than this slice's own.
+      const tasksDirIsShared = !!slicePath && !!milestonePath && slicePath === milestonePath;
       if (!tasksDir) {
         // Pending slices haven't been planned yet — tasks/ is created on demand.
         // Skipped slices may legitimately never create tasks/.
@@ -396,16 +400,24 @@ export async function checkGsdStateHealth(
           for (const f of readdirSync(tasksDir)) {
             if (!f.endsWith("-SUMMARY.md")) continue;
             const diskTaskId = f.replace(/-SUMMARY\.md$/, "");
-            // In flat-phase layouts resolveTasksDir() resolves to the shared
-            // milestone directory (resolveSlicePath falls back to the phase dir
-            // when no slices/<SID>/ subdir exists), so this listing holds every
-            // slice's task summaries — not just this slice's. A slice-qualified
-            // id ("S06.T02") names its owning slice, so skip ids owned by another
-            // slice; otherwise each sibling slice reports the same file as
-            // missing from its own plan. Unqualified legacy ids ("T02") stay on
-            // the original path: those only appear in per-slice tasks/ dirs.
-            const dot = diskTaskId.indexOf(".");
-            if (dot > 0 && diskTaskId.slice(0, dot) !== slice.id) continue;
+            // In flat-phase layouts resolveSlicePath() falls back to the phase
+            // dir when no slices/<SID>/ subdir exists, so resolveTasksDir()
+            // hands back ONE shared <phase>/tasks/ for every slice. Its listing
+            // then holds every slice's task summaries, and comparing all of them
+            // against a single slice's plan reports each foreign summary as
+            // missing from every slice that does not own it.
+            //
+            // Only attribute a summary to this slice when we can actually prove
+            // ownership. A slice-qualified id ("S06.T02") names its owner. An
+            // unqualified id ("T02") in a shared dir is unattributable from the
+            // filename alone, so skip it rather than guess — a missed finding is
+            // better than one false positive per sibling slice. In a genuine
+            // per-slice tasks/ dir every file does belong to this slice, so the
+            // original unfiltered behavior is preserved there.
+            if (tasksDirIsShared) {
+              const dot = diskTaskId.indexOf(".");
+              if (dot <= 0 || diskTaskId.slice(0, dot) !== slice.id) continue;
+            }
             if (!planTaskIds.has(diskTaskId)) {
               issues.push({ severity: "info", code: "task_file_not_in_plan", scope: "slice", unitId,
                 message: `Task summary "${f}" exists on disk but "${diskTaskId}" is not in ${slice.id}-PLAN.md`,
