@@ -8,7 +8,7 @@ import {
   readdirSync,
   renameSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 import {
   _getAdapter,
@@ -114,12 +114,58 @@ function hasExplicitReopenAfter(
   return Date.parse(reopenAt) > Date.parse(completedDispatchAt);
 }
 
+/**
+ * Disk-existence check for a staged task SUMMARY artifact row (#1771): the
+ * recorded path, or the currently-resolved projection path. Mirrors the
+ * sibling disk-check branch below so a stale DB row whose file never existed
+ * cannot fail-close into a phantom divergence wedge.
+ */
+function stagedTaskSummaryExistsOnDisk(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  rowPath: string,
+): boolean {
+  const candidates = [
+    isAbsolute(rowPath) ? rowPath : resolve(basePath, rowPath),
+    resolveTaskFile(basePath, milestoneId, sliceId, taskId, "SUMMARY"),
+  ];
+  return candidates.some((candidate) => candidate !== null && existsSync(candidate));
+}
+
+/**
+ * Whether the task ever ran: a SUMMARY row on a task that was previously
+ * executed (and is now pending again) is dead bookkeeping (#1771), while a
+ * row on a task that never ran is an unproven failure-path write and must
+ * stay a blocker (ADR-017/#414).
+ */
+function taskHasAttemptHistory(milestoneId: string, sliceId: string, taskId: string): boolean {
+  if (!isDbAvailable()) return false;
+  const row = _getAdapter()!.prepare(`
+    SELECT 1 AS present
+    FROM workflow_item_lifecycles lifecycle
+    JOIN workflow_execution_attempts attempt
+      ON attempt.lifecycle_id = lifecycle.lifecycle_id
+     AND attempt.project_id = lifecycle.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+    LIMIT 1
+  `).get({
+    ":milestone_id": milestoneId,
+    ":slice_id": sliceId,
+    ":task_id": taskId,
+  });
+  return row !== undefined;
+}
+
 function addUniqueDrift(
   drifts: ArtifactDbStatusDivergenceDrift[],
   seen: Set<string>,
   drift: ArtifactDbStatusDivergenceDrift,
-): void {
-  const key = [
+): void {  const key = [
     drift.milestoneId,
     drift.sliceId ?? "",
     drift.taskId ?? "",
@@ -203,6 +249,16 @@ function detectArtifactDbStatusDriftForMilestone(
         continue;
       }
       if (isClosedStatus(task.status)) continue;
+      // (#1771) A DB row whose file never existed, on a task that ran before
+      // and is back to pending, is dead bookkeeping — ignore it instead of
+      // wedging the project. A row on a task that never ran stays a blocker.
+      if (
+        task.status === "pending" &&
+        taskHasAttemptHistory(milestoneId, slice.id, task.id) &&
+        !stagedTaskSummaryExistsOnDisk(basePath, milestoneId, slice.id, task.id, row.path)
+      ) {
+        continue;
+      }
       if (isCanonicalStagedTaskSummaryProjection(basePath, {
         path: row.path,
         milestoneId: row.milestone_id,

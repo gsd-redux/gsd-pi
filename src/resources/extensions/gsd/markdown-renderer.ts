@@ -918,6 +918,11 @@ export async function renderTaskSummary(
     if (!attempt || attempt.outcome === "interrupted") {
       return false;
     }
+    // A blockerDiscovered failure clears its staged SUMMARY at settle time;
+    // never re-project it (#1726).
+    if (attempt.outcome === "failed" && attempt.resultFailureClass === "blocker-discovered") {
+      return false;
+    }
   } else {
     return false;
   }

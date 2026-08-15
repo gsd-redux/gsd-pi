@@ -476,15 +476,23 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
     },
   }, (context) => {
     const attempt = loadAttemptExecution(input.attemptId);
-    if (input.outcome === "interrupted") {
-      setTaskSummaryMd(attempt.milestone_id, attempt.slice_id, attempt.task_id, "");
-    }
     if (input.stagedTaskCompletion) {
       writeStagedTaskCompletion(context, {
         milestoneId: attempt.milestone_id,
         sliceId: attempt.slice_id,
         taskId: attempt.task_id,
       }, input.stagedTaskCompletion);
+    }
+    // Interrupted Attempts clear their staged SUMMARY at settle time; a
+    // blockerDiscovered failure gets the same treatment (#1726) — otherwise
+    // the staged projection is re-rendered forever for a task that was
+    // never completed. Cleared after any staged write so it always wins.
+    const blockerDiscovered =
+      input.outcome === "failed" &&
+      typeof input.output === "object" && input.output !== null &&
+      (input.output as Record<string, unknown>)["blockerDiscovered"] === true;
+    if (input.outcome === "interrupted" || blockerDiscovered) {
+      setTaskSummaryMd(attempt.milestone_id, attempt.slice_id, attempt.task_id, "");
     }
     const settled = settleAttemptWithResult(context, input);
     terminalizeTaskExecutionDispatch(context, {

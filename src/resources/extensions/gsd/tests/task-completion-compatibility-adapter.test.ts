@@ -691,7 +691,79 @@ test("#1677: a canonical staged Task SUMMARY remains current on a host-verificat
   await assertStagedSummaryIsCurrent(basePath);
 });
 
-test("#1677: a failed executor Attempt cannot legitimize an open Task SUMMARY", async () => {
+test("#1771: a stale SUMMARY artifact row with no file on a pending task does not wedge", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  const staged = await stageTaskCompletion(stageInput(basePath));
+
+  // The clean-finalize aftermath from #1771: the task is back to pending and
+  // the SUMMARY file is gone, but the artifact bookkeeping row survives.
+  db().prepare(`
+    UPDATE tasks SET status = 'pending', full_summary_md = ''
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+  unlinkSync(staged.summaryPath);
+
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: false, reconciliationDivergence: false },
+    "dead artifact bookkeeping on a pending task must not wedge drift detection",
+  );
+});
+
+test("#1763: staging from a milestone worktree dual-writes the SUMMARY to the project root", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  const worktreePath = join(basePath, ".gsd-worktrees", "M001");
+  mkdirSync(worktreePath, { recursive: true });
+
+  const staged = await stageTaskCompletion(stageInput(worktreePath));
+
+  const { resolveTaskFile } = await import("../paths.js");
+  const rootSummary = resolveTaskFile(basePath, "M001", "S01", "T01", "SUMMARY");
+  assert.ok(rootSummary, "project-root SUMMARY path resolves");
+  assert.equal(existsSync(rootSummary), true, "the canonical copy survives at the project root");
+  assert.equal(
+    readFileSync(rootSummary, "utf8"),
+    readFileSync(staged.summaryPath, "utf8"),
+    "the project-root copy is byte-identical to the worktree-local render",
+  );
+});
+
+test("#1677: inside a worktree the classifier falls back to the project-root copy", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+
+  const worktreePath = join(basePath, ".gsd-worktrees", "M001");
+  mkdirSync(worktreePath, { recursive: true });
+  const artifact = row(
+    "SELECT path, full_content FROM artifacts WHERE artifact_type = 'SUMMARY' AND task_id = 'T01'",
+  );
+  const taskRow = row("SELECT status, full_summary_md FROM tasks WHERE id = 'T01'");
+  const { isCanonicalStagedTaskSummaryProjection } = await import(
+    "../task-summary-projection-classification.js"
+  );
+  assert.equal(
+    isCanonicalStagedTaskSummaryProjection(worktreePath, {
+      path: String(artifact.path),
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      fullContent: String(artifact.full_content),
+    }, {
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+      status: String(taskRow.status),
+      fullSummaryMd: String(taskRow.full_summary_md),
+    }),
+    true,
+    "the project-root canonical copy exempts the staged projection inside the worktree",
+  );
+});
+
+test("#1726: a blockerDiscovered failure leaves no staged SUMMARY and no wedge", async () => {
   const { stageTaskCompletion } = await subject();
   const { basePath } = createFixture();
   const input = stageInput(basePath);
@@ -703,10 +775,26 @@ test("#1677: a failed executor Attempt cannot legitimize an open Task SUMMARY", 
   assert.equal(staged.nextStage, "route");
   assert.equal(attempt?.state, "settled");
   assert.equal(attempt?.outcome, "failed");
+  assert.equal(
+    row("SELECT full_summary_md FROM tasks WHERE id = 'T01'").full_summary_md,
+    "",
+    "the staged summary is cleared at settle time",
+  );
+  assert.equal(
+    Number(row("SELECT COUNT(*) AS count FROM artifacts WHERE artifact_type = 'SUMMARY'").count),
+    0,
+    "no SUMMARY artifact is projected for a failed Attempt",
+  );
   assert.deepEqual(
     await taskSummaryDivergence(basePath),
-    { doctorDivergence: true, reconciliationDivergence: true },
-    "executor failure evidence must remain fail-closed",
+    { doctorDivergence: false, reconciliationDivergence: false },
+    "a blockerDiscovered failure must not leave a staged SUMMARY that wedges drift detection",
+  );
+  const { renderTaskSummary } = await import("../markdown-renderer.js");
+  assert.equal(
+    await renderTaskSummary(basePath, "M001", "S01", "T01"),
+    false,
+    "the renderer refuses re-projection",
   );
 });
 

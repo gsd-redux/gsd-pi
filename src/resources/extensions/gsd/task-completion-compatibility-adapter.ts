@@ -18,6 +18,7 @@ import {
 } from "./gsd-db.js";
 import { renderPlanCheckboxes, renderTaskSummary } from "./markdown-renderer.js";
 import { clearPathCache, resolveTaskFile } from "./paths.js";
+import { isGsdWorktreePath, resolveWorktreeProjectRoot } from "./worktree-root.js";
 import {
   closeTaskQualityGates,
   type TaskQualityGateContent,
@@ -319,7 +320,21 @@ export async function stageTaskCompletion(
     stagedTaskCompletion: buildStagedTaskCompletion(input, task),
   });
 
-  const summaryPath = await renderTaskSummaryProjection(input.basePath, input.task);
+  // A blockerDiscovered staging must not project a SUMMARY at all (#1726):
+  // the Attempt failed, so there is no completion to render.
+  let summaryPath = "";
+  if (!blocked) {
+    summaryPath = await renderTaskSummaryProjection(input.basePath, input.task);
+    // (#1763) A staged SUMMARY written only into the worktree-local `.gsd` is
+    // orphaned when an unmerged worktree is torn down — dual-write the
+    // canonical copy to the project root through the same projection seam.
+    if (isGsdWorktreePath(input.basePath)) {
+      const projectRoot = resolveWorktreeProjectRoot(input.basePath);
+      if (projectRoot && projectRoot !== input.basePath) {
+        await renderTaskSummaryProjection(projectRoot, input.task);
+      }
+    }
+  }
   return {
     status: settlement.status,
     attemptId,
