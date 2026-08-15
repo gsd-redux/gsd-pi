@@ -396,6 +396,16 @@ export async function checkGsdStateHealth(
           for (const f of readdirSync(tasksDir)) {
             if (!f.endsWith("-SUMMARY.md")) continue;
             const diskTaskId = f.replace(/-SUMMARY\.md$/, "");
+            // In flat-phase layouts resolveTasksDir() resolves to the shared
+            // milestone directory (resolveSlicePath falls back to the phase dir
+            // when no slices/<SID>/ subdir exists), so this listing holds every
+            // slice's task summaries — not just this slice's. A slice-qualified
+            // id ("S06.T02") names its owning slice, so skip ids owned by another
+            // slice; otherwise each sibling slice reports the same file as
+            // missing from its own plan. Unqualified legacy ids ("T02") stay on
+            // the original path: those only appear in per-slice tasks/ dirs.
+            const dot = diskTaskId.indexOf(".");
+            if (dot > 0 && diskTaskId.slice(0, dot) !== slice.id) continue;
             if (!planTaskIds.has(diskTaskId)) {
               issues.push({ severity: "info", code: "task_file_not_in_plan", scope: "slice", unitId,
                 message: `Task summary "${f}" exists on disk but "${diskTaskId}" is not in ${slice.id}-PLAN.md`,
