@@ -522,20 +522,23 @@ test("Slice completion rejects a cancelled child without a current authorized Wa
   assert.deepEqual(durableSnapshot(), before, "unwaived-child rejection must leave exact zero residue");
 });
 
-test("Slice completion rejects a missing Q8 gate without durable residue", () => {
+test("Slice completion self-heals a missing Q8 gate (#1679)", () => {
   makeBase();
   finishTaskWithOptionalEvidence(true);
   db().prepare(`
     DELETE FROM quality_gates
     WHERE milestone_id = 'M001' AND slice_id = 'S01' AND gate_id = 'Q8'
   `).run();
-  const before = durableSnapshot();
 
-  assert.throws(
-    () => completeSlice(validInput("slice-complete/missing-q8")),
-    /Q8|quality gate/i,
-  );
-  assert.deepEqual(durableSnapshot(), before, "missing-Q8 rejection must leave exact zero residue");
+  const result = completeSlice(validInput("slice-complete/missing-q8"));
+
+  assert.equal(result.status, "committed");
+  const q8 = db().prepare(`
+    SELECT status FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND gate_id = 'Q8'
+  `).all() as Array<Record<string, unknown>>;
+  assert.equal(q8.length, 1, "exactly one Q8 row after self-heal");
+  assert.equal(String(q8[0]!["status"]), "complete");
 });
 
 test("Slice completion rejects pending and running descendants without durable residue", () => {
