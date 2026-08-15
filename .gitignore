@@ -55,9 +55,14 @@ bun.lock
 # Hermes integration test fixtures (minimal tracked GSD projects)
 !integrations/hermes/tests/fixtures/minimal-project/.gsd/
 !integrations/hermes/tests/fixtures/minimal-project/.gsd/**
+# ...except the SQLite DB, which the tests generate at runtime
+integrations/hermes/tests/fixtures/minimal-project/.gsd/gsd.db
 .audits/
 .plans/
 docs/coherence-audit/
+
+# Local GSD Path working state (tracked files stay tracked; new files ignored)
+.project/
 
 # Local MCP client config
 .mcp.json
