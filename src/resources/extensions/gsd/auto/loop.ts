@@ -1019,7 +1019,7 @@ export async function autoLoop(
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} before unit retry`);
           }
           dispatchSettled = customDispatchSettled;
-          await closeRun("canceled", unitPhaseResult.reason);
+          await closeRun("retry", unitPhaseResult.reason);
           finishIncompleteIteration({
             status: "retry",
             reason: unitPhaseResult.reason,
@@ -1854,7 +1854,7 @@ export async function autoLoop(
         break;
       }
       if (unitPhaseResult.action === "retry") {
-        await closeRun("canceled", unitPhaseResult.reason);
+        await closeRun("retry", unitPhaseResult.reason);
         finishIncompleteIteration({
           status: "retry",
           reason: unitPhaseResult.reason,

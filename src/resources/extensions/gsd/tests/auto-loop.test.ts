@@ -2302,13 +2302,82 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         action === "break" ? "failed" : undefined,
         "a terminal recovery abort must settle its dispatch before pausing",
       );
-      assert.equal(releaseCalls, 0);
+      assert.equal(releaseCalls, action === "retry" ? 1 : 0);
       assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
     } finally {
       closeDatabase();
       rmSync(basePath, { recursive: true, force: true });
     }
   }
+});
+
+test("#1769: unit recovery retry releases the active orchestration marker", async (t) => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.notify = () => {};
+  const pi = makeMockPi();
+  let advanceCalls = 0;
+  let activeMarker = false;
+  const retried: UnitRef[] = [];
+  const unit = { unitType: "execute-task", unitId: "M001/S01/T01" };
+  const s = makeLoopSession({
+    currentMilestoneId: "M001",
+    orchestration: {
+      start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      advance: async () => {
+        advanceCalls++;
+        if (advanceCalls === 1) {
+          activeMarker = true;
+          return {
+            kind: "advanced" as const,
+            unit,
+            stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+            dispatchId: 1,
+          };
+        }
+        if (activeMarker) {
+          return {
+            kind: "skipped" as const,
+            code: "unit-already-active" as const,
+            reason: "idempotent advance: unit already active",
+          };
+        }
+        return { kind: "stopped" as const, reason: "retry marker released" };
+      },
+      settle: async () => {},
+      completeActiveUnit: async () => {},
+      retryActiveUnit: async (retriedUnit) => {
+        activeMarker = false;
+        retried.push(retriedUnit);
+      },
+      abandonActiveUnit: async () => {},
+      resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+      stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+      getStatus: () => ({
+        phase: "running" as const,
+        transitionCount: advanceCalls,
+        ...(activeMarker ? { activeUnit: unit } : {}),
+      }),
+    } satisfies AutoOrchestrationModule,
+  });
+  openLoopDatabase(t, s);
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
+    taskExecutionBoundary: async () => ({
+      action: "retry" as const,
+      reason: "task-recovery-repair",
+    }),
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(advanceCalls, 2, "the next advance must run after recovery retry closeout");
+  assert.deepEqual(retried, [unit]);
+  const wedgeResult = getOpenWedge(realpathSync(s.basePath));
+  assert.equal(wedgeResult.ok, true);
+  assert.equal(wedgeResult.ok ? wedgeResult.wedge : null, null);
 });
 
 test("custom-engine recovery fails loudly when dispatch terminalization cannot be confirmed", async (t) => {
