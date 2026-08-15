@@ -21,7 +21,6 @@ export interface RequirementQueryOpts {
 	milestoneId?: string;
 	sliceId?: string;
 	status?: string;
-	class?: string;
 }
 
 function resolveReadAdapter(adapter?: DbAdapter): DbAdapter {
