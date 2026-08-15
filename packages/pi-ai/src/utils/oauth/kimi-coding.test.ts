@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
-import { describe, test, type TestContext } from "node:test";
+import { after, describe, test, type TestContext } from "node:test";
 import { getModel } from "../../models.js";
 import { streamAnthropic } from "../../providers/anthropic.js";
 import type { Context, StreamOptions } from "../../types.js";
 import { getOAuthApiKey, getOAuthProvider } from "./index.js";
 import { kimiCodingOAuthProvider, loginKimiCoding, refreshKimiCodingToken } from "./kimi-coding.js";
+
+// nodejs/node#64322: this file's fetch/server handles can still be winding
+// down when the node:test child force-exits, and on Windows that trips a libuv
+// assertion at teardown. Settling briefly after the suite lets them close first.
+after(async () => {
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+});
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
