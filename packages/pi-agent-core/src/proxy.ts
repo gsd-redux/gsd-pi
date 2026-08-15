@@ -245,7 +245,7 @@ function processProxyEvent(
 
 		case "text_start":
 			partial.content[proxyEvent.contentIndex] = { type: "text", text: "" };
-			return { type: "text_start", contentIndex: proxyEvent.contentIndex, partial };
+			return { type: "text_start", contentIndex: proxyEvent.contentIndex };
 
 		case "text_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
@@ -255,7 +255,6 @@ function processProxyEvent(
 					type: "text_delta",
 					contentIndex: proxyEvent.contentIndex,
 					delta: proxyEvent.delta,
-					partial,
 				};
 			}
 			throw new Error("Received text_delta for non-text content");
@@ -269,7 +268,6 @@ function processProxyEvent(
 					type: "text_end",
 					contentIndex: proxyEvent.contentIndex,
 					content: content.text,
-					partial,
 				};
 			}
 			throw new Error("Received text_end for non-text content");
@@ -277,7 +275,7 @@ function processProxyEvent(
 
 		case "thinking_start":
 			partial.content[proxyEvent.contentIndex] = { type: "thinking", thinking: "" };
-			return { type: "thinking_start", contentIndex: proxyEvent.contentIndex, partial };
+			return { type: "thinking_start", contentIndex: proxyEvent.contentIndex };
 
 		case "thinking_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
@@ -287,7 +285,6 @@ function processProxyEvent(
 					type: "thinking_delta",
 					contentIndex: proxyEvent.contentIndex,
 					delta: proxyEvent.delta,
-					partial,
 				};
 			}
 			throw new Error("Received thinking_delta for non-thinking content");
@@ -301,7 +298,6 @@ function processProxyEvent(
 					type: "thinking_end",
 					contentIndex: proxyEvent.contentIndex,
 					content: content.thinking,
-					partial,
 				};
 			}
 			throw new Error("Received thinking_end for non-thinking content");
@@ -315,7 +311,7 @@ function processProxyEvent(
 				arguments: {},
 				partialJson: "",
 			} satisfies ToolCall & { partialJson: string } as ToolCall;
-			return { type: "toolcall_start", contentIndex: proxyEvent.contentIndex, partial };
+			return { type: "toolcall_start", contentIndex: proxyEvent.contentIndex };
 
 		case "toolcall_delta": {
 			const content = partial.content[proxyEvent.contentIndex];
@@ -327,7 +323,6 @@ function processProxyEvent(
 					type: "toolcall_delta",
 					contentIndex: proxyEvent.contentIndex,
 					delta: proxyEvent.delta,
-					partial,
 				};
 			}
 			throw new Error("Received toolcall_delta for non-toolCall content");
@@ -341,7 +336,6 @@ function processProxyEvent(
 					type: "toolcall_end",
 					contentIndex: proxyEvent.contentIndex,
 					toolCall: content,
-					partial,
 				};
 			}
 			return undefined;
