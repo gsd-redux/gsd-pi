@@ -14,6 +14,7 @@ import {
 	findLatestPinnableCandidates,
 	findLatestPinnableText,
 	tearDownPinnedZone,
+	updatePinnedMessageZone,
 } from "./chat-pinned-zone.js";
 import {
 	hasAssistantToolBlocks,
@@ -31,6 +32,7 @@ import {
 import {
 	applySubTurnContentShrink,
 	rebuildSegmentsOnMessageEnd,
+	runSegmentWalker,
 	scanNewContentBlocks,
 } from "./chat-segment-walker.js";
 
@@ -259,26 +261,35 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					}
 				}
 
-					// Update index: fully processed blocks won't need re-scanning.
+					runSegmentWalker(host, rs, timestampFormat);
+
+				// Update index: fully processed blocks won't need re-scanning.
 				// Keep the last block's index (it may still be accumulating data),
 				// so we re-check it next time but skip all earlier ones.
 				if (contentBlocks.length > 0) {
 					rs.lastProcessedContentIndex = Math.max(0, contentBlocks.length - 1);
 				}
 
-				// Defer runSegmentWalker + updatePinnedMessageZone + render
-				// into a single debounced batch. This reduces CPU churn by
-				// ~50x: instead of executing segment walker + pinned zone
-				// on every token delta, they run once per 50ms window.
-				rs.scheduleDebouncedStreamingWork(host, timestampFormat, contentBlocks);
+				// Pinned message: mirror the latest assistant text above the editor
+				// when tool executions push it out of the viewport.
+				const { toreDownPinnedZone } = updatePinnedMessageZone(host, rs, contentBlocks);
+				if (toreDownPinnedZone && !host.loadingAnimation) {
+					host.statusContainer.clear();
+					startLoadingAnimation(host);
+				}
+
+				// Batch renders, not the walker: sub-turn replacement and
+				// suppression logic must observe every intermediate state,
+				// while consecutive renders within one 50ms window can coalesce.
+				rs.scheduleDebouncedRender(host.ui);
 			}
 			break;
 
-			case "message_end":
-				if (event.message.role === "user") break;
-				if (event.message.role === "assistant") {
-					host.streamingMessage = event.message;
-					let errorMessage: string | undefined;
+		case "message_end":
+			if (event.message.role === "user") break;
+			if (event.message.role === "assistant") {
+				host.streamingMessage = event.message;
+				let errorMessage: string | undefined;
 					if (host.streamingMessage.stopReason === "aborted") {
 						const retryAttempt = host.session.retryAttempt;
 						errorMessage = retryAttempt > 0
@@ -350,8 +361,8 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				tearDownPinnedZone(host, { realignViewport: true });
 				host.footer.invalidate();
 		}
-		// Flush any pending streaming work + force immediate render
-		// so the final message state is visible without debounce delay.
+		// Final state paints immediately: cancel any pending debounced
+		// render from streaming and request one now.
 		rs.flushPendingStreamingWork(host.ui);
 		break;
 
@@ -427,8 +438,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			// Keep chat history as the single source after completion.
 			tearDownPinnedZone(host, { realignViewport: true });
 			await host.checkShutdownRequested();
-			// Force immediate render at agent end (no debounce)
-			host.ui.requestRender(true);
+			rs.flushPendingStreamingWork(host.ui);
 			break;
 
 		case "auto_compaction_start":

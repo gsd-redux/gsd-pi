@@ -2,14 +2,11 @@ import type { Markdown, TUI } from "@gsd/pi-tui";
 
 import type { AssistantMessageComponent } from "./components/assistant-message.js";
 import type { DynamicBorder } from "./components/dynamic-border.js";
-import type { TimestampFormat } from "./components/timestamp.js";
 import {
 	ToolExecutionComponent,
 	ToolPhaseSummaryComponent,
 	type ToolExecutionPhase,
 } from "./components/tool-execution.js";
-import { runSegmentWalker } from "./controllers/chat-segment-walker.js";
-import { updatePinnedMessageZone } from "./controllers/chat-pinned-zone.js";
 
 /** Default debounce delay for streaming work batching (ms). */
 const STREAM_RENDER_DEBOUNCE_MS = 50;
@@ -64,15 +61,8 @@ export class StreamingRenderState {
 	/** Cache for buildDesiredSegmentsForMessage — avoids O(n) block iteration during streaming. */
 	_desiredSegmentsCache?: DesiredSegmentsCache;
 
-	/** Debounce timer for batching streaming work (segment walker + pinned zone + render). */
+	/** Debounce timer for batching streaming render requests. */
 	renderDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-	/** Pending streaming work: host reference + content blocks for deferred execution. */
-	_pendingStreamingArgs: {
-		host: any;
-		timestampFormat: TimestampFormat;
-		contentBlocks: Array<any>;
-	} | null = null;
 
 	resetStreamingSegments(): void {
 		this.lastProcessedContentIndex = 0;
@@ -104,55 +94,35 @@ export class StreamingRenderState {
 	}
 
 	/**
-	 * Accumulate streaming work and schedule a debounced batch execution.
+	 * Schedule a debounced render request.
 	 *
 	 * During active streaming, multiple message_update events fire rapidly.
-	 * This batches runSegmentWalker + updatePinnedMessageZone + requestRender
-	 * into a single execution window, reducing CPU churn by ~50x.
-	 *
-	 * IMPORTANT: This replaces the old pattern where runSegmentWalker and
-	 * updatePinnedMessageZone were called synchronously on every message_update.
-	 * Those functions are now deferred until the debounce fires.
+	 * The segment walker and pinned-zone update still run synchronously on
+	 * each update (their internal caches keep them cheap, and sub-turn
+	 * replacement/suppression logic depends on seeing each intermediate
+	 * state) — but the actual render is batched into one request per
+	 * debounce window, which is where the CPU churn lives.
 	 */
-	scheduleDebouncedStreamingWork(
-		host: any,
-		timestampFormat: TimestampFormat,
-		contentBlocks: Array<any>,
-	): void {
-		// Accumulate the latest streaming work
-		this._pendingStreamingArgs = { host, timestampFormat, contentBlocks };
-
+	scheduleDebouncedRender(ui: TUI): void {
 		if (this.renderDebounceTimer) {
 			clearTimeout(this.renderDebounceTimer);
 		}
 		this.renderDebounceTimer = setTimeout(() => {
 			this.renderDebounceTimer = null;
-			// Execute all accumulated work in one batch
-			const args = this._pendingStreamingArgs;
-			this._pendingStreamingArgs = null;
-			if (args) {
-				// Run segment walker + pinned zone + render in one batch
-				runSegmentWalker(args.host, this, args.timestampFormat);
-				updatePinnedMessageZone(args.host, this, args.contentBlocks);
-				args.host.ui.requestRender();
-			}
+			ui.requestRender();
 		}, STREAM_RENDER_DEBOUNCE_MS);
 	}
 
 	/**
-	 * Flush pending streaming work immediately + force render.
-	 * Call this at stream boundaries (message_end, agent_end).
+	 * Cancel any pending debounced render and request one immediately.
+	 * Call this at stream boundaries (message_end, agent_end) so the final
+	 * state paints without waiting out the debounce window.
 	 */
 	flushPendingStreamingWork(ui: TUI): void {
 		this.cancelDebouncedRender();
-		// Execute any pending work immediately
-		const args = this._pendingStreamingArgs;
-		this._pendingStreamingArgs = null;
-		if (args) {
-			runSegmentWalker(args.host, this, args.timestampFormat);
-			updatePinnedMessageZone(args.host, this, args.contentBlocks);
-		}
-		ui.requestRender(true); // force = true for final flush
+		// Not forced: force-realigning the viewport here would break the
+		// "no force-render when pinned zone was never shown" contract.
+		ui.requestRender();
 	}
 
 	/** Cancel any pending debounced render (call at stream end). */
