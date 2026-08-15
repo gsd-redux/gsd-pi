@@ -104,6 +104,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd context        Context breakdown chart  [--open|--text|--json]",
     "  /gsd logs           Browse activity logs, debug logs, and metrics  [debug|tail|clear]",
     "  /gsd debug          Create/list/continue persistent debug sessions",
+    "  /gsd copilot-models Check the live GitHub Copilot model catalog for drift",
     "",
     "COURSE CORRECTION",
     "  /gsd steer <desc>   Apply user override to active work",
