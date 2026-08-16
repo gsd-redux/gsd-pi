@@ -12,7 +12,8 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
-import type { AutoAdvanceResult, AutoOrchestrationModule, AutoSessionContext, AutoStatus, AutoTerminalOutcome } from "./contracts.js";
+import type { AutoAdvanceResult, AutoOrchestrationModule, AutoSessionContext, AutoStatus, AutoTerminalOutcome, UnitRef } from "./contracts.js";
+import { UNIT_ALREADY_ACTIVE_SKIP_CODE, UNIT_ALREADY_ACTIVE_SKIP_REASON } from "./contracts.js";
 import type { AutoSession, PendingOrchestrationDispatch } from "./session.js";
 import type { GSDState, Phase } from "../types.js";
 import type { MinimalModelRegistry } from "../context-budget.js";
@@ -20,12 +21,13 @@ import type { MinimalModelRegistry } from "../context-budget.js";
 type BlockedAdvanceResult = Extract<AutoAdvanceResult, { kind: "blocked" }>;
 
 import { debugCount, debugLog, debugTime } from "../debug-logger.js";
-import { reconcileBeforeDispatch } from "../state-reconciliation.js";
+import {
+  reconcileBeforeDispatch,
+  type ReconciliationBlockerDetail,
+} from "../state-reconciliation.js";
 import { isLegalEdge, IllegalPhaseTransitionError } from "../state-transition-matrix.js";
 import { hasPendingDeepStage, resolveDispatch } from "../auto-dispatch.js";
 import { classifyFailure } from "../recovery-classification.js";
-import { verifyExpectedArtifact, refreshRecoveryDbForArtifact } from "../auto-recovery.js";
-import { invalidateAllCaches } from "../cache.js";
 import { compileUnitToolContract } from "../tool-contract.js";
 import { createWorktreeSafetyModule } from "../worktree-safety.js";
 import { repairAutoWorktreeSafetyFailure } from "../auto-worktree-repair.js";
@@ -59,14 +61,43 @@ import { isSkippedForDispatch } from "../status-guards.js";
 import { getErrorMessage } from "../error-utils.js";
 import { logWarning } from "../workflow-logger.js";
 import { normalizeRealPath } from "../paths.js";
+import { preserveProjectionChanges } from "../projection-worker.js";
+import { buildDispatchKey } from "./dispatch-key.js";
 import {
-  buildDispatchKey,
-  createDispatchHistory,
-  STUCK_WINDOW_SIZE,
-  type DispatchHistory,
-} from "./dispatch-history.js";
+  COMPLETED_NO_ADVANCE_GUARD_ID,
+  formatWedgeRefusalNotice,
+  formatWedgeTripNotice,
+  getOpenWedge,
+  lookupLatestLedgerError,
+  recordNonAdvancingOutcome,
+  serializeNonAdvancingEvidence,
+  snapshotUnitTargetRows,
+} from "../auto-liveness-backstop.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  recordDispatchClaim,
+  markRunning as markDispatchRunning,
+  markCompleted as markDispatchCompleted,
+  markFailed as markDispatchFailed,
+  markCanceled as markDispatchCanceled,
+  getRecentForUnit as getRecentDispatchesForUnit,
+  getActiveForWorker,
+} from "../db/unit-dispatches.js";
+import { claimMilestoneLease } from "../db/milestone-leases.js";
+import type { IterationRunOutcome } from "./iteration-run.js";
+import {
+  activeUnitFromWorker,
+  claimUnitRun,
+  iterationDataForClaim,
+  resolveExistingUnitRun,
+  unitRefForDispatch,
+  UNIT_RUN_CLAIM_FAIL_LOG,
+  UNIT_RUN_CLAIM_REJECT_LOG,
+  UNIT_RUN_LEASE_FAIL_LOG,
+  UNIT_RUN_LEASE_LOG,
+} from "./unit-run.js";
 import { evaluateAllCompleteSettlement } from "../milestone-settlement.js";
 import { hasHeldMilestoneLease, reclaimMissingMilestoneLease } from "./milestone-lease-reclaim.js";
 import {
@@ -124,8 +155,8 @@ export interface OrchestratorContext {
 
 /** Result type of a single dispatch decision. */
 export type DispatchDecision =
-  | { kind: "blocked"; reason: string; action: "pause" | "stop" }
-  | { kind: "skipped"; reason: string }
+  | { kind: "blocked"; reason: string; action: "pause" | "stop"; guardId: string }
+  | { kind: "skipped"; reason: string; code: "no-dispatch" | "already-closed" }
   | { unitType: string; unitId: string; reason: string; preconditions: string[] }
   | null;
 
@@ -210,6 +241,7 @@ export async function decideOrchestratorDispatch(
         kind: "blocked",
         reason: state.nextAction || "No active milestone. Run /gsd unpark <id> or create a new milestone.",
         action: "stop",
+        guardId: "no-active-milestone",
       };
     }
   }
@@ -262,7 +294,7 @@ export async function decideOrchestratorDispatch(
   if (session && pendingRetry && active) {
     const authorityBlocker = getDispatchAuthorityBlocker(pendingRetry.unitType, pendingRetry.unitId);
     if (authorityBlocker) {
-      return { kind: "blocked", reason: authorityBlocker, action: "stop" };
+      return { kind: "blocked", reason: authorityBlocker, action: "stop", guardId: "dispatch-authority" };
     }
     const alreadyClosedReason = getDispatchAlreadyClosedReason(
       pendingRetry.unitType,
@@ -278,7 +310,7 @@ export async function decideOrchestratorDispatch(
     ) {
       session.pendingOrchestrationDispatch = null;
       session.pendingVerificationRetry = null;
-      return { kind: "skipped", reason: alreadyClosedReason };
+      return { kind: "skipped", reason: alreadyClosedReason, code: "already-closed" };
     }
     session.pendingVerificationRetryDispatch = null;
     session.pendingOrchestrationDispatch = pendingRetry;
@@ -313,6 +345,7 @@ export async function decideOrchestratorDispatch(
       kind: "blocked",
       reason: action.reason,
       action: action.level === "warning" ? "pause" : "stop",
+      guardId: "dispatch-rule-stop",
     };
   }
   if (action.action !== "dispatch") {
@@ -320,6 +353,7 @@ export async function decideOrchestratorDispatch(
     return {
       kind: "skipped",
       reason: action.matchedRule ?? "dispatch-skip",
+      code: "no-dispatch",
     };
   }
   const alreadyClosedReason = getDispatchAlreadyClosedReason(action.unitType, action.unitId);
@@ -335,7 +369,7 @@ export async function decideOrchestratorDispatch(
       session.pendingOrchestrationDispatch = null;
       session.pendingVerificationRetry = null;
     }
-    return { kind: "skipped", reason: alreadyClosedReason };
+    return { kind: "skipped", reason: alreadyClosedReason, code: "already-closed" };
   }
   if (session) {
     const pending: PendingOrchestrationDispatch = {
@@ -369,19 +403,22 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   private readonly s: AutoSession;
   private readonly flowId: string;
   private seq = 0;
-  private lastAdvanceKey: string | null = null;
   private lastFinalizedUnitKey: string | null = null;
-  // Dispatch History module (#482): the dispatch-decision window with
-  // cross-session DB rehydration and full detect-stuck rules.
-  private readonly dispatchHistory: DispatchHistory;
+  // ADR-047 liveness backstop: target-row hash captured at dispatch so
+  // completeActiveUnit can detect completed-no-advance outcomes, and the last
+  // decided unit so non-advancing outcomes carry their target identity.
+  private pendingTargetSnapshot: { unitType: string; unitId: string; hash: string } | null = null;
+  private lastDecisionUnit: { unitType: string; unitId: string } | null = null;
+  private pendingLivenessInput: {
+    guardId: string;
+    inputPayload: string;
+    sanctionedExit?: string;
+  } | null = null;
+  private pendingBackstopFailure: string | null = null;
   // ADR-030 Phase Transition Invariant: the prior advance's reconciled Phase,
   // the "from" endpoint of the edge check. In-memory; reset on start/resume/stop
   // so the first advance of a session has no edge to assert.
   private lastDerivedPhase: Phase | null = null;
-  // #442: the unit key we last attempted graduated stuck-recovery for. Bounds
-  // recovery to one attempt per stuck episode per run (reset on start/resume/
-  // stop), mirroring the legacy Level-1-then-Level-2 escalation in phases.ts.
-  private lastStuckRecoveryKey: string | null = null;
 
   public constructor(context: OrchestratorContext) {
     this.ctx = context.ctx;
@@ -390,16 +427,18 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     this.runtimeBasePath = context.runtimeBasePath;
     this.s = context.session;
     this.flowId = `auto-orchestrator-${Date.now()}`;
-    this.dispatchHistory = createDispatchHistory({
-      windowSize: STUCK_WINDOW_SIZE,
-      // Same stable scope the auto-loop uses for stuck-state persistence so
-      // rehydration reads the rows the dispatch ledger wrote for this project.
-      resolveScopeId: () =>
-        normalizeRealPath(
-          this.s.scope?.workspace.projectRoot ??
-            (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
-        ) || null,
-    });
+  }
+
+  /**
+   * Stable project scope for the liveness backstop — the same realpath scope
+   * the dispatch ledger uses, so signatures survive worktree adoption and
+   * process restarts.
+   */
+  private backstopScopeId(): string | null {
+    return normalizeRealPath(
+      this.s.scope?.workspace.projectRoot ??
+        (this.s.originalBasePath || this.s.basePath || this.runtimeBasePath),
+    ) || null;
   }
 
   // ── Live base-path resolution (was the wiring factory's getLiveDispatchBasePath) ──
@@ -585,25 +624,32 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
   private async reconcileBeforeDispatch(): Promise<
     { ok: true; reason: string; stateSnapshot?: GSDState }
-    | { ok: false; reason: string; stateSnapshot?: GSDState }
+    | {
+      ok: false;
+      reason: string;
+      stateSnapshot?: GSDState;
+      blockerDetails: readonly ReconciliationBlockerDetail[];
+    }
   > {
     const activeBasePath = this.getLiveDispatchBasePath();
-    const result = await reconcileBeforeDispatch(activeBasePath);
-    // Failure-path summaries written by gsd_summary_save create
-    // artifact-db-status-divergence blockers for tasks that are still
-    // pending (gsd_task_complete never ran). These tasks can still be
-    // dispatched and the drift self-heals once they complete successfully.
-    const hardBlockers = result.blockers.filter(
-      (b) =>
-        !b.includes("has SUMMARY artifact while DB status is") &&
-        !b.includes("has SUMMARY on disk while DB status is") &&
-        !b.includes("has task SUMMARY artifacts but no DB tasks"),
-    );
-    if (hardBlockers.length > 0) {
+    try {
+      await preserveProjectionChanges(activeBasePath);
+    } catch (error) {
+      const reason = `Projection observation failed: ${getErrorMessage(error)}`;
+      logWarning("reconcile", reason);
       return {
         ok: false,
-        reason: hardBlockers[0],
+        reason,
+        blockerDetails: [{ message: reason }],
+      };
+    }
+    const result = await reconcileBeforeDispatch(activeBasePath);
+    if (result.blockers.length > 0) {
+      return {
+        ok: false,
+        reason: result.blockers.join("\n"),
         stateSnapshot: result.stateSnapshot,
+        blockerDetails: result.blockerDetails,
       };
     }
     const repairedKinds = result.repaired.map((d) => d.kind);
@@ -871,77 +917,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
 
   // ── Lifecycle verbs ──────────────────────────────────────────────────────
 
-  /**
-   * #442: graduated stuck recovery, ported from the legacy
-   * auto/phases.ts:runDispatch path that Phase 3 retires. The ring-buffer
-   * hard-stops (stuck-loop saturation and finalized-repeat) would otherwise
-   * KILL a unit that actually completed on disk but whose DB row is still
-   * stale. Before hard-stopping, verify the expected artifact exists; if so,
-   * refresh the DB from it, invalidate caches and reset the dispatch ring so
-   * the next advance picks the correct next unit. Bounded to one attempt per
-   * stuck key per episode (reset on lifecycle + genuine finalize) to avoid an
-   * unbounded recover→re-saturate→recover loop — mirrors the legacy
-   * Level-1-recover-then-Level-2-hard-stop escalation.
-   *
-   * Returns true when recovery succeeded; the caller should re-loop (return a
-   * skipped result) instead of stopping.
-   */
-  private tryStuckArtifactRecovery(unitType: string, unitId: string): boolean {
-    const key = buildDispatchKey(unitType, unitId);
-    if (this.lastStuckRecoveryKey === key) return false; // already tried this episode
-    const basePath = this.getLiveDispatchBasePath();
-    if (!verifyExpectedArtifact(unitType, unitId, basePath)) return false;
-    const refreshed = refreshRecoveryDbForArtifact(unitType, unitId, basePath);
-    // Fatal failures cannot be recovered — hard-stop. Non-fatal (e.g. plan-slice
-    // DB refresh hiccup) still fall through: invalidating caches and resetting
-    // the ring gives the next advance a clean slate to pick up the correct state,
-    // mirroring the legacy Level-1 "continue" escalation path.
-    if (!refreshed.ok && refreshed.fatal) return false;
-    this.lastStuckRecoveryKey = key;
-    invalidateAllCaches();
-    this.dispatchHistory.clearOnRecovery();
-    this.lastAdvanceKey = null;
-    this.lastFinalizedUnitKey = null;
-    return true;
-  }
-
-  private stuckRecovered(
-    decision: { unitType: string; unitId: string },
-    stateSnapshot: GSDState,
-  ): AutoAdvanceResult {
-    const recovered: AutoAdvanceResult = {
-      kind: "skipped",
-      reason: `stuck-recovery: ${decision.unitType} ${decision.unitId} artifact found on disk; DB refreshed`,
-      stateSnapshot,
-    };
-    this.status.phase = "running";
-    this.status.activeUnit = undefined;
-    this.bumpTransition();
-    this.journalTransition({
-      name: "advance-skipped",
-      reason: recovered.reason,
-      unitType: decision.unitType,
-      unitId: decision.unitId,
-    });
-    this.postAdvanceRecord(recovered);
-    return recovered;
-  }
-
   public async start(_sessionContext: AutoSessionContext): Promise<AutoAdvanceResult> {
-    this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    // #852: a fresh user-triggered session must start with a clean stuck window.
-    // Cross-session rehydration at start() was removed because it caused false
-    // stuck-loop verdicts when prior sessions left consecutive finalize-retry
-    // entries in unit_dispatches — the new session would be killed before its
-    // first dispatch ran. Within-session stuck detection (accumulated through
-    // recordDispatch() calls during advance()) remains fully active and catches
-    // genuine stuck patterns after STUCK_WINDOW_SIZE dispatches.
-    //
-    // resume() retains cross-session rehydration: an interrupted session resuming
-    // after a crash should see the dispatch history it had been accumulating.
-    this.dispatchHistory.clearOnRecovery();
-    this.lastStuckRecoveryKey = null;
+    // ADR-047: cross-session liveness state lives in the DB-persisted
+    // block-signature ledger, not in-process — a restart resets nothing.
+    this.pendingTargetSnapshot = null;
+    this.pendingBackstopFailure = null;
     this.lastDerivedPhase = null;
     this.status.phase = "running";
     this.bumpTransition();
@@ -950,9 +931,132 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     return { kind: "started" };
   }
 
+  /**
+   * ADR-047 liveness backstop wrapper. Re-entry is refused while an
+   * unacknowledged wedge record exists; every non-advancing advance outcome
+   * feeds the DB-persisted block-signature ledger, and a tripped signature
+   * converts the outcome into a surfaced, resumable hard stop.
+   */
   public async advance(): Promise<AutoAdvanceResult> {
+    if (this.pendingBackstopFailure) {
+      return this.backstopFailure(this.pendingBackstopFailure);
+    }
+    const scopeId = this.backstopScopeId();
+    if (!scopeId) return this.backstopFailure('project scope unavailable');
+    const openWedgeResult = getOpenWedge(scopeId);
+    if (!openWedgeResult.ok) return this.backstopFailure(openWedgeResult.error);
+    const openWedge = openWedgeResult.wedge;
+    if (openWedge) {
+      const blocked: AutoAdvanceResult = {
+        kind: "blocked",
+        reason: formatWedgeRefusalNotice(openWedge),
+        action: "stop",
+      };
+      this.journalTransition({
+        name: "advance-blocked",
+        reason: blocked.reason,
+        unitType: openWedge.unitType,
+        unitId: openWedge.unitId,
+      });
+      this.postAdvanceRecord(blocked);
+      return blocked;
+    }
+    return this.adjudicateLiveness(await this.advanceInner());
+  }
+
+  private withLivenessInput<T extends AutoAdvanceResult>(
+    result: T,
+    input: { guardId: string; inputPayload?: string; sanctionedExit?: string },
+  ): T {
+    this.pendingLivenessInput = {
+      guardId: input.guardId,
+      inputPayload: input.inputPayload ?? ("reason" in result ? result.reason : input.guardId),
+      ...(input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : {}),
+    };
+    return result;
+  }
+
+  /**
+   * Feed the liveness ledger from the single seam where advance outcomes are
+   * adjudicated. Guard blocks and gate failures (kind "blocked"/"error")
+   * record a signature built from the guard's own reason payload; a dispatch
+   * (kind "advanced") snapshots the target rows so completeActiveUnit can
+   * detect completed-no-advance. Transient retry pauses (kind "paused") are
+   * not recorded here — the loop counts them against its existing
+   * consecutive-error budget and, on exhaustion, stops through the blocked
+   * path and records that exhaustion into this same ledger (ADR-047 gap fix).
+   */
+  private adjudicateLiveness(result: AutoAdvanceResult): AutoAdvanceResult {
+    if (this.pendingBackstopFailure) return this.backstopFailure(this.pendingBackstopFailure);
+    const scopeId = this.backstopScopeId();
+    if (!scopeId) return result;
+
+    if (result.kind === "advanced") {
+      const { unitType, unitId } = result.unit;
+      const snapshot = snapshotUnitTargetRows(unitType, unitId);
+      if (!snapshot.ok) return this.backstopFailure(snapshot.error);
+      this.pendingTargetSnapshot = snapshot.hash ? { unitType, unitId, hash: snapshot.hash } : null;
+      return result;
+    }
+    if (result.kind !== "blocked" && result.kind !== "error" && result.kind !== "skipped") return result;
+
+    const livenessInput = this.pendingLivenessInput;
+    this.pendingLivenessInput = null;
+    if (!livenessInput) {
+      return result.kind === "skipped"
+        ? result
+        : this.backstopFailure("semantic guard did not provide a stable identity");
+    }
+    const unit = this.lastDecisionUnit ?? {
+      unitType: "orchestration",
+      unitId: this.s.currentMilestoneId ?? "workflow",
+    };
+    const outcome = recordNonAdvancingOutcome({
+      scopeId,
+      guardId: livenessInput.guardId,
+      unitType: unit.unitType,
+      unitId: unit.unitId,
+      inputPayload: livenessInput.inputPayload,
+    }, livenessInput.sanctionedExit
+      ? { sanctionedExit: livenessInput.sanctionedExit }
+      : undefined);
+    if ('error' in outcome) return this.backstopFailure(outcome.error);
+    if (!outcome.tripped) return result;
+
+    const wedged: AutoAdvanceResult = {
+      kind: "blocked",
+      reason: formatWedgeTripNotice(outcome.wedge),
+      action: "stop",
+      ...(result.kind === "blocked" && result.stateSnapshot
+        ? { stateSnapshot: result.stateSnapshot }
+        : {}),
+    };
+    this.journalTransition({
+      name: "advance-blocked",
+      reason: wedged.reason,
+      unitType: unit.unitType,
+      unitId: unit.unitId,
+    });
+    this.postAdvanceRecord(wedged);
+    return wedged;
+  }
+
+  private backstopFailure(detail: string): AutoAdvanceResult {
+    const blocked: AutoAdvanceResult = {
+      kind: "blocked",
+      reason: `liveness backstop unavailable: ${detail}. Repair the workflow database with \`/gsd doctor --fix\` before resuming auto-mode.`,
+      action: "stop",
+    };
+    this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
+    this.postAdvanceRecord(blocked);
+    return blocked;
+  }
+
+  private async advanceInner(): Promise<AutoAdvanceResult> {
     debugCount("dispatches");
     const stopAdvanceTimer = debugTime("orchestrator-advance");
+    this.lastDecisionUnit = null;
+    this.pendingLivenessInput = null;
     try {
       this.ensureLockOwnership();
       const uokGateContext = this.resolveUokGateContext();
@@ -971,7 +1075,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         const blocked: AutoAdvanceResult = { kind: "blocked", reason: staleMsg, action: "pause" };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "resource-version-guard" });
       }
       await this.emitUokGate({
         ...uokGateContext,
@@ -1000,7 +1104,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "pre-dispatch-health-gate" });
       }
       if (gate.kind === "threw") {
         await this.emitUokGate({
@@ -1035,7 +1139,16 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        const blockerDetails = "blockerDetails" in reconciliation
+          ? reconciliation.blockerDetails
+          : [{ message: blocked.reason }];
+        const blockerKinds = blockerDetails.map((detail) =>
+          detail.drift?.kind ?? detail.detectorKind ?? "state"
+        ).sort();
+        return this.withLivenessInput(blocked, {
+          guardId: `state-reconciliation:${[...new Set(blockerKinds)].join("+")}`,
+          inputPayload: serializeNonAdvancingEvidence(blockerDetails),
+        });
       }
 
       const reconciledPhase = reconciliation.stateSnapshot.phase;
@@ -1061,8 +1174,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
               };
               this.status.phase = "stopped";
               this.status.activeUnit = undefined;
-              this.lastAdvanceKey = null;
-              this.dispatchHistory.clearOnRecovery();
+              this.discardActiveUnitRun(stopped.reason);
               this.bumpTransition();
               this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
               this.postAdvanceRecord(stopped);
@@ -1079,12 +1191,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           }
           this.status.phase = "paused";
           this.status.activeUnit = undefined;
-          this.lastAdvanceKey = null;
-          this.dispatchHistory.clearOnRecovery();
           this.bumpTransition();
           this.journalTransition({ name: "advance-blocked", reason: settlementBlock.reason });
           this.postAdvanceRecord(settlementBlock);
-          return settlementBlock;
+          return this.withLivenessInput(settlementBlock, { guardId: "milestone-settlement" });
         }
         const terminalOutcome = noRemainingUnitsOutcome(reconciliation.stateSnapshot);
         const stopped: AutoAdvanceResult = {
@@ -1095,16 +1205,17 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.status.phase = "stopped";
         this.status.activeUnit = undefined;
-        this.lastAdvanceKey = null;
-        this.dispatchHistory.clearOnRecovery();
+        this.discardActiveUnitRun(stopped.reason);
         this.bumpTransition();
         this.journalTransition({ name: "advance-stopped", reason: stopped.reason });
         this.postAdvanceRecord(stopped);
         return stopped;
       }
       if ("kind" in decision && decision.kind === "skipped") {
+        this.discardActiveUnitRun(decision.reason);
         const skipped: AutoAdvanceResult = {
           kind: "skipped",
+          code: decision.code,
           reason: decision.reason,
           stateSnapshot: reconciliation.stateSnapshot,
         };
@@ -1124,7 +1235,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         };
         this.journalTransition({ name: "advance-blocked", reason: blocked.reason });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: decision.guardId });
       }
 
       const priorSliceBlocker = this.findPriorSliceCompletionBlocker(decision.unitType, decision.unitId);
@@ -1143,52 +1254,57 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "prior-slice-completion" });
       }
 
-      // Record every dispatch decision in the history window before pre-flight
-      // checks so the stuck-loop detector observes the full decision history
-      // (including decisions that idempotency would otherwise short-circuit).
-      // The window is capped at STUCK_WINDOW_SIZE and evicts oldest-first.
-      const nextKey = this.dispatchHistory.recordDispatch(decision.unitType, decision.unitId);
+      // ADR-047: remember the decided unit so any guard block below carries
+      // its target identity into the liveness ledger.
+      this.lastDecisionUnit = { unitType: decision.unitType, unitId: decision.unitId };
+      const nextKey = buildDispatchKey(decision.unitType, decision.unitId);
 
-      const matchingCount = this.dispatchHistory.countMatching(nextKey);
       if (this.lastFinalizedUnitKey === nextKey) {
-        // #442: the unit re-dispatched immediately after finalizing may have
-        // actually completed on disk with a stale DB. Verify + recover before
-        // hard-stopping (legacy graduated stuck-recovery parity).
-        if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
-          this.clearPendingDispatch();
-          return this.stuckRecovered(decision, reconciliation.stateSnapshot);
-        }
         this.clearPendingDispatch();
-        const blocked: AutoAdvanceResult = {
-          kind: "blocked",
+        const current = snapshotUnitTargetRows(decision.unitType, decision.unitId);
+        if (!current.ok || !current.hash) {
+          this.pendingBackstopFailure = current.ok
+            ? `target snapshot unavailable for finalized ${decision.unitType} ${decision.unitId}`
+            : current.error;
+        }
+        const skipped: AutoAdvanceResult = {
+          kind: "skipped",
+          code: "completed-no-advance",
           reason: `state did not advance after finalized ${decision.unitType} ${decision.unitId}`,
-          action: "stop",
           stateSnapshot: reconciliation.stateSnapshot,
         };
         this.journalTransition({
-          name: "advance-blocked",
-          reason: blocked.reason,
+          name: "advance-skipped",
+          reason: skipped.reason,
           unitType: decision.unitType,
           unitId: decision.unitId,
         });
-        this.postAdvanceRecord(blocked);
-        return blocked;
+        this.postAdvanceRecord(skipped);
+        return this.withLivenessInput(skipped, {
+          guardId: COMPLETED_NO_ADVANCE_GUARD_ID,
+          inputPayload: current.ok && current.hash ? current.hash : skipped.reason,
+          sanctionedExit:
+            `${decision.unitType} ${decision.unitId} completed without changing any of its target rows; ` +
+            `inspect the unit's summary and reconcile state (\`/gsd status\`, \`/gsd doctor\`) before re-running.`,
+        });
       }
 
-      // Idempotency: same key as immediately previous successful advance.
-      // This is the soft, fast-path block kept from #5786. It only fires when
-      // the ring is NOT yet saturated for this key — once the ring is full of
-      // `nextKey`, the stuck-loop verdict takes precedence (see below). Both
-      // checks coexist: idempotency for the common immediate-repeat case,
-      // stuck-loop for the saturated-window case.
-      if (this.lastAdvanceKey === nextKey && matchingCount < STUCK_WINDOW_SIZE) {
-        // Unit already active — benign no-op. Return skipped so the loop re-polls
-        // without cancelling the in-flight unit (blocked+pause would force-cancel it).
+      const existingRun = resolveExistingUnitRun({
+        workerId: this.s.workerId,
+        unitType: decision.unitType,
+        unitId: decision.unitId,
+        unitExecutionInFlight: this.s.unitExecutionInFlight,
+      });
+      if (existingRun.kind === "skip-in-flight") {
         this.clearPendingDispatch();
-        const skipped: AutoAdvanceResult = { kind: "skipped", reason: "idempotent advance: unit already active" };
+        const skipped: AutoAdvanceResult = {
+          kind: "skipped",
+          code: UNIT_ALREADY_ACTIVE_SKIP_CODE,
+          reason: UNIT_ALREADY_ACTIVE_SKIP_REASON,
+        };
         this.journalTransition({
           name: "advance-skipped",
           reason: skipped.reason,
@@ -1199,46 +1315,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         return skipped;
       }
 
-      // Stuck-loop detection: consult the Dispatch History module's full
-      // detect-stuck rule set once the window is *full* — not only when a
-      // single key saturates it. Gating on a single key's saturation count
-      // (matchingCount >= STUCK_WINDOW_SIZE) let two-unit oscillations slip
-      // through forever: an execute-task ↔ complete-slice loop (a slice gate
-      // that keeps reopening the same task, #1225) fills the window with two
-      // alternating keys, so neither key ever reaches the saturation count and
-      // detect-stuck's oscillation/repeat rules were never even invoked. Firing
-      // on window saturation instead covers both shapes. Consecutive same-key
-      // re-advances (the benign pause/resume churn the old count gate guarded
-      // against) are already short-circuited above by the idempotency skip, and
-      // legitimate retry backoff is still suppressed inside detect-stuck via the
-      // dispatch ledger — a saturated window with no verdict means we are inside
-      // the unit's retry-backoff budget, so let the retry proceed.
-      const windowSaturated =
-        this.dispatchHistory.getRecentWindow().length >= STUCK_WINDOW_SIZE;
-      const stuckVerdict = windowSaturated ? this.dispatchHistory.detectStuck() : null;
-      if (stuckVerdict) {
-        // #442: before declaring a stuck loop, verify the unit didn't actually
-        // complete on disk (stale DB) and recover if so — legacy graduated
-        // stuck-recovery parity. Otherwise hard-stop with a diagnosable reason.
-        if (this.tryStuckArtifactRecovery(decision.unitType, decision.unitId)) {
-          this.clearPendingDispatch();
-          return this.stuckRecovered(decision, reconciliation.stateSnapshot);
-        }
-        this.clearPendingDispatch();
-        const blocked: AutoAdvanceResult = {
-          kind: "blocked",
-          reason: `stuck-loop: ${stuckVerdict.reason}`,
-          action: "stop",
-        };
-        this.journalTransition({
-          name: "advance-blocked",
-          reason: blocked.reason,
-          unitType: decision.unitType,
-          unitId: decision.unitId,
-        });
-        this.postAdvanceRecord(blocked);
-        return blocked;
-      }
+      // ADR-047: the legacy detect-stuck rule set ("Rule 1" over the dispatch
+      // window) was deleted, not paralleled. Non-advancing outcomes now feed
+      // the DB-persisted block-signature ledger in adjudicateLiveness(), which
+      // trips at 2 identical-input occurrences, interleaving-blind — covering
+      // the repeat, oscillation, and zero-work re-dispatch shapes the window
+      // rules missed or double-reported.
 
       const contract = this.compileUnitToolContract(decision.unitType);
       if (!contract.ok) {
@@ -1256,7 +1338,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "unit-tool-contract" });
       }
 
       const worktree = await this.prepareWorktreeForUnit(decision.unitType, decision.unitId);
@@ -1275,12 +1357,19 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
           unitId: decision.unitId,
         });
         this.postAdvanceRecord(blocked);
-        return blocked;
+        return this.withLivenessInput(blocked, { guardId: "unit-worktree-preparation" });
       }
 
-      this.status.activeUnit = { unitType: decision.unitType, unitId: decision.unitId };
+      const dispatchId = existingRun.kind === "resume"
+        ? existingRun.dispatchId
+        : this.openUnitRun(decision.unitType, decision.unitId, reconciliation.stateSnapshot);
+      if (typeof dispatchId !== "number") {
+        this.clearPendingDispatch();
+        this.postAdvanceRecord(dispatchId);
+        return dispatchId;
+      }
+
       this.status.phase = "running";
-      this.lastAdvanceKey = nextKey;
       this.bumpTransition();
 
       this.journalTransition({
@@ -1289,26 +1378,32 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
         unitType: decision.unitType,
         unitId: decision.unitId,
       });
-      // syncAfterUnit was a no-op in the wired WorktreeAdapter.
 
       const advanced: AutoAdvanceResult = {
         kind: "advanced",
         unit: { unitType: decision.unitType, unitId: decision.unitId },
         stateSnapshot: reconciliation.stateSnapshot,
+        dispatchId,
       };
       this.postAdvanceRecord(advanced);
       return advanced;
     } catch (error) {
       const recovery = this.classifyAndRecover({
         error,
-        unitType: this.status.activeUnit?.unitType,
-        unitId: this.status.activeUnit?.unitId,
+        unitType: activeUnitFromWorker(this.s.workerId)?.unitType,
+        unitId: activeUnitFromWorker(this.s.workerId)?.unitId,
       });
-      const result: AutoAdvanceResult = recovery.action === "retry"
-        ? { kind: "paused", reason: recovery.reason }
-        : recovery.action === "escalate"
-          ? { kind: "error", reason: recovery.reason }
-          : { kind: "stopped", reason: recovery.reason };
+      let result: AutoAdvanceResult;
+      if (recovery.action === "retry") {
+        result = { kind: "paused", reason: recovery.reason };
+      } else if (recovery.action === "escalate") {
+        result = this.withLivenessInput(
+          { kind: "error", reason: recovery.reason },
+          { guardId: "advance-exception" },
+        );
+      } else {
+        result = { kind: "stopped", reason: recovery.reason };
+      }
 
       if (result.kind === "paused") {
         this.status.phase = "paused";
@@ -1319,9 +1414,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       }
 
       if (result.kind === "stopped") {
-        this.lastAdvanceKey = null;
         this.lastFinalizedUnitKey = null;
-        this.dispatchHistory.clearOnRecovery();
         this.status.activeUnit = undefined;
       }
       this.bumpTransition();
@@ -1348,17 +1441,10 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   public async resume(): Promise<AutoAdvanceResult> {
-    this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
-    // Preserve the dispatch-history window across an in-process resume so
-    // stuck-loop detection accumulates across pause/resume cycles rather than
-    // resetting each time (#572 regression). When the window is empty (fresh
-    // orchestrator resuming a prior session), rehydrate it from the DB
-    // dispatch ledger so cross-session re-dispatch loops are detected (#482).
-    if (this.dispatchHistory.getRecentWindow().length === 0) {
-      this.dispatchHistory.rehydrate();
-    }
-    this.lastStuckRecoveryKey = null;
+    this.pendingBackstopFailure = null;
+    // ADR-047: the DB-persisted signature ledger already spans pause/resume
+    // cycles and process restarts — no in-process window to rehydrate.
     // ADR-030: drop the prior "from" — the first advance after resume has no
     // edge to assert (avoids a false illegal-edge across the pause boundary).
     this.lastDerivedPhase = null;
@@ -1373,18 +1459,12 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     if (this.status.phase === "stopped") {
       return { kind: "stopped", reason };
     }
-    // cleanupOnStop was a no-op in the wired WorktreeAdapter.
+    this.discardActiveUnitRun(reason);
     this.status.phase = "stopped";
     this.status.activeUnit = undefined;
-    this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = null;
     this.lastDerivedPhase = null;
-    // Preserve the dispatch-history window on pause so stuck-loop detection
-    // accumulates across pause/resume cycles. Only clear on a hard stop.
-    if (reason !== "pause") {
-      this.dispatchHistory.clearOnRecovery();
-    }
-    this.lastStuckRecoveryKey = null;
+    this.pendingTargetSnapshot = null;
     this.bumpTransition();
     this.journalTransition({ name: "stop", reason });
     this.notifyLifecycle({ name: "stop", detail: reason });
@@ -1392,21 +1472,160 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
   }
 
   public getStatus(): AutoStatus {
-    return { ...this.status, activeUnit: this.status.activeUnit ? { ...this.status.activeUnit } : undefined };
+    const activeUnit = activeUnitFromWorker(this.s.workerId);
+    return { ...this.status, activeUnit: activeUnit ? { ...activeUnit } : undefined };
+  }
+
+  public async settle(
+    dispatchId: number,
+    outcome: IterationRunOutcome,
+    reason: string,
+  ): Promise<void> {
+    const unit = unitRefForDispatch(dispatchId) ?? activeUnitFromWorker(this.s.workerId);
+    if (!unit) return;
+    switch (outcome) {
+      case "completed":
+        markDispatchCompleted(dispatchId);
+        await this.recordCompletedCloseout(unit);
+        break;
+      case "retry":
+        markDispatchFailed(dispatchId, { errorSummary: reason });
+        await this.recordRetryCloseout(unit);
+        break;
+      case "failed":
+        markDispatchFailed(dispatchId, { errorSummary: reason });
+        await this.recordAbandonCloseout(unit, reason);
+        break;
+      case "canceled":
+        markDispatchCanceled(dispatchId, reason);
+        await this.recordAbandonCloseout(unit, reason);
+        break;
+      default: {
+        const exhaustive: never = outcome;
+        throw new Error(`Unhandled settle outcome: ${String(exhaustive)}`);
+      }
+    }
   }
 
   public async completeActiveUnit(unit: { unitType: string; unitId: string }): Promise<void> {
+    const row = this.matchingActiveDispatch(unit);
+    if (row) {
+      await this.settle(row.id, "completed", "completeActiveUnit");
+      return;
+    }
+    await this.recordCompletedCloseout(unit);
+  }
+
+  public async retryActiveUnit(unit: { unitType: string; unitId: string }): Promise<void> {
+    const row = this.matchingActiveDispatch(unit);
+    if (row) {
+      await this.settle(row.id, "retry", "finalize-retry");
+      return;
+    }
+    await this.recordRetryCloseout(unit);
+  }
+
+  public async abandonActiveUnit(
+    unit: UnitRef,
+    reason: string,
+  ): Promise<void> {
+    const row = this.matchingActiveDispatch(unit);
+    if (row) {
+      await this.settle(row.id, "failed", reason);
+      return;
+    }
+    await this.recordAbandonCloseout(unit, reason);
+  }
+
+  private matchingActiveDispatch(unit: UnitRef) {
+    if (!this.s.workerId) return null;
+    const row = getActiveForWorker(this.s.workerId);
+    if (!row) return null;
+    if (row.unit_type !== unit.unitType || row.unit_id !== unit.unitId) return null;
+    return row;
+  }
+
+  private discardActiveUnitRun(reason: string): void {
+    if (!this.s.workerId) return;
+    const row = getActiveForWorker(this.s.workerId);
+    if (row) markDispatchCanceled(row.id, reason);
+  }
+
+  private openUnitRun(
+    unitType: string,
+    unitId: string,
+    stateSnapshot: GSDState,
+  ): number | AutoAdvanceResult {
+    const claimed = claimUnitRun({
+      session: this.s,
+      flowId: this.s.currentTraceId ?? this.flowId,
+      turnId: this.s.currentTurnId ?? randomUUID(),
+      iterData: iterationDataForClaim(unitType, unitId, stateSnapshot, this.s),
+      leaseDeps: {
+        claimMilestoneLease,
+        logLeaseRecovered: UNIT_RUN_LEASE_LOG,
+        logLeaseRecoveryFailed: UNIT_RUN_LEASE_FAIL_LOG,
+      },
+      claimDeps: {
+        getRecentDispatchesForUnit,
+        recordDispatchClaim,
+        markDispatchRunning,
+        logClaimRejected: UNIT_RUN_CLAIM_REJECT_LOG,
+        logClaimFailed: UNIT_RUN_CLAIM_FAIL_LOG,
+      },
+    });
+    if (claimed.kind === "opened") return claimed.dispatchId;
+    if (claimed.kind === "blocked" || claimed.kind === "degraded") {
+      return {
+        kind: "blocked",
+        reason: claimed.reason,
+        action: "stop",
+        stateSnapshot,
+      };
+    }
+    return {
+      kind: "blocked",
+      reason: `dispatch claim skipped: ${claimed.reason}`,
+      action: "stop",
+      stateSnapshot,
+    };
+  }
+
+  private async recordCompletedCloseout(unit: UnitRef): Promise<void> {
     const unitKey = buildDispatchKey(unit.unitType, unit.unitId);
-    const activeUnitKey = this.status.activeUnit
-      ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
-      : null;
-    if (activeUnitKey !== unitKey) return;
+    const scopeId = this.backstopScopeId();
+    const snapshot = this.pendingTargetSnapshot;
+    this.pendingTargetSnapshot = null;
+    if (
+      scopeId &&
+      snapshot &&
+      buildDispatchKey(snapshot.unitType, snapshot.unitId) === unitKey
+    ) {
+      const current = snapshotUnitTargetRows(unit.unitType, unit.unitId);
+      if (!current.ok) {
+        this.pendingBackstopFailure = current.error;
+      } else if (current.hash && current.hash === snapshot.hash) {
+        const outcome = recordNonAdvancingOutcome({
+          scopeId,
+          guardId: COMPLETED_NO_ADVANCE_GUARD_ID,
+          unitType: unit.unitType,
+          unitId: unit.unitId,
+          inputPayload: current.hash,
+        }, {
+          sanctionedExit:
+            `${unit.unitType} ${unit.unitId} completed without changing any of its target rows; ` +
+            `inspect the unit's summary and reconcile state (\`/gsd status\`, \`/gsd doctor\`) before re-running.`,
+        });
+        if ('error' in outcome) {
+          this.pendingBackstopFailure = outcome.error;
+        } else if (outcome.tripped) {
+          this.ctx.ui.notify(formatWedgeTripNotice(outcome.wedge), "error");
+        }
+      }
+    }
 
     this.status.activeUnit = undefined;
-    this.lastAdvanceKey = null;
     this.lastFinalizedUnitKey = unitKey;
-    // Genuine progress — re-enable graduated stuck recovery for future episodes.
-    this.lastStuckRecoveryKey = null;
     this.bumpTransition();
     this.journalTransition({
       name: "unit-finalized",
@@ -1415,22 +1634,43 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     });
   }
 
-  public async retryActiveUnit(unit: { unitType: string; unitId: string }): Promise<void> {
-    const unitKey = buildDispatchKey(unit.unitType, unit.unitId);
-    const activeUnitKey = this.status.activeUnit
-      ? buildDispatchKey(this.status.activeUnit.unitType, this.status.activeUnit.unitId)
-      : null;
-    if (activeUnitKey !== unitKey && this.lastFinalizedUnitKey !== unitKey) return;
-
-    if (activeUnitKey === unitKey) {
-      this.status.activeUnit = undefined;
+  private async recordRetryCloseout(unit: UnitRef): Promise<void> {
+    const scopeId = this.backstopScopeId();
+    if (scopeId) {
+      const ledgerError = lookupLatestLedgerError(unit.unitType, unit.unitId);
+      const outcome = recordNonAdvancingOutcome({
+        scopeId,
+        guardId: "finalize-retry",
+        unitType: unit.unitType,
+        unitId: unit.unitId,
+        inputPayload: ledgerError ?? "finalize-retry",
+      }, {
+        sanctionedExit:
+          `${unit.unitType} ${unit.unitId} failed finalize twice with identical inputs` +
+          (ledgerError ? `: ${ledgerError.slice(0, 300)}` : "") +
+          ` — fix the underlying failure before re-running.`,
+      });
+      if ('error' in outcome) this.pendingBackstopFailure = outcome.error;
     }
-    this.lastAdvanceKey = null;
+
+    this.status.activeUnit = undefined;
     this.lastFinalizedUnitKey = null;
     this.bumpTransition();
     this.journalTransition({
       name: "unit-retry",
       reason: "finalize-retry",
+      unitType: unit.unitType,
+      unitId: unit.unitId,
+    });
+  }
+
+  private async recordAbandonCloseout(unit: UnitRef, reason: string): Promise<void> {
+    this.status.activeUnit = undefined;
+    this.pendingTargetSnapshot = null;
+    this.bumpTransition();
+    this.journalTransition({
+      name: "unit-abandon",
+      reason,
       unitType: unit.unitType,
       unitId: unit.unitId,
     });

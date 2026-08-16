@@ -36,6 +36,7 @@ import {
 } from "./legacy-import-preview-source.js";
 import {
   compileLegacyImportApplicationPlan,
+  legacyImportProjectionKind,
   type LegacyImportApplicationPlan,
 } from "./legacy-import-application-plan.js";
 import {
@@ -558,6 +559,7 @@ const INSTRUCTION_RESULT_ACTIONS: ReadonlySet<string> = new Set([
   "replace-slice-dependencies",
   "delete-slice-dependencies",
   "adopt-lifecycle",
+  "seed-quality-gate",
   "preserve",
 ]);
 
@@ -721,13 +723,14 @@ function requireReplayAggregate(
   }
   plan.projectionKeys.forEach((projectionKey, index) => {
     const projection = aggregate.projections[index];
+    const projectionKind = legacyImportProjectionKind(projectionKey);
     const predecessorId = projection?.["supersedes_projection_work_id"];
     let predecessorMatches = predecessorId === null && projection?.["predecessor_id"] === null;
     if (typeof predecessorId === "string") {
       predecessorMatches = projection?.["predecessor_id"] === predecessorId
         && projection?.["predecessor_project_id"] === projectId
         && projection?.["predecessor_key"] === projectionKey
-        && projection?.["predecessor_kind"] === "markdown"
+        && projection?.["predecessor_kind"] === projectionKind
         && Number(projection?.["predecessor_revision"]) < resultingRevision
         && Number(projection?.["predecessor_epoch"]) <= resultingEpoch;
     }
@@ -736,7 +739,7 @@ function requireReplayAggregate(
       || projection["projection_work_id"] !== `${operationId}:${String(index).padStart(4, "0")}`
       || projection["project_id"] !== projectId
       || projection["projection_key"] !== projectionKey
-      || projection["projection_kind"] !== "markdown"
+      || projection["projection_kind"] !== projectionKind
       || projection["renderer_version"] !== "v1"
       || projection["source_project_revision"] !== resultingRevision
       || projection["source_authority_epoch"] !== resultingEpoch
@@ -1007,7 +1010,7 @@ export function applyLegacyImport(input: unknown): LegacyImportApplicationReceip
         }],
         projections: plan.projectionKeys.map((projectionKey) => ({
           projectionKey,
-          projectionKind: "markdown",
+          projectionKind: legacyImportProjectionKind(projectionKey),
           rendererVersion: "v1",
         })),
       };

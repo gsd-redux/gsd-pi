@@ -113,19 +113,13 @@ Replace the path with the exact global bin directory from your pnpm error messag
 
 **Fix:** Inspect the blocker file and `/gsd status`. If work is still required, use the appropriate explicit recovery path such as retrying the failed Attempt, reopening a terminal task, or replanning the task before depending on later slice or milestone artifacts.
 
-### Auto mode stops with "Loop detected"
+### Auto mode stops with a liveness wedge
 
-**Cause:** The sliding-window detector found a repeated dispatch pattern that did not recover after the diagnostic retry. Missing expected artifacts usually surface through the bounded 3-attempt artifact verification retry path instead.
+**Symptoms:** Auto mode reports a wedge id, the guard that blocked, and a sanctioned recovery command. Re-running `/gsd auto` prints the same notice instead of entering the loop. This can also follow repeated `already-active` dispatch-claim skips.
 
-**Fix:** Check the task plan for clarity. If the plan is ambiguous, refine it manually, then `/gsd auto` to resume.
+**Cause:** The same guard or non-advancing outcome read byte-identical inputs twice. The wedge is stored in the workflow database, so interleaved dispatches and process restarts do not clear it.
 
-### Auto mode pauses after repeated `already-active` dispatch claims
-
-**Symptoms:** Auto mode repeatedly skips dispatch with reason `already-active`, then pauses with a message that manual recovery is required.
-
-**Cause:** GSD treats 3 consecutive `already-active` claim skips for the same unit as a stuck claim path and pauses auto mode instead of retrying forever.
-
-**Fix:** Resolve the underlying active-claim/worker state (usually with `/gsd doctor` or `/gsd doctor fix`), then run `/gsd auto` or `/gsd resume`.
+**Fix:** Apply the sanctioned recovery printed in the wedge notice. For an `already-active` claim, resolve the underlying active-claim or worker state, usually with `/gsd doctor` or `/gsd doctor fix`. Then run the exact `/gsd auto --resume-wedge <id>` command from the notice to acknowledge the wedge and retry. A wrong or incomplete recovery re-trips on the second unchanged occurrence.
 
 ### Auto mode pauses after a timeout or finalize failure
 
@@ -191,7 +185,7 @@ Replace the path with the exact global bin directory from your pnpm error messag
 
 **Symptoms:** GSD exits during startup with a message like `flat-phase migration failed` or `flat-phase migration required but the workflow database could not be opened`.
 
-**Cause:** The project still has the legacy nested `.gsd/milestones/` layout. On startup, GSD must migrate it to the flat `.gsd/phases/` layout before path resolvers and state checks run. This migration is fail-closed: if the SQLite database cannot be opened, the backup/rename/delete step fails, or the rendered flat-phase projection cannot be verified, startup stops instead of continuing against mixed disk state.
+**Cause:** The project still has the legacy nested `.gsd/milestones/` layout. On startup, GSD must migrate it to the flat `.gsd/phases/` layout before path resolvers and state checks run. Markdown for milestone, slice, and task identities already known to the database is archived in the migration backup and re-rendered from database authority; it is not imported during startup. An unknown or ambiguous identity, a database hierarchy gap, an unavailable database, a backup/rename/delete failure, or an unverifiable flat-phase render stops startup before GSD can continue against mixed or invented state.
 
 **Fix:**
 - Make sure you are starting GSD from the project root and that `.gsd/gsd.db*`, `.gsd/`, and `.gsd-backups/` are readable and writable on local disk.
@@ -393,9 +387,9 @@ In these states GSD does not auto-stash and does not auto-fix; it stops so you c
 
 **Symptoms:** `/gsd doctor` shows an error with issue code `artifact_db_status_divergence` for a completion artifact such as `S01-T01-SUMMARY.md` (or legacy `T01-SUMMARY.md` in older flat projects), while the database still shows that task as open or missing.
 
-**What it means:** A completion artifact exists on disk, but runtime will not silently trust it as task completion. `/gsd doctor fix` can repair task completion from a SUMMARY only when the SUMMARY frontmatter matches the task, has no blocker, has a valid `completed_at`, and its `verification_result` is passing.
+**What it means:** Runtime will not silently trust an open-task SUMMARY as task completion. After `gsd_task_complete` stages a result, an `in_progress` task's SUMMARY is considered a current staged projection only when its milestone, slice, and task identity and canonical path match; its disk and artifact content are byte-identical; its stamp-stripped content matches the task's database summary; and the latest Attempt is settled and successful at `verify`, or at `route` after a current non-passing host verdict. A mismatched, disk-only, missing-task, missing-Attempt, or failed-executor SUMMARY remains fail-closed and produces this diagnostic.
 
-**Fix:** Run `/gsd doctor fix` when doctor marks the divergence as fixable. Non-passing, negated-passing such as `not passed`, blocker, invalid, or mismatched summaries stay manual-recovery cases; inspect the artifact, repair or rerun the task, then rerun `/gsd doctor`.
+**Fix:** Review the divergent SUMMARY, then run `/gsd rebuild markdown` to quarantine stale projections and re-render from the authoritative database. Use `/gsd recover` with its exact Preview approval only when markdown should repopulate a lost or corrupt database. Otherwise, repair or rerun the task and rerun `/gsd doctor`.
 
 ### `/gsd doctor` reports `artifact_user_content_missing`
 
@@ -420,6 +414,8 @@ In these states GSD does not auto-stash and does not auto-fix; it stops so you c
 **Cause:** Antivirus, indexers, editors, or filesystem watchers can briefly lock the destination or temp file just as GSD performs the atomic rename.
 
 **Current behavior:** GSD now retries those transient rename failures with a short bounded backoff before surfacing an error. The retry is intentionally limited so genuine filesystem problems still fail loudly instead of hanging forever.
+
+Native projection-root operations on Windows also identify `ERROR_SHARING_VIOLATION` (`os error 32`) as transient. Auto mode routes that typed failure through its existing transient-execution retry budget; other projection failures are not reclassified, and sustained handle contention still surfaces as an error after the budget is exhausted.
 
 **Fix:**
 - Re-run the operation; most transient lock races clear quickly.

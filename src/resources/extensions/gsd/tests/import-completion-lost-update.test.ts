@@ -152,7 +152,7 @@ test("re-import preserves execution metadata and completed_at of an attested-com
   assert.equal(after.completed_at, OLD_COMPLETED_AT, "completed_at must not be refreshed by re-import");
 });
 
-test("removing the SUMMARY.md (reopen) lets a re-import return the task to pending and clears completion metadata (#1222)", () => {
+test("removing the SUMMARY.md without a DB reopen leaves the complete row in place (T021)", () => {
   const base = copyFixture();
   writeFileSync(join(base, SUMMARY_REL), "# T01 SUMMARY\n\nDone.\n");
 
@@ -177,20 +177,18 @@ test("removing the SUMMARY.md (reopen) lets a re-import return the task to pendi
   assert.equal(before.status, "complete", "precondition: T01 is complete");
   assert.equal(before.completed_at, "2026-07-01T00:00:00.000Z", "precondition: completed_at set");
 
-  // reopen-task deletes the flat-phase SUMMARY; the next re-import must respect it.
+  // T021: deleting the SUMMARY projection is not a status write. Unscoped
+  // re-import must not treat the missing file as authority over the DB row.
+  // reopen-task updates the DB itself; it does not rely on this import path.
   unlinkSync(join(base, SUMMARY_REL));
   migrateHierarchyToDb(base);
   invalidateStateCache();
   const after = t01Row()!;
   assert.equal(
     after.status,
-    "pending",
-    "after the SUMMARY is removed, a re-import must return the unchecked task to pending",
+    "complete",
+    "unscoped re-import must not overwrite existing DB status when SUMMARY is gone",
   );
-  // A pending re-import must not preserve stale completion metadata (#1228 thread):
-  // preserveCompletionMetadata only applies to complete/done imports.
-  assert.ok(!after.completed_at, "completed_at must be cleared when the task reverts to pending");
-  assert.ok(!after.one_liner, "one_liner must be cleared when the task reverts to pending");
-  assert.ok(!after.full_summary_md, "full_summary_md must be cleared when the task reverts to pending");
-  assert.ok(!after.verification_result, "verification_result must be cleared when the task reverts to pending");
+  assert.equal(after.completed_at, "2026-07-01T00:00:00.000Z", "completion metadata survives");
+  assert.equal(after.one_liner, "Implemented the widget frobnicator end-to-end");
 });

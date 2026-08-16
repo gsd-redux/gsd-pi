@@ -69,6 +69,7 @@ import { hasImplementationArtifacts } from "./milestone-implementation-evidence.
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import {
   readExecuteTaskArtifactReadiness,
+  readTerminalTaskRecoveryAbort,
   resolveArtifactVerificationBase,
 } from "./artifact-verification.js";
 import {
@@ -113,8 +114,15 @@ export function _setGithubFinalizeFnForTests(
 
 // ─── Recovery DB refresh ──────────────────────────────────────────────────────
 
+/**
+ * The success arm carries `advanced: false` when the branch only *observed*
+ * canonical state and wrote nothing (#1622). Callers must not describe such a
+ * result as a DB refresh, and must not treat it as evidence that a re-dispatch
+ * will find different state than the one that got the unit stuck. `advanced`
+ * absent means the branch either reconciled the DB or had no DB work to do.
+ */
 export type ArtifactRecoveryDbRefreshResult =
-  | { ok: true }
+  | { ok: true; advanced?: boolean; reason?: string; message?: string }
   | { ok: false; fatal: boolean; message: string; reason: string };
 
 function closeoutProofRecoveryReason(reason: CloseoutProofFailureReason): string {
@@ -170,7 +178,14 @@ export function refreshRecoveryDbForArtifact(
   unitId: string,
   basePath: string,
 ): ArtifactRecoveryDbRefreshResult {
-  if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") return { ok: true };
+  if (unitType !== "plan-slice" && unitType !== "execute-task" && unitType !== "complete-milestone") {
+    return {
+      ok: true,
+      advanced: false,
+      reason: `${unitType}-attempt-read-only-verified`,
+      message: `artifact verified on disk for ${unitType} ${unitId} (no DB write)`,
+    };
+  }
   if (!isDbAvailable()) {
     if (unitType === "execute-task") {
       return {
@@ -220,7 +235,45 @@ export function refreshRecoveryDbForArtifact(
         message: `Stuck recovery found execute-task ${unitId} artifacts, but its latest canonical Task Attempt has no actionable verify or route Result.`,
       };
     }
-    return { ok: true };
+    // #1622: a route-stage Attempt whose agent-owned recovery already aborted is
+    // NOT recoverable by re-dispatch — the next dispatch breaks instantly with
+    // `task-recovery-abort`, orphaning a worktree and leaving auto-mode to
+    // silently re-dispatch forever. Fail closed with the operator-actionable
+    // recovery path instead of reporting success.
+    if (readiness === "route") {
+      let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
+      try {
+        terminalAbort = readTerminalTaskRecoveryAbort(mid, sid, tid);
+      } catch (err) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "execute-task-recovery-route-read-failed",
+          message: `Stuck recovery could not read the canonical Task recovery route for execute-task ${unitId}: ${getErrorMessage(err)}`,
+        };
+      }
+      if (terminalAbort) {
+        return {
+          ok: false,
+          fatal: true,
+          reason: "execute-task-recovery-aborted",
+          message: `Stuck recovery found execute-task ${unitId} artifacts, but its canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}); re-dispatching would break immediately with task-recovery-abort. Resume it with \`gsd_task_recovery_resume\` using recoveryActionId ${terminalAbort.recoveryActionId}, or reconcile the projection drift with \`gsd rebuild markdown\` then \`gsd recover\`.`,
+        };
+      }
+    }
+    // #1622: unlike the plan-slice/complete-milestone branches below, nothing
+    // above writes the Task row — this branch only *reads* canonical Attempt
+    // readiness. Reconciling the row here would silently import a completion
+    // artifact the runtime deliberately refuses to trust (the doctor
+    // `artifact_db_status_divergence` check exists precisely to keep that an
+    // operator-invoked decision), so report the read-only outcome instead of an
+    // unqualified success and let callers describe what actually happened.
+    return {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: `canonical Task Attempt verified at the ${readiness} stage (no DB write)`,
+    };
   }
 
   if (!refreshWorkflowDatabaseFromDisk()) {

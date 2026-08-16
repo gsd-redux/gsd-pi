@@ -1,15 +1,21 @@
 /**
- * Regression test for #3607 — tighten verifyExpectedArtifact legacy branch.
+ * verifyExpectedArtifact behaviour after the DB cutover (ADR-017).
  *
- * The legacy (pre-migration) fallback in verifyExpectedArtifact previously
- * accepted either a heading match (### T01 --) or a checked checkbox as proof
- * that gsd_complete_task ran. A heading alone does not prove completion —
- * it could result from a rogue write.
+ * Task completion is DB-authoritative: for `execute-task`, verification reads
+ * the latest Task Attempt and nothing else. There is no longer a legacy branch
+ * that reads a slice PLAN — with the DB open the Attempt decides, and with the
+ * DB unavailable the unit fails closed. The #3607 checkbox-discrimination
+ * tests that used to live here were retired for that reason (see
+ * `docs/dev/state-db-cutover-milestone-decision.md`); a test that asserts
+ * against an unreachable branch reads as protection that does not exist.
  *
- * These tests exercise verifyExpectedArtifact directly for execute-task units
- * when the DB is unavailable (legacy branch). Only a checked checkbox in the
- * slice plan counts as evidence of completion; a bare heading or an unchecked
- * checkbox must not pass.
+ * What remains here:
+ * - `execute-task` fails closed with a `recovery` warning when the DB is
+ *   unavailable, and does not accept projection evidence when the DB is open
+ *   but carries no settled Attempt Result.
+ * - Artifact PATH resolution for the unit types that still resolve one:
+ *   sibling/team-suffix phase dirs (#1500) and the worktree→project-root
+ *   fallback (#852, #870).
  */
 
 import { test } from "node:test";
@@ -20,6 +26,28 @@ import { tmpdir } from "node:os";
 
 import { verifyExpectedArtifact } from "../auto-recovery.ts";
 import { closeDatabase, insertMilestone, insertSlice, insertTask, isDbAvailable, openDatabase } from "../gsd-db.ts";
+import { drainLogs, setStderrLoggingEnabled, _resetLogs, type LogEntry } from "../workflow-logger.ts";
+
+/**
+ * Run `verifyExpectedArtifact` with stderr suppressed, returning both the
+ * result and the log entries the call emitted. The workflow-logger buffer is a
+ * process-wide singleton, so it must be drained inside this scope.
+ */
+function verifyAndCaptureLogs(
+  unitType: string,
+  unitId: string,
+  base: string,
+): { result: boolean; logs: LogEntry[] } {
+  const previous = setStderrLoggingEnabled(false);
+  _resetLogs();
+  try {
+    const result = verifyExpectedArtifact(unitType, unitId, base);
+    return { result, logs: drainLogs() };
+  } finally {
+    _resetLogs();
+    setStderrLoggingEnabled(previous);
+  }
+}
 
 /** Scaffold .gsd/milestones/M001/slices/S01/ with tasks/ and a T01-SUMMARY.md. */
 function scaffoldProject(t: { after: (fn: () => void) => void }): {
@@ -39,9 +67,9 @@ function scaffoldProject(t: { after: (fn: () => void) => void }): {
   return { base, planPath: join(sliceDir, "S01-PLAN.md") };
 }
 
-test("#3607: execute-task legacy branch — checked checkbox [x] passes verification", (t) => {
+test("execute-task with the DB unavailable — checked checkbox [x] fails closed", (t) => {
   closeDatabase();
-  assert.equal(isDbAvailable(), false, "DB must be closed to hit legacy branch");
+  assert.equal(isDbAvailable(), false, "DB must be closed to exercise the DB-unavailable path");
 
   const { base, planPath } = scaffoldProject(t);
   writeFileSync(
@@ -54,14 +82,20 @@ test("#3607: execute-task legacy branch — checked checkbox [x] passes verifica
     ].join("\n"),
   );
 
+  const { result, logs } = verifyAndCaptureLogs("execute-task", "M001/S01/T01", base);
+
   assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "checked checkbox [x] is accepted as completion evidence",
+    result,
+    false,
+    "a checked checkbox is a projection, not authority — it must not verify completion",
   );
+  const recovery = logs.find((e) => e.component === "recovery" && /verify-fail execute-task M001\/S01\/T01/u.test(e.message));
+  assert.ok(recovery, "a recovery warning must name why completion could not be confirmed");
+  assert.match(recovery!.message, /DB unavailable/u);
+  assert.match(recovery!.message, /cannot confirm task completion/u);
 });
 
-test("#3607: execute-task legacy branch — checked checkbox [X] (uppercase) also passes", (t) => {
+test("execute-task with the DB unavailable — checked checkbox [X] (uppercase) also fails closed", (t) => {
   closeDatabase();
   const { base, planPath } = scaffoldProject(t);
   writeFileSync(
@@ -73,84 +107,20 @@ test("#3607: execute-task legacy branch — checked checkbox [X] (uppercase) als
     ].join("\n"),
   );
 
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "uppercase [X] checkbox is accepted",
-  );
+  const { result, logs } = verifyAndCaptureLogs("execute-task", "M001/S01/T01", base);
+
+  assert.equal(result, false, "uppercase [X] is no more authoritative than lowercase [x]");
+  const recovery = logs.find((e) => e.component === "recovery" && /verify-fail execute-task M001\/S01\/T01/u.test(e.message));
+  assert.ok(recovery, "a recovery warning must be logged");
+  assert.match(recovery!.message, /DB unavailable/u);
 });
 
-test("#3607: execute-task legacy branch — unchecked checkbox [ ] is rejected", (t) => {
-  closeDatabase();
-  const { base, planPath } = scaffoldProject(t);
-  writeFileSync(
-    planPath,
-    [
-      "# S01 plan",
-      "",
-      "- [ ] **T01: Implement feature**",
-    ].join("\n"),
-  );
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    false,
-    "unchecked checkbox [ ] must not pass verification (#3607)",
-  );
-});
-
-test("#3607: execute-task legacy branch — bare heading ### T01 is no longer sufficient", (t) => {
-  closeDatabase();
-  const { base, planPath } = scaffoldProject(t);
-  // Old buggy behaviour would pass on a heading alone. This must now fail.
-  writeFileSync(
-    planPath,
-    [
-      "# S01 plan",
-      "",
-      "### T01 -- Implement feature",
-      "",
-      "Some description here, but no checkbox.",
-    ].join("\n"),
-  );
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    false,
-    "heading alone must not pass verification after #3607 fix",
-  );
-});
-
-test("#3607: execute-task legacy branch — missing plan file returns false", (t) => {
-  closeDatabase();
-  const { base } = scaffoldProject(t);
-  // Do not create S01-PLAN.md at all.
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    false,
-    "missing plan file must cause verification to return false",
-  );
-});
-
-test("#3607: execute-task legacy branch — wrong task id in checkbox does not match", (t) => {
-  closeDatabase();
-  const { base, planPath } = scaffoldProject(t);
-  writeFileSync(
-    planPath,
-    [
-      "# S01 plan",
-      "",
-      "- [x] **T02: Some other task**",
-    ].join("\n"),
-  );
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    false,
-    "checkbox for a different task id must not count as T01 completion",
-  );
-});
+// The four #3607 negatives that stood here (unchecked `[ ]`, bare heading,
+// missing plan, wrong task id) were deleted by T036. Each opened
+// `closeDatabase()` and asserted `false`, but DB-closed `execute-task`
+// verification now returns `false` unconditionally, so no fixture could make
+// them fail. Checkbox discrimination is not a behaviour this codebase has any
+// more; see the milestone decision doc's accepted residual risks.
 
 test("execute-task DB branch ignores checked plan and summary without an Attempt Result", (t) => {
   closeDatabase();
@@ -220,29 +190,16 @@ test("execute-task DB lag branch — summary without checked plan still fails", 
   );
 });
 
-test("#1500: execute-task accepts SUMMARY in stale sibling flat-phase dir", (t) => {
-  closeDatabase();
-  const base = mkdtempSync(join(tmpdir(), "gsd-stale-sibling-phase-"));
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const phasesDir = join(base, ".gsd", "phases");
-  const staleDir = join(phasesDir, "09-obg27g-m009-obg27g-web-api");
-  const activeDir = join(phasesDir, "09-m009-obg27g-m009-obg27g-web-api");
-  mkdirSync(staleDir, { recursive: true });
-  mkdirSync(activeDir, { recursive: true });
-
-  writeFileSync(join(activeDir, "09-04-PLAN.md"), "# S04 plan\n\n- [x] **T02: Build endpoint**\n");
-  writeFileSync(join(staleDir, "S04-T02-SUMMARY.md"), "# T02 summary\n");
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M009/S04/T02", base),
-    true,
-    "verification must accept the summary from a same-number sibling phase dir",
-  );
-});
+// Two more #1500 fixtures stood here and were deleted by T036 for the same
+// reason: both went through `verifyExpectedArtifact("execute-task", …)`, whose
+// outcome no longer depends on any file on disk. The reseeded "SUMMARY in a
+// stale sibling flat-phase dir" positive stayed green with the SUMMARY deleted
+// (it only proved that a settled Attempt verifies), and the
+// "does NOT borrow a summary from a different-milestone same-phase dir"
+// negative asserted a `false` that is now unconditional. Sibling-dir
+// resolution for execute-task is unreachable in both directions, so the
+// team-suffix fallback it exercised was removed from
+// `findExistingSiblingPhaseArtifact` too.
 
 test("#1500: plan-milestone does NOT borrow a roadmap from a team-suffix sibling projection", (t) => {
   closeDatabase();
@@ -279,33 +236,6 @@ test("#1500: plan-milestone does NOT borrow a roadmap from a team-suffix sibling
     verifyExpectedArtifact("plan-milestone", "M009", base),
     false,
     "plan-milestone must not accept a roadmap from a team-suffix sibling projection",
-  );
-});
-
-test("#1500: execute-task does NOT borrow a summary from a different-milestone same-phase dir", (t) => {
-  closeDatabase();
-  const base = mkdtempSync(join(tmpdir(), "gsd-sibling-foreign-milestone-"));
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const phasesDir = join(base, ".gsd", "phases");
-  // M009-abc123's own phase dir has the checked plan but no summary; only a
-  // DIFFERENT milestone (M009-def456) that merely shares the padded phase number
-  // carries the summary.
-  const ownDir = join(phasesDir, "09-abc123-web-api");
-  const foreignDir = join(phasesDir, "09-def456-web-api");
-  mkdirSync(ownDir, { recursive: true });
-  mkdirSync(foreignDir, { recursive: true });
-
-  writeFileSync(join(ownDir, "09-04-PLAN.md"), "# S04 plan\n\n- [x] **T02: Build endpoint**\n");
-  writeFileSync(join(foreignDir, "S04-T02-SUMMARY.md"), "# T02 summary\n");
-
-  assert.equal(
-    verifyExpectedArtifact("execute-task", "M009-abc123/S04/T02", base),
-    false,
-    "verification must not borrow a summary from a different team-suffix milestone sharing the phase number",
   );
 });
 

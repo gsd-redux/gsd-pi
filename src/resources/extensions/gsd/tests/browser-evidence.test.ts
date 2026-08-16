@@ -140,3 +140,37 @@ describe('hasBrowserRequiredText', () => {
     );
   });
 });
+
+describe('hasBrowserRequiredText — negated browser mentions', () => {
+  // Acceptance run 7: a slice that writes two text files declared
+  // "UAT mode: artifact-driven" and explained why. complete-slice rejected it with
+  // "UAT requires browser verification". The rationale line read
+  // "...no runtime behavior, server, UI, or browser interaction is involved" — the
+  // negator sits several list items away from "browser", so the adjacency-based
+  // negation guard missed it and `browser interaction` matched as a requirement.
+  test('a negated list mentioning browser is not a browser requirement', () => {
+    const text = [
+      '## UAT Type',
+      '',
+      '- UAT mode: artifact-driven',
+      '- Why this mode is sufficient: slice deliverables are static text files with exact',
+      '  required content; no runtime behavior, server, UI, or browser interaction is involved.',
+    ].join('\n');
+    assert.ok(!hasBrowserRequiredText(text), 'negated browser mention must not escalate');
+  });
+
+  test('adjacent negations still pass', () => {
+    assert.ok(!hasBrowserRequiredText('- No browser interaction is required.'));
+    assert.ok(!hasBrowserRequiredText('- Verified without a browser session.'));
+  });
+
+  test('a real requirement in a later clause still counts', () => {
+    // The negation guard is clause-bounded, so it must not swallow the sentence after it.
+    const text = [
+      '## Test Cases',
+      '',
+      '1. No seeded data is needed. Open the page at localhost:3000 and screenshot it.',
+    ].join('\n');
+    assert.ok(hasBrowserRequiredText(text), 'a genuine browser step must still be detected');
+  });
+});

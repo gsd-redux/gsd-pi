@@ -43,7 +43,7 @@ export const INTEGRATION_EXTENSION_GLOBS = new Set([
   'slash-commands',
 ]);
 
-export const SOURCE_ROOTS = ['src', 'packages', 'scripts', 'web', 'studio', 'vscode-extension'];
+export const SOURCE_ROOTS = ['src', 'packages', 'scripts', 'web', 'vscode-extension'];
 
 // Archived material is kept for provenance only: nothing imports it and no
 // runner executes it, so it must not register as live test or source surface.
@@ -100,7 +100,7 @@ export function classifyRunner(testPath) {
   if (testPath.startsWith('tests/e2e/')) return 'e2e';
   if (testPath.startsWith('tests/smoke/') || testPath.startsWith('tests/live')) return 'release-pipeline';
   if (testPath.startsWith('scripts/__tests__/')) return 'scripts-fast-gates';
-  if (testPath.startsWith('web/') || testPath.startsWith('studio/') || testPath.startsWith('vscode-extension/')) {
+  if (testPath.startsWith('web/') || testPath.startsWith('vscode-extension/')) {
     return 'ui-sparse-manual';
   }
   if (testPath.startsWith('packages/')) return 'packages';
@@ -160,7 +160,6 @@ export function classifyArea(sourcePath) {
   if (p.startsWith('src/')) return `src:${p.split('/')[1]}`;
   if (p.startsWith('web/')) return 'web';
   if (p.startsWith('scripts/')) return 'scripts';
-  if (p.startsWith('studio/')) return 'studio';
   if (p.startsWith('vscode-extension/')) return 'vscode';
   return 'other';
 }
@@ -294,7 +293,6 @@ export function sourceSuiteCoverageKeys(sourcePath) {
   if (p.startsWith('src/')) return ['root:src'];
   if (p.startsWith('scripts/')) return ['root:scripts'];
   if (p.startsWith('web/')) return ['root:web'];
-  if (p.startsWith('studio/')) return ['root:studio'];
   if (p.startsWith('vscode-extension/')) return ['root:vscode'];
   return [];
 }
@@ -311,7 +309,6 @@ export function testSuiteCoverageKeys(testPath) {
   if (testPath.startsWith('src/tests/')) return ['root:src'];
   if (testPath.startsWith('scripts/__tests__/')) return ['root:scripts'];
   if (testPath.startsWith('web/')) return ['root:web'];
-  if (testPath.startsWith('studio/')) return ['root:studio'];
   if (testPath.startsWith('vscode-extension/')) return ['root:vscode'];
   return [];
 }

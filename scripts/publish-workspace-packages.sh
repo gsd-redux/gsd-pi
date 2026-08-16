@@ -5,8 +5,7 @@
 # order, at the current root package.json version. The package list is derived
 # from scripts/lib/npm-release-packages.cjs (driven by each package's
 # publishConfig) — NOT a hardcoded list — so a new publishable package can never
-# be silently forgotten the way @opengsd/cloud-mcp-gateway and @opengsd/daemon
-# were.
+# be silently forgotten by a stale hardcoded list.
 #
 # Assumes the build already ran and prepack has resolved workspace: ranges
 # (callers run scripts/prepack-resolve-workspace.cjs + the postpack restore trap).

@@ -93,8 +93,6 @@ async function runSuccessfulFinalize(s: AutoSession) {
       previousTier: undefined,
     },
     {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     },
   );
@@ -150,8 +148,6 @@ async function runFinalizeWithDeps(
       previousTier: undefined,
     },
     {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     },
   );

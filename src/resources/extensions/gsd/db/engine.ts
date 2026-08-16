@@ -42,6 +42,7 @@ import type { GsdWorkspace, MilestoneScope } from "../workspace.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { createDbAdapter, type DbAdapter } from "../db-adapter.js";
 import { createBaseSchemaObjects } from "../db-base-schema.js";
+import { hasRequiredSchemaObjects } from "../db-required-schema.js";
 import { createCoordinationTablesV24 } from "../db-coordination-schema.js";
 import { createDbConnectionCache, type DbConnectionCacheEntry } from "../db-connection-cache.js";
 import { backupDatabaseBeforeMigration, isMigrationBackupError } from "../db-migration-backup.js";
@@ -88,6 +89,7 @@ import {
   applyMigrationV43MilestoneCompletion,
   applyMigrationV44MilestoneReopen,
   applyMigrationV45AuthorityRecovery,
+  applyMigrationV47SameLeaseAttemptSettlement,
 } from "../db-migration-steps.js";
 import {
   createCanonicalFoundationSchemaV31,
@@ -156,7 +158,43 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 47;
+
+/**
+ * PRAGMA application_id stamped on every gsd.db at V46 so binaries and
+ * external tools can cheaply identify DB-authored GSD state. Derivation:
+ * the ASCII bytes of "GSDB" interpreted as a big-endian 32-bit unsigned
+ * integer (0x47 'G' << 24 | 0x53 'S' << 16 | 0x44 'D' << 8 | 0x42 'B').
+ */
+export const GSD_APPLICATION_ID = 0x47534442;
+
+/**
+ * Typed refuse-newer error. The engine throws this when a database records a
+ * schema version newer than this binary supports; read/write seams must
+ * distinguish it from generic open failures and surface the exact message
+ * instead of degrading to empty state (T003 spike: silent divergence).
+ */
+export class SchemaTooNewError extends Error {
+  override readonly name = "GSDSchemaTooNewError";
+  readonly currentVersion: number;
+  readonly supportedVersion: number;
+
+  constructor(currentVersion: number, supportedVersion: number) {
+    super(
+      `gsd.db schema is v${currentVersion}, newer than the v${supportedVersion} this gsd-pi supports. ` +
+      `Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.`,
+    );
+    this.currentVersion = currentVersion;
+    this.supportedVersion = supportedVersion;
+  }
+}
+
+export function isSchemaTooNewError(err: unknown): err is SchemaTooNewError {
+  // The name check keeps the guard reliable when the error crosses a module
+  // instance boundary (e.g. jiti-loaded extension vs. directly imported).
+  return err instanceof SchemaTooNewError
+    || (err instanceof Error && err.name === "GSDSchemaTooNewError");
+}
 
 interface StartupRepairAssessment {
   readonly required: boolean;
@@ -176,6 +214,7 @@ function assessStartupRepair(db: DbAdapter): StartupRepairAssessment {
     || !hasCanonicalOutboxInvariantsV31(db)
     || !hasVerificationEvidenceDedupIndex(db)
     || !hasRuntimeKvSchemaV25(db)
+    || !hasRequiredSchemaObjects(db)
     || (fts.supported && (!fts.schemaComplete || !fts.rebuildMarked));
   return {
     required,
@@ -366,6 +405,7 @@ function initSchema(
         applyMigrationV43MilestoneCompletion(db);
         applyMigrationV44MilestoneReopen(db);
         applyMigrationV45AuthorityRecovery(db);
+        applyMigrationV47SameLeaseAttemptSettlement(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -381,6 +421,9 @@ function initSchema(
         db.exec("CREATE INDEX IF NOT EXISTS idx_rework_findings_status ON rework_brief_findings(brief_id, severity, status)");
 
         recordSchemaVersion(db, SCHEMA_VERSION);
+        // Fresh DBs get the same V46 cutover stamps as migrated DBs so new
+        // and upgraded databases are indistinguishable.
+        stampStateCutoverPragmas(db, SCHEMA_VERSION);
       }
     }
 
@@ -445,6 +488,25 @@ let _migrationFaultForTest = false;
 /** Test-only: force migrateSchema to throw after applying its steps but before COMMIT. */
 export function _setMigrationFaultForTest(v: boolean): void { _migrationFaultForTest = v; }
 
+/**
+ * Stamp the state-DB cutover PRAGMAs so binaries and external tools can
+ * detect DB-authored GSD state cheaply (PRAGMA application_id/user_version
+ * are readable without parsing schema_version). No table changes.
+ */
+function stampStateCutoverPragmas(db: DbAdapter, version: number): void {
+  db.exec(`PRAGMA application_id = ${GSD_APPLICATION_ID}`);
+  db.exec(`PRAGMA user_version = ${version}`);
+}
+
+/**
+ * V46 — state-DB cutover stamp. Adds/alters NO tables; it only stamps
+ * application_id + user_version and records schema version 46.
+ */
+function applyMigrationV46StateCutoverStamp(db: DbAdapter): void {
+  stampStateCutoverPragmas(db, 46);
+  recordSchemaVersion(db, 46);
+}
+
 function migrateSchema(
   db: DbAdapter,
   dbPath: string | null,
@@ -453,10 +515,7 @@ function migrateSchema(
 ): void {
   const currentVersion = getCurrentSchemaVersion(db);
   if (currentVersion > SCHEMA_VERSION) {
-    throw new Error(
-      `gsd.db schema is v${currentVersion}, newer than the v${SCHEMA_VERSION} this gsd-pi supports. ` +
-      `Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.`,
-    );
+    throw new SchemaTooNewError(currentVersion, SCHEMA_VERSION);
   }
   if (currentVersion === SCHEMA_VERSION) return;
 
@@ -708,6 +767,22 @@ function migrateSchema(
     if (currentVersion < 45) {
       applyMigrationV45AuthorityRecovery(db);
       recordSchemaVersion(db, 45);
+    }
+
+    if (currentVersion < 46) {
+      // V46 adds/alters NO tables — cutover stamps only (application_id,
+      // user_version) so binaries and external tools can detect DB-authored
+      // state cheaply.
+      applyMigrationV46StateCutoverStamp(db);
+    }
+
+    if (currentVersion < 47) {
+      // V47 — same-lease Attempt settlement (#1740): recreate the
+      // dispatch-scope transition trigger so a worker holding its own lease
+      // can settle its own Attempt after its dispatch row is gone.
+      applyMigrationV47SameLeaseAttemptSettlement(db);
+      stampStateCutoverPragmas(db, 47);
+      recordSchemaVersion(db, 47);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");
@@ -1983,10 +2058,11 @@ export function closeAllDatabases(): void {
  * Open (or reuse) the database connection scoped to the given workspace.
  *
  * Uses workspace.identityKey as the cache key, so sibling worktrees of the
- * same project resolve to the same connection. On a cache hit the existing
- * adapter is reactivated as the current connection without re-opening the
- * file. On a cache miss, delegates to openDatabase() for the full
- * open + schema-init + migration flow, then caches the result.
+ * same project resolve to the same connection. On a cache hit with complete
+ * startup invariants, the existing adapter is reactivated without re-opening
+ * the file. A cache hit that needs repair is closed and reopened through the
+ * guarded schema-init flow. On a cache miss, delegates to openDatabase() for
+ * the full open + schema-init + migration flow, then caches the result.
  *
  * When switching to a different workspace, the previously active connection
  * is preserved in the cache (not closed), so callers can switch back to it
@@ -2013,13 +2089,19 @@ export function openDatabaseByWorkspace(workspace: GsdWorkspace): boolean {
   }
   const validCached = _dbCache.get(key);
   if (validCached) {
-    // Reactivate the cached connection as the current singleton.
-    currentDb = validCached.db;
-    currentPath = validCached.dbPath;
-    currentPid = process.pid;
-    _dbOpenState.markAttempted();
-    _currentIdentityKey = key;
-    return true;
+    if (_replacementObservationDatabases.has(validCached.db) || !assessStartupRepair(validCached.db).required) {
+      currentDb = validCached.db;
+      currentPath = validCached.dbPath;
+      currentPid = process.pid;
+      _dbOpenState.markAttempted();
+      _currentIdentityKey = key;
+      return true;
+    }
+    if (currentDb === validCached.db) closeDatabase();
+    else {
+      closeCachedConnection(validCached, "workspace");
+      _dbCache.delete(key);
+    }
   }
 
   // Cache miss — need to open a new connection.
@@ -2206,7 +2288,15 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
     } else {
       try {
         assertDatabaseAdapterMatchesPath(currentDb, path);
-        return true;
+        if (
+          path === ":memory:"
+          || _replacementObservationDatabases.has(currentDb)
+          || !assessStartupRepair(currentDb).required
+        ) {
+          return true;
+        }
+        closeDatabase();
+        _dbOpenState.markAttempted();
       } catch {
         closeDatabase();
       }

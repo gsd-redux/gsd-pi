@@ -725,6 +725,32 @@ describe('gsd-recover', async () => {
     }
   });
 
+  test('handleRecover reports base snapshot error code and row identity', async () => {
+    const base = createFixtureBase();
+    try {
+      openDatabase(join(base, '.gsd', 'gsd.db'));
+      _getAdapter()!.exec(`
+        INSERT INTO memories (id, category, content, created_at, updated_at, structured_fields)
+        VALUES
+          ('memory-1', 'architecture', 'First', 'created', 'updated', '{"sourceDecisionId":"D001"}'),
+          ('memory-2', 'architecture', 'Second', 'created', 'updated', '{"sourceDecisionId":"D001"}')
+      `);
+
+      const { ctx, notes } = makeCtx();
+      await handleRecover(ctx, base);
+
+      assert.equal(notes.at(-1)?.kind, 'error');
+      const message = notes.at(-1)?.message ?? '';
+      assert.match(message, /LEGACY_IMPORT_BASE_ROW_DUPLICATE/);
+      assert.match(message, /"row_set":"decision_memories"/);
+      assert.match(message, /source_decision_id/);
+      assert.match(message, /D001/);
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
   test('handleRecover reports the drilled content-addressed backup used before recovery', async () => {
     const base = createFixtureBase();
     try {

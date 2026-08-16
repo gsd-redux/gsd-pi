@@ -195,6 +195,8 @@ function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 		modelId.includes("opus-4.7") ||
 		modelId.includes("opus-4-8") ||
 		modelId.includes("opus-4.8") ||
+		modelId.includes("opus-5") ||
+		modelId.includes("opus.5") ||
 		modelId.includes("fable-5") ||
 		modelId.includes("fable.5") ||
 		modelId.includes("sonnet-5") ||
@@ -255,6 +257,8 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		model.id.includes("opus-4.7") ||
 		model.id.includes("opus-4-8") ||
 		model.id.includes("opus-4.8") ||
+		model.id.includes("opus-5") ||
+		model.id.includes("opus.5") ||
 		model.id.includes("fable-5") ||
 		model.id.includes("fable.5") ||
 		model.id.includes("sonnet-5") ||
@@ -266,6 +270,15 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.api === "anthropic-messages" || model.api === "anthropic-vertex") &&
 		isAnthropicAdaptiveThinkingModel(model.id)
 	) {
+		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
+	}
+	if (
+		(model.provider === "minimax" || model.provider === "minimax-cn") &&
+		model.api === "anthropic-messages" &&
+		model.id === "MiniMax-M3"
+	) {
+		// M3 exposes adaptive and disabled thinking modes over the Anthropic-compatible
+		// endpoint, so force adaptive thinking instead of the budget-based default.
 		mergeAnthropicMessagesCompat(model, { forceAdaptiveThinking: true });
 	}
 	if (model.api === "openai-completions" && model.id.includes("deepseek-v4")) {
@@ -1239,6 +1252,27 @@ async function generateModels() {
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
 
+	// MAI Code 1.1 Flash is exposed by GitHub Copilot but may lag in models.dev.
+	for (let i = allModels.length - 1; i >= 0; i--) {
+		if (allModels[i].provider === "github-copilot" && /mai[- ]code[- ]1\.1[- ]flash/i.test(allModels[i].id)) {
+			allModels.splice(i, 1);
+		}
+	}
+	allModels.push({
+		id: "mai-code-1.1-flash",
+		name: "MAI Code 1.1 Flash",
+		api: "openai-responses",
+		provider: "github-copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		reasoning: true,
+		headers: { ...COPILOT_STATIC_HEADERS },
+		thinkingLevelMap: { off: null, minimal: "low", medium: "medium", xhigh: "high" },
+		input: ["text"],
+		cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400_000,
+		maxTokens: 128_000,
+	});
+
 	// Fix incorrect cache pricing for Claude Opus 4.5 from models.dev
 	// models.dev has 3x the correct pricing (1.5/18.75 instead of 0.5/6.25)
 	const opus45 = allModels.find(m => m.provider === "anthropic" && m.id === "claude-opus-4-5");
@@ -1382,6 +1416,75 @@ async function generateModels() {
 			contextWindow: 1000000,
 			maxTokens: 128000,
 		});
+	}
+
+	// Add missing Claude Opus 5 until models.dev includes it.
+	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-5")) {
+		allModels.push({
+			id: "claude-opus-5",
+			name: "Claude Opus 5",
+			api: "anthropic-messages",
+			baseUrl: "https://api.anthropic.com",
+			provider: "anthropic",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 25,
+				cacheRead: 0.5,
+				cacheWrite: 6.25,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
+	// Add missing Claude Opus 5 on Vertex until models.dev includes it.
+	if (!allModels.some(m => m.provider === "anthropic-vertex" && m.id === "claude-opus-5")) {
+		allModels.push({
+			id: "claude-opus-5",
+			name: "Claude Opus 5 (Vertex)",
+			api: "anthropic-vertex",
+			baseUrl: VERTEX_BASE_URL,
+			provider: "anthropic-vertex",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 25,
+				cacheRead: 0.5,
+				cacheWrite: 6.25,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
+	// Add missing Claude Opus 5 Bedrock profiles until models.dev includes them.
+	for (const [bedrockId, regionLabel] of [
+		["anthropic.claude-opus-5", ""],
+		["us.anthropic.claude-opus-5", " (US)"],
+		["global.anthropic.claude-opus-5", " (Global)"],
+	] as const) {
+		if (!allModels.some(m => m.provider === "amazon-bedrock" && m.id === bedrockId)) {
+			allModels.push({
+				id: bedrockId,
+				name: `Claude Opus 5${regionLabel}`,
+				api: "bedrock-converse-stream",
+				baseUrl: getBedrockBaseUrl(bedrockId),
+				provider: "amazon-bedrock",
+				reasoning: true,
+				input: ["text", "image"],
+				cost: {
+					input: 5,
+					output: 25,
+					cacheRead: 0.5,
+					cacheWrite: 6.25,
+				},
+				contextWindow: 1000000,
+				maxTokens: 128000,
+			});
+		}
 	}
 
 	// Add missing Claude Sonnet 4.6
@@ -1786,12 +1889,16 @@ async function generateModels() {
 		}
 	}
 
-	const minimaxDirectModelOverrides = new Map([
+	const minimaxDirectModelOverrides = new Map<
+		string,
+		{ contextWindow: number; maxTokens: number; input?: ("text" | "image" | "video")[] }
+	>([
 		["MiniMax-M2.7", { contextWindow: 204800, maxTokens: 131072 }],
 		["MiniMax-M2.7-highspeed", { contextWindow: 204800, maxTokens: 131072 }],
 		// MiniMax's API overview advertises a 1M context window for M3; models.dev
-		// currently reports the documented guaranteed 512K floor.
-		["MiniMax-M3", { contextWindow: 1000000, maxTokens: 131072 }],
+		// currently reports the documented guaranteed 512K floor. M3 also accepts
+		// video inputs alongside text and image, which models.dev does not report.
+		["MiniMax-M3", { contextWindow: 1000000, maxTokens: 131072, input: ["text", "image", "video"] }],
 	]);
 	const minimaxDirectSupportedIds = new Set(minimaxDirectModelOverrides.keys());
 
@@ -1804,6 +1911,9 @@ async function generateModels() {
 			if (override) {
 				candidate.contextWindow = override.contextWindow;
 				candidate.maxTokens = override.maxTokens;
+				if (override.input) {
+					candidate.input = override.input;
+				}
 			}
 		}
 	}

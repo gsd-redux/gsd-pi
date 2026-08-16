@@ -37,6 +37,10 @@ const VALIDATION_BLOCK_RE =
 
 // ─── Core (basePath-only — usable by both drift API and legacy wrapper) ──────
 
+// No state-version stamp short-circuit here: `project_authority.revision` is
+// not bumped by the projection-affecting writes, and the stamp is a content
+// byte a hand-edited file keeps, so a matching stamp is not evidence of
+// freshness. Every entry the detector emits is kept.
 function detectStaleRenderDriftFromBasePath(basePath: string): StaleRenderDrift[] {
   const entries = detectStaleRenders(basePath);
   if (entries.length === 0) return [];

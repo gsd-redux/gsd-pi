@@ -87,7 +87,7 @@ test("loaded addon exposes the file-identity and directory-sync N-API exports", 
   assert.equal(output.syncDirectoryEntry, "function", "addon is stale: syncDirectoryEntry export missing");
 });
 
-test("projection root lock permits root writes while excluding a second owner", (t) => {
+test("projection root lock permits root writes, excludes a second owner, and reacquires after close", (t) => {
   const root = mkdtempSync(join(tmpdir(), "gsd-native-projection-root-"));
   const previousNativePreference = process.env.GSD_NATIVE_PREFER_LOCAL;
   let lock;
@@ -115,4 +115,10 @@ test("projection root lock permits root writes while excluding a second owner", 
   lock.writeFile("PROJECT.md", Buffer.from("# Project\n"));
   assert.equal(lock.readFile("PROJECT.md").toString(), "# Project\n");
   assert.ok(lock.listDirectory("").includes("PROJECT.md"));
+
+  for (let acquisition = 2; acquisition <= 4; acquisition++) {
+    lock.close();
+    lock = acquireProjectionRootIdentityLock(root, stat.dev.toString(), stat.ino.toString());
+    assert.equal(lock.readFile("PROJECT.md").toString(), "# Project\n", `acquisition ${acquisition}`);
+  }
 });

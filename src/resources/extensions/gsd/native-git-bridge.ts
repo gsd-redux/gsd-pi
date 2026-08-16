@@ -253,6 +253,13 @@ export function nativeDetectMainBranch(basePath: string): string {
   const masterExists = gitExec(basePath, ["show-ref", "--verify", "refs/heads/master"], true);
   if (masterExists) return "master";
 
+  // An unborn HEAD (zero-commit repo) still reports a current branch name,
+  // which callers would use as a start point and hit "not a valid object
+  // name". Report "" instead — but only when this really is a repo, so a
+  // non-repo path keeps throwing the way the native path does.
+  const head = gitExec(basePath, ["rev-parse", "--verify", "--quiet", "HEAD"], true);
+  if (!head && gitExec(basePath, ["rev-parse", "--git-dir"], true)) return "";
+
   return gitExec(basePath, ["branch", "--show-current"]);
 }
 
@@ -266,15 +273,40 @@ export function nativeDetectMainBranch(basePath: string): string {
 export function nativeBranchExists(basePath: string, branch: string): boolean {
   const native = loadNative();
   if (native) {
-    return native.gitBranchExists(basePath, branch);
+    const refExists = native.gitBranchExists(basePath, branch);
+    if (refExists) return true;
+    return branchExistsIncludingUnborn(
+      false,
+      currentBranchIncludingUnborn(
+        () => native.gitCurrentBranch(basePath),
+        () => gitExec(basePath, ["symbolic-ref", "--quiet", "--short", "HEAD"], true),
+      ),
+      branch,
+    );
   }
   const result = gitExec(basePath, ["show-ref", "--verify", `refs/heads/${branch}`], true);
-  if (result !== "") return true;
+  const current = gitExec(basePath, ["symbolic-ref", "--quiet", "--short", "HEAD"], true);
+  return branchExistsIncludingUnborn(result !== "", current, branch);
+}
 
-  // show-ref fails for unborn branches (zero commits). Fall back to checking
-  // whether the requested branch is the current (unborn) branch.
-  const current = gitExec(basePath, ["branch", "--show-current"], true);
-  return current === branch;
+export function currentBranchIncludingUnborn(
+  nativeCurrentBranch: () => string | null,
+  symbolicCurrentBranch: () => string,
+): string | null {
+  try {
+    const currentBranch = nativeCurrentBranch();
+    if (currentBranch) return currentBranch;
+  } catch {
+  }
+  return symbolicCurrentBranch() || null;
+}
+
+export function branchExistsIncludingUnborn(
+  refExists: boolean,
+  currentBranch: string | null,
+  branch: string,
+): boolean {
+  return refExists || currentBranch === branch;
 }
 
 /**
@@ -392,6 +424,15 @@ export function nativeHasCommittedHead(basePath: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function nativeIsCurrentUnbornBranch(basePath: string, branch: string): boolean {
+  const native = loadNative();
+  const currentBranch = currentBranchIncludingUnborn(
+    () => native?.gitCurrentBranch(basePath) ?? null,
+    () => gitExec(basePath, ["symbolic-ref", "--quiet", "--short", "HEAD"], true),
+  );
+  return currentBranch === branch && !nativeHasCommittedHead(basePath);
 }
 
 /**
@@ -1020,6 +1061,7 @@ export function nativeCommit(
  * Fallback: `git checkout <branch>`.
  */
 export function nativeCheckoutBranch(basePath: string, branch: string): void {
+  if (nativeIsCurrentUnbornBranch(basePath, branch)) return;
   const native = loadNative();
   if (native) {
     native.gitCheckoutBranch(basePath, branch);
@@ -1029,6 +1071,16 @@ export function nativeCheckoutBranch(basePath: string, branch: string): void {
     cwd: basePath,
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf-8",
+  });
+}
+
+/** Create and enter a branch when HEAD is unborn and has no commit target. */
+export function nativeCheckoutNewBranch(basePath: string, branch: string): void {
+  execFileSync("git", ["checkout", "-b", branch], {
+    cwd: basePath,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+    env: GIT_NO_PROMPT_ENV,
   });
 }
 

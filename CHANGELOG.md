@@ -8,6 +8,112 @@ This changelog starts from the `open-gsd/gsd-pi` ownership baseline. Earlier pro
 
 ## [Unreleased]
 
+### Changed
+- **gsd**: collapse auto-mode onto a single UnitRun — the claimed/running `unit_dispatches` row (ADR-048). `advance()` returns `dispatchId`; `getStatus().activeUnit` reads the database; `settle(dispatchId, outcome)` is the closeout seam.
+
+## [1.15.1] - 2026-08-14
+
+### Fixed
+- **gsd**: fail-closed auto-mode closeout so a unit run cannot silently re-enter the same skip (#1754, #1739, #1726)
+- **gsd**: persist a terminal task-recovery abort and stop re-dispatching that execute-task until resume (#1754)
+- **gsd**: settle the active unit when verified-task publication fails, and recapture the host-verification source after deferred execute-task commit/hooks (#1739)
+- **gsd**: do not re-project a leaked SUMMARY for cancelled/interrupted task attempts (#1726)
+
+## [1.15.0] - 2026-08-12
+
+### Added
+- **model-router**: add claude-sonnet-5 to model capability registries
+- **tools**: add gsd_requirement_list/get and gsd_decision_list/get (#1608)
+- **pi-ai**: add missing kimi-coding subscription models to catalog
+- **pi-ai**: add Kimi Code (subscription) OAuth provider
+
+### Fixed
+- **mcp-server**: register canonical read tools in contract order
+- **issue**: [Bug]: unable to build with pnpm
+- **gsd**: remove duplicate sonnet-5 keys after main rebase
+- **gsd**: dedupe sonnet-5 model-router keys
+- **gsd**: add copilot sonnet startup fallback when catalog lags
+- **contracts**: preserve workflow tool registration order
+- **model-router**: remove duplicate Sonnet registry entries
+- **pi-coding-agent**: type OAuth refresh lock result
+- **gsd**: resolve copilot sonnet-5 model alias warnings
+- **gsd**: keep projection bytes readable across mutation boundaries
+- **bug-3**: Stale worktree cleanup exposes raw EACCES errors EACCES cleanup failures now provide ownership and permission remediation.
+- **bug-2**: Write gate falsely reports that auto-mode is not running live and empty-path blocks now report auto-mode’s actual runtime state.
+- **bug-1**: Write gate ignores degraded branch-mode isolation write and bash gates now use the session’s effective isolation mode.
+- **gsd**: preserve projection mutation ordering
+- **gsd**: restore plan drift diagnostic
+- **contracts**: add gsd_decision_list/get and gsd_requirement_list/get to WORKFLOW_TOOL_CONTRACTS
+- **types**: add includeSuperseded to DecisionQueryOpts interface
+- resolve all 5 Codex adversarial review findings in PR #1613
+- **gsd**: scope milestone planning to project state
+- **issue**: Sticky isolationDegraded flag strands branch-mode milestone: hard-blocks /gsd auto after one failure, no recovery until process restart (#1692)
+- **gsd**: reopen workflow DB for task summary lineage
+- **gsd**: keep main-branch detection loud on a non-repo path
+- **gsd**: surface projection artifact failures
+- **gsd**: classify Windows projection lock contention
+- **gsd**: keep discussion writes layout-aware
+- **gsd**: recover branch isolation across auto runs
+- retire unused legacy Cloud v1 products (#1695)
+- **gsd**: keep branch entry idempotent on an unborn milestone branch
+- **issue**: Branch isolation fails on a zero-commit repo: git branch -f milestone/<MID> <unbornBranch> → 'not a valid object name'
+- **issue**: Windows: native projection root identity lock fails on 2nd+ acquisition, blocking plan-task/plan-slice renders
+- **daemon**: retire legacy Cloud v1 runtime (#1687)
+- **web**: retire hosted cloud mode (#1683)
+- **gsd**: classify staged task summaries consistently
+- **gsd**: repair liveness schema on v1.14 upgrade
+
+### Changed
+- **ci**: retrigger PR checks
+- **gsd**: deepen projection delivery ownership
+- **gsd**: own slice companion gate lifecycle
+- **gsd**: register required schema features once
+- **gsd**: centralize task summary projection writes
+
+### Removed
+- **cloud**: remove the unused legacy Cloud v1 agent, MCP gateway, and macOS monitor; this retired code is unrelated to the current `gsd-cloud` project
+
+## [1.14.0] - 2026-08-10
+
+### Added
+- **gsd**: add state contract v1 projection (#1665)
+- **pi-ai**: refresh MiniMax-M3 video input and adaptive thinking (#1573)
+
+### Fixed
+- **gsd**: hash actual guard inputs in block signatures (#1676)
+- **gsd**: prevent persistent auto-mode wedges (#1673)
+- **issue**: [Bug]: Symlinked .gsd project store breaks the closeout consistency gate — milestone merge fails with 'fatal: not a git repository' (#1670)
+- **issue**: [Bug]: Auto-mode pause during unit setup leaks the milestone lease — same-process resume deadlocks against its own stale lease (#1669)
+- **issue**: Auto-mode silent re-dispatch loop: refreshRecoveryDbForArtifact catch-all for non-whitelisted unit types is a no-op reported as success (#1663)
+- **issue**: bug: parent-workspace host verification fans out to all child repos when task targets orchestration root (#1656)
+- **issue**: Auto-mode permanently stuck: paused_session pins active-but-superseded milestone; resume path has no active-milestone check (auto.js:2059) (#1644)
+- **issue**: evidence-xref blocking mismatch pauses without settling the Attempt, then pre-verification-dispatched routes into the publication boundary — unrecoverable execute-task re-dispatch loop (#1642)
+- **issue**: v1.12.0 regression: auto-mode dispatches replan-task but no Unit manifest is registered (#1639)
+- **issue**: gsd recover aborts: assessments base-snapshot identity (milestone/slice/task/scope) does not match PK (path) (#1638)
+- **issue**: task-recovery-abort loop: predecessor abort check is a pure read with no escalation, and gsd_task_recovery_resume is hard-blocked in every auto unit scope (#1637)
+- **issue**: Safety harness: false-positive "unexpected file change" on auto-generated files in .gsd/ or .gsd-state/ when GSD_STATE_DIR is set (#1636)
+
+## [1.13.0] - 2026-08-08
+
+### Added
+- **gsd**: cut project state over to DB authority (#1627)
+
+### Fixed
+- **issue**: fix: forensics redactForGitHub misses OS username, workspace repo IDs, and doctor issue paths (#1633)
+- **migrate**: slice completion guard + decision field extraction (fixes #1606, #1607) (#1611)
+- **model-router**: add claude-sonnet-5 catalog entry; classify recon subagents as light (#1609)
+- **gsd**: make auto mode complete a milestone end to end (#1605)
+- **issue**: bug: dispatch-guard.js blocks research-slice/parallel-research sentinel — missing DB exemption (#1617)
+- **issue**: roadmap-divergence reconciliation never converges when a slice is skipped (detector includes skipped slices, renderer omits them) (#1620)
+- **issue**: Auto-mode silent re-dispatch loop: execute-task refreshRecoveryDbForArtifact is a read-only no-op, projection-drift stuck-recovery never advances state (#1624)
+- **issue**: [Bug]: [drift-check] /gsd auto enters a two-state drift loop: disk-slice-id-divergence fix triggers roadmap-divergence (#1625)
+- **issue**: bug: gsd_milestone_status does not return persisted dependsOn / milestone dependencies (#1602)
+- **issue**: bug: `gsd extensions` throws ESYNC — lockSync called with unsupported `retries` option (v1.12.0) (#1599)
+- **issue**: task-recovery-abort loop after verify timeout: gsd_task_recovery_resume requires a recoveryActionId that is never surfaced anywhere (#1597)
+- **issue**: v1.12.0: passing gsd_task_complete verificationEvidence is not considered before blocking project-wide verification_commands (#1596)
+- **issue**: [Bug]: SOURCE_PATHSPEC hardcodes literal ".gsd/**", never excludes tracked GSD bookkeeping files when .gsd is a symlink (always true) — causes stuck-loop on first execute-task verdict replay (#1595)
+- **issue**: [Bug]: prompt-golden-fixtures Phase 2 reduction gate fails on macOS — prompt size is fixture-path-length sensitive (#1594)
+
 ## [1.12.0] - 2026-08-03
 
 ### Added

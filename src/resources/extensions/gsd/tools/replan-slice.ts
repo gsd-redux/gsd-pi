@@ -29,6 +29,7 @@ import {
   planningOperationPayload,
 } from "../planning-domain-operation.js";
 import { readLatestTaskAttempt } from "../task-execution-domain-operation.js";
+import { ensurePendingSliceQ8 } from "../db/writers/slice-companion-state.js";
 
 export interface ReplanSliceTaskInput {
   taskId: string;
@@ -334,6 +335,7 @@ export async function handleReplanSlice(
             status: "skipped",
           });
         }
+        ensurePendingSliceQ8(context, params);
       },
     });
     operationStatus = receipt.status;

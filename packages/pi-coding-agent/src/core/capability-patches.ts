@@ -31,6 +31,8 @@ export const CAPABILITY_PATCHES: CapabilityPatch[] = [
 				m.id.includes("opus-4.7") ||
 				m.id.includes("opus-4-8") ||
 				m.id.includes("opus-4.8") ||
+				m.id.includes("opus-5") ||
+				m.id.includes("opus.5") ||
 				m.id.includes("fable-5") ||
 				m.id.includes("fable.5")),
 		caps: { supportsXhigh: true },

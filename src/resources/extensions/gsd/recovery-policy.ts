@@ -98,6 +98,7 @@ function budgetedRule(
   switch (classification.failureKind) {
     case "transient-execution":
     case "tool-unavailable":
+    case "projection-lock-transient":
       return { action: "retry", policyClass: "transient-execution", maxUses: 2 };
     case "provider":
       return classification.action === "retry"

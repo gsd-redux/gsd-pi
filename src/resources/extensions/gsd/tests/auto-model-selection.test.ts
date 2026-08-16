@@ -1141,3 +1141,25 @@ test("resolveModelId: github-copilot wins over openai when both offer the same G
   assert.ok(result);
   assert.equal(result.provider, "github-copilot");
 });
+
+test("resolveModelId: github-copilot alias resolves explicit provider/model when registry uses copilot", () => {
+  const availableModels = [
+    { id: "claude-sonnet-5", provider: "copilot" },
+  ];
+
+  const result = resolveModelId("github-copilot/claude-sonnet-5", availableModels, undefined);
+  assert.ok(result, "should resolve via provider alias");
+  assert.equal(result.provider, "copilot");
+  assert.equal(result.id, "claude-sonnet-5");
+});
+
+test("resolveModelId: copilot alias wins over openai in bare-ID precedence", () => {
+  const availableModels = [
+    { id: "gpt-5.5", provider: "openai" },
+    { id: "gpt-5.5", provider: "copilot" },
+  ];
+
+  const result = resolveModelId("gpt-5.5", availableModels, undefined);
+  assert.ok(result);
+  assert.equal(result.provider, "copilot");
+});

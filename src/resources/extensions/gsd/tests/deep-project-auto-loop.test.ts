@@ -27,6 +27,7 @@ import {
 } from "../guided-flow.ts";
 import {
   closeDatabase,
+  insertArtifact,
   insertMilestone,
   openDatabase,
 } from "../gsd-db.ts";
@@ -350,7 +351,7 @@ test("deep project setup: pre-dispatch can run before the first milestone exists
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(stopped, false);
@@ -375,6 +376,14 @@ test("deep project setup: bootstrap continues queued M002 without milestone cont
     openDatabase(join(base, ".gsd", "gsd.db"));
     insertMilestone({ id: "M001", title: "First milestone", status: "complete" });
     insertMilestone({ id: "M002", title: "Second milestone", status: "queued" });
+    insertArtifact({
+      path: "PROJECT.md",
+      artifact_type: "PROJECT",
+      milestone_id: null,
+      slice_id: null,
+      task_id: null,
+      full_content: readFileSync(join(base, ".gsd", "PROJECT.md"), "utf-8"),
+    });
     closeDatabase();
 
     const messages: unknown[] = [];
@@ -462,7 +471,7 @@ test("deep project setup: pre-dispatch takes precedence over an existing draft m
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -509,7 +518,7 @@ test("deep project setup: pending setup does not rewrite executing state to PROJ
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(paused, false);
@@ -563,7 +572,7 @@ test("deep project setup: pre-dispatch does not rewrite execution state to PROJE
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -621,7 +630,7 @@ test("deep project setup: pending project research cannot dispatch PROJECT/S01",
         flowId: "test-flow",
         nextSeq: () => ++seq,
       },
-      { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 },
+      { consecutiveFinalizeTimeouts: 0 },
     );
 
     assert.equal(result.action, "next");
@@ -947,8 +956,6 @@ test("deep auto dispatch forces milestone checkpoints into plain chat", async (t
       midTitle: "Plain Chat Gate",
     },
     {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     },
   );

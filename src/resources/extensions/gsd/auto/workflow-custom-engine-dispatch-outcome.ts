@@ -8,7 +8,7 @@ export interface HandleCustomEngineDispatchOutcomeDeps {
 }
 
 export type CustomEngineDispatchFlow =
-  | { action: "break" }
+  | { action: "break"; inputPayload: string }
   | { action: "continue" }
   | { action: "dispatch" };
 
@@ -18,7 +18,7 @@ export async function handleCustomEngineDispatchOutcome(input: {
 }): Promise<CustomEngineDispatchFlow> {
   if (input.decision.action === "stop") {
     await input.deps.stopAuto(input.decision.reason);
-    return { action: "break" };
+    return { action: "break", inputPayload: input.decision.reason };
   }
   if (input.decision.action === "skip") {
     return { action: "continue" };

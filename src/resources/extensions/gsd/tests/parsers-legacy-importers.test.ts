@@ -1,25 +1,30 @@
-// Structural invariant: parsers-legacy is banned from decision paths (ADR-017).
+// Structural invariant: the legacy markdown state-path is gone (T020/T022).
 //
 // The DB is the single source of truth; `.gsd/*.md` files are projections.
 // Dispatch/gate/completion code must read state via gsd-db queries (e.g.
 // getMilestoneSliceSummaries), never by parsing markdown projections.
 //
-// Two assertions:
-// 1. Decision-path modules must NOT import parsers-legacy (hard ban).
-// 2. Every other importer must be on the explicit allowlist below, each with
-//    a one-line justification. When this test fails, do not extend the
-//    allowlist for a decision path — add/extend a query in db/queries.ts and
-//    read the DB instead.
+// KEYED ON SYMBOLS, NOT THE MODULE SPECIFIER (T033). This registry counts a
+// module as a legacy-parser consumer when it references
+// `parseLegacyRoadmap`/`parseLegacyPlan` OR imports a module named
+// `parsers-legacy`. Projection parsers live under `parseProjection*` in
+// schemas/parsers.ts and are not this path. Mirrors
+// scripts/legacy-state-path-proof.mjs.
+//
+// Assertions:
+// 1. Decision-path modules must NOT consume the legacy parsers (hard ban).
+// 2. Zero production importers of the retired symbols or shim.
+// 3. parsers-legacy.ts does not exist.
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const extensionsDir = join(process.cwd(), "src/resources/extensions");
 
-// Modules that make dispatch/gate/completion decisions. Importing
-// parsers-legacy here is always a violation, allowlist or not.
+// Modules that make dispatch/gate/completion decisions. Consuming the legacy
+// parsers here is always a violation, allowlist or not.
 const BANNED_DECISION_PATHS = new Set([
   "gsd/auto-direct-dispatch.ts",
   "gsd/dispatch-guard.ts",
@@ -38,42 +43,76 @@ const BANNED_DECISION_PATHS = new Set([
   "gsd/tools/complete-slice.ts",
 ]);
 
-// Legitimate importers. Each entry carries its justification; anything not
-// listed here (and not under a tests/ directory) fails the test.
-const ALLOWED_IMPORTERS = new Set([
-  // migration/import: parses markdown to populate the DB
-  "gsd/md-importer.ts",
-  "gsd/migration-auto-check.ts",
-  // drift detection: compares markdown projection against DB by design
-  "gsd/state-reconciliation/drift/roadmap.ts",
-  // drift detection: reads PLAN.md tasks to distinguish a real plan from a
-  // stub before clearing a stale is_sketch flag (#1287)
-  "gsd/state-reconciliation/drift/sketch-flag.ts",
-  // stale-render detection + render verification helpers over rendered output
-  "gsd/markdown-renderer.ts",
-  // pre-migration fallback: deriveState must work before the DB exists
-  "gsd/state.ts",
-  // explicit degraded-mode fallback when DB has no task rows (warns on use)
-  "gsd/reactive-graph.ts",
-  // recovery path: explicit pre-migration/DB-unavailable fallback branches
-  // (verifyExpectedArtifact extracted here from auto-recovery.ts)
-  "gsd/artifact-verification.ts",
-  // diagnostics-only surfaces: report on projections, make no dispatch decisions
-  "gsd/doctor.ts",
-  "gsd/doctor-state-checks.ts",
-  // diagnostics-only: compares PLAN.md task checkboxes against DB status
-  "gsd/doctor-engine-checks.ts",
-  // display/telemetry-only surfaces
-  "gsd/workspace-index.ts",
-  "gsd/visualizer-data.ts",
-  // prompt context text (display strings injected into unit prompts)
-  "gsd/auto-prompts.ts",
-  "gsd/commands-maintenance.ts",
-  // display-only GitHub issue/PR body sync
-  "github-sync/sync.ts",
-]);
+const SHIM_PATH = join(process.cwd(), "src/resources/extensions/gsd/parsers-legacy.ts");
 
-const IMPORT_RE = /from\s+["'][^"']*parsers-legacy(?:\.js)?["']|import\(\s*["'][^"']*parsers-legacy(?:\.js)?["']\s*\)|require\(\s*["'][^"']*parsers-legacy(?:\.js)?["']\s*\)/;
+// The declaration home of the projection parsers is not a consumer of the
+// retired symbols.
+const SELF_PATHS = new Set(["gsd/schemas/parsers.ts"]);
+
+// Specifier anywhere in a string literal — covers `from '…'`, `import('…')`,
+// `require('…')`, the side-effect form (`import './parsers-legacy.js';`) and
+// the specifier-on-its-own-line form.
+const SPECIFIER_RE = /["'][^"']*parsers-legacy(?:\.js)?["']/;
+// The legacy exports of schemas/parsers.ts that parse projection markdown as a
+// data source. `parseRoadmap` is the unrelated validation parser, not listed.
+const LEGACY_PARSER_SYMBOL_RE = /\b(?:parseLegacyRoadmap|parseLegacyPlan)\b/;
+
+/** Blank out `//` and `/* … *\/` comments, preserving string literals, so a
+ *  banned symbol named in prose is not a false positive. */
+function stripComments(source: string): string {
+  let out = "";
+  let quote: string | null = null;
+  let inBlock = false;
+  let i = 0;
+
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (inBlock) {
+      if (ch === "*" && next === "/") {
+        inBlock = false;
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (quote !== null) {
+      out += ch;
+      if (ch === "\\") {
+        out += next ?? "";
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === "/" && next === "/") {
+      while (i < source.length && source[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
 
 function walkTsFiles(root: string): string[] {
   const out: string[] = [];
@@ -108,14 +147,14 @@ function findImporters(): string[] {
   const importers: string[] = [];
   for (const file of walkTsFiles(extensionsDir)) {
     const rel = relative(extensionsDir, file).split("\\").join("/");
-    if (rel === "gsd/parsers-legacy.ts") continue; // the module itself
-    const content = readFileSync(file, "utf-8");
-    if (IMPORT_RE.test(content)) importers.push(rel);
+    if (SELF_PATHS.has(rel)) continue; // the shim and the symbols' own home
+    const code = stripComments(readFileSync(file, "utf-8"));
+    if (SPECIFIER_RE.test(code) || LEGACY_PARSER_SYMBOL_RE.test(code)) importers.push(rel);
   }
   return importers.sort();
 }
 
-test("decision-path modules do not import parsers-legacy (ADR-017)", () => {
+test("decision-path modules do not consume the legacy parsers (ADR-017)", () => {
   const violations = findImporters().filter((rel) => BANNED_DECISION_PATHS.has(rel));
   assert.deepEqual(
     violations,
@@ -125,24 +164,22 @@ test("decision-path modules do not import parsers-legacy (ADR-017)", () => {
   );
 });
 
-test("every parsers-legacy importer is on the explicit allowlist", () => {
-  const unexpected = findImporters().filter((rel) => !ALLOWED_IMPORTERS.has(rel));
+test("zero production importers of retired legacy parser symbols or shim", () => {
+  const importers = findImporters();
   assert.deepEqual(
-    unexpected,
+    importers,
     [],
-    `New parsers-legacy importer(s) detected:\n  ${unexpected.join("\n  ")}\n` +
-      `If this is migration/drift/display-only code, add it to ALLOWED_IMPORTERS ` +
-      `with a one-line justification. If it makes dispatch/gate/completion ` +
-      `decisions, read the DB instead (db/queries.ts).`,
+    `Retired legacy-parser consumer(s) detected:\n  ${importers.join("\n  ")}\n` +
+      `Projection reads must use parseProjection* from schemas/parsers.ts. ` +
+      `Decision paths must read the DB (db/queries.ts). Do not reintroduce ` +
+      `parseLegacyRoadmap, parseLegacyPlan, or parsers-legacy.`,
   );
 });
 
-test("allowlist has no stale entries", () => {
-  const importers = new Set(findImporters());
-  const stale = [...ALLOWED_IMPORTERS].filter((rel) => !importers.has(rel));
-  assert.deepEqual(
-    stale,
-    [],
-    `Allowlist entries no longer import parsers-legacy — remove them:\n  ${stale.join("\n  ")}`,
+test("parsers-legacy.ts does not exist", () => {
+  assert.equal(
+    existsSync(SHIM_PATH),
+    false,
+    "parsers-legacy.ts was deleted in T020; re-adding it is a regression",
   );
 });

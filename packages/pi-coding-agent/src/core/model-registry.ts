@@ -787,9 +787,9 @@ export class ModelRegistry {
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
-			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
+			const storedAuth = await this.authStorage.getApiKeyWithOAuthState(model.provider, { includeFallback: false });
 			const apiKey =
-				apiKeyFromAuthStorage ??
+				storedAuth?.apiKey ??
 				(providerConfig?.apiKey
 					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
 					: undefined);
@@ -809,6 +809,9 @@ export class ModelRegistry {
 				if (!apiKey) {
 					return { ok: false, error: `No API key found for "${model.provider}"` };
 				}
+				headers = { ...headers, Authorization: `Bearer ${apiKey}` };
+			}
+			if (model.provider === "kimi-coding" && storedAuth?.isOAuth && apiKey) {
 				headers = { ...headers, Authorization: `Bearer ${apiKey}` };
 			}
 
@@ -1167,7 +1170,7 @@ export class ModelRegistry {
 	private getDiscoveryProviderDefaults(provider: string): {
 		api: Api;
 		baseUrl: string;
-		input: ("text" | "image")[];
+		input: Model<Api>["input"];
 		contextWindow: number;
 		maxTokens: number;
 	} {

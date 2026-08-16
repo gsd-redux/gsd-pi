@@ -111,7 +111,7 @@ const ModelCatalogEntrySchema = Type.Object({
 	baseUrl: Type.String(),
 	reasoning: Type.Boolean(),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
-	input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]), { minItems: 1 }),
+	input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image"), Type.Literal("video")]), { minItems: 1 }),
 	cost: Type.Object({
 		input: Type.Number(),
 		output: Type.Number(),

@@ -30,6 +30,13 @@ test("lookupModelCost finds haiku", () => {
   assert.ok(entry.inputPer1k < 0.001, "haiku should be cheap");
 });
 
+test("lookupModelCost finds MAI Code 1.1 Flash pricing", () => {
+  const entry = lookupModelCost("github-copilot/mai-code-1.1-flash");
+  assert.ok(entry);
+  assert.equal(entry.inputPer1k, 0.0002);
+  assert.equal(entry.outputPer1k, 0.0012);
+});
+
 // ─── compareModelCost ────────────────────────────────────────────────────────
 
 test("haiku is cheaper than opus", () => {

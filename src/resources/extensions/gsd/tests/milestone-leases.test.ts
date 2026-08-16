@@ -52,7 +52,7 @@ test("first claim returns ok=true with token=1", (t) => {
   assert.equal(row!.status, "held");
 });
 
-test("second claim by different worker is rejected while lease is held", (t) => {
+test("second claim by a different process is rejected while lease is held", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, ".gsd", "gsd.db"));
@@ -60,6 +60,8 @@ test("second claim by different worker is rejected while lease is held", (t) => 
 
   const w1 = registerAutoWorker({ projectRootRealpath: base });
   const w2 = registerAutoWorker({ projectRootRealpath: join(base, "other-project") });
+  _getAdapter()!.prepare("UPDATE workers SET pid = :pid WHERE worker_id = :worker_id")
+    .run({ ":pid": process.pid + 1, ":worker_id": w2 });
   const first = claimMilestoneLease(w1, "M001");
   assert.equal(first.ok, true);
 
@@ -71,14 +73,14 @@ test("second claim by different worker is rejected while lease is held", (t) => 
   }
 });
 
-test("claim by another worker row from the same live process is re-entrant", (t) => {
+test("claim by another worker row from the same live process is re-entrant across worktrees", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
 
   const w1 = registerAutoWorker({ projectRootRealpath: base });
-  const w2 = registerAutoWorker({ projectRootRealpath: base });
+  const w2 = registerAutoWorker({ projectRootRealpath: join(base, ".gsd-worktrees", "M001") });
   const first = claimMilestoneLease(w1, "M001");
   assert.equal(first.ok, true);
 

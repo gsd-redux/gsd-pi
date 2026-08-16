@@ -2,7 +2,6 @@ import { join } from "node:path";
 
 import { loadFile } from "./files.js";
 import { isDbAvailable, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
-import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -88,40 +87,19 @@ async function indexSlice(basePath: string, milestoneId: string, sliceId: string
   const tasksDir = resolveTasksDir(basePath, milestoneId, sliceId) ?? undefined;
 
   const tasks: WorkspaceTaskTarget[] = [];
-  let title = fallbackTitle;
+  const title = fallbackTitle;
 
-  // Prefer DB for task data, fall back to file parsing when DB has no data
-  let usedDb = false;
+  // Post-cutover the DB is the read authority — no markdown fallback.
   if (isDbAvailable()) {
     const dbTasks = getSliceTasks(milestoneId, sliceId);
-    if (dbTasks.length > 0) {
-      usedDb = true;
-      for (const task of dbTasks) {
-        title = fallbackTitle; // title comes from slice-level data, not plan
-        tasks.push({
-          id: task.id,
-          title: task.title,
-          done: task.status === "complete" || task.status === "done",
-          planPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "PLAN") ?? undefined,
-          summaryPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "SUMMARY") ?? undefined,
-        });
-      }
-    }
-  }
-  if (!usedDb && planPath) {
-    // File-based fallback: parse slice plan for task entries
-    const planContent = await loadFile(planPath);
-    if (planContent) {
-      const parsed = parsePlan(planContent);
-      for (const task of parsed.tasks) {
-        tasks.push({
-          id: task.id,
-          title: task.title,
-          done: task.done,
-          planPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "PLAN") ?? undefined,
-          summaryPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "SUMMARY") ?? undefined,
-        });
-      }
+    for (const task of dbTasks) {
+      tasks.push({
+        id: task.id,
+        title: task.title,
+        done: task.status === "complete" || task.status === "done",
+        planPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "PLAN") ?? undefined,
+        summaryPath: resolveTaskFile(basePath, milestoneId, sliceId, task.id, "SUMMARY") ?? undefined,
+      });
     }
   }
 
@@ -155,27 +133,16 @@ export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptio
     const slices: WorkspaceSliceTarget[] = [];
 
     if (roadmapPath || isDbAvailable()) {
-      // Normalize slices from DB, fall back to file-based parsing when DB has no data
+      // Normalize slices from the DB — post-cutover read authority, no markdown fallback.
       type NormSlice = { id: string; done: boolean; title: string; risk: string; depends: string[]; demo: string };
       let normSlices: NormSlice[] | null = null;
       if (isDbAvailable()) {
         const dbSlices = getMilestoneSlices(milestoneId);
-        if (dbSlices.length > 0) {
-          normSlices = dbSlices.map(s => ({ id: s.id, done: s.status === "complete", title: s.title, risk: s.risk || "medium", depends: s.depends, demo: s.demo }));
-        }
+        normSlices = dbSlices.map(s => ({ id: s.id, done: s.status === "complete", title: s.title, risk: s.risk || "medium", depends: s.depends, demo: s.demo }));
         // Get title from roadmap header
         if (roadmapPath) {
           const roadmapContent = await loadFile(roadmapPath);
           if (roadmapContent) title = titleFromRoadmapHeader(roadmapContent, milestoneId);
-        }
-      }
-      if (!normSlices && roadmapPath) {
-        // File-based fallback: parse roadmap for slice entries
-        const roadmapContent = await loadFile(roadmapPath);
-        if (roadmapContent) {
-          title = titleFromRoadmapHeader(roadmapContent, milestoneId);
-          const parsed = parseRoadmap(roadmapContent);
-          normSlices = parsed.slices.map(s => ({ id: s.id, done: s.done, title: s.title, risk: s.risk || "medium", depends: s.depends, demo: s.demo || "" }));
         }
       }
       if (!normSlices) normSlices = [];

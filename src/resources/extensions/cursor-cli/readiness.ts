@@ -85,15 +85,12 @@ function hasCursorApiKey(): boolean {
 function probeAuth(command: string): boolean | null {
 	if (hasCursorApiKey()) return true;
 
-	for (const args of [["agent", "status", "--json"], ["status", "--json"], ["agent", "status"], ["status"]]) {
-		try {
-			const out = spawnCursorAgent(command, args, STATUS_TIMEOUT_MS).toString();
-			debugLog("status output", args.join(" "), out.slice(0, 200));
-			const parsed = parseCursorAgentStatus(out);
-			if (parsed !== null) return parsed;
-		} catch (error) {
-			debugLog("status failed", args.join(" "), (error as Error).message?.slice(0, 200));
-		}
+	try {
+		const out = spawnCursorAgent(command, ["status"], STATUS_TIMEOUT_MS).toString();
+		debugLog("status output", out.slice(0, 200));
+		return parseCursorAgentStatus(out);
+	} catch (error) {
+		debugLog("status failed", (error as Error).message?.slice(0, 200));
 	}
 
 	return null;

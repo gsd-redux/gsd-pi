@@ -19,7 +19,7 @@ import {
 import { migrateHierarchyToDb } from "../md-importer.ts";
 import { checkMarkdownHierarchyAgainstDb, countMarkdownHierarchy } from "../migration-auto-check.ts";
 import { queryDecisions } from "../context-store.ts";
-import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
+import { deriveState, deriveStateFromDb, invalidateStateCache } from "../state.ts";
 import type { Requirement } from "../types.ts";
 
 function makeBase(prefix = "gsd-db-authority-"): string {
@@ -121,7 +121,7 @@ test("DB authority: REQUIREMENTS.md and DECISIONS.md projections do not populate
   insertMilestone({ id: "M999", title: "DB Milestone", status: "active" });
 
   invalidateStateCache();
-  const state = await deriveStateFromDb(base);
+  const state = await deriveState(base);
 
   assert.deepEqual(state.requirements, {
     active: 0,
@@ -132,6 +132,7 @@ test("DB authority: REQUIREMENTS.md and DECISIONS.md projections do not populate
     total: 0,
   });
   assert.deepEqual(queryDecisions(), []);
+  assert.deepEqual(state.recentDecisions, [], "DECISIONS.md projection must not populate recentDecisions");
 });
 
 test("DB authority: DB requirements remain canonical when REQUIREMENTS.md disagrees", async (t) => {

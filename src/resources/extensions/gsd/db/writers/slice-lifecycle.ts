@@ -16,6 +16,7 @@ import {
 } from "./lifecycle-commands.js";
 import { compareLifecycleShadow, normalizeLegacyLifecycleStatus } from "../lifecycle-shadow-comparison.js";
 import { terminalizeTaskExecutionDispatch } from "./task-execution.js";
+import { ensurePendingSliceQ8 } from "./slice-companion-state.js";
 
 interface SliceIdentity {
   milestoneId: string;
@@ -952,32 +953,7 @@ export function reopenSliceHierarchy(
     WHERE milestone_id = :milestone_id AND id = :slice_id
   `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId });
   if (Number((updated as { changes?: number }).changes ?? 0) !== 1) throw new Error("Slice reopen must update one Slice");
-  const q8Rows = getDb().prepare(`
-    SELECT 1 FROM quality_gates
-    WHERE milestone_id = :milestone_id AND slice_id = :slice_id
-      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
-  `).all({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId });
-  if (q8Rows.length > 1) {
-    throw new SliceLifecycleValidationError("Slice reopen found multiple Q8 quality gates");
-  }
-  const q8Write = q8Rows.length === 0
-    ? getDb().prepare(`
-        INSERT INTO quality_gates (
-          milestone_id, slice_id, gate_id, scope, task_id, status
-        ) VALUES (
-          :milestone_id, :slice_id, 'Q8', 'slice', '', 'pending'
-        )
-      `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId })
-    : getDb().prepare(`
-        UPDATE quality_gates
-        SET status = 'pending', verdict = '', rationale = '',
-            findings = '', evaluated_at = NULL
-        WHERE milestone_id = :milestone_id AND slice_id = :slice_id
-          AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
-      `).run({ ":milestone_id": slice.milestoneId, ":slice_id": slice.sliceId });
-  if (Number((q8Write as { changes?: number }).changes ?? 0) !== 1) {
-    throw new Error("Slice reopen must establish exactly one pending Q8 quality gate");
-  }
+  ensurePendingSliceQ8(context, slice);
   const shadows = [
     readLifecycleShadowComparison(context, { itemKind: "slice", ...slice }),
     ...reopenedTaskIds.map((taskId) => readLifecycleShadowComparison(context, { itemKind: "task", ...slice, taskId })),

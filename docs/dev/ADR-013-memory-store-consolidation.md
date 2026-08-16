@@ -9,7 +9,9 @@
 > workflow decision, but it is noncritical and cannot own or authorize workflow
 > state. The body below is retained as history.
 
-**Status:** Accepted (mostly implemented — Phase 6 preflight/cutover outstanding)
+**Status:** Accepted (partially landed — Phases 0–6 cutover verified at HEAD; the `decisions` table drop (#5756) is outstanding)
+
+> Implementation note (2026-08-01 audit): the trace confirms `structured_fields` on the memories schema (`db-base-schema.ts:80`), `bootstrap/memory-tools.ts`, `memory-backfill.ts`, `memory-consolidation-scanner.ts`, and that `db-writer.ts` no longer calls `db.upsertDecision`; the legacy `decisions` table and its `active_decisions` view still exist in `db-base-schema.ts` (lines 20 and 414), so the drop step is genuinely unlanded.
 **Date:** 2026-04-19
 **Implemented:** 2026-04 to 2026-05 (Phases 0–5; Phase 6 preflight/cutover tracked on #5751 / #5755 / #5756)
 **Author:** Jeremy (@jeremymcs)
@@ -79,7 +81,7 @@ The two surfaces are not just redundant; they fragment durable knowledge across 
 
 1. **Phase 0 ADR (this document).**
 2. **Add `structuredFields` JSON column to `memories` table.** Preserves the structured fields `gsd_save_decision` records today (`scope`, `decision`, `choice`, `rationale`, `made_by`, `revisable`) so a row migrated from `decisions` retains schema fidelity. The `capture_thought` tool gains an optional `structuredFields` parameter that mirrors the same shape.
-3. **Register `capture_thought` and `memory_query` in `packages/mcp-server/src/server.ts`.** Resolve the `gsd_graph` name collision by renaming the memory variant to `gsd_memory_graph` (or namespacing similarly). External MCP clients (studio, vscode-extension) gain access to the new surface before any cutover removes their current sources.
+3. **Register `capture_thought` and `memory_query` in `packages/mcp-server/src/server.ts`.** Resolve the `gsd_graph` name collision by renaming the memory variant to `gsd_memory_graph` (or namespacing similarly). External MCP clients (vscode-extension) gain access to the new surface before any cutover removes their current sources.
 4. **Auto-injection parity in `src/resources/extensions/gsd/bootstrap/system-context.ts`.** Implement `loadMemoryBlock` mirroring `loadKnowledgeBlock`: query top-N highest-confidence and most-reinforced memories scoped to the project, inject on `before_agent_start`. After this lands, `memory_query` becomes a discretionary refinement, not the only path to retrieval.
 5. **Backfill `decisions` -> `memories`.** Idempotent migration runs on the next `session_start` after a migration version bump. Each `decisions` row produces a `memories` row with `category = "architecture"`, `content` synthesised from `decision + choice + rationale`, and `structuredFields` populated verbatim. Re-running the migration is a no-op (matched on `structuredFields.sourceDecisionId`).
 6. **Cutover.** Remove KNOWLEDGE.md / DECISIONS.md / `gsd_save_decision` write paths from `buildExtractionStepsBlock`, `execute-task.md`, `complete-slice.md`. Replace with single `capture_thought` calls. Re-render DECISIONS.md and KNOWLEDGE.md from the `memories` table through the projection hooks that own those files. Update remaining #4429 regression tests. Deprecate the `decisions` table (read-only for one minor version, then drop).
@@ -97,7 +99,7 @@ Step 6 may land only when **all** of the following are observable on `feat/memor
 - Step 4 auto-injection produces a memory block measurably similar in coverage to the old Patterns/Lessons KNOWLEDGE.md inline injection on at least three real GSD projects (manual spot check); Rules still come from `loadKnowledgeBlock`.
 - Step 5 backfill is idempotent (rerunnable with no diff) on at least one real `.gsd/gsd.db` that contains historical decisions.
 - The ADR-013 Phase 6 preflight scanner reports zero consolidation gaps at startup and through `/gsd doctor`: active `decisions` rows must have matching `memories.structured_fields.sourceDecisionId` markers, and migrated `KNOWLEDGE.md` rows must have matching `sourceKnowledgeId` markers.
-- MCP `capture_thought` and `memory_query` calls succeed end-to-end from a non-CLI client (studio or vscode integration test).
+- MCP `capture_thought` and `memory_query` calls succeed end-to-end from a non-CLI client (vscode integration test).
 - No regression test in `src/resources/extensions/gsd/tests/` is silenced or removed without an explicit rationale comment in the diff.
 - A two-week dual-write bake period elapses with no in-flight project reporting lost decisions or knowledge entries.
 

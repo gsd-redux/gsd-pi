@@ -15,7 +15,7 @@ import {
   isDbAvailable,
   setSliceSketchFlag,
 } from "../../gsd-db.js";
-import { parsePlan } from "../../parsers-legacy.js";
+import { parseProjectionPlan as parsePlan } from "../../schemas/parsers.js";
 import { resolveSliceFile } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";
@@ -67,6 +67,12 @@ function isPlaceholderTaskTitle(title: string): boolean {
  * at least one non-placeholder task. This is strictly stricter than the old
  * existence check — the documented crash-recovery scenarios (a real plan-slice
  * that wrote its tasks) still clear, a bare stub no longer does.
+ *
+ * No state-version stamp short-circuit here (unlike the roadmap/stale-render
+ * detectors): the stamp (T008) only proves the projection was rendered from
+ * the current DB state, and a stub PLAN rendered from current state is still
+ * a stub. This is a content judgment about *what the plan says*, not a
+ * freshness judgment, so it must always parse the file.
  */
 function sketchIsPlanned(basePath: string, mid: string, sid: string): boolean {
   const planPath = resolveSliceFile(basePath, mid, sid, "PLAN");

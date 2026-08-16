@@ -18,6 +18,7 @@ import {
   openDatabase,
   closeDatabase,
   insertMilestone,
+  _getAdapter,
 } from "../gsd-db.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease } from "../db/milestone-leases.ts";
@@ -42,6 +43,8 @@ test("two workers contesting the same milestone: only one wins the lease", (t) =
 
   const w1 = registerAutoWorker({ projectRootRealpath: base });
   const w2 = registerAutoWorker({ projectRootRealpath: join(base, "other-project") });
+  _getAdapter()!.prepare("UPDATE workers SET pid = :pid WHERE worker_id = :worker_id")
+    .run({ ":pid": process.pid + 1, ":worker_id": w2 });
 
   const r1 = claimMilestoneLease(w1, "M001");
   const r2 = claimMilestoneLease(w2, "M001");

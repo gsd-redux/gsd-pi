@@ -1519,6 +1519,16 @@ function formatWorktreeIsolationBlockReason(
     ].join(" ");
   }
 
+  if (isAutoLive) {
+    return [
+      `HARD BLOCK: Worktree isolation is configured (\`git.isolation: worktree\`) and auto-mode is running,`,
+      `but the target "${displayTarget}" is not inside \`.gsd/worktrees/<MID>/\`.`,
+      `The live session has not entered degraded branch-mode fallback, so project-root code edits`,
+      `would be lost by the worktree commit pipeline. Write inside the active milestone worktree.`,
+      `If worktree setup failed, restart auto-mode so branch-mode fallback can be established.`,
+    ].join(" ");
+  }
+
   return [
     `HARD BLOCK: Worktree isolation is configured (\`git.isolation: worktree\`) but auto-mode is`,
     `not running and the target "${displayTarget}" is not inside \`.gsd/worktrees/<MID>/\`.`,
@@ -1532,8 +1542,9 @@ function formatWorktreeIsolationBlockReason(
 
 /**
  * Block planning-write tool calls that would land code at the project root
- * while `git.isolation: worktree` is in effect and auto-mode hasn't created
- * (or flipped cwd into) the milestone worktree.
+ * while effective `git.isolation: worktree` is in effect and auto-mode hasn't
+ * created (or flipped cwd into) the milestone worktree. Degraded/recovery
+ * branch mode deliberately bypasses this guard.
  *
  * Pure / unit-testable. Callers in `register-hooks.ts` supply the effective
  * execution base path (worker cwd or project root) and current auto liveness;
@@ -1542,7 +1553,7 @@ function formatWorktreeIsolationBlockReason(
  * Allow rules (in order):
  *   1. Tool isn't a planning-write (write/edit/multi_edit/notebook_edit).
  *   2. `GSD_DISABLE_WORKTREE_WRITE_GUARD=1` self-hosting bypass.
- *   3. Isolation mode is not "worktree".
+ *   3. Effective isolation mode is not "worktree".
  *   4. Active unit is a bootstrap unit (discuss-milestone/plan-milestone/init).
  *   5. Target is inside `<projectRoot>/.gsd/worktrees/` (a real worktree).
  *   6. Target is inside `<projectRoot>/.gsd/` and isn't masquerading as a
@@ -1557,11 +1568,14 @@ export function shouldBlockWorktreeWrite(
   effectiveBasePath: string,
   isAutoLive: boolean,
   currentUnitType?: string | null,
+  effectiveIsolationMode?: ReturnType<typeof getIsolationMode>,
 ): { block: boolean; reason?: string } {
   const tool = canonicalToolName(toolName);
   if (!PLANNING_WRITE_TOOLS.has(tool)) return { block: false };
   if (process.env.GSD_DISABLE_WORKTREE_WRITE_GUARD === "1") return { block: false };
-  if (getIsolationMode(effectiveBasePath) !== "worktree") return { block: false };
+  if ((effectiveIsolationMode ?? getIsolationMode(effectiveBasePath)) !== "worktree") {
+    return { block: false };
+  }
   if (currentUnitType && WORKTREE_GATE_BOOTSTRAP_UNITS.has(currentUnitType)) return { block: false };
 
   if (!targetPath) {
@@ -1569,7 +1583,9 @@ export function shouldBlockWorktreeWrite(
       block: true,
       reason: [
         `HARD BLOCK: ${tool} called with empty path while \`git.isolation: worktree\` is configured`,
-        `and auto-mode is not active. Refusing to allow writes that cannot be located.`,
+        isAutoLive
+          ? `and auto-mode is running. Refusing to allow writes that cannot be located.`
+          : `and auto-mode is not active. Refusing to allow writes that cannot be located.`,
       ].join(" "),
     };
   }
@@ -1619,9 +1635,12 @@ export function shouldBlockWorktreeBash(
   effectiveBasePath: string,
   isAutoLive: boolean,
   currentUnitType?: string | null,
+  effectiveIsolationMode?: ReturnType<typeof getIsolationMode>,
 ): { block: boolean; reason?: string } {
   if (process.env.GSD_DISABLE_WORKTREE_WRITE_GUARD === "1") return { block: false };
-  if (getIsolationMode(effectiveBasePath) !== "worktree") return { block: false };
+  if ((effectiveIsolationMode ?? getIsolationMode(effectiveBasePath)) !== "worktree") {
+    return { block: false };
+  }
   if (currentUnitType && WORKTREE_GATE_BOOTSTRAP_UNITS.has(currentUnitType)) return { block: false };
   // Block whenever the effective cwd is inside a milestone worktree — not only
   // during live auto-mode. Reactive-execute subagents run as fresh pi children

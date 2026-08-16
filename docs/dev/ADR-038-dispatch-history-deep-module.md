@@ -1,10 +1,10 @@
 # ADR-038: Dispatch History deep module
 
-> **Disposition under [ADR-046](ADR-046-database-authoritative-workflow-lifecycle.md): Superseded.** Durable dispatch attribution and cross-restart stuck prevention remain valid requirements. The dispatch-history window, ledger-specific recovery counters, and stuck module are replaced by persisted Attempts, Failure Observations, unchanged-cause fingerprints, and recovery budgets.
+> **Disposition under [ADR-047](ADR-047-auto-mode-liveness-backstop.md): Superseded.** Durable dispatch attribution remains in `unit_dispatches`; the dispatch-history window, Rule 1 detector, and graduated stuck recovery are deleted in favor of the DB-persisted liveness backstop.
 
 ## Status
 
-Accepted (2026-06-12)
+Superseded (2026-08-08)
 
 ## Context
 

@@ -13,6 +13,7 @@ import {
 import { warnIfManifestHasMissingSkills } from "../skill-manifest.js";
 import { _resetLogs, drainLogs, setStderrLoggingEnabled } from "../workflow-logger.js";
 import type { GSDPreferences } from "../preferences.js";
+import { createWorkspace, scopeMilestone } from "../workspace.js";
 
 function makeTempBase(): string {
   return mkdtempSync(join(tmpdir(), "gsd-skill-activation-"));
@@ -351,7 +352,7 @@ test("milestone prompt builders propagate always_use_skills through buildSkillAc
     assert.ok(researchPrompt.includes(expectedSkillRead(base, "write-docs")));
     assert.ok(researchPrompt.includes(expectedSkillRead(base, "swiftui")));
 
-    const planPrompt = await buildPlanMilestonePrompt("M001", "Test", base);
+    const planPrompt = await buildPlanMilestonePrompt("M001", "Test", base, scopeMilestone(createWorkspace(base), "M001"));
     assert.ok(planPrompt.includes(expectedSkillRead(base, "write-docs")));
     assert.ok(planPrompt.includes(expectedSkillRead(base, "swiftui")));
   } finally {

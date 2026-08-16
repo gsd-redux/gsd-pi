@@ -20,6 +20,7 @@ import type {
   DriftContext,
   DriftHandler,
   DriftRecord,
+  ReconciliationBlockerDetail,
   ReconciliationDeps,
   ReconciliationResult,
 } from "./types.js";
@@ -30,6 +31,7 @@ export type {
   DriftRecord,
   ReconciliationDeps,
   ReconciliationResult,
+  ReconciliationBlockerDetail,
 } from "./types.js";
 export { ReconciliationFailedError } from "./errors.js";
 export type { ReconciliationFailureDetail } from "./errors.js";
@@ -42,6 +44,22 @@ const defaultDeps: ReconciliationDeps = {
   deriveState: defaultDeriveState,
   clearParseCache: defaultClearParseCache,
 };
+
+function dedupeBlockerDetails(
+  details: readonly ReconciliationBlockerDetail[],
+): ReconciliationBlockerDetail[] {
+  const seen = new Set<string>();
+  return details.filter((detail) => {
+    const key = JSON.stringify(detail);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stateBlockerDetails(state: GSDState): ReconciliationBlockerDetail[] {
+  return (state.blockers ?? []).map((message) => ({ message }));
+}
 
 /**
  * Drift-driven pre-dispatch reconciliation per ADR-017.
@@ -93,11 +111,15 @@ export async function reconcileBeforeDispatch(
     if (deps.dryRun && drift.length > 0) {
       const wouldRepair: DriftRecord[] = [];
       const blockers: string[] = [...detection.detectBlockers];
+      const blockerDetails: ReconciliationBlockerDetail[] = [
+        ...detection.detectBlockerDetails,
+      ];
       for (const record of drift) {
         const handler = registry.find((h) => h.kind === record.kind);
         const blocker = handler?.blocker ? await handler.blocker(record, ctx) : null;
         if (blocker) {
           blockers.push(blocker);
+          blockerDetails.push({ message: blocker, drift: record });
         } else {
           wouldRepair.push(record);
         }
@@ -112,6 +134,10 @@ export async function reconcileBeforeDispatch(
             ...blockers,
           ]),
         ],
+        blockerDetails: dedupeBlockerDetails([
+          ...stateBlockerDetails(stateSnapshot),
+          ...blockerDetails,
+        ]),
       };
     }
     if (drift.length === 0) {
@@ -125,11 +151,18 @@ export async function reconcileBeforeDispatch(
             ...detection.detectBlockers,
           ]),
         ],
+        blockerDetails: dedupeBlockerDetails([
+          ...stateBlockerDetails(stateSnapshot),
+          ...detection.detectBlockerDetails,
+        ]),
       };
     }
 
     const failures: ReconciliationFailureDetail[] = [];
     const blockers: string[] = [...detection.detectBlockers];
+    const blockerDetails: ReconciliationBlockerDetail[] = [
+      ...detection.detectBlockerDetails,
+    ];
     let repairedThisPass = false;
     const repairedKindsThisPass = new Set<string>();
 
@@ -145,6 +178,7 @@ export async function reconcileBeforeDispatch(
         const blocker = handler.blocker ? await handler.blocker(record, ctx) : null;
         if (blocker) {
           blockers.push(blocker);
+          blockerDetails.push({ message: blocker, drift: record });
           phaseBlocked = true;
           continue;
         }
@@ -178,6 +212,10 @@ export async function reconcileBeforeDispatch(
         stateSnapshot: blockerState,
         repaired,
         blockers: [...new Set([...(blockerState.blockers ?? []), ...blockers])],
+        blockerDetails: dedupeBlockerDetails([
+          ...stateBlockerDetails(blockerState),
+          ...blockerDetails,
+        ]),
       };
     }
     if (failures.length > 0) {
@@ -195,12 +233,16 @@ export async function reconcileBeforeDispatch(
 
   if (persistent.length > 0) {
     const blockers: string[] = [...finalDetection.detectBlockers];
+    const blockerDetails: ReconciliationBlockerDetail[] = [
+      ...finalDetection.detectBlockerDetails,
+    ];
     const unblockedPersistent: DriftRecord[] = [];
     for (const record of persistent) {
       const handler = registry.find((h) => h.kind === record.kind);
       const blocker = handler?.blocker ? await handler.blocker(record, finalCtx) : null;
       if (blocker) {
         blockers.push(blocker);
+        blockerDetails.push({ message: blocker, drift: record });
       } else {
         unblockedPersistent.push(record);
       }
@@ -211,6 +253,10 @@ export async function reconcileBeforeDispatch(
         stateSnapshot: finalState,
         repaired,
         blockers: [...new Set([...(finalState.blockers ?? []), ...blockers])],
+        blockerDetails: dedupeBlockerDetails([
+          ...stateBlockerDetails(finalState),
+          ...blockerDetails,
+        ]),
       };
     }
     throw new ReconciliationFailedError({ persistentDrift: persistent });
@@ -226,6 +272,10 @@ export async function reconcileBeforeDispatch(
         ...finalDetection.detectBlockers,
       ]),
     ],
+    blockerDetails: dedupeBlockerDetails([
+      ...stateBlockerDetails(finalState),
+      ...finalDetection.detectBlockerDetails,
+    ]),
   };
 }
 
@@ -257,6 +307,7 @@ interface DetectionOutcome {
   records: DriftRecord[];
   /** One blocker string per handler whose detect() threw. */
   detectBlockers: string[];
+  detectBlockerDetails: ReconciliationBlockerDetail[];
 }
 
 /**
@@ -273,6 +324,7 @@ async function detectAllDrift(
 ): Promise<DetectionOutcome> {
   const records: DriftRecord[] = [];
   const detectBlockers: string[] = [];
+  const detectBlockerDetails: ReconciliationBlockerDetail[] = [];
   for (const handler of registry) {
     try {
       const detected = await handler.detect(state, ctx);
@@ -282,7 +334,8 @@ async function detectAllDrift(
       const blocker = `Drift detection failed for "${handler.kind}": ${message}`;
       logWarning("reconcile", blocker);
       detectBlockers.push(blocker);
+      detectBlockerDetails.push({ message: blocker, detectorKind: handler.kind });
     }
   }
-  return { records, detectBlockers };
+  return { records, detectBlockers, detectBlockerDetails };
 }

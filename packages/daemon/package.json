@@ -1,6 +1,6 @@
 {
   "name": "@opengsd/daemon",
-  "version": "1.12.0",
+  "version": "1.15.0",
   "description": "GSD daemon — background process for project monitoring and Discord integration",
   "license": "MIT",
   "repository": {
@@ -21,27 +21,22 @@
     }
   },
   "bin": {
-    "gsd-daemon": "./bin/gsd-daemon.js",
-    "gsd-mcp": "./bin/gsd-mcp.js",
-    "gsd-mcp-runtime": "./bin/gsd-mcp-runtime.js"
+    "gsd-daemon": "./bin/gsd-daemon.js"
   },
   "scripts": {
     "build": "node ../../scripts/clean-package-dist.cjs && tsc",
-    "test": "pnpm run build && node --test dist/daemon.test.js dist/cloud-config.test.js dist/cloud-runtime.test.js dist/device-flow.test.js dist/local-tool-executor.test.js dist/mcp-cli.test.js dist/message-batcher.test.js"
+    "test": "pnpm run build && node --test dist/daemon.test.js dist/message-batcher.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
     "@opengsd/contracts": "workspace:*",
-    "@opengsd/mcp-server": "workspace:*",
     "@opengsd/rpc-client": "workspace:*",
     "discord.js": "^14.25.1",
-    "ws": "^8.20.0",
     "yaml": "^2.8.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",
-    "@types/ws": "^8.5.13",
     "typescript": "^5.4.0"
   },
   "engines": {

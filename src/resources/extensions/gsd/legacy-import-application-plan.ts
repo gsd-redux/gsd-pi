@@ -92,6 +92,16 @@ export interface LegacyImportApplicationLifecycleInstruction {
   readonly changeIds: readonly string[];
 }
 
+export interface LegacyImportApplicationQualityGateInstruction {
+  readonly action: "seed-quality-gate";
+  readonly targetKind: "slice-quality-gate";
+  readonly targetKey: string;
+  readonly milestoneId: string;
+  readonly sliceId: string;
+  readonly gateStatus: "pending" | "complete";
+  readonly changeIds: readonly string[];
+}
+
 export interface LegacyImportApplicationPreserveInstruction {
   readonly action: "preserve";
   readonly targetKind: string;
@@ -109,6 +119,7 @@ export type LegacyImportApplicationPlanInstruction =
   | LegacyImportApplicationSliceDependenciesInstruction
   | LegacyImportApplicationDeleteSliceDependenciesInstruction
   | LegacyImportApplicationLifecycleInstruction
+  | LegacyImportApplicationQualityGateInstruction
   | LegacyImportApplicationPreserveInstruction;
 
 export interface LegacyImportApplicationAffectedTarget {
@@ -132,6 +143,7 @@ export interface LegacyImportApplicationMutationCounts {
   readonly replaceSliceDependencies: number;
   readonly deleteSliceDependencies: number;
   readonly adoptLifecycle: number;
+  readonly seedQualityGate: number;
 }
 
 export interface LegacyImportApplicationEventFacts {
@@ -362,7 +374,7 @@ function rowPatch(
       && (prepared.kind === "milestone" || prepared.kind === "slice" || prepared.kind === "task")
       && (
         typeof value !== "string"
-        || (normalizeCanonicalLifecycleStatus(value) ?? normalizeLegacyLifecycleStatus(value)) === null
+        || normalizeAnyLifecycleStatus(value) === null
       )
     ) {
       fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import hierarchy status is unsupported");
@@ -378,6 +390,14 @@ function rowPatch(
     patch[field] = normalizedValue;
   }
   return patch;
+}
+
+function normalizedChangeIds(changeIds: readonly string[]): string[] {
+  return [...new Set(changeIds)].sort(compareText);
+}
+
+function normalizeAnyLifecycleStatus(value: string): CanonicalLifecycleStatus | null {
+  return normalizeCanonicalLifecycleStatus(value) ?? normalizeLegacyLifecycleStatus(value);
 }
 
 function lifecycleKind(kind: string, field: string | undefined): HierarchyKind | undefined {
@@ -412,7 +432,7 @@ function normalizedLifecycleStatus(value: LegacyImportValue): CanonicalLifecycle
   if (typeof candidate !== "string") {
     fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import lifecycle status is missing");
   }
-  const status = normalizeCanonicalLifecycleStatus(candidate) ?? normalizeLegacyLifecycleStatus(candidate);
+  const status = normalizeAnyLifecycleStatus(candidate);
   if (status === null) {
     fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import lifecycle status is unsupported");
   }
@@ -591,7 +611,7 @@ function rowInstruction(
   const values = row.action === "create"
     ? { ...row.identity, ...row.values }
     : row.action === "delete" ? {} : row.values;
-  const changeIds = [...new Set(row.changeIds)].sort(compareText);
+  const changeIds = normalizedChangeIds(row.changeIds);
   if (row.targetKind === "decision") {
     return {
       action: `${row.action}-decision-memory`,
@@ -635,7 +655,7 @@ function sliceDependencies(
         targetKey: row.targetKey,
         milestoneId,
         sliceId,
-        changeIds: [...new Set(row.changeIds)].sort(compareText),
+        changeIds: normalizedChangeIds(row.changeIds),
       });
       continue;
     }
@@ -665,7 +685,7 @@ function sliceDependencies(
       milestoneId,
       sliceId,
       dependsOnSliceIds,
-      changeIds: [...new Set(row.changeIds)].sort(compareText),
+      changeIds: normalizedChangeIds(row.changeIds),
     });
   }
   return instructions.sort((left, right) => compareText(left.targetKey, right.targetKey));
@@ -737,6 +757,17 @@ function projections(
   }
   return [...values.keys()];
 }
+
+/**
+ * Lifecycle projection keys must carry the same projection kind the canonical
+ * lifecycle domain operations enqueue, because trg_workflow_projection_lineage
+ * refuses to extend a (project, key) chain across a kind change. Importing
+ * lifecycle keys as "markdown" left post-import closeouts unable to enqueue
+ * their slice/task lifecycle projections (#1659). The key-family → kind
+ * mapping lives in projection-identity.ts as the single authority (#1661);
+ * this alias is the import surface's name for it.
+ */
+export { canonicalProjectionKind as legacyImportProjectionKind } from "./projection-identity.js";
 
 export function compileLegacyImportApplicationPlan(value: unknown): LegacyImportApplicationPlan {
   if (!isStrictLegacyImportData(value)) {
@@ -853,6 +884,57 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
     addRowClaim(rows, prepared, change.action, patch, change.change_id);
   }
 
+  // Companion-authority pass: an import that creates a hierarchy row must also
+  // mint the canonical companion rows that the workflow engine hard-requires
+  // beside it, or a recover-imported tree wedges auto mode at slice closeout.
+  //   #1657: execute-task and complete-slice require workflow_item_lifecycles
+  //   rows. Derive an adoption for every hierarchy create that has no explicit
+  //   lifecycle claim; explicit status evidence keeps authority. The status
+  //   mapping mirrors the planning adoption seam (milestone-planning-persistence):
+  //   terminal statuses adopt as-is, in-flight work adopts as "ready".
+  //   #1658: complete-slice requires exactly one Q8 quality gate per slice
+  //   (pending while open — the row plan_slice seeds; complete once closed —
+  //   the state completeSliceHierarchy leaves behind). Derive one Q8 claim per
+  //   created slice, mirroring whichever lifecycle authority won above.
+  const qualityGateClaims: LegacyImportApplicationQualityGateInstruction[] = [];
+  for (const row of rows.values()) {
+    if (row.action !== "create") continue;
+    const itemKind = lifecycleKind(row.targetKind, "status");
+    if (itemKind === undefined) continue;
+    const status = row.values["status"];
+    const normalized = typeof status === "string"
+      ? normalizeAnyLifecycleStatus(status)
+      : null;
+    const identity = lifecycleIdentity(itemKind, row.targetKey);
+    if (!lifecycleClaims.has(`${itemKind}\0${row.targetKey}`)) {
+      addLifecycleClaim(lifecycleClaims, {
+        action: "adopt-lifecycle",
+        lifecycleAction: "create",
+        targetKind: `${itemKind}-lifecycle`,
+        targetKey: row.targetKey,
+        itemKind,
+        ...identity,
+        lifecycleStatus: normalized === "completed" || normalized === "cancelled" ? normalized : "ready",
+        changeIds: row.changeIds,
+      });
+    }
+    if (itemKind === "slice") {
+      const lifecycleStatus = lifecycleClaims.get(`slice\0${row.targetKey}`)?.lifecycleStatus;
+      if (identity.sliceId === null) {
+        fail("LEGACY_IMPORT_APPLICATION_MAPPING_INCONSISTENT", "legacy import slice quality gate identity is incomplete");
+      }
+      qualityGateClaims.push({
+        action: "seed-quality-gate",
+        targetKind: "slice-quality-gate",
+        targetKey: row.targetKey,
+        milestoneId: identity.milestoneId,
+        sliceId: identity.sliceId,
+        gateStatus: lifecycleStatus === "completed" ? "complete" : "pending",
+        changeIds: row.changeIds,
+      });
+    }
+  }
+
   const rowValues = [...rows.values()];
   validatePhysicalRowIdentities(rowValues);
   const nonDeletes = rowValues.filter((row) => row.action !== "delete").sort(compareRows);
@@ -865,16 +947,20 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
   const lifecycle = [...lifecycleClaims.values()]
     .map((instruction) => ({
       ...instruction,
-      changeIds: [...new Set(instruction.changeIds)].sort(compareText),
+      changeIds: normalizedChangeIds(instruction.changeIds),
     }))
     .sort((left, right) => (
       lifecycleRank(left.itemKind) - lifecycleRank(right.itemKind)
       || compareText(left.targetKey, right.targetKey)
     ));
+  const qualityGates = qualityGateClaims
+    .map((instruction) => ({ ...instruction, changeIds: normalizedChangeIds(instruction.changeIds) }))
+    .sort((left, right) => compareText(left.targetKey, right.targetKey));
   const instructions: LegacyImportApplicationPlanInstruction[] = [
     ...nonDeletes.map(rowInstruction),
     ...dependencyWrites,
     ...lifecycle,
+    ...qualityGates,
     ...dependencyDeletes,
     ...deletes.map(rowInstruction),
     ...preserves,
@@ -886,6 +972,7 @@ export function compileLegacyImportApplicationPlan(value: unknown): LegacyImport
     replaceSliceDependencies: dependencyWrites.length,
     deleteSliceDependencies: dependencyDeletes.length,
     adoptLifecycle: lifecycle.length,
+    seedQualityGate: qualityGates.length,
   };
   const affectedTargets: LegacyImportApplicationAffectedTarget[] = [];
   const affected = new Set<string>();

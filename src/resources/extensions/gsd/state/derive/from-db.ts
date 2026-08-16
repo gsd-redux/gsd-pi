@@ -1,19 +1,23 @@
 // Project/App: gsd-pi
 // File Purpose: DB-backed GSD state derivation pipeline stage.
+// Post-cutover (T007) this module is the sole state authority on the live
+// derive path: DB rows decide phase/registry/progress. Markdown state
+// projections on disk (STATE.md, roadmaps, plans, summaries) are never
+// parsed as authority here; DB-unavailable fails closed in db-open.ts.
+// Canonical-lifecycle read authority (handleAllSlicesDone +
+// resolveMilestoneValidationVerdict) is pinned by D005 and unchanged.
 
 import type { ActiveRef, GSDState, MilestoneRegistryEntry, Phase } from '../../types.js';
-import { join } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
 import { isClosedStatus, isDeferredStatus } from '../../status-guards.js';
-import {
-  buildMilestoneFileName,
-  resolveFile,
-  resolveGsdRootFile,
-  resolveMilestonePath,
-} from '../../paths.js';
 import { parseProject } from '../../schemas/parsers.js';
 import {
+  queryDecisions,
+  queryDecisionsFromMemories,
+} from '../../context-store.js';
+import {
   getAllMilestones,
+  getArtifact,
+  getMilestoneScopedArtifacts,
   getPendingGateCountForTurn,
   getReplanHistory,
   getRequirementCounts,
@@ -83,7 +87,7 @@ function buildDerivedState(
     activeSlice: context.activeSlice ?? null,
     activeTask: context.activeTask ?? null,
     phase,
-    recentDecisions: [],
+    recentDecisions: loadRecentDecisionsFromDb(),
     blockers: options.blockers ?? [],
     nextAction,
     ...(options.lastCompletedMilestone !== undefined
@@ -121,30 +125,28 @@ function buildCompletenessSet(basePath: string, milestones: MilestoneRow[]) {
   return { completeMilestoneIds, parkedMilestoneIds };
 }
 
-function milestoneArtifactExistsInResolvedDir(
-  milestoneDir: string | null,
-  milestoneId: string,
-  suffix: string,
-): boolean {
-  if (!milestoneDir) return false;
-  const flatPath = join(milestoneDir, buildMilestoneFileName(milestoneId, suffix));
-  return existsSync(flatPath) || resolveFile(milestoneDir, milestoneId, suffix) !== null;
+function loadRecentDecisionsFromDb(): string[] {
+  const fromMemories = queryDecisionsFromMemories();
+  const rows = fromMemories.length > 0 ? fromMemories : queryDecisions();
+  return rows.slice(-5).map(
+    (d) => `${d.id} (${d.when_context}): ${d.decision} -> ${d.choice}`,
+  );
 }
 
 // The IDs the user actually committed to as their roadmap, read from the
-// PROJECT.md "Milestone Sequence". A content-less queued milestone that appears
-// here is a real, not-yet-planned roadmap stage (e.g. the first milestone right
-// after deep-project setup) and is safe to promote to active. A content-less
-// queued row that is NOT listed here is a phantom left by
-// gsd_milestone_generate_id that was never made part of the roadmap (#1524) and
-// must not be promoted. Returns an empty set when PROJECT.md is absent or
-// unparsable, which keeps phantom-only repos out of the promotion path.
-function loadProjectSequenceIds(basePath: string): Set<string> {
-  const projectPath = resolveGsdRootFile(basePath, 'PROJECT');
-  if (!existsSync(projectPath)) return new Set<string>();
+// PROJECT.md artifact stored in the DB. A content-less queued milestone that
+// appears here is a real, not-yet-planned roadmap stage (e.g. the first
+// milestone right after deep-project setup) and is safe to promote to active.
+// A content-less queued row that is NOT listed here is a phantom left by
+// gsd_milestone_generate_id that was never made part of the roadmap (#1524)
+// and must not be promoted. Returns an empty set when the PROJECT artifact is
+// absent or unparsable, which keeps phantom-only repos out of the promotion
+// path. Disk PROJECT.md is a projection and is never opened here.
+function loadProjectSequenceIds(): Set<string> {
+  const project = getArtifact("PROJECT.md");
+  if (!project?.full_content) return new Set<string>();
   try {
-    const parsed = parseProject(readFileSync(projectPath, 'utf-8'));
-    return new Set(parsed.milestones.map((m) => m.id));
+    return new Set(parseProject(project.full_content).milestones.map((m) => m.id));
   } catch (e) {
     logWarning('state', `failed to parse PROJECT.md milestone sequence: ${(e as Error).message}`);
     return new Set<string>();
@@ -152,7 +154,6 @@ function loadProjectSequenceIds(basePath: string): Set<string> {
 }
 
 async function buildRegistryAndFindActive(
-  basePath: string,
   milestones: MilestoneRow[],
   completeMilestoneIds: Set<string>,
   parkedMilestoneIds: Set<string>
@@ -164,7 +165,7 @@ async function buildRegistryAndFindActive(
   let activeMilestoneHasDraft = false;
   let firstPromotableQueuedShell: { id: string; title: string; deps: string[]; hasDraftContext: boolean } | null = null;
 
-  const projectSequenceIds = loadProjectSequenceIds(basePath);
+  const projectSequenceIds = loadProjectSequenceIds();
 
   const activeMilestoneIds = milestones
     .filter((m) => !parkedMilestoneIds.has(m.id))
@@ -191,9 +192,9 @@ async function buildRegistryAndFindActive(
     const allSlicesDone = slices.length > 0 && slices.every(s => isStatusDone(s.status));
 
     const title = stripMilestonePrefix(m.title) || m.id;
-    const milestoneDir = resolveMilestonePath(basePath, m.id);
-    const hasContext = milestoneArtifactExistsInResolvedDir(milestoneDir, m.id, "CONTEXT");
-    const hasDraftContext = !hasContext && milestoneArtifactExistsInResolvedDir(milestoneDir, m.id, "CONTEXT-DRAFT");
+    const artifacts = getMilestoneScopedArtifacts(m.id);
+    const hasContext = artifacts.some((a) => a.artifact_type === "CONTEXT");
+    const hasDraftContext = !hasContext && artifacts.some((a) => a.artifact_type === "CONTEXT-DRAFT");
     const readiness = classifyMilestoneReadiness({
       status: m.status,
       hasContext,
@@ -213,7 +214,7 @@ async function buildRegistryAndFindActive(
       if (readiness.kind === 'queued-shell') {
         // Only a *promotable* queued-shell may become active in the fallback
         // below: one that carries draft context (discuss-milestone was started)
-        // or is listed in the PROJECT.md roadmap sequence (a real, not-yet-
+        // or is listed in the PROJECT artifact roadmap sequence (a real, not-yet-
         // planned stage). A content-less shell that is neither is a phantom left
         // by gsd_milestone_generate_id that was never planned; promoting it
         // strands the user on an empty milestone (#1524), so we record it only
@@ -249,7 +250,7 @@ async function buildRegistryAndFindActive(
 
   // Promote the first promotable queued-shell as a fallback when no other
   // milestone became active. "Promotable" (tracked above) means it either
-  // carries draft context or is part of the PROJECT.md roadmap sequence.
+  // carries draft context or is part of the PROJECT artifact roadmap sequence.
   // Content-less phantom rows never reach here, so state falls through to
   // handleNoActiveMilestone and the doctor can flag them as orphans (#1524).
   // A draft-bearing shell resumes discussion (needs-discussion); an in-sequence
@@ -433,7 +434,7 @@ function checkReplanTrigger(basePath: string, milestoneId: string, sliceId: stri
 
 export async function deriveStateFromDb(
   basePath: string,
-  artifactReadRoot: string = basePath,
+  _artifactReadRoot: string = basePath,
 ): Promise<GSDState> {
   if (!ensureExistingWorkflowDbOpen(basePath)) {
     return buildDbUnavailableState();
@@ -463,7 +464,7 @@ export async function deriveStateFromDb(
 
   const { completeMilestoneIds, parkedMilestoneIds } = buildCompletenessSet(basePath, milestones);
   
-  const registryContext = await buildRegistryAndFindActive(basePath, milestones, completeMilestoneIds, parkedMilestoneIds);
+  const registryContext = await buildRegistryAndFindActive(milestones, completeMilestoneIds, parkedMilestoneIds);
   const { registry, activeMilestone, activeMilestoneSlices, activeMilestoneHasDraft } = registryContext;
   
   const milestoneProgress = {

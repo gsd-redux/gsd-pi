@@ -35,6 +35,8 @@ const HISTORY_LOGICAL_PATH = "migration/managed-outputs.json";
 const JOURNAL_LOGICAL_ROOT = "migration/projection-mutations";
 const UNBOUND_EVIDENCE_LOGICAL_PATH = "migration/unbound-projection-evidence.json";
 const NATIVE_EVIDENCE_LOGICAL_ROOT = "migration/native-projection-evidence";
+const PROJECTION_ROOT_LOCK_RETRY_DELAYS_MS = [5, 10, 20, 40] as const;
+const projectionRootLockRetrySleep = new Int32Array(new SharedArrayBuffer(4));
 
 interface NativeProjectionEvidenceDescriptor {
   readonly version: 2;
@@ -206,6 +208,46 @@ function openManagedProjectionRoot(targetRoot: string): ProjectionRootIdentityLo
     stat.dev.toString(),
     stat.ino.toString(),
   );
+}
+
+function isTransientProjectionRootLockError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (current !== null && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as { code?: unknown; message?: unknown; cause?: unknown };
+    if (candidate.code === "EBUSY") return true;
+    if (typeof candidate.message === "string"
+      && /\bEBUSY\b|sharing violation|os error 32|projection root is busy/iu.test(candidate.message)) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
+}
+
+function openManagedProjectionRootWithRetry<T>(
+  open: () => T,
+  wait: (delayMs: number) => void = (delayMs) => {
+    Atomics.wait(projectionRootLockRetrySleep, 0, 0, delayMs);
+  },
+): T {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return open();
+    } catch (error) {
+      const delay = PROJECTION_ROOT_LOCK_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTransientProjectionRootLockError(error)) throw error;
+      wait(delay);
+    }
+  }
+}
+
+export function _openManagedProjectionRootWithRetryForTest<T>(
+  open: () => T,
+  wait: (delayMs: number) => void,
+): T {
+  return openManagedProjectionRootWithRetry(open, wait);
 }
 
 function withManagedProjectionRoot<T>(
@@ -2106,7 +2148,7 @@ export function beginManagedProjectionMutation(
     return null;
   }
   const root = journalRoot(target.targetRoot);
-  const handle = openManagedProjectionRoot(target.targetRoot);
+  const handle = openManagedProjectionRootWithRetry(() => openManagedProjectionRoot(target.targetRoot));
   try {
     recoverManagedProjectionMutations(target.targetRoot, handle);
     recoverEvidenceResolutions(handle);

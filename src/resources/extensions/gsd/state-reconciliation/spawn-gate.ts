@@ -11,6 +11,7 @@ import {
   ReconciliationFailedError,
   type ReconciliationDeps,
 } from "./index.js";
+import { preserveProjectionChanges } from "../projection-worker.js";
 
 export type SpawnGateResult =
   | { ok: true; reason?: string }
@@ -38,6 +39,7 @@ export async function reconcileBeforeSpawn(
   const reconcileFn = reconcile ?? reconcileBeforeDispatch;
   const hasReconcileDeps = Object.keys(reconcileDeps).length > 0;
   try {
+    await preserveProjectionChanges(basePath);
     const result = await reconcileFn(
       basePath,
       hasReconcileDeps ? (reconcileDeps as ReconciliationDeps) : undefined,

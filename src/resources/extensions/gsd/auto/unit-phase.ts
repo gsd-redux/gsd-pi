@@ -25,6 +25,8 @@ import {
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
 import { isDbAvailable, getTask } from "../gsd-db.js";
 import { getLatestForUnit } from "../db/unit-dispatches.js";
+import { markWorkerStopping } from "../db/auto-workers.js";
+import { releaseMilestoneLease } from "../db/milestone-leases.js";
 import type { MinimalModelRegistry } from "../context-budget.js";
 import { parseUnitId } from "../unit-id.js";
 import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
@@ -593,22 +595,6 @@ export async function runUnitPhase(
     sessionFile,
   );
 
-  // Tag the most recent window entry with error info for stuck detection
-  const lastEntry = loopState.recentUnits[loopState.recentUnits.length - 1];
-  if (lastEntry) {
-    if (unitResult.errorContext) {
-      lastEntry.error = `${unitResult.errorContext.category}:${unitResult.errorContext.message}`.slice(0, 200);
-    } else if (unitResult.status === "error" || unitResult.status === "cancelled") {
-      lastEntry.error = `${unitResult.status}:${unitType}/${unitId}`;
-    } else if (unitResult.event?.messages?.length) {
-      const lastMsg = unitResult.event.messages[unitResult.event.messages.length - 1];
-      const msgStr = typeof lastMsg === "string" ? lastMsg : JSON.stringify(lastMsg);
-      if (/error|fail|exception/i.test(msgStr)) {
-        lastEntry.error = msgStr.slice(0, 200);
-      }
-    }
-  }
-
   if (unitResult.status === "cancelled") {
     if (_isPauseOriginCancelledResult(s.paused, unitResult.errorContext)) {
       if (!pausedBeforeRun) {
@@ -617,6 +603,29 @@ export async function runUnitPhase(
           category: "aborted" as const,
           isTransient: true,
         };
+        // pauseAuto normally owns coordination cleanup, but this setup race can
+        // observe paused state without that cleanup path completing.
+        const abandonedWorkerId = s.workerId;
+        if (unitType === "plan-milestone" && abandonedWorkerId) {
+          try {
+            if (s.currentMilestoneId && s.milestoneLeaseToken) {
+              releaseMilestoneLease(
+                abandonedWorkerId,
+                s.currentMilestoneId,
+                s.milestoneLeaseToken,
+              );
+            }
+          } catch (err) {
+            logWarning("engine", `setup pause lease cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          try {
+            markWorkerStopping(abandonedWorkerId);
+          } catch (err) {
+            logWarning("engine", `setup pause worker cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+          s.workerId = null;
+          s.milestoneLeaseToken = null;
+        }
         await deps.autoCommitUnit?.(s.basePath, unitType, unitId, ctx);
         await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, pauseContext);
         return { action: "break", reason: "pause-during-setup" };

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { buildPlanMilestonePrompt } from "../auto-prompts.ts";
+import { createWorkspace, scopeMilestone } from "../workspace.ts";
 
 function createBase(): string {
   const base = mkdtempSync(join(tmpdir(), "gsd-plan-queue-"));
@@ -36,7 +37,7 @@ describe("plan-milestone queue context", () => {
         ].join("\n"),
       );
 
-      const prompt = await buildPlanMilestonePrompt("M010", "M010", base);
+      const prompt = await buildPlanMilestonePrompt("M010", "M010", base, scopeMilestone(createWorkspace(base), "M010"));
 
       assert.match(prompt, /Source: `\.gsd\/QUEUE\.md`/);
       assert.match(prompt, /Analytics Dashboard — Interactivity, Intelligence & Demo Readiness/);

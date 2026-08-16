@@ -215,8 +215,7 @@ test("a genuine v43 database gains hierarchy reopen authorization on upgrade", (
   closeDatabase();
   const upgraded = openRawDatabase(dbPath);
   try {
-    assert.equal(SCHEMA_VERSION, 45);
-    assert.equal(schemaVersion(upgraded), 45);
+    assert.equal(schemaVersion(upgraded), SCHEMA_VERSION);
     assert.throws(() => transitionToReady(upgraded), /reopen authorization/i);
   } finally {
     upgraded.close();

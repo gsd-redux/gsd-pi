@@ -37,9 +37,10 @@ const WORKSPACE_ENTRIES = {
   'pi-tui':          new URL('../dist-test/packages/pi-tui/src/index.js', import.meta.url).href,
   'native':          new URL('../dist-test/packages/native/dist/index.js', import.meta.url).href,
   'agent-core':      new URL('../dist-test/packages/gsd-agent-core/dist/index.js', import.meta.url).href,
+  'contracts':       new URL('../dist-test/packages/contracts/src/index.js', import.meta.url).href,
 };
 
-const WORKSPACE_SCOPES = ['@gsd', '@earendil-works', '@mariozechner'];
+const WORKSPACE_SCOPES = ['@gsd', '@earendil-works', '@mariozechner', '@opengsd'];
 
 const BUILT_PACKAGE_ENTRIES = {
   'pi-coding-agent': new URL('../packages/pi-coding-agent/dist/index.js', import.meta.url).href,
@@ -49,6 +50,7 @@ const BUILT_PACKAGE_ENTRIES = {
   'pi-tui':          new URL('../packages/pi-tui/dist/index.js', import.meta.url).href,
   'native':          new URL('../packages/native/dist/index.js', import.meta.url).href,
   'agent-core':      new URL('../packages/gsd-agent-core/dist/index.js', import.meta.url).href,
+  'contracts':       new URL('../packages/contracts/dist/index.js', import.meta.url).href,
 };
 
 const GSD_ALIASES = Object.fromEntries(
@@ -154,6 +156,9 @@ function resolveWorkspaceSubpath(specifier, context) {
     }
     if (specifier === `${scope}/agent-core`) {
       return workspaceEntry('agent-core', context);
+    }
+    if (specifier === `${scope}/contracts` || specifier === `${scope}/contracts/dist/index.js`) {
+      return workspaceEntry('contracts', context);
     }
     const agentCorePrefix = `${scope}/agent-core/`;
     if (specifier.startsWith(agentCorePrefix)) {

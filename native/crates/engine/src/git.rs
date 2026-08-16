@@ -200,9 +200,13 @@ pub fn git_main_branch(repo_path: String) -> Result<String> {
         return Ok("master".to_string());
     }
 
-    let head = repo
-        .head()
-        .map_err(|e| git_err("Failed to read HEAD", e))?;
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(error) if error.code() == git2::ErrorCode::UnbornBranch => {
+            return Ok(String::new());
+        }
+        Err(error) => return Err(git_err("Failed to read HEAD", error)),
+    };
     Ok(head.shorthand().unwrap_or("HEAD").to_string())
 }
 

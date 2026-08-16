@@ -12,10 +12,6 @@
 import type { TaskIO, DerivedTaskNode, ReactiveExecutionState } from "./types.js";
 import { loadFile, parseTaskPlanIO } from "./files.js";
 import { isDbAvailable, getSliceTasks } from "./gsd-db.js";
-// Explicit degraded-mode fallback ONLY (ADR-017): parsePlan is consulted when
-// the DB is unavailable or has no task rows for the slice; the DB path in
-// loadSliceTaskIO always wins when rows exist, and the fallback logs a warning.
-import { parsePlan } from "./parsers-legacy.js";
 import { logWarning } from "./workflow-logger.js";
 import { resolveTasksDir, resolveTaskFiles } from "./paths.js";
 import { join } from "node:path";
@@ -228,23 +224,14 @@ export async function loadSliceTaskIO(
   } catch { /* fall through */ }
 
   if (!taskEntries) {
-    // Degraded-mode fallback (ADR-017): no DB task rows for this slice —
-    // parse the PLAN.md projection instead. Warn so silent drift from the
-    // DB-authoritative path is visible in logs.
+    // The DB is the single source of truth (ADR-017): with no task rows for
+    // this slice there is no graph to derive. Warn so the empty result is
+    // visible in logs instead of silently parsing the PLAN.md projection.
     logWarning(
       "projection",
-      `reactive-graph: DB unavailable or no task rows for ${mid}/${sid}; falling back to PLAN.md parsing`,
+      `reactive-graph: DB unavailable or no task rows for ${mid}/${sid}; deriving an empty graph`,
     );
-    const parsed = parsePlan(planContent);
-    if (parsed.tasks.length > 0) {
-      taskEntries = parsed.tasks.map(t => ({
-        id: t.id,
-        title: t.title,
-        done: t.done,
-      }));
-    } else {
-      return [];
-    }
+    return [];
   }
 
   const tDir = resolveTasksDir(basePath, mid, sid);

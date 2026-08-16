@@ -91,7 +91,7 @@ test("build-native publishes MCP server workspace to npm before the main package
   assert.ok(workspacePublishIndex > -1 && workspacePublishIndex < mainPublishIndex);
   // Publishing goes through the shared, derived-list script so this path can't
   // drift from the production release path (and can't re-introduce the hardcoded
-  // list that dropped cloud-mcp-gateway + daemon).
+  // list that omitted publishable workspace packages).
   assert.match(workspacePublish.run, /publish-workspace-packages\.sh/);
   assert.match(workspacePublish.run, /prepack-resolve-workspace\.cjs/);
   assert.match(workspacePublish.run, /postpack-restore-workspace\.cjs/);

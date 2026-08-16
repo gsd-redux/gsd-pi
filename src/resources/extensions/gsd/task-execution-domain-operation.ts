@@ -23,7 +23,16 @@ import {
   type StagedTaskCompletionWriteInput,
   writeStagedTaskCompletion,
 } from "./db/writers/task-execution.js";
-import type { ExecutionInvocation } from "./execution-invocation.js";
+import {
+  claimMilestoneLease,
+  getMilestoneLease,
+} from "./db/milestone-leases.js";
+import { autoWorkerHeartbeatTtlSeconds } from "./db/auto-workers.js";
+import {
+  internalExecutionInvocation,
+  type ExecutionInvocation,
+} from "./execution-invocation.js";
+import { isDbAvailable, setTaskSummaryMd } from "./gsd-db.js";
 import { ensureHostTechnicalCriterion } from "./task-verification-domain-operation.js";
 import type { RecoveryAction } from "./recovery-classification.js";
 import type { TaskFailureKind } from "./recovery-policy.js";
@@ -77,6 +86,11 @@ export interface SettleTaskAttemptReceipt {
   resultingRevision: number;
   resultId: string;
   nextStage: "verify" | "route";
+}
+
+export interface InterruptOrphanedTaskAttemptsReceipt {
+  attemptIds: string[];
+  milestoneLeaseToken: number | null;
 }
 
 export interface TaskExecutionAttemptSnapshot {
@@ -364,6 +378,30 @@ export function readLatestTaskAttempt(
   return snapshot(row);
 }
 
+/**
+ * Every Task Attempt id for the lifecycle, newest first. Recovery scans must
+ * consider superseded Attempts, not just the latest (#1754 residual).
+ */
+export function readTaskAttemptIds(task: ClaimTaskAttemptInput["task"]): string[] {
+  const rows = getDb().prepare(`
+    SELECT attempt.attempt_id
+    FROM workflow_item_lifecycles lifecycle
+    JOIN workflow_execution_attempts attempt
+      ON attempt.lifecycle_id = lifecycle.lifecycle_id
+     AND attempt.project_id = lifecycle.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+    ORDER BY attempt.attempt_number DESC
+  `).all({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Array<Record<string, unknown>>;
+  return rows.map((row) => String(row["attempt_id"]));
+}
+
 export function claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt {
   const fence = readDomainOperationFence(input.invocation.idempotencyKey);
   let claimed: ClaimRunningAttemptResult | undefined;
@@ -438,6 +476,9 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
     },
   }, (context) => {
     const attempt = loadAttemptExecution(input.attemptId);
+    if (input.outcome === "interrupted") {
+      setTaskSummaryMd(attempt.milestone_id, attempt.slice_id, attempt.task_id, "");
+    }
     if (input.stagedTaskCompletion) {
       writeStagedTaskCompletion(context, {
         milestoneId: attempt.milestone_id,
@@ -494,4 +535,88 @@ export function settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAtte
     resultId: result.result_id,
     nextStage: nextStage(result.outcome),
   };
+}
+
+/**
+ * Interrupt running Attempts whose auto-mode worker is no longer live.
+ * The replacement worker must hold a newer milestone lease, preserving the
+ * existing attempt.interrupt fencing contract even after the original lease
+ * row has been overwritten.
+ */
+export function interruptOrphanedTaskAttempts(input: {
+  workerId: string;
+  milestoneId: string;
+}): InterruptOrphanedTaskAttemptsReceipt {
+  if (!isDbAvailable()) return { attemptIds: [], milestoneLeaseToken: null };
+  const cutoff = new Date(
+    Date.now() - autoWorkerHeartbeatTtlSeconds() * 1000,
+  ).toISOString();
+  const attempts = getDb().prepare(`
+    SELECT attempt.attempt_id, attempt.worker_id, attempt.milestone_lease_token
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    LEFT JOIN workers owner ON owner.worker_id = attempt.worker_id
+    WHERE lifecycle.milestone_id = :milestone_id
+      AND attempt.attempt_state = 'running'
+      AND attempt.worker_id <> :worker_id
+      AND (
+        owner.worker_id IS NULL
+        OR owner.status <> 'active'
+        OR owner.last_heartbeat_at < :cutoff
+      )
+    ORDER BY attempt.started_at, attempt.attempt_id
+  `).all({
+    ":milestone_id": input.milestoneId,
+    ":worker_id": input.workerId,
+    ":cutoff": cutoff,
+  }) as unknown as Array<{
+    attempt_id: string;
+    worker_id: string;
+    milestone_lease_token: number;
+  }>;
+  if (attempts.length === 0) {
+    return { attemptIds: [], milestoneLeaseToken: null };
+  }
+
+  const heldLease = getMilestoneLease(input.milestoneId);
+  let milestoneLeaseToken =
+    heldLease?.worker_id === input.workerId
+      && heldLease.status === "held"
+      && Date.parse(heldLease.expires_at) > Date.now()
+      ? heldLease.fencing_token
+      : null;
+  if (milestoneLeaseToken === null) {
+    const claimed = claimMilestoneLease(input.workerId, input.milestoneId);
+    if (!claimed.ok) return { attemptIds: [], milestoneLeaseToken: null };
+    milestoneLeaseToken = claimed.token;
+  }
+
+  const attemptIds: string[] = [];
+  for (const attempt of attempts) {
+    if (milestoneLeaseToken <= attempt.milestone_lease_token) continue;
+    settleTaskAttempt({
+      invocation: internalExecutionInvocation(
+        `internal:auto:attempt.interrupt:${attempt.attempt_id}:${input.workerId}:${milestoneLeaseToken}`,
+        { actorId: input.workerId },
+      ),
+      attemptId: attempt.attempt_id,
+      outcome: "interrupted",
+      failureClass: "stale-worker",
+      summary: "Interrupted orphaned Task Attempt after auto-mode worker termination",
+      output: {
+        staleWorkerId: attempt.worker_id,
+        staleMilestoneLeaseToken: attempt.milestone_lease_token,
+        replacementWorkerId: input.workerId,
+        replacementMilestoneLeaseToken: milestoneLeaseToken,
+      },
+      recovery: {
+        workerId: input.workerId,
+        milestoneLeaseToken,
+      },
+    });
+    attemptIds.push(attempt.attempt_id);
+  }
+  return { attemptIds, milestoneLeaseToken };
 }

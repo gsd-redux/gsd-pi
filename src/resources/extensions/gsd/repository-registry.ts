@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import { isAbsolute, relative, resolve } from "node:path";
+import { extractPlanningPathReference } from "./pre-execution-checks.js";
 import type { GSDPreferences, WorkspacePreferences, WorkspaceRepositoryPreference } from "./preferences-types.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 import { resolveGsdPathContract } from "./paths.js";
@@ -33,6 +34,45 @@ export function defaultRepositoryTargets(registry: RepositoryRegistry): string[]
   if (project) return [project.id];
   const first = registry.repositories[0];
   return first ? [first.id] : [];
+}
+
+/**
+ * Derive parent-mode repository targets from the paths a task plans to touch.
+ * Paths resolve against the project root; a path inside a declared child
+ * repository attributes the task to that repository (deepest root wins), and
+ * anything else belongs to the orchestration root ("project"). Without this,
+ * defaulted targets fan verification out to every child repo even when the
+ * task's files live only at the orchestration root, so no planning input can
+ * make the gate pass (#1630). Accepts raw planned references — non-path
+ * entries are filtered and annotations normalized here so derivation
+ * semantics live in one place. Returns null when derivation has nothing to
+ * go on (not parent mode, no declared children, or no usable paths).
+ */
+export function deriveRepositoryTargetsFromPlannedPaths(
+  registry: RepositoryRegistry,
+  plannedReferences: readonly string[],
+): string[] | null {
+  if (registry.mode !== "parent") return null;
+  const children = registry.repositories.filter((repo) => repo.id !== "project");
+  if (children.length === 0) return null;
+
+  const targets: string[] = [];
+  for (const raw of plannedReferences) {
+    const plannedPath = extractPlanningPathReference(raw);
+    if (!plannedPath) continue;
+    const absolute = isAbsolute(plannedPath)
+      ? resolve(plannedPath)
+      : resolve(registry.projectRoot, plannedPath);
+    let matched: RegisteredRepository | undefined;
+    for (const child of children) {
+      const rel = relative(child.root, absolute);
+      const inside = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+      if (inside && (!matched || child.root.length > matched.root.length)) matched = child;
+    }
+    const id = matched ? matched.id : "project";
+    if (!targets.includes(id)) targets.push(id);
+  }
+  return targets.length > 0 ? targets : null;
 }
 
 

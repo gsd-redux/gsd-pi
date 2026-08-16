@@ -19,7 +19,7 @@ import {
 } from '../gsd-db.ts';
 import { handleCompleteSlice as handleCompleteSliceWithInvocation } from '../tools/complete-slice.ts';
 import { reopenSlice } from '../slice-lifecycle-domain-operation.ts';
-import { parseRoadmap } from '../parsers-legacy.ts';
+import { parseProjectionRoadmap as parseRoadmap } from '../schemas/parsers.ts';
 import { internalExecutionInvocation, type ExecutionInvocation } from '../execution-invocation.ts';
 import type { CompleteSliceParams } from '../types.ts';
 import { seedSliceCompletionAuthority } from './slice-completion-fixture.ts';

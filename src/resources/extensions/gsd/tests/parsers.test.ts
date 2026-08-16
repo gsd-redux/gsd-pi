@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRoadmap, parsePlan } from '../parsers-legacy.ts';
+import { parseProjectionRoadmap as parseRoadmap, parseProjectionPlan as parsePlan } from '../schemas/parsers.ts';
 import { parseTaskPlanFile, parseSummary, parseContinue, parseRequirementCounts, parseSecretsManifest, formatSecretsManifest } from '../files.ts';
 // ═══════════════════════════════════════════════════════════════════════════
 // parseRoadmap tests

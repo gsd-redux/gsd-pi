@@ -937,6 +937,41 @@ describe("checkVerificationCommands", () => {
 
     assert.deepEqual(results, []);
   });
+
+  // Regression for #1615 / #1650: terminal tasks never execute, so their
+  // verify commands must not produce blocking findings the re-dispatched
+  // plan-slice unit cannot repair (gsd_plan_task refuses terminal tasks,
+  // gsd_task_reopen is outside its tool contract).
+  test("skips terminal tasks with unsafe verify while still validating pending tasks (#1615)", () => {
+    const unsafeVerify = "grep '9.0.x|net9.0' <prose>; known-issue project in S04";
+    for (const status of ["skipped", "complete", "closed", "done"]) {
+      const results = checkVerificationCommands([
+        createTask({ id: "T01", status, verify: unsafeVerify }),
+        createTask({
+          id: "T02",
+          status: "pending",
+          verify: "python3 -m pytest tests/ -q --tb=short",
+        }),
+      ]);
+
+      assert.deepEqual(results, [], `terminal status "${status}" must not block`);
+    }
+  });
+
+  test("still blocks a pending task with an unsafe verify (#1615 guard preserved)", () => {
+    const results = checkVerificationCommands([
+      createTask({ id: "T01", status: "skipped", verify: "prose; not | a command" }),
+      createTask({
+        id: "T02",
+        status: "pending",
+        verify: "python3 -m pytest tests/ -q --tb=short 2>&1 | tail -5",
+      }),
+    ]);
+
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.target, "T02 Verify");
+    assert.equal(results[0]?.blocking, true);
+  });
 });
 
 // ─── runPreExecutionChecks Integration Tests ─────────────────────────────────

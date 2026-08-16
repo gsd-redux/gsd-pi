@@ -1148,11 +1148,12 @@ const key = getEnvApiKey('openai');  // checks OPENAI_API_KEY
 
 ## OAuth Providers
 
-Several providers require OAuth authentication instead of static API keys:
+Several providers support OAuth authentication for subscription access:
 
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
+- **Kimi Code** (Kimi Code subscription)
 
 For paid Cloud Code Assist subscriptions, set `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID` to your project ID.
 
@@ -1220,10 +1221,11 @@ import {
   loginOpenAICodex,
   loginGitHubCopilot,
   loginGeminiCli,
+  loginKimiCoding,
 
   // Token management
   refreshOAuthToken,   // (provider, credentials) => new credentials
-  getOAuthApiKey,      // (provider, credentialsMap) => { newCredentials, apiKey } | null
+  getOAuthApiKey,      // => { newCredentials, apiKey, apiKeyProvenance } | null
 
   // Types
   type OAuthProvider,
@@ -1277,7 +1279,7 @@ writeFileSync('auth.json', JSON.stringify(auth, null, 2));
 const model = getModel('github-copilot', 'gpt-4o');
 const response = await complete(model, {
   messages: [{ role: 'user', content: 'Hello!' }]
-}, { apiKey: result.apiKey });
+}, { apiKey: result.apiKey, apiKeyProvenance: result.apiKeyProvenance });
 ```
 
 ### Provider Notes
@@ -1287,6 +1289,8 @@ const response = await complete(model, {
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
+
+**Kimi Code**: Requires a Kimi Code subscription and uses a browser-based device authorization flow. Pass the `apiKeyProvenance` returned by `getOAuthApiKey()` with the token so requests use `Authorization: Bearer`. Static `KIMI_API_KEY` credentials continue to use `x-api-key`.
 
 ## Development
 

@@ -6,8 +6,6 @@ import { scanForProjects } from './project-scanner.js';
 import type { DiscordBot } from './discord-bot.js';
 import type { EventBridge } from './event-bridge.js';
 import { Orchestrator } from './orchestrator.js';
-import { CloudRuntime } from './cloud-runtime.js';
-import { LocalToolExecutor } from './local-tool-executor.js';
 
 /**
  * Core daemon class — ties config + logger together with lifecycle management.
@@ -24,7 +22,6 @@ export class Daemon {
   private eventBridge: EventBridge | undefined;
   private orchestrator: Orchestrator | undefined;
   private removeOrchestratorListener: (() => void) | undefined;
-  private cloudRuntime: CloudRuntime | undefined;
 
   constructor(
     private readonly config: DaemonConfig,
@@ -43,7 +40,6 @@ export class Daemon {
       log_level: this.config.log.level,
       scan_roots: this.config.projects.scan_roots.length,
       discord_configured: !!this.config.discord,
-      cloud_configured: !!this.config.cloud?.device_token,
     });
 
     process.on('SIGTERM', this.onSigterm);
@@ -132,16 +128,6 @@ export class Daemon {
       }
     }
 
-    if (this.config.cloud?.device_token && this.config.cloud?.runtime_id && this.config.cloud.enabled !== false) {
-      const executor = new LocalToolExecutor(this.sessionManager, () => this.scanProjects());
-      this.cloudRuntime = new CloudRuntime(this.config.cloud, executor, this.logger);
-      this.cloudRuntime.start();
-      this.logger.info('cloud runtime wired', {
-        gateway_url: this.config.cloud.gateway_url,
-        runtime_id: this.config.cloud.runtime_id,
-      });
-    }
-
     // Health heartbeat — logs uptime, session count, Discord status, memory
     const startTime = Date.now();
     this.healthTimer = setInterval(() => {
@@ -212,11 +198,6 @@ export class Daemon {
     if (this.orchestrator) {
       this.orchestrator.stop();
       this.orchestrator = undefined;
-    }
-
-    if (this.cloudRuntime) {
-      this.cloudRuntime.stop();
-      this.cloudRuntime = undefined;
     }
 
     // Stop EventBridge before Discord bot destroy

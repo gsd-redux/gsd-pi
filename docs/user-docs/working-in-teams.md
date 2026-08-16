@@ -29,6 +29,8 @@ Share planning artifacts (milestones, roadmaps, decisions) while keeping runtime
 .gsd/completed-units.json
 .gsd/STATE.md
 .gsd/gsd.db*
+.gsd/state-manifest.json
+.gsd/state.json
 .gsd/metrics.json
 .gsd/activity/
 .gsd/runtime/

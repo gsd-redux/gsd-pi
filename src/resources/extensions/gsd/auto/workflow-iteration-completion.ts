@@ -9,7 +9,6 @@ export interface WorkflowIterationRecoveryState {
 
 export interface CompleteWorkflowIterationDeps {
   emitIterationEnd: () => void;
-  saveStuckState: () => void;
   logIterationComplete: () => void;
 }
 
@@ -21,6 +20,5 @@ export function completeWorkflowIteration(
   state.consecutiveCooldowns = 0;
   state.recentErrorMessages.length = 0;
   deps.emitIterationEnd();
-  deps.saveStuckState();
   deps.logIterationComplete();
 }

@@ -32,10 +32,6 @@ const CLASSIFICATIONS = [
 const PROOF_OUTCOMES = ["advanced", "repaired", "unresolved", "rejected", "observation_loss"];
 const COMPATIBILITY_IDS = [
   "runtime-disagreement",
-  "frozen-public-response",
-  "mode-transport-matrix",
-  "unadopted-import",
-  "unadopted-reconcile",
   "same-status-repair",
   "park-unpark",
   "discard",
@@ -51,22 +47,6 @@ const COMPATIBILITY_DETAILS = Object.freeze({
   "runtime-disagreement": {
     file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
     title: "legacy milestone status remains public when canonical lifecycle disagrees",
-  },
-  "frozen-public-response": {
-    file: "src/resources/extensions/gsd/tests/semantic-shadow-contract.test.ts",
-    title: "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor",
-  },
-  "mode-transport-matrix": {
-    file: "src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts",
-    title: "all supported modes and transports preserve the frozen response and exact observation identity",
-  },
-  "unadopted-import": {
-    file: "src/resources/extensions/gsd/tests/md-importer-adopted-authority.test.ts",
-    title: "unadopted re-import keeps existing checkbox completion behavior",
-  },
-  "unadopted-reconcile": {
-    file: "src/resources/extensions/gsd/tests/workflow-reconcile.test.ts",
-    title: "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path",
   },
   "same-status-repair": {
     file: "src/resources/extensions/gsd/tests/adopted-lifecycle-bypass-closure.test.ts",
@@ -112,7 +92,7 @@ const COMPATIBILITY_DETAILS = Object.freeze({
 const COMMANDS = Object.freeze([
   {
     id: "semantic-shadow-capstone",
-    command: "pnpm exec tsx --test --test-concurrency=1 src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+    command: "pnpm exec tsx --test --test-concurrency=1 src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
     stage: "post_generation",
     verdict: "required",
   },
@@ -354,7 +334,7 @@ function validInput() {
     commands: COMMANDS.map((command) => ({ ...command })),
     noCutover: {
       structural: { passed: 8, total: 8 },
-      behavioral: { passed: 15, total: 15 },
+      behavioral: { passed: 11, total: 11 },
     },
     authorityBaseline: { passed: 4, total: 4 },
     deferredCutoverBlockers: [...DEFERRED_BLOCKERS],
@@ -520,7 +500,7 @@ const failureCases = [
   }, /command inventory.*stage|post-generation command/i],
   ["pre-certified post-generation command", (input) => { input.commands[3].verdict = "pass"; }, /post-generation command.*required/i],
   ["post-generation exit claim", (input) => { input.commands[3].exitCode = 0; }, /post-generation command.*exit/i],
-  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 14; }, /no-cutover.*15\/15/i],
+  ["no-cutover regression", (input) => { input.noCutover.behavioral.passed = 10; }, /no-cutover.*11\/11/i],
   ["authority baseline regression", (input) => { input.authorityBaseline.passed = 3; }, /baseline.*4\/4/i],
   ["GO recommendation", (input) => { input.recommendation = "GO"; }, /recommendation.*NO_GO/i],
   ["missing deferred blocker", (input) => input.deferredCutoverBlockers.pop(), /deferred cutover blocker/i],

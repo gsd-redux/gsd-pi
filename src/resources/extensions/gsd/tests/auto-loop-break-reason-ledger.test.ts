@@ -17,10 +17,16 @@ test("loop break branches settle the ledger with the resolved break reason", () 
     assert.notEqual(sentinel, -1, "expected a `break;` sentinel to terminate the break branch body");
     const body = branch.slice(0, sentinel);
     assert.match(body, /const breakReason = unitPhaseResult\.reason \?\? "unit-break";/);
-    assert.match(body, /settleDispatchFailed\([^,]+, breakReason,/);
-    assert.match(body, /finishTurn\("stopped", "execution", breakReason\)/);
+    assert.match(body, /closeRun\("failed", breakReason\)/);
+    // The trailing argument is the ADR-047 liveness guard id — a stable guard
+    // identity, deliberately constant so repeat blocks hash to one signature.
+    // It is not the break reason, which must stay the resolved reason.
+    assert.match(body, /finishTurn\("stopped", "execution", breakReason, "unit-break"\)/);
+    const withoutGuardIdentities = body
+      .replace(/const breakReason = unitPhaseResult\.reason \?\? "unit-break";/, "")
+      .replace(/finishTurn\("stopped", "execution", breakReason, "unit-break"\)/, "");
     assert.doesNotMatch(
-      body.replace(/const breakReason = unitPhaseResult\.reason \?\? "unit-break";/, ""),
+      withoutGuardIdentities,
       /"unit-break"/,
       "break reason must not be hardcoded — distinct reasons must stay distinct for stuck-loop detection",
     );

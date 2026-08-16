@@ -15,6 +15,7 @@ export type DriftRecord =
   | { kind: "stale-worker"; lockPath: string; pid: number }
   | { kind: "unregistered-milestone"; milestoneId: string }
   | { kind: "roadmap-divergence"; milestoneId: string; sliceId?: string }
+  | { kind: "roadmap-missing"; milestoneId: string }
   | {
       kind: "disk-slice-id-divergence";
       milestoneId: string;
@@ -106,6 +107,14 @@ export interface ReconciliationResult {
   stateSnapshot: GSDState;
   repaired: readonly DriftRecord[];
   blockers: readonly string[];
+  blockerDetails: readonly ReconciliationBlockerDetail[];
+}
+
+/** Structured evidence retained for every terminal reconciliation blocker. */
+export interface ReconciliationBlockerDetail {
+  message: string;
+  drift?: DriftRecord;
+  detectorKind?: DriftRecord["kind"];
 }
 
 /**

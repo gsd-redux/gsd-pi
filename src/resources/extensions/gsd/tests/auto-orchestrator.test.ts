@@ -14,7 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,7 +23,6 @@ import {
   decideOrchestratorDispatch,
   resolveLiveOrchestratorBasePath,
 } from "../auto/orchestrator.js";
-import { STUCK_WINDOW_SIZE } from "../auto/dispatch-history.js";
 import type { OrchestratorContext } from "../auto/orchestrator.js";
 import type { AutoOrchestrationModule, AutoSessionContext } from "../auto/contracts.js";
 import type { GSDState } from "../types.js";
@@ -33,6 +32,7 @@ import type { UnifiedRule } from "../rule-types.js";
 import { supportsStructuredQuestions } from "../workflow-mcp.js";
 import {
   closeDatabase,
+  insertArtifact,
   insertAssessment,
   insertGateRow,
   insertMilestone,
@@ -44,11 +44,18 @@ import { AutoSession } from "../auto/session.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease, getMilestoneLease, releaseMilestoneLease } from "../db/milestone-leases.js";
 import { recordDispatchClaim, markFailed } from "../db/unit-dispatches.js";
+import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.js";
+import { internalExecutionInvocation } from "../execution-invocation.js";
 import { normalizeRealPath } from "../paths.js";
 import { acquireSessionLock, releaseSessionLock } from "../session-lock.js";
 import { queryJournal } from "../journal.js";
 import { invalidateAllCaches } from "../cache.js";
 import { invalidateStateCache } from "../state.js";
+import {
+  COMPLETED_NO_ADVANCE_GUARD_ID,
+  getOpenWedge,
+} from "../auto-liveness-backstop.js";
+import { renderRoadmapFromDb } from "../markdown-renderer.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixture builder
@@ -163,6 +170,7 @@ function makeFixture(opts: FixtureOptions = {}): Fixture {
   session.originalBasePath = base;
   session.currentMilestoneId = "M001";
   session.resourceVersionOnStart = null;
+  session.workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
 
   const ctx: OrchestratorContext = {
     ctx: { model: {}, modelRegistry: { getAll: () => [], getAvailable: () => [] }, ui: { notify() {} } } as never,
@@ -202,6 +210,46 @@ function makeFixture(opts: FixtureOptions = {}): Fixture {
       try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
     },
   };
+}
+
+/**
+ * Seed the canonical Task Attempt that makes `verifyExpectedArtifact` report the
+ * fixture task as complete on disk while its DB row stays open — the #1622
+ * projection-drift shape that drives stuck recovery down the execute-task
+ * (read-only) branch.
+ */
+function seedSucceededTaskAttempt(base: string): void {
+  const workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) throw new Error("fixture lease claim failed");
+  const claim = recordDispatchClaim({
+    traceId: "read-only-recovery",
+    workerId,
+    milestoneLeaseToken: lease.token,
+    milestoneId: "M001",
+    sliceId: "S01",
+    taskId: "T01",
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+  });
+  assert.equal(claim.ok, true);
+  if (!claim.ok) throw new Error("fixture dispatch claim failed");
+  const attempt = claimTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:read-only-recovery:claim"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId,
+    milestoneLeaseToken: lease.token,
+    coordinationDispatchId: claim.dispatchId,
+  });
+  settleTaskAttempt({
+    invocation: internalExecutionInvocation("test:orchestrator:read-only-recovery:settle"),
+    attemptId: attempt.attemptId,
+    outcome: "succeeded",
+    failureClass: "none",
+    summary: "executor succeeded",
+    output: {},
+  });
 }
 
 function makeState(): GSDState {
@@ -311,6 +359,63 @@ test("advance() dispatches the resolved unit and journals advance", async (t) =>
   const names = f.journalNames();
   assert.ok(names.includes("advance"));
   assert.ok(!names.includes("advance-blocked"));
+});
+
+test("advance() preserves an external projection edit without blocking valid work", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  const rendered = await renderRoadmapFromDb(f.base, "M001");
+  assert.ok("roadmapPath" in rendered);
+  const externalEdit = Buffer.from("# External roadmap evidence\n");
+  writeFileSync(rendered.roadmapPath, externalEdit);
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "advanced");
+  if (result.kind !== "advanced") return;
+  assert.deepEqual(result.unit, { unitType: "execute-task", unitId: "M001/S01/T01" });
+  assert.match(readFileSync(rendered.roadmapPath, "utf-8"), /S01: Slice/);
+  const quarantineRoot = join(f.base, ".gsd", "quarantine", "projections");
+  const preservedPath = readdirSync(quarantineRoot, { recursive: true })
+    .map(String)
+    .find((path) => path.endsWith("ROADMAP.md")
+      && readFileSync(join(quarantineRoot, path)).equals(externalEdit));
+  assert.ok(preservedPath);
+  assert.ok(!f.journalNames().includes("advance-blocked"));
+});
+
+test("#1677: advance() blocks an unproven open-task SUMMARY instead of filtering its text", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  const summaryPath = join(
+    f.base,
+    ".gsd",
+    "milestones",
+    "M001",
+    "slices",
+    "S01",
+    "tasks",
+    "T01-SUMMARY.md",
+  );
+  const summary = "# T01 Summary\n\nUnproven failure-path output.\n";
+  writeFileSync(summaryPath, summary);
+  insertArtifact({
+    path: summaryPath,
+    artifact_type: "SUMMARY",
+    milestone_id: "M001",
+    slice_id: "S01",
+    task_id: "T01",
+    full_content: summary,
+  });
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") return;
+  assert.equal(result.action, "pause");
+  assert.match(result.reason, /Artifact\/DB status drift/);
+  assert.ok(f.journalNames().includes("advance-blocked"));
+  assert.ok(!f.journalNames().includes("advance"));
 });
 
 test("advance() sets active unit and is reflected in status", async (t) => {
@@ -589,7 +694,7 @@ test("advance() stopped clears previous activeUnit and resets idempotent lock", 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Idempotency + finalized guard + stuck-loop ring (issues #5786 / #5787 / #415)
+// Idempotency + finalized guard (issues #5786 / #5787 / #415)
 // ─────────────────────────────────────────────────────────────────────────────
 
 test("advance() is idempotent for the same active unit", async (t) => {
@@ -597,6 +702,7 @@ test("advance() is idempotent for the same active unit", async (t) => {
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
@@ -606,6 +712,7 @@ test("advance() is idempotent for the same active unit", async (t) => {
   assert.equal(second.kind, "skipped");
   if (second.kind !== "skipped") return;
   assert.equal(second.reason, "idempotent advance: unit already active");
+  assert.equal(second.code, "unit-already-active");
 });
 
 test("idempotency skip fires with its own reason before saturation", async (t) => {
@@ -613,12 +720,14 @@ test("idempotency skip fires with its own reason before saturation", async (t) =
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
   assert.equal(second.kind, "skipped");
   if (second.kind !== "skipped") return;
   assert.equal(second.reason, "idempotent advance: unit already active");
+  assert.equal(second.code, "unit-already-active");
 });
 
 test("completeActiveUnit clears in-flight idempotency and stops stale same-unit advance", async (t) => {
@@ -630,23 +739,24 @@ test("completeActiveUnit clears in-flight idempotency and stops stale same-unit 
   if (first.kind !== "advanced") throw new Error("expected first advance");
 
   await f.orchestrator.completeActiveUnit(first.unit);
+  const beforeRepeat = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(beforeRepeat.ok, true);
+  assert.equal(beforeRepeat.ok ? beforeRepeat.wedge : null, null, "one occurrence must not trip");
   const second = await f.orchestrator.advance();
 
   assert.equal(f.orchestrator.getStatus().activeUnit, undefined);
   assert.equal(second.kind, "blocked");
   if (second.kind !== "blocked") throw new Error("expected stale same-unit block");
   assert.equal(second.action, "stop");
-  assert.equal(second.reason, "state did not advance after finalized execute-task M001/S01/T01");
+  assert.match(second.reason, /liveness backstop tripped/);
+  const wedge = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(wedge.ok, true);
+  assert.equal(wedge.ok ? wedge.wedge?.guardId : null, COMPLETED_NO_ADVANCE_GUARD_ID);
+  assert.equal(wedge.ok ? wedge.wedge?.occurrenceCount : null, 2);
   assert.ok(f.journalNames().includes("unit-finalized"));
 });
 
-test("#442: finalized-repeat recovers (skipped) when the unit's artifact already exists on disk", async (t) => {
-  // plan-milestone's expected artifact is the ROADMAP, which the fixture
-  // already writes — so verifyExpectedArtifact returns true. This is the legacy
-  // stuck-recovery scenario (unit completed on disk, DB row stale): instead of
-  // the finalized-repeat HARD-STOP, #442 verify-and-recover should refresh +
-  // skip so the loop can progress. plan-milestone is deliberately NOT one of
-  // the DB-refreshing unit types, so the recovery stays side-effect-light.
+test("ADR-047: finalized-repeat guard does not run legacy graduated recovery", async (t) => {
   const f = makeFixture({
     dispatch: () => ({ action: "dispatch", unitType: "plan-milestone", unitId: "M001", prompt: "p" }),
   });
@@ -659,10 +769,23 @@ test("#442: finalized-repeat recovers (skipped) when the unit's artifact already
   await f.orchestrator.completeActiveUnit(first.unit);
 
   const second = await f.orchestrator.advance();
-  assert.equal(second.kind, "skipped", "should recover via artifact verification, not hard-stop");
-  if (second.kind !== "skipped") throw new Error("expected skipped recovery");
-  assert.match(second.reason, /stuck-recovery/);
-  assert.ok(f.journalNames().includes("advance-skipped"));
+  assert.equal(second.kind, "blocked");
+  if (second.kind !== "blocked") throw new Error("expected finalized-repeat guard block");
+  assert.match(second.reason, /completed-no-advance/);
+  assert.ok(f.journalNames().includes("advance-blocked"));
+});
+
+test("ADR-047: unavailable liveness storage fails the advance boundary closed", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+  closeDatabase();
+
+  const result = await f.orchestrator.advance();
+
+  assert.equal(result.kind, "blocked");
+  if (result.kind !== "blocked") throw new Error("expected a blocked advance");
+  assert.equal(result.action, "stop");
+  assert.match(result.reason, /liveness backstop unavailable/i);
 });
 
 test("completeActiveUnit allows a different next unit to advance", async (t) => {
@@ -709,7 +832,7 @@ test("completeActiveUnit guard survives an intervening advance and blocks X→Y�
   assert.equal(third.kind, "blocked");
   if (third.kind !== "blocked") throw new Error("expected X→Y→X re-dispatch to be blocked");
   assert.equal(third.action, "stop");
-  assert.equal(third.reason, "state did not advance after finalized execute-task M001/S01/T01");
+  assert.match(third.reason, /completed-no-advance/);
 });
 
 test("retryActiveUnit clears in-flight idempotency without marking the unit finalized", async (t) => {
@@ -727,6 +850,45 @@ test("retryActiveUnit clears in-flight idempotency without marking the unit fina
   if (second.kind !== "advanced") throw new Error("expected retry advance");
   assert.deepEqual(second.unit, first.unit);
   assert.ok(f.journalNames().includes("unit-retry"));
+});
+
+test("settle canceled clears a deferred dispatch claim without finalizing the unit", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  await f.orchestrator.settle(first.dispatchId, "canceled", "deferred-closeout");
+  const second = await f.orchestrator.advance();
+
+  assert.equal(f.orchestrator.getStatus().activeUnit?.unitId, first.unit.unitId);
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected deferred unit to re-advance");
+  assert.deepEqual(second.unit, first.unit);
+  assert.notEqual(second.dispatchId, first.dispatchId);
+  assert.equal(f.journalNames().includes("unit-finalized"), false);
+  const wedge = getOpenWedge(normalizeRealPath(f.base));
+  assert.equal(wedge.ok, true);
+  assert.equal(wedge.ok ? wedge.wedge : null, null);
+});
+
+test("abandonActiveUnit clears an abnormal exit so the same unit can advance again", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  await f.orchestrator.abandonActiveUnit(first.unit, "unit execution crashed");
+  const second = await f.orchestrator.advance();
+
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected re-advance after abandonment");
+  assert.deepEqual(second.unit, first.unit);
+  assert.ok(f.journalNames().includes("unit-abandon"));
 });
 
 test("retryActiveUnit clears finalized same-unit guard for post-hook retries", async (t) => {
@@ -749,48 +911,64 @@ test("retryActiveUnit clears finalized same-unit guard for post-hook retries", a
   assert.ok(names.includes("unit-retry"));
 });
 
-test("resume() clears idempotent lock and allows re-advance", async (t) => {
+test("resume() keeps an in-flight UnitRun skip, then resumes the claimed row", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const idempotent = await f.orchestrator.advance();
   const resumed = await f.orchestrator.resume();
+  f.session.unitExecutionInFlight = false;
   const next = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
   assert.equal(idempotent.kind, "skipped");
   assert.equal(resumed.kind, "resumed");
   assert.equal(next.kind, "advanced");
+  if (next.kind !== "advanced") throw new Error("expected resume advance");
+  assert.equal(next.dispatchId, first.dispatchId);
 });
 
-test("start() clears prior idempotent lock", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  await f.orchestrator.advance();
-  const idempotent = await f.orchestrator.advance();
-  const restarted = await f.orchestrator.start(SESSION_CONTEXT);
-  const next = await f.orchestrator.advance();
-
-  assert.equal(idempotent.kind, "skipped");
-  assert.equal(restarted.kind, "started");
-  assert.equal(next.kind, "advanced");
-});
-
-test("stop() clears idempotent unit lock so advance can run again", async (t) => {
+test("start() does not skip-string-match a claimed UnitRun after restart", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
+  const idempotent = await f.orchestrator.advance();
+  const restarted = await f.orchestrator.start(SESSION_CONTEXT);
+  f.session.unitExecutionInFlight = false;
+  const next = await f.orchestrator.advance();
+
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  assert.equal(idempotent.kind, "skipped");
+  assert.equal(restarted.kind, "started");
+  assert.equal(next.kind, "advanced");
+  if (next.kind !== "advanced") throw new Error("expected restarted advance");
+  assert.equal(next.dispatchId, first.dispatchId);
+});
+
+test("stop() cancels the UnitRun so advance can claim again", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const idempotent = await f.orchestrator.advance();
   const stopped = await f.orchestrator.stop("reset");
+  f.session.unitExecutionInFlight = false;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
   assert.equal(idempotent.kind, "skipped");
   assert.equal(stopped.kind, "stopped");
   assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected post-stop advance");
+  assert.notEqual(second.dispatchId, first.dispatchId);
 });
 
 test("idempotent path journals advance-skipped and records a health snapshot", async (t) => {
@@ -798,286 +976,31 @@ test("idempotent path journals advance-skipped and records a health snapshot", a
   t.after(() => f.cleanup());
 
   await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   await f.orchestrator.advance();
 
   assert.ok(f.journalNames().includes("advance-skipped"));
 });
 
+test("a new orchestrator resumes the claimed UnitRun instead of skip-string-matching", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  const restarted = createAutoOrchestrator(f.ctx);
+  const second = await restarted.advance();
+
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected UnitRun resume");
+  assert.equal(second.dispatchId, first.dispatchId);
+  assert.equal(second.unit.unitId, first.unit.unitId);
+  assert.equal(restarted.getStatus().activeUnit?.unitId, first.unit.unitId);
+});
+
 // ─── Stuck-loop ring buffer (issue #5787) ──────────────────────────────────
-
-test("stuck-loop: empty ring on a freshly constructed orchestrator advances normally", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  const result = await f.orchestrator.advance();
-
-  assert.equal(result.kind, "advanced");
-});
-
-test("stuck-loop: distinct units making forward progress do not block", async (t) => {
-  // Healthy forward progress visits new units every advance — no key repeats,
-  // so no oscillation/repeat rule fires even once the window is full.
-  let i = 0;
-  const sequence = ["M001/S01/A", "M001/S01/B", "M001/S01/C", "M001/S01/D", "M001/S01/E", "M001/S01/F"];
-  const f = makeFixture({
-    dispatch: () => ({ action: "dispatch", unitType: "execute-task", unitId: sequence[i++ % sequence.length], prompt: "p" }),
-  });
-  t.after(() => f.cleanup());
-
-  for (let round = 0; round < STUCK_WINDOW_SIZE; round++) {
-    const result = await f.orchestrator.advance();
-    assert.equal(result.kind, "advanced", `round ${round} should advance, got ${result.kind}`);
-  }
-});
-
-test("stuck-loop #1225: two-unit oscillation blocks once the window saturates", async (t) => {
-  // Reproduces the execute-task ↔ complete-slice loop: a slice gate keeps
-  // reopening the same task, so two keys alternate forever. Neither key ever
-  // saturates the window on its own, so the old matchingCount>=SIZE gate never
-  // consulted detect-stuck and the loop ran until an external kill. The window
-  // still fills, so detect-stuck's oscillation/repeat rules must now fire.
-  let i = 0;
-  const sequence: Array<{ unitType: string; unitId: string }> = [
-    { unitType: "execute-task", unitId: "M001/S01/T01" },
-    { unitType: "complete-slice", unitId: "M001/S01" },
-  ];
-  const f = makeFixture({
-    dispatch: () => {
-      const next = sequence[i++ % sequence.length];
-      return { action: "dispatch", unitType: next.unitType, unitId: next.unitId, prompt: "p" };
-    },
-  });
-  t.after(() => f.cleanup());
-
-  let blocked: Awaited<ReturnType<typeof f.orchestrator.advance>> | undefined;
-  for (let round = 0; round < STUCK_WINDOW_SIZE; round++) {
-    const result = await f.orchestrator.advance();
-    if (result.kind === "blocked") {
-      blocked = result;
-      break;
-    }
-  }
-
-  assert.ok(blocked, "oscillation must be detected once the window saturates");
-  if (!blocked || blocked.kind !== "blocked") return;
-  assert.equal(blocked.action, "stop");
-  assert.ok(
-    blocked.reason.startsWith("stuck-loop:"),
-    `expected stuck-loop verdict, got: ${blocked.reason}`,
-  );
-});
-
-test("stuck-loop: ring saturated with same unit blocks with action 'stop' and stuck-loop reason", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  const results: Awaited<ReturnType<typeof f.orchestrator.advance>>[] = [];
-  for (let i = 0; i < STUCK_WINDOW_SIZE; i++) {
-    results.push(await f.orchestrator.advance());
-  }
-
-  // First call advances.
-  assert.equal(results[0].kind, "advanced");
-
-  // Intermediate calls are skipped by idempotency (not stuck-loop yet).
-  for (let i = 1; i < STUCK_WINDOW_SIZE - 1; i++) {
-    const r = results[i];
-    assert.equal(r.kind, "skipped", `round ${i} should be skipped`);
-    if (r.kind !== "skipped") return;
-    assert.equal(r.reason, "idempotent advance: unit already active");
-  }
-
-  // The final call (ring now holds STUCK_WINDOW_SIZE copies) returns stuck-loop
-  // with the detect-stuck rule verdict in the reason.
-  const last = results[STUCK_WINDOW_SIZE - 1];
-  assert.equal(last.kind, "blocked");
-  if (last.kind !== "blocked") return;
-  assert.equal(last.action, "stop");
-  assert.ok(
-    last.reason.startsWith("stuck-loop: execute-task:M001/S01/T01 derived"),
-    `expected detect-stuck verdict reason, got: ${last.reason}`,
-  );
-});
-
-test("stuck-loop: start() resets the ring so a fresh saturation cycle is required", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    await f.orchestrator.advance();
-  }
-
-  const restarted = await f.orchestrator.start(SESSION_CONTEXT);
-  assert.equal(restarted.kind, "started");
-
-  const next = await f.orchestrator.advance();
-  assert.equal(next.kind, "advanced");
-});
-
-test("stuck-loop: resume() preserves ring so detection accumulates across pause/resume", async (t) => {
-  // Regression for #572: resume() must NOT reset dispatchKeyWindow. Before the
-  // fix, a pause/resume cycle cleared the window, letting a stuck loop silently
-  // re-accumulate STUCK_WINDOW_SIZE dispatches before being detected again.
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    await f.orchestrator.advance();
-  }
-
-  const resumed = await f.orchestrator.resume();
-  assert.equal(resumed.kind, "resumed");
-
-  // The ring is preserved, so the next advance pushes it to STUCK_WINDOW_SIZE
-  // and triggers stuck-loop detection — not a fresh dispatch.
-  const next = await f.orchestrator.advance();
-  assert.equal(next.kind, "blocked");
-  if (next.kind !== "blocked") return;
-  assert.equal(next.action, "stop");
-  assert.ok(next.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${next.reason}`);
-});
-
-test("stuck-loop: stop('pause') preserves ring across the stop/resume cycle", async (t) => {
-  // Regression for #572: stop("pause") must behave the same as resume() —
-  // the window must survive so detection accumulates across pause/resume pairs.
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    await f.orchestrator.advance();
-  }
-
-  const stopped = await f.orchestrator.stop("pause");
-  assert.equal(stopped.kind, "stopped");
-
-  const resumed = await f.orchestrator.resume();
-  assert.equal(resumed.kind, "resumed");
-
-  const next = await f.orchestrator.advance();
-  assert.equal(next.kind, "blocked");
-  if (next.kind !== "blocked") return;
-  assert.equal(next.action, "stop");
-  assert.ok(next.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${next.reason}`);
-});
-
-test("stuck-loop: stop('user-request') resets the ring (hard stop)", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    await f.orchestrator.advance();
-  }
-
-  const stopped = await f.orchestrator.stop("user-request");
-  assert.equal(stopped.kind, "stopped");
-
-  // Hard stop clears the ring, so the next advance dispatches fresh.
-  const next = await f.orchestrator.advance();
-  assert.equal(next.kind, "advanced");
-});
-
-test("stuck-loop #852 fix: start() does NOT rehydrate so prior-session failures cannot false-positive on a fresh session", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  // Simulate a PRIOR session: STUCK_WINDOW_SIZE-1 consecutive dispatches of
-  // the same unit, all failed. Before #852 was fixed, start() would rehydrate
-  // these stale entries and the very next advance() would declare stuck —
-  // killing the new session before a single dispatch ran. The fix: start()
-  // clears the window WITHOUT rehydrating, so prior-session failures are
-  // invisible to the fresh session.
-  //
-  // Cross-session stuck detection is preserved by resume() (which rehydrates
-  // when the window is empty after a crash) and by within-session accumulation
-  // (STUCK_WINDOW_SIZE dispatches of the same unit within one session still
-  // trigger stuck detection). See the resume() test below.
-  const worker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
-  const lease = claimMilestoneLease(worker, "M001");
-  assert.equal(lease.ok, true);
-  if (!lease.ok) return;
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    const claim = recordDispatchClaim({
-      traceId: `prior-session-${i}`,
-      workerId: worker,
-      milestoneLeaseToken: lease.token,
-      milestoneId: "M001",
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
-    });
-    assert.equal(claim.ok, true);
-    if (!claim.ok) return;
-    markFailed(claim.dispatchId, { errorSummary: "" });
-  }
-
-  const started = await f.orchestrator.start(SESSION_CONTEXT);
-  assert.equal(started.kind, "started");
-
-  // The fresh session must advance past the prior-session history: window is
-  // empty after start(), so the first advance dispatches normally.
-  const result = await f.orchestrator.advance();
-  assert.equal(result.kind, "advanced", "fresh session must not be blocked by stale prior-session dispatch history");
-});
-
-test("stuck-loop #482: resume() with an empty window rehydrates from the dispatch ledger", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  const worker = registerAutoWorker({ projectRootRealpath: normalizeRealPath(f.base) });
-  const lease = claimMilestoneLease(worker, "M001");
-  assert.equal(lease.ok, true);
-  if (!lease.ok) return;
-  for (let i = 0; i < STUCK_WINDOW_SIZE - 1; i++) {
-    const claim = recordDispatchClaim({
-      traceId: `prior-session-resume-${i}`,
-      workerId: worker,
-      milestoneLeaseToken: lease.token,
-      milestoneId: "M001",
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
-    });
-    assert.equal(claim.ok, true);
-    if (!claim.ok) return;
-    markFailed(claim.dispatchId, { errorSummary: "" });
-  }
-
-  // Fresh orchestrator resuming a prior session: window starts empty, so
-  // resume() must rehydrate (while in-process resume keeps the live window —
-  // see the #572 preservation tests above).
-  const resumed = await f.orchestrator.resume();
-  assert.equal(resumed.kind, "resumed");
-
-  const result = await f.orchestrator.advance();
-  assert.equal(result.kind, "blocked");
-  if (result.kind !== "blocked") return;
-  assert.equal(result.action, "stop");
-  assert.ok(result.reason.startsWith("stuck-loop:"), `expected stuck-loop reason, got: ${result.reason}`);
-});
-
-test("stuck-loop: journal records the stuck-loop reason on advance-blocked", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  for (let i = 0; i < STUCK_WINDOW_SIZE; i++) {
-    await f.orchestrator.advance();
-  }
-
-  const stuckEntry = queryJournal(f.base).find(
-    (e) => {
-      const reason = (e.data as Record<string, unknown> | undefined)?.reason;
-      return typeof reason === "string" && reason.startsWith("stuck-loop:");
-    },
-  );
-  assert.ok(stuckEntry, "journal must record an advance-blocked entry with the stuck-loop reason");
-  assert.ok(f.journalNames().includes("advance-blocked"));
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Recovery path: a lock held by another process throws inside advance() and is
-// routed through the REAL classifyFailure → result mapping + notifications.
-// We force the throw by acquiring the lock under a different PID (writing a
-// foreign-PID lockfile is not portable, so we drive the deterministic-stop
-// classification via a fixture whose runtimeBasePath has no valid lock).
-// ─────────────────────────────────────────────────────────────────────────────
 
 test("advance() routes a lost-lock error through recovery and journals an outcome", async (t) => {
   const f = makeFixture();
@@ -1545,6 +1468,7 @@ test("decideOrchestratorDispatch keeps blocking stale milestone worktree scope",
     reason:
       'Dispatch milestone mismatch: context mid "M002" does not match session.currentMilestoneId "M001". The active worktree/session and derived project state disagree; recover, park, or discard the stranded milestone before continuing.',
     action: "pause",
+    guardId: "dispatch-rule-stop",
   });
   assert.equal((session as { currentMilestoneId: string }).currentMilestoneId, "M001");
 });
@@ -1620,6 +1544,7 @@ test("decideOrchestratorDispatch blocks a non-slice verification retry without D
     kind: "blocked",
     reason: "Cannot dispatch validate-milestone M001: workflow DB is unavailable.",
     action: "stop",
+    guardId: "dispatch-authority",
   });
   assert.equal(
     (session as unknown as { pendingVerificationRetryDispatch: unknown }).pendingVerificationRetryDispatch,
@@ -1668,6 +1593,7 @@ test("decideOrchestratorDispatch clears verification retry state when skipping a
 
     assert.deepEqual(result, {
       kind: "skipped",
+      code: "already-closed",
       reason: "execute-task M001/S01/T01 is already complete",
     });
     const sess = session as { pendingVerificationRetry: unknown; pendingOrchestrationDispatch: unknown };
@@ -1767,6 +1693,7 @@ test("decideOrchestratorDispatch preserves stop reason as a blocked decision", a
       kind: "blocked",
       reason: "remediation blocker",
       action: "pause",
+      guardId: "dispatch-rule-stop",
     });
   } finally {
     resetRegistry();
@@ -1796,6 +1723,7 @@ test("decideOrchestratorDispatch preserves dispatch skip instead of collapsing i
 
     assert.deepEqual(result, {
       kind: "skipped",
+      code: "no-dispatch",
       reason: "evaluating-gates -> omitted",
     });
   } finally {

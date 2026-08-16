@@ -20,7 +20,13 @@ import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdic
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { hasPendingMilestoneSubjectiveUat } from "./milestone-subjective-uat-domain-operation.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices } from "./gsd-db.js";
+import {
+  getMilestoneSlices,
+  getSliceTasks,
+  getTask,
+  getTaskVerificationEvidence,
+  isDbAvailable,
+} from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
@@ -33,7 +39,7 @@ import {
   captureRuntimeErrors,
   runDependencyAudit,
 } from "./verification-gate.js";
-import type { VerificationTarget } from "./verification-gate.js";
+import type { VerificationTarget, TaskVerificationEvidence } from "./verification-gate.js";
 import { writeVerificationJSON, type PostExecutionCheckJSON, type EvidenceJSON } from "./verification-evidence.js";
 import { logWarning } from "./workflow-logger.js";
 import { runPostExecutionChecks, type PostExecutionResult } from "./post-execution-checks.js";
@@ -56,7 +62,7 @@ import {
   readLatestTaskAttempt,
   type TaskExecutionAttemptSnapshot,
 } from "./task-execution-domain-operation.js";
-import { recordFailureAndSelectRecovery } from "./task-recovery-domain-operation.js";
+import { recordFailureAndSelectRecovery, type TaskRecoveryReceipt } from "./task-recovery-domain-operation.js";
 import {
   invalidateTaskTechnicalPass,
   readTaskTechnicalVerdict,
@@ -239,6 +245,14 @@ function routeHostTechnicalFailure(
   attempt: VerificationAttemptSnapshot,
   verdict: FailedVerdictIdentity,
   failureKind: "verification-failed" | "verification-drift" = "verification-failed",
+  // A terminal abort is resumable by design via `gsd_task_recovery_resume`, but that
+  // tool needs the exact recoveryActionId. Hand it back so the caller can surface it
+  // on the finalize break reason instead of discarding it here (#1593).
+  recordAbort?: (recoveryActionId: string) => void,
+  // Invoked for EVERY routed decision (not just aborts) so callers that must
+  // surface the sanctioned exit on the first pause — e.g. the safety
+  // evidence-xref block (#1641) — can report the minted recoveryActionId.
+  onRouted?: (recoveryActionId: string, action: TaskRecoveryReceipt["action"]) => void,
 ): "retry" | "abort" {
   if (!attempt.resultId) throw new Error("Host verification Attempt Result is missing");
   const routeInput = {
@@ -267,20 +281,110 @@ function routeHostTechnicalFailure(
   } catch {
     recovery = authority.routeTaskFailure(routeInput);
   }
+  onRouted?.(recovery.recoveryActionId, recovery.action);
   switch (recovery.action) {
     case "retry":
     case "repair":
     case "remediate":
     case "replan":
       return "retry";
-    case "abort":
-      return recovery.status === "replayed" && recovery.resumeAuthorized ? "retry" : "abort";
+    case "abort": {
+      if (recovery.status === "replayed" && recovery.resumeAuthorized) return "retry";
+      recordAbort?.(recovery.recoveryActionId);
+      return "abort";
+    }
     default:
       throw new Error(`Unsupported agent recovery action ${recovery.action}`);
   }
 }
 
 export const _routeHostTechnicalFailureForTest = routeHostTechnicalFailure;
+
+export interface EvidenceCrossReferenceBlockResult {
+  recoveryActionId: string;
+  action: TaskRecoveryReceipt["action"];
+  outcome: "retry" | "abort";
+}
+
+/**
+ * Settle a blocking safety evidence cross-reference mismatch through the
+ * canonical verdict + route seam (#1641 / #1649).
+ *
+ * The safety harness detects a Task that claimed passing verification which the
+ * recorded execution contradicts. Before this seam existed the blocking branch
+ * was a pure read (notify → pause), which left the Attempt wedged at
+ * settled/succeeded/verify forever: no recoveryActionId was minted, so
+ * `gsd_task_recovery_resume` had no key to accept, and every resume replayed
+ * the identical finalize sequence.
+ *
+ * This records the withheld verdict as a durable failing host Technical
+ * Verdict (which advances the kernel checkpoint to the route stage, ending the
+ * awaiting-verification wedge) and routes the failure through the same durable
+ * recovery policy the verification gate uses — same idempotency key, same
+ * classification — so any later gate pass over this Attempt replays rather
+ * than conflicts.
+ */
+export function routeEvidenceCrossReferenceBlock(input: {
+  attempt: VerificationAttemptSnapshot;
+  basePath: string;
+  mismatch: {
+    command: string;
+    claimedExitCode: number;
+    actualExitCode: number | null;
+    reason: string;
+  };
+  taskAuthority?: TaskVerificationAuthority;
+}): EvidenceCrossReferenceBlockResult {
+  const authority = input.taskAuthority ?? defaultTaskVerificationAuthority;
+  const attempt = input.attempt;
+  if (!isTaskAttemptAwaitingVerification(attempt)) {
+    throw new Error("Evidence cross-reference block requires an Attempt awaiting verification");
+  }
+  const nowIso = new Date().toISOString();
+  const recorded = authority.recordTaskTechnicalVerdict({
+    invocation: internalExecutionInvocation(`internal:auto:safety-evidence-xref:${attempt.attemptId}`),
+    attemptId: attempt.attemptId,
+    testedSourceRevision: "unavailable",
+    verdict: "fail",
+    rationale: `Safety evidence cross-reference: ${input.mismatch.reason}`,
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: input.mismatch.command || "gsd-safety-evidence-xref",
+      workingDirectory: input.basePath,
+      startedAt: nowIso,
+      endedAt: nowIso,
+      exitCode: input.mismatch.actualExitCode ?? 1,
+      observation: "failed",
+      durableOutputRef: `db://safety-evidence-xref/${attempt.attemptId}`,
+      environment: {
+        node: process.version,
+        platform: process.platform,
+        claimedExitCode: input.mismatch.claimedExitCode,
+        // Machine-readable discriminator: this verdict was synthesized from an
+        // evidence contradiction, not a host verification run (#1641).
+        verificationPolicy: 'safety-evidence-xref',
+      },
+    },
+  });
+  let routed: { recoveryActionId: string; action: TaskRecoveryReceipt["action"] } | null = null;
+  const outcome = routeHostTechnicalFailure(
+    authority,
+    attempt,
+    { verdictId: recorded.verdictId, evidenceId: recorded.evidenceId, verdict: "fail" },
+    "verification-failed",
+    undefined,
+    (recoveryActionId, action) => {
+      routed = { recoveryActionId, action };
+    },
+  );
+  if (!routed) {
+    throw new Error("Safety evidence cross-reference routing did not record a recovery action");
+  }
+  return {
+    ...(routed as { recoveryActionId: string; action: TaskRecoveryReceipt["action"] }),
+    outcome,
+  };
+}
 
 function invalidateStoredHostPass(
   authority: TaskVerificationAuthority,
@@ -639,6 +743,14 @@ export async function runPostUnitVerification(
     return "continue";
   }
 
+  // Capture the recoveryActionId of a terminal abort so the finalize break reason can
+  // print it — it is the only key `gsd_task_recovery_resume` accepts (#1593). Reset per
+  // verification pass so a stale id from an earlier unit can never be reported.
+  s.lastTaskRecoveryAbortId = null;
+  const recordAbort = (recoveryActionId: string) => {
+    s.lastTaskRecoveryAbortId = recoveryActionId;
+  };
+
   let recoverableAttempt: VerificationAttemptSnapshot | null = null;
   let recoverableAuthority: TaskVerificationAuthority | null = null;
   let canonicalVerdictWriteStarted = false;
@@ -664,7 +776,7 @@ export async function runPostUnitVerification(
         verdictId: replayedVerdict.verdictId,
         evidenceId: replayedVerdict.evidenceId,
         verdict: replayedVerdict.verdict,
-      }, replayedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed")
+      }, replayedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort)
       : null;
     if (!replayedRecovery && !isTaskAttemptAwaitingVerification(latestAttempt)) {
       throw new Error("Host verification requires the latest succeeded canonical Attempt at the verify stage");
@@ -697,11 +809,14 @@ export async function runPostUnitVerification(
     let taskPlanVerify: string | undefined;
     let taskRow: TaskRow | null = null;
     let sliceRow: SliceRow | null = null;
+    // Structured evidence staged by gsd_task_complete for this Task (#1591).
+    let taskEvidence: TaskVerificationEvidence[] = [];
     if (mid && sid && tid) {
       if (isDbAvailable()) {
         taskRow = getTask(mid, sid, tid);
         sliceRow = getSlice(mid, sid);
         taskPlanVerify = taskRow?.verify;
+        taskEvidence = getTaskVerificationEvidence(mid, sid, tid);
       }
       // When DB unavailable, taskPlanVerify stays undefined — gate runs without task-specific checks
     }
@@ -743,7 +858,7 @@ export async function runPostUnitVerification(
         verdictId: invalidated.verdictId,
         evidenceId: invalidated.evidenceId,
         verdict: "inconclusive",
-      }, "verification-drift");
+      }, "verification-drift", recordAbort);
       if (recovery === "abort") return "abort";
       return recordDurableVerificationRetry(s, retryKey, failureContext);
     }
@@ -779,12 +894,14 @@ export async function runPostUnitVerification(
         cwd: verificationTargets[0]?.cwd ?? s.basePath,
         preferenceCommands: prefs?.verification_commands ?? verificationTargets[0]?.preferenceCommands,
         taskPlanVerify,
+        taskEvidence,
       });
     } else {
       result = runVerificationGateForTargets({
         targets: verificationTargets,
         preferenceCommands: prefs?.verification_commands,
         taskPlanVerify,
+        taskEvidence,
       });
     }
 
@@ -1079,7 +1196,8 @@ export async function runPostUnitVerification(
         : "fail";
     let durableRecovery: "retry" | "abort" | null = null;
     if (mid && sid && tid) {
-      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result);
+      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result) ||
+        "Host-owned technical verification failed.";
       if (sourceError) {
         rationale = sourceError;
       } else if (postExecInfrastructureError) {
@@ -1106,7 +1224,7 @@ export async function runPostUnitVerification(
           verdictId: recordedVerdict.verdictId,
           evidenceId: recordedVerdict.evidenceId,
           verdict: hostTechnicalVerdict,
-        });
+        }, "verification-failed", recordAbort);
       }
 
       try {
@@ -1243,7 +1361,7 @@ export async function runPostUnitVerification(
         verdictId: storedVerdict.verdictId,
         evidenceId: storedVerdict.evidenceId,
         verdict: storedVerdict.verdict,
-      }, storedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed");
+      }, storedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort);
       if (recovery === "abort") return "abort";
       const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
       return recordDurableVerificationRetry(s, retryKey, message);
@@ -1271,7 +1389,7 @@ export async function runPostUnitVerification(
       verdictId: recorded.verdictId,
       evidenceId: recorded.evidenceId,
       verdict: "inconclusive",
-    });
+    }, "verification-failed", recordAbort);
     if (recovery === "abort") return "abort";
     const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
     return recordDurableVerificationRetry(s, retryKey, message);

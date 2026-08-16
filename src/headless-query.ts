@@ -119,10 +119,39 @@ export interface QueryResult {
 
 type HeadlessQueryModules = Awaited<ReturnType<typeof loadExtensionModules>>
 
+/**
+ * Detect the engine's typed refuse-newer error (db/engine.ts
+ * SchemaTooNewError). The error crosses a jiti module-instance boundary to
+ * reach this seam, so match on its stable `name` contract rather than
+ * instanceof.
+ */
+export function isSchemaTooNewErrorLike(err: unknown): err is Error {
+  return err instanceof Error && err.name === 'GSDSchemaTooNewError'
+}
+
 export async function runHeadlessQuery(
   basePath: string,
   modules: HeadlessQueryModules,
   writeOutput: (text: string) => void = (text) => process.stdout.write(text),
+  writeError: (text: string) => void = (text) => process.stderr.write(text),
+): Promise<QueryResult> {
+  try {
+    return await runHeadlessQueryUnsafe(basePath, modules, writeOutput)
+  } catch (err) {
+    if (isSchemaTooNewErrorLike(err)) {
+      // Version skew must refuse loudly: print the exact engine message and
+      // exit non-zero — never emit a degraded all-zero payload with exit 0.
+      writeError(`[gsd] ${err.message}\n`)
+      return { exitCode: 1 }
+    }
+    throw err
+  }
+}
+
+async function runHeadlessQueryUnsafe(
+  basePath: string,
+  modules: HeadlessQueryModules,
+  writeOutput: (text: string) => void,
 ): Promise<QueryResult> {
   const {
     openProjectDbIfPresent,

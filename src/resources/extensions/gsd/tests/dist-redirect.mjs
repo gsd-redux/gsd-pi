@@ -49,6 +49,11 @@ export function resolve(specifier, context, nextResolve) {
   } else if (specifier.startsWith("@gsd/agent-core/")) {
     const subpath = specifier.replace(/^@gsd\/agent-core\//, "").replace(/\.js$/, ".ts");
     specifier = new URL(`packages/gsd-agent-core/src/${subpath}`, ROOT).href;
+  } else if (specifier === "@opengsd/contracts" || specifier === "@opengsd/contracts/dist/index.js") {
+    specifier = new URL("packages/contracts/src/index.ts", ROOT).href;
+  } else if (specifier.startsWith("@opengsd/contracts/")) {
+    const subpath = specifier.replace(/^@opengsd\/contracts\//, "").replace(/\.js$/, ".ts");
+    specifier = new URL(`packages/contracts/src/${subpath}`, ROOT).href;
   } else if (specifier === "@gsd/native") {
     specifier = new URL("packages/native/src/index.ts", ROOT).href;
   } else if (specifier.startsWith("@gsd/native/")) {

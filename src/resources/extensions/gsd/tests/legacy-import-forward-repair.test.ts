@@ -303,9 +303,16 @@ test("Forward Repair tombstones unchanged hierarchy introduced by the Import App
     plan.targets.some((entry) => entry.mutation?.action === "cancel-imported-lifecycle"),
     JSON.stringify(plan.targets),
   );
+  // #1657: the Application now mints a lifecycle for every created hierarchy
+  // row, so the repair cancels those directly instead of creating cancelled
+  // tombstones for lifecycle-less ancestors.
   assert.equal(
     plan.targets.filter((entry) => entry.mutation?.action === "create-cancelled-lifecycle").length,
-    2,
+    0,
+  );
+  assert.equal(
+    plan.targets.filter((entry) => entry.mutation?.action === "cancel-imported-lifecycle").length,
+    3,
   );
 
   assert.equal(applyLegacyImportForwardRepair(input).status, "committed");
@@ -355,7 +362,7 @@ test("Forward Repair Domain Operation rolls back mutations without its exact rec
   assert.deepEqual(durableRepairSnapshot(), before);
 });
 
-test("Forward Repair safely reverts import-created rows untouched since the import", () => {
+test("Forward Repair tombstones untouched import-created hierarchy instead of deleting it (#1657)", () => {
   const prepared = prepareCase();
   executeDomainOperation({
     operationType: "milestone.describe",
@@ -392,20 +399,25 @@ test("Forward Repair safely reverts import-created rows untouched since the impo
     entry.targetKind === "milestone" || entry.targetKind === "slice" || entry.targetKind === "task"
   ));
   assert.ok(createdTargets.length > 0);
+  // #1657: every import-created hierarchy row now carries import-minted
+  // lifecycle authority, so the revert retains the rows and cancels their
+  // lifecycles rather than deleting adopted lifecycle history.
   for (const entry of createdTargets) {
-    assert.equal(entry.disposition, "safe-revert", `${entry.targetKey} must be safely revertible`);
-    assert.equal(entry.reasonCode, "CREATED_ROW_UNCHANGED", `${entry.targetKey} must be unchanged`);
+    assert.equal(entry.disposition, "preserve", `${entry.targetKey} must be retained for its lifecycle tombstone`);
+    assert.equal(entry.reasonCode, "CREATED_ROW_RETAINED_FOR_LIFECYCLE_TOMBSTONE", `${entry.targetKey} reason`);
   }
+  const lifecycleTargets = plan.targets.filter((entry) => (
+    entry.mutation?.action === "cancel-imported-lifecycle"
+  ));
+  assert.equal(lifecycleTargets.length, createdTargets.length);
 
   const committed = applyLegacyImportForwardRepair(input);
   assert.equal(committed.status, "committed");
   assert.deepEqual(readFileSync(prepared.backup.backup_ref), backupBytes);
-  assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM milestones
-    WHERE id IN ('M001', 'M002', 'M003', 'M004')`).get()?.["count"], 0);
-  assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM slices
-    WHERE milestone_id IN ('M001', 'M002', 'M003', 'M004')`).get()?.["count"], 0);
-  assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM tasks
-    WHERE milestone_id IN ('M001', 'M002', 'M003', 'M004')`).get()?.["count"], 0);
+  assert.ok(Number(db().prepare(`SELECT COUNT(*) AS count FROM milestones
+    WHERE id IN ('M001', 'M002', 'M003', 'M004')`).get()?.["count"]) > 0);
+  assert.deepEqual(db().prepare(`SELECT DISTINCT lifecycle_status FROM workflow_item_lifecycles
+    WHERE milestone_id IN ('M001', 'M002', 'M003', 'M004')`).all(), [{ lifecycle_status: "cancelled" }]);
   assert.deepEqual(db().prepare(`SELECT title, status FROM milestones WHERE id = 'M-LATER'`).get(), {
     title: "Unrelated later work",
     status: "active",
@@ -447,8 +459,10 @@ test("Forward Repair preserves an import-created row modified only on a defaulte
   assert.equal(evolved?.disposition, "later-modified");
   assert.equal(evolved?.reasonCode, "CREATED_ROW_CHANGED_LATER");
   const untouched = plan.targets.find((entry) => entry.targetKind === "milestone" && entry.targetKey === "M002");
-  assert.equal(untouched?.disposition, "safe-revert");
-  assert.equal(untouched?.reasonCode, "CREATED_ROW_UNCHANGED");
+  // #1657: untouched import-created rows carry import-minted lifecycles, so
+  // they are retained for their lifecycle tombstone instead of deleted.
+  assert.equal(untouched?.disposition, "preserve");
+  assert.equal(untouched?.reasonCode, "CREATED_ROW_RETAINED_FOR_LIFECYCLE_TOMBSTONE");
   assert.equal(plan.unresolvedCount, 0);
 
   const committed = applyLegacyImportForwardRepair(input);
@@ -456,11 +470,9 @@ test("Forward Repair preserves an import-created row modified only on a defaulte
   assert.deepEqual(db().prepare("SELECT vision FROM milestones WHERE id = 'M001'").get(), {
     vision: "Later accepted vision",
   });
-  assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM slices
-    WHERE milestone_id = 'M001'`).get()?.["count"], 0);
-  assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM tasks
-    WHERE milestone_id = 'M001'`).get()?.["count"], 0);
-  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM milestones WHERE id = 'M002'").get()?.["count"], 0);
+  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM milestones WHERE id = 'M002'").get()?.["count"], 1);
+  assert.deepEqual(db().prepare(`SELECT DISTINCT lifecycle_status FROM workflow_item_lifecycles
+    WHERE milestone_id = 'M002'`).all(), [{ lifecycle_status: "cancelled" }]);
 });
 
 const PRECOMMIT_FAULTS = [
@@ -753,7 +765,7 @@ test("Forward Repair requires a choice when a field changed away from both base 
     },
     mutationCounts: {
       create: 0, update: 1, delete: 0,
-      replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0,
+      replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0, seedQualityGate: 0,
     },
     affectedTargets: [{ targetKind: "requirement", targetKey: "R001" }],
     eventFacts: {
@@ -764,7 +776,7 @@ test("Forward Repair requires a choice when a field changed away from both base 
       receiptCounts: { create: 0, update: 1, delete: 0, preserve: 0, unparsed: 0, unresolved: 0 },
       mutationCounts: {
         create: 0, update: 1, delete: 0,
-        replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0,
+        replaceSliceDependencies: 0, deleteSliceDependencies: 0, adoptLifecycle: 0, seedQualityGate: 0,
       },
       affectedTargetHashes: [identity],
       sourceCount: 0, diagnosisCount: 0, resolutionCount: 0, preserveCount: 0, unparsedCount: 0,
@@ -966,13 +978,26 @@ function applyWriterPlan(prepared: PreparedCase, suffix: string, targets: readon
   });
 }
 
+// #1657: import-created rows always carry lifecycle rows now, and the schema
+// forbids deleting lifecycle history. Seed lifecycle-less hierarchy (as a
+// pre-#1657 Application would have left it) so the deeper guards stay covered.
+function seedLifecycleLessHierarchy(): void {
+  db().prepare(`INSERT INTO milestones (id, title, status, created_at)
+    VALUES ('M900', 'Pre-lifecycle import', 'active', '2026-07-18T00:00:00.000Z')`).run();
+  db().prepare(`INSERT INTO slices (milestone_id, id, title, status)
+    VALUES ('M900', 'S01', 'Pre-lifecycle slice', 'pending')`).run();
+  db().prepare(`INSERT INTO tasks (milestone_id, slice_id, id, title, status)
+    VALUES ('M900', 'S01', 'T01', 'Pre-lifecycle task', 'pending')`).run();
+}
+
 test("the repair writer refuses to strand later artifact history on a created row", () => {
   const prepared = prepareCase();
+  seedLifecycleLessHierarchy();
   db().prepare(`INSERT INTO artifacts (path, artifact_type, milestone_id, slice_id, task_id, full_content, imported_at)
-    VALUES ('.gsd/later-evidence.md', 'note', 'M001', 'S01', NULL, 'later canonical evidence', '2026-07-19T00:00:00.000Z')`).run();
+    VALUES ('.gsd/later-evidence.md', 'note', 'M900', 'S01', NULL, 'later canonical evidence', '2026-07-19T00:00:00.000Z')`).run();
   const targets = [
-    deleteTarget(0, "slice", "M001/S01", "slices", { milestone_id: "M001", id: "S01" }),
-    deleteTarget(1, "task", "M001/S01/T01", "tasks", { milestone_id: "M001", slice_id: "S01", id: "T01" }),
+    deleteTarget(0, "slice", "M900/S01", "slices", { milestone_id: "M900", id: "S01" }),
+    deleteTarget(1, "task", "M900/S01/T01", "tasks", { milestone_id: "M900", slice_id: "S01", id: "T01" }),
   ];
   const before = durableRepairSnapshot();
 
@@ -982,19 +1007,20 @@ test("the repair writer refuses to strand later artifact history on a created ro
   assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM artifacts
     WHERE path = '.gsd/later-evidence.md'`).get()?.["count"], 1);
   assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM slices
-    WHERE milestone_id = 'M001' AND id = 'S01'`).get()?.["count"], 1);
+    WHERE milestone_id = 'M900' AND id = 'S01'`).get()?.["count"], 1);
   assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM tasks
-    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'`).get()?.["count"], 1);
+    WHERE milestone_id = 'M900' AND slice_id = 'S01' AND id = 'T01'`).get()?.["count"], 1);
 });
 
 test("the repair writer refuses to delete a created row that gained unit dispatch history", () => {
   const prepared = prepareCase();
+  seedLifecycleLessHierarchy();
   db().prepare(`INSERT INTO workers (worker_id, host, pid, started_at, version, last_heartbeat_at, status, project_root_realpath)
     VALUES ('worker-guard', 'localhost', 1, '2026-07-19T00:00:00.000Z', 'test', '2026-07-19T00:00:00.000Z', 'active', '/tmp/project-1')`).run();
   db().prepare(`INSERT INTO unit_dispatches (trace_id, worker_id, milestone_lease_token, milestone_id, slice_id, task_id, unit_type, unit_id, status, started_at)
-    VALUES ('trace-guard', 'worker-guard', 1, 'M001', 'S03', 'T01', 'task', 'T01', 'completed', '2026-07-19T00:00:00.000Z')`).run();
+    VALUES ('trace-guard', 'worker-guard', 1, 'M900', 'S01', 'T01', 'task', 'T01', 'completed', '2026-07-19T00:00:00.000Z')`).run();
   const targets = [
-    deleteTarget(0, "task", "M001/S03/T01", "tasks", { milestone_id: "M001", slice_id: "S03", id: "T01" }),
+    deleteTarget(0, "task", "M900/S01/T01", "tasks", { milestone_id: "M900", slice_id: "S01", id: "T01" }),
   ];
   const before = durableRepairSnapshot();
 
@@ -1002,22 +1028,23 @@ test("the repair writer refuses to delete a created row that gained unit dispatc
 
   assert.deepEqual(durableRepairSnapshot(), before);
   assert.equal(db().prepare(`SELECT COUNT(*) AS count FROM tasks
-    WHERE milestone_id = 'M001' AND slice_id = 'S03' AND id = 'T01'`).get()?.["count"], 1);
+    WHERE milestone_id = 'M900' AND slice_id = 'S01' AND id = 'T01'`).get()?.["count"], 1);
 });
 
 test("the repair writer reverts parent-first target lists child-first", () => {
   const prepared = prepareCase();
+  seedLifecycleLessHierarchy();
   const targets = [
-    deleteTarget(0, "milestone", "M002", "milestones", { id: "M002" }),
-    deleteTarget(1, "slice", "M002/S01", "slices", { milestone_id: "M002", id: "S01" }),
-    deleteTarget(2, "task", "M002/S01/T01", "tasks", { milestone_id: "M002", slice_id: "S01", id: "T01" }),
+    deleteTarget(0, "milestone", "M900", "milestones", { id: "M900" }),
+    deleteTarget(1, "slice", "M900/S01", "slices", { milestone_id: "M900", id: "S01" }),
+    deleteTarget(2, "task", "M900/S01/T01", "tasks", { milestone_id: "M900", slice_id: "S01", id: "T01" }),
   ];
 
   applyWriterPlan(prepared, "ordering", targets);
 
-  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM tasks WHERE milestone_id = 'M002'").get()?.["count"], 0);
-  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM slices WHERE milestone_id = 'M002'").get()?.["count"], 0);
-  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM milestones WHERE id = 'M002'").get()?.["count"], 0);
+  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM tasks WHERE milestone_id = 'M900'").get()?.["count"], 0);
+  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM slices WHERE milestone_id = 'M900'").get()?.["count"], 0);
+  assert.equal(db().prepare("SELECT COUNT(*) AS count FROM milestones WHERE id = 'M900'").get()?.["count"], 0);
 });
 
 test("a decision memory deleted after import is later-modified, not an impossible restore choice", () => {

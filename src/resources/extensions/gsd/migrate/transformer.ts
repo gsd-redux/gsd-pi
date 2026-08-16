@@ -176,7 +176,11 @@ function mapSlice(
     tasks = planNumbers.map((pn, i) => mapTask(phase.plans[pn], i, phase.summaries));
   }
 
-  const done = entry.done;
+  // #1606: a ROADMAP checkbox alone is insufficient — verify every child task is
+  // also done. A slice with pending tasks must remain open to avoid phantom
+  // completion that causes auto-mode to skip unfinished work.
+  const allTasksDone = tasks.length === 0 || tasks.every((t) => t.done);
+  const done = entry.done && allTasksDone;
   const sliceSummary = done && phase ? buildSliceSummary(phase) : null;
 
   return {
@@ -342,18 +346,25 @@ function deriveVision(parsed: PlanningProject): string {
 
 function deriveDecisions(parsed: PlanningProject): string {
   // Extract key decisions from phase summaries if available
-  const decisions: string[] = [];
+  // #1607: use extractDecisionFields for file-sourced decisions to preserve semantics.
+  interface RowEntry { decision: string; choice: string; rationale: string; scope: string }
+  const rows: RowEntry[] = [];
+
   const decisionFiles = [...parsed.decisions].sort((a, b) => a.fileName.localeCompare(b.fileName));
-  for (const decision of decisionFiles) {
-    decisions.push(extractDecisionTitle(decision.fileName, decision.content));
+  for (const df of decisionFiles) {
+    rows.push(extractDecisionFields(df.fileName, df.content));
   }
+
   for (const phase of Object.values(parsed.phases)) {
     for (const summary of Object.values(phase.summaries)) {
       const kd = summary.frontmatter['key-decisions'] ?? [];
-      decisions.push(...kd);
+      for (const entry of kd) {
+        rows.push({ decision: entry, choice: '(from summary)', rationale: '(from summary key-decisions)', scope: 'migration' });
+      }
     }
   }
-  if (decisions.length === 0) return '';
+
+  if (rows.length === 0) return '';
   const lines = [
     '# Decisions Register',
     '',
@@ -362,22 +373,57 @@ function deriveDecisions(parsed: PlanningProject): string {
     '     Read this file at the start of any planning or research phase. -->',
     '',
     '| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |',
-    '|---|------|-------|----------|--------|-----------|------------|---------|',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ];
 
-  decisions.forEach((decision, index) => {
+  rows.forEach((row, index) => {
     const id = padId('D', index + 1, 3);
-    const escaped = decision.replace(/\|/g, '\\|');
-    lines.push(`| ${id} | migration | legacy-import | ${escaped} | ${escaped} | Migrated from legacy summary key-decisions | Yes | human |`);
+    const esc = (v: string) => v.replace(/\|/g, '\\|');
+    lines.push(`| ${id} | migration | ${esc(row.scope)} | ${esc(row.decision)} | ${esc(row.choice)} | ${esc(row.rationale)} | Yes | human |`);
   });
 
   return lines.join('\n') + '\n';
 }
 
-function extractDecisionTitle(fileName: string, content: string): string {
+interface MigrationDecisionFields {
+  decision: string;
+  choice: string;
+  rationale: string;
+  scope: string;
+}
+
+/** #1607: extract structured fields from a legacy decision file.
+ * Tries ## Choice / ## Rationale / ## Scope sections first; falls back to
+ * preserving body content in Rationale rather than fabricating values.
+ */
+function extractDecisionFields(fileName: string, content: string): MigrationDecisionFields {
   const heading = content.split('\n').find((line) => /^#\s+/.test(line.trim()));
-  if (heading) return heading.replace(/^#\s+/, '').trim();
-  return fileName.replace(/\.md$/i, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
+  const decision = heading
+    ? heading.replace(/^#\s+/, '').trim()
+    : fileName.replace(/\.md$/i, '').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-/g, ' ');
+
+  const sectionMatch = (label: string) => {
+    const m = content.match(new RegExp(`^##\\s+${label}\\s*\n([\\s\\S]*?)(?=^##\\s|\$)`, 'm'));
+    return m ? m[1].trim() : null;
+  };
+
+  const choiceSection = sectionMatch('Choice');
+  const rationaleSection = sectionMatch('Rationale');
+  const scopeSection = sectionMatch('Scope');
+
+  // Preserve as much signal as possible; never fabricate structured fields.
+  const choice = choiceSection
+    ? choiceSection.split('\n')[0]!.trim()
+    : '(not parsed -- see migration source)';
+
+  const rationale = rationaleSection
+    ? rationaleSection.replace(/\n+/g, ' ').trim().slice(0, 300)
+    : content.replace(/^#[^\n]*\n/, '').trim().replace(/\n+/g, ' ').slice(0, 300) ||
+      '(not parsed -- see migration source)';
+
+  const scope = scopeSection ? scopeSection.split('\n')[0]!.trim() : 'migration';
+
+  return { decision, choice, rationale, scope };
 }
 
 function buildMilestoneFromLegacyMilestone(source: PlanningMilestone, index: number): GSDMilestone {
@@ -392,7 +438,9 @@ function buildMilestoneFromLegacyMilestone(source: PlanningMilestone, index: num
       entries.push({
         number: phase.number,
         title: phase.slug,
-        done: Object.keys(phase.summaries).length > 0,
+        // #1606: require ALL plans to have summaries, not just any summary.
+        done: Object.keys(phase.plans).length > 0 &&
+              Object.keys(phase.plans).every((pn) => phase.summaries[pn] !== undefined),
         raw: '',
       });
     }

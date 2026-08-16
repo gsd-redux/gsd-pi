@@ -22,6 +22,7 @@ import {
   recordRequirementDisposition,
   terminateRecoveryWaiver,
 } from "./task-recovery.js";
+import { ensurePendingSliceQ8 } from "./slice-companion-state.js";
 
 export interface MilestoneCompletionHierarchyInput {
   milestoneId: string;
@@ -311,37 +312,6 @@ function revokeCancellationWaivers(
     revokedWaiverIds.push(waiver.waiver_id);
   }
   return { revokedWaiverIds, supersedingDispositionIds };
-}
-
-function resetSliceQ8(milestoneId: string, sliceId: string): void {
-  const q8Rows = getDb().prepare(`
-    SELECT 1 FROM quality_gates
-    WHERE milestone_id = :milestone_id AND slice_id = :slice_id
-      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
-  `).all({ ":milestone_id": milestoneId, ":slice_id": sliceId });
-  if (q8Rows.length > 1) {
-    throw new MilestoneLifecycleValidationError(
-      `Milestone reopen found multiple Q8 quality gates for Slice ${sliceId}`,
-    );
-  }
-  const q8Write = q8Rows.length === 0
-    ? getDb().prepare(`
-        INSERT INTO quality_gates (
-          milestone_id, slice_id, gate_id, scope, task_id, status
-        ) VALUES (
-          :milestone_id, :slice_id, 'Q8', 'slice', '', 'pending'
-        )
-      `).run({ ":milestone_id": milestoneId, ":slice_id": sliceId })
-    : getDb().prepare(`
-        UPDATE quality_gates
-        SET status = 'pending', verdict = '', rationale = '',
-            findings = '', evaluated_at = NULL
-        WHERE milestone_id = :milestone_id AND slice_id = :slice_id
-          AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
-      `).run({ ":milestone_id": milestoneId, ":slice_id": sliceId });
-  if (changedRows(q8Write) !== 1) {
-    throw new Error(`Milestone reopen must establish one pending Q8 quality gate for Slice ${sliceId}`);
-  }
 }
 
 function currentSliceCancellationAuthorization(
@@ -740,7 +710,7 @@ export function reopenMilestoneHierarchy(
     if (changedRows(updated) !== 1) {
       throw new Error(`Milestone reopen must update Slice ${sliceId}`);
     }
-    resetSliceQ8(milestoneId, sliceId);
+    ensurePendingSliceQ8(context, { milestoneId, sliceId });
     reopenedSliceIds.push(sliceId);
   }
 

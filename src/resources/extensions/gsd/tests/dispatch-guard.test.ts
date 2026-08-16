@@ -167,6 +167,58 @@ test("dispatch guard allows dispatch when all earlier slices complete", (t) => {
   assert.equal(getPriorSliceCompletionBlocker(repo, "main", "plan-milestone", "M003"), null);
 });
 
+test("dispatch guard exempts the parallel-research sentinel from slice DB presence (#1616)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M042"), { recursive: true });
+  mkdirSync(join(repo, ".gsd", "milestones", "M043"), { recursive: true });
+
+  insertMilestone({ id: "M042", title: "Previous" });
+  insertSlice({ id: "S01", milestoneId: "M042", title: "Done", status: "complete", depends: [], sequence: 1 });
+
+  // M043 has real slices S01-S02; "parallel-research" is never inserted by design.
+  insertMilestone({ id: "M043", title: "Current" });
+  insertSlice({ id: "S01", milestoneId: "M043", title: "First", status: "pending", depends: [], sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M043", title: "Second", status: "pending", depends: [], sequence: 2 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M042", "M042-ROADMAP.md"), "# M042\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M043", "M043-ROADMAP.md"), "# M043\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "research-slice", "M043/parallel-research"),
+    null,
+  );
+
+  // Real slice ids are still checked against the DB.
+  assert.match(
+    getPriorSliceCompletionBlocker(repo, "main", "research-slice", "M043/S99") ?? "",
+    /slice M043\/S99 is missing from the workflow DB/i,
+  );
+});
+
+test("dispatch guard still blocks parallel-research when an earlier milestone is incomplete (#1616)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M042"), { recursive: true });
+  mkdirSync(join(repo, ".gsd", "milestones", "M043"), { recursive: true });
+
+  insertMilestone({ id: "M042", title: "Previous" });
+  insertSlice({ id: "S01", milestoneId: "M042", title: "Pending", status: "pending", depends: [], sequence: 1 });
+
+  insertMilestone({ id: "M043", title: "Current" });
+  insertSlice({ id: "S01", milestoneId: "M043", title: "First", status: "pending", depends: [], sequence: 1 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M042", "M042-ROADMAP.md"), "# M042\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M043", "M043-ROADMAP.md"), "# M043\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "research-slice", "M043/parallel-research"),
+    "Cannot dispatch research-slice M043/parallel-research: earlier slice M042/S01 is not complete.",
+  );
+});
+
 test("dispatch guard unblocks slice when positionally-earlier slice depends on it (#1638)", (t) => {
   // S05 depends on S06, but S05 appears first positionally.
   // Old behavior: S06 blocked because S05 (positionally earlier) is incomplete.

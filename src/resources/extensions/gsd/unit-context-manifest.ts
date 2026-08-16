@@ -564,6 +564,21 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     },
     maxSystemPromptChars: COMMON_BUDGET_LARGE,
   },
+  "replan-task": {
+    skills: { mode: "none" },
+    knowledge: "none",
+    memory: "none",
+    codebaseMap: false,
+    preferences: "none",
+    contextMode: "planning",
+    tools: { mode: "workflow-only" },
+    artifacts: {
+      inline: ["task-plan"],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_SMALL,
+  },
   "reactive-execute": {
     skills: skillPolicyForUnit("reactive-execute"),
     knowledge: "scoped",

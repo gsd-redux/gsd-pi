@@ -9,6 +9,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { TASK_LIFECYCLE_PROJECTION_KIND } from "./projection-identity.js";
 import { normalizeLegacyLifecycleStatus } from "./db/lifecycle-shadow-comparison.js";
 import {
   adoptOrTransitionLifecycle,
@@ -26,6 +27,7 @@ import {
 } from "./db/writers/task-recovery.js";
 import { terminalizeTaskExecutionDispatch } from "./db/writers/task-execution.js";
 import type { ExecutionInvocation } from "./execution-invocation.js";
+import { ensurePendingSliceQ8 } from "./db/writers/slice-companion-state.js";
 
 export interface TaskLifecycleIdentity {
   milestoneId: string;
@@ -134,7 +136,7 @@ function mutation(
     }],
     projections: [{
       projectionKey: `lifecycle/${entityId}`.toLowerCase(),
-      projectionKind: "task-lifecycle",
+      projectionKind: TASK_LIFECYCLE_PROJECTION_KIND,
       rendererVersion: "1",
     }],
   };
@@ -324,6 +326,7 @@ export function reopenTask(input: {
       adoptedFromStatus: legacyStatus,
     });
     reopenLegacyTaskState(context, input.task);
+    ensurePendingSliceQ8(context, input.task);
     const checkpoint = appendRecoveryWorkCheckpoint(context, {
       lifecycleId: lifecycle.lifecycleId,
       scopeKey: checkpointScope(input.task),

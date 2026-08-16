@@ -1872,7 +1872,7 @@ export async function resolveClaudePermissionMode(
 // NOTE: These helpers intentionally mirror @gsd/pi-ai anthropic-shared
 // behavior so this extension remains typecheck-stable even when the published
 // @gsd/pi-ai barrel lags behind monorepo source exports.
-/** Return true for model IDs that support the adaptive thinking API (Opus 4.6/4.7/4.8, Sonnet 4.6/4.7, Haiku 4.5). */
+/** Return true for model IDs that support the adaptive thinking API (Opus 4.6/4.7/4.8/5, Fable 5, Sonnet 4.6/4.7, Haiku 4.5). */
 function modelSupportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6")
@@ -1881,6 +1881,8 @@ function modelSupportsAdaptiveThinking(modelId: string): boolean {
 		|| modelId.includes("opus-4.7")
 		|| modelId.includes("opus-4-8")
 		|| modelId.includes("opus-4.8")
+		|| modelId.includes("opus-5")
+		|| modelId.includes("opus.5")
 		|| modelId.includes("fable-5")
 		|| modelId.includes("fable.5")
 		|| modelId.includes("sonnet-4-6")
@@ -1908,6 +1910,8 @@ function mapThinkingLevelToAnthropicEffort(level: ThinkingLevel | undefined, mod
 				|| modelId.includes("opus-4.7")
 				|| modelId.includes("opus-4-8")
 				|| modelId.includes("opus-4.8")
+				|| modelId.includes("opus-5")
+				|| modelId.includes("opus.5")
 				|| modelId.includes("fable-5")
 				|| modelId.includes("fable.5")
 			) return "xhigh";

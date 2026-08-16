@@ -121,6 +121,7 @@ function planFor(
     replaceSliceDependencies: instructions.filter((entry) => entry.action === "replace-slice-dependencies").length,
     deleteSliceDependencies: instructions.filter((entry) => entry.action === "delete-slice-dependencies").length,
     adoptLifecycle: instructions.filter((entry) => entry.action === "adopt-lifecycle").length,
+    seedQualityGate: instructions.filter((entry) => entry.action === "seed-quality-gate").length,
   };
   const affectedTargets = instructions
     .filter((entry) => entry.action !== "preserve")

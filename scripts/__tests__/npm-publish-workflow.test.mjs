@@ -9,6 +9,7 @@ import YAML from "yaml";
 const workflow = YAML.parse(
   readFileSync(".github/workflows/npm-publish.yml", "utf8"),
 );
+const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
 const latestCondition = "${{ github.event.inputs.channel == 'latest' }}";
 const prereleaseChannel =
@@ -198,6 +199,36 @@ test("production release runs optional live workflow test on the configured Open
   assert.equal(step.env.OPENAI_API_KEY, "${{ secrets.OPENAI_API_KEY }}");
   assert.equal(step.env.GSD_LIVE_TESTS, "1");
   assert.equal(step.env.GSD_LIVE_WORKFLOW_MODEL, "openai/gpt-5.4-mini");
+});
+
+test("prerelease verification blocks release planning on the auto-mode acceptance bed", () => {
+  const steps = workflow.jobs["prerelease-verify"].steps;
+  const buildHelpersIndex = steps.findIndex(
+    (step) => step.name === "Build auto-mode acceptance bed helpers",
+  );
+  const acceptanceBedIndex = steps.findIndex(
+    (step) => step.name === "Run auto-mode acceptance bed (against installed binary)",
+  );
+  const acceptanceBed = steps.find(
+    (step) => step.name === "Run auto-mode acceptance bed (against installed binary)",
+  );
+
+  assert.ok(buildHelpersIndex > -1, "prerelease verification must build the acceptance bed helpers");
+  assert.match(steps[buildHelpersIndex].run, /pnpm run build:core/);
+  assert.ok(buildHelpersIndex < acceptanceBedIndex, "acceptance bed helpers must exist before the bed runs");
+  assert.ok(acceptanceBed, "prerelease verification must run the auto-mode acceptance bed");
+  assert.notEqual(
+    acceptanceBed["continue-on-error"],
+    true,
+    "a wedged acceptance bed must block the release",
+  );
+  assert.match(acceptanceBed.run, /GSD_SMOKE_BINARY=\$\(which gsd\)/);
+  assert.match(acceptanceBed.run, /pnpm run test:auto-acceptance/);
+  assert.equal(
+    packageJson.scripts["test:auto-acceptance"],
+    "node tests/acceptance-bed/auto-milestone-bed.mjs",
+  );
+  assert.equal(workflow.jobs["prod-release-plan"].needs, "prerelease-verify");
 });
 
 test("production release publishes workspace packages and verifies ALL packages before cutting the GitHub release", () => {

@@ -25,8 +25,10 @@ import { clearParseCache } from "../files.js";
 import {
   _getAdapter,
   closeDatabase,
+  insertArtifact,
   openDatabase,
 } from "../gsd-db.js";
+import { stripProjectionStamp } from "../markdown-renderer.js";
 import { clearPathCache } from "../paths.js";
 import {
   claimTaskAttempt,
@@ -38,7 +40,11 @@ import {
   appendKernelCheckpoint,
   readDomainOperationFence,
 } from "../db/writers/lifecycle-commands.js";
+import { checkEngineHealth } from "../doctor-engine-checks.js";
+import type { DoctorIssue } from "../doctor-types.js";
 import type { ExecutionInvocation } from "../execution-invocation.js";
+import { detectArtifactDbDrift } from "../state-reconciliation/drift/artifact-db.js";
+import type { GSDState } from "../types.js";
 
 interface TaskIdentity {
   milestoneId: string;
@@ -416,6 +422,47 @@ function taskState(): Record<string, unknown> {
   `);
 }
 
+function reconciliationState(): GSDState {
+  return {
+    activeMilestone: { id: "M001", title: "Compatibility adapter" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "executing",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Verify task",
+    registry: [],
+    requirements: { active: 0, validated: 0, deferred: 0, outOfScope: 0, blocked: 0, total: 0 },
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+}
+
+async function taskSummaryDivergence(basePath: string, taskId = "T01"): Promise<{
+  doctorDivergence: boolean;
+  reconciliationDivergence: boolean;
+}> {
+  const issues: DoctorIssue[] = [];
+  await checkEngineHealth(basePath, issues, []);
+  const doctorDivergence = issues.some((issue) =>
+    issue.code === "artifact_db_status_divergence" && issue.unitId === `M001/S01/${taskId}`
+  );
+
+  const state = reconciliationState();
+  const drifts = detectArtifactDbDrift(state, { basePath, state });
+  const reconciliationDivergence = drifts.some((drift) =>
+    drift.kind === "artifact-db-status-divergence" && drift.taskId === taskId
+  );
+  return { doctorDivergence, reconciliationDivergence };
+}
+
+async function assertStagedSummaryIsCurrent(basePath: string): Promise<void> {
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: false, reconciliationDivergence: false },
+    "doctor and reconciliation must accept a canonical staged Task SUMMARY",
+  );
+}
+
 function settlementState(): Record<string, unknown> {
   return {
     authority: row("SELECT revision, authority_epoch FROM project_authority"),
@@ -473,6 +520,194 @@ test("staging settles the canonical Attempt but leaves legacy completion and its
   assert.match(readFileSync(staged.summaryPath, "utf8"), /host verification is still required/i);
   assert.match(readFileSync(planPath, "utf8"), /\[ \][^\n]*\*\*T01/);
   assert.equal(count("verification_evidence"), 1);
+});
+
+test("#1677: a canonical staged Task SUMMARY is current while awaiting host verification", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+
+  const staged = await stageTaskCompletion(stageInput(basePath));
+
+  assert.equal(staged.nextStage, "verify");
+  assert.deepEqual(
+    row("SELECT status, completed_at FROM tasks WHERE id = 'T01'"),
+    { status: "in_progress", completed_at: null },
+  );
+  const artifactContent = String(row(
+    "SELECT full_content FROM artifacts WHERE artifact_type = 'SUMMARY' AND task_id = 'T01'",
+  ).full_content);
+  const taskContent = String(row(
+    "SELECT full_summary_md FROM tasks WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'",
+  ).full_summary_md);
+  assert.equal(readFileSync(staged.summaryPath, "utf8"), artifactContent);
+  assert.equal(stripProjectionStamp(artifactContent), stripProjectionStamp(taskContent));
+  await assertStagedSummaryIsCurrent(basePath);
+});
+
+function registerFailClosedSummaryMutation(
+  name: string,
+  mutate: (basePath: string, summaryPath: string) => string | void,
+): void {
+  test(`#1677: ${name} remains fail-closed`, async () => {
+    const { stageTaskCompletion } = await subject();
+    const { basePath } = createFixture();
+    const staged = await stageTaskCompletion(stageInput(basePath));
+    const expectedTaskId = mutate(basePath, staged.summaryPath) ?? "T01";
+
+    assert.deepEqual(
+      await taskSummaryDivergence(basePath, expectedTaskId),
+      { doctorDivergence: true, reconciliationDivergence: true },
+    );
+  });
+}
+
+registerFailClosedSummaryMutation("mismatched artifact identity", () => {
+  db().prepare(`
+    UPDATE artifacts SET task_id = 'T99'
+    WHERE artifact_type = 'SUMMARY' AND task_id = 'T01'
+  `).run();
+  return "T99";
+});
+
+registerFailClosedSummaryMutation("non-canonical artifact path", (basePath, summaryPath) => {
+  const alternatePath = join(basePath, ".gsd", "phases", "01-test", "T01-ALT-SUMMARY.md");
+  writeFileSync(alternatePath, readFileSync(summaryPath, "utf8"));
+  db().prepare(`
+    UPDATE artifacts SET path = :path
+    WHERE artifact_type = 'SUMMARY' AND task_id = 'T01'
+  `).run({ ":path": alternatePath });
+});
+
+registerFailClosedSummaryMutation("disk and artifact byte mismatch", (_basePath, summaryPath) => {
+  writeFileSync(summaryPath, `${readFileSync(summaryPath, "utf8")}disk-only mutation\n`);
+});
+
+registerFailClosedSummaryMutation("artifact and Task summary mismatch", () => {
+  db().prepare(`
+    UPDATE tasks SET full_summary_md = full_summary_md || '\nDB-only mutation\n'
+    WHERE milestone_id = 'M001' AND slice_id = 'S01' AND id = 'T01'
+  `).run();
+});
+
+test("#1677: an in-progress Task SUMMARY without an Attempt remains fail-closed", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  const staged = await stageTaskCompletion(stageInput(basePath));
+  const summaryPath = staged.summaryPath.replace("T01-SUMMARY.md", "T02-SUMMARY.md");
+  assert.notEqual(summaryPath, staged.summaryPath);
+  const taskSummary = "# T02 Summary\n\nNo Attempt exists for this projection.\n";
+  const artifactContent = `${taskSummary}<!-- gsd:state-version=1:1 -->\n`;
+  db().prepare(`
+    INSERT INTO tasks (
+      milestone_id, slice_id, id, title, status, full_summary_md, sequence
+    ) VALUES (
+      'M001', 'S01', 'T02', 'Missing Attempt', 'in_progress', :summary, 2
+    )
+  `).run({ ":summary": taskSummary });
+  writeFileSync(summaryPath, artifactContent);
+  insertArtifact({
+    path: summaryPath,
+    artifact_type: "SUMMARY",
+    milestone_id: "M001",
+    slice_id: "S01",
+    task_id: "T02",
+    full_content: artifactContent,
+  });
+
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath, "T02"),
+    { doctorDivergence: true, reconciliationDivergence: true },
+  );
+});
+
+test("#1677: a newer running Attempt keeps an older successful staged SUMMARY fail-closed", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  db().prepare(`
+    INSERT INTO unit_dispatches (
+      trace_id, turn_id, worker_id, milestone_lease_token,
+      milestone_id, slice_id, task_id, unit_type, unit_id,
+      status, attempt_n, started_at
+    ) VALUES (
+      'trace-dispatch-2', 'turn-dispatch-2', 'worker-1', 7,
+      'M001', 'S01', 'T01', 'execute-task', 'M001/S01/T01',
+      'claimed', 2, '2026-07-12T00:10:00.000Z'
+    )
+  `).run();
+  const dispatchId = Number(row("SELECT MAX(id) AS id FROM unit_dispatches").id);
+  const retry = claimTaskAttempt({
+    invocation: invocation("task-completion/retry-claim"),
+    task: TASK,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: dispatchId,
+    retryOfAttemptId: attemptId,
+  });
+  assert.equal(retry.attemptNumber, 2);
+
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: true, reconciliationDivergence: true },
+  );
+});
+
+test("#1677: a verify-stage SUMMARY remains current after a passing verdict until publication", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+  recordPassingHostVerdict(basePath, attemptId);
+
+  const attempt = readLatestTaskAttempt(TASK);
+  assert.equal(attempt?.nextStage, "verify");
+  await assertStagedSummaryIsCurrent(basePath);
+});
+
+test("#1677: an unreadable canonical Task SUMMARY remains fail-closed", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  const staged = await stageTaskCompletion(stageInput(basePath));
+  unlinkSync(staged.summaryPath);
+  mkdirSync(staged.summaryPath);
+
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: true, reconciliationDivergence: true },
+    "diagnostics must report divergence when canonical content cannot be read",
+  );
+});
+
+test("#1677: a canonical staged Task SUMMARY remains current on a host-verification recovery route", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath, attemptId } = createFixture();
+  await stageTaskCompletion(stageInput(basePath));
+
+  recordFailingHostVerdict(basePath, attemptId);
+
+  const attempt = readLatestTaskAttempt(TASK);
+  assert.equal(attempt?.state, "settled");
+  assert.equal(attempt?.outcome, "succeeded");
+  assert.equal(attempt?.nextStage, "route");
+  await assertStagedSummaryIsCurrent(basePath);
+});
+
+test("#1677: a failed executor Attempt cannot legitimize an open Task SUMMARY", async () => {
+  const { stageTaskCompletion } = await subject();
+  const { basePath } = createFixture();
+  const input = stageInput(basePath);
+  input.completion.blockerDiscovered = true;
+
+  const staged = await stageTaskCompletion(input);
+
+  const attempt = readLatestTaskAttempt(TASK);
+  assert.equal(staged.nextStage, "route");
+  assert.equal(attempt?.state, "settled");
+  assert.equal(attempt?.outcome, "failed");
+  assert.deepEqual(
+    await taskSummaryDivergence(basePath),
+    { doctorDivergence: true, reconciliationDivergence: true },
+    "executor failure evidence must remain fail-closed",
+  );
 });
 
 test("staging normalizes a pending legacy Task and clears its stale completion timestamp", async () => {

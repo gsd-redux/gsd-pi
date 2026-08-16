@@ -105,8 +105,8 @@ test("public corpus compiles 13 eligible Previews and refuses 13 unresolved Prev
   assert.deepEqual([...compiled.keys()].sort(), [...ELIGIBLE_CASES].sort());
   assert.equal(compiled.size, 13);
   assert.equal(refused.length, 13);
-  assert.equal(compiled.get("planning-flat-complete"), 5);
-  assert.equal(compiled.get("gsd-nested"), 22);
+  assert.equal(compiled.get("planning-flat-complete"), 8);
+  assert.equal(compiled.get("gsd-nested"), 45);
   assert.equal(compiled.get("custom-workflow"), 18);
   assert.equal(compiled.get("jsonl-history"), 14);
   assert.equal(compiled.get("knowledge-graph"), 3);

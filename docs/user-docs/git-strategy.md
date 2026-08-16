@@ -32,6 +32,12 @@ Work happens in the project root on a `milestone/<MID>` branch. No worktree is c
 
 Use this when worktrees cause problems — submodule-heavy repos, repos with hardcoded paths, or environments where worktree symlinks don't behave.
 
+Branch mode also works in a zero-commit repository: GSD creates and enters the
+unborn `milestone/<MID>` branch without requiring a commit target. Re-entering
+that same unborn branch is a no-op, so staged and unstaged first-commit work is
+preserved across auto-mode runs. A new run retries the configured isolation
+mode instead of inheriting an earlier run's degraded-isolation flag.
+
 ## Branching Model (Worktree Mode)
 
 ```
@@ -98,7 +104,7 @@ These features apply only in **worktree mode**.
 Auto mode creates and manages worktrees automatically:
 
 1. When a milestone starts, a worktree is created at `.gsd-worktrees/<MID>/` on branch `milestone/<MID>`
-2. The project-root SQLite database remains canonical runtime state; artifact/projection files are rendered under the active worktree-local `.gsd/` while execution runs inside that worktree
+2. Project/worktree state boundaries follow [Auto Mode's State Authority contract](./auto-mode.md#state-authority): source-code execution stays inside the worktree while Plan Milestone resolves canonical Project state through the project root
    SQLite WAL coordination is single-host only; do not share this runtime across machines, and see `src/resources/extensions/gsd/docs/COORDINATION.md` for the coordination constraints.
 3. All execution happens inside the worktree
 4. On milestone completion, the worktree is squash-merged to the integration branch

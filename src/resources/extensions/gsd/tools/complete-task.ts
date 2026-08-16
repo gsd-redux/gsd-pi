@@ -29,7 +29,11 @@ import {
   setTaskEscalationPending,
   setTaskEscalationAwaitingReview,
 } from "../gsd-db.js";
-import { getWorkflowDatabasePath, ensureWorkflowDbAtPath } from "../db-workspace.js";
+import {
+  getWorkflowDatabasePath,
+  ensureWorkflowDbAtPath,
+  isWorkflowDatabaseOpen,
+} from "../db-workspace.js";
 import { closeTaskQualityGates } from "../quality-gate-closure.js";
 import {
   buildFlatTaskFileName,
@@ -45,9 +49,9 @@ import {
 } from "../paths.js";
 import { resolveCanonicalMilestoneRoot } from "../worktree-manager.js";
 import { checkOwnership, taskUnitKey } from "../unit-ownership.js";
-import { saveFile, clearParseCache, normalizePlannedFileReference } from "../files.js";
+import { clearParseCache, normalizePlannedFileReference } from "../files.js";
 import { invalidateStateCache } from "../state.js";
-import { renderPlanCheckboxes } from "../markdown-renderer.js";
+import { ProjectionWriteError, renderPlanCheckboxes, writeTaskSummaryProjection } from "../markdown-renderer.js";
 import {
   renderMilestoneShellProjections,
   renderSummaryContent,
@@ -149,10 +153,50 @@ export function resolveTaskSummaryPath(
   );
 }
 
+/**
+ * Persist a task-summary projection through the canonical projection seam,
+ * tolerating a workflow database handle that disappears across the summary
+ * write's await boundary.
+ *
+ * The seam records artifact lineage in the DB *after* the disk bytes land, so a
+ * handle lost mid-write surfaces as a `ProjectionWriteError` even though the
+ * database file is intact and reopenable. That is the same recoverable loss the
+ * plan-render step already reopens for; treating it as a stale projection would
+ * report a repairable handle loss as durable drift. Genuine persistence
+ * failures (a missing database file, or a failing insert against a live handle)
+ * still fail loud.
+ */
+async function persistTaskSummaryProjection(
+  artifactBasePath: string,
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  summaryMd: string,
+  workflowDbPath: string | null,
+): Promise<void> {
+  try {
+    await writeTaskSummaryProjection(artifactBasePath, milestoneId, sliceId, taskId, summaryMd);
+    return;
+  } catch (err) {
+    const reopened =
+      err instanceof ProjectionWriteError &&
+      !isWorkflowDatabaseOpen() &&
+      ensureWorkflowDbAtPath(workflowDbPath);
+    if (!reopened) throw err;
+    logWarning(
+      "projection",
+      `complete_task reopened the workflow database to record task summary lineage for ${milestoneId}/${sliceId}/${taskId}`,
+    );
+  }
+
+  await writeTaskSummaryProjection(artifactBasePath, milestoneId, sliceId, taskId, summaryMd);
+}
+
 async function repairMissingTaskSummaryProjection(
   artifactBasePath: string,
   taskRow: TaskRow,
 ): Promise<{ summaryPath: string; stale: boolean }> {
+  const workflowDbPath = getWorkflowDatabasePath();
   const summaryPath = taskSummaryPath(
     artifactBasePath,
     taskRow.milestone_id,
@@ -172,7 +216,14 @@ async function repairMissingTaskSummaryProjection(
   let stale = false;
 
   try {
-    await saveFile(summaryPath, summaryMd);
+    await persistTaskSummaryProjection(
+      artifactBasePath,
+      taskRow.milestone_id,
+      taskRow.slice_id,
+      taskRow.id,
+      summaryMd,
+      workflowDbPath,
+    );
     await renderPlanCheckboxes(artifactBasePath, taskRow.milestone_id, taskRow.slice_id);
   } catch (renderErr) {
     stale = true;
@@ -631,7 +682,14 @@ export async function handleCompleteTask(
   );
 
   try {
-    await saveFile(summaryPath, summaryMd);
+    await persistTaskSummaryProjection(
+      artifactBasePath,
+      params.milestoneId,
+      params.sliceId,
+      params.taskId,
+      summaryMd,
+      workflowDbPath,
+    );
 
     // Toggle or regenerate the plan projection from DB. Missing projection
     // files are rebuilt by the renderer instead of being skipped.

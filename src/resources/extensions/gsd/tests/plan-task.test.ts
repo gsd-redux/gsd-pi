@@ -6,7 +6,8 @@ import { tmpdir } from 'node:os';
 
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, getSlice, getTask, getSliceTasks, getGateResults } from '../gsd-db.ts';
 import { handlePlanTask as handlePlanTaskWithInvocation, type PlanTaskParams } from '../tools/plan-task.ts';
-import { parsePlan } from '../parsers-legacy.ts';
+import { parseProjectionPlan as parsePlan } from '../schemas/parsers.ts';
+import { resolveVerificationRepositoryTargets } from '../verification-source-integrity.ts';
 
 let invocationSequence = 0;
 
@@ -341,6 +342,38 @@ test('handlePlanTask persists targetRepositories for parent-workspace tasks', as
     const planned = tasks.find((t) => t.id === 'T02');
     assert.ok(planned, 'planned task should exist');
     assert.deepEqual(planned?.target_repositories, ['project']);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanTask keeps implicit parent-workspace tasks scoped to the root for verification', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParent();
+    writeParentWorkspacePreferences(base);
+    const result = await handlePlanTask(validParams(), base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const task = getTask('M001', 'S02', 'T02');
+    const slice = getSlice('M001', 'S02');
+    // #1630 derives the concrete target from the task's root-only planned paths,
+    // so the row is explicit rather than empty; #1656's requirement is that
+    // verification never fans out to the child repositories, asserted below.
+    assert.deepEqual(task?.target_repositories, ['project']);
+
+    const resolved = resolveVerificationRepositoryTargets(base, {
+      workspace: {
+        mode: 'parent',
+        repositories: {
+          frontend: { path: 'frontend' },
+          backend: { path: 'backend' },
+        },
+      },
+    }, task, slice);
+    assert.deepEqual(resolved.repositories.map((repository) => repository.id), ['project']);
   } finally {
     cleanup(base);
   }

@@ -25,6 +25,8 @@ import {
   markLatestActiveForWorkerCanceled,
   getRecentForUnit,
   getLatestForUnit,
+  getActiveForWorker,
+  getDispatchById,
 } from "../db/unit-dispatches.ts";
 
 function makeBase(): string {
@@ -340,4 +342,31 @@ test("recordDispatchClaim rejects claims for missing leases before insert", (t) 
     workerId: "missing-worker",
     milestoneLeaseToken: 1,
   });
+});
+
+test("getActiveForWorker returns the claimed or running row for this worker", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  const { workerId, leaseToken } = setup(base);
+
+  const claim = recordDispatchClaim({
+    traceId: "active-for-worker",
+    workerId,
+    milestoneLeaseToken: leaseToken,
+    milestoneId: "M001",
+    sliceId: "S01",
+    unitType: "plan-slice",
+    unitId: "M001/S01",
+  });
+  assert.equal(claim.ok, true);
+  if (!claim.ok) throw new Error("expected claim");
+
+  const active = getActiveForWorker(workerId);
+  assert.ok(active);
+  assert.equal(active.id, claim.dispatchId);
+  assert.equal(active.status, "claimed");
+  assert.equal(getDispatchById(claim.dispatchId)?.id, claim.dispatchId);
+
+  markCompleted(claim.dispatchId);
+  assert.equal(getActiveForWorker(workerId), null);
 });

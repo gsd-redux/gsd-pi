@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRoadmap } from "../parsers-legacy.ts";
+import { parseProjectionRoadmap as parseRoadmap } from "../schemas/parsers.ts";
 import { parseRoadmapSlices, expandDependencies } from "../roadmap-slices.ts";
 
 const content = `# M003: Current

@@ -250,7 +250,7 @@ For every new PR head, re-evaluate from scratch:
 The CI workflow's blocking aggregate requires `fast-gates`, `build`,
 `windows-portability`, and `node22-smoke` to succeed or be legitimately skipped.
 Heavy changes also run build, typecheck, package validation, workspace/extension
-coverage, unit, package, cloud-package, integration, E2E, and Node 22 smoke
+coverage, unit, package, workspace, integration, E2E, and Node 22 smoke
 inside those jobs. Conditional security or workflow-guard checks must also pass
 when their changed-path trigger starts them.
 

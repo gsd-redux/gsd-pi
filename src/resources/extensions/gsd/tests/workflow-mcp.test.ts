@@ -38,8 +38,13 @@ function extractElicitPayload(request: unknown): ElicitPayload {
 
 test("resolveWorkflowMcpProjectRoot maps milestone worktree cwd to project root", () => {
   const projectRoot = "/tmp/my-project";
-  const worktree = join(projectRoot, ".gsd", "worktrees", "M002-abc");
-  assert.equal(resolveWorkflowMcpProjectRoot(worktree), projectRoot);
+  const worktrees = [
+    join(projectRoot, ".gsd-worktrees", "M001-abc"),
+    join(projectRoot, ".gsd", "worktrees", "M002-abc"),
+  ];
+  for (const worktree of worktrees) {
+    assert.equal(resolveWorkflowMcpProjectRoot(worktree), projectRoot);
+  }
   assert.equal(resolveWorkflowMcpProjectRoot(projectRoot), projectRoot);
 });
 

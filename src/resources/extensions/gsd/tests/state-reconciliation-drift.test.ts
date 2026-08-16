@@ -9,7 +9,7 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -31,7 +31,7 @@ import {
 } from "../gsd-db.ts";
 import { clearParseCache } from "../files.ts";
 import { clearPathCache } from "../paths.ts";
-import { detectStaleRenders } from "../markdown-renderer.ts";
+import { detectStaleRenders, getCurrentProjectStateVersion, renderRoadmapFromDb } from "../markdown-renderer.ts";
 import { invalidateStateCache } from "../state.ts";
 import {
   reconcileBeforeDispatch,
@@ -44,6 +44,7 @@ import {
 import { classifyFailure } from "../recovery-classification.ts";
 import { handlerPhaseIndex, RECONCILIATION_REPAIR_PHASES } from "../state-reconciliation/registry.ts";
 import { staleRenderHandler } from "../state-reconciliation/drift/stale-render.ts";
+import { roadmapMissingHandler } from "../state-reconciliation/drift/roadmap.ts";
 import type { GSDState } from "../types.ts";
 
 function makeState(overrides: Partial<GSDState> = {}): GSDState {
@@ -123,11 +124,14 @@ test("ADR-017 (#5700): sketch-flag drift detected and repaired end-to-end", asyn
 
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 0, "post: flag cleared");
-  assert.equal(result.repaired.length, 1);
-  assert.equal(result.repaired[0]?.kind, "stale-sketch-flag");
-  if (result.repaired[0]?.kind === "stale-sketch-flag") {
-    assert.equal(result.repaired[0].mid, "M001");
-    assert.equal(result.repaired[0].sid, "S02");
+  // #1634: the fixture never renders ROADMAP.md, so the roadmap-missing
+  // handler also repairs on this pass — scope the assertion to the kind under
+  // test.
+  const sketchRepairs = result.repaired.filter((d) => d.kind === "stale-sketch-flag");
+  assert.equal(sketchRepairs.length, 1);
+  if (sketchRepairs[0]?.kind === "stale-sketch-flag") {
+    assert.equal(sketchRepairs[0].mid, "M001");
+    assert.equal(sketchRepairs[0].sid, "S02");
   }
 });
 
@@ -162,7 +166,7 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 1, "stub PLAN: flag stays set");
-  assert.equal(result.repaired.length, 0, "stub PLAN: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "stub PLAN: no repair");
 
   // A projection round-trip stub whose only task is a synthetic "Plan NN"
   // placeholder (migrate/transformer.buildTaskTitle) must also not clear it.
@@ -178,7 +182,7 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 1, "placeholder task: flag stays set");
-  assert.equal(result.repaired.length, 0, "placeholder task: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "placeholder task: no repair");
 
   // buildTaskTitle also emits `${phase} ${plan}` (e.g. "00 01") when the plan
   // frontmatter carries phase/plan. This projected placeholder must not clear
@@ -199,7 +203,51 @@ test("#1287: stub/placeholder PLAN does NOT clear the sketch flag", async (t) =>
     1,
     "phase/plan placeholder task: flag stays set",
   );
-  assert.equal(result.repaired.length, 0, "phase/plan placeholder task: no repair");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "phase/plan placeholder task: no repair");
+});
+
+test("T013: a state-version-stamped stub PLAN still does NOT clear the sketch flag", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({
+    id: "S02",
+    milestoneId: "M001",
+    title: "Feature",
+    status: "pending",
+    risk: "medium",
+    depends: [],
+    demo: "S02 demo.",
+    sequence: 1,
+    isSketch: true,
+    sketchScope: "limited",
+  });
+
+  // The sketch judgment is about PLAN *content*, not projection freshness, so
+  // a stub carrying a current state-version stamp must still be parsed and
+  // rejected — the stamp only proves it was rendered from this DB state.
+  const version = getCurrentProjectStateVersion();
+  writeFileSync(
+    join(base, ".gsd", "phases", "01-test", "01-02-PLAN.md"),
+    `${makeStalePlanContent("S02", [{ id: "T01", title: "Plan 01", done: false }])}` +
+      `<!-- gsd:state-version=${version.revision}:${version.authorityEpoch} -->\n`,
+  );
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: "M001", title: "Test" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    getSlice("M001", "S02")?.is_sketch,
+    1,
+    "stamped stub PLAN: flag stays set (no stamp short-circuit)",
+  );
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 0, "stamped stub PLAN: no repair");
 });
 
 test("#1288: real tasks shaped like `word + number` still clear the sketch flag", async (t) => {
@@ -242,7 +290,7 @@ test("#1288: real tasks shaped like `word + number` still clear the sketch flag"
   });
   assert.equal(result.ok, true);
   assert.equal(getSlice("M001", "S02")?.is_sketch, 0, "real task titles: flag cleared");
-  assert.equal(result.repaired.length, 1, "real task titles: repaired once");
+  assert.equal(result.repaired.filter((d) => d.kind === "stale-sketch-flag").length, 1, "real task titles: repaired once");
 });
 
 test("ADR-017 (#5700): repair failure throws ReconciliationFailedError with shape", async () => {
@@ -1384,6 +1432,61 @@ test("ADR-017 (#870): roadmap-divergence accepts recovered S00 blocker sequence"
   assert.equal(readFileSync(roadmapPath, "utf-8"), originalRoadmap);
 });
 
+test("ADR-017 (#1619): skipped slices are excluded from the divergence view", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-skipped-"));
+  const milestoneId = "M017";
+  const milestoneDir = join(base, ".gsd", "milestones", milestoneId);
+  const roadmapPath = join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  mkdirSync(milestoneDir, { recursive: true });
+  // The projection omits the skipped S00-blocker, so S01 renders first.
+  const originalRoadmap = [
+    `# ${milestoneId}: Blocker Skipped Milestone`,
+    "",
+    "**Vision:** Skipped blocker slice must not wedge reconciliation.",
+    "",
+    "## Slices",
+    "",
+    "- [ ] **S01: Source of truth contract** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+    "- [ ] **S02: Policy implementation** `risk:medium` `depends:[]`",
+    "  > After this: ",
+    "",
+  ].join("\n");
+  writeFileSync(roadmapPath, originalRoadmap);
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: milestoneId,
+    title: "Blocker Skipped Milestone",
+    status: "queued",
+    planning: { vision: "Skipped blocker slice must not wedge reconciliation." },
+  });
+  insertSlice({ id: "S00-blocker", milestoneId, title: "Blocker placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 0 });
+  insertSlice({ id: "S01", milestoneId, title: "Source of truth contract", status: "pending", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId, title: "Policy implementation", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  // S01 is planned, so it counts as "ready" — without excluding the skipped
+  // S00-blocker its DB index (1) would never match its roadmap index (0).
+  insertTask({ id: "T01", sliceId: "S01", milestoneId, title: "Map policy inputs", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState({ activeMilestone: { id: milestoneId, title: "Blocker Skipped Milestone" } }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    false,
+    "a skipped slice omitted by the renderer must not report roadmap-divergence",
+  );
+  assert.equal(readFileSync(roadmapPath, "utf-8"), originalRoadmap);
+});
+
 test("ADR-017 (#5705): roadmap-divergence re-renders projection without syncing depends into DB", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-"));
   const milestoneDir = join(base, ".gsd", "phases", "01-test");
@@ -1618,6 +1721,112 @@ test("ADR-017 (#5705): in-sync ROADMAP and DB → no roadmap-divergence drift", 
   );
 });
 
+// T031: the roadmap detector compares content on every call — a state-version
+// stamp never short-circuits it, because a stale projection can carry the
+// current stamp (slice writes don't bump `project_authority.revision`) and a
+// hand-edited file keeps whatever stamp it was written with.
+function writeStampedRoadmap(roadmapPath: string, stamp: string): void {
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify stamp short-circuit",
+      "",
+      "## Slices",
+      "",
+      // Diverges from the DB below (DB has S02.depends = []).
+      "- [ ] **S01: Foundation** `risk:medium` `depends:[]`",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[S01]`",
+      "",
+      stamp,
+      "",
+    ].join("\n"),
+  );
+}
+
+function seedStampFixtureDb(base: string): void {
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Foundation", status: "pending", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Plan S01", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+}
+
+test("T031: a roadmap stamped with the CURRENT state version still reports diverging content as drift", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-t031-roadmap-stamp-current-"));
+  const milestoneDir = join(base, ".gsd", "phases", "01-test");
+  const roadmapPath = join(milestoneDir, "01-ROADMAP.md");
+  mkdirSync(milestoneDir, { recursive: true });
+  t.after(() => cleanup(base));
+
+  // Write unstamped first so the DB (and its state version) exists before the
+  // stamp is computed, then stamp the diverging fixture with the current
+  // revision:epoch. A matching stamp must NOT suppress the comparison.
+  writeStampedRoadmap(roadmapPath, "");
+  seedStampFixtureDb(base);
+
+  const version = getCurrentProjectStateVersion();
+  writeStampedRoadmap(
+    roadmapPath,
+    `<!-- gsd:state-version=${version.revision}:${version.authorityEpoch} -->`,
+  );
+  clearRendererCaches();
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    "current stamp must not short-circuit the content comparison",
+  );
+  assert.deepEqual(getSlice("M001", "S02")?.depends, [], "DB depends remains authoritative");
+  assert.match(
+    readFileSync(roadmapPath, "utf-8"),
+    /- \[ \] \*\*S02: Feature\*\* `risk:medium` `depends:\[\]`/,
+    "projection re-rendered from DB depends",
+  );
+});
+
+test("T031: a stamped roadmap whose content diverges from the DB still reports drift", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-t031-roadmap-stamp-stale-"));
+  const milestoneDir = join(base, ".gsd", "phases", "01-test");
+  const roadmapPath = join(milestoneDir, "01-ROADMAP.md");
+  mkdirSync(milestoneDir, { recursive: true });
+  t.after(() => cleanup(base));
+
+  writeStampedRoadmap(roadmapPath, "<!-- gsd:state-version=999:999 -->");
+  seedStampFixtureDb(base);
+  clearRendererCaches();
+
+  assert.notDeepEqual(
+    getCurrentProjectStateVersion(),
+    { revision: 999, authorityEpoch: 999 },
+    "fixture precondition: 999:999 must not be the current DB state version",
+  );
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    "mismatched stamp must take the existing comparison path and report drift",
+  );
+  assert.deepEqual(getSlice("M001", "S02")?.depends, [], "DB depends remains authoritative");
+  assert.match(
+    readFileSync(roadmapPath, "utf-8"),
+    /- \[ \] \*\*S02: Feature\*\* `risk:medium` `depends:\[\]`/,
+    "projection re-rendered from DB depends",
+  );
+});
+
 test("ADR-017 (#1370): roadmap-divergence skips completed milestone sharing active worktree phase", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-shared-phase-"));
   const milestoneDir = join(base, ".gsd", "phases", "06-rlrbot-m006-rlrbot-tool-registry-and-command-sa");
@@ -1837,12 +2046,10 @@ test("ADR-017: orphan task completion artifact fails closed", async (t) => {
   assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
-test("ADR-017 (#414): failure-path summary artifact blocker matches auto.ts filter phrase", async (t) => {
+test("ADR-017 (#414): an unproven failure-path summary remains a blocker", async (t) => {
   // When gsd_summary_save writes a SUMMARY artifact row for a task that never
   // called gsd_task_complete, the task stays pending and the artifact DB row
-  // produces an artifact-db-status-divergence blocker. The auto.ts dispatch
-  // wrapper must be able to filter this class of blocker to allow re-dispatch.
-  // If this test fails, update the filter strings in auto.ts to match.
+  // remains fail-closed without a canonical staged Attempt/Result.
   const base = mkdtempSync(join(tmpdir(), "gsd-failure-path-summary-drift-"));
   t.after(() => cleanup(base));
 
@@ -1867,17 +2074,11 @@ test("ADR-017 (#414): failure-path summary artifact blocker matches auto.ts filt
 
   assert.equal(result.ok, true);
   assert.ok(result.blockers.length > 0, "blocker must be produced for pending-task SUMMARY drift");
-  const blocker = result.blockers.join("\n");
-  assert.match(
-    blocker,
-    /has SUMMARY artifact while DB status is/,
-    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
-  );
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
-test("ADR-017 (#414): no-db-tasks summary artifact blocker matches auto.ts filter phrase", async (t) => {
-  // When a slice has SUMMARY artifacts in the DB but no DB tasks, the auto.ts
-  // filter must be able to recognise this as a failure-path case and skip it.
+test("ADR-017 (#414): a summary artifact without DB tasks remains a blocker", async (t) => {
+  // No task identity means the SUMMARY cannot be proven as a DB-backed staged projection.
   const base = mkdtempSync(join(tmpdir(), "gsd-no-db-tasks-summary-drift-"));
   t.after(() => cleanup(base));
 
@@ -1902,20 +2103,14 @@ test("ADR-017 (#414): no-db-tasks summary artifact blocker matches auto.ts filte
 
   assert.equal(result.ok, true);
   assert.ok(result.blockers.length > 0, "blocker must be produced for no-db-tasks SUMMARY drift");
-  const blocker = result.blockers.join("\n");
-  assert.match(
-    blocker,
-    /has task SUMMARY artifacts but no DB tasks/,
-    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
-  );
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
-test("ADR-017 (#414): task-level on-disk summary blocker matches auto.ts filter phrase", async (t) => {
+test("ADR-017 (#414): a disk-only task summary remains a blocker", async (t) => {
   // When gsd_summary_save writes a SUMMARY file to disk for a task that never
   // called gsd_task_complete, but the artifact DB row was not yet written (or
-  // the process crashed before insertion), reconciliation emits
-  // "has SUMMARY on disk while DB status is". The auto.ts filter must match
-  // this phrase so re-dispatch is not blocked.
+  // the process crashed before insertion), no durable projection identity can
+  // prove that the file is current.
   const base = mkdtempSync(join(tmpdir(), "gsd-task-disk-summary-drift-"));
   t.after(() => cleanup(base));
 
@@ -1936,19 +2131,12 @@ test("ADR-017 (#414): task-level on-disk summary blocker matches auto.ts filter 
 
   assert.equal(result.ok, true);
   assert.ok(result.blockers.length > 0, "blocker must be produced for on-disk task SUMMARY drift");
-  const blocker = result.blockers.join("\n");
-  assert.match(
-    blocker,
-    /has SUMMARY on disk while DB status is/,
-    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
-  );
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
-test("ADR-017 (#414): slice-level on-disk summary blocker matches auto.ts filter phrase", async (t) => {
+test("ADR-017 (#414): a disk-only slice summary remains a blocker", async (t) => {
   // When a SUMMARY file exists on disk for a slice that is still pending
-  // (no gsd_task_complete for the slice), reconciliation emits
-  // "has SUMMARY on disk while DB status is". The auto.ts filter must match
-  // this phrase so re-dispatch is not blocked.
+  // (no gsd_task_complete for the slice), it remains unproven projection drift.
   const base = mkdtempSync(join(tmpdir(), "gsd-slice-disk-summary-drift-"));
   t.after(() => cleanup(base));
 
@@ -1968,12 +2156,7 @@ test("ADR-017 (#414): slice-level on-disk summary blocker matches auto.ts filter
 
   assert.equal(result.ok, true);
   assert.ok(result.blockers.length > 0, "blocker must be produced for on-disk slice SUMMARY drift");
-  const blocker = result.blockers.join("\n");
-  assert.match(
-    blocker,
-    /has SUMMARY on disk while DB status is/,
-    "blocker phrase must match the filter in auto.ts reconcileBeforeDispatch wrapper",
-  );
+  assert.match(result.blockers.join("\n"), /Artifact\/DB status drift/);
 });
 
 test("completedMilestoneReopenedGuidance tells active milestones to finish closeout", async () => {
@@ -2077,6 +2260,147 @@ test("#1565: unique-suffix DB milestone id resolves slices planned under the fil
   );
 });
 
+test("#1623: suffixed DB slice id satisfies the bare PLAN-filename slice id", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-suffixed-slice-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  writeFileSync(join(phaseDir, "01-01-PLAN.md"), "# Plan S01\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  // Replanning stored the slice with a suffix; the plan filename can only ever
+  // encode the bare numeric index, so exact-id matching flagged false drift.
+  insertSlice({ id: "S01-replan", milestoneId: "M001", title: "Slice", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    result.blockers.join("\n").includes("references unknown S01"),
+    false,
+    "suffixed slice id must satisfy the bare id derived from the plan filename",
+  );
+});
+
+test("#1623: bare plan slice id does not match a longer numeric slice id", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-bare-slice-prefix-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  writeFileSync(join(phaseDir, "01-01-PLAN.md"), "# Plan S01\n");
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S010", milestoneId: "M001", title: "Slice", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(
+    result.blockers.join("\n").includes("references unknown S01"),
+    true,
+    "S010 is a different slice, not a suffixed alias of S01",
+  );
+});
+
+test("#1623: skipped slice does not produce unrepairable roadmap-divergence", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-skipped-roadmap-drift-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  const roadmapPath = join(phaseDir, "01-ROADMAP.md");
+  // The rendered projection omits skipped slices, so S01 is absent by design.
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify skipped slices stay out of the divergence check",
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[]`",
+      "",
+    ].join("\n"),
+  );
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M001",
+    title: "Test",
+    status: "active",
+    planning: { vision: "Verify skipped slices stay out of the divergence check" },
+  });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true, result.ok ? "" : result.blockers.join("\n"));
+  assert.equal(
+    result.repaired.some((d) => d.kind === "roadmap-divergence"),
+    false,
+    "a skipped slice missing from ROADMAP.md is the rendered contract, not drift",
+  );
+});
+
+test("#1623: stale roadmap row for a now-skipped slice is re-rendered away", async (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-skipped-roadmap-stale-"));
+  t.after(() => cleanup(base));
+
+  const phaseDir = join(base, ".gsd", "phases", "01-test");
+  mkdirSync(phaseDir, { recursive: true });
+  const roadmapPath = join(phaseDir, "01-ROADMAP.md");
+  writeFileSync(
+    roadmapPath,
+    [
+      "# M001: Test",
+      "",
+      "**Vision:** Verify skipped slices are dropped from a stale projection",
+      "",
+      "## Slices",
+      "",
+      "- [ ] **S01: Placeholder** `risk:medium` `depends:[]`",
+      "- [ ] **S02: Feature** `risk:medium` `depends:[]`",
+      "",
+    ].join("\n"),
+  );
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M001",
+    title: "Test",
+    status: "active",
+    planning: { vision: "Verify skipped slices are dropped from a stale projection" },
+  });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Placeholder", status: "skipped", risk: "medium", depends: [], demo: "", sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Feature", status: "pending", risk: "medium", depends: [], demo: "", sequence: 2 });
+  insertTask({ id: "T01", sliceId: "S02", milestoneId: "M001", title: "Plan S02", status: "pending" });
+
+  const result = await reconcileBeforeDispatch(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+  });
+
+  assert.equal(result.ok, true, result.ok ? "" : result.blockers.join("\n"));
+  const roadmap = readFileSync(roadmapPath, "utf-8");
+  assert.equal(roadmap.includes("S01: Placeholder"), false, "skipped slice is dropped");
+  assert.match(roadmap, /S02: Feature/);
+});
+
 // ─── #5707: caller closure (reconcileBeforeSpawn) ────────────────────────────
 
 test("ADR-017 (#5707): reconcileBeforeSpawn returns ok=true on clean reconciliation", async () => {
@@ -2145,12 +2469,61 @@ test("ADR-017 (#5707): reconcileBeforeSpawn reports repaired drift in ok=true re
   }
 });
 
+test("reconcileBeforeSpawn preserves an unbaselined roadmap before re-projecting", async (t) => {
+  const base = makeFixtureBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({
+    id: "M001",
+    title: "Test",
+    status: "active",
+    planning: { vision: "Canonical vision" },
+  });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Canonical slice",
+    status: "pending",
+    risk: "low",
+    depends: [],
+  });
+  const rendered = await renderRoadmapFromDb(base, "M001");
+  assert.equal("roadmapPath" in rendered, true);
+  const roadmapPath = join(base, ".gsd", "phases", "01-test", "01-ROADMAP.md");
+  writeFileSync(roadmapPath, "# Externally edited roadmap\n", "utf-8");
+  rmSync(join(base, ".gsd", ".compat.json"), { force: true });
+
+  const result = await reconcileBeforeSpawn(base, {
+    invalidateStateCache: () => {},
+    deriveState: async () => makeState(),
+    registry: [roadmapMissingHandler],
+  });
+
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  assert.match(readFileSync(roadmapPath, "utf-8"), /Canonical slice/);
+  const quarantineRoot = join(base, ".gsd", "quarantine", "projections");
+  const quarantinedRoadmap = readdirSync(quarantineRoot, { recursive: true })
+    .map(String)
+    .find((path) => path.endsWith("01-ROADMAP.md"));
+  assert.ok(quarantinedRoadmap);
+  assert.equal(
+    readFileSync(join(quarantineRoot, quarantinedRoadmap), "utf-8"),
+    "# Externally edited roadmap\n",
+  );
+});
+
 test("ADR-017 (#6238): reconcileBeforeSpawn does not pass reconcile-only deps object", async () => {
   let receivedDeps: Partial<ReconciliationDeps> | undefined;
   const result = await reconcileBeforeSpawn("/project", {
     reconcile: async (_basePath, deps) => {
       receivedDeps = deps;
-      return { ok: true, stateSnapshot: makeState(), repaired: [], blockers: [] };
+      return {
+        ok: true,
+        stateSnapshot: makeState(),
+        repaired: [],
+        blockers: [],
+        blockerDetails: [],
+      };
     },
   });
 
@@ -2230,16 +2603,14 @@ test("deriveState is pure: stale sketch healed only via reconcileBeforeDispatch"
   assert.notEqual(afterReconcile.phase, "refining", "derive after reconcile advances past sketch gate");
 });
 
-test("reconciliation repair phases: external authority boundary precedes re-project handlers", () => {
-  assert.equal(RECONCILIATION_REPAIR_PHASES.length, 3);
-  assert.equal(RECONCILIATION_REPAIR_PHASES[0]?.name, "external-edit-boundary");
-  assert.equal(RECONCILIATION_REPAIR_PHASES[0]?.stopOnBlocker, true);
-  assert.ok(handlerPhaseIndex("external-markdown-edit") < handlerPhaseIndex("stale-render"));
-  assert.ok(handlerPhaseIndex("external-planning-edit") < handlerPhaseIndex("roadmap-divergence"));
+test("pre-dispatch reconciliation excludes projection observations", () => {
+  assert.equal(RECONCILIATION_REPAIR_PHASES.length, 2);
+  assert.equal(handlerPhaseIndex("external-markdown-edit"), -1);
+  assert.equal(handlerPhaseIndex("external-planning-edit"), -1);
   assert.ok(handlerPhaseIndex("stale-sketch-flag") < handlerPhaseIndex("stale-render"));
 });
 
-test("external authority blocker stops later re-projection in the same pass", async () => {
+test("custom reconciliation blockers retain their structured drift evidence", async () => {
   const externalDrift: DriftRecord = {
     kind: "external-markdown-edit",
     projectionPath: "phases/01-test/01-ROADMAP.md",
@@ -2247,12 +2618,6 @@ test("external authority blocker stops later re-projection in the same pass", as
     actualSha: "after",
     entities: ["M001"],
   };
-  const renderDrift: DriftRecord = {
-    kind: "stale-render",
-    renderPath: "phases/01-test/01-ROADMAP.md",
-    reason: "DB projection is stale",
-  };
-  let rendered = false;
   const externalHandler: DriftHandler = {
     kind: "external-markdown-edit",
     detect: () => [externalDrift],
@@ -2261,21 +2626,16 @@ test("external authority blocker stops later re-projection in the same pass", as
       throw new Error("blocked external repair must not run");
     },
   };
-  const renderHandler: DriftHandler = {
-    kind: "stale-render",
-    detect: () => [renderDrift],
-    repair: () => {
-      rendered = true;
-    },
-  };
-
   const result = await reconcileBeforeDispatch("/project", {
     invalidateStateCache: () => {},
     deriveState: async () => makeState(),
-    registry: [externalHandler, renderHandler],
+    registry: [externalHandler],
   });
 
-  assert.equal(rendered, false);
   assert.equal(result.repaired.length, 0);
   assert.deepEqual(result.blockers, ["review the external modeled edit"]);
+  assert.deepEqual(result.blockerDetails, [{
+    message: "review the external modeled edit",
+    drift: externalDrift,
+  }]);
 });

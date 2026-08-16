@@ -1,6 +1,8 @@
 # ADR-009: Unified Orchestration Kernel Refactor
 
-**Status:** Accepted (implemented; emergency legacy fallback retained)
+**Status:** Accepted (landed under different names — `src/resources/extensions/gsd/uok/` modules; superseded by ADR-046)
+
+> Implementation note (2026-08-01 audit): no `OrchestrationKernel` symbol exists at HEAD. The trace finds the kernel under `src/resources/extensions/gsd/uok/` (`kernel.ts`, `gate-runner.ts`, `gitops.ts`, `audit.ts`, `model-policy.ts`, `plan-v2.ts`, `execution-graph.ts`), with the legacy fallback path as a flag in `uok/kernel.ts` (`legacy-fallback` / `legacy.uokFallbackUsed`). Per the ADR-046 disposition above, this design is no longer current architecture.
 **Date:** 2026-04-14
 **Deciders:** Jeremy McSpadden, GSD Core Team
 **Related:** ADR-001 (worktree architecture), ADR-003 (pipeline simplification), ADR-004 (capability-aware routing), ADR-005 (multi-provider strategy), ADR-008 (tools over MCP)

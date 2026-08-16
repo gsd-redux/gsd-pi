@@ -98,6 +98,17 @@ test("Tool Contract compiles known Unit prompt and tool policy", () => {
   });
 });
 
+test("Tool Contract compiles the replan-task recovery Unit", () => {
+  const result = compileUnitToolContract("replan-task");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok && result.contract.unitType, "replan-task");
+  assert.deepEqual(result.ok && result.contract.requiredWorkflowTools, ["gsd_replan_task"]);
+  assert.equal(result.ok && result.contract.contextMode, "planning");
+  assert.equal(result.ok && result.contract.toolsPolicy.mode, "workflow-only");
+  assert.deepEqual(result.ok && result.contract.promptContext.artifacts.inline, ["task-plan"]);
+});
+
 test("Tool Contract derives dispatch readiness from Unit workflow tools", () => {
   const error = getUnitWorkflowDispatchReadinessError({
     provider: "claude-code",
@@ -184,14 +195,13 @@ test("auto Unit tool scope blocks complete-slice from saving UAT Assessment", ()
   assert.match(result.reason ?? "", /Run UAT owns persisted UAT Assessment/);
 });
 
-test("auto Unit tool scope hard-blocks repaired-abort authorization from dispatched workers", () => {
+test("auto Unit tool scope allows repaired-abort authorization in execute-task", () => {
   for (const toolName of [
     "gsd_task_recovery_resume",
     "mcp__gsd-workflow__gsd_task_recovery_resume",
   ]) {
     const result = shouldBlockAutoUnitToolCall("execute-task", toolName);
-    assert.equal(result.block, true, `${toolName} must remain control-plane only`);
-    assert.match(result.reason ?? "", /Tool Contract failure/);
+    assert.equal(result.block, false, `${toolName} must be available to execute-task recovery`);
   }
 });
 
@@ -237,6 +247,7 @@ test("Recovery Classification covers ADR-015 failure families", () => {
     ["stale worker lease", "stale-worker", "stop"],
     ["worktree root missing .git", "worktree-invalid", "stop"],
     ["verification drift in state snapshot", "verification-drift", "escalate"],
+    ["projection root operation failed: C:\\repo\\.gsd\\worktrees\\M001: The process cannot access the file because it is being used by another process. (os error 32)", "projection-lock-transient", "retry"],
     ["rate limit 429", "provider", "retry"],
     ["unexpected invariant", "runtime-unknown", "escalate"],
   ] as const;

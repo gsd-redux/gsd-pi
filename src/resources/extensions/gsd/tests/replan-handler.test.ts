@@ -18,7 +18,7 @@ import {
 } from '../gsd-db.ts';
 import { handleReplanSlice as handleReplanSliceWithInvocation } from '../tools/replan-slice.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
-import { parsePlan } from '../parsers-legacy.ts';
+import { parseProjectionPlan as parsePlan } from '../schemas/parsers.ts';
 
 function handleReplanSlice(
   params: Parameters<typeof handleReplanSliceWithInvocation>[0],

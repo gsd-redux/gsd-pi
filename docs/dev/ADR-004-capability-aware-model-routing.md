@@ -1,6 +1,8 @@
 # ADR-004: Capability-Aware Model Routing
 
-**Status:** Implemented (Phase 2)
+**Status:** Accepted (landed under different names — capability scoring lives in core `model-router.ts` / `auto-model-selection.ts`, not the Phase 2 extension prototype)
+
+> Implementation note (2026-08-01 audit): the trace at HEAD finds `ModelCapabilities`, `MODEL_CAPABILITY_PROFILES`, `BASE_REQUIREMENTS`, `computeTaskRequirements`, and `selectionMethod: "capability-scored"` in `src/resources/extensions/gsd/model-router.ts`, capability-override loading and the `before_model_select` emit in `src/resources/extensions/gsd/auto-model-selection.ts`, and coverage in `src/resources/extensions/gsd/tests/capability-router.test.ts` — i.e. the ADR's Phase 3 core-integration shape, not the Phase 2 extension rollout the old status label claimed.
 **Date:** 2026-03-26
 **Revised:** 2026-04-03
 **Deciders:** Jeremy McSpadden

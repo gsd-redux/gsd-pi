@@ -3,13 +3,14 @@
 
 import { createHash, type Hash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { closeSync, lstatSync, openSync, readSync, readlinkSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, lstatSync, openSync, readSync, readlinkSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { GSDPreferences } from "./preferences-types.js";
 import {
   createRepositoryRegistryFromPreferences,
   defaultRepositoryTargets,
+  deriveRepositoryTargetsFromPlannedPaths,
   type RegisteredRepository,
 } from "./repository-registry.js";
 
@@ -48,6 +49,30 @@ export interface VerificationSourceSnapshotOptions {
 
 const SOURCE_PATHSPEC = ["--", ".", ":(exclude).gsd/**"];
 
+/**
+ * Git pathspecs match tracked path names, not symlink targets. In a GSD-managed
+ * project `.gsd` is always a symlink to the real per-project state directory, so
+ * the literal `:(exclude).gsd/**` above never matches the bookkeeping files —
+ * git indexes them under the symlink's real path. When that real path lives
+ * inside the repository (the documented layout for committing durable audit
+ * artifacts), GSD rewriting its own SUMMARY/VERIFY/CODEBASE files would
+ * otherwise change the source hash and invalidate a just-recorded pass verdict
+ * on replay, producing a stuck retry loop (#1590).
+ */
+function gsdBookkeepingExclusions(cwd: string): string[] {
+  let repoRoot: string;
+  let gsdTarget: string;
+  try {
+    repoRoot = realpathSync(cwd);
+    gsdTarget = realpathSync(join(cwd, ".gsd"));
+  } catch {
+    return [];
+  }
+  const rel = relative(repoRoot, gsdTarget).replaceAll("\\", "/");
+  if (!rel || rel === ".gsd" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)) return [];
+  return [`:(exclude)${rel}`, `:(exclude)${rel}/**`];
+}
+
 export function resolveVerificationRepositoryTargets(
   basePath: string,
   preferences: GSDPreferences | undefined,
@@ -58,7 +83,22 @@ export function resolveVerificationRepositoryTargets(
   const taskTargets = task?.target_repositories?.length ? task.target_repositories : null;
   const sliceTargets = slice?.target_repositories?.length ? slice.target_repositories : null;
   const explicitIds = taskTargets ?? sliceTargets;
-  const requestedIds = explicitIds ?? defaultRepositoryTargets(registry);
+  // Without stored targets, honor where the task's files actually live before
+  // falling back to the registry default — in parent mode the default fans out
+  // to every child repo, which a root-targeting task can never satisfy (#1630).
+  const derivedIds = explicitIds
+    ? null
+    : deriveRepositoryTargetsFromPlannedPaths(registry, task?.files ?? []);
+  // Nothing derivable either (no task, or no path-shaped planned files): a
+  // parent workspace verifies the orchestration root rather than fanning out
+  // across every child repository (#1656).
+  const parentWorkspaceFallback = registry.mode === "parent" && registry.byId.has("project")
+    ? ["project"]
+    : null;
+  const requestedIds = explicitIds
+    ?? derivedIds
+    ?? parentWorkspaceFallback
+    ?? defaultRepositoryTargets(registry);
   const repositories: RegisteredRepository[] = [];
   const missingRepositoryIds: string[] = [];
   const seen = new Set<string>();
@@ -133,6 +173,7 @@ function sourcePaths(cwd: string, options: VerificationSourceSnapshotOptions): s
     "--exclude-standard",
     "-z",
     ...SOURCE_PATHSPEC,
+    ...gsdBookkeepingExclusions(cwd),
     ...exclusions,
   ])
     .toString("utf8")
@@ -170,6 +211,7 @@ function addSubmoduleRevision(hash: Hash, cwd: string, path: string): void {
     "--",
     ".",
     ":(exclude).gsd/**",
+    ...gsdBookkeepingExclusions(absolutePath),
   ]).length > 0;
   if (dirty) throw new Error(`verification source submodule has unpublished changes: ${path}`);
   addHashField(hash, "source-repository", entry.objectId);

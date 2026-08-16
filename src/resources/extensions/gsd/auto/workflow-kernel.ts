@@ -11,16 +11,20 @@ export type WorkflowStopReason =
   | "missing-command-context"
   | "session-lock-lost";
 
-export type DispatchClaimSkipReason = "already-active" | "stale-lease";
+export type DispatchClaimSkipReason =
+  | "already-active"
+  | "stale-lease"
+  | "dispatch-claim-degraded";
 
 export type DispatchClaimInput =
   | { kind: "opened"; dispatchId: number }
   | { kind: "skip"; reason: DispatchClaimSkipReason }
-  | { kind: "degraded" };
+  | { kind: "degraded"; reason: string };
 
 export type DispatchClaimDecision =
-  | { action: "run"; dispatchId: number | null }
-  | { action: "skip"; reason: DispatchClaimSkipReason };
+  | { action: "run"; dispatchId: number }
+  | { action: "skip"; reason: DispatchClaimSkipReason }
+  | { action: "stop"; reason: "dispatch-claim-degraded"; message: string };
 
 export type EngineDispatchInput =
   | { action: "dispatch" }
@@ -263,8 +267,9 @@ export function decideDispatchClaim(input: DispatchClaimInput): DispatchClaimDec
   }
 
   return {
-    action: "run",
-    dispatchId: null,
+    action: "stop",
+    reason: "dispatch-claim-degraded",
+    message: input.reason,
   };
 }
 
@@ -302,7 +307,12 @@ function isCompleteAndBreakReason(
   );
 }
 
-/** Strip per-attempt counter suffixes so detect-stuck Rule 1 can match repeats. */
+/**
+ * Strip per-attempt counter suffixes from ledger error summaries. Load-bearing
+ * for the ADR-047 backstop: the finalize-retry signature hashes this summary,
+ * so a changing "(attempt N/M)" suffix must not make identical failures read
+ * as different inputs.
+ */
 const FAILURE_DETAIL_ATTEMPT_SUFFIX_RE = /\s*\(attempt\s+\d+(?:\/\d+)?\)\.?$/i;
 
 function failureDetailForLedger(detail: string | undefined): string | undefined {

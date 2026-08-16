@@ -1,9 +1,9 @@
 // Project/App: gsd-pi
-// File Purpose: ADR-017 drift handler for external (gsd-core) edits to .planning/.
-// Parallel to external-markdown-edit.ts. Detects sha drift between the compat
-// marker's planning.projections/passthrough and current .planning/ files.
+// File Purpose: Observe external .planning edits and retain the opt-in legacy drift handler.
+// Detects sha drift between the compat marker's planning projections/passthrough
+// entries and current .planning/ files.
 //
-// Modeled files are terminal authority conflicts. Passthrough files have no DB
+// The Projection Worker preserves modeled bytes; passthrough files have no DB
 // model, so their checksum may be refreshed without changing source content.
 
 import { existsSync, readFileSync } from "node:fs";
@@ -28,13 +28,13 @@ type ExternalPlanningEditDrift = Extract<
 >;
 
 function detectOne(
-  ctx: DriftContext,
+  basePath: string,
   entries: Record<string, { sha: string; entities: string[] }>,
   passthrough: boolean,
 ): ExternalPlanningEditDrift[] {
   const records: ExternalPlanningEditDrift[] = [];
   for (const [projectionPath, entry] of Object.entries(entries)) {
-    const abs = join(ctx.basePath, ".planning", projectionPath);
+    const abs = join(basePath, ".planning", projectionPath);
     if (!existsSync(abs)) continue; // missing-file drift is covered by other handlers
     const actual = computeProjectionSha(readFileSync(abs, "utf-8"));
     if (actual === entry.sha) continue;
@@ -51,12 +51,12 @@ function detectOne(
 }
 
 function detectUnseededPlanningFiles(
-  ctx: DriftContext,
+  basePath: string,
   projections: Record<string, { sha: string; entities: string[] }>,
   passthrough: Record<string, { sha: string; entities: string[] }>,
   includePassthrough = true,
 ): ExternalPlanningEditDrift[] {
-  const planningDir = join(ctx.basePath, ".planning");
+  const planningDir = join(basePath, ".planning");
   if (!existsSync(planningDir)) return [];
 
   const records: ExternalPlanningEditDrift[] = [];
@@ -79,19 +79,19 @@ function detectUnseededPlanningFiles(
   return records;
 }
 
-async function detectExternalPlanningEdit(
-  _state: GSDState,
-  ctx: DriftContext,
+export async function observeExternalPlanningEdits(
+  basePath: string,
+  dryRun = false,
 ): Promise<ExternalPlanningEditDrift[]> {
-  const marker = readCompatMarker(ctx.basePath, {
-    healInvalidKeys: !ctx.dryRun,
-    quarantineInvalid: !ctx.dryRun,
+  const marker = readCompatMarker(basePath, {
+    healInvalidKeys: !dryRun,
+    quarantineInvalid: !dryRun,
   });
   if (!marker.planning?.active) {
     // An inactive but recognizable legacy tree requires an explicit migration.
     // Detect only modeled files here: passthrough baselines are refreshed only
     // after compatibility is active, so first contact remains fully read-only.
-    const planningDir = join(ctx.basePath, ".planning");
+    const planningDir = join(basePath, ".planning");
     if (!existsSync(planningDir)) return [];
     try {
       const { parsePlanningDirectory } = await import("../../migrate/parser.js");
@@ -99,7 +99,7 @@ async function detectExternalPlanningEdit(
       const parsed = await parsePlanningDirectory(planningDir);
       const layout = detectPlanningLayout(parsed);
       if (!layout) return [];
-      return detectUnseededPlanningFiles(ctx, {}, {}, false);
+      return detectUnseededPlanningFiles(basePath, {}, {}, false);
     } catch (e) {
       logWarning(
         "reconcile",
@@ -113,11 +113,11 @@ async function detectExternalPlanningEdit(
   const hasBaselines =
     Object.keys(projections).length > 0 || Object.keys(passthrough).length > 0;
   return [
-    ...detectOne(ctx, projections, false),
-    ...detectOne(ctx, passthrough, true),
+    ...detectOne(basePath, projections, false),
+    ...detectOne(basePath, passthrough, true),
     // No baseline yet (post-capture, pre-writePlanningDirectory): skip unseeded
     // detection so every on-disk file is not treated as drift in the same pass.
-    ...(hasBaselines ? detectUnseededPlanningFiles(ctx, projections, passthrough) : []),
+    ...(hasBaselines ? detectUnseededPlanningFiles(basePath, projections, passthrough) : []),
   ];
 }
 
@@ -154,7 +154,8 @@ function repairExternalPlanningEdit(
 
 export const externalPlanningEditHandler: DriftHandler<ExternalPlanningEditDrift> = {
   kind: "external-planning-edit",
-  detect: detectExternalPlanningEdit,
+  detect: (_state: GSDState, ctx: DriftContext) =>
+    observeExternalPlanningEdits(ctx.basePath, ctx.dryRun),
   blocker: externalPlanningEditBlocker,
   repair: repairExternalPlanningEdit,
 };

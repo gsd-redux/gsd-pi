@@ -103,8 +103,10 @@ function createRetryBridgeContext(
   session.orchestration = {
     start: async () => ({ kind: "started" }),
     advance: async () => ({ kind: "stopped", reason: "unused" }),
+    settle: async () => {},
     completeActiveUnit: async () => {},
     retryActiveUnit,
+    abandonActiveUnit: async () => {},
     resume: async () => ({ kind: "resumed" }),
     stop: async (reason: string) => ({ kind: "stopped", reason }),
     getStatus: () => ({ phase: "running", transitionCount: 0 }),
@@ -720,8 +722,10 @@ test("post-unit blocking gate pauses auto-mode on needs-attention verdict", asyn
     s.orchestration = {
       start: async () => ({ kind: "started" }),
       advance: async () => ({ kind: "stopped", reason: "unused" }),
-      completeActiveUnit: async () => {},
+      settle: async () => {},
+    completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
+      abandonActiveUnit: async () => {},
       resume: async () => ({ kind: "resumed" }),
       stop: async (reason: string) => ({ kind: "stopped", reason }),
       getStatus: () => ({ phase: "running", transitionCount: 0 }),

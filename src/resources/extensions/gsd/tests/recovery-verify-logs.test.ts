@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { verifyExpectedArtifact, _setRoadmapParserFnForTests } from "../auto-recovery.ts";
-import { closeDatabase, openDatabase, _getAdapter } from "../gsd-db.ts";
+import { closeDatabase, openDatabase, insertMilestone, insertSlice, _getAdapter } from "../gsd-db.ts";
 import {
   drainLogs,
   peekLogs,
@@ -281,13 +281,18 @@ test("parallel-research verify-fail logs a recovery warning when a research-read
   const base = createFixtureBase("gsd-recovery-logs-prrs-");
   try {
     const dir = milestoneDir(base, "M001");
-    // A roadmap with one not-done slice (S01) and no milestone-level RESEARCH.
-    // S01 is research-ready (no deps, not done) and has no RESEARCH file → :462.
+    // The roadmap projection must exist so verification passes the
+    // roadmap-missing guard; slice state itself comes from the DB (ADR-017).
     writeFileSync(
       join(dir, "M001-ROADMAP.md"),
       ["# M001: Roadmap", "", "## Slices", "", "- [ ] **S01: First** `risk:low` `depends:[]`", ""].join("\n"),
       "utf-8",
     );
+    // One not-done slice (S01) and no milestone-level RESEARCH: S01 is
+    // research-ready (no deps, not done) and has no RESEARCH file.
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Roadmap", status: "active" });
+    insertSlice({ milestoneId: "M001", id: "S01", title: "First", status: "pending", risk: "low", depends: [] });
 
     const { result, logs } = verifyAndCaptureLogs("research-slice", "M001/parallel-research", base);
 
@@ -299,6 +304,7 @@ test("parallel-research verify-fail logs a recovery warning when a research-read
       /verify-fail research-slice M001\/parallel-research: slice S01 missing RESEARCH/u,
     );
   } finally {
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
 });
@@ -342,10 +348,13 @@ test("gate-evaluate verify logs a recovery warning when the pending-gates DB que
   }
 });
 
-// ─── roadmap-parse-threw catches (:515 plan-milestone, :622 complete-slice) ─
-// parseLegacyRoadmap is internally defensive against every malformed input, so
-// these catches are unreachable without the _setRoadmapParserFnForTests seam.
-// We inject a throwing parser to pin both best-effort failure logs.
+// ─── fail-closed verification witnesses ────────────────────────────────────
+// plan-milestone parses the artifact's own content (does it declare slices?),
+// so its parse-failure catch survives the DB cutover; parseProjectionRoadmap is
+// internally defensive against every malformed input, so that catch is
+// unreachable without the _setRoadmapParserFnForTests seam.
+// complete-slice and parallel-research instead read slice state from the DB.
+// With no DB they must fail CLOSED — never silently return true — and say why.
 
 test("plan-milestone verify logs a recovery warning when the roadmap parser throws (auto-recovery.ts:515)", () => {
   const base = createFixtureBase("gsd-recovery-logs-parse-");
@@ -370,44 +379,39 @@ test("plan-milestone verify logs a recovery warning when the roadmap parser thro
   }
 });
 
-test("complete-slice verify logs a recovery warning when the legacy roadmap parse fails (auto-recovery.ts:622)", () => {
+test("complete-slice verify fails closed and logs a recovery warning when the DB is unavailable", () => {
   const base = createFixtureBase("gsd-recovery-logs-cs-parse-");
-  const restore = _setRoadmapParserFnForTests(() => {
-    throw new Error("forced legacy roadmap parse failure");
-  });
   try {
     const dir = sliceDir(base, "M001", "S01");
-    // complete-slice verification: SUMMARY + UAT present, DB unavailable →
-    // legacy roadmap checkbox fallback → parser throws → :622 warning.
+    // complete-slice verification: SUMMARY + UAT present, but this fixture base
+    // carries no gsd.db, so the slice row cannot be read. Slice completion is
+    // DB-authoritative (ADR-017) — the artifacts alone must NOT verify.
     writeFileSync(join(dir, "S01-SUMMARY.md"), "# S01 done\n", "utf-8");
-    // UAT file required so the complete-slice guard (auto-recovery.ts:655) does
-    // not return false before reaching the legacy roadmap fallback.
+    // UAT file required so the complete-slice guard does not return false
+    // before reaching the DB read.
     writeFileSync(join(dir, "S01-UAT.md"), "# UAT\n", "utf-8");
-    // Legacy ROADMAP.md (unprefixed) under the milestone dir.
+    // A roadmap projection marking S01 not-done must not be consulted at all.
     writeFileSync(join(base, ".gsd", "milestones", "M001", "ROADMAP.md"), "# M001\n\n## Slices\n\n- [ ] **S01: A**\n", "utf-8");
 
     const { result, logs } = verifyAndCaptureLogs("complete-slice", "M001/S01", base);
 
-    assert.equal(result, false, "a parser failure must fail complete-slice verification");
-    const recovery = logs.find((e) => e.component === "recovery" && /roadmap parse failed/u.test(e.message));
+    assert.equal(result, false, "an unreadable slice row must fail complete-slice verification");
+    const recovery = logs.find((e) => e.component === "recovery" && /verify-fail complete-slice M001\/S01/u.test(e.message));
     assert.ok(recovery, "a recovery warning must be logged");
-    assert.match(recovery!.message, /roadmap parse failed/u);
-    assert.match(recovery!.message, /forced legacy roadmap parse failure/u);
+    assert.match(recovery!.message, /DB unavailable/u);
+    assert.match(recovery!.message, /cannot confirm slice completion/u);
   } finally {
-    restore();
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test("parallel-research verify logs a recovery warning when the roadmap parse throws (auto-recovery.ts:522)", () => {
+test("parallel-research verify fails closed and logs a recovery warning when the DB is unavailable", () => {
   const base = createFixtureBase("gsd-recovery-logs-prr-throw-");
-  const restore = _setRoadmapParserFnForTests(() => {
-    throw new Error("forced parallel-research parse failure");
-  });
   try {
     const dir = milestoneDir(base, "M001");
-    // A real ROADMAP with a research-ready slice so verification reaches the
-    // parser loop; the seam makes parseRoadmapForRecovery throw → :522 catch.
+    // A real ROADMAP so verification clears the roadmap-missing guard, but this
+    // fixture base carries no gsd.db. Slice state is DB-authoritative
+    // (ADR-017): an empty slice list must not read as "every slice researched".
     writeFileSync(
       join(dir, "M001-ROADMAP.md"),
       ["# M001: Roadmap", "", "## Slices", "", "- [ ] **S01: First** `risk:low` `depends:[]`", ""].join("\n"),
@@ -416,13 +420,64 @@ test("parallel-research verify logs a recovery warning when the roadmap parse th
 
     const { result, logs } = verifyAndCaptureLogs("research-slice", "M001/parallel-research", base);
 
-    assert.equal(result, false, "a parser failure must fail parallel-research verification");
-    const recovery = logs.find((e) => e.component === "recovery" && /parallel-research verification failed/u.test(e.message));
+    assert.equal(result, false, "an unreadable slice list must fail parallel-research verification");
+    const recovery = logs.find((e) => e.component === "recovery" && /verify-fail research-slice M001\/parallel-research/u.test(e.message));
     assert.ok(recovery, "a recovery warning must be logged");
-    assert.match(recovery!.message, /parallel-research verification failed/u);
-    assert.match(recovery!.message, /forced parallel-research parse failure/u);
+    assert.match(recovery!.message, /DB unavailable/u);
+    assert.match(recovery!.message, /cannot verify slice RESEARCH coverage/u);
   } finally {
-    restore();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("execute-task verify fails closed and logs a recovery warning when the DB is unavailable", () => {
+  const base = createFixtureBase("gsd-recovery-logs-et-nodb-");
+  try {
+    const dir = sliceDir(base, "M001", "S01");
+    mkdirSync(join(dir, "tasks"), { recursive: true });
+    // A PLAN projection that ticks T01 as done, plus the task SUMMARY the
+    // generic artifact check looks for. Task completion is DB-authoritative
+    // (ADR-017): with no gsd.db under this fixture base, a `- [x] **T01:`
+    // checkbox must NOT be accepted as proof of completion.
+    writeFileSync(
+      join(dir, "S01-PLAN.md"),
+      "# S01: Test Slice\n\n## Tasks\n\n- [x] **T01: Implement feature** `est:15m`\n",
+      "utf-8",
+    );
+    writeFileSync(join(dir, "tasks", "T01-SUMMARY.md"), "# T01 Summary\n\nDone.\n", "utf-8");
+
+    const { result, logs } = verifyAndCaptureLogs("execute-task", "M001/S01/T01", base);
+
+    assert.equal(result, false, "a checked PLAN checkbox must not verify task completion without the DB");
+    const recovery = logs.find((e) => e.component === "recovery" && /verify-fail execute-task M001\/S01\/T01/u.test(e.message));
+    assert.ok(recovery, "a recovery warning must be logged");
+    assert.equal(recovery!.severity, "warn");
+    assert.match(recovery!.message, /DB unavailable/u);
+    assert.match(recovery!.message, /cannot confirm task completion/u);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("complete-milestone verify fails closed and logs a recovery warning when the closeout proof fails", () => {
+  const base = createFixtureBase("gsd-recovery-logs-cm-nodb-");
+  try {
+    const dir = milestoneDir(base, "M001");
+    // A success-looking SUMMARY, but no gsd.db under this fixture base, so
+    // proveMilestoneCloseout cannot clear the closeout consistency gate.
+    // Milestone closeout is DB-authoritative (ADR-017): SUMMARY content must
+    // never rescue a failed closeout proof into a verify-pass.
+    writeFileSync(join(dir, "M001-SUMMARY.md"), "# M001: Milestone Summary\n\nDone.\n", "utf-8");
+
+    const { result, logs } = verifyAndCaptureLogs("complete-milestone", "M001", base);
+
+    assert.equal(result, false, "a failed closeout proof must stay failed");
+    const recovery = logs.find((e) => e.component === "recovery" && /verify-fail complete-milestone M001/u.test(e.message));
+    assert.ok(recovery, "a recovery warning must be logged");
+    assert.equal(recovery!.severity, "warn");
+    assert.match(recovery!.message, /closeout proof failed/u);
+    assert.match(recovery!.message, /cannot confirm milestone closeout/u);
+  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });

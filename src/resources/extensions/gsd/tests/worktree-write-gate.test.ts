@@ -148,6 +148,8 @@ describe("shouldBlockWorktreeWrite (#5199)", () => {
     );
     assert.equal(result.block, true);
     assert.match(result.reason ?? "", /HARD BLOCK/);
+    assert.match(result.reason ?? "", /auto-mode is running/);
+    assert.doesNotMatch(result.reason ?? "", /auto-mode is\s+not running/);
   });
 
   test("Case 7b: relative write from project root cwd is blocked", () => {
@@ -161,6 +163,20 @@ describe("shouldBlockWorktreeWrite (#5199)", () => {
     );
     assert.equal(result.block, true);
     assert.match(result.reason ?? "", /HARD BLOCK/);
+  });
+
+  test("live auto-mode empty-path block reports the runtime truthfully", () => {
+    projectRoot = makeProject("worktree");
+    const result = shouldBlockWorktreeWrite(
+      "write",
+      "",
+      projectRoot,
+      /* isAutoLive */ true,
+      "execute-task",
+    );
+    assert.equal(result.block, true);
+    assert.match(result.reason ?? "", /auto-mode is running/);
+    assert.doesNotMatch(result.reason ?? "", /auto-mode is not active/);
   });
 
   test("Case 7c: auto active in worktree blocks absolute project-root source writes", () => {
