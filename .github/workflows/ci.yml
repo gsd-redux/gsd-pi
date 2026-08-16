@@ -234,6 +234,9 @@ jobs:
           GSD_SKIP_NATIVE_PACKAGE_TESTS: ${{ needs.fast-gates.outputs.portability-changed == 'true' && '0' || '1' }}
         run: pnpm run test:packages:compiled
 
+      - name: Run pi-ai vitest suite
+        run: pnpm --filter @gsd/pi-ai test
+
       - name: Run daemon package tests
         run: pnpm run test:daemon
 
