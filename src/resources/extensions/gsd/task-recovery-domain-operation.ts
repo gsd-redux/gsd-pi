@@ -626,12 +626,6 @@ function requireResumableAbortScope(recoveryActionId: string): FailedAttemptScop
       AND lifecycle.lifecycle_status = 'in_progress'
       AND attempt.attempt_state = 'settled'
       AND ${CURRENT_TASK_RECOVERY_CAUSAL_AUTHORITY_SQL}
-      AND attempt.attempt_number = (
-        SELECT MAX(latest.attempt_number)
-        FROM workflow_execution_attempts latest
-        WHERE latest.project_id = attempt.project_id
-          AND latest.lifecycle_id = attempt.lifecycle_id
-      )
       AND NOT EXISTS (
         SELECT 1 FROM workflow_blockers blocker
         WHERE blocker.project_id = action.project_id

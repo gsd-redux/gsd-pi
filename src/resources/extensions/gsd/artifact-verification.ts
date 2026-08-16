@@ -44,7 +44,7 @@ import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import { loadAllCaptures, loadPendingCaptures } from "./captures.js";
 import { proveMilestoneCloseout } from "./milestone-closeout-proof.js";
-import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
+import { readLatestTaskAttempt, readTaskAttemptIds } from "./task-execution-domain-operation.js";
 import {
   readPendingTaskRecoveryContext,
   readTaskRecoveryRoute,
@@ -67,7 +67,7 @@ export function readExecuteTaskArtifactReadiness(
 }
 
 /**
- * The recovery action id when the latest Task Attempt already settled on an
+ * The recovery action id when any Task Attempt already settled on an
  * agent-owned `abort` that is not resume-authorized.
  *
  * `readExecuteTaskArtifactReadiness` reports "route" for *any* settled Attempt
@@ -76,18 +76,23 @@ export function readExecuteTaskArtifactReadiness(
  * `runWithTaskExecutionAttempt` sees the same predecessor route and breaks with
  * `task-recovery-abort` before any work starts (#1622). Stuck recovery must
  * refuse instead of clearing the dispatch ring and re-dispatching.
+ *
+ * Detection is not limited to the latest Attempt: a terminal abort on a
+ * superseded Attempt is just as operative, and the latest Attempt carrying no
+ * route of its own must not hide it (#1754 residual).
  */
 export function readTerminalTaskRecoveryAbort(
   milestoneId: string,
   sliceId: string,
   taskId: string,
 ): { recoveryActionId: string } | null {
-  const attempt = readLatestTaskAttempt({ milestoneId, sliceId, taskId });
-  if (!attempt) return null;
-  const route = readTaskRecoveryRoute(attempt.attemptId);
-  if (!route || route.recoveryOwner !== "agent") return null;
-  if (route.action !== "abort" || route.resumeAuthorized) return null;
-  return { recoveryActionId: route.recoveryActionId };
+  for (const attemptId of readTaskAttemptIds({ milestoneId, sliceId, taskId })) {
+    const route = readTaskRecoveryRoute(attemptId);
+    if (!route || route.recoveryOwner !== "agent") continue;
+    if (route.action !== "abort" || route.resumeAuthorized) continue;
+    return { recoveryActionId: route.recoveryActionId };
+  }
+  return null;
 }
 
 /**

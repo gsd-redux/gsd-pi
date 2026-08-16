@@ -171,7 +171,12 @@ export function terminalizeTaskExecutionDispatch(
   const operationType = requireActiveDomainOperationContext(context);
   const allowedOperationTypes = input.cancellation
     ? ["task.cancel", "slice.cancel"]
-    : [input.outcome === "interrupted" ? "attempt.interrupt" : "attempt.settle"];
+    // attempt.settle may also record an interrupted outcome: the same-session
+    // lease guard (#1740) settles its own orphaned Attempt under the worker's
+    // own held lease, which cannot use the fenced attempt.interrupt path.
+    : input.outcome === "interrupted"
+      ? ["attempt.interrupt", "attempt.settle"]
+      : ["attempt.settle"];
   if (!allowedOperationTypes.includes(operationType)) {
     throw new Error(`Task dispatch terminalization requires a ${allowedOperationTypes.join(" or ")} Domain Operation`);
   }
@@ -200,18 +205,11 @@ export function terminalizeTaskExecutionDispatch(
       WHERE id = :dispatch_id
         AND worker_id = :worker_id
         AND milestone_lease_token = :lease_token
-        AND (
-          status = 'canceled'
-          OR (
-            :recovery_interruption = 1
-            AND status IN ('failed', 'stuck', 'paused')
-          )
-        )
+        AND status IN ('canceled', 'failed', 'stuck', 'paused')
     `).get({
       ":dispatch_id": input.dispatchId,
       ":worker_id": input.workerId,
       ":lease_token": input.milestoneLeaseToken,
-      ":recovery_interruption": operationType === "attempt.interrupt" ? 1 : 0,
     });
     if (alreadyTerminal) return;
   }
