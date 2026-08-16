@@ -946,6 +946,62 @@ test("validateVerificationCommand rejects arbitrary semicolon command chaining",
   }
 });
 
+// ─── Quote-aware substitution + flag-tolerant prose (#1671, #1724 / #1782) ──
+
+const ISSUE_1671_VERIFY =
+  "node --test tests/hooks-planning.test.ts — exit 0, asserts: (1) toolNames includes discussion_arena when forced + planning, (2) excludes when available-only, (3) excludes when execution phase, (4) prompt instruction contains marker, (5) repeated calls do not duplicate instruction. Plus npm test full suite 0 regressions on 19/41 (now 41+) tests.";
+
+const ISSUE_1671_OCCURRENCE_1 =
+  "npm test -- tests/discussion-arena-coordination.test.ts exit 0 con nuovi test verdi (assenza activation, activation valida, mode invalido, milestone ID con trattino vs underscore, milestones nested profondità). npx tsc --noEmit exit 0.";
+
+const ISSUE_1671_OCCURRENCE_2 =
+  "npm test -- tests/examples-validation.test.ts exit 0. Il parsing dell'esempio produce activation strutturata.";
+
+const ISSUE_1724_RG = "! rg -q '`[a-zA-Z_]+ \\(' module_file.py";
+
+test("validateVerificationCommand: quote-aware substitution truth table (#1724)", () => {
+  assert.equal(validateVerificationCommand(ISSUE_1724_RG).ok, true, "single-quoted backtick in rg pattern");
+  assert.equal(validateVerificationCommand("rg 'foo`bar' notes.md").ok, true, "walkthrough: single-quoted backtick");
+  assert.equal(validateVerificationCommand("rg -q '$(pattern)' file.txt").ok, true, "single-quoted $(");
+
+  const unquotedSub = validateVerificationCommand("echo $(rm -rf /tmp/gsd-verify-x)");
+  assert.equal(unquotedSub.ok, false, "unquoted $( still rejected");
+  if (!unquotedSub.ok) assert.match(unquotedSub.reason, /shell control syntax/);
+
+  const unquotedTick = validateVerificationCommand("echo `rm -rf /tmp/gsd-verify-x`");
+  assert.equal(unquotedTick.ok, false, "unquoted backtick still rejected");
+  if (!unquotedTick.ok) assert.match(unquotedTick.reason, /shell control syntax/);
+
+  const doubleQuotedSub = validateVerificationCommand('echo "$(rm -rf /tmp/gsd-verify-x)"');
+  assert.equal(doubleQuotedSub.ok, false, "double quotes do not protect $(");
+  if (!doubleQuotedSub.ok) assert.match(doubleQuotedSub.reason, /shell control syntax/);
+
+  const doubleQuotedTick = validateVerificationCommand("echo \"`rm -rf /tmp/gsd-verify-x`\"");
+  assert.equal(doubleQuotedTick.ok, false, "double quotes do not protect backticks");
+  if (!doubleQuotedTick.ok) assert.match(doubleQuotedTick.reason, /shell control syntax/);
+});
+
+test("isLikelyCommand: flags after the command word do not suppress prose (#1671)", () => {
+  assert.equal(isLikelyCommand("node --test tests/hooks-planning.test.ts"), true, "plain command with flags");
+  assert.equal(isLikelyCommand(ISSUE_1671_VERIFY), false, "reporter Verify line is prose");
+  assert.equal(isLikelyCommand("git log --oneline -5"), true, "flag-only command stays a command");
+  assert.equal(isLikelyCommand("git log --oneline shows the scaffold commit"), false, "flag then prose marker");
+  assert.equal(isLikelyCommand(`${ISSUE_1671_OCCURRENCE_1} contains a marker`), false);
+  assert.equal(isLikelyCommand(`${ISSUE_1671_OCCURRENCE_2} contains a marker`), false);
+});
+
+test("discoverCommands: #1671 reporter line is not executed; #1724 rg line is", () => {
+  const proseDir = makeTempDir("gsd-verify-1671");
+  const prose = discoverCommands({ cwd: proseDir, taskPlanVerify: ISSUE_1671_VERIFY });
+  assert.deepEqual(prose.commands, [], "appended assertion prose must not become a check");
+  assert.notEqual(prose.source, "task-plan");
+
+  const rgDir = makeTempDir("gsd-verify-1724");
+  const rg = discoverCommands({ cwd: rgDir, taskPlanVerify: ISSUE_1724_RG });
+  assert.deepEqual(rg.commands, [ISSUE_1724_RG]);
+  assert.equal(rg.source, "task-plan");
+});
+
 // ─── Additional Preference Validation Tests (T02) ──────────────────────────
 
 test("verification-gate: verification_commands produces no unknown-key warnings", () => {

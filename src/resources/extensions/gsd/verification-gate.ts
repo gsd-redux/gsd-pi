@@ -314,9 +314,6 @@ function isAllowedExitCodeEchoSuffix(suffix: string): boolean {
 
 /** Returns true when command text contains unquoted shell control syntax. */
 function hasUnsafeShellSyntax(cmd: string): boolean {
-  // Command substitution remains unsafe even when quoted with double quotes.
-  if (cmd.includes("$(") || cmd.includes("`")) return true;
-
   let inSingle = false;
   let inDouble = false;
   let escaped = false;
@@ -339,6 +336,10 @@ function hasUnsafeShellSyntax(cmd: string): boolean {
       inDouble = !inDouble;
       continue;
     }
+    // Backtick / $( substitute unless inside single quotes. Double quotes do
+    // not protect them — that matches POSIX shell semantics (#1724).
+    if (!inSingle && ch === "`") return true;
+    if (!inSingle && ch === "$" && cmd[i + 1] === "(") return true;
     if (!inSingle && !inDouble && ch === "|" && cmd[i + 1] === "|") {
       return true;
     }
@@ -518,12 +519,12 @@ const PROSE_MARKER_WORDS = new Set([
 
 /**
  * Does a known-command-prefixed string read as prose rather than a command?
- * True when there is no flag/sub-command structure but there are English
- * function words — e.g. "git log shows the scaffold commit authored by ...".
+ * True when there are English function words after the command word —
+ * e.g. "git log shows the scaffold commit authored by ...".
+ * Flags after the command word do not suppress this check (#1671).
  */
 function readsAsProseAfterCommandWord(tokens: string[]): boolean {
   if (tokens.length < 4) return false;
-  if (tokens.some(t => t.startsWith("-"))) return false;
   return tokens
     .slice(1)
     .some(t => PROSE_MARKER_WORDS.has(t.toLowerCase().replace(/[.,;:!?]+$/, "")));
