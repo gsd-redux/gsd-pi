@@ -2,7 +2,7 @@
  * Shared utilities for Google Generative AI and Google Vertex providers.
  */
 
-import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
+import type { Content, FinishReason, FunctionCallingConfigMode, Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeToolSchema } from "../utils/sanitize-tool-schema.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
@@ -732,47 +732,22 @@ export function convertTools(
  */
 export function mapToolChoice(choice: string): FunctionCallingConfigMode {
 	switch (choice) {
-		case "auto":
-			return FunctionCallingConfigMode.AUTO;
 		case "none":
-			return FunctionCallingConfigMode.NONE;
+			return "NONE" as FunctionCallingConfigMode;
 		case "any":
-			return FunctionCallingConfigMode.ANY;
+			return "ANY" as FunctionCallingConfigMode;
 		default:
-			return FunctionCallingConfigMode.AUTO;
+			return "AUTO" as FunctionCallingConfigMode;
 	}
 }
 
 /**
  * Map Gemini FinishReason to our StopReason.
  */
-export function mapStopReason(reason: FinishReason): StopReason {
-	switch (reason) {
-		case FinishReason.STOP:
-			return "stop";
-		case FinishReason.MAX_TOKENS:
-			return "length";
-		case FinishReason.BLOCKLIST:
-		case FinishReason.PROHIBITED_CONTENT:
-		case FinishReason.SPII:
-		case FinishReason.SAFETY:
-		case FinishReason.IMAGE_SAFETY:
-		case FinishReason.IMAGE_PROHIBITED_CONTENT:
-		case FinishReason.IMAGE_RECITATION:
-		case FinishReason.IMAGE_OTHER:
-		case FinishReason.RECITATION:
-		case FinishReason.FINISH_REASON_UNSPECIFIED:
-		case FinishReason.OTHER:
-		case FinishReason.LANGUAGE:
-		case FinishReason.MALFORMED_FUNCTION_CALL:
-		case FinishReason.UNEXPECTED_TOOL_CALL:
-		case FinishReason.NO_IMAGE:
-			return "error";
-		default: {
-			const _exhaustive: never = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
-	}
+export function mapStopReason(reason: FinishReason | string | undefined): StopReason {
+	if (reason === "STOP") return "stop";
+	if (reason === "MAX_TOKENS") return "length";
+	return "error";
 }
 
 /**

@@ -590,8 +590,9 @@ describe("faux provider", () => {
 		registration.setResponses([fauxAssistantMessage("hello")]);
 		registration.unregister();
 
+		const model = registration.getModel();
 		await expect(
-			complete(registration.getModel(), { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] }),
-		).rejects.toThrow(`No API provider registered for api: ${registration.api}`);
+			complete(model, { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] }),
+		).rejects.toThrow(`No API provider registered for provider/api: ${model.provider}/${registration.api}`);
 	});
 });
