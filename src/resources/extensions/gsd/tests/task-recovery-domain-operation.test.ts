@@ -41,7 +41,7 @@ import { buildExecuteTaskPrompt, buildTaskRecoveryReplanPrompt } from "../auto-p
 import { buildCustomEngineIterationData } from "../auto/workflow-custom-engine-iteration.ts";
 import { handleReplanTask } from "../tools/replan-task.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
-import { verifyExpectedArtifact } from "../artifact-verification.ts";
+import { verifyExpectedArtifact, readTerminalTaskRecoveryAbort } from "../artifact-verification.ts";
 
 const tempDirs = new Set<string>();
 
@@ -1354,6 +1354,112 @@ test("deterministic repair abort resumes after restart and is consumed by one su
     FROM workflow_execution_attempts
     WHERE retry_of_attempt_id = :attempt_id
   `, { ":attempt_id": secondFailure.attemptId }).count), 1);
+});
+
+test("a terminal abort on a superseded Attempt stops dispatch and resumes (#1754 residual)", () => {
+  const firstFailure = seedFailedAttempt();
+  const route = (
+    key: string,
+    failure: { attemptId: string; resultId: string },
+    summary: string,
+  ) =>
+    recordFailureAndSelectRecovery({
+      invocation: invocation(key),
+      ...failure,
+      owner: "agent",
+      classification: { failureKind: "worktree-invalid" },
+      summary,
+      evidence: { source: "executor", diagnostic: summary },
+      rationale: "repair the deterministic worktree fault",
+    });
+
+  route("recovery/superseded/1", firstFailure, "Worktree root was missing before the repair.");
+  const secondDispatchId = insertClaimedDispatch(2);
+  const secondClaim = claimTaskAttempt({
+    invocation: invocation("fixture/claim/2"),
+    task: { milestoneId: "M001", sliceId: "S01", taskId: "T01" },
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: secondDispatchId,
+    retryOfAttemptId: firstFailure.attemptId,
+  });
+
+  const secondSettlement = settleTaskAttempt({
+    invocation: invocation("fixture/settle/2"),
+    attemptId: secondClaim.attemptId,
+    outcome: "interrupted",
+    failureClass: "stale-worker",
+    summary: "Replaced stale Task Attempt after milestone lease takeover",
+    output: {},
+  });
+  const aborted = route(
+    "recovery/superseded/2",
+    { attemptId: secondClaim.attemptId, resultId: secondSettlement.resultId },
+    "Worktree root was still missing after the repair attempt.",
+  );
+  assert.equal(aborted.action, "abort");
+
+  // A successor Attempt supersedes the aborted one. Current claim rules
+  // refuse to build on an unresumed abort, but pre-fix production minted
+  // exactly this state (#1754), so the residual is seeded the way those DBs
+  // carry it: a settled superseding Attempt whose claim predates any resume.
+  // The claim-authority and settled-shape triggers reject that insert today,
+  // so they are dropped for the seed, matching the fixture-surgery pattern
+  // used for immutable domain events above.
+  const thirdDispatchId = insertClaimedDispatch(3);
+  db().exec(`
+    DROP TRIGGER trg_workflow_attempt_route_authority_v39;
+    DROP TRIGGER trg_workflow_attempt_settlement_insert_shape_v36;
+  `);
+  const secondOperation = row(`
+    SELECT project_id, settle_operation_id, settle_project_revision, settle_authority_epoch
+    FROM workflow_execution_attempts WHERE attempt_id = :attempt_id
+  `, { ":attempt_id": secondClaim.attemptId });
+  db().prepare(`
+    INSERT INTO workflow_execution_attempts (
+      attempt_id, project_id, lifecycle_id, attempt_number, retry_of_attempt_id,
+      attempt_state, coordination_dispatch_id, worker_id, milestone_lease_token,
+      claimed_at, started_at, ended_at, claim_operation_id,
+      claim_project_revision, claim_authority_epoch, settle_outcome,
+      settle_operation_id, settle_project_revision, settle_authority_epoch
+    ) VALUES (
+      'attempt-superseding', :project_id, :lifecycle_id, 3, :retry_of,
+      'settled', :dispatch_id, 'worker-1', 7,
+      '2026-07-13T00:03:00.000Z', '2026-07-13T00:03:00.000Z', '2026-07-13T00:04:00.000Z',
+      :operation_id, :project_revision, :authority_epoch,
+      'succeeded', :operation_id, :project_revision, :authority_epoch
+    )
+  `).run({
+    ":project_id": secondOperation.project_id,
+    ":lifecycle_id": firstFailure.lifecycleId,
+    ":retry_of": secondClaim.attemptId,
+    ":dispatch_id": thirdDispatchId,
+    ":operation_id": secondOperation.settle_operation_id,
+    ":project_revision": secondOperation.settle_project_revision,
+    ":authority_epoch": secondOperation.settle_authority_epoch,
+  });
+  assert.equal(
+    row("SELECT attempt_id AS id FROM workflow_execution_attempts ORDER BY attempt_number DESC LIMIT 1").id,
+    "attempt-superseding",
+    "the aborted Attempt is superseded by a newer Attempt",
+  );
+
+  // The stop-guard sees the superseded Attempt's terminal abort, and the
+  // resume predicate accepts it instead of throwing (#1754 residual).
+  const terminal = readTerminalTaskRecoveryAbort("M001", "S01", "T01");
+  assert.equal(terminal?.recoveryActionId, aborted.recoveryActionId);
+  const resumed = resumeTaskRecovery({
+    invocation: invocation("recovery/superseded/resume"),
+    recoveryActionId: aborted.recoveryActionId,
+    repairSummary: "Recreated the missing worktree root and verified GSD resolves it.",
+    evidence: { command: "gsd doctor", exitCode: 0, verdict: "PASS" },
+  });
+  assert.equal(resumed.status, "committed");
+  assert.equal(
+    readTerminalTaskRecoveryAbort("M001", "S01", "T01"),
+    null,
+    "a resume-authorized abort clears the stop-guard",
+  );
 });
 
 test("a pre-commit fault leaves no recovery residue and the same request retries cleanly", () => {

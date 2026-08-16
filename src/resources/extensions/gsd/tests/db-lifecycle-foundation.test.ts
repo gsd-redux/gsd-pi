@@ -620,9 +620,20 @@ test("Attempt attribution rejects stale fencing and cross-scope dispatches", () 
       WHERE attempt_id = 'attempt-valid'
     `);
     db.prepare("UPDATE unit_dispatches SET status = 'completed' WHERE id = ?").run(childDispatchId);
+    // An expired lease keeps the dispatch-scope fence: the attempt cannot be
+    // settled once its dispatch is gone and no live lease authorizes it.
+    db.exec("UPDATE milestone_leases SET expires_at = '2000-01-01T00:00:00.000Z' WHERE milestone_id = 'M-A'");
     assert.throws(
       () => settleAttempt(db, "attempt-valid", "op-3", 3),
-      /does not match workflow attempt scope/,
+      /current held lease|does not match workflow attempt scope/,
+    );
+    // V47 (#1740): with its own lease held, the worker settles its own Attempt
+    // even after the coordination dispatch is gone.
+    db.exec("UPDATE milestone_leases SET expires_at = '2099-01-01T00:00:00.000Z' WHERE milestone_id = 'M-A'");
+    settleAttempt(db, "attempt-valid", "op-3", 3);
+    assert.equal(
+      db.prepare("SELECT attempt_state AS state FROM workflow_execution_attempts WHERE attempt_id = 'attempt-valid'").get()?.state,
+      "settled",
     );
   } finally {
     db.close();

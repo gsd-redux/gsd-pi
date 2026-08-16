@@ -89,6 +89,7 @@ import {
   applyMigrationV43MilestoneCompletion,
   applyMigrationV44MilestoneReopen,
   applyMigrationV45AuthorityRecovery,
+  applyMigrationV47SameLeaseAttemptSettlement,
 } from "../db-migration-steps.js";
 import {
   createCanonicalFoundationSchemaV31,
@@ -157,7 +158,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 46;
+export const SCHEMA_VERSION = 47;
 
 /**
  * PRAGMA application_id stamped on every gsd.db at V46 so binaries and
@@ -404,6 +405,7 @@ function initSchema(
         applyMigrationV43MilestoneCompletion(db);
         applyMigrationV44MilestoneReopen(db);
         applyMigrationV45AuthorityRecovery(db);
+        applyMigrationV47SameLeaseAttemptSettlement(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -772,6 +774,15 @@ function migrateSchema(
       // user_version) so binaries and external tools can detect DB-authored
       // state cheaply.
       applyMigrationV46StateCutoverStamp(db);
+    }
+
+    if (currentVersion < 47) {
+      // V47 — same-lease Attempt settlement (#1740): recreate the
+      // dispatch-scope transition trigger so a worker holding its own lease
+      // can settle its own Attempt after its dispatch row is gone.
+      applyMigrationV47SameLeaseAttemptSettlement(db);
+      stampStateCutoverPragmas(db, 47);
+      recordSchemaVersion(db, 47);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");
