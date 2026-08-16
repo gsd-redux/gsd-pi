@@ -69,7 +69,18 @@ type BudgetedRule = {
   action: "retry" | "repair" | "remediate";
   policyClass: RecoveryPolicyClass;
   maxUses: 1 | 2;
+  /** Bounded retry wait schedule (#1690): exponential, capped — no unbounded waits. */
+  waitMs?: readonly number[];
 };
+
+/**
+ * Backoff schedule for projection-lock-transient retries (#1690): exponential,
+ * capped at 30s. Attempts stay bounded by maxUses; a transient sharing
+ * violation (os error 32) needs time to clear instead of an instant re-entry.
+ */
+export const PROJECTION_LOCK_TRANSIENT_BACKOFF_MS: readonly number[] = [
+  1000, 2000, 4000, 8000, 16000, 30000,
+];
 
 const CLARIFICATION_BLOCKERS = new Set<HumanBlockerKind>([
   "ambiguous_intent",
@@ -98,8 +109,14 @@ function budgetedRule(
   switch (classification.failureKind) {
     case "transient-execution":
     case "tool-unavailable":
-    case "projection-lock-transient":
       return { action: "retry", policyClass: "transient-execution", maxUses: 2 };
+    case "projection-lock-transient":
+      return {
+        action: "retry",
+        policyClass: "transient-execution",
+        maxUses: 2,
+        waitMs: PROJECTION_LOCK_TRANSIENT_BACKOFF_MS,
+      };
     case "provider":
       return classification.action === "retry"
         ? { action: "retry", policyClass: "transient-execution", maxUses: 2 }

@@ -895,9 +895,9 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
     error: unknown;
     unitType?: string;
     unitId?: string;
-  }): { action: "retry" | "escalate" | "stop"; reason: string } {
+  }): { action: "retry" | "escalate" | "stop"; reason: string; backoffMs?: readonly number[] } {
     const recovery = classifyFailure(input);
-    return { action: recovery.action, reason: recovery.reason };
+    return { action: recovery.action, reason: recovery.reason, backoffMs: recovery.backoffMs };
   }
 
   /**
@@ -1395,7 +1395,7 @@ export class AutoOrchestrator implements AutoOrchestrationModule {
       });
       let result: AutoAdvanceResult;
       if (recovery.action === "retry") {
-        result = { kind: "paused", reason: recovery.reason };
+        result = { kind: "paused", reason: recovery.reason, backoffMs: recovery.backoffMs };
       } else if (recovery.action === "escalate") {
         result = this.withLivenessInput(
           { kind: "error", reason: recovery.reason },

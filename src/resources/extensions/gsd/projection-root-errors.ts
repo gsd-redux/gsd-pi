@@ -14,9 +14,16 @@ export class ProjectionLockTransientError extends Error {
 }
 
 export function isTransientProjectionLockError(error: unknown): boolean {
-  if (error instanceof ProjectionLockTransientError) return true;
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return WINDOWS_SHARING_VIOLATION.test(message);
+  // Walk the cause chain: a wrapped transient must classify identically to a
+  // bare one on every consumer (#1762).
+  let current: unknown = error;
+  for (let depth = 0; depth < 10 && current !== undefined && current !== null; depth++) {
+    if (current instanceof ProjectionLockTransientError) return true;
+    const message = current instanceof Error ? current.message : String(current ?? "");
+    if (WINDOWS_SHARING_VIOLATION.test(message)) return true;
+    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return false;
 }
 
 export function throwIfTransientProjectionLockError(error: unknown): void {

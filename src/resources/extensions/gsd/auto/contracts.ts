@@ -81,7 +81,7 @@ export type AutoAdvanceResult =
       stateSnapshot?: GSDState;
       terminalOutcome?: AutoTerminalOutcome;
     }
-  | { kind: "paused"; reason: string }
+  | { kind: "paused"; reason: string; backoffMs?: readonly number[] }
   | { kind: "error"; reason: string };
 
 export interface AutoOrchestrationModule {

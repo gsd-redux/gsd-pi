@@ -5183,6 +5183,66 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
   }
 });
 
+test("#1690: projection-lock transient pauses wait out a bounded backoff and never wedge", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const pi = makeMockPi();
+  const notices: string[] = [];
+  ctx.ui.notify = (message: string) => { notices.push(message); };
+
+  const s = makeLoopSession({ currentMilestoneId: "M001" });
+  s.orchestration = {
+    start: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    advance: async () => ({
+      kind: "paused" as const,
+      reason: "projection root operation failed: file in use (os error 32)",
+      backoffMs: [1, 1, 1],
+    }),
+    settle: async () => {},
+    completeActiveUnit: async () => {},
+    retryActiveUnit: async () => {},
+    abandonActiveUnit: async () => {},
+    resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
+    stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
+    getStatus: () => ({ phase: "running" as const, transitionCount: 1 }),
+  } satisfies AutoOrchestrationModule;
+  mkdirSync(join(s.basePath, ".gsd"), { recursive: true });
+  openDatabase(join(s.basePath, ".gsd", "gsd.db"));
+
+  let stopReason = "";
+  const deps = makeMockDeps({
+    adjudicateNonAdvancingOutcome: undefined,
+    stopAuto: async (_ctx, _pi, reason) => {
+      deps.callLog.push("stopAuto");
+      stopReason = reason ?? "";
+      s.active = false;
+    },
+  });
+
+  try {
+    await autoLoop(ctx, pi, s, deps);
+
+    assert.ok(
+      notices.some((message) => /waiting \d+s before retrying/.test(message)),
+      "the transient pause must wait observably before re-entry",
+    );
+    assert.equal(deps.callLog.includes("stopAuto"), true, "the error budget still stops a never-healing transient");
+    assert.match(stopReason, /^Blocked: /);
+    const wedgeResult = getOpenWedge(realpathSync(s.basePath));
+    assert.equal(wedgeResult.ok, true);
+    assert.equal(
+      wedgeResult.ok ? wedgeResult.wedge : null,
+      null,
+      "identical transient strings must not trip the strike counter",
+    );
+  } finally {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(s.basePath, { recursive: true, force: true });
+  }
+});
+
 test("autoLoop drains sidecar queue after postUnitPostVerification enqueues items", async (t) => {
   _resetPendingResolve();
 

@@ -35,6 +35,7 @@ import {
 } from "./unit-phase.js";
 import { debugLog } from "../debug-logger.js";
 import { markBlockedStopReason } from "../stop-notice.js";
+import { isTransientProjectionLockError } from "../projection-root-errors.js";
 import {
   formatWedgeTripNotice,
   recordNonAdvancingOutcome,
@@ -1453,11 +1454,33 @@ export async function autoLoop(
             if (pausedDecision.action === "invalidate-and-retry") {
               deps.invalidateAllCaches();
             }
+            // #1690 defect A: a transient pause carries the policy's bounded
+            // backoff schedule — wait it out before re-entry instead of
+            // immediately retrying a lock that needs time to clear.
+            const backoffMs = orchestrationResult.backoffMs;
+            if (backoffMs && backoffMs.length > 0) {
+              const waitMs = backoffMs[Math.min(Math.max(consecutiveErrors, 1), backoffMs.length) - 1]!;
+              ctx.ui.notify(
+                `Transient pause (${pausedMsg}) — waiting ${Math.round(waitMs / 1000)}s before retrying.`,
+                "warning",
+              );
+              await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+            }
             finishIncompleteIteration({
               status: "paused",
               reason: orchestrationResult.reason,
             });
-            finishTurn("skipped", "execution", pausedMsg, "orchestration-transient-pause");
+            // #1690 defect B: a projection-lock transient pause must not feed
+            // the deterministic strike counter — N identical os-error-32
+            // strings would false-trip the liveness wedge. Other pause classes
+            // keep the ADR-047 ledger behavior, and the consecutive-error
+            // budget above still stops a never-healing transient.
+            finishTurn(
+              "skipped",
+              "execution",
+              pausedMsg,
+              isTransientProjectionLockError(pausedMsg) ? null : "orchestration-transient-pause",
+            );
             continue;
           }
 

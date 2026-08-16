@@ -32,3 +32,28 @@ test("other projection-root failures remain non-transient", () => {
   assert.equal(isTransientProjectionLockError(error), false);
   assert.doesNotThrow(() => throwIfTransientProjectionLockError(error));
 });
+
+test("a wrapped sharing violation classifies as transient through the cause chain (#1762)", () => {
+  const bare = new Error(
+    "projection root operation failed: C:\\repo: file is being used by another process (os error 32)",
+  );
+  const wrapped = new Error("managed projection history replay failed", { cause: bare });
+  const doubleWrapped = new Error("journal replay aborted", { cause: wrapped });
+
+  assert.equal(isTransientProjectionLockError(wrapped), true);
+  assert.equal(isTransientProjectionLockError(doubleWrapped), true);
+  const classified = classifyFailure({ error: doubleWrapped });
+  assert.equal(classified.failureKind, "projection-lock-transient");
+  assert.equal(classified.action, "retry");
+});
+
+test("the transient classification carries the bounded backoff schedule (#1690)", () => {
+  const classified = classifyFailure({
+    error: new Error("projection root operation failed: busy (os error 32)"),
+  });
+  assert.equal(classified.failureKind, "projection-lock-transient");
+  assert.deepEqual(classified.backoffMs, [1000, 2000, 4000, 8000, 16000, 30000]);
+
+  const nonTransient = classifyFailure({ error: new Error("access denied (os error 5)") });
+  assert.equal(nonTransient.backoffMs, undefined);
+});
