@@ -1370,8 +1370,11 @@ test("ADR-017 (#391): roadmap-divergence skips slices before task planning compl
 test("ADR-017 (#870): roadmap-divergence accepts recovered S00 blocker sequence", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-s00-"));
   const milestoneId = "M002-a1rwmq";
-  const milestoneDir = join(base, ".gsd", "milestones", milestoneId);
-  const roadmapPath = join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  // Flat-phase layout: startup migrates legacy milestones/ on contact, and
+  // reconcileBeforeDispatch now settles a pending migration before detecting
+  // drift — a legacy fixture would be converted mid-reconcile.
+  const milestoneDir = join(base, ".gsd", "phases", "02-a1rwmq-support-command-policy-hardening");
+  const roadmapPath = join(milestoneDir, "02-ROADMAP.md");
   mkdirSync(milestoneDir, { recursive: true });
   const originalRoadmap = [
     "# M002-a1rwmq: Support Command Policy Hardening",
@@ -1435,8 +1438,11 @@ test("ADR-017 (#870): roadmap-divergence accepts recovered S00 blocker sequence"
 test("ADR-017 (#1619): skipped slices are excluded from the divergence view", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-adr017-roadmap-skipped-"));
   const milestoneId = "M017";
-  const milestoneDir = join(base, ".gsd", "milestones", milestoneId);
-  const roadmapPath = join(milestoneDir, `${milestoneId}-ROADMAP.md`);
+  // Flat-phase layout: startup migrates legacy milestones/ on contact, and
+  // reconcileBeforeDispatch now settles a pending migration before detecting
+  // drift — a legacy fixture would be converted mid-reconcile.
+  const milestoneDir = join(base, ".gsd", "phases", "17-blocker-skipped-milestone");
+  const roadmapPath = join(milestoneDir, "17-ROADMAP.md");
   mkdirSync(milestoneDir, { recursive: true });
   // The projection omits the skipped S00-blocker, so S01 renders first.
   const originalRoadmap = [
