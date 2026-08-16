@@ -1150,7 +1150,13 @@ function describeArtifactVerificationFailure(
     const completionToolHint = unitType === "execute-task" && !hasTaskCompletionToolCall(agentEndMessages)
       ? " No completion tool call detected (`gsd_task_complete`/alias)."
       : "";
-    return `Artifact verification failed: ${relPath} was not found on disk after unit execution${expected ? ` (${expected})` : ""}.${completionToolHint}`;
+    const saveToolHint =
+      unitType === "run-uat"
+        ? " Re-call gsd_uat_result_save."
+        : unitType === "validate-milestone"
+          ? " Re-run gsd_validate_milestone."
+          : "";
+    return `Artifact verification failed: ${relPath} was not found on disk after unit execution${expected ? ` (${expected})` : ""}.${completionToolHint}${saveToolHint}`;
   }
 
   const validationKind = artifactValidationKind(unitType);

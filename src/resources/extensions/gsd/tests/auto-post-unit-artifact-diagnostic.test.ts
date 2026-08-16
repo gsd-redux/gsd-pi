@@ -36,6 +36,24 @@ test("missing execute-task artifact skips completion-tool hint when completion t
   assert.doesNotMatch(msg, /No completion tool call detected \(`gsd_task_complete`\/alias\)/);
 });
 
+test("missing run-uat artifact names gsd_uat_result_save (#1781 O-4)", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-artifact-diag-uat-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
+
+  const msg = _describeArtifactVerificationFailureForTest("run-uat", "M001/S01", base);
+  assert.match(msg, /ASSESSMENT\.md was not found on disk after unit execution/);
+  assert.match(msg, /gsd_uat_result_save/);
+});
+
+test("missing validate-milestone artifact names gsd_validate_milestone (#1781 O-4)", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-artifact-diag-validate-"));
+  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+
+  const msg = _describeArtifactVerificationFailureForTest("validate-milestone", "M001", base);
+  assert.match(msg, /was not found on disk after unit execution/);
+  assert.match(msg, /gsd_validate_milestone/);
+});
+
 test("parallel research cost spike writes durable PARALLEL-BLOCKER", () => {
   const base = mkdtempSync(join(tmpdir(), "gsd-parallel-cost-blocker-"));
   try {
