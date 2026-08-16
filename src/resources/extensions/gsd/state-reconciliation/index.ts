@@ -8,6 +8,7 @@ import {
 } from "../state.js";
 import { clearParseCache as defaultClearParseCache } from "../files.js";
 import { clearPathCache } from "../paths.js";
+import { resolveWorktreeOwningProjectRoot } from "../worktree-root.js";
 import { logWarning } from "../workflow-logger.js";
 import type { GSDState } from "../types.js";
 
@@ -104,8 +105,9 @@ export async function reconcileBeforeDispatch(
     const { isDbAvailable } = await import("../gsd-db.js");
     if (isDbAvailable()) {
       const { needsFlatPhaseMigration, migrateToFlatPhase } = await import("../flat-phase-migration.js");
-      if (needsFlatPhaseMigration(basePath)) {
-        await migrateToFlatPhase(basePath);
+      const migrationBasePath = resolveWorktreeOwningProjectRoot(basePath);
+      if (needsFlatPhaseMigration(migrationBasePath)) {
+        await migrateToFlatPhase(migrationBasePath);
         // The tree layout just changed (possibly by the lock holder we waited
         // on) — drop cached listings so detection sees the settled layout.
         clearParseCache();

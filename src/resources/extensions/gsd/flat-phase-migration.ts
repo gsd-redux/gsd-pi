@@ -33,6 +33,9 @@ import {
 } from "./atomic-write.js";
 
 const LEGACY_MIGRATING_SEGMENT = "milestones.migrating";
+const EXPLICIT_RECOVERY_REQUIRED =
+  "flat-phase migration skipped: legacy markdown contains state absent from the canonical DB. " +
+  "Recommended: run `/gsd recover` and approve its exact Preview hash to import explicitly.";
 const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
 type FlatPhaseMigrationStage = "before-remove" | "after-remove" | "before-move" | "after-move";
 let flatPhaseMigrationBoundaryForTest: ((stage: FlatPhaseMigrationStage, path: string) => void) | null = null;
@@ -438,6 +441,13 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
 
+  // With no milestone rows, every content-bearing legacy milestone is outside
+  // database authority. Refuse before creating the persistent lock anchors so
+  // an implicit migration attempt remains read-only.
+  if (getAllMilestones().length === 0) {
+    throw new Error(EXPLICIT_RECOVERY_REQUIRED);
+  }
+
   const migrationLockTarget = flatPhaseMigrationLockTarget(basePath);
 
   // Headless runs the gsd extension in two processes (host + RPC child) and both
@@ -487,10 +497,7 @@ async function migrateToFlatPhaseLocked(basePath: string): Promise<void> {
   // for known identities is archived in the migration backup, then rebuilt from DB.
   const legacySource = resumingInterrupted ? migratingPath : milestonesPath;
   if (legacyHierarchyContainsUnknownIdentity(basePath, legacySource)) {
-    throw new Error(
-      "flat-phase migration skipped: legacy markdown contains state absent from the canonical DB. " +
-      "Recommended: run `/gsd recover` and approve its exact Preview hash to import explicitly.",
-    );
+    throw new Error(EXPLICIT_RECOVERY_REQUIRED);
   }
 
   const milestonesBefore = getAllMilestones().length;

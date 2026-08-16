@@ -30,6 +30,16 @@ function makeFixtureBase(): string {
   return base;
 }
 
+function flatPhaseDir(base: string): string {
+  return join(base, ".gsd", "phases", "01-test");
+}
+
+function makeFlatFixtureBase(): string {
+  const base = mkdtempSync(join(tmpdir(), "gsd-adr011-"));
+  mkdirSync(flatPhaseDir(base), { recursive: true });
+  return base;
+}
+
 function writePreferences(base: string, phasesBlock: string): void {
   const prefsPath = join(base, ".gsd", "PREFERENCES.md");
   const body = [
@@ -74,6 +84,11 @@ function seedMilestoneWithSketchedS02(base: string): void {
 function writeS01Artifacts(base: string): void {
   writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-PLAN.md"), "# S01 Plan\n");
   writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md"), "# S01 Summary\n");
+}
+
+function writeFlatS01Artifacts(base: string): void {
+  writeFileSync(join(flatPhaseDir(base), "01-01-PLAN.md"), "# S01 Plan\n");
+  writeFileSync(join(flatPhaseDir(base), "01-01-SUMMARY.md"), "# S01 Summary\n");
 }
 
 // A *real* decomposed PLAN (>= 1 genuine task). #1287: the stale-sketch-flag
@@ -192,14 +207,14 @@ test("ADR-011: refining + flag flipped OFF mid-milestone → falls through to pl
 
 test("ADR-011: existing PLAN + stale sketch flag heals via reconcileBeforeDispatch, then dispatch routes past refining (progressive_planning ON)", async (t) => {
   const originalCwd = process.cwd();
-  const base = makeFixtureBase();
+  const base = makeFlatFixtureBase();
   t.after(() => cleanup(base, originalCwd));
 
   seedMilestoneWithSketchedS02(base);
-  writeS01Artifacts(base);
+  writeFlatS01Artifacts(base);
   writePreferences(base, "phases:\n  progressive_planning: true");
   writeFileSync(
-    join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-PLAN.md"),
+    join(flatPhaseDir(base), "01-02-PLAN.md"),
     realPlanContent("S02"),
   );
   process.chdir(base);
@@ -258,15 +273,15 @@ test("ADR-011: autoHealSketchFlags flips is_sketch=0 when PLAN file exists", asy
 
 test("ADR-011: reconcileBeforeDispatch auto-heals stale sketch flag when PLAN exists", async (t) => {
   const originalCwd = process.cwd();
-  const base = makeFixtureBase();
+  const base = makeFlatFixtureBase();
   t.after(() => cleanup(base, originalCwd));
 
   seedMilestoneWithSketchedS02(base);
-  writeS01Artifacts(base);
+  writeFlatS01Artifacts(base);
   writePreferences(base, "phases:\n  skip_research: false");
   // Simulate plan-slice completion where PLAN exists but is_sketch was not flipped.
   writeFileSync(
-    join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-PLAN.md"),
+    join(flatPhaseDir(base), "01-02-PLAN.md"),
     realPlanContent("S02"),
   );
   process.chdir(base);
@@ -289,14 +304,14 @@ test("ADR-011: reconcileBeforeDispatch auto-heals stale sketch flag when PLAN ex
 
 test("ADR-011: deriveState stays pure across worktree/canonical-root; healing belongs to reconcile at the canonical artifact root", async (t) => {
   const originalCwd = process.cwd();
-  const base = makeFixtureBase();
+  const base = makeFlatFixtureBase();
   t.after(() => cleanup(base, originalCwd));
 
   seedMilestoneWithSketchedS02(base);
-  writeS01Artifacts(base);
+  writeFlatS01Artifacts(base);
   writePreferences(base, "phases:\n  skip_research: false");
   writeFileSync(
-    join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-PLAN.md"),
+    join(flatPhaseDir(base), "01-02-PLAN.md"),
     realPlanContent("S02"),
   );
   const worktreePath = join(base, "worker");
