@@ -72,6 +72,7 @@ const PREF_SAMPLE_VALUES: Record<string, unknown> = {
   verification_commands: ["npm test"],
   verification_auto_fix: true,
   verification_max_retries: 1,
+  verification_timeout_ms: 120000,
   per_unit_cost_cap_usd: 5,
   unit_cost_spike_multiplier: 4,
   search_provider: "web",
