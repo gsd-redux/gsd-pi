@@ -9,6 +9,7 @@ import {
 	buildCursorSpawnInvocation,
 	parseCursorAgentLine,
 	streamViaCursorAgent,
+	unsupportedCursorGsdToolError,
 } from "../stream-adapter.ts";
 
 const model = {
@@ -48,6 +49,16 @@ test("buildCursorPrompt preserves system, message, and tool context", () => {
 	assert.match(prompt, /System instructions:\nBe concise\./);
 	assert.match(prompt, /User:\nHello/);
 	assert.match(prompt, /Requested GSD tools: gsd_plan_slice/);
+	assert.match(prompt, /GSD lifecycle tools executed locally: \(none\)/);
+});
+
+test("buildCursorPrompt names bridged GSD lifecycle tools as locally executed (#1764)", () => {
+	const prompt = buildCursorPrompt({
+		...context,
+		tools: [{ name: "gsd_task_complete" }, { name: "gsd_plan_slice" }],
+	} as Context);
+	assert.match(prompt, /GSD lifecycle tools executed locally: gsd_task_complete/);
+	assert.match(prompt, /Requested GSD tools: gsd_task_complete, gsd_plan_slice/);
 });
 
 test("parseCursorAgentLine maps text, legacy tool, result, usage, and errors", () => {
@@ -271,4 +282,38 @@ test("streamViaCursorAgent turns NDJSON into assistant events with external tool
 	assert.deepEqual(toolCall.externalResult, { content: [{ type: "text", text: "ok" }], isError: false });
 	assert.equal(done.message.usage.input, 3);
 	assert.equal(done.message.usage.output, 4);
+});
+
+test("cursor adapter bridges gsd_task_complete for local host execution (#1764)", async () => {
+	const lines = [
+		'{"type":"assistant","message":{"content":[{"type":"text","text":"Completing"}]}}',
+		'{"type":"tool_call","id":"tool_1","name":"gsd_task_complete","input":{"milestoneId":"M001"}}',
+		'{"type":"tool_result","tool_call_id":"tool_1","content":"ignored","is_error":false}',
+	];
+	const stream = streamViaCursorAgent(model, context, {
+		_cursorAgentRunnerForTest: async () => ({ stdout: `${lines.join("\n")}\n`, stderr: "", code: 0, signal: null }),
+	});
+	const events = [];
+	for await (const event of stream) events.push(event);
+	const done = events.find((event) => event.type === "done");
+	assert.ok(done && done.type === "done");
+	const toolCall = done.message.content.find((block) => block.type === "toolCall");
+	assert.ok(toolCall && toolCall.type === "toolCall");
+	assert.equal(toolCall.name, "gsd_task_complete");
+	assert.equal(toolCall.externalResult, undefined);
+});
+
+test("cursor adapter refuses unbridged GSD tool calls (#1764)", async () => {
+	const lines = [
+		'{"type":"tool_call","id":"tool_1","name":"gsd_exec","input":{"command":"ls"}}',
+	];
+	const stream = streamViaCursorAgent(model, context, {
+		_cursorAgentRunnerForTest: async () => ({ stdout: `${lines.join("\n")}\n`, stderr: "", code: 0, signal: null }),
+	});
+	const events = [];
+	for await (const event of stream) events.push(event);
+	const error = events.find((event) => event.type === "error");
+	assert.ok(error && error.type === "error");
+	assert.match(error.error.errorMessage ?? "", /tool unsupported under cursor-agent: gsd_exec/);
+	assert.equal(unsupportedCursorGsdToolError("gsd_exec"), "tool unsupported under cursor-agent: gsd_exec");
 });

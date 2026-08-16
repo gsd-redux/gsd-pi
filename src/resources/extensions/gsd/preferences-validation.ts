@@ -648,7 +648,9 @@ export function validatePreferences(preferences: GSDPreferences): {
   // ─── Remote Questions ───────────────────────────────────────────────
   if (preferences.remote_questions !== undefined) {
     const remoteQuestions = preferences.remote_questions as unknown;
-    if (typeof remoteQuestions === "object" && remoteQuestions !== null) {
+    if (remoteQuestions === null) {
+      // Bare YAML stub (`remote_questions: null`) means absent (#1764).
+    } else if (typeof remoteQuestions === "object") {
       validated.remote_questions = remoteQuestions as GSDPreferences["remote_questions"];
     } else if (remoteQuestions === false) {
       // Explicit disable for a globally-configured remote questions channel.

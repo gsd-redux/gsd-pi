@@ -144,6 +144,10 @@ test("invalid value types produce errors and fall back to undefined", () => {
 });
 
 test("remote_questions accepts object config and false disables without error", () => {
+  const stub = validatePreferences({ remote_questions: null } as any);
+  assert.equal(stub.errors.length, 0);
+  assert.equal(stub.preferences.remote_questions, undefined);
+
   const disabled = validatePreferences({ remote_questions: false } as any);
   assert.equal(disabled.errors.length, 0);
   assert.equal(disabled.preferences.remote_questions, undefined);

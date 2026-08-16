@@ -1,4 +1,4 @@
-import test from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -13,6 +13,18 @@ import mcpClientExtension, {
   _resetMcpClientStateForTest,
 } from "../../mcp-client/index.ts";
 import type { ManagedMcpServerConfig } from "../../mcp-client/manager.ts";
+import { hasPersistedStdioTrust } from "../../mcp-client/stdio-trust-store.ts";
+
+const originalGsdHome = process.env.GSD_HOME;
+const isolatedGsdHome = mkdtempSync(join(tmpdir(), "gsd-mcp-trust-home-"));
+before(() => {
+  process.env.GSD_HOME = isolatedGsdHome;
+});
+after(() => {
+  if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+  else process.env.GSD_HOME = originalGsdHome;
+  rmSync(isolatedGsdHome, { recursive: true, force: true });
+});
 
 // Note: four source-grep tests that scanned `mcp-client/index.ts` for
 // Map<> shapes, catch-block structure, and closeAll body were removed
@@ -402,5 +414,34 @@ test("MCP stdio discover deduplicates concurrent first calls for the same server
     else process.env.GSD_HOME = previousGsdHome;
     rmSync(projectDir, { recursive: true, force: true });
     rmSync(gsdHomeDir, { recursive: true, force: true });
+  }
+});
+
+test("headless stdio trust fails until persisted interactive approval (#1772)", async () => {
+  process.env.GSD_HOME = isolatedGsdHome;
+  const config = { ...makeStdioConfig("headless-trust"), env: { CUSTOM_KEY: "placeholder-value" } };
+  await assert.rejects(
+    _assertTrustedStdioServerForTest(config, { hasUI: false } as any),
+    /project-shared stdio command.*Trust required, run once interactively/s,
+  );
+  await assert.rejects(
+    _assertTrustedStdioServerForTest({ ...config, sourceKind: "project-local" }, { hasUI: false } as any),
+    /project-local stdio command.*Trust required, run once interactively/s,
+  );
+  const harness = createConfirmHarness();
+  try {
+    const pending = _assertTrustedStdioServerForTest(config, harness.ctx as any);
+    await waitForCondition("interactive trust", () => harness.prompts.length === 1);
+    harness.prompts[0]?.resolve(true);
+    await pending;
+    assert.equal(hasPersistedStdioTrust(config), true);
+    const store = readFileSync(join(isolatedGsdHome, "mcp-stdio-trust.json"), "utf-8");
+    assert.equal(store.includes("placeholder-value"), false);
+    assert.equal(store.includes("CUSTOM_KEY"), false);
+    await _resetMcpClientStateForTest();
+    await _assertTrustedStdioServerForTest(config, { hasUI: false } as any);
+  } finally {
+    for (const prompt of harness.prompts) prompt.reject(new Error("test cleanup"));
+    await _resetMcpClientStateForTest();
   }
 });
