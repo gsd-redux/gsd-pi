@@ -1074,6 +1074,43 @@ function artifactValidationKind(unitType: string): "project" | "requirements" | 
 
 const TASK_COMPLETION_TOOL_NAMES = new Set(["gsd_task_complete", "gsd_complete_task"]);
 
+/**
+ * Verify-after-write receipt check (#1714/#1761): a run-uat or
+ * validate-milestone unit may only complete when its save actually persisted.
+ * Returns null when the durable receipt exists, else an error naming the
+ * missing artifact and the owning save tool.
+ */
+function missingDurableSaveReceipt(unitType: string, unitId: string): string | null {
+  if (!isDbAvailable()) return null;
+  const db = _getAdapter();
+  if (!db) return null;
+  if (unitType === "run-uat") {
+    const { milestone, slice } = parseUnitId(unitId);
+    const row = db.prepare(`
+      SELECT status FROM quality_gates
+      WHERE milestone_id = :milestone_id AND slice_id = :slice_id
+        AND gate_id = 'UAT' AND (task_id = '' OR task_id IS NULL)
+    `).get({ ":milestone_id": milestone, ":slice_id": slice }) as Record<string, unknown> | undefined;
+    if (!row) {
+      return `Artifact verification failed: UAT verdict for ${unitId} was not durably persisted (no quality_gates UAT row). Re-call gsd_uat_result_save with the existing evidence.`;
+    }
+    return null;
+  }
+  if (unitType === "validate-milestone") {
+    const { milestone } = parseUnitId(unitId);
+    const row = db.prepare(`
+      SELECT 1 AS present FROM assessments
+      WHERE milestone_id = :milestone_id AND scope = 'milestone-validation'
+      LIMIT 1
+    `).get({ ":milestone_id": milestone });
+    if (!row) {
+      return `Artifact verification failed: milestone validation verdict for ${milestone} was not durably persisted (no milestone-validation assessment row). Re-run gsd_validate_milestone.`;
+    }
+    return null;
+  }
+  return null;
+}
+
 function hasTaskCompletionToolCall(agentEndMessages?: unknown[] | null): boolean {
   if (!Array.isArray(agentEndMessages)) return false;
   for (const rawMessage of agentEndMessages) {
@@ -1098,8 +1135,7 @@ function describeArtifactVerificationFailure(
   unitId: string,
   basePath: string,
   agentEndMessages?: unknown[] | null,
-): string {
-  const worktreeFailure = diagnoseWorktreeIntegrityFailure(basePath);
+): string {  const worktreeFailure = diagnoseWorktreeIntegrityFailure(basePath);
   if (worktreeFailure) {
     return `${worktreeFailure} Unit: ${unitType} ${unitId}.`;
   }
@@ -1132,6 +1168,7 @@ function describeArtifactVerificationFailure(
   return `Artifact verification failed: ${relPath} exists but did not satisfy the ${unitType} completion contract${expected ? ` (${expected})` : ""}.`;
 }
 export const _describeArtifactVerificationFailureForTest = describeArtifactVerificationFailure;
+export const _missingDurableSaveReceiptForTest = missingDurableSaveReceipt;
 
 async function repairCompleteSliceRoadmapProjection(
   unitType: string,
@@ -2003,6 +2040,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
     // Artifact verification
     const verificationBasePath = s.currentUnit.workspaceRoot ?? s.basePath;
     let triggerArtifactVerified = false;
+    let durableReceiptFailure: string | null = null;
     if (!s.currentUnit.type.startsWith("hook/")) {
       try {
         triggerArtifactVerified =
@@ -2013,6 +2051,24 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         }
       } catch (e) {
         debugLog("postUnit", { phase: "artifact-verify", error: String(e) });
+      }
+
+      // Verify-after-write (#1714/#1761): a run-uat or validate-milestone unit
+      // whose save never persisted is an explicit unit error, not a silent pass.
+      if (
+        triggerArtifactVerified &&
+        (s.currentUnit.type === "run-uat" || s.currentUnit.type === "validate-milestone")
+      ) {
+        durableReceiptFailure = missingDurableSaveReceipt(s.currentUnit.type, s.currentUnit.id);
+        if (durableReceiptFailure) {
+          triggerArtifactVerified = false;
+          debugLog("postUnit", {
+            phase: "durable-save-receipt-missing",
+            unitType: s.currentUnit.type,
+            unitId: s.currentUnit.id,
+            reason: durableReceiptFailure,
+          });
+        }
       }
 
       try {
@@ -2468,7 +2524,9 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             );
           }
           const attempt = (s.verificationRetryCount.get(retryKey) ?? 0) + 1;
-          const failureDetails = describeArtifactVerificationFailure(
+          // A missing durable save receipt names the artifact and the owning
+          // save tool (#1761 O-4); everything else keeps the artifact ladder.
+          const failureDetails = durableReceiptFailure ?? describeArtifactVerificationFailure(
             s.currentUnit.type,
             s.currentUnit.id,
             verificationBasePath,

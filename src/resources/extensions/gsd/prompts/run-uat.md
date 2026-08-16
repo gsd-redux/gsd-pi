@@ -69,6 +69,8 @@ After running all checks, compute the **overall verdict**:
 
 Call `gsd_uat_result_save` once after all checks are complete. The tool computes the assessment path, persists to DB/disk, saves attempt history, and saves the aggregate UAT gate.
 
+**Verify the save before ending your turn.** If `gsd_uat_result_save` returns an error (for example a schema validation error on `checks`), fix the payload and retry — exactly once. If the retry also fails, end the unit with an explicit error naming the validation failure; do not narrate success. A `run-uat` unit that ends without a persisted `quality_gates` UAT row and its ASSESSMENT artifact is a failed unit, not a completed one.
+
 Pass these top-level fields:
 
 ```ts
