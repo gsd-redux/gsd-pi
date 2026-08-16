@@ -49,6 +49,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "closeout", desc: "Recover failed git closeout actions (status, retry, resolve)" },
   { cmd: "rebuild", desc: "Rebuild markdown projections from the canonical DB" },
   { cmd: "db", desc: "Database maintenance — restore-backup lists and restores verified pre-migration backups" },
+  { cmd: "task", desc: "Task operations — settle reconciles an orphaned running Attempt (dry-run first)" },
   { cmd: "model", desc: "Switch the active session model or open a picker" },
   { cmd: "mode", desc: "Switch workflow mode (solo/team)" },
   { cmd: "prefs", desc: "Manage preferences (model selection, timeouts, etc.)" },
@@ -229,6 +230,10 @@ const NESTED_COMPLETIONS: CompletionMap = {
   ],
   db: [
     { cmd: "restore-backup", desc: "List or restore a verified pre-migration database backup (destructive; requires --consent)" },
+  ],
+  task: [
+    { cmd: "settle <M001/S01/T01> --reason \"...\"", desc: "Dry-run: show the running Attempt that would be settled" },
+    { cmd: "settle <M001/S01/T01> --reason \"...\" --apply", desc: "Settle the orphaned running Attempt as interrupted" },
   ],
   knowledge: [
     { cmd: "rule", desc: "Add a project rule (always/never do X)" },

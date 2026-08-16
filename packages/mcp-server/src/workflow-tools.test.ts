@@ -1807,6 +1807,10 @@ export const executeTaskRecoveryResume = async (params, projectDir, invocation) 
   return { content: [{ type: "text", text: "mock task recovery resume" }] };
 };
 
+export const executeTaskSettle = async (params, projectDir, invocation) => {
+  return { content: [{ type: "text", text: "mock task settle" }] };
+};
+
 export const executeTaskComplete = async (params, projectDir, invocation) => {
   const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
   if (capturePath) {

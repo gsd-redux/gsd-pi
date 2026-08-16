@@ -201,6 +201,14 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 		auditEvent: "workflow.task.recovery.resume",
 	},
 	{
+		canonicalName: "gsd_task_settle",
+		aliases: [],
+		schemaId: "workflow.task.settle",
+		executorId: "executeTaskSettle",
+		writePolicy: "write",
+		auditEvent: "workflow.task.settle",
+	},
+	{
 		canonicalName: "gsd_slice_reopen",
 		aliases: ["gsd_reopen_slice"],
 		schemaId: "workflow.slice.reopen",
