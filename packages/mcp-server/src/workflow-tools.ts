@@ -440,6 +440,17 @@ type WorkflowToolExecutors = {
     basePath: string,
     invocation: ExecutionInvocation,
   ) => Promise<unknown>;
+  executeTaskSettle: (
+    params: {
+      milestoneId: string;
+      sliceId: string;
+      taskId: string;
+      reason: string;
+      apply?: boolean;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
+  ) => Promise<unknown>;
   executeSliceReopen: (
     params: {
       sliceId: string;
@@ -768,6 +779,7 @@ function isWorkflowToolExecutors(value: unknown): value is WorkflowToolExecutors
     "executeTaskComplete",
     "executeTaskReopen",
     "executeTaskRecoveryResume",
+    "executeTaskSettle",
     "executeSliceReopen",
     "executeSkipSlice",
     "executeMilestoneReopen",
@@ -1381,6 +1393,21 @@ async function handleTaskRecoveryResume(
       const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
       return executeTaskRecoveryResume(args, resolvedProjectDir, invocation);
     }),
+  );
+}
+
+async function handleTaskSettle(
+  projectDir: string,
+  args: Omit<z.infer<typeof taskSettleSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  // Dry-run is read-only; only an applying settle crosses the write gate.
+  if (args.apply === true) {
+    await enforceWorkflowWriteGate("gsd_task_settle", projectDir, args.milestoneId);
+  }
+  const { executeTaskSettle } = await getWorkflowToolExecutors();
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeTaskSettle(args, projectDir, invocation)),
   );
 }
 
@@ -2377,6 +2404,16 @@ const taskRecoveryResumeParams = {
   ).describe("Structured evidence proving the repair"),
 };
 const taskRecoveryResumeSchema = z.object(taskRecoveryResumeParams);
+
+const taskSettleParams = {
+  projectDir: projectDirParam,
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
+  reason: nonEmptyString("reason").describe("Operator rationale recorded on the settled Attempt Result"),
+  apply: z.boolean().optional().describe("Actually settle; omit or false for a dry run that changes nothing"),
+};
+const taskSettleSchema = z.object(taskSettleParams);
 
 const sliceReopenParams = {
   projectDir: projectDirParam,
@@ -3429,6 +3466,21 @@ export function registerWorkflowTools(
         projectDir,
         resumeArgs,
         mcpExecutionInvocation("gsd_task_recovery_resume", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_task_settle",
+    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true.",
+    taskSettleParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(taskSettleSchema, args);
+      const { projectDir, ...settleArgs } = parsed;
+      return handleTaskSettle(
+        projectDir,
+        settleArgs,
+        mcpExecutionInvocation("gsd_task_settle", extra),
       );
     },
   );

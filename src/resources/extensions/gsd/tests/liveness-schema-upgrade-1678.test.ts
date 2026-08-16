@@ -25,7 +25,7 @@ import { createWorkspace, scopeMilestone } from "../workspace.ts";
 
 const V113_SCHEMA_V46_FIXTURE = join(
   dirname(fileURLToPath(import.meta.url)),
-  "__fixtures__/legacy-import-corpus/v1/lifecycle-truth-matrix/source/.gsd/gsd.db",
+  "__fixtures__/liveness-upgrade/v113-schema-v46.gsd.db",
 );
 const TEST_LOADER = fileURLToPath(new URL("./resolve-ts.mjs", import.meta.url));
 const DOCTOR_MODULE = new URL("../doctor.ts", import.meta.url).href;
@@ -200,7 +200,15 @@ test("#1678: opening a pre-v1.14 v46 database bootstraps liveness schema without
 
   assert.equal(openDatabase(dbPath), true);
   assert.deepEqual(schemaObjects(), expectedSchemaObjects());
-  assert.deepEqual(versionStamps(), stampsBefore, "startup repair must not move any version stamp");
+  assert.deepEqual(
+    versionStamps(),
+    {
+      schemaVersion: stampsBefore.schemaVersion + 1,
+      userVersion: stampsBefore.userVersion + 1,
+      applicationId: stampsBefore.applicationId,
+    },
+    "only the V47 same-lease trigger migration may move the version stamps",
+  );
   assert.deepEqual(snapshotWorkflowRows(), rowsBefore, "startup repair must not rewrite workflow-owned rows");
   assert.deepEqual(getOpenWedge(basePath), { ok: true, wedge: null });
   assert.equal(fixtureHash(), sealedHash, "upgrade must not mutate its sealed source fixture");
