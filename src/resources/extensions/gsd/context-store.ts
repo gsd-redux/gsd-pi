@@ -5,6 +5,7 @@
 // All functions degrade gracefully: return empty results when DB unavailable, never throw.
 
 import { _getAdapter, isDbAvailable } from "./gsd-db.js";
+import type { DbAdapter } from "./db-adapter.js";
 import type { Decision, DecisionMadeBy, Requirement } from "./types.js";
 
 // ─── Query Functions ───────────────────────────────────────────────────────
@@ -19,6 +20,15 @@ export interface RequirementQueryOpts {
 	milestoneId?: string;
 	sliceId?: string;
 	status?: string;
+	class?: string;
+}
+
+function resolveReadAdapter(adapter?: DbAdapter): DbAdapter {
+	const resolved = adapter ?? _getAdapter();
+	if (!resolved) {
+		throw new Error("Database adapter not available (db_unavailable)");
+	}
+	return resolved;
 }
 
 /**
@@ -285,6 +295,11 @@ export function queryRequirements(opts?: RequirementQueryOpts): Requirement[] {
 		if (opts?.status) {
 			clauses.push("status = :status");
 			params[":status"] = opts.status;
+		}
+
+		if (opts?.class) {
+			clauses.push("class = :class");
+			params[":class"] = opts.class;
 		}
 
 		const sql = `SELECT * FROM requirements WHERE ${clauses.join(" AND ")} ORDER BY id`;
@@ -712,11 +727,9 @@ export function getDecisionById(
  */
 export function queryRequirementsWithLimit(
 	opts?: RequirementQueryOpts & { limit?: number },
+ 	adapter?: DbAdapter,
 ): Requirement[] {
-	const adapter = _getAdapter();
-	if (!adapter) {
-		throw new Error("Database adapter not available (db_unavailable)");
-	}
+	const db = resolveReadAdapter(adapter);
 
 	const clauses: string[] = ["superseded_by IS NULL"];
 	const params: Record<string, unknown> = {};
@@ -748,7 +761,7 @@ export function queryRequirementsWithLimit(
 	const sql = `SELECT * FROM requirements WHERE ${clauses.join(" AND ")} ORDER BY id LIMIT :limit`;
 	params[":limit"] = limit;
 
-	const rows = adapter.prepare(sql).all(params);
+	const rows = db.prepare(sql).all(params);
 
 	return rows.map((row) => ({
 		id: row["id"] as string,
@@ -772,11 +785,9 @@ export function queryRequirementsWithLimit(
  */
 export function queryDecisionsWithLimit(
 	opts?: DecisionQueryOpts & { limit?: number },
+ 	adapter?: DbAdapter,
 ): Decision[] {
-	const adapter = _getAdapter();
-	if (!adapter) {
-		throw new Error("Database adapter not available (db_unavailable)");
-	}
+	const db = resolveReadAdapter(adapter);
 
 	const clauses: string[] = [
 		"category = 'architecture'",
@@ -807,7 +818,7 @@ export function queryDecisionsWithLimit(
 	const sql = `SELECT seq, structured_fields FROM memories WHERE ${clauses.join(" AND ")} ORDER BY seq DESC LIMIT :limit`;
 	params[":limit"] = limit;
 
-	const rows = adapter.prepare(sql).all(params) as Array<
+	const rows = db.prepare(sql).all(params) as Array<
 		Record<string, unknown>
 	>;
 
@@ -832,13 +843,13 @@ export function queryDecisionsWithLimit(
 /**
  * Fetch single requirement by ID. Throws on query errors.
  */
-export function getRequirementByIdStrict(id: string): Requirement | null {
-	const adapter = _getAdapter();
-	if (!adapter) {
-		throw new Error("Database adapter not available (db_unavailable)");
-	}
+export function getRequirementByIdStrict(
+	id: string,
+	adapter?: DbAdapter,
+): Requirement | null {
+	const db = resolveReadAdapter(adapter);
 
-	const row = adapter
+	const row = db
 		.prepare(
 			"SELECT * FROM requirements WHERE id = :id AND superseded_by IS NULL",
 		)
@@ -868,16 +879,14 @@ export function getRequirementByIdStrict(id: string): Requirement | null {
 export function getDecisionByIdStrict(
 	id: string,
 	includeSuperseded = false,
+ 	adapter?: DbAdapter,
 ): Decision | null {
-	const adapter = _getAdapter();
-	if (!adapter) {
-		throw new Error("Database adapter not available (db_unavailable)");
-	}
+	const db = resolveReadAdapter(adapter);
 
 	const supersededClause = includeSuperseded
 		? ""
 		: "AND json_extract(structured_fields, '$.superseded_by') IS NULL";
-	const rows = adapter
+	const rows = db
 		.prepare(
 			`SELECT seq, structured_fields FROM memories
        WHERE category = 'architecture'

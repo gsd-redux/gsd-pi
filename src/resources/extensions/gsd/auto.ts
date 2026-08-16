@@ -3,13 +3,14 @@
 /**
  * GSD Auto Mode — Fresh Session Per Unit
  *
- * State machine driven by .gsd/ files on disk. Each "unit" of work
- * (plan slice, execute task, complete slice) gets a fresh session via
+ * State machine driven by the project database and the UnitRun
+ * (`unit_dispatches` row with status claimed|running; ADR-048). Each "unit"
+ * of work (plan slice, execute task, complete slice) gets a fresh session via
  * the stashed ctx.newSession() pattern.
  *
- * The extension reads disk state after each agent_end, determines the
- * next unit type, creates a fresh session, and injects a focused prompt
- * telling the LLM which files to read and what to do.
+ * After each agent_end, the orchestrator decides the next unit, claims it in
+ * the same advance() step, creates a fresh session, and injects a focused
+ * prompt telling the LLM which files to read and what to do.
  */
 
 import type {

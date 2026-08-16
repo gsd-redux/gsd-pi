@@ -86,6 +86,7 @@ import {
   loadRoadmapCompletedSliceCandidates,
 } from "./auto-prompts.js";
 import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
+import { readTerminalTaskRecoveryAbort } from "./artifact-verification.js";
 import { checkNeedsRunUat } from "./uat-dispatch.js";
 import { normalizeModelFieldConfig, resolveModelWithFallbacksForUnit, resolveThinkingLevelForUnit } from "./preferences-models.js";
 import { resolveUokFlags } from "./uok/flags.js";
@@ -784,6 +785,30 @@ export function isVerificationNotApplicable(value: string): boolean {
   const v = (value ?? "").toLowerCase().trim().replace(/[.\s]+$/, "");
   if (!v || v === "none") return true;
   return /^(?:none(?:[\s._\u2014-]+[\s\S]*)?|n\/?a(?:[\s._\u2014-]+[\s\S]*)?|not[\s._-]+(?:applicable|required|needed|provided)|no[\s._-]+operational[\s\S]*)$/i.test(v);
+}
+
+function readExecuteTaskTerminalAbort(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): Extract<DispatchAction, { action: "stop" }> | null {
+  if (!isDbAvailable()) return null;
+  let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
+  try {
+    terminalAbort = readTerminalTaskRecoveryAbort(milestoneId, sliceId, taskId);
+  } catch (err) {
+    return {
+      action: "stop",
+      reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+      level: "error",
+    };
+  }
+  if (!terminalAbort) return null;
+  return {
+    action: "stop",
+    reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}). Resume it with gsd_task_recovery_resume.`,
+    level: "error",
+  };
 }
 
 // ─── Rules ────────────────────────────────────────────────────────────────
@@ -1899,6 +1924,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (retryUnitId) {
         const { milestone: retryMid, slice: retrySid, task: retryTid } = parseUnitId(retryUnitId);
         if (retryMid === mid && retrySid === sid && retryTid) {
+          const retryAbort = readExecuteTaskTerminalAbort(retryMid, retrySid, retryTid);
+          if (retryAbort) return retryAbort;
           const retryTitle = state.activeTask?.id === retryTid
             ? state.activeTask.title
             : retryTid;
@@ -1922,6 +1949,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (!state.activeTask) return null;
       const tid = state.activeTask.id;
       const tTitle = state.activeTask.title;
+      const terminalAbort = readExecuteTaskTerminalAbort(mid, sid, tid);
+      if (terminalAbort) return terminalAbort;
 
       return {
         action: "dispatch",

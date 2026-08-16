@@ -39,7 +39,7 @@ The long-running state-DB refactor is stuck mid-flight. Two state paths coexist 
 - Phase 5 DB split (`gsd-db.ts` monolith → modules) — user confirmed 2026-08-01: "yes" to keeping it a separate milestone.
 - Legacy remote-product cleanup was separately sequenced and has since completed; it is not part of this state-layer milestone.
 - Extension modularization (`src/resources/extensions/` → `extensions/*`) — separate queued workstream.
-- Killing other scaffolding (`studio/`, `packages/db`) — not this milestone.
+- Killing other scaffolding (`packages/db`) — not this milestone.
 - Do not break the single-writer DB invariant (user-confirmed protected behavior, enforced by existing tests).
 - Do not weaken `pnpm run verify:pr` or the enforced coverage floors as a way to get green.
 - No DI containers, framework swaps, or cosmetic refactors (VISION.md standing policy).

@@ -1252,6 +1252,27 @@ async function generateModels() {
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
 
+	// MAI Code 1.1 Flash is exposed by GitHub Copilot but may lag in models.dev.
+	for (let i = allModels.length - 1; i >= 0; i--) {
+		if (allModels[i].provider === "github-copilot" && /mai[- ]code[- ]1\.1[- ]flash/i.test(allModels[i].id)) {
+			allModels.splice(i, 1);
+		}
+	}
+	allModels.push({
+		id: "mai-code-1.1-flash",
+		name: "MAI Code 1.1 Flash",
+		api: "openai-responses",
+		provider: "github-copilot",
+		baseUrl: "https://api.individual.githubcopilot.com",
+		reasoning: true,
+		headers: { ...COPILOT_STATIC_HEADERS },
+		thinkingLevelMap: { off: null, minimal: "low", medium: "medium", xhigh: "high" },
+		input: ["text"],
+		cost: { input: 0.2, output: 1.2, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400_000,
+		maxTokens: 128_000,
+	});
+
 	// Fix incorrect cache pricing for Claude Opus 4.5 from models.dev
 	// models.dev has 3x the correct pricing (1.5/18.75 instead of 0.5/6.25)
 	const opus45 = allModels.find(m => m.provider === "anthropic" && m.id === "claude-opus-4-5");

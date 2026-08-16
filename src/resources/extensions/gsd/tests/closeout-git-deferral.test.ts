@@ -29,6 +29,12 @@ import {
   settleTaskAttempt,
 } from "../task-execution-domain-operation.ts";
 import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
+import { recaptureVerifiedSourceAfterDeferredCloseout } from "../auto/verified-source-recapture.ts";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
 
 function settleCanonicalTaskForHostVerification(basePath: string): void {
@@ -197,6 +203,65 @@ test("blocking evidence-xref routes recovery and clears evidence before pausing"
     );
   } finally {
     resetEvidence();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("deferred closeout source recapture invalidates a stale passing verdict", () => {
+  const base = makeTempRepo("gsd-source-recapture-");
+  try {
+    writeFileSync(join(base, ".gitignore"), ".gsd/\n");
+    writeFileSync(join(base, "tracked.txt"), "verified\n");
+    git(base, "add", ".gitignore", "tracked.txt");
+    git(base, "commit", "-m", "fixture");
+
+    openDatabase(":memory:");
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+    insertTask({
+      id: "T01",
+      sliceId: "S01",
+      milestoneId: "M001",
+      title: "Add app entrypoint",
+      status: "in_progress",
+    });
+    settleCanonicalTaskForHostVerification(base);
+    const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.ok(attempt);
+    const source = captureVerificationSourceSnapshot([{ id: "root", cwd: base }]);
+    assert.equal(source.ok, true, source.ok ? undefined : source.error);
+    recordTaskTechnicalVerdict({
+      invocation: {
+        idempotencyKey: "fixture:source-recapture:verdict",
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      attemptId: attempt.attemptId,
+      testedSourceRevision: source.snapshot.aggregateRevision,
+      verdict: "pass",
+      rationale: "Host verification passed before deferred closeout git.",
+      evidence: {
+        evidenceClass: "command",
+        commandOrTool: "npm test",
+        workingDirectory: base,
+        startedAt: "2026-07-12T00:02:00.000Z",
+        endedAt: "2026-07-12T00:02:01.000Z",
+        exitCode: 0,
+        observation: "passed",
+        durableOutputRef: "db://host-verification/attempt-1",
+        environment: { runner: "node-test", platform: "test" },
+      },
+    });
+
+    writeFileSync(join(base, "tracked.txt"), "rewritten by pre-commit hook\n");
+    assert.equal(recaptureVerifiedSourceAfterDeferredCloseout({
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      basePath: base,
+    }), "retry");
+    assert.equal(readTaskTechnicalVerdict(attempt.attemptId)?.verdict, "inconclusive");
+  } finally {
     closeDatabase();
     cleanup(base);
   }

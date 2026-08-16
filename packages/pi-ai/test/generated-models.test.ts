@@ -138,6 +138,23 @@ describe("models.generated.ts", () => {
 		}
 	});
 
+	test("includes MAI Code 1.1 Flash for GitHub Copilot", () => {
+		const model = MODELS["github-copilot"]["mai-code-1.1-flash"];
+		expect(model).toMatchObject({
+			id: "mai-code-1.1-flash",
+			name: "MAI Code 1.1 Flash",
+			api: "openai-responses",
+			provider: "github-copilot",
+			baseUrl: "https://api.individual.githubcopilot.com",
+			reasoning: true,
+			cost: { input: 0.2, output: 1.2 },
+		});
+		expect(model.headers).toMatchObject({
+			"Copilot-Integration-Id": "vscode-chat",
+		});
+		expect(model.thinkingLevelMap).toMatchObject({ off: null, minimal: "low", medium: "medium", xhigh: "high" });
+	});
+
 	test("includes GPT-5.6 variants for OpenAI and OpenAI Codex providers", () => {
 		expect("gpt-5.6" in MODELS.openai).toBe(false);
 		expect("gpt-5.6" in MODELS["openai-codex"]).toBe(false);

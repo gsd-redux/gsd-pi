@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import type { AutoSession } from "./session.js";
 import type { AutoTerminalOutcome } from "./contracts.js";
-import type { ErrorContext } from "./types.js";
+import type { ErrorContext, IterationData } from "./types.js";
 import type { GSDPreferences } from "../preferences.js";
 import type { GSDState } from "../types.js";
 import type { SessionLockStatus } from "../session-lock.js";
@@ -40,6 +40,10 @@ import type {
 } from "./task-execution-cutover.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
 import type { MemoryPressureSnapshot } from "./workflow-memory-pressure.js";
+import type {
+  DispatchClaimOutcome,
+  OpenDispatchClaimDeps,
+} from "./workflow-dispatch-claim.js";
 
 export interface StopAutoOptions {
   preserveWorktree?: boolean;
@@ -81,6 +85,17 @@ type PauseAutoFn = (
  * can access private functions from auto.ts without exporting them.
  */
 export interface LoopDeps {
+  /**
+   * Dispatch-claim seam for loop-mechanics tests. Production callers omit it
+   * and use the canonical database-backed claim adapter.
+   */
+  openDispatchClaim?: (
+    session: AutoSession,
+    flowId: string,
+    turnId: string,
+    iteration: IterationData,
+    deps: OpenDispatchClaimDeps,
+  ) => DispatchClaimOutcome;
   /**
    * Heap-pressure reading for the loop's preflight memory check. Injected so
    * the preflight liveness path (ADR-047, #1672) is testable without an

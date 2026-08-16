@@ -75,14 +75,14 @@ test("openDispatchClaim degrades when worker identity or lease token is missing"
     openDispatchClaim(makeSession({ workerId: null }), "flow", "turn", makeIterationData(), makeDeps({
       recordDispatchClaim: () => assert.fail("recordDispatchClaim should not be called"),
     })),
-    { kind: "degraded" },
+    { kind: "degraded", reason: "missing-worker-or-lease" },
   );
 
   assert.deepEqual(
     openDispatchClaim(makeSession({ milestoneLeaseToken: null }), "flow", "turn", makeIterationData(), makeDeps({
       recordDispatchClaim: () => assert.fail("recordDispatchClaim should not be called"),
     })),
-    { kind: "degraded" },
+    { kind: "degraded", reason: "missing-worker-or-lease" },
   );
 });
 
@@ -91,7 +91,7 @@ test("openDispatchClaim degrades when iteration has no milestone id", () => {
     openDispatchClaim(makeSession(), "flow", "turn", makeIterationData({ mid: undefined }), makeDeps({
       recordDispatchClaim: () => assert.fail("recordDispatchClaim should not be called"),
     })),
-    { kind: "degraded" },
+    { kind: "degraded", reason: "missing-milestone" },
   );
 });
 
@@ -189,7 +189,7 @@ test("openDispatchClaim degrades on claim write failures", () => {
     logClaimFailed: err => logged.push(err),
   }));
 
-  assert.deepEqual(outcome, { kind: "degraded" });
+  assert.deepEqual(outcome, { kind: "degraded", reason: "db unavailable" });
   assert.deepEqual(logged, [writeError]);
 });
 

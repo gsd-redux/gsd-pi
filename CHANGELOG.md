@@ -8,6 +8,17 @@ This changelog starts from the `open-gsd/gsd-pi` ownership baseline. Earlier pro
 
 ## [Unreleased]
 
+### Changed
+- **gsd**: collapse auto-mode onto a single UnitRun — the claimed/running `unit_dispatches` row (ADR-048). `advance()` returns `dispatchId`; `getStatus().activeUnit` reads the database; `settle(dispatchId, outcome)` is the closeout seam.
+
+## [1.15.1] - 2026-08-14
+
+### Fixed
+- **gsd**: fail-closed auto-mode closeout so a unit run cannot silently re-enter the same skip (#1754, #1739, #1726)
+- **gsd**: persist a terminal task-recovery abort and stop re-dispatching that execute-task until resume (#1754)
+- **gsd**: settle the active unit when verified-task publication fails, and recapture the host-verification source after deferred execute-task commit/hooks (#1739)
+- **gsd**: do not re-project a leaked SUMMARY for cancelled/interrupted task attempts (#1726)
+
 ## [1.15.0] - 2026-08-12
 
 ### Added

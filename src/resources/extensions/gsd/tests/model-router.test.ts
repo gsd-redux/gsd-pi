@@ -36,6 +36,18 @@ const AVAILABLE_MODELS = [
   "gpt-4o-mini",
 ];
 
+test("routes MAI Code 1.1 Flash as a light-tier model", () => {
+  const result = resolveModelForComplexity(
+    makeClassification("light"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    { ...defaultRoutingConfig(), enabled: true },
+    ["claude-opus-4-6", "mai-code-1.1-flash"],
+  );
+
+  assert.equal(result.modelId, "mai-code-1.1-flash");
+  assert.equal(result.wasDowngraded, true);
+});
+
 // ─── Passthrough when disabled ───────────────────────────────────────────────
 
 test("returns configured model when routing is disabled", () => {

@@ -110,9 +110,9 @@ import {
   isTaskAttemptAwaitingVerification,
   readLatestTaskAttempt,
 } from "./task-execution-domain-operation.js";
-import { recordTaskTechnicalVerdict } from "./task-verification-domain-operation.js";
 import { recordFailureAndSelectRecovery } from "./task-recovery-domain-operation.js";
 import { isTaskExecutionReadyForHostVerification } from "./auto/task-execution-cutover.js";
+import { recaptureVerifiedSourceAfterDeferredCloseout } from "./auto/verified-source-recapture.js";
 import {
   routeEvidenceCrossReferenceBlock,
   type EvidenceCrossReferenceBlockResult,
@@ -2582,6 +2582,15 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         return "stopped";
       }
       if (gitActionResult === "retry") {
+        return "retry";
+      }
+      if (
+        recaptureVerifiedSourceAfterDeferredCloseout({
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+          basePath: s.basePath,
+        }) === "retry"
+      ) {
         return "retry";
       }
     }

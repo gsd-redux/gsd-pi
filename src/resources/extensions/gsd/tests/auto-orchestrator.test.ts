@@ -170,6 +170,7 @@ function makeFixture(opts: FixtureOptions = {}): Fixture {
   session.originalBasePath = base;
   session.currentMilestoneId = "M001";
   session.resourceVersionOnStart = null;
+  session.workerId = registerAutoWorker({ projectRootRealpath: normalizeRealPath(base) });
 
   const ctx: OrchestratorContext = {
     ctx: { model: {}, modelRegistry: { getAll: () => [], getAvailable: () => [] }, ui: { notify() {} } } as never,
@@ -701,6 +702,7 @@ test("advance() is idempotent for the same active unit", async (t) => {
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
@@ -710,6 +712,7 @@ test("advance() is idempotent for the same active unit", async (t) => {
   assert.equal(second.kind, "skipped");
   if (second.kind !== "skipped") return;
   assert.equal(second.reason, "idempotent advance: unit already active");
+  assert.equal(second.code, "unit-already-active");
 });
 
 test("idempotency skip fires with its own reason before saturation", async (t) => {
@@ -717,12 +720,14 @@ test("idempotency skip fires with its own reason before saturation", async (t) =
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
   assert.equal(second.kind, "skipped");
   if (second.kind !== "skipped") return;
   assert.equal(second.reason, "idempotent advance: unit already active");
+  assert.equal(second.code, "unit-already-active");
 });
 
 test("completeActiveUnit clears in-flight idempotency and stops stale same-unit advance", async (t) => {
@@ -847,7 +852,7 @@ test("retryActiveUnit clears in-flight idempotency without marking the unit fina
   assert.ok(f.journalNames().includes("unit-retry"));
 });
 
-test("releaseActiveUnit clears a deferred dispatch claim without finalizing the unit", async (t) => {
+test("settle canceled clears a deferred dispatch claim without finalizing the unit", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
@@ -855,13 +860,14 @@ test("releaseActiveUnit clears a deferred dispatch claim without finalizing the 
   assert.equal(first.kind, "advanced");
   if (first.kind !== "advanced") throw new Error("expected first advance");
 
-  await f.orchestrator.releaseActiveUnit?.(first.unit);
+  await f.orchestrator.settle(first.dispatchId, "canceled", "deferred-closeout");
   const second = await f.orchestrator.advance();
 
   assert.equal(f.orchestrator.getStatus().activeUnit?.unitId, first.unit.unitId);
   assert.equal(second.kind, "advanced");
   if (second.kind !== "advanced") throw new Error("expected deferred unit to re-advance");
   assert.deepEqual(second.unit, first.unit);
+  assert.notEqual(second.dispatchId, first.dispatchId);
   assert.equal(f.journalNames().includes("unit-finalized"), false);
   const wedge = getOpenWedge(normalizeRealPath(f.base));
   assert.equal(wedge.ok, true);
@@ -905,48 +911,64 @@ test("retryActiveUnit clears finalized same-unit guard for post-hook retries", a
   assert.ok(names.includes("unit-retry"));
 });
 
-test("resume() clears idempotent lock and allows re-advance", async (t) => {
+test("resume() keeps an in-flight UnitRun skip, then resumes the claimed row", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const idempotent = await f.orchestrator.advance();
   const resumed = await f.orchestrator.resume();
+  f.session.unitExecutionInFlight = false;
   const next = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
   assert.equal(idempotent.kind, "skipped");
   assert.equal(resumed.kind, "resumed");
   assert.equal(next.kind, "advanced");
+  if (next.kind !== "advanced") throw new Error("expected resume advance");
+  assert.equal(next.dispatchId, first.dispatchId);
 });
 
-test("start() clears prior idempotent lock", async (t) => {
-  const f = makeFixture();
-  t.after(() => f.cleanup());
-
-  await f.orchestrator.advance();
-  const idempotent = await f.orchestrator.advance();
-  const restarted = await f.orchestrator.start(SESSION_CONTEXT);
-  const next = await f.orchestrator.advance();
-
-  assert.equal(idempotent.kind, "skipped");
-  assert.equal(restarted.kind, "started");
-  assert.equal(next.kind, "advanced");
-});
-
-test("stop() clears idempotent unit lock so advance can run again", async (t) => {
+test("start() does not skip-string-match a claimed UnitRun after restart", async (t) => {
   const f = makeFixture();
   t.after(() => f.cleanup());
 
   const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
+  const idempotent = await f.orchestrator.advance();
+  const restarted = await f.orchestrator.start(SESSION_CONTEXT);
+  f.session.unitExecutionInFlight = false;
+  const next = await f.orchestrator.advance();
+
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+  assert.equal(idempotent.kind, "skipped");
+  assert.equal(restarted.kind, "started");
+  assert.equal(next.kind, "advanced");
+  if (next.kind !== "advanced") throw new Error("expected restarted advance");
+  assert.equal(next.dispatchId, first.dispatchId);
+});
+
+test("stop() cancels the UnitRun so advance can claim again", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   const idempotent = await f.orchestrator.advance();
   const stopped = await f.orchestrator.stop("reset");
+  f.session.unitExecutionInFlight = false;
   const second = await f.orchestrator.advance();
 
   assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
   assert.equal(idempotent.kind, "skipped");
   assert.equal(stopped.kind, "stopped");
   assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected post-stop advance");
+  assert.notEqual(second.dispatchId, first.dispatchId);
 });
 
 test("idempotent path journals advance-skipped and records a health snapshot", async (t) => {
@@ -954,9 +976,28 @@ test("idempotent path journals advance-skipped and records a health snapshot", a
   t.after(() => f.cleanup());
 
   await f.orchestrator.advance();
+  f.session.unitExecutionInFlight = true;
   await f.orchestrator.advance();
 
   assert.ok(f.journalNames().includes("advance-skipped"));
+});
+
+test("a new orchestrator resumes the claimed UnitRun instead of skip-string-matching", async (t) => {
+  const f = makeFixture();
+  t.after(() => f.cleanup());
+
+  const first = await f.orchestrator.advance();
+  assert.equal(first.kind, "advanced");
+  if (first.kind !== "advanced") throw new Error("expected first advance");
+
+  const restarted = createAutoOrchestrator(f.ctx);
+  const second = await restarted.advance();
+
+  assert.equal(second.kind, "advanced");
+  if (second.kind !== "advanced") throw new Error("expected UnitRun resume");
+  assert.equal(second.dispatchId, first.dispatchId);
+  assert.equal(second.unit.unitId, first.unit.unitId);
+  assert.equal(restarted.getStatus().activeUnit?.unitId, first.unit.unitId);
 });
 
 // ─── Stuck-loop ring buffer (issue #5787) ──────────────────────────────────
@@ -1552,6 +1593,7 @@ test("decideOrchestratorDispatch clears verification retry state when skipping a
 
     assert.deepEqual(result, {
       kind: "skipped",
+      code: "already-closed",
       reason: "execute-task M001/S01/T01 is already complete",
     });
     const sess = session as { pendingVerificationRetry: unknown; pendingOrchestrationDispatch: unknown };
@@ -1681,6 +1723,7 @@ test("decideOrchestratorDispatch preserves dispatch skip instead of collapsing i
 
     assert.deepEqual(result, {
       kind: "skipped",
+      code: "no-dispatch",
       reason: "evaluating-gates -> omitted",
     });
   } finally {

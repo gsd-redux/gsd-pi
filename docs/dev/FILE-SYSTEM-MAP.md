@@ -871,20 +871,6 @@ package and refreshes stale or incomplete managed copies.
 
 ---
 
-## studio/ — Electron Desktop App
-
-| File | System Label(s) | Description |
-|------|-----------------|-------------|
-| studio/electron.vite.config.ts | Studio App, Build System | Electron Vite build configuration |
-| studio/src/main/index.ts | Studio App | Electron main process window creation |
-| studio/src/preload/index.ts | Studio App | Context isolation preload for IPC bridge |
-| studio/src/preload/index.d.ts | Studio App | Preload bridge type definitions |
-| studio/src/renderer/src/main.tsx | Studio App | React renderer entry point |
-| studio/src/renderer/src/App.tsx | Studio App | Main app component |
-| studio/src/renderer/src/lib/theme/tokens.ts | Studio App | Design tokens (colors, fonts, sizes) |
-
----
-
 ## native/ — Rust Engine
 
 | File | System Label(s) | Description |
@@ -1044,7 +1030,6 @@ Quick lookup: which files are part of each system?
 | **Skills** | src/resources/skills/*, gsd/skill-telemetry.ts, gsd/preferences-skills.ts, core/skills.ts |
 | **Slash Commands** | src/resources/extensions/slash-commands/* |
 | **State Machine** | gsd/state.ts, gsd/state/derive/*, gsd/history.ts, gsd/json-persistence.ts, gsd/memory-store.ts, gsd/reactive-graph.ts, core/agent-session.ts, web/lib/gsd-workspace-store.tsx, web/lib/command-surface-store.ts, web/lib/workspace-live-state.ts |
-| **Studio App** | studio/* |
 | **Subagent** | src/resources/extensions/subagent/*, src/resources/agents/* |
 | **Syntax Highlighting** | native/crates/engine/src/highlight.rs, packages/native/src/highlight/* |
 | **Text Processing** | native/crates/engine/src/diff.rs, html.rs, text.rs, truncate.rs, json_parse.rs, stream_process.rs |

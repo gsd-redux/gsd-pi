@@ -1196,7 +1196,8 @@ export async function runPostUnitVerification(
         : "fail";
     let durableRecovery: "retry" | "abort" | null = null;
     if (mid && sid && tid) {
-      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result);
+      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result) ||
+        "Host-owned technical verification failed.";
       if (sourceError) {
         rationale = sourceError;
       } else if (postExecInfrastructureError) {

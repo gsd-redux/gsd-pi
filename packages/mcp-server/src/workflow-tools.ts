@@ -440,6 +440,17 @@ type WorkflowToolExecutors = {
     basePath: string,
     invocation: ExecutionInvocation,
   ) => Promise<unknown>;
+  executeTaskSettle: (
+    params: {
+      milestoneId: string;
+      sliceId: string;
+      taskId: string;
+      reason: string;
+      apply?: boolean;
+    },
+    basePath: string,
+    invocation: ExecutionInvocation,
+  ) => Promise<unknown>;
   executeSliceReopen: (
     params: {
       sliceId: string;
@@ -768,6 +779,7 @@ function isWorkflowToolExecutors(value: unknown): value is WorkflowToolExecutors
     "executeTaskComplete",
     "executeTaskReopen",
     "executeTaskRecoveryResume",
+    "executeTaskSettle",
     "executeSliceReopen",
     "executeSkipSlice",
     "executeMilestoneReopen",
@@ -1287,6 +1299,30 @@ async function runSerializedWorkflowDbOperation<T>(
   });
 }
 
+async function runSerializedCanonicalReadOperation<T>(
+  projectDir: string,
+  fn: (adapter: { close(): void }) => Promise<T>,
+): Promise<T> {
+  return runSerializedWorkflowOperation(async () => {
+    const { resolveProjectRootDbPath, openWorkflowDatabaseIsolated } = await importWorkflowRuntimeModule<any>(
+      "../../../src/resources/extensions/gsd/db-workspace.js",
+    );
+    const dbPath = resolveProjectRootDbPath(projectDir);
+    if (!existsSync(dbPath)) {
+      throw new Error("Database adapter not available (db_unavailable)");
+    }
+    const adapter = openWorkflowDatabaseIsolated(dbPath);
+    if (!adapter) {
+      throw new Error("Database adapter not available (db_unavailable)");
+    }
+    try {
+      return await fn(adapter);
+    } finally {
+      adapter.close();
+    }
+  });
+}
+
 async function enforceWorkflowWriteGate(
   toolName: string,
   projectDir: string,
@@ -1357,6 +1393,21 @@ async function handleTaskRecoveryResume(
       const { executeTaskRecoveryResume } = await getWorkflowToolExecutors();
       return executeTaskRecoveryResume(args, resolvedProjectDir, invocation);
     }),
+  );
+}
+
+async function handleTaskSettle(
+  projectDir: string,
+  args: Omit<z.infer<typeof taskSettleSchema>, "projectDir">,
+  invocation: ExecutionInvocation,
+): Promise<unknown> {
+  // Dry-run is read-only; only an applying settle crosses the write gate.
+  if (args.apply === true) {
+    await enforceWorkflowWriteGate("gsd_task_settle", projectDir, args.milestoneId);
+  }
+  const { executeTaskSettle } = await getWorkflowToolExecutors();
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeTaskSettle(args, projectDir, invocation)),
   );
 }
 
@@ -2354,6 +2405,16 @@ const taskRecoveryResumeParams = {
 };
 const taskRecoveryResumeSchema = z.object(taskRecoveryResumeParams);
 
+const taskSettleParams = {
+  projectDir: projectDirParam,
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
+  reason: nonEmptyString("reason").describe("Operator rationale recorded on the settled Attempt Result"),
+  apply: z.boolean().optional().describe("Actually settle; omit or false for a dry run that changes nothing"),
+};
+const taskSettleSchema = z.object(taskSettleParams);
+
 const sliceReopenParams = {
   projectDir: projectDirParam,
   sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
@@ -2623,22 +2684,38 @@ export function registerWorkflowTools(
     },
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(decisionListSchema, args);
-      return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { queryDecisionsWithLimit } = await importWorkflowRuntimeModule<any>(
-          "../../../src/resources/extensions/gsd/context-store.js",
-        );
-        const limit = Math.min(params.limit ?? 200, 500);
-        const results = queryDecisionsWithLimit({
-          scope: params.scope ?? undefined,
-          milestoneId: params.milestoneId ?? undefined,
-          includeSuperseded: params.includeSuperseded ?? false,
-          limit,
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async (adapter: any) => {
+          const { queryDecisionsWithLimit } = await importWorkflowRuntimeModule<any>(
+            "../../../src/resources/extensions/gsd/context-store.js",
+          );
+          const limit = Math.min(params.limit ?? 200, 500);
+          const results = queryDecisionsWithLimit(
+            {
+              scope: params.scope ?? undefined,
+              milestoneId: params.milestoneId ?? undefined,
+              includeSuperseded: params.includeSuperseded ?? false,
+              limit,
+            },
+            adapter,
+          );
+          return {
+            content: [{ type: "text" as const, text: `Found ${results.length} decision(s).` }],
+            details: { operation: "list_decisions", count: results.length, decisions: results },
+          };
         });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const dbUnavailable = msg.includes("db_unavailable");
         return {
-          content: [{ type: "text" as const, text: `Found ${results.length} decision(s).` }],
-          details: { operation: "list_decisions", count: results.length, decisions: results },
+          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error listing decisions: ${msg}` }],
+          details: {
+            operation: "list_decisions",
+            error: dbUnavailable ? "db_unavailable" : "query_error",
+            ...(dbUnavailable ? {} : { message: msg }),
+          },
         };
-      });
+      }
     },
   );
 
@@ -2658,22 +2735,40 @@ export function registerWorkflowTools(
     },
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(decisionGetSchema, args);
-      return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { getDecisionByIdStrict } = await importWorkflowRuntimeModule<any>(
-          "../../../src/resources/extensions/gsd/context-store.js",
-        );
-        const decision = getDecisionByIdStrict(params.id, params.includeSuperseded ?? false);
-        if (!decision) {
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async (adapter: any) => {
+          const { getDecisionByIdStrict } = await importWorkflowRuntimeModule<any>(
+            "../../../src/resources/extensions/gsd/context-store.js",
+          );
+          const decision = getDecisionByIdStrict(
+            params.id,
+            params.includeSuperseded ?? false,
+            adapter,
+          );
+          if (!decision) {
+            return {
+              content: [{ type: "text" as const, text: `Decision ${params.id} not found.` }],
+              details: { operation: "get_decision", id: params.id, error: "not_found" },
+            };
+          }
           return {
-            content: [{ type: "text" as const, text: `Decision ${params.id} not found.` }],
-            details: { operation: "get_decision", id: params.id, error: "not_found" },
+            content: [{ type: "text" as const, text: `Decision ${decision.id}: ${decision.decision}` }],
+            details: { operation: "get_decision", id: decision.id, decision },
           };
-        }
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const dbUnavailable = msg.includes("db_unavailable");
         return {
-          content: [{ type: "text" as const, text: `Decision ${decision.id}: ${decision.decision}` }],
-          details: { operation: "get_decision", id: decision.id, decision },
+          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error fetching decision: ${msg}` }],
+          details: {
+            operation: "get_decision",
+            id: params.id,
+            error: dbUnavailable ? "db_unavailable" : "query_error",
+            ...(dbUnavailable ? {} : { message: msg }),
+          },
         };
-      });
+      }
     },
   );
 
@@ -2763,23 +2858,38 @@ export function registerWorkflowTools(
     },
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(requirementListSchema, args);
-      return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { queryRequirementsWithLimit } = await importWorkflowRuntimeModule<any>(
-          "../../../src/resources/extensions/gsd/context-store.js",
-        );
-        const limit = Math.min(params.limit ?? 200, 500);
-        const results = queryRequirementsWithLimit({
-          class: params.class ?? undefined,
-          status: params.status ?? undefined,
-          milestoneId: params.milestoneId ?? undefined,
-          limit,
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async (adapter: any) => {
+          const { queryRequirementsWithLimit } = await importWorkflowRuntimeModule<any>(
+            "../../../src/resources/extensions/gsd/context-store.js",
+          );
+          const limit = Math.min(params.limit ?? 200, 500);
+          const results = queryRequirementsWithLimit(
+            {
+              status: params.status ?? undefined,
+              milestoneId: params.milestoneId ?? undefined,
+              limit,
+            },
+            adapter,
+          );
+          const filtered = params.class ? results.filter((r: any) => r.class === params.class) : results;
+          return {
+            content: [{ type: "text" as const, text: `Found ${filtered.length} requirement(s).` }],
+            details: { operation: "list_requirements", count: filtered.length, requirements: filtered },
+          };
         });
-        const filtered = params.class ? results.filter((r: any) => r.class === params.class) : results;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const dbUnavailable = msg.includes("db_unavailable");
         return {
-          content: [{ type: "text" as const, text: `Found ${filtered.length} requirement(s).` }],
-          details: { operation: "list_requirements", count: filtered.length, requirements: filtered },
+          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error listing requirements: ${msg}` }],
+          details: {
+            operation: "list_requirements",
+            error: dbUnavailable ? "db_unavailable" : "query_error",
+            ...(dbUnavailable ? {} : { message: msg }),
+          },
         };
-      });
+      }
     },
   );
 
@@ -2797,22 +2907,36 @@ export function registerWorkflowTools(
     },
     async (args: Record<string, unknown>) => {
       const { projectDir, ...params } = parseWorkflowArgs(requirementGetSchema, args);
-      return runSerializedWorkflowDbOperation(projectDir, async () => {
-        const { getRequirementByIdStrict } = await importWorkflowRuntimeModule<any>(
-          "../../../src/resources/extensions/gsd/context-store.js",
-        );
-        const req = getRequirementByIdStrict(params.id);
-        if (!req) {
+      try {
+        return await runSerializedCanonicalReadOperation(projectDir, async (adapter: any) => {
+          const { getRequirementByIdStrict } = await importWorkflowRuntimeModule<any>(
+            "../../../src/resources/extensions/gsd/context-store.js",
+          );
+          const req = getRequirementByIdStrict(params.id, adapter);
+          if (!req) {
+            return {
+              content: [{ type: "text" as const, text: `Requirement ${params.id} not found.` }],
+              details: { operation: "get_requirement", id: params.id, error: "not_found" },
+            };
+          }
           return {
-            content: [{ type: "text" as const, text: `Requirement ${params.id} not found.` }],
-            details: { operation: "get_requirement", id: params.id, error: "not_found" },
+            content: [{ type: "text" as const, text: `Requirement ${req.id}: ${req.description}` }],
+            details: { operation: "get_requirement", id: req.id, requirement: req },
           };
-        }
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const dbUnavailable = msg.includes("db_unavailable");
         return {
-          content: [{ type: "text" as const, text: `Requirement ${req.id}: ${req.description}` }],
-          details: { operation: "get_requirement", id: req.id, requirement: req },
+          content: [{ type: "text" as const, text: dbUnavailable ? "Error: GSD database is not available." : `Error fetching requirement: ${msg}` }],
+          details: {
+            operation: "get_requirement",
+            id: params.id,
+            error: dbUnavailable ? "db_unavailable" : "query_error",
+            ...(dbUnavailable ? {} : { message: msg }),
+          },
         };
-      });
+      }
     },
   );
 
@@ -3342,6 +3466,21 @@ export function registerWorkflowTools(
         projectDir,
         resumeArgs,
         mcpExecutionInvocation("gsd_task_recovery_resume", extra),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_task_settle",
+    "Operator tool: settle a Task's orphaned running Attempt as interrupted. Dry-run by default — prints the exact rows it would change; mutation requires apply: true.",
+    taskSettleParams,
+    async (args: Record<string, unknown>, extra?: WorkflowMcpRequestExtra) => {
+      const parsed = parseWorkflowArgs(taskSettleSchema, args);
+      const { projectDir, ...settleArgs } = parsed;
+      return handleTaskSettle(
+        projectDir,
+        settleArgs,
+        mcpExecutionInvocation("gsd_task_settle", extra),
       );
     },
   );

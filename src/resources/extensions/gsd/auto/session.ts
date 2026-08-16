@@ -68,6 +68,7 @@ export interface PendingOrchestrationDispatch {
   state: import("../types.js").GSDState;
   mid: string | undefined;
   midTitle: string | undefined;
+  dispatchId?: number;
 }
 
 /**

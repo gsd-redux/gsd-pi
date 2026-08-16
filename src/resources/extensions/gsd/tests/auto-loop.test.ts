@@ -285,7 +285,7 @@ function createLoopTestOrchestration(
         return resultForBreak(preDispatchResult.reason, preDispatch);
       }
       if (preDispatchResult.action === "continue") {
-        return { kind: "skipped", reason: "pre-dispatch-skip" };
+        return { kind: "skipped", code: "no-dispatch" as const, reason: "pre-dispatch-skip" };
       }
       if (preDispatchResult.action === "retry") {
         return { kind: "paused", reason: preDispatchResult.reason };
@@ -300,6 +300,7 @@ function createLoopTestOrchestration(
       if (dispatch.result.action === "continue") {
         return {
           kind: "skipped",
+          code: "no-dispatch" as const,
           reason: "dispatch-skip",
           stateSnapshot: preDispatchResult.data.state,
         };
@@ -322,9 +323,13 @@ function createLoopTestOrchestration(
       status.phase = "running";
       status.activeUnit = unit;
       status.transitionCount += 1;
-      return { kind: "advanced", unit, stateSnapshot: data.state };
+      // Real workers still claim in the loop. Fixture-only runs pass a
+      // positive id so the loop does not open a second database claim.
+      const dispatchId = s.workerId ? 0 : 1;
+      s.pendingOrchestrationDispatch.dispatchId = dispatchId;
+      return { kind: "advanced", unit, stateSnapshot: data.state, dispatchId };
     },
-    async releaseActiveUnit() {
+    async settle() {
       clearActiveUnit();
     },
     async completeActiveUnit() {
@@ -363,6 +368,12 @@ async function autoLoop(
   deps: LoopDeps,
   options?: Parameters<typeof rawAutoLoop>[4],
 ): Promise<void> {
+  // Loop-mechanics fixtures intentionally do not open the workflow database or
+  // register a worker. Bypass only that unrelated coordination boundary; tests
+  // that provide a real worker continue through the canonical claim adapter.
+  if (!s.workerId && !deps.openDispatchClaim) {
+    deps.openDispatchClaim = () => ({ kind: "opened", dispatchId: 1 });
+  }
   if (!s.orchestration) {
     s.orchestration = createLoopTestOrchestration(ctx, pi, s, deps);
   }
@@ -2263,7 +2274,9 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
       });
       let releaseCalls = 0;
       s.orchestration = {
-        releaseActiveUnit: async () => { releaseCalls++; },
+        settle: async () => { releaseCalls++; },
+        retryActiveUnit: async () => { releaseCalls++; },
+        abandonActiveUnit: async () => {},
       };
       let dispatchStatusAtPause: string | undefined;
       const deps = makeMockDeps({
@@ -2289,7 +2302,7 @@ test("custom-engine recovery break and retry terminalize their dispatch", async 
         action === "break" ? "failed" : undefined,
         "a terminal recovery abort must settle its dispatch before pausing",
       );
-      assert.equal(releaseCalls, action === "retry" ? 1 : 0);
+      assert.equal(releaseCalls, 0);
       assert.equal(pi.calls.length, 0, `${action} must exit before invoking the agent`);
     } finally {
       closeDatabase();
@@ -3230,8 +3243,10 @@ test("autoLoop dev path dispatches orchestration.advance results without legacy 
           kind: "advanced" as const,
           unit: { unitType: "execute-task", unitId: "M002/S03/T05" },
           stateSnapshot,
+          dispatchId: 1,
         };
       },
+      settle: async () => {},
       completeActiveUnit: async (unit: { unitType: string; unitId: string }) => {
         finalizedUnits.push(`${unit.unitType}:${unit.unitId}`);
       },
@@ -3316,6 +3331,7 @@ test("autoLoop pauses once when orchestration reports reconciliation drift error
           reason: "Reconciliation drift: Reconciliation repair failed in pass 0",
         };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -3362,6 +3378,7 @@ test("autoLoop retries next iteration when orchestration reports paused", async 
           ? { kind: "paused" as const, reason: "provider transient; retry" }
           : { kind: "stopped" as const, reason: "done retrying" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -3419,6 +3436,7 @@ test("#1674: unknown orchestration outcomes hash the kind the loop read", async 
         if (kind) return { kind } as any;
         return { kind: "stopped" as const, reason: "done" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -3478,6 +3496,7 @@ test("autoLoop consumes pending orchestration dispatch without advancing twice",
       advance: async () => {
         throw new Error("advance must not run when a pending dispatch already exists");
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -3541,6 +3560,7 @@ test("autoLoop stops orchestrator complete state through completion surface", as
           allMilestonesComplete: true as const,
         },
       }),
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -3772,8 +3792,10 @@ test("autoLoop releases orchestration active unit before artifact retry", async 
             kind: "advanced" as const,
             unit: { unitType: "complete-slice", unitId: "M005/S01" },
             stateSnapshot,
+            dispatchId: 1,
           };
         },
+        settle: async () => {},
         completeActiveUnit: async () => {},
         retryActiveUnit: async (unit: { unitType: string; unitId: string }) => {
           retryUnits.push(`${unit.unitType}:${unit.unitId}`);
@@ -4625,7 +4647,9 @@ test("ADR-047: pre-dispatch hook skips feed the loop-boundary ledger", async (t)
       kind: "advanced" as const,
       unit: { unitType: "execute-task", unitId: "M001/S01/T01" },
       stateSnapshot,
+      dispatchId: 1,
     }),
+    settle: async () => {},
     completeActiveUnit: async () => {},
     retryActiveUnit: async () => {},
     abandonActiveUnit: async () => {},
@@ -4765,8 +4789,10 @@ test("#1672: the max-iteration preflight exit persists a block signature across 
       start: async () => ({ kind: "stopped" as const, reason: "unused" }),
       advance: async () => ({
         kind: "skipped" as const,
+        code: "no-dispatch" as const,
         reason: `no-op ${runTag}-${++skipCounter}`,
       }),
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -4825,13 +4851,15 @@ test("abnormal unit exit abandons the active orchestration marker before the nex
             kind: "advanced" as const,
             unit: { unitType: "plan-slice", unitId: "M001/S01" },
             stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+            dispatchId: 1,
           };
         }
         if (activeMarker) {
-          return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+          return { kind: "skipped" as const, code: "unit-already-active" as const, reason: "idempotent advance: unit already active" };
         }
         return { kind: "stopped" as const, reason: "no active unit" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async (unit, reason) => {
@@ -4875,77 +4903,46 @@ test("abnormal unit exit abandons the active orchestration marker before the nex
   assert.equal(wedgeResult.ok ? wedgeResult.wedge : null, null);
 });
 
-test("#1721: idle active-unit skip releases the stale claim and re-advances immediately", async (t) => {
+test("#1721: idle unit-already-active skip without in-flight stops instead of livelocking", async (t) => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
   ctx.ui.setStatus = () => {};
   const pi = makeMockPi();
   const unit = { unitType: "execute-task", unitId: "M001/S01/T01" };
-  const stateSnapshot = await makeMockDeps().deriveState("unused");
   let advanceCalls = 0;
-  let releaseCalls = 0;
-  let claimActive = true;
   const s = makeLoopSession({
     currentMilestoneId: "M001",
     orchestration: {
       start: async () => ({ kind: "stopped" as const, reason: "unused" }),
       advance: async () => {
         advanceCalls++;
-        if (claimActive) {
-          return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
-        }
-        s.pendingOrchestrationDispatch = {
-          ...unit,
-          prompt: "retry recovered task",
-          pauseAfterUatDispatch: false,
-          state: stateSnapshot,
-          mid: "M001",
-          midTitle: "Milestone 1",
-        };
-        return { kind: "advanced" as const, unit, stateSnapshot };
+        return { kind: "skipped" as const, code: "unit-already-active" as const, reason: "idempotent advance: unit already active" };
       },
-      releaseActiveUnit: async (released: UnitRef) => {
-        assert.deepEqual(released, unit);
-        releaseCalls++;
-        claimActive = false;
-      },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
-      abandonActiveUnit: async () => {
-        claimActive = false;
-      },
+      abandonActiveUnit: async () => {},
       resume: async () => ({ kind: "stopped" as const, reason: "unused" }),
       stop: async (reason: string) => ({ kind: "stopped" as const, reason }),
       getStatus: () => ({
         phase: "running" as const,
         transitionCount: advanceCalls,
-        activeUnit: claimActive ? unit : undefined,
+        activeUnit: unit,
       }),
     } satisfies AutoOrchestrationModule,
   });
   openLoopDatabase(t, s);
-  const adjudicated: string[] = [];
   const deps = makeMockDeps({
-    adjudicateNonAdvancingOutcome: (_session, input) => {
-      adjudicated.push(input.guardId);
-      return null;
-    },
-    taskExecutionBoundary: async () => {
-      s.active = false;
-      return { action: "retry" as const, reason: "task-recovery-repair" };
-    },
+    adjudicateNonAdvancingOutcome: () => null,
   });
 
   await autoLoop(ctx, pi, s, deps);
 
-  assert.equal(releaseCalls, 2, "the defensive skip recovery and deferred retry both release the claim");
-  assert.equal(advanceCalls, 2, "the recovered claim must be re-advanced in the same iteration");
-  assert.deepEqual(adjudicated, ["unit-retry"]);
-  assert.equal(
-    adjudicated.includes("orchestration-stale-active-unit"),
-    false,
-    "a recovered stale claim must not feed the stale-unit guard",
+  assert.equal(advanceCalls, 1, "a stale skip must stop instead of re-polling");
+  assert.ok(
+    deps.callLog.includes("stopAuto") || deps.callLog.some(entry => entry.startsWith("stopAuto")),
+    "stale skip must stop auto-mode",
   );
 });
 
@@ -4973,10 +4970,12 @@ test("#1672: an unclearable active-unit marker still makes following skips ledge
             kind: "advanced" as const,
             unit: { unitType: "plan-slice", unitId: "M001/S01" },
             stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+            dispatchId: 1,
           };
         }
-        return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+        return { kind: "skipped" as const, code: "unit-already-active" as const, reason: "idempotent advance: unit already active" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -5000,17 +4999,12 @@ test("#1672: an unclearable active-unit marker still makes following skips ledge
 
   await autoLoop(ctx, pi, s, deps);
 
-  assert.equal(advanceCalls, 3, "the second stale skip must trip the backstop, not spin");
+  assert.equal(advanceCalls, 2, "the first stale skip must stop, not spin");
   const stopEntry = deps.callLog.find(entry => entry.startsWith("stopAuto:"));
-  assert.match(stopEntry ?? "", /^stopAuto:Blocked: /, "a tripped stale skip stops through the blocked path");
+  assert.match(stopEntry ?? "", /^stopAuto:Blocked: /, "a stale skip stops through the blocked path");
   const wedgeResult = getOpenWedge(realpathSync(s.basePath));
   assert.equal(wedgeResult.ok, true);
-  const wedge = wedgeResult.ok ? wedgeResult.wedge : null;
-  assert.ok(wedge, "the stale active-unit skip must persist a wedge");
-  assert.equal(wedge!.guardId, "orchestration-stale-active-unit");
-  assert.match(wedge!.sanctionedExit, /`\/gsd auto`/);
-  assert.match(wedge!.sanctionedExit, /gsd_task_recovery_resume/);
-  assert.doesNotMatch(wedge!.sanctionedExit, /Resolve the reported condition/);
+  // One stale skip is enough to stop; ADR-047 still trips only at occurrence 2.
 });
 
 test("finalize exceptions abandon the active orchestration marker before the next advance", async (t) => {
@@ -5038,13 +5032,15 @@ test("finalize exceptions abandon the active orchestration marker before the nex
             kind: "advanced" as const,
             unit: { unitType: "plan-slice", unitId: "M001/S01" },
             stateSnapshot: await makeMockDeps().deriveState(s.basePath),
+            dispatchId: 1,
           };
         }
         if (activeMarker) {
-          return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+          return { kind: "skipped" as const, code: "unit-already-active" as const, reason: "idempotent advance: unit already active" };
         }
         return { kind: "stopped" as const, reason: "no active unit" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async (unit, reason) => {
@@ -5107,8 +5103,9 @@ test("autoLoop does not pause on repeated idempotent advance skips while a unit 
       advance: async () => {
         advanceCalls++;
         if (advanceCalls >= 5) s.active = false;
-        return { kind: "skipped" as const, reason: "idempotent advance: unit already active" };
+        return { kind: "skipped" as const, code: "unit-already-active" as const, reason: "idempotent advance: unit already active" };
       },
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},
@@ -5146,6 +5143,7 @@ test("ADR-047 #1655: identical transient pauses trip at the loop outcome boundar
     session.orchestration = {
       start: async () => ({ kind: "stopped" as const, reason: "unused" }),
       advance: async () => ({ kind: "paused" as const, reason: "transient: database is locked" }),
+      settle: async () => {},
       completeActiveUnit: async () => {},
       retryActiveUnit: async () => {},
       abandonActiveUnit: async () => {},

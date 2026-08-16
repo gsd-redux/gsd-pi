@@ -510,6 +510,28 @@ export function getLatestForUnit(unitId: string): UnitDispatchRow | null {
   return row ?? null;
 }
 
+export function getDispatchById(dispatchId: number): UnitDispatchRow | null {
+  if (!isDbAvailable()) return null;
+  const db = _getAdapter()!;
+  const row = db.prepare(
+    `SELECT * FROM unit_dispatches WHERE id = :id LIMIT 1`,
+  ).get({ ":id": dispatchId }) as UnitDispatchRow | undefined;
+  return row ?? null;
+}
+
+/** The UnitRun for this worker: the claimed or running dispatch row. */
+export function getActiveForWorker(workerId: string): UnitDispatchRow | null {
+  if (!isDbAvailable()) return null;
+  const db = _getAdapter()!;
+  const row = db.prepare(
+    `SELECT * FROM unit_dispatches
+     WHERE worker_id = :worker_id AND status IN ('claimed','running')
+     ORDER BY id DESC
+     LIMIT 1`,
+  ).get({ ":worker_id": workerId }) as UnitDispatchRow | undefined;
+  return row ?? null;
+}
+
 /**
  * Fetch dispatches for a milestone filtered by status. Useful for janitors
  * + dashboards.

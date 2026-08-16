@@ -22,6 +22,19 @@ export function decideVerificationVerdict(
   unitType: string,
   result: VerificationGateResult,
 ): VerificationVerdict {
+  if (!result.passed) {
+    const failureContext = (result.runtimeErrors ?? [])
+      .filter((error) => error.blocking)
+      .map((error) => `[${error.source}] ${error.message}`)
+      .join("\n");
+    return {
+      passed: false,
+      reason: "checks-failed",
+      retryable: true,
+      failureContext,
+    };
+  }
+
   if (unitType === "execute-task" && result.discoverySource === "task-plan-prose" && result.checks.length === 0) {
     return {
       passed: true,
@@ -37,15 +50,6 @@ export function decideVerificationVerdict(
       reason: "no-host-checks",
       retryable: false,
       failureContext: NO_HOST_CHECKS_FAILURE_CONTEXT,
-    };
-  }
-
-  if (!result.passed) {
-    return {
-      passed: false,
-      reason: "checks-failed",
-      retryable: true,
-      failureContext: "",
     };
   }
 

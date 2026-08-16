@@ -393,7 +393,7 @@ test("authority cutover rejects a future database schema and damaged replay line
   let request = input(evidence);
   db().prepare(`
     INSERT INTO schema_version (version, applied_at)
-    VALUES (47, '2026-07-17T00:00:02.000Z')
+    VALUES (48, '2026-07-17T00:00:02.000Z')
   `).run();
   expectCode(
     () => cutoverProjectAuthority(request),

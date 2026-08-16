@@ -13,6 +13,7 @@ import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { createProjectionDirectorySync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus, isHiddenFromRoadmap, toStatus } from "./status-guards.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
 import { dirname, join } from "node:path";
 import {
   getAllMilestones,
@@ -907,8 +908,18 @@ export async function renderTaskSummary(
 ): Promise<boolean> {
   const task = getTask(milestoneId, sliceId, taskId);
   const status = task ? toStatus(task.status) : null;
-  if (!task || (status !== "in_progress" && status !== "complete") || !task.full_summary_md) {
-    return false; // No summary to render — skip silently
+  if (!task || !task.full_summary_md) {
+    return false;
+  }
+  if (status === "complete") {
+    // Published completions keep projecting.
+  } else if (status === "in_progress") {
+    const attempt = readLatestTaskAttempt({ milestoneId, sliceId, taskId });
+    if (!attempt || attempt.outcome === "interrupted") {
+      return false;
+    }
+  } else {
+    return false;
   }
 
   await writeTaskSummaryProjection(
