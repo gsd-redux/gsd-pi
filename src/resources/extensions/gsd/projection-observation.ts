@@ -100,7 +100,8 @@ function preserveOne(
         // failing the journaled replay forever (#1762).
         if (!shouldCopyDeleteOnRenameFailure(error)) throw error;
         atomicWriteBufferSync(target, currentBytes);
-        rmSync(absPath);
+        // force: Windows can mark the source read-only while a share is held.
+        rmSync(absPath, { force: true });
       }
     } else {
       atomicWriteBufferSync(target, observedBytes);
