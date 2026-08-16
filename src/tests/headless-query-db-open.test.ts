@@ -26,8 +26,8 @@ import { recordSchemaVersion } from "../resources/extensions/gsd/db-schema-metad
 import { SchemaTooNewError } from "../resources/extensions/gsd/db/engine.ts";
 import { deriveState } from "../resources/extensions/gsd/state.ts";
 
-const V47_MESSAGE =
-  "gsd.db schema is v47, newer than the v46 this gsd-pi supports. " +
+const V48_MESSAGE =
+  "gsd.db schema is v48, newer than the v47 this gsd-pi supports. " +
   "Update gsd-pi (npm i -g @opengsd/gsd-pi) before opening this project.";
 
 test("headless-query opens the DB before deriveState (#4123)", async () => {
@@ -77,7 +77,7 @@ test("SchemaTooNewError from deriveState exits non-zero with the exact engine me
     {
       openProjectDbIfPresent: async () => {},
       deriveState: async () => {
-        throw new SchemaTooNewError(47, 46);
+        throw new SchemaTooNewError(48, 47);
       },
       resolveDispatch: async () => {
         throw new Error("resolveDispatch should not run after a refused deriveState");
@@ -96,7 +96,7 @@ test("SchemaTooNewError from deriveState exits non-zero with the exact engine me
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.data, undefined);
   assert.equal(output, "");
-  assert.equal(errors, `[gsd] ${V47_MESSAGE}\n`);
+  assert.equal(errors, `[gsd] ${V48_MESSAGE}\n`);
 });
 
 test("non-version deriveState failures keep current handling (they propagate)", async () => {
@@ -132,7 +132,7 @@ function makeNewerSchemaProject(version: number): string {
 }
 
 test("newer-schema fixture: real deriveState refuses, and the CLI boundary exits non-zero with the exact message", async () => {
-  const base = makeNewerSchemaProject(47);
+  const base = makeNewerSchemaProject(48);
   try {
     // Real read seam: engine refuse-newer → db-workspace "schema-too-new"
     // result → state/derive/db-open loud throw.
@@ -143,7 +143,7 @@ test("newer-schema fixture: real deriveState refuses, and the CLI boundary exits
       thrown = err;
     }
     assert.ok(thrown instanceof SchemaTooNewError, `expected SchemaTooNewError, got ${String(thrown)}`);
-    assert.equal(thrown.message, V47_MESSAGE);
+    assert.equal(thrown.message, V48_MESSAGE);
 
     // The headless-query boundary converts that exact error into a loud
     // non-zero refusal — never a degraded all-zero payload with exit 0.
@@ -171,7 +171,7 @@ test("newer-schema fixture: real deriveState refuses, and the CLI boundary exits
     );
     assert.notEqual(result.exitCode, 0);
     assert.equal(output, "");
-    assert.equal(errors, `[gsd] ${V47_MESSAGE}\n`);
+    assert.equal(errors, `[gsd] ${V48_MESSAGE}\n`);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

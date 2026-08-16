@@ -254,11 +254,15 @@ function fakeDomain() {
   const deps: CutoverDeps = {
     readLatestTaskAttempt(task) {
       calls.push({ name: "read-latest", value: task });
-      return attempts.at(-1) ?? null;
+      const attempt = attempts.at(-1);
+      // Reads return point-in-time snapshots, like the canonical DB readers —
+      // later settlements must not mutate what a caller already saw.
+      return attempt ? { ...attempt } : null;
     },
     readTaskAttempt(attemptId) {
       calls.push({ name: "read-attempt", value: attemptId });
-      return attempts.find((attempt) => attempt.attemptId === attemptId) ?? null;
+      const attempt = attempts.find((candidate) => candidate.attemptId === attemptId);
+      return attempt ? { ...attempt } : null;
     },
     readTaskRecoveryRoute(attemptId) {
       calls.push({ name: "read-recovery", value: attemptId });
@@ -1441,7 +1445,7 @@ test("a replacement lease routes a stale running Attempt and redispatches before
   assert.equal(domain.claims[0].retryOfAttemptId, "attempt-1");
 });
 
-test("a live running Attempt rejects a different dispatch that has not taken over its lease", async () => {
+test("a same-lease running Attempt is settled interrupted before the guard rejects the re-dispatch (#1740)", async () => {
   const { runWithTaskExecutionAttempt } = await subject();
   const domain = fakeDomain();
   domain.attempts.push({
@@ -1455,14 +1459,83 @@ test("a live running Attempt rejects a different dispatch that has not taken ove
   });
   let ran = false;
 
-  await assert.rejects(runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: 42 }), async () => {
     ran = true;
     return { action: "next", data: {} };
-  }, domain.deps), /active|running|Attempt/i);
+  }, domain.deps);
+
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-retry" });
+  assert.equal(ran, false);
+  assert.equal(domain.claims.length, 0);
+  assert.equal(domain.settlements.length, 1, "the guard must settle before any throw");
+  assert.equal(domain.settlements[0].attemptId, "attempt-1");
+  assert.equal(domain.settlements[0].outcome, "interrupted");
+  assert.equal(domain.settlements[0].failureClass, "stale-worker");
+  assert.equal(
+    domain.settlements[0].recovery,
+    undefined,
+    "an equal-or-older lease cannot use the fenced interrupt path",
+  );
+  assert.match(
+    domain.settlements[0].summary,
+    /cannot replace an active running Attempt without a newer milestone lease/,
+  );
+  assert.equal(domain.attempts[0].state, "settled", "no Attempt may stay running when the guard trips");
+  assert.equal(domain.routes.length, 1, "the catch routes the interrupted Result through durable recovery");
+});
+
+test("a same-session re-dispatch with an equal lease token leaves no running Attempt behind (#1740)", async () => {
+  const { runWithTaskExecutionAttempt } = await subject();
+  const { dispatchId: firstDispatchId } = seedCanonicalTaskFixture();
+  const task = { milestoneId: "M001", sliceId: "S01", taskId: "T01" };
+  const firstClaim = claimTaskAttempt({
+    invocation: {
+      idempotencyKey: "test:lease-guard:claim:first",
+      sourceTransport: "internal",
+      actorType: "agent",
+    },
+    task,
+    workerId: "worker-1",
+    milestoneLeaseToken: 7,
+    coordinationDispatchId: firstDispatchId,
+  });
+  assert.equal(readTaskAttempt(firstClaim.attemptId)?.state, "running");
+
+  // The re-dispatch mints a fresh coordination dispatch for the same unit; the
+  // stale first dispatch row has left ('claimed','running') — the partial
+  // unique index on active dispatches demands it — but its Attempt stays
+  // running (#1740). The V47 dispatch-scope trigger authorizes the worker's
+  // own-lease settle of that orphaned Attempt.
+  database().prepare(`
+    UPDATE unit_dispatches SET status = 'canceled', ended_at = '2026-07-12T00:10:00.000Z'
+    WHERE id = :id
+  `).run({ ":id": firstDispatchId });
+  const secondDispatchId = insertClaimedDispatch(2);
+  let ran = false;
+  const result = await runWithTaskExecutionAttempt(input({ dispatchId: secondDispatchId }), async () => {
+    ran = true;
+    return { action: "next", data: {} };
+  }, canonicalDeps());
 
   assert.equal(ran, false);
-  assert.equal(domain.settlements.length, 0);
-  assert.equal(domain.claims.length, 0);
+  assert.deepEqual(result, { action: "retry", reason: "task-recovery-repair" });
+  const predecessor = readTaskAttempt(firstClaim.attemptId);
+  assert.equal(predecessor?.state, "settled");
+  assert.equal(predecessor?.outcome, "interrupted");
+  assert.equal(predecessor?.resultFailureClass, "stale-worker");
+  const running = database().prepare(`
+    SELECT COUNT(*) AS count FROM workflow_execution_attempts WHERE attempt_state = 'running'
+  `).get() as { count: number };
+  assert.equal(running.count, 0, "no code path may leave an Attempt in running when the guard trips");
+  const observation = database().prepare(`
+    SELECT summary, failure_kind FROM workflow_failure_observations
+  `).get() as { summary: string; failure_kind: string };
+  assert.match(
+    observation.summary,
+    /cannot replace an active running Attempt without a newer milestone lease/,
+    "the guard error must surface through the durable failure route",
+  );
+  assert.equal(observation.failure_kind, "stale-worker");
 });
 
 test("lost first-claim response replays the exact claim without self-linking or interruption", async () => {

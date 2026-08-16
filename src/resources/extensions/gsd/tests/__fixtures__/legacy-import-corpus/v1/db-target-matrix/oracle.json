@@ -5,8 +5,8 @@
   "importer_version": "v1-test",
   "base_project_revision": 0,
   "base_authority_epoch": 0,
-  "base_database_schema_version": 46,
-  "source_set_hash": "sha256:f712d43219ebb62dc86387bceac68ac8b336d2683085dffa77e6830f190bee7f",
+  "base_database_schema_version": 47,
+  "source_set_hash": "sha256:ecbeb6e6b5179d5122aa57a60c8c5d390d5959fef9c5272451545e82ffff8388",
   "change_set_hash": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
   "counts": {
     "create": 0,
@@ -29,22 +29,22 @@
       "outcome": "unparsed"
     },
     {
-      "source_id": "database-current-v46",
-      "path": "current-v46/.gsd/gsd.db",
+      "source_id": "database-current-v47",
+      "path": "current-v47/.gsd/gsd.db",
       "kind": "sqlite-database",
       "byte_size": 9728,
-      "sha256": "sha256:ca1d0ffdf9fc1f5b189fc51c510c4dd783847e60a347181a45cc68dfb50f3a08",
+      "sha256": "sha256:b9ad285a8695872f73e7b43650fd350cd53402b12e13ec5a54f557cae136332d",
       "parser_id": "gsd-sqlite-target",
       "parser_version": "1",
       "encoding": "binary",
       "outcome": "mapped"
     },
     {
-      "source_id": "database-future-v47",
-      "path": "future-v47/.gsd/gsd.db",
+      "source_id": "database-future-v48",
+      "path": "future-v48/.gsd/gsd.db",
       "kind": "sqlite-database",
       "byte_size": 9728,
-      "sha256": "sha256:0bf3858c29561b109e5297cb9483c85355db56fa89657bc44f86f4ece309337a",
+      "sha256": "sha256:2d377a43bf36ff8a1f45d88840baaa1fe1078c9ceb4b8c1ee83da7e1a5b29f28",
       "parser_id": "gsd-sqlite-target",
       "parser_version": "1",
       "encoding": "binary",
@@ -89,6 +89,17 @@
       "kind": "sqlite-database",
       "byte_size": 9728,
       "sha256": "sha256:c56c2c8906d99df7bcb16d19697bddd504d8662339a47f18b8714023b95a8286",
+      "parser_id": "gsd-sqlite-target",
+      "parser_version": "1",
+      "encoding": "binary",
+      "outcome": "mapped"
+    },
+    {
+      "source_id": "database-historical-v46",
+      "path": "historical-v46/.gsd/gsd.db",
+      "kind": "sqlite-database",
+      "byte_size": 9728,
+      "sha256": "sha256:ca1d0ffdf9fc1f5b189fc51c510c4dd783847e60a347181a45cc68dfb50f3a08",
       "parser_id": "gsd-sqlite-target",
       "parser_version": "1",
       "encoding": "binary",
@@ -157,10 +168,10 @@
       "message": "The target is not an openable SQLite database and cannot be classified safely."
     },
     {
-      "diagnosis_id": "diagnosis-future-v47",
+      "diagnosis_id": "diagnosis-future-v48",
       "code": "future-schema-version",
       "severity": "blocker",
-      "source_id": "database-future-v47",
+      "source_id": "database-future-v48",
       "locator": {
         "start_byte": 0,
         "end_byte": 16
@@ -169,7 +180,7 @@
         "redacted": true,
         "sha256": "sha256:3f8434aff012ffcb594ad7527d6042841ce94f499887f86ab828f84a9a275f91"
       },
-      "message": "Schema v47 is newer than the accepted v46 target and must remain untouched."
+      "message": "Schema v48 is newer than the accepted v47 target and must remain untouched."
     },
     {
       "diagnosis_id": "diagnosis-historical-v30",
@@ -232,6 +243,21 @@
       "message": "Schema v45 is a supported historical database target."
     },
     {
+      "diagnosis_id": "diagnosis-historical-v46",
+      "code": "historical-schema-version",
+      "severity": "info",
+      "source_id": "database-historical-v46",
+      "locator": {
+        "start_byte": 0,
+        "end_byte": 16
+      },
+      "raw_value": {
+        "redacted": true,
+        "sha256": "sha256:3f8434aff012ffcb594ad7527d6042841ce94f499887f86ab828f84a9a275f91"
+      },
+      "message": "Schema v46 is a supported historical database target."
+    },
+    {
       "diagnosis_id": "diagnosis-unversioned-populated",
       "code": "unversioned-populated-database",
       "severity": "warning",
@@ -268,7 +294,7 @@
       "disposition": "unsupported"
     },
     {
-      "diagnosis_id": "diagnosis-future-v47",
+      "diagnosis_id": "diagnosis-future-v48",
       "disposition": "unsupported"
     },
     {
@@ -301,6 +327,14 @@
       "target": {
         "kind": "database-target",
         "key": "historical-v45/.gsd/gsd.db"
+      }
+    },
+    {
+      "diagnosis_id": "diagnosis-historical-v46",
+      "disposition": "mapped",
+      "target": {
+        "kind": "database-target",
+        "key": "historical-v46/.gsd/gsd.db"
       }
     },
     {

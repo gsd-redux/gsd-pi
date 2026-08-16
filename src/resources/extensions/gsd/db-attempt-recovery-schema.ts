@@ -328,3 +328,73 @@ export function createAttemptRecoverySchemaV36(db: DbAdapter): void {
   createAttemptTransitionFencingTrigger(db);
   createAttemptSettlementShapeTrigger(db);
 }
+
+/**
+ * V47 — same-lease Attempt settlement (#1740). A same-session re-dispatch
+ * holds the very lease its orphaned running Attempt was claimed under, but the
+ * Attempt's coordination dispatch has already left ('claimed','running'), so
+ * the dispatch-scope trigger rejected the settle-before-throw path and the
+ * Attempt stayed running forever. The replacement-lease bypass only covers a
+ * strictly newer recovery lease (#1748 cross-process orphans).
+ *
+ * The fencing trigger already authorizes any state transition while the
+ * Attempt's own lease is held; this recreation extends the dispatch-scope
+ * trigger with the same authorization so a worker can settle its own Attempt
+ * under its own held lease once its dispatch row is gone.
+ */
+export function createAttemptSameLeaseSettlementSchemaV47(db: DbAdapter): void {
+  const attemptsTable = db.prepare(`
+    SELECT 1 AS present FROM sqlite_master
+    WHERE type = 'table' AND name = 'workflow_execution_attempts'
+  `).get();
+  if (!attemptsTable) return;
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_workflow_attempt_transition_dispatch_scope;
+
+    CREATE TRIGGER trg_workflow_attempt_transition_dispatch_scope
+    BEFORE UPDATE ON workflow_execution_attempts
+    WHEN NEW.attempt_state != OLD.attempt_state
+      AND NEW.coordination_dispatch_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM workflow_item_lifecycles lifecycle
+        JOIN unit_dispatches dispatch ON dispatch.id = NEW.coordination_dispatch_id
+        WHERE lifecycle.lifecycle_id = NEW.lifecycle_id
+          AND dispatch.milestone_id = lifecycle.milestone_id
+          AND dispatch.slice_id IS lifecycle.slice_id
+          AND dispatch.task_id IS lifecycle.task_id
+          AND dispatch.worker_id = NEW.worker_id
+          AND dispatch.milestone_lease_token = NEW.milestone_lease_token
+          AND dispatch.status IN ('claimed', 'running')
+      )
+      AND NOT (
+        NEW.attempt_state = 'settled'
+        AND NEW.settle_outcome = 'interrupted'
+        AND NEW.recovery_worker_id IS NOT NULL
+        AND NEW.recovery_milestone_lease_token > OLD.milestone_lease_token
+        AND EXISTS (
+          SELECT 1 FROM workflow_operations operation
+          WHERE operation.operation_id = NEW.settle_operation_id
+            AND operation.project_id = NEW.project_id
+            AND operation.operation_type = 'attempt.interrupt'
+        )
+      )
+      AND NOT (
+        NEW.attempt_state = 'settled'
+        AND NEW.recovery_worker_id IS NULL
+        AND EXISTS (
+          SELECT 1
+          FROM workflow_item_lifecycles lifecycle
+          JOIN milestone_leases lease ON lease.milestone_id = lifecycle.milestone_id
+          WHERE lifecycle.lifecycle_id = NEW.lifecycle_id
+            AND lease.worker_id = NEW.worker_id
+            AND lease.fencing_token = NEW.milestone_lease_token
+            AND lease.status = 'held'
+            AND lease.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'coordination dispatch does not match workflow attempt scope');
+    END;
+  `);
+}
