@@ -50,6 +50,17 @@ function recoverFixture(dir: string): ReturnType<typeof gsdSync> {
 	return gsdSync(["headless", "recover", `--preview=${previewHash}`], { cwd: dir, timeoutMs: 30_000 });
 }
 
+function commitRecoveredMilestone(dir: string): void {
+	// Track projections so auto-start's migrateToExternalState aborts (#1364).
+	// An ignored in-project .gsd/ is eligible for that move, and pass-0
+	// reconciliation then flakes on roadmap-missing instead of the provider error.
+	commitPaths(dir, [
+		".gsd/milestones/M001/M001-CONTEXT.md",
+		".gsd/milestones/M001/M001-ROADMAP.md",
+		".gsd/milestones/M001/slices/S01/S01-PLAN.md",
+	], "test: seed recovered milestone projections");
+}
+
 function writeRecoveredMilestone(dir: string): void {
 	const milestoneDir = join(dir, ".gsd", "milestones", "M001");
 	const sliceDir = join(milestoneDir, "slices", "S01");
@@ -204,7 +215,7 @@ describe("headless auto pause e2e (fake LLM)", () => {
 		const project = createTmpProject({
 			git: true,
 			files: {
-				".gitignore": ".gsd/\n",
+				".gitignore": ".gsd/worktrees/\n",
 				"package.json": JSON.stringify({ type: "module", scripts: { test: "node --test test/answer.test.js" } }, null, 2) + "\n",
 				"src/answer.js": "export function answer() {\n\treturn \"pending\";\n}\n",
 				"test/answer.test.js": [
@@ -222,12 +233,17 @@ describe("headless auto pause e2e (fake LLM)", () => {
 		t.after(project.cleanup);
 		commitFixture(project.dir);
 		writeRecoveredMilestone(project.dir);
+		commitRecoveredMilestone(project.dir);
 
 		const recover = recoverFixture(project.dir);
 		assert.equal(
 			recover.code,
 			0,
 			`expected recover exit 0, got ${recover.code}. stderr=${recover.stderrClean.slice(0, 800)}`,
+		);
+		assert.ok(
+			existsSync(join(project.dir, ".gsd", "milestones", "M001", "M001-ROADMAP.md")),
+			"recovered ROADMAP must stay on disk so auto pass-0 cannot emit roadmap-missing",
 		);
 
 		const transcript = writeTranscript([
