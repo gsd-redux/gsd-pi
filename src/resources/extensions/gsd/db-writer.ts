@@ -8,12 +8,13 @@
 // Critical invariant: generated markdown must round-trip through
 // parseDecisionsTable() and parseRequirementsSections() with field fidelity.
 
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import type { Decision, Requirement } from './types.js';
 import { summarizeRequirementsCoverage } from './requirements-backlog.js';
 import { resolveGsdRootFile } from './paths.js';
 import { saveFile } from './files.js';
+import { recordCompatProjectionWrite } from './compat/compat-marker.js';
 import { GSDError, GSD_STALE_STATE, GSD_IO_ERROR } from './errors.js';
 import { logWarning, logError } from './workflow-logger.js';
 import { invalidateStateCache } from './state.js';
@@ -23,6 +24,16 @@ import type { MilestoneScope, GsdWorkspace } from './workspace.js';
 import { createWorkspace, scopeMilestone } from './workspace.js';
 import { createMemory } from './memory-store.js';
 import { synthesizeDecisionMemoryContent } from './memory-backfill.js';
+
+async function writeGsdProjection(
+  basePath: string,
+  filePath: string,
+  content: string,
+  entities: string[] = [],
+): Promise<void> {
+  await saveFile(filePath, content);
+  recordCompatProjectionWrite(basePath, filePath, content, entities);
+}
 
 // ─── Freeform Detection ───────────────────────────────────────────────────
 
@@ -427,7 +438,7 @@ export async function saveRequirementToDb(
     const md = generateRequirementsMd(nonSuperseded);
     const filePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
     try {
-      await saveFile(filePath, md);
+      await writeGsdProjection(basePath, filePath, md);
     } catch (diskErr) {
       logWarning('projection', 'REQUIREMENTS.md projection write failed; DB requirement remains committed', { fn: 'saveRequirementToDb', id, error: String((diskErr as Error).message) });
     }
@@ -454,6 +465,35 @@ export function _resetDecisionSaveLock(): void {
   _decisionSaveLock = Promise.resolve();
 }
 
+export interface DecisionsProjectionIntent {
+  path: string;
+  content: string;
+}
+
+export async function readDecisionsProjectionIntent(
+  basePath: string,
+): Promise<DecisionsProjectionIntent | null> {
+  const { getAllDecisionsFromMemories } = await import('./context-store.js');
+  const allDecisions: Decision[] = getAllDecisionsFromMemories();
+  const path = resolveGsdRootFile(basePath, 'DECISIONS');
+  const existingContent = existsSync(path) ? readFileSync(path, 'utf-8') : null;
+  if (allDecisions.length === 0 && existingContent === null) return null;
+
+  if (existingContent && !isDecisionsTableFormat(existingContent)) {
+    const marker = '---\n\n## Decisions Table';
+    const markerIdx = existingContent.indexOf(marker);
+    const freeformPart = markerIdx >= 0
+      ? existingContent.substring(0, markerIdx).trimEnd()
+      : existingContent.trimEnd();
+    return {
+      path,
+      content: freeformPart + '\n' + generateDecisionsAppendBlock(allDecisions),
+    };
+  }
+
+  return { path, content: generateDecisionsMd(allDecisions) };
+}
+
 /**
  * Re-project root DECISIONS.md from the authoritative decision records, with no
  * new decision being added. Mirrors the projection saveDecisionToDb performs
@@ -464,32 +504,9 @@ export function _resetDecisionSaveLock(): void {
  * decisions). DB stays the single source of truth; this only writes markdown.
  */
 export async function regenerateDecisionsMarkdown(basePath: string): Promise<void> {
-  const { getAllDecisionsFromMemories } = await import('./context-store.js');
-  const allDecisions: Decision[] = getAllDecisionsFromMemories();
-
-  const filePath = resolveGsdRootFile(basePath, 'DECISIONS');
-  let existingContent: string | null = null;
-  if (existsSync(filePath)) {
-    existingContent = readFileSync(filePath, 'utf-8');
-  }
-
-  // Nothing to project: no decisions in the DB and no file to normalize.
-  if (allDecisions.length === 0 && existingContent === null) return;
-
-  let md: string;
-  if (existingContent && !isDecisionsTableFormat(existingContent)) {
-    // Preserve freeform content; refresh only the appended decisions table.
-    const marker = '---\n\n## Decisions Table';
-    const markerIdx = existingContent.indexOf(marker);
-    const freeformPart = markerIdx >= 0
-      ? existingContent.substring(0, markerIdx).trimEnd()
-      : existingContent.trimEnd();
-    md = freeformPart + '\n' + generateDecisionsAppendBlock(allDecisions);
-  } else {
-    md = generateDecisionsMd(allDecisions);
-  }
-
-  await saveFile(filePath, md);
+  const intent = await readDecisionsProjectionIntent(basePath);
+  if (!intent) return;
+  await writeGsdProjection(basePath, intent.path, intent.content);
 }
 
 // ─── Save Decision to DB + Regenerate Markdown ────────────────────────────
@@ -639,7 +656,7 @@ export async function saveDecisionToDb(
     }
 
     try {
-      await saveFile(filePath, md);
+      await writeGsdProjection(basePath, filePath, md);
     } catch (diskErr) {
       logWarning('projection', 'DECISIONS.md projection write failed; DB decision remains committed', { fn: 'saveDecisionToDb', id, error: String((diskErr as Error).message) });
     }
@@ -792,7 +809,7 @@ export async function updateRequirementInDb(
     const md = generateRequirementsMd(nonSuperseded);
     const filePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
     try {
-      await saveFile(filePath, md);
+      await writeGsdProjection(basePath, filePath, md);
     } catch (diskErr) {
       logWarning('projection', 'REQUIREMENTS.md projection write failed; DB requirement update remains committed', { fn: 'updateRequirementInDb', id, error: String((diskErr as Error).message) });
     }
@@ -868,7 +885,8 @@ export async function saveArtifactToDbForWorkspace(
 
     if (!skipDiskWrite) {
       try {
-        await saveFile(fullPath, contentToPersist);
+        const basePath = dirname(gsdDir);
+        await writeGsdProjection(basePath, fullPath, contentToPersist);
       } catch (diskErr) {
         logWarning('projection', 'artifact projection write failed; DB artifact remains committed', { fn: 'saveArtifactToDbForWorkspace', path: opts.path, error: String((diskErr as Error).message) });
       }
@@ -947,7 +965,17 @@ export async function saveArtifactToDbByScope(
     // Write the file to disk (only if we're not preserving a richer existing file)
     if (!skipDiskWrite) {
       try {
-        await saveFile(fullPath, contentToPersist);
+        const basePath = dirname(gsdDir);
+        await writeGsdProjection(
+          basePath,
+          fullPath,
+          contentToPersist,
+          [
+            opts.milestone_id,
+            opts.slice_id && `${opts.milestone_id}/${opts.slice_id}`,
+            opts.task_id && `${opts.milestone_id}/${opts.slice_id}/${opts.task_id}`,
+          ].filter((entity): entity is string => Boolean(entity)),
+        );
       } catch (diskErr) {
         logWarning('projection', 'artifact projection write failed; DB artifact remains committed', { fn: 'saveArtifactToDbByScope', path: opts.path, error: String((diskErr as Error).message) });
       }

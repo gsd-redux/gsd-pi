@@ -16,11 +16,13 @@ test("Task verification abort is machine-terminal without a pause", () => {
 
   const flow = handleCustomEngineTaskVerifyOutcome({
     outcome: "abort",
-    finishTurn: (status, failureClass, error) => calls.push([status, failureClass, error]),
+    inputPayload: "abort evidence",
+    finishTurn: (status, failureClass, error, guardId, inputPayload) =>
+      calls.push([status, failureClass, error, guardId, inputPayload]),
   });
 
   assert.deepEqual(flow, { action: "break" });
-  assert.deepEqual(calls, [["stopped", "verification", "custom-engine-task-verify-abort"]]);
+  assert.deepEqual(calls, [["stopped", "verification", "custom-engine-task-verify-abort", "custom-engine-task-verify", "abort evidence"]]);
 });
 
 test("Task verification retry directly re-enters the loop", () => {
@@ -28,11 +30,13 @@ test("Task verification retry directly re-enters the loop", () => {
 
   const flow = handleCustomEngineTaskVerifyOutcome({
     outcome: "retry",
-    finishTurn: (status, failureClass, error) => calls.push([status, failureClass, error]),
+    inputPayload: "retry evidence",
+    finishTurn: (status, failureClass, error, guardId, inputPayload) =>
+      calls.push([status, failureClass, error, guardId, inputPayload]),
   });
 
   assert.deepEqual(flow, { action: "continue" });
-  assert.deepEqual(calls, [["retry", "verification", "custom-engine-task-verify-retry"]]);
+  assert.deepEqual(calls, [["retry", "verification", "custom-engine-task-verify-retry", "custom-engine-task-verify", "retry evidence"]]);
 });
 
 function makeDeps(): {
@@ -48,7 +52,8 @@ function makeDeps(): {
       calls.push(["stopAuto", reason]);
     },
     reportPause: details => calls.push(["reportPause", details]),
-    finishTurn: (status, failureClass, error) => calls.push(["finishTurn", status, failureClass, error]),
+    finishTurn: (status, failureClass, error, guardId, inputPayload) =>
+      calls.push(["finishTurn", status, failureClass, error, guardId, inputPayload]),
   };
   return { deps, calls };
 }
@@ -59,6 +64,7 @@ test("handleCustomEngineVerifyPause pauses and reports unit details", async () =
   const flow = await handleCustomEngineVerifyPause({
     unitType: "execute-task",
     unitId: "T01",
+    inputPayload: '{"policy":"human-review"}',
     deps,
   });
 
@@ -66,7 +72,7 @@ test("handleCustomEngineVerifyPause pauses and reports unit details", async () =
   assert.deepEqual(calls, [
     ["pauseAuto"],
     ["reportPause", { unitType: "execute-task", unitId: "T01" }],
-    ["finishTurn", "paused", "manual-attention", "custom-engine-verify-pause"],
+    ["finishTurn", "paused", "manual-attention", "custom-engine-verify-pause", "custom-engine-verify", '{"policy":"human-review"}'],
   ]);
 });
 
@@ -75,13 +81,14 @@ test("handleCustomEngineVerifyRetryOutcome pauses after recovery pause", async (
 
   const flow = await handleCustomEngineVerifyRetryOutcome({
     outcome: { action: "pause", attempts: 4, turnError: "recovery-pause" },
+    inputPayload: '{"policy":"content-heuristic","failure":"missing file"}',
     deps,
   });
 
   assert.deepEqual(flow, { action: "break" });
   assert.deepEqual(calls, [
     ["pauseAuto"],
-    ["finishTurn", "paused", "manual-attention", "recovery-pause"],
+    ["finishTurn", "paused", "manual-attention", "recovery-pause", "custom-engine-verify", '{"policy":"content-heuristic","failure":"missing file"}'],
   ]);
 });
 
@@ -95,13 +102,14 @@ test("handleCustomEngineVerifyRetryOutcome stops after recovery stop", async () 
       stopMessage: "Recovery failed",
       turnError: "recovery-stop",
     },
+    inputPayload: '{"policy":"shell-command","exitCode":1}',
     deps,
   });
 
   assert.deepEqual(flow, { action: "break" });
   assert.deepEqual(calls, [
     ["stopAuto", "Recovery failed"],
-    ["finishTurn", "stopped", "manual-attention", "recovery-stop"],
+    ["finishTurn", "stopped", "manual-attention", "recovery-stop", "custom-engine-verify", '{"policy":"shell-command","exitCode":1}'],
   ]);
 });
 
@@ -110,11 +118,12 @@ test("handleCustomEngineVerifyRetryOutcome continues for retry", async () => {
 
   const flow = await handleCustomEngineVerifyRetryOutcome({
     outcome: { action: "retry", attempts: 1 },
+    inputPayload: '{"policy":"shell-command","exitCode":2}',
     deps,
   });
 
   assert.deepEqual(flow, { action: "continue" });
   assert.deepEqual(calls, [
-    ["finishTurn", "retry", undefined, undefined],
+    ["finishTurn", "retry", "manual-attention", undefined, "custom-engine-verify", '{"policy":"shell-command","exitCode":2}'],
   ]);
 });

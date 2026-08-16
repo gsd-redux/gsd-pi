@@ -1,10 +1,7 @@
 /**
  * OAuth credential management for AI providers.
  *
- * This module handles login, token refresh, and credential storage
- * for OAuth-based providers:
- * - Anthropic (Claude Pro/Max)
- * - GitHub Copilot
+ * This module handles login and token refresh for OAuth-based providers.
  */
 
 // Anthropic
@@ -22,6 +19,8 @@ export {
 export { loginOpenAICodex, openaiCodexOAuthProvider, refreshOpenAICodexToken } from "./openai-codex.js";
 // xAI Grok (SuperGrok / X Premium OAuth)
 export { enforceXaiTokenOrigin, loginXai, refreshXaiToken, xaiOAuthProvider } from "./xai.js";
+// Kimi Code (subscription OAuth)
+export { kimiCodingOAuthProvider, loginKimiCoding, refreshKimiCodingToken } from "./kimi-coding.js";
 
 export * from "./types.js";
 
@@ -29,8 +28,10 @@ export * from "./types.js";
 // Provider Registry
 // ============================================================================
 
+import type { ApiKeyProvenance } from "../../types.js";
 import { anthropicOAuthProvider } from "./anthropic.js";
 import { githubCopilotOAuthProvider } from "./github-copilot.js";
+import { kimiCodingOAuthProvider } from "./kimi-coding.js";
 import { openaiCodexOAuthProvider } from "./openai-codex.js";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.js";
 import { xaiOAuthProvider } from "./xai.js";
@@ -40,6 +41,7 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
 	xaiOAuthProvider,
+	kimiCodingOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
@@ -126,13 +128,17 @@ export async function refreshOAuthToken(
  * Get API key for a provider from OAuth credentials.
  * Automatically refreshes expired tokens.
  *
- * @returns API key string and updated credentials, or null if no credentials
+ * @returns API key, its OAuth provenance, and updated credentials, or null if no credentials
  * @throws Error if refresh fails
  */
 export async function getOAuthApiKey(
 	providerId: OAuthProviderId,
 	credentials: Record<string, OAuthCredentials>,
-): Promise<{ newCredentials: OAuthCredentials; apiKey: string } | null> {
+): Promise<{
+	newCredentials: OAuthCredentials;
+	apiKey: string;
+	apiKeyProvenance: ApiKeyProvenance;
+} | null> {
 	const provider = getOAuthProvider(providerId);
 	if (!provider) {
 		throw new Error(`Unknown OAuth provider: ${providerId}`);
@@ -153,5 +159,5 @@ export async function getOAuthApiKey(
 	}
 
 	const apiKey = provider.getApiKey(creds);
-	return { newCredentials: creds, apiKey };
+	return { newCredentials: creds, apiKey, apiKeyProvenance: { type: "oauth", provider: providerId } };
 }

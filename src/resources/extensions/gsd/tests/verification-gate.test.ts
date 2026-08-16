@@ -266,6 +266,54 @@ describe("verification-gate: discovery", () => {
     assert.deepStrictEqual(result.commands, []);
   });
 
+  test("prose taskPlanVerify with passing task evidence beats preference commands (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "Planning artifacts exist and contain all required sections",
+      preferenceCommands: ["cargo test", "cargo clippy"],
+      taskEvidence: [
+        { command: "gsd_exec node: artifact check", exitCode: 0, verdict: "passed", durationMs: 12 },
+        { command: "gsd_exec node: consolidated artifact verification", exitCode: 0, verdict: "pass", durationMs: 8 },
+      ],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan-prose");
+    assert.deepStrictEqual(result.commands, []);
+  });
+
+  test("failing task evidence still falls through to preference commands (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "Planning artifacts exist and contain all required sections",
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [
+        { command: "gsd_exec node: artifact check", exitCode: 1, verdict: "fail", durationMs: 3 },
+      ],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "preference");
+    assert.deepStrictEqual(result.commands, ["cargo test"]);
+  });
+
+  test("task evidence does not override a runnable task-plan command (issue #1591)", () => {
+    const result = discoverCommands({
+      taskPlanVerify: "npm run test",
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [{ command: "node check.js", exitCode: 0, verdict: "pass", durationMs: 1 }],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "task-plan");
+    assert.deepStrictEqual(result.commands, ["npm run test"]);
+  });
+
+  test("task evidence does not bypass preferences without prose task verify (issue #1591)", () => {
+    const result = discoverCommands({
+      preferenceCommands: ["cargo test"],
+      taskEvidence: [{ command: "node check.js", exitCode: 0, verdict: "pass", durationMs: 1 }],
+      cwd: tmp,
+    });
+    assert.equal(result.source, "preference");
+    assert.deepStrictEqual(result.commands, ["cargo test"]);
+  });
+
   test("genuinely unsafe command still suppresses the prose fallback", () => {
     const result = discoverCommands({
       taskPlanVerify: "npm run test > results.txt",
@@ -771,6 +819,32 @@ test("isLikelyCommand: prose descriptions are rejected", () => {
   assert.equal(isLikelyCommand("All tests pass and coverage is above 80%"), false);
   assert.equal(isLikelyCommand("File should exist in the output directory"), false);
   assert.equal(isLikelyCommand("Build succeeds without errors or warnings"), false);
+});
+
+test("isLikelyCommand: lowercase prose is rejected, including a leading file path", () => {
+  // Every prose case above announces itself with a capital letter or a comma.
+  // Lowercase prose fell through to "command" and got executed: the gate ran
+  // `greet/hello.txt exists and contains "hello"`, which tried to execute the
+  // .txt file and failed with exit 126 "Permission denied" — failing the gate
+  // for a task that had actually succeeded.
+  assert.equal(isLikelyCommand('greet/hello.txt exists and contains "hello"'), false);
+  assert.equal(isLikelyCommand("./out/report.txt exists and contains the summary"), false);
+  assert.equal(isLikelyCommand("the migration is complete and the table exists"), false);
+
+  // Real commands with a path-like or bare first token still pass.
+  assert.equal(isLikelyCommand("./scripts/verify.sh"), true);
+  assert.equal(isLikelyCommand("./scripts/check.sh --strict --quiet"), true);
+  assert.equal(isLikelyCommand("mytool build release"), true);
+});
+
+test("discoverCommands: a prose verify field is not run as a shell command", () => {
+  const dir = makeTempDir("gsd-verify-prose");
+  const result = discoverCommands({
+    cwd: dir,
+    taskPlanVerify: 'greet/hello.txt exists and contains "hello"',
+  });
+  assert.deepEqual(result.commands, [], "prose must not become a runnable check");
+  assert.notEqual(result.source, "task-plan");
 });
 
 test("isLikelyCommand: known command word followed by English prose is rejected (issue #1567)", () => {

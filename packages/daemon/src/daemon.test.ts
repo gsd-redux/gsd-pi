@@ -10,7 +10,6 @@ import { dirname } from 'node:path';
 import { resolveConfigPath, loadConfig, validateConfig } from './config.js';
 import { Logger } from './logger.js';
 import { Daemon } from './daemon.js';
-import { CloudRuntime } from './cloud-runtime.js';
 import { SessionManager } from './session-manager.js';
 import type { DaemonConfig, LogEntry } from './types.js';
 
@@ -26,50 +25,6 @@ afterEach(() => {
     const d = cleanupDirs.pop()!;
     if (existsSync(d)) rmSync(d, { recursive: true, force: true });
   }
-});
-
-it('cloud runtime handles gateway cancel for in-flight requests', async () => {
-  let finishTool!: (value: unknown) => void;
-  const calls: Array<{ toolName: string; args: Record<string, unknown>; projectAlias?: string }> = [];
-  const executor = {
-    execute: (toolName: string, args: Record<string, unknown>, projectAlias?: string) => {
-      calls.push({ toolName, args, projectAlias });
-      if (toolName === 'gsd_cancel') return Promise.resolve({ content: [] });
-      return new Promise((resolve) => {
-        finishTool = resolve;
-      });
-    },
-    advertisedProjects: async () => [],
-  };
-  const sent: unknown[] = [];
-  const runtime = new CloudRuntime(
-    { gateway_url: 'ws://127.0.0.1:1', device_token: 'token', runtime_id: 'runtime' },
-    executor as never,
-    { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined } as never,
-  );
-  (runtime as unknown as { socket: { readyState: number; send: (payload: string) => void } }).socket = {
-    readyState: 1,
-    send: (payload: string) => sent.push(JSON.parse(payload) as unknown),
-  };
-
-  const running = (runtime as unknown as { handleMessage: (text: string) => Promise<void> }).handleMessage(JSON.stringify({
-    type: 'tool_call',
-    requestId: 'request-1',
-    toolName: 'gsd_progress',
-    args: { projectDir: '/project' },
-  }));
-  await new Promise((resolve) => setImmediate(resolve));
-
-  await (runtime as unknown as { handleMessage: (text: string) => Promise<void> }).handleMessage(JSON.stringify({
-    type: 'cancel',
-    requestId: 'request-1',
-  }));
-  finishTool({ late: true });
-  await running;
-
-  assert.deepEqual(calls.map((call) => call.toolName), ['gsd_progress', 'gsd_cancel']);
-  assert.deepEqual(calls[1], { toolName: 'gsd_cancel', args: { projectDir: '/project' }, projectAlias: undefined });
-  assert.deepEqual(sent, []);
 });
 
 // ---------- config ----------
@@ -182,6 +137,44 @@ log:
     assert.equal(cfg.log.level, 'info');
     assert.equal(cfg.log.max_size_mb, 50);
     assert.deepEqual(cfg.projects.scan_roots, []);
+  });
+
+  it('ignores a stale cloud block while preserving retained config', () => {
+    const dir = tmpDir();
+    cleanupDirs.push(dir);
+    const configPath = join(dir, 'stale-cloud.yaml');
+    const logPath = join(dir, 'daemon.log');
+    writeFileSync(configPath, `
+cloud:
+  gateway_url: https://gateway.example
+  runtime_id: retired-runtime
+  enabled: true
+discord:
+  token: fixture
+  guild_id: guild-1
+  owner_id: owner-1
+projects:
+  scan_roots:
+    - /projects/one
+log:
+  file: ${logPath}
+  level: warn
+  max_size_mb: 25
+`);
+
+    const config = loadConfig(configPath);
+    type ConfigIncludesCloud = 'cloud' extends keyof typeof config ? true : false;
+    const configIncludesCloud: ConfigIncludesCloud = false;
+
+    assert.equal(configIncludesCloud, false);
+    assert.equal('cloud' in config, false);
+    assert.deepEqual(config.discord, {
+      token: 'fixture',
+      guild_id: 'guild-1',
+      owner_id: 'owner-1',
+    });
+    assert.deepEqual(config.projects.scan_roots, ['/projects/one']);
+    assert.deepEqual(config.log, { file: logPath, level: 'warn', max_size_mb: 25 });
   });
 });
 
@@ -577,6 +570,23 @@ describe('CLI integration', () => {
     assert.ok(result.includes('Usage: gsd-daemon'));
     assert.ok(result.includes('--config'));
     assert.ok(result.includes('--verbose'));
+    assert.doesNotMatch(result, /cloud/i);
+  });
+
+  it('rejects the retired cloud subcommand', () => {
+    assert.throws(
+      () => execFileSync(
+        process.execPath,
+        [join(__dirname, 'cli.js'), 'cloud', 'status'],
+        { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' },
+      ),
+      (err: unknown) => {
+        const execErr = err as { status: number; stderr: string };
+        assert.equal(execErr.status, 1);
+        assert.match(execErr.stderr, /unexpected argument.*cloud/i);
+        return true;
+      },
+    );
   });
 
   it('starts, logs to file, and exits cleanly on SIGTERM', { timeout: 15000 }, async () => {

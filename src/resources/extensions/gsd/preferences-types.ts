@@ -211,7 +211,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
  */
 export const KNOWN_UNIT_LABELS = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice", "refine-slice",
-  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
+  "execute-task", "replan-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
   // Deep planning mode (project-level) units

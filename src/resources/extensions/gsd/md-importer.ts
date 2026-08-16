@@ -47,7 +47,7 @@ import {
 } from './paths.js';
 import { findMilestoneIds } from './guided-flow.js';
 import { milestoneIdToPhaseNum } from './layout-policy.js';
-import { parseRoadmap, parsePlan } from './parsers-legacy.js';
+import { parseProjectionRoadmap as parseRoadmap, parseProjectionPlan as parsePlan } from './schemas/parsers.js';
 import { parseContextDependsOn, parseSummary } from './files.js';
 import { logWarning } from './workflow-logger.js';
 import { parseDecisionsTable } from './decision-markdown-parser.js';
@@ -756,9 +756,9 @@ export function migrateHierarchyToDb(
 
     // #027: when a status scope is supplied, a milestone outside it keeps DB
     // status authority for rows that already exist — only the drifted file's
-    // milestone(s) may drive status closes from checkboxes. Absent scope,
-    // markdown remains authoritative only for unadopted rows.
-    const milestoneStatusAuthoritative = !statusScope || statusScope.has(milestoneId);
+    // milestone(s) may drive status closes from checkboxes. T021: absent scope
+    // also preserves existing DB status (unadopted checkbox-wins is gone).
+    const milestoneStatusAuthoritative = Boolean(statusScope?.has(milestoneId));
     // Snapshot existing statuses so scoped imports and adopted rows can echo
     // DB authority back into metadata-only upserts.
     const adoptedKeys = adoptedHierarchyKeys(milestoneId);

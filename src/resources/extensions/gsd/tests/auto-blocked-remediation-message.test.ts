@@ -72,8 +72,6 @@ test("blocked remediation warning uses /gsd dispatch reassess and hides internal
   } as any;
 
   const result = await runPreDispatch(ic, {
-    recentUnits: [],
-    stuckRecoveryAttempts: 0,
     consecutiveFinalizeTimeouts: 0,
   });
 

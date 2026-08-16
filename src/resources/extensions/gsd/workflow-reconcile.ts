@@ -26,7 +26,6 @@ import {
   setTaskBlockerDiscovered,
   insertOrIgnoreSlice,
   insertOrIgnoreTask,
-  getDb,
 } from "./gsd-db.js";
 import { openWorkflowDatabasePath } from "./db-workspace.js";
 import { isClosedStatus } from "./status-guards.js";
@@ -46,29 +45,6 @@ const TASK_STATE_EVENT_COMMANDS = new Set([
 
 const SLICE_STATE_EVENT_COMMANDS = new Set(["complete_slice"]);
 const MILESTONE_STATE_EVENT_COMMANDS = new Set(["complete_milestone"]);
-
-function hasAdoptedLifecycle(
-  itemKind: "task" | "slice" | "milestone",
-  params: Record<string, unknown>,
-): boolean {
-  return Boolean(getDb().prepare(`
-    SELECT 1 AS present
-    FROM workflow_item_lifecycles lifecycle
-    JOIN project_authority authority
-      ON authority.singleton = 1
-     AND authority.project_id = lifecycle.project_id
-    WHERE lifecycle.item_kind = :item_kind
-      AND lifecycle.milestone_id = :milestone_id
-      AND ((:slice_id IS NULL AND lifecycle.slice_id IS NULL) OR lifecycle.slice_id = :slice_id)
-      AND ((:task_id IS NULL AND lifecycle.task_id IS NULL) OR lifecycle.task_id = :task_id)
-    LIMIT 1
-  `).get({
-    ":item_kind": itemKind,
-    ":milestone_id": params["milestoneId"],
-    ":slice_id": itemKind === "milestone" ? null : params["sliceId"],
-    ":task_id": itemKind === "task" ? params["taskId"] : null,
-  }));
-}
 
 // ─── Replay Helpers ──────────────────────────────────────────────────────────
 
@@ -135,13 +111,13 @@ function replayEvents(events: WorkflowEvent[]): void {
     if (TASK_STATE_EVENT_COMMANDS.has(cmd)) itemKind = "task";
     else if (SLICE_STATE_EVENT_COMMANDS.has(cmd)) itemKind = "slice";
     else if (MILESTONE_STATE_EVENT_COMMANDS.has(cmd)) itemKind = "milestone";
-    if (itemKind && hasAdoptedLifecycle(itemKind, p)) {
+    if (itemKind) {
       let entityId = String(p["milestoneId"]);
       if (itemKind !== "milestone") entityId += `/${p["sliceId"]}`;
       if (itemKind === "task") entityId += `/${p["taskId"]}`;
       logWarning(
         "reconcile",
-        `Ignoring legacy ${cmd} replay for canonically adopted ${itemKind} ${entityId}`,
+        `Ignoring legacy ${cmd} replay for ${itemKind} ${entityId}`,
       );
       continue;
     }

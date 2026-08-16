@@ -340,16 +340,8 @@ describe("RpcClient construction", () => {
 
 	it("starts rpc mode exactly once before additional args", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "rpc-client-"));
-		const argvPath = join(dir, "argv.json");
 		const scriptPath = join(dir, "agent.js");
-		writeFileSync(
-			scriptPath,
-			`
-				const fs = require("node:fs");
-				fs.writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)));
-				setInterval(() => {}, 1000);
-			`,
-		);
+		writeFileSync(scriptPath, "setInterval(() => {}, 1000);\n");
 
 		const client = new RpcClient({
 			cliPath: scriptPath,
@@ -358,8 +350,13 @@ describe("RpcClient construction", () => {
 
 		try {
 			await client.start();
-			const argv = JSON.parse(readFileSync(argvPath, "utf8"));
-			assert.deepEqual(argv, ["--mode", "rpc", "--model", "claude-sonnet", "--bare"]);
+			assert.deepEqual((client as any).process.spawnargs.slice(2), [
+				"--mode",
+				"rpc",
+				"--model",
+				"claude-sonnet",
+				"--bare",
+			]);
 		} finally {
 			await client.stop();
 			rmSync(dir, { recursive: true, force: true });

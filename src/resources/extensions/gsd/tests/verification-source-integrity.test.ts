@@ -3,14 +3,15 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import {
   captureVerificationSourceSnapshot,
   confirmVerificationSourceSnapshot,
+  resolveVerificationRepositoryTargets,
   verificationSourceChanged,
 } from "../verification-source-integrity.js";
 
@@ -44,6 +45,27 @@ function capture(
 afterEach(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
   tempDirs.clear();
+});
+
+test("parent-workspace verification defaults to the orchestration root", () => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-source-parent-workspace-"));
+  tempDirs.add(base);
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  mkdirSync(join(base, "frontend"));
+  mkdirSync(join(base, "backend"));
+
+  const resolved = resolveVerificationRepositoryTargets(base, {
+    workspace: {
+      mode: "parent",
+      repositories: {
+        frontend: { path: "frontend" },
+        backend: { path: "backend" },
+      },
+    },
+  }, null, null);
+
+  assert.deepEqual(resolved.repositories.map((repository) => repository.id), ["project"]);
+  assert.equal(resolved.explicitTargetsRequested, false);
 });
 
 test("source revision changes for staged, unstaged, and untracked content", () => {
@@ -189,4 +211,34 @@ test("workflow state under .gsd does not change the tested source revision", () 
   const after = capture([{ id: "root", cwd }]);
 
   assert.equal(after.aggregateRevision, before.aggregateRevision);
+});
+
+test("tracked bookkeeping under a symlinked .gsd does not change the tested source revision", () => {
+  const cwd = createRepository("symlinked-state");
+  const stateDir = join(cwd, ".gsd-state", "projects", "abc123");
+  mkdirSync(stateDir, { recursive: true });
+  symlinkSync(stateDir, join(cwd, ".gsd"), "dir");
+  writeFileSync(join(stateDir, "CODEBASE.md"), "# codebase\n");
+  git(cwd, ["add", "-f", ".gsd-state/projects/abc123/CODEBASE.md"]);
+  git(cwd, ["commit", "-qm", "durable bookkeeping"]);
+  const before = capture([{ id: "root", cwd }]);
+
+  writeFileSync(join(cwd, ".gsd", "CODEBASE.md"), "# codebase (regenerated)\n");
+  writeFileSync(join(cwd, ".gsd", "S01-T01-VERIFY.json"), "{\"verdict\":\"pass\"}\n");
+  const after = capture([{ id: "root", cwd }]);
+
+  assert.equal(after.aggregateRevision, before.aggregateRevision);
+});
+
+test("a .gsd symlink resolving to the repository parent still produces a source proof", () => {
+  const cwd = createRepository("parent-symlinked-state");
+  // `relative()` yields exactly ".." here — without treating that as outside-repo
+  // the pathspec would become `:(exclude)..` and git would reject the command.
+  symlinkSync(dirname(cwd), join(cwd, ".gsd"), "dir");
+
+  const before = capture([{ id: "root", cwd }]);
+  writeFileSync(join(cwd, "tracked.txt"), "changed\n");
+  const after = capture([{ id: "root", cwd }]);
+
+  assert.notEqual(after.aggregateRevision, before.aggregateRevision);
 });

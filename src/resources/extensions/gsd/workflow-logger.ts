@@ -193,7 +193,7 @@ export function hasAnyIssues(): boolean {
 }
 
 /**
- * Get a one-line summary of accumulated issues for stuck detection messages.
+ * Get a one-line summary of accumulated issues for failure diagnostics.
  * Returns null if no entries.
  *
  * Must be called BEFORE drainLogs() — use drainAndSummarize() for safe ordering.

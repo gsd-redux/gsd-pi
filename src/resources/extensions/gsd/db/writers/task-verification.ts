@@ -101,6 +101,8 @@ export function insertHostTechnicalVerdict(
   if (requireActiveDomainOperationContext(context) !== "attempt.verify") {
     throw new Error("Host Technical Verdict creation requires an attempt.verify Domain Operation");
   }
+  const rationale = input.rationale.trim();
+  if (!rationale) throw new Error("rationale must not be blank");
   const verdictId = randomUUID();
   const evidenceId = randomUUID();
   getDb().prepare(`
@@ -121,7 +123,7 @@ export function insertHostTechnicalVerdict(
     ":attempt_id": input.scope.attemptId,
     ":source_revision": input.testedSourceRevision,
     ":verdict": input.verdict,
-    ":rationale": input.rationale,
+    ":rationale": rationale,
     ":supersedes_verdict_id": input.supersedesVerdictId ?? null,
     ":created_at": input.createdAt,
     ":operation_id": context.operationId,

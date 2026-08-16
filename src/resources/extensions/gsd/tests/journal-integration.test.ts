@@ -41,6 +41,7 @@ import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import {
   closeDatabase,
   getTask,
+  insertAssessment,
   insertMilestone,
   insertSlice,
   insertTask,
@@ -268,7 +269,7 @@ test("runDispatch emits dispatch-match with correct rule and flowId", async () =
     mid: "M001",
     midTitle: "Test Milestone",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const result = await runDispatch(ic, preData, loopState);
 
@@ -300,7 +301,7 @@ test("runDispatch emits dispatch-stop when dispatch returns stop action", async 
     mid: "M001",
     midTitle: "Test",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const result = await runDispatch(ic, preData, loopState);
   assert.equal(result.action, "break");
@@ -363,8 +364,6 @@ test("runDispatch checks prior-slice completion against the project root in work
   };
 
   const result = await runDispatch(ic, preData, {
-    recentUnits: [],
-    stuckRecoveryAttempts: 0,
     consecutiveFinalizeTimeouts: 0,
   });
 
@@ -376,454 +375,6 @@ test("runDispatch checks prior-slice completion against the project root in work
       args: [projectRoot, "main", "execute-task", "M001/S01/T01"],
     },
   ]);
-});
-
-test("runDispatch retries when complete-milestone summary exists on disk and stuck recovery can proceed (#4289)", async (t) => {
-  const capture = createEventCapture();
-  let pauseCalls = 0;
-  let stopCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-complete-${randomUUID()}`);
-  t.after(() => {
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
-  mkdirSync(join(base, "src"), { recursive: true });
-  writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Summary\nDone.\n");
-  writeFileSync(join(base, "src", "app.ts"), "export const ok = true;\n");
-
-  execFileSync("git", ["init", "-b", "main"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.name", "Codex"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.email", "codex@example.com"], { cwd: base, stdio: "ignore" });
-  writeFileSync(join(base, "README.md"), "# test\n");
-  execFileSync("git", ["add", "README.md"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["commit", "-m", "chore: seed"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["checkout", "-b", "fix/test"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["add", ".gsd/milestones/M001/M001-SUMMARY.md", "src/app.ts"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["commit", "-m", "feat: summary exists but db is stale"], { cwd: base, stdio: "ignore" });
-
-  const deps = makeMockDeps(capture, {
-    pauseAuto: async () => { pauseCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "complete-milestone",
-      unitId: "M001",
-      prompt: "complete the milestone",
-      matchedRule: "completing-milestone-rule",
-    }),
-  });
-
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      currentMilestoneId: "M001",
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "completing-milestone",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-
-  const result = await runDispatch(ic, preData, {
-    recentUnits: [
-      { key: "complete-milestone/M001" },
-      { key: "complete-milestone/M001" },
-    ],
-    stuckRecoveryAttempts: 0,
-    consecutiveFinalizeTimeouts: 0,
-  });
-
-  assert.equal(result.action, "continue");
-  assert.equal(pauseCalls, 0, "artifact-based recovery should retry before pausing");
-  assert.equal(stopCalls, 0, "artifact-based recovery should not hard-stop the loop");
-});
-
-test("runDispatch does not promote an open execute-task from SUMMARY projections at Level 1", async (t) => {
-  const capture = createEventCapture();
-  let pauseCalls = 0;
-  let stopCalls = 0;
-  let invalidateCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-execute-task-${randomUUID()}`);
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-  const tasksDir = join(sliceDir, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
-  openDatabase(join(base, ".gsd", "gsd.db"));
-  insertMilestone({ id: "M001", title: "Test", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "in_progress" });
-  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "pending" });
-  writeFileSync(
-    join(sliceDir, "S01-PLAN.md"),
-    [
-      "# S01",
-      "",
-      "## Tasks",
-      "",
-      "- [x] **T01: First task** `est:1h`",
-      "",
-    ].join("\n"),
-  );
-  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01 Plan\n");
-  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone on disk.\n");
-
-  const deps = makeMockDeps(capture, {
-    pauseAuto: async () => { pauseCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    invalidateAllCaches: () => { invalidateCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
-      prompt: "execute the task",
-      matchedRule: "executing → execute-task",
-    }),
-  });
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      originalBasePath: base,
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "executing",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      activeSlice: { id: "S01", title: "Slice" },
-      activeTask: { id: "T01", title: "First task" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-  const loopState: LoopState = {
-    recentUnits: [
-      { key: "execute-task/M001/S01/T01" },
-      { key: "execute-task/M001/S01/T01" },
-    ],
-    stuckRecoveryAttempts: 0,
-    consecutiveFinalizeTimeouts: 0,
-  };
-
-  const result = await runDispatch(ic, preData, loopState);
-
-  assert.equal(result.action, "next");
-  assert.equal(pauseCalls, 0, "Level 1 should retry after cache invalidation");
-  assert.equal(stopCalls, 0, "Level 1 should not hard-stop the loop");
-  assert.equal(invalidateCalls, 1, "Level 1 should invalidate caches before retrying");
-  assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 1 recovery increments the attempt counter");
-  assert.equal(
-    getTask("M001", "S01", "T01")?.status,
-    "pending",
-    "SUMMARY and checked-box projections must not close the authoritative DB task",
-  );
-});
-
-test("runDispatch stops at Level 2 rather than promoting execute-task from SUMMARY projections", async (t) => {
-  const capture = createEventCapture();
-  let pauseCalls = 0;
-  let stopCalls = 0;
-  let invalidateCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-execute-task-l2-${randomUUID()}`);
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-  const tasksDir = join(sliceDir, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  execFileSync("git", ["init", "--initial-branch=main"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: base, stdio: "ignore" });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: base, stdio: "ignore" });
-  openDatabase(join(base, ".gsd", "gsd.db"));
-  insertMilestone({ id: "M001", title: "Test", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "in_progress" });
-  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "pending" });
-  writeFileSync(
-    join(sliceDir, "S01-PLAN.md"),
-    "# S01\n\n## Tasks\n\n- [x] **T01: First task** `est:1h`\n",
-  );
-  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01 Plan\n");
-  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone on disk.\n");
-
-  const deps = makeMockDeps(capture, {
-    pauseAuto: async () => { pauseCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    invalidateAllCaches: () => { invalidateCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
-      prompt: "execute the task",
-      matchedRule: "executing execute-task",
-    }),
-  });
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      originalBasePath: base,
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "executing",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      activeSlice: { id: "S01", title: "Slice" },
-      activeTask: { id: "T01", title: "First task" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-  const loopState: LoopState = {
-    recentUnits: [
-      { key: "execute-task/M001/S01/T01" },
-      { key: "execute-task/M001/S01/T01" },
-    ],
-    stuckRecoveryAttempts: 1,
-    consecutiveFinalizeTimeouts: 0,
-  };
-
-  const result = await runDispatch(ic, preData, loopState);
-
-  assert.equal(result.action, "break");
-  assert.equal(pauseCalls, 0, "a stale projection is not a fatal canonical-state mismatch");
-  assert.equal(stopCalls, 1, "Level 2 should stop when no canonical Attempt Result is actionable");
-  assert.equal(invalidateCalls, 1, "Level 2 should invalidate caches before the final authority check");
-  assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 2 does not reset the recovery counter");
-  assert.equal(
-    getTask("M001", "S01", "T01")?.status,
-    "pending",
-    "SUMMARY and checked-box projections must not close the authoritative DB task",
-  );
-});
-
-test("runDispatch clears execute-task stuck state when artifacts and DB status are complete", async (t) => {
-  const capture = createEventCapture();
-  let pauseCalls = 0;
-  let stopCalls = 0;
-  let invalidateCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-execute-task-complete-${randomUUID()}`);
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-  const tasksDir = join(sliceDir, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  openDatabase(join(base, ".gsd", "gsd.db"));
-  insertMilestone({ id: "M001", title: "Test", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "in_progress" });
-  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "complete" });
-  writeFileSync(
-    join(sliceDir, "S01-PLAN.md"),
-    "# S01\n\n## Tasks\n\n- [x] **T01: First task** `est:1h`\n",
-  );
-  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01 Plan\n");
-  writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone on disk.\n");
-
-  const deps = makeMockDeps(capture, {
-    pauseAuto: async () => { pauseCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    invalidateAllCaches: () => { invalidateCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "execute-task",
-      unitId: "M001/S01/T01",
-      prompt: "execute the task",
-      matchedRule: "executing execute-task",
-    }),
-  });
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      originalBasePath: base,
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "executing",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      activeSlice: { id: "S01", title: "Slice" },
-      activeTask: { id: "T01", title: "First task" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-  const loopState: LoopState = {
-    recentUnits: [
-      { key: "execute-task/M001/S01/T01" },
-      { key: "execute-task/M001/S01/T01" },
-    ],
-    stuckRecoveryAttempts: 0,
-    consecutiveFinalizeTimeouts: 0,
-  };
-
-  const result = await runDispatch(ic, preData, loopState);
-
-  assert.equal(result.action, "continue");
-  assert.equal(pauseCalls, 0, "closed DB task should not pause auto-mode");
-  assert.equal(stopCalls, 0, "closed DB task should not hard-stop the loop");
-  assert.equal(invalidateCalls, 1, "closed DB task recovery should invalidate caches once");
-  assert.deepEqual(loopState.recentUnits, [], "closed DB task recovery should clear the stuck window");
-  assert.equal(loopState.stuckRecoveryAttempts, 1, "closed DB task recovery should preserve the recovery counter");
-});
-
-test("runDispatch clears stuck state after Level 1 artifact recovery", async (t) => {
-  const capture = createEventCapture();
-  let invalidateCalls = 0;
-  let stopCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-plan-${randomUUID()}`);
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-  const tasksDir = join(sliceDir, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  openDatabase(join(base, ".gsd", "gsd.db"));
-  insertMilestone({ id: "M001", title: "Test", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
-  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "pending" });
-  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n## Tasks\n\n- [ ] **T01: First task** `est:1h`\n");
-  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01 Plan\n");
-
-  const deps = makeMockDeps(capture, {
-    invalidateAllCaches: () => { invalidateCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "plan-slice",
-      unitId: "M001/S01",
-      prompt: "plan the slice",
-      matchedRule: "planning → plan-slice",
-    }),
-  });
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      originalBasePath: base,
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "planning",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      activeSlice: { id: "S01", title: "Slice" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-  const loopState: LoopState = {
-    recentUnits: [
-      { key: "plan-slice/M001/S01" },
-      { key: "plan-slice/M001/S01" },
-    ],
-    stuckRecoveryAttempts: 0,
-    consecutiveFinalizeTimeouts: 0,
-  };
-
-  const result = await runDispatch(ic, preData, loopState);
-
-  assert.equal(result.action, "continue");
-  assert.equal(invalidateCalls, 1, "Level 1 artifact recovery should invalidate caches");
-  assert.equal(stopCalls, 0, "Level 1 artifact recovery should not hard-stop");
-  assert.deepEqual(loopState.recentUnits, [], "Level 1 artifact recovery should clear the stuck window");
-  assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 1 artifact recovery should preserve the recovery counter");
-});
-
-test("runDispatch escapes Level 2 stuck stop when artifact verifies after cache invalidation", async (t) => {
-  const capture = createEventCapture();
-  let invalidateCalls = 0;
-  let stopCalls = 0;
-  const base = join(tmpdir(), `gsd-stuck-plan-l2-${randomUUID()}`);
-  t.after(() => {
-    closeDatabase();
-    rmSync(base, { recursive: true, force: true });
-  });
-
-  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
-  const tasksDir = join(sliceDir, "tasks");
-  mkdirSync(tasksDir, { recursive: true });
-  openDatabase(join(base, ".gsd", "gsd.db"));
-  insertMilestone({ id: "M001", title: "Test", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
-  insertTask({ id: "T01", milestoneId: "M001", sliceId: "S01", title: "First task", status: "pending" });
-  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01\n\n## Tasks\n\n- [ ] **T01: First task** `est:1h`\n");
-  writeFileSync(join(tasksDir, "T01-PLAN.md"), "# T01 Plan\n");
-
-  const deps = makeMockDeps(capture, {
-    invalidateAllCaches: () => { invalidateCalls++; },
-    stopAuto: async () => { stopCalls++; },
-    resolveDispatch: async () => ({
-      action: "dispatch" as const,
-      unitType: "plan-slice",
-      unitId: "M001/S01",
-      prompt: "plan the slice",
-      matchedRule: "planning → plan-slice",
-    }),
-  });
-  const ic = makeIC(deps, {
-    s: {
-      ...makeSession(),
-      basePath: base,
-      originalBasePath: base,
-    } as any,
-  });
-  const preData: PreDispatchData = {
-    state: {
-      phase: "planning",
-      activeMilestone: { id: "M001", title: "Test", status: "active" },
-      activeSlice: { id: "S01", title: "Slice" },
-      registry: [{ id: "M001", status: "active" }],
-      blockers: [],
-    } as any,
-    mid: "M001",
-    midTitle: "Test Milestone",
-  };
-  const loopState: LoopState = {
-    recentUnits: [
-      { key: "plan-slice/M001/S01" },
-      { key: "plan-slice/M001/S01" },
-    ],
-    stuckRecoveryAttempts: 1,
-    consecutiveFinalizeTimeouts: 0,
-  };
-
-  const result = await runDispatch(ic, preData, loopState);
-
-  assert.equal(result.action, "continue");
-  assert.equal(invalidateCalls, 1, "Level 2 escape should invalidate caches before rechecking artifacts");
-  assert.equal(stopCalls, 0, "verified artifacts should escape Level 2 hard stop");
-  assert.deepEqual(loopState.recentUnits, [], "Level 2 artifact escape should clear the stuck window");
-  assert.equal(loopState.stuckRecoveryAttempts, 1, "Level 2 artifact escape should preserve the recovery counter");
 });
 
 test("runUnitPhase emits unit-start and unit-end with causedBy reference", async () => {
@@ -854,7 +405,7 @@ test("runUnitPhase emits unit-start and unit-end with causedBy reference", async
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   // Start runUnitPhase (it will block on runUnit internally)
   const unitPromise = runUnitPhase(ic, iterData, loopState);
@@ -908,7 +459,7 @@ test("runUnitPhase increments unitDispatchCount for repeated artifact-missing re
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const firstRun = runUnitPhase(ic, iterData, loopState);
   await new Promise(r => setTimeout(r, 50));
@@ -952,7 +503,7 @@ test("runUnitPhase pre-dispatch model validation failures do not emit unit-start
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   await assert.rejects(() => runUnitPhase(ic, iterData, loopState), ModelPolicyDispatchBlockedError);
   await assert.rejects(() => runUnitPhase(ic, iterData, loopState), ModelPolicyDispatchBlockedError);
@@ -989,7 +540,7 @@ test("all events from a mock iteration have monotonically increasing seq and sam
     mid: "M001",
     midTitle: "Test",
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
   const dispatchResult = await runDispatch(ic, preData, loopState);
   assert.equal(dispatchResult.action, "next");
 
@@ -1035,7 +586,7 @@ test("dispatch-match events include matchedRule field matching the rule name", a
     midTitle: "Test",
   };
 
-  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 });
+  await runDispatch(ic, preData, { consecutiveFinalizeTimeouts: 0 });
 
   const matchEvents = capture.events.filter(e => e.eventType === "dispatch-match");
   assert.equal(matchEvents.length, 1);
@@ -1064,7 +615,7 @@ test("pre-dispatch-hook event is emitted when hooks fire", async () => {
     midTitle: "Test",
   };
 
-  await runDispatch(ic, preData, { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 });
+  await runDispatch(ic, preData, { consecutiveFinalizeTimeouts: 0 });
 
   const hookEvents = capture.events.filter(e => e.eventType === "pre-dispatch-hook");
   assert.equal(hookEvents.length, 1, "should emit one pre-dispatch-hook event");
@@ -1086,7 +637,7 @@ test("terminal event is emitted on milestone-complete", async () => {
     }) as any,
   });
   const ic = makeIC(deps);
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const result = await runPreDispatch(ic, loopState);
   assert.equal(result.action, "break");
@@ -1110,7 +661,7 @@ test("terminal event is emitted on blocked state", async () => {
     }) as any,
   });
   const ic = makeIC(deps);
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const result = await runPreDispatch(ic, loopState);
   assert.equal(result.action, "break");
@@ -1165,8 +716,6 @@ test("#4671: plan-v2 missing CONTEXT.md reaches dispatch recovery instead of pau
     ic.s.basePath = basePath;
 
     const result = await runPreDispatch(ic, {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     });
 
@@ -1226,8 +775,6 @@ test("plan-v2 empty graph rederives state before pausing", async () => {
     ic.s.basePath = basePath;
 
     const result = await runPreDispatch(ic, {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     });
 
@@ -1277,8 +824,6 @@ test("plan-v2 empty graph pauses after one failed rederive", async () => {
     ic.s.basePath = basePath;
 
     const result = await runPreDispatch(ic, {
-      recentUnits: [],
-      stuckRecoveryAttempts: 0,
       consecutiveFinalizeTimeouts: 0,
     });
 
@@ -1313,7 +858,7 @@ test("milestone-transition event is emitted when milestone changes", async () =>
   });
   // Session says current milestone is M001, but state will return M002
   ic.s.currentMilestoneId = "M001";
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   await runPreDispatch(ic, loopState);
 
@@ -1351,7 +896,7 @@ test("unit-end event contains errorContext when unit is cancelled with structure
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const unitPromise = runUnitPhase(ic, iterData, loopState);
   await new Promise(r => setTimeout(r, 50));
@@ -1365,12 +910,6 @@ test("unit-end event contains errorContext when unit is cancelled with structure
   assert.equal((result as any).reason, "unit-hard-timeout");
   assert.equal(pauseCalls, 1, "timeout cancellations should pause auto-mode exactly once");
   assert.equal(commitCalls, 1, "timeout cancellations should flush a unit auto-commit once");
-
-  // Verify error classification used structured errorContext on the window entry
-  const entry = loopState.recentUnits[loopState.recentUnits.length - 1];
-  assert.ok(entry.error, "window entry must have error set");
-  assert.ok(entry.error!.startsWith("timeout:"), "error must start with category from errorContext");
-  assert.ok(entry.error!.includes("Hard timeout error"), "error must include the errorContext message");
 
   const endEvents = capture.events.filter(e => e.eventType === "unit-end");
   assert.equal(endEvents.length, 1, "timeout cancellations should still emit unit-end");
@@ -1408,7 +947,7 @@ test("session-failed cancellations close out and emit unit-end before hard stop"
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T01" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const unitPromise = runUnitPhase(ic, iterData, loopState);
   await new Promise(r => setTimeout(r, 50));
@@ -1461,7 +1000,7 @@ test("runFinalize pauses and emits unit-end when pre-verification times out", as
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const originalSetTimeout = globalThis.setTimeout;
   try {
@@ -1510,7 +1049,7 @@ test("transient session-failed cancellations pause instead of hard-stopping", as
     isRetry: false,
     previousTier: undefined,
   };
-  const loopState: LoopState = { recentUnits: [{ key: "execute-task/M001/S01/T02" }], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };
+  const loopState: LoopState = { consecutiveFinalizeTimeouts: 0 };
 
   const unitPromise = runUnitPhase(ic, iterData, loopState);
   await new Promise(r => setTimeout(r, 50));
@@ -1521,7 +1060,4 @@ test("transient session-failed cancellations pause instead of hard-stopping", as
   assert.equal(result.action, "break");
   assert.equal((result as any).reason, "session-timeout");
 
-  const entry = loopState.recentUnits[loopState.recentUnits.length - 1];
-  assert.ok(entry.error, "window entry must have error set");
-  assert.ok(entry.error!.startsWith("session-failed:"), "error must preserve the session-failed category");
 });

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -49,7 +49,7 @@ test("prompt golden fixtures meet Phase 2 reduction gate", async (t) => {
   let baselineChars = 0;
   let currentChars = 0;
   for (const fixture of promptGoldenUnits) {
-    const chars = prompts[fixture.unitType].length;
+    const chars = normalizeFixtureRoot(prompts[fixture.unitType], base).length;
     baselineChars += fixture.phase2StartChars;
     currentChars += chars;
     assert.ok(
@@ -80,6 +80,20 @@ function promptMetric(prompt: string): { chars: number; bytes: number; lines: nu
     lines: prompt.length === 0 ? 0 : prompt.split(/\r\n|\r|\n/).length,
     sha256: createHash("sha256").update(prompt).digest("hex"),
   };
+}
+
+// The rendered prompts embed the fixture root's absolute path, whose length is
+// platform-dependent (Linux `/tmp/...` vs macOS `/var/folders/<hash>/T/...`).
+// Collapse it to a fixed placeholder so the size gate measures prompt content only.
+const FIXTURE_ROOT_PLACEHOLDER = "/gsd-fixture-root";
+
+function normalizeFixtureRoot(prompt: string, base: string): string {
+  const roots = new Set([base, realpathSync(base)]);
+  let normalized = prompt;
+  for (const root of roots) {
+    normalized = normalized.split(root).join(FIXTURE_ROOT_PLACEHOLDER);
+  }
+  return normalized;
 }
 
 async function loadPromptBuilders(base: string): Promise<{

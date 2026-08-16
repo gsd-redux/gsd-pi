@@ -24,6 +24,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import type { PreExecutionCheckJSON } from "./verification-evidence.ts";
 import { validateVerificationCommand } from "./verification-gate.js";
+import { isClosedStatus } from "./status-guards.js";
 import { FRAMEWORK_METADATA_DIRS, PLANNING_ARTIFACT_NAME_RE } from "./paths.js";
 
 const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -91,6 +92,13 @@ export function checkVerificationCommands(tasks: TaskRow[]): PreExecutionCheckJS
   const results: PreExecutionCheckJSON[] = [];
 
   for (const task of tasks) {
+    // Terminal tasks (complete/done/skipped/closed) never execute, so their
+    // verify commands are irrelevant to upcoming execution. Flagging them
+    // corners the re-dispatched plan-slice unit: gsd_plan_task refuses
+    // terminal tasks and gsd_task_reopen is outside its tool contract, so the
+    // demanded repair is impossible and the retry loop burns out (#1615).
+    if (isClosedStatus(task.status)) continue;
+
     const verify = task.verify.trim();
     if (!verify) continue;
 

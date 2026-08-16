@@ -65,6 +65,20 @@ export function isClosedStatus(status: string): boolean {
   return RAW_CLOSED_SET.has(status);
 }
 
+/**
+ * Returns true when a slice is omitted from the rendered ROADMAP projection.
+ *
+ * #1623: `renderRoadmapFromDb` drops skipped slices, but roadmap-divergence
+ * detection treated them as "ready" (because `isClosedStatus("skipped")` is
+ * true) and therefore expected them to appear in ROADMAP.md. A skipped slice
+ * then produced permanent drift: re-rendering could never add a row the
+ * renderer deliberately omits, so `/gsd auto` paused with "drift persisted
+ * after cap=2 passes". Both sides now share this single predicate.
+ */
+export function isHiddenFromRoadmap(status: string): boolean {
+  return status === "skipped";
+}
+
 /** Returns true when a slice status indicates it was deferred by a decision. */
 export function isDeferredStatus(status: string): boolean {
   return status === "deferred";

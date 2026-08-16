@@ -1,14 +1,16 @@
 // Project/App: gsd-pi
 // File Purpose: gsd-core ↔ gsd-pi compatibility marker (`.gsd/.compat.json`).
 //
-// Records per-projection content hashes so the ADR-017 reconcile pipeline can
-// distinguish gsd-pi's own writes (expected) from external edits made by gsd-core
-// (drift to import). gsd-core is oblivious to this file and ignores it.
+// Records per-projection content hashes so the Projection Worker can distinguish
+// gsd-pi's own writes from external edits whose exact bytes must be preserved.
+// gsd-core is oblivious to this file and ignores it.
 
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join, isAbsolute, normalize, relative, resolve } from "node:path";
+import { dirname, join, isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteSync } from "../atomic-write.js";
+import { computeProjectionSha } from "../projection-content-hash.js";
+import { isSafeProjectionKey, isValidCompatMarker } from "./compat-marker-validation.js";
+export { computeProjectionSha, normalizeForHash } from "../projection-content-hash.js";
 
 /** Current marker schema version. Bump on breaking format changes + migrate. */
 export const COMPAT_MARKER_SCHEMA = 2;
@@ -22,9 +24,9 @@ export type PlanningLayout = "flat-phases" | "multi-milestone" | "legacy-milesto
 
 /**
  * `.planning/` projection tracking. `projections` are modeled files (roadmap,
- * plans, summaries, state) that get re-imported on drift; `passthrough` are
- * un-modeled docs (DISCUSSION-LOG, PATTERNS, REVIEWS, codebase/) that get sha-
- * refreshed only — content never re-rendered.
+ * plans, summaries, state) whose external bytes are preserved before a DB-backed
+ * rebuild; `passthrough` are un-modeled docs (DISCUSSION-LOG, PATTERNS, REVIEWS,
+ * codebase/) that get sha-refreshed only — content is never re-rendered.
  */
 export interface PlanningMarker {
   active: boolean;
@@ -35,10 +37,8 @@ export interface PlanningMarker {
 
 /**
  * Per-file projection entry. `sha` is a normalized-content SHA-256; `entities`
- * is the list of DB entity ids (milestone/slice/task) that the file projects.
- * External-edit repair derives milestone ids from this list so markdown status
- * authority is limited to the drifted projection's milestone scope while the
- * importer still walks the whole tree.
+ * is the list of DB entity ids (milestone/slice/task) that the file projects,
+ * retained as typed scope evidence when an external edit is observed.
  */
 export interface ProjectionEntry {
   sha: string;
@@ -81,14 +81,6 @@ export function compatMarkerPath(basePath: string): string {
  * whitespace, CRLF) don't produce false-positive drift. Conservative: only
  * transforms that are provably round-trippable through gsd-pi's projection.
  */
-export function normalizeForHash(content: string): string {
-  return content.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n");
-}
-
-export function computeProjectionSha(content: string): string {
-  return createHash("sha256").update(normalizeForHash(content)).digest("hex").slice(0, 16);
-}
-
 function normalizeRealPath(p: string): string {
   try {
     return realpathSync.native(p);
@@ -121,11 +113,11 @@ export function deriveCompatProjectionKey(absPath: string, roots: readonly strin
 }
 
 /**
- * Read & validate the marker. A missing marker → EMPTY_MARKER (treat every
- * projection as external on next reconcile). A malformed marker is quarantined
+ * Read and validate the marker. A missing marker returns EMPTY_MARKER so future
+ * projection writes can establish baselines. A malformed marker is quarantined
  * to `.compat.json.bad-<ts>` (never overwrite without backup) then returns
- * EMPTY_MARKER. A schema-mismatch returns EMPTY_MARKER (forward-compat: refuse
- * to act on a future format we don't understand).
+ * EMPTY_MARKER. A schema mismatch returns EMPTY_MARKER (forward compatibility:
+ * refuse to act on a future format we don't understand).
  */
 export function readCompatMarker(
   basePath: string,
@@ -151,18 +143,18 @@ export function readCompatMarker(
     return emptyMarker();
   }
 
-  if (healInvalidKeys && healMarkerProjectionKeys(basePath, parsed) && isValidMarker(parsed)) {
+  if (healInvalidKeys && healMarkerProjectionKeys(basePath, parsed) && isValidCompatMarker(parsed)) {
     writeCompatMarker(basePath, parsed);
   }
 
-  if (!isValidMarker(parsed)) {
+  if (!isValidCompatMarker(parsed)) {
     if (quarantineInvalid) quarantine(basePath, raw);
     return emptyMarker();
   }
   // Promote older markers by defaulting absent fields. Schema 1 → 2 only adds
   // the optional `planning` field; treat its absence as planning-inactive so
   // existing PR #802 users upgrade transparently. (A future schema 3 would
-  // need an explicit migration here; for now anything that passes isValidMarker
+  // need an explicit migration here; for now anything that passes validation
   // is safe to read.)
   if (!parsed.planning) {
     parsed.planning = { active: false, layout: null, projections: {}, passthrough: {} };
@@ -193,6 +185,23 @@ function emptyMarker(): CompatMarker {
 export function writeCompatMarker(basePath: string, marker: CompatMarker): void {
   const path = compatMarkerPath(basePath);
   atomicWriteSync(path, JSON.stringify(marker, null, 2));
+}
+
+export function recordCompatProjectionWrite(
+  basePath: string,
+  filePath: string,
+  content: string,
+  entities: string[],
+): void {
+  const projectionPath = deriveCompatProjectionKey(filePath, [join(basePath, ".gsd")]);
+  const marker = readCompatMarker(basePath);
+  marker.projections[projectionPath] = {
+    sha: computeProjectionSha(content),
+    entities,
+  };
+  marker.lastWriter = "gsd-pi";
+  marker.lastProjectedAt = new Date().toISOString();
+  writeCompatMarker(basePath, marker);
 }
 
 /**
@@ -259,37 +268,6 @@ function quarantine(basePath: string, raw: string): void {
   }
 }
 
-function isValidProjectionEntry(x: unknown): x is ProjectionEntry {
-  if (typeof x !== "object" || x === null) return false;
-  const e = x as Record<string, unknown>;
-  if (typeof e.sha !== "string") return false;
-  if (!Array.isArray(e.entities) || !e.entities.every((s) => typeof s === "string")) return false;
-  return true;
-}
-
-/**
- * Projection-map keys are repo-relative paths under .gsd/ or .planning/.
- * The marker is repo-controlled content, so a key must never escape its
- * root: reject absolute paths, drive letters, backslashes, and any
- * normalized form that starts with "..". Mirrors the write-side guard in
- * db-writer.ts.
- */
-function isSafeProjectionKey(key: string): boolean {
-  if (key.length === 0 || key.includes("\\") || key.includes("\0")) return false;
-  if (isAbsolute(key) || /^[A-Za-z]:/.test(key)) return false;
-  const norm = normalize(key);
-  return norm !== ".." && !norm.startsWith("../") && !isAbsolute(norm);
-}
-
-function isValidProjectionMap(x: unknown): boolean {
-  if (typeof x !== "object" || x === null) return false;
-  for (const [k, v] of Object.entries(x as Record<string, unknown>)) {
-    if (!isSafeProjectionKey(k)) return false;
-    if (!isValidProjectionEntry(v)) return false;
-  }
-  return true;
-}
-
 function healMarkerProjectionKeys(basePath: string, marker: unknown): marker is CompatMarker {
   if (typeof marker !== "object" || marker === null) return false;
   const m = marker as Record<string, unknown>;
@@ -335,32 +313,4 @@ function healProjectionMapKeys(
   }
 
   return changed;
-}
-
-function isValidPlanningMarker(x: unknown): x is PlanningMarker {
-  if (typeof x !== "object" || x === null) return false;
-  const p = x as Record<string, unknown>;
-  if (typeof p.active !== "boolean") return false;
-  if (
-    p.layout !== null &&
-    !["flat-phases", "multi-milestone", "legacy-milestone-dir"].includes(p.layout as string)
-  ) {
-    return false;
-  }
-  if (!isValidProjectionMap(p.projections)) return false;
-  if (!isValidProjectionMap(p.passthrough)) return false;
-  return true;
-}
-
-function isValidMarker(x: unknown): x is CompatMarker {
-  if (typeof x !== "object" || x === null) return false;
-  const m = x as Record<string, unknown>;
-  if (m.lastWriter !== "gsd-pi") return false;
-  if (typeof m.schema !== "number") return false;
-  if (typeof m.lastProjectedAt !== "string") return false;
-  if (typeof m.piVersion !== "string") return false;
-  if (!isValidProjectionMap(m.projections)) return false;
-  // planning is optional; when present, must validate.
-  if (m.planning !== undefined && !isValidPlanningMarker(m.planning)) return false;
-  return true;
 }

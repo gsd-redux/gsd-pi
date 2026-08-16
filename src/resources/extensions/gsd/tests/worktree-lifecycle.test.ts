@@ -16,7 +16,7 @@ import {
 } from "../worktree-lifecycle.js";
 import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import { AutoSession } from "../auto/session.js";
-import { openDatabase, closeDatabase, insertMilestone } from "../gsd-db.js";
+import { openDatabase, closeDatabase, insertMilestone, _getAdapter } from "../gsd-db.js";
 import { registerAutoWorker } from "../db/auto-workers.js";
 import { claimMilestoneLease } from "../db/milestone-leases.js";
 
@@ -88,6 +88,7 @@ function makeDeps(
  */
 function makeGitRepoBase(opts?: {
   isolation?: "worktree" | "branch" | "none";
+  unborn?: boolean;
 }): string {
   const base = realpathSync(mkdtempSync(join(tmpdir(), "gsd-lifecycle-git-")));
   const git = (args: string[]): void => {
@@ -105,8 +106,10 @@ function makeGitRepoBase(opts?: {
       `## Git\n- isolation: ${opts.isolation}\n`,
     );
   }
-  git(["add", "."]);
-  git(["commit", "-m", "init"]);
+  if (!opts?.unborn) {
+    git(["add", "."]);
+    git(["commit", "-m", "init"]);
+  }
   return base;
 }
 
@@ -277,9 +280,65 @@ test("enterMilestone honors stranded branch recovery instead of recreating the w
   );
 });
 
-test("enterMilestone returns ok:false reason:isolation-degraded when session degraded", () => {
-  const s = makeSession({ isolationDegraded: true });
-  const deps = makeDeps({ getIsolationMode: () => "branch" });
+test("enterMilestone retries branch isolation when session is degraded", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "branch" });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+
+  const s = makeSession({
+    basePath: base,
+    originalBasePath: base,
+    isolationDegraded: true,
+  });
+  const deps = makeDeps();
+  const ctx = makeCtx();
+  const lifecycle = new WorktreeLifecycle(s, deps);
+
+  const result = lifecycle.enterMilestone("M001", ctx);
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.mode, "branch");
+    assert.equal(result.path, base);
+  }
+  assert.equal(s.isolationDegraded, false);
+  assert.equal(s.basePath, base);
+  assert.equal(s.milestoneLeaseToken, null);
+});
+
+test("enterMilestone enters branch isolation in a zero-commit repository (#1688)", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "branch", unborn: true });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+
+  const s = makeSession({ basePath: base, originalBasePath: base });
+  const lifecycle = new WorktreeLifecycle(s, makeDeps());
+
+  const result = lifecycle.enterMilestone("M001", makeCtx());
+
+  assert.equal(result.ok, true);
+  assert.equal(
+    execFileSync("git", ["branch", "--show-current"], { cwd: base, encoding: "utf8" }).trim(),
+    "milestone/M001",
+  );
+  assert.throws(
+    () => execFileSync("git", ["rev-parse", "--verify", "HEAD"], { cwd: base, stdio: "pipe" }),
+    "branch entry must not fabricate a commit",
+  );
+});
+
+test("enterMilestone remains degraded when branch isolation retry fails", (t) => {
+  const previousCwd = process.cwd();
+  const base = makeGitRepoBase({ isolation: "branch" });
+  t.after(() => cleanupRepoBase(base, previousCwd));
+  rmSync(join(base, ".git"), { recursive: true, force: true });
+
+  const s = makeSession({
+    basePath: base,
+    originalBasePath: base,
+    isolationDegraded: true,
+  });
+  const deps = makeDeps();
   const ctx = makeCtx();
   const lifecycle = new WorktreeLifecycle(s, deps);
 
@@ -289,8 +348,7 @@ test("enterMilestone returns ok:false reason:isolation-degraded when session deg
   if (!result.ok) {
     assert.equal(result.reason, "isolation-degraded");
   }
-  assert.equal(s.basePath, "/project");
-  assert.equal(s.milestoneLeaseToken, null);
+  assert.equal(s.isolationDegraded, true);
 });
 
 test("enterMilestone falls back to branch mode when session is degraded in worktree isolation", (t) => {
@@ -414,6 +472,8 @@ test("enterMilestone returns ok:false reason:lease-conflict when another worker 
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   const holder = registerAutoWorker({ projectRootRealpath: base });
   const contender = registerAutoWorker({ projectRootRealpath: join(base, "other-project") });
+  _getAdapter()!.prepare("UPDATE workers SET pid = :pid WHERE worker_id = :worker_id")
+    .run({ ":pid": process.pid + 1, ":worker_id": contender });
   const claim = claimMilestoneLease(holder, "M001");
   assert.equal(claim.ok, true);
 

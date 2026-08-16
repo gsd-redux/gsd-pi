@@ -56,3 +56,47 @@ test("built-in verification retries a replayed authorized abort", () => {
 
 	assert.equal(outcome, "retry");
 });
+
+test("terminal abort surfaces its recoveryActionId to the caller (#1593)", () => {
+	const surfaced: string[] = [];
+	const outcome = _routeHostTechnicalFailureForTest({
+		routeTaskFailure: () => ({
+			action: "abort",
+			status: "applied",
+			resumeAuthorized: false,
+			recoveryActionId: "8f1d0c2e-6a44-4b19-9e77-2c3d5f0a1b62",
+		}),
+	} as never, {
+		attemptId: "attempt-1",
+		resultId: "result-1",
+	} as never, {
+		verdictId: "verdict-1",
+		evidenceId: "evidence-1",
+		verdict: "fail",
+	}, "verification-failed", (id) => surfaced.push(id));
+
+	assert.equal(outcome, "abort");
+	assert.deepEqual(surfaced, ["8f1d0c2e-6a44-4b19-9e77-2c3d5f0a1b62"]);
+});
+
+test("a replayed authorized abort does not surface a recoveryActionId (#1593)", () => {
+	const surfaced: string[] = [];
+	const outcome = _routeHostTechnicalFailureForTest({
+		routeTaskFailure: () => ({
+			action: "abort",
+			status: "replayed",
+			resumeAuthorized: true,
+			recoveryActionId: "8f1d0c2e-6a44-4b19-9e77-2c3d5f0a1b62",
+		}),
+	} as never, {
+		attemptId: "attempt-1",
+		resultId: "result-1",
+	} as never, {
+		verdictId: "verdict-1",
+		evidenceId: "evidence-1",
+		verdict: "fail",
+	}, "verification-failed", (id) => surfaced.push(id));
+
+	assert.equal(outcome, "retry");
+	assert.deepEqual(surfaced, []);
+});

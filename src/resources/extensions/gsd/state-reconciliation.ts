@@ -15,6 +15,7 @@ export type {
   DriftRecord,
   ReconciliationDeps,
   ReconciliationFailureDetail,
+  ReconciliationBlockerDetail,
   ReconciliationResult,
 } from "./state-reconciliation/index.js";
 

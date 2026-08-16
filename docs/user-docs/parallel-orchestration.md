@@ -89,7 +89,7 @@ Workers and the coordinator communicate through DB-backed coordination tables in
 - **`unit_dispatches`** — dispatch ledger that records claim, running, completed, failed, stuck, canceled, and retry timing state per unit
 - **`command_queue`** — targeted or broadcast control commands claimed atomically by workers
 
-If a worker stops heartbeating, its lease can expire and another worker can safely take over the milestone. Retry-aware stuck detection also consults the dispatch ledger so a unit waiting for `next_run_at` is not misclassified as stuck.
+If a worker stops heartbeating, its lease can expire and another worker can safely take over the milestone. Dispatch claiming respects the ledger's `next_run_at` retry schedule; repeated non-advancing claim outcomes are adjudicated separately by the DB-persisted liveness backstop.
 
 This model assumes local-disk locking semantics. Do not place the project on NFS/SMB/FUSE-style mounts or try to share `.gsd/gsd.db*` across hosts.
 

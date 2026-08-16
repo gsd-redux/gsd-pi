@@ -228,21 +228,20 @@ export async function writePlanningDirectory(
           const task = tasks[ti]!;
           const planNum = ti + 1;
           const planPath = join(phaseDir, `${pad(phaseNum)}-${pad(planNum)}-PLAN.md`);
-          await saveFile(
-            planPath,
-            formatPlanningPlan(phaseNum, planNum, task.title || task.id, [
-              {
-                id: task.id,
-                title: task.title || task.id,
-                estimate: task.estimate || undefined,
-                done: isClosedStatus(task.status),
-              },
-            ]),
-          );
+          const planContent = formatPlanningPlan(phaseNum, planNum, task.title || task.id, [
+            {
+              id: task.id,
+              title: task.title || task.id,
+              estimate: task.estimate || undefined,
+              done: isClosedStatus(task.status),
+            },
+          ]);
+          await saveFile(planPath, planContent);
           paths.push(planPath);
           projectionWrites.push({
             relPath: toPlanningRel(planPath),
             entities: [`${milestone.id}/${slice.id}/${task.id}`],
+            sha: computeProjectionSha(planContent),
           });
         }
       }
@@ -263,23 +262,35 @@ export async function writePlanningDirectory(
   // Root files
   const milestoneEntities = milestones.map((m) => m.id);
   const roadmapPath = join(root, "ROADMAP.md");
-  await saveFile(roadmapPath, formatPlanningRoadmapFlat(roadmapEntries));
+  const roadmapContent = formatPlanningRoadmapFlat(roadmapEntries);
+  await saveFile(roadmapPath, roadmapContent);
   paths.push(roadmapPath);
-  projectionWrites.push({ relPath: toPlanningRel(roadmapPath), entities: milestoneEntities });
+  projectionWrites.push({
+    relPath: toPlanningRel(roadmapPath),
+    entities: milestoneEntities,
+    sha: computeProjectionSha(roadmapContent),
+  });
 
   const completedPhases = roadmapEntries.filter((e) => e.done).length;
   const statePath = join(root, "STATE.md");
-  await saveFile(
-    statePath,
-    formatPlanningState(milestones[0]!.id, roadmapEntries.length, completedPhases),
-  );
+  const stateContent = formatPlanningState(milestones[0]!.id, roadmapEntries.length, completedPhases);
+  await saveFile(statePath, stateContent);
   paths.push(statePath);
-  projectionWrites.push({ relPath: toPlanningRel(statePath), entities: [milestones[0]!.id] });
+  projectionWrites.push({
+    relPath: toPlanningRel(statePath),
+    entities: [milestones[0]!.id],
+    sha: computeProjectionSha(stateContent),
+  });
 
   const projectPath = join(root, "PROJECT.md");
-  await saveFile(projectPath, formatPlanningProject(milestones[0]!.title || milestones[0]!.id));
+  const projectContent = formatPlanningProject(milestones[0]!.title || milestones[0]!.id);
+  await saveFile(projectPath, projectContent);
   paths.push(projectPath);
-  projectionWrites.push({ relPath: toPlanningRel(projectPath), entities: [milestones[0]!.id] });
+  projectionWrites.push({
+    relPath: toPlanningRel(projectPath),
+    entities: [milestones[0]!.id],
+    sha: computeProjectionSha(projectContent),
+  });
 
   removeObsoletePlanningProjections(
     basePath,

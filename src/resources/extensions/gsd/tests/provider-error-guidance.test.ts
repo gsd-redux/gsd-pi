@@ -45,6 +45,14 @@ test("classifyError: xAI grammar limit is model-error", () => {
   assert.equal(result.kind, "model-error");
 });
 
+test("classifyError: Anthropic cache_control.ttl ordering 400 is model-error (#1709)", () => {
+  const result = classifyError(
+    "API Error: 400 messages.16.content.0.cache_control.ttl: a ttl='1h' cache_control block must not come after a ttl='5m' cache_control block. Note that blocks are processed in the following order: `tools`, `system`, `messages`.",
+  );
+  assert.equal(result.kind, "model-error");
+  assert.equal(isTransient(result), false);
+});
+
 test("classifyError: context window 400 stays server (transient)", () => {
   const result = classifyError("400 invalid params, context window exceeds limit (2013)");
   assert.equal(result.kind, "server");

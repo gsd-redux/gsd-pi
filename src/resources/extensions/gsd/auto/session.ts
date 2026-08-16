@@ -68,6 +68,7 @@ export interface PendingOrchestrationDispatch {
   state: import("../types.js").GSDState;
   mid: string | undefined;
   midTitle: string | undefined;
+  dispatchId?: number;
 }
 
 /**
@@ -156,6 +157,7 @@ export class AutoSession {
 
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
+  unitExecutionInFlight = false;
   currentTraceId: string | null = null;
   currentTurnId: string | null = null;
   currentUnitRouting: UnitRouting | null = null;
@@ -181,6 +183,19 @@ export class AutoSession {
   // ── Recovery ─────────────────────────────────────────────────────────────
   pendingCrashRecovery: string | null = null;
   pendingVerificationRetry: PendingVerificationRetry | null = null;
+  /**
+   * recoveryActionId of the terminal agent-owned abort minted by the last host
+   * verification pass. It is the only key `gsd_task_recovery_resume` accepts, so
+   * finalize prints it in the `verification-abort` break reason (#1593).
+   */
+  lastTaskRecoveryAbortId: string | null = null;
+  /**
+   * Recovery action minted when the safety evidence cross-reference blocked an
+   * execute-task unit (#1641 / #1649). Finalize prints it in the
+   * `safety-evidence-block` break reason so the sanctioned exit reaches the
+   * journal, the dispatch ledger, and the operator.
+   */
+  lastSafetyBlockRecovery: { recoveryActionId?: string; resumeInstruction: string } | null = null;
   readonly verificationRetryCount = new Map<string, number>();
   readonly verificationRetryFailureHashes = new Map<string, string>();
   readonly exhaustedVerificationUnits = new Set<string>();
@@ -379,6 +394,7 @@ export class AutoSession {
 
     // Unit
     this.clearCurrentUnit();
+    this.unitExecutionInFlight = false;
     this.toolSurfaceSnapshot = null;
     this.currentTraceId = null;
     this.currentTurnId = null;
@@ -399,6 +415,8 @@ export class AutoSession {
     // Recovery
     this.pendingCrashRecovery = null;
     this.pendingVerificationRetry = null;
+    this.lastTaskRecoveryAbortId = null;
+    this.lastSafetyBlockRecovery = null;
     this.verificationRetryCount.clear();
     this.verificationRetryFailureHashes.clear();
     this.exhaustedVerificationUnits.clear();

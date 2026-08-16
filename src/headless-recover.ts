@@ -86,7 +86,7 @@ async function loadExtensionModules() {
     throw new Error('selected GSD extensions do not support recovery choice tokens; synchronize the extension bundle')
   }
   return {
-    openWorkflowDatabase: openWorkflowDatabase as (basePath: string) => { ok: boolean },
+    openWorkflowDatabase: openWorkflowDatabase as (basePath: string) => { ok: boolean; reason?: string; error?: Error },
     closeWorkflowDatabase: closeWorkflowDatabase as () => void,
     prepareVerifiedRecoverApplication: prepareVerifiedRecoverApplication as PrepareVerifiedRecoverApplication,
     applyPreparedVerifiedRecoverApplication: applyPreparedVerifiedRecoverApplication as ApplyPreparedVerifiedRecoverApplication,
@@ -198,7 +198,13 @@ export async function handleRecover(
   }
   const opened = modules.openWorkflowDatabase(basePath)
   if (!opened.ok) {
-    process.stderr.write(`[headless] recover: failed to open or create the GSD database at ${basePath}\n`)
+    // Refuse-newer version skew forwards the exact engine message (T003 spike,
+    // mandate 3); every other open failure keeps the generic message.
+    if (opened.reason === 'schema-too-new' && opened.error instanceof Error) {
+      process.stderr.write(`[headless] recover: ${opened.error.message}\n`)
+    } else {
+      process.stderr.write(`[headless] recover: failed to open or create the GSD database at ${basePath}\n`)
+    }
     return { exitCode: 1 }
   }
   try {

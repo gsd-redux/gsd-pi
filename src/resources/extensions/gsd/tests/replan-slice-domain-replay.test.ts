@@ -202,6 +202,36 @@ test("slice replan exact retry replays once and changed reuse conflicts without 
   }
 });
 
+test("slice replan restores its pending Q8 companion gate", async (t) => {
+  const base = makeBase();
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+  await seedPlannedSlice(base);
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  adapter.prepare(`
+    DELETE FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S01'
+      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
+  `).run();
+
+  const result = await handleReplanSlice(
+    replanParams(),
+    base,
+    invocation("replan-slice/restore-q8"),
+  );
+
+  assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+  assert.deepEqual(rows(`
+    SELECT gate_id, scope, status
+    FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S01'
+      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
+  `), [{ gate_id: "Q8", scope: "slice", status: "pending" }]);
+});
+
 test("slice replan retry preserves a newer durable replan projection", async () => {
   const base = makeBase();
   try {

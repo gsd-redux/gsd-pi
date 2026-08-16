@@ -1,8 +1,7 @@
 // gsd-pi + scripts/verify-workspace-dist.cjs
 // Fails the release when any publishable workspace package lacks build output.
 // npm publish --ignore-scripts skips per-package builds, so an unwired package
-// otherwise publishes as bin+README only (this shipped @opengsd/gsd-cloud
-// 1.7.0-1.8.1 broken — 3 files, no dist/).
+// otherwise publishes as bin+README only.
 const { execFileSync } = require('node:child_process')
 const { existsSync, readdirSync } = require('node:fs')
 const { join } = require('node:path')

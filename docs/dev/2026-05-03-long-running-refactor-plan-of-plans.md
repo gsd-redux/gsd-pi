@@ -743,3 +743,38 @@ Parallel work is allowed only inside a phase when file ownership is disjoint and
 - App-surface convergence is either completed in a dedicated Phase 6 stack or explicitly deferred from the SRC-first merge.
 - Shipping paths produce one consistent PR evidence format.
 - Legacy paths are removed only after telemetry, tests, and migration notes.
+
+## Closeout — state-DB cutover milestone (2026-08-12)
+
+The state-DB cutover milestone shipped. Live project state is DB-authoritative;
+markdown files are stamped read-only projections. Wave 4 deleted the leftover
+filesystem-state read path (`_deriveStateImpl`, `parsers-legacy.ts`) and the
+ADR-046-timeboxed unadopted import/reconcile witnesses.
+
+**Gate split-retirement:** `gate:semantic-shadow-no-cutover` was split-retired
+into `gate:lifecycle-shadow-no-cutover`, which is part of `verify:pr`. D005
+remains in force for canonical lifecycle read authority. The successor gate
+keeps those invariants; it does not silently reverse D005.
+
+**Evidence-gated deletions (wave 4):** T022 deleted `_deriveStateImpl`; T020
+deleted `parsers-legacy.ts` at zero production importers after renaming the
+relocated parsers to `parseProjection*`; T021 deleted the four timeboxed
+witnesses and the unadopted import/reconcile compatibility branches. The
+legacy-state-path proof is PASS (zero offenders).
+
+**Timebox:** ADR-046 required 2 stable releases + ≥60 days after cutover
+release v1.13.0 (2026-08-08). Subsequent stables v1.14.0 (2026-08-10) and
+v1.15.0 (2026-08-12) satisfied the release count. The remaining calendar days
+(earliest date 2026-10-07) were waived by the project owner on 2026-08-12
+("finish all waves").
+
+**Still deferred, explicitly out of this milestone:**
+
+- Canonical lifecycle read-authority cutover under M003 / D005 (public status
+  responses, disagreement witnesses, park/unpark/discard adoption as lifecycle
+  commands).
+- Phase 5 DB split.
+- Separately sequenced product cleanup.
+
+Those remain INTENT vetoes. This closeout does not authorize them.
+

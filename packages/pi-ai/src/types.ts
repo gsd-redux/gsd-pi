@@ -85,11 +85,18 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+export type ApiKeyProvenance = {
+	type: "oauth";
+	provider: string;
+};
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
+	/** Pass through the provenance returned by getOAuthApiKey() when using OAuth credentials. */
+	apiKeyProvenance?: ApiKeyProvenance;
 	/**
 	 * Preferred transport for providers that support multiple transports.
 	 * Providers that do not support this option ignore it.
@@ -609,7 +616,7 @@ export interface Model<TApi extends Api> {
 	 * Missing keys use provider defaults. null marks a level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image")[];
+	input: ("text" | "image" | "video")[];
 	cost: {
 		input: number; // $/million tokens
 		output: number; // $/million tokens

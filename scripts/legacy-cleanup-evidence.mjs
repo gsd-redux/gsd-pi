@@ -1,16 +1,16 @@
 // Project/App: gsd-pi
-// File Purpose: Runs representative checks and produces Phase 8 legacy cleanup telemetry evidence.
+// File Purpose: Runs representative checks and produces Phase 8 legacy cleanup
+// telemetry evidence. Fails closed — the evidence commands must emit a fresh
+// telemetry report; a missing or stale report is never treated as zero usage.
 
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 
 import {
-  LEGACY_COUNTERS,
   evaluateLegacyCleanupGate,
-  readTelemetryReport,
+  loadTelemetryEvidence,
   renderLegacyCleanupGateSummary,
 } from "./legacy-cleanup-gate.mjs";
+import { collectLegacyStatePathProof, renderLegacyStatePathProofSummary } from "./legacy-state-path-proof.mjs";
 
 export const DEFAULT_EVIDENCE_COMMANDS = [["npm", "run", "baseline:refactor:gate"]];
 
@@ -70,22 +70,6 @@ export function parseCommandSpec(value) {
   return parsed;
 }
 
-export async function ensureTelemetryReport(file) {
-  try {
-    return await readTelemetryReport(file);
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
-
-  const report = {
-    ts: new Date().toISOString(),
-    counters: Object.fromEntries(LEGACY_COUNTERS.map((counter) => [counter, 0])),
-  };
-  await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, `${JSON.stringify(report, null, 2)}\n`, "utf-8");
-  return report;
-}
-
 export async function runEvidenceCommand(command, env) {
   const child = spawn(command[0], command.slice(1), {
     env,
@@ -105,13 +89,16 @@ export async function collectLegacyCleanupEvidence(opts) {
     ...process.env,
     GSD_LEGACY_TELEMETRY_FILE: opts.file,
   };
+  const runStartMs = Date.now();
 
   for (const command of opts.commands) {
     await runEvidenceCommand(command, env);
   }
 
-  const report = await ensureTelemetryReport(opts.file);
-  return evaluateLegacyCleanupGate(report);
+  // Fail closed: the report must have been written by the commands above.
+  const report = await loadTelemetryEvidence(opts.file, { notBeforeMs: runStartMs });
+  const proof = await collectLegacyStatePathProof({ root: opts.proofRoot ?? process.cwd() });
+  return { ...evaluateLegacyCleanupGate(report, proof), proof };
 }
 
 async function main() {
@@ -122,6 +109,7 @@ async function main() {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
       process.stdout.write(renderLegacyCleanupGateSummary(result));
+      process.stdout.write(renderLegacyStatePathProofSummary(result.proof));
     }
     process.exitCode = result.ok ? 0 : 2;
   } catch (error) {

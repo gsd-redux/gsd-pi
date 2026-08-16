@@ -1,19 +1,13 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+import type { Readable } from "node:stream";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 import { safePackageRootFromImportUrl } from "./safe-import-meta-resolve.ts";
-import { LocalTransport, type BridgeTransport, type BridgeTransportCloseInfo } from "./bridge-transport.ts";
-import {
-  CloudTransport,
-  decodeCloudProjectRef,
-  encodeCloudProjectRef,
-  isCloudProjectRef,
-  type CloudProjectRef,
-} from "./cloud-transport.ts";
 
-import type { AgentSessionEvent, SessionStateChangeReason } from "@gsd/agent-core";
+import type { AgentSessionEvent } from "@gsd/agent-core";
 import type {
   RpcCommand,
   RpcExtensionUIRequest,
@@ -39,8 +33,6 @@ import {
   type SessionManageErrorResponse,
   type SessionManageResponse,
 } from "../../web/lib/session-browser-contract.ts";
-import { getCloudSessionFromRequest } from "../../web/lib/cloud-auth.ts";
-import { getCloudModeConfig, isCloudMode } from "../../web/lib/cloud-mode.ts";
 import { authFilePath } from "../app-paths.ts";
 import { getProjectSessionsDir } from "../project-sessions.ts";
 import {
@@ -74,12 +66,14 @@ export function resetDefaultPackageRootForTests(): void {
 
 const RESPONSE_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 150_000;
+const MAX_STDERR_BUFFER = 8_000;
 const WORKSPACE_INDEX_CACHE_TTL_MS = 30_000;
 
 type BridgeLifecyclePhase = "idle" | "starting" | "ready" | "failed";
 type BridgeInput = RpcCommand | RpcExtensionUIResponse;
 type BridgeTerminalCommand = Extract<RpcCommand, { type: "terminal_input" | "terminal_resize" | "terminal_redraw" }>;
 type BridgeTerminalOutputEvent = { type: "terminal_output"; data: string };
+type SessionStateChangeReason = Extract<AgentSessionEvent, { type: "session_state_changed" }>["reason"];
 type BridgeSessionStateChangedEvent = { type: "session_state_changed"; reason: SessionStateChangeReason };
 
 type BridgeCommandFailureResponse = RpcResponse & {
@@ -637,6 +631,12 @@ interface BridgeCliEntry {
   cwd: string;
 }
 
+interface SpawnedRpcChild extends ChildProcess {
+  stdin: NonNullable<ChildProcess["stdin"]>;
+  stdout: NonNullable<ChildProcess["stdout"]>;
+  stderr: NonNullable<ChildProcess["stderr"]>;
+}
+
 interface PendingRpcRequest {
   resolve: (response: RpcResponse) => void;
   reject: (error: Error) => void;
@@ -645,7 +645,7 @@ interface PendingRpcRequest {
 
 interface BridgeServiceDeps {
   spawn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
-  existsSync?: (path: string) => boolean;
+  existsSync?: typeof existsSync;
   execPath?: string;
   env?: NodeJS.ProcessEnv;
   indexWorkspace?: (basePath: string) => Promise<GSDWorkspaceIndex>;
@@ -808,6 +808,45 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function serializeJsonLine(value: unknown): string {
+  return `${JSON.stringify(value)}\n`;
+}
+
+function attachJsonLineReader(stream: Readable, onLine: (line: string) => void): () => void {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+
+  const emitLine = (line: string) => {
+    onLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+  };
+
+  const onData = (chunk: string | Buffer) => {
+    buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);
+    while (true) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) return;
+      emitLine(buffer.slice(0, newlineIndex));
+      buffer = buffer.slice(newlineIndex + 1);
+    }
+  };
+
+  const onEnd = () => {
+    buffer += decoder.end();
+    if (buffer.length > 0) {
+      emitLine(buffer);
+      buffer = "";
+    }
+  };
+
+  stream.on("data", onData);
+  stream.on("end", onEnd);
+
+  return () => {
+    stream.off("data", onData);
+    stream.off("end", onEnd);
+  };
+}
+
 function redactSensitiveText(value: string): string {
   return value
     .replace(/sk-[A-Za-z0-9_-]{6,}/g, "[redacted]")
@@ -821,10 +860,86 @@ function sanitizeErrorMessage(error: unknown): string {
   return redactSensitiveText(raw).replace(/\s+/g, " ").trim();
 }
 
+function captureStderr(buffer: string, chunk: string): string {
+  const next = `${buffer}${chunk}`;
+  return next.length <= MAX_STDERR_BUFFER ? next : next.slice(next.length - MAX_STDERR_BUFFER);
+}
+
 function buildExitMessage(code: number | null, signal: NodeJS.Signals | null, stderrBuffer: string): string {
   const base = `RPC bridge exited${code !== null ? ` with code ${code}` : ""}${signal ? ` (${signal})` : ""}`;
   const stderr = redactSensitiveText(stderrBuffer).trim();
   return stderr ? `${base}. stderr=${stderr}` : base;
+}
+
+function destroyChildStreams(child: Partial<SpawnedRpcChild> | null | undefined): void {
+  try {
+    child?.stdin?.destroy();
+  } catch {
+    // Ignore cleanup failures.
+  }
+  try {
+    child?.stdout?.destroy();
+  } catch {
+    // Ignore cleanup failures.
+  }
+  try {
+    child?.stderr?.destroy();
+  } catch {
+    // Ignore cleanup failures.
+  }
+}
+
+async function terminateRpcChild(child: SpawnedRpcChild): Promise<void> {
+  child.removeAllListeners();
+  try {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+
+    await new Promise<void>((resolve, reject) => {
+      let forceKill: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (forceKill) clearTimeout(forceKill);
+        child.off("exit", onExit);
+        child.off("close", onExit);
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      const onExit = () => finish();
+      const sendSignal = (signal: NodeJS.Signals) => {
+        try {
+          const delivered = child.kill(signal);
+          if (!delivered) {
+            if (child.exitCode !== null || child.signalCode !== null) {
+              finish();
+            } else {
+              finish(new Error(`Failed to send ${signal} to RPC bridge`));
+            }
+          }
+        } catch (error) {
+          finish(new Error(`Failed to send ${signal} to RPC bridge`, { cause: error }));
+        }
+      };
+
+      child.once("exit", onExit);
+      child.once("close", onExit);
+      forceKill = setTimeout(() => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          finish();
+          return;
+        }
+        sendSignal("SIGKILL");
+      }, 2_000);
+      sendSignal("SIGTERM");
+    });
+  } finally {
+    destroyChildStreams(child);
+  }
 }
 
 function getBridgeDeps(): BridgeServiceDeps {
@@ -1291,18 +1406,21 @@ export class BridgeService {
   private readonly pendingRequests = new Map<string, PendingRpcRequest>();
   private readonly config: BridgeRuntimeConfig;
   private readonly deps: BridgeServiceDeps;
-  private readonly transportFactory: (() => BridgeTransport) | null;
-  private transport: BridgeTransport | null = null;
+  private process: SpawnedRpcChild | null = null;
+  private detachStdoutReader: (() => void) | null = null;
   private startPromise: Promise<void> | null = null;
   private refreshPromise: Promise<void> | null = null;
   private authRefreshPromise: Promise<void> | null = null;
+  private disposePromise: Promise<void> | null = null;
+  private lifecycleError: Error | null = null;
+  private disposed = false;
   private requestCounter = 0;
+  private stderrBuffer = "";
   private snapshot: BridgeRuntimeSnapshot;
 
-  constructor(config: BridgeRuntimeConfig, deps: BridgeServiceDeps, createTransport?: () => BridgeTransport) {
+  constructor(config: BridgeRuntimeConfig, deps: BridgeServiceDeps) {
     this.config = config;
     this.deps = deps;
-    this.transportFactory = createTransport ?? null;
     this.snapshot = {
       phase: "idle",
       projectCwd: config.projectCwd,
@@ -1335,7 +1453,12 @@ export class BridgeService {
   }
 
   async ensureStarted(): Promise<void> {
-    if (this.transport && this.snapshot.phase === "ready") return;
+    await this.runWhenReady(() => undefined);
+  }
+
+  private async ensureStartedInternal(): Promise<void> {
+    this.assertAvailable();
+    if (this.process && this.snapshot.phase === "ready") return;
     if (this.startPromise) return await this.startPromise;
 
     this.startPromise = this.startInternal();
@@ -1346,18 +1469,43 @@ export class BridgeService {
     }
   }
 
+  private async runWhenReady<T>(operation: () => T | Promise<T>): Promise<T> {
+    while (true) {
+      this.assertAvailable();
+      const authRefresh = this.authRefreshPromise;
+      if (authRefresh) {
+        await authRefresh;
+        continue;
+      }
+
+      await this.ensureStartedInternal();
+      this.assertAvailable();
+      if (this.authRefreshPromise) continue;
+      return await operation();
+    }
+  }
+
+  private assertAvailable(): void {
+    if (this.disposed) {
+      throw new Error("RPC bridge disposed");
+    }
+    if (this.lifecycleError) {
+      throw this.lifecycleError;
+    }
+  }
+
   async sendInput(input: BridgeInput): Promise<RpcResponse | null> {
-    await this.ensureStarted();
-    if (!this.transport?.connected) {
-      throw new Error(this.snapshot.lastError?.message || "RPC bridge is not connected");
-    }
-
     if (isRpcExtensionUiResponse(input)) {
-      this.transport.send(input);
-      return null;
+      return await this.runWhenReady(() => {
+        if (!this.process?.stdin) {
+          throw new Error(this.snapshot.lastError?.message || "RPC bridge is not connected");
+        }
+        this.process.stdin.write(serializeJsonLine(input));
+        return null;
+      });
     }
 
-    const response = sanitizeRpcResponse(await this.requestResponse(input));
+    const response = sanitizeRpcResponse(await this.runWhenReady(() => this.requestResponse(input)));
     this.snapshot.lastCommandType = input.type;
     this.snapshot.updatedAt = nowIso();
 
@@ -1384,6 +1532,7 @@ export class BridgeService {
   }
 
   async refreshAuth(): Promise<void> {
+    this.assertAvailable();
     if (this.authRefreshPromise) {
       return await this.authRefreshPromise;
     }
@@ -1400,16 +1549,20 @@ export class BridgeService {
       await this.startPromise;
     }
 
-    if (this.transport && this.snapshot.phase === "ready") {
-      this.resetProcessForAuthRefresh();
+    this.assertAvailable();
+    if (this.process && this.snapshot.phase === "ready") {
+      await this.resetProcessForAuthRefresh();
     }
 
-    await this.ensureStarted();
+    this.assertAvailable();
+    await this.ensureStartedInternal();
   }
 
-  private resetProcessForAuthRefresh(): void {
-    const transport = this.transport;
-    this.transport = null;
+  private async resetProcessForAuthRefresh(): Promise<void> {
+    const child = this.process;
+    this.detachStdoutReader?.();
+    this.detachStdoutReader = null;
+    this.stderrBuffer = "";
 
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
@@ -1417,8 +1570,20 @@ export class BridgeService {
     }
     this.pendingRequests.clear();
 
-    if (transport) {
-      void transport.close();
+    if (child) {
+      try {
+        await terminateRpcChild(child);
+      } catch (error) {
+        const lifecycleError = error instanceof Error ? error : new Error(String(error));
+        this.lifecycleError = lifecycleError;
+        this.snapshot.phase = "failed";
+        this.recordError(lifecycleError, "ready");
+        this.broadcastStatus();
+        throw lifecycleError;
+      }
+      if (this.process === child) {
+        this.process = null;
+      }
     }
 
     this.snapshot.phase = "idle";
@@ -1463,8 +1628,9 @@ export class BridgeService {
   }
 
   private async sendTerminalCommand(command: BridgeTerminalCommand): Promise<void> {
-    await this.ensureStarted();
-    const response = sanitizeRpcResponse(await this.requestResponse(command));
+    const response = sanitizeRpcResponse(
+      await this.runWhenReady(() => this.requestResponse(command)),
+    );
     if (!response.success) {
       this.recordError(response.error, this.snapshot.phase, { commandType: command.type });
       this.broadcastStatus();
@@ -1473,6 +1639,16 @@ export class BridgeService {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
+    if (!this.disposePromise) {
+      this.disposePromise = this.disposeInternal();
+    }
+    await this.disposePromise;
+  }
+
+  private async disposeInternal(): Promise<void> {
+    this.detachStdoutReader?.();
+    this.detachStdoutReader = null;
     this.subscribers.clear();
     this.terminalSubscribers.clear();
     for (const pending of this.pendingRequests.values()) {
@@ -1480,94 +1656,98 @@ export class BridgeService {
       pending.reject(new Error("RPC bridge disposed"));
     }
     this.pendingRequests.clear();
-    if (this.transport) {
-      const transport = this.transport;
-      this.transport = null;
-      await transport.close();
+    const lifecycle = this.authRefreshPromise ?? this.startPromise;
+    if (lifecycle) {
+      await lifecycle.catch(() => {});
+    }
+    if (this.process) {
+      const proc = this.process;
+      await terminateRpcChild(proc);
+      if (this.process === proc) {
+        this.process = null;
+      }
     }
     this.snapshot.phase = "idle";
     this.snapshot.connectionCount = 0;
     this.snapshot.updatedAt = nowIso();
   }
 
-  private createLocalTransport(): BridgeTransport {
-    const cliEntry = resolveBridgeCliEntry(this.config, this.deps);
-    const childEnv = { ...(this.deps.env ?? process.env) };
-    delete childEnv.GSD_CODING_AGENT_DIR;
-    childEnv.GSD_WEB_BRIDGE_TUI = "1";
-    return new LocalTransport({
-      command: cliEntry.command,
-      args: cliEntry.args,
-      cwd: cliEntry.cwd,
-      env: childEnv,
-      spawn: this.deps.spawn,
-    });
-  }
-
   private async startInternal(): Promise<void> {
+    this.assertAvailable();
     this.snapshot.phase = "starting";
     this.snapshot.startedAt = nowIso();
     this.snapshot.updatedAt = this.snapshot.startedAt;
     this.snapshot.lastError = null;
     this.broadcastStatus();
 
-    let transport: BridgeTransport;
+    let cliEntry: BridgeCliEntry;
     try {
-      transport = this.transportFactory ? this.transportFactory() : this.createLocalTransport();
+      cliEntry = resolveBridgeCliEntry(this.config, this.deps);
     } catch (error) {
       this.snapshot.phase = "failed";
       this.recordError(error, "starting");
       throw error;
     }
 
-    this.transport = transport;
-    transport.onEvent((line) => {
-      if (this.transport !== transport) return;
-      this.handleTransportLine(line);
+    const spawnChild = this.deps.spawn ?? ((command, args, options) => spawn(command, args, options));
+    const childEnv = { ...(this.deps.env ?? process.env) };
+    delete childEnv.GSD_CODING_AGENT_DIR;
+    childEnv.GSD_WEB_BRIDGE_TUI = "1";
+
+    const child = spawnChild(cliEntry.command, cliEntry.args, {
+      cwd: cliEntry.cwd,
+      env: childEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    }) as SpawnedRpcChild;
+
+    this.process = child;
+    this.stderrBuffer = "";
+    child.stderr.on("data", (chunk) => {
+      this.stderrBuffer = captureStderr(this.stderrBuffer, chunk.toString());
     });
-    transport.onClose((info) => {
-      if (this.transport !== transport) return;
-      this.handleTransportClose(info, transport);
-    });
+    this.detachStdoutReader = attachJsonLineReader(child.stdout, (line) => this.handleStdoutLine(line));
+    child.once("exit", (code, signal) => this.handleProcessExit(child, code, signal));
+    child.once("error", (error) => this.handleProcessExit(child, null, null, error));
 
     let startupTimeout: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       startupTimeout = setTimeout(() => reject(new Error(`RPC bridge startup timed out after ${START_TIMEOUT_MS}ms`)), START_TIMEOUT_MS);
     });
 
-    // connect() must run inside the timeout race: a CloudTransport whose socket
-    // opens but never receives an opened/error/closed frame would otherwise
-    // hang startup indefinitely.
-    const startup = (async () => {
-      await transport.connect();
-      await this.refreshState(true);
-    })();
-    // If the timeout wins the race, `startup` stays pending and will reject
-    // later (e.g. once we close the transport below). Attach a no-op handler so
-    // that late rejection never surfaces as an unhandledRejection; the timeout
-    // error is the authoritative failure.
-    startup.catch(() => {});
-
     try {
-      await Promise.race([startup, timeout]);
+      await Promise.race([this.refreshState(true), timeout]);
+      this.assertAvailable();
       this.snapshot.phase = "ready";
       this.snapshot.updatedAt = nowIso();
       this.snapshot.lastError = null;
       this.broadcastStatus();
     } catch (error) {
+      this.detachStdoutReader?.();
+      this.detachStdoutReader = null;
+      for (const pending of this.pendingRequests.values()) {
+        clearTimeout(pending.timeout);
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      this.pendingRequests.clear();
+      try {
+        await terminateRpcChild(child);
+      } catch (terminationError) {
+        const lifecycleError = terminationError instanceof Error
+          ? terminationError
+          : new Error(String(terminationError));
+        this.lifecycleError = lifecycleError;
+        this.snapshot.phase = "failed";
+        this.recordError(lifecycleError, "starting");
+        this.broadcastStatus();
+        throw lifecycleError;
+      }
+      if (this.process === child) {
+        this.process = null;
+      }
       this.snapshot.phase = "failed";
       this.recordError(error, "starting");
       this.broadcastStatus();
-      // Tear down the (possibly half-open) transport so a timed-out or failed
-      // startup never leaks a live connection or dangling listeners.
-      if (this.transport === transport) {
-        this.transport = null;
-      }
-      try {
-        await transport.close();
-      } catch {
-        // Best effort — startup already failed.
-      }
       throw error;
     } finally {
       if (startupTimeout) {
@@ -1614,7 +1794,7 @@ export class BridgeService {
   }
 
   private requestResponse(command: RpcCommand, timeoutMs?: number): Promise<RpcResponse> {
-    if (!this.transport?.connected) {
+    if (!this.process?.stdin) {
       return Promise.reject(new Error("RPC bridge is not connected"));
     }
 
@@ -1640,11 +1820,11 @@ export class BridgeService {
         timeout,
       });
 
-      this.transport.send(payload);
+      this.process!.stdin.write(serializeJsonLine(payload));
     });
   }
 
-  private handleTransportLine(line: string): void {
+  private handleStdoutLine(line: string): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(line);
@@ -1708,10 +1888,19 @@ export class BridgeService {
     }
   }
 
-  private handleTransportClose(info: BridgeTransportCloseInfo, transport: BridgeTransport): void {
-    this.transport = null;
+  private handleProcessExit(
+    child: SpawnedRpcChild,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    error?: unknown,
+  ): void {
+    if (this.process !== child) return;
 
-    const exitError = new Error(buildExitMessage(info.code, info.signal, transport.getStderrTail?.() ?? ""));
+    this.detachStdoutReader?.();
+    this.detachStdoutReader = null;
+    this.process = null;
+
+    const exitError = new Error(buildExitMessage(code, signal, this.stderrBuffer));
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
       pending.reject(exitError);
@@ -1720,7 +1909,7 @@ export class BridgeService {
 
     this.snapshot.phase = "failed";
     this.snapshot.updatedAt = nowIso();
-    this.recordError(info.error ?? exitError, this.snapshot.activeSessionId ? "ready" : "starting");
+    this.recordError(error ?? exitError, this.snapshot.activeSessionId ? "ready" : "starting");
     this.broadcastStatus();
   }
 
@@ -1762,24 +1951,6 @@ export class BridgeService {
 }
 
 export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService {
-  // Cloud mode: the key encodes (deviceId, alias, role) — see cloud-transport.ts.
-  // Bridges are backed by a relay-proxied WebSocket RPC channel instead of a
-  // local child process.
-  if (isCloudProjectRef(projectCwd)) {
-    const existing = projectBridgeRegistry.get(projectCwd);
-    if (existing) return existing;
-
-    const ref = decodeCloudProjectRef(projectCwd);
-    const config: BridgeRuntimeConfig = {
-      projectCwd: ref.alias,
-      projectSessionsDir: "",
-      packageRoot: "",
-    };
-    const service = new BridgeService(config, getBridgeDeps(), () => createCloudBridgeTransport(ref));
-    projectBridgeRegistry.set(projectCwd, service);
-    return service;
-  }
-
   const resolvedPath = resolve(projectCwd);
   const existing = projectBridgeRegistry.get(resolvedPath);
   if (existing) return existing;
@@ -1791,24 +1962,13 @@ export function getProjectBridgeServiceForCwd(projectCwd: string): BridgeService
   return service;
 }
 
-function createCloudBridgeTransport(ref: CloudProjectRef): BridgeTransport {
-  const cloudConfig = getCloudModeConfig(getBridgeDeps().env ?? process.env);
-  return new CloudTransport({
-    gatewayInternalUrl: cloudConfig.gatewayInternalUrl,
-    gatewayInternalToken: cloudConfig.gatewayInternalToken,
-    deviceId: ref.deviceId,
-    projectAlias: ref.alias,
-    role: ref.role,
-  });
-}
-
 /**
  * Dispose the bridge for a single project and drop it from the registry,
  * reclaiming its spawned RPC child process. Use when a project is no longer
  * served (e.g. its last SSE subscriber disconnected).
  */
 export async function disposeProjectBridge(projectCwd: string): Promise<void> {
-  const resolvedPath = isCloudProjectRef(projectCwd) ? projectCwd : resolve(projectCwd);
+  const resolvedPath = resolve(projectCwd);
   const service = projectBridgeRegistry.get(resolvedPath);
   if (!service) return;
   projectBridgeRegistry.delete(resolvedPath);
@@ -1843,27 +2003,8 @@ export async function disposeAllProjectBridges(): Promise<void> {
 /**
  * Resolve the project CWD from the request query param or env.
  * Returns null when no project is configured (pre-project-selection state).
- *
- * Cloud mode: `?project=` carries a project ALIAS which must be granted by the
- * session cookie; the return value is an opaque cloud project ref key (see
- * cloud-transport.ts) that the bridge registry resolves to a CloudTransport.
  */
 export function resolveProjectCwd(request: Request): string | null {
-  const env = getBridgeDeps().env ?? process.env;
-  if (isCloudMode(env)) {
-    let alias: string | null = null;
-    try {
-      alias = new URL(request.url).searchParams.get("project");
-    } catch {
-      // Malformed URL — no project.
-    }
-    if (!alias) return null;
-    const session = getCloudSessionFromRequest(request, env);
-    // The proxy enforces the 403; treat an ungranted alias as "no project" here.
-    if (!session || !session.projects.includes(alias)) return null;
-    return encodeCloudProjectRef({ deviceId: session.deviceId, alias, role: session.role });
-  }
-
   try {
     const url = new URL(request.url);
     const projectParam = url.searchParams.get("project");
@@ -1871,7 +2012,7 @@ export function resolveProjectCwd(request: Request): string | null {
   } catch {
     // Malformed URL — fall through to env-based default.
   }
-  return env.GSD_WEB_PROJECT_CWD || null;
+  return (getBridgeDeps().env ?? process.env).GSD_WEB_PROJECT_CWD || null;
 }
 
 /**
@@ -2039,30 +2180,6 @@ function buildSessionManageError(
 }
 
 export async function collectSessionBrowserPayload(query: SessionBrowserQuery = {}, projectCwd?: string): Promise<SessionBrowserResponse> {
-  // Cloud mode: session files live on the remote machine and the RPC channel
-  // only exposes the active session — the browser shows an empty list.
-  if (projectCwd && isCloudProjectRef(projectCwd)) {
-    const ref = decodeCloudProjectRef(projectCwd);
-    const cloudBridge = getProjectBridgeServiceForCwd(projectCwd);
-    try {
-      await cloudBridge.ensureStarted();
-    } catch {
-      // Still return the payload with whatever snapshot is available.
-    }
-    return {
-      project: {
-        scope: SESSION_BROWSER_SCOPE,
-        cwd: ref.alias,
-        sessionsDir: "",
-        activeSessionPath: cloudBridge.getSnapshot().activeSessionFile,
-      },
-      query: normalizeSessionBrowserQuery(query),
-      totalSessions: 0,
-      returnedSessions: 0,
-      sessions: [],
-    };
-  }
-
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
   const config = resolveBridgeRuntimeConfig(env, projectCwd);
@@ -2096,6 +2213,9 @@ export async function collectSessionBrowserPayload(query: SessionBrowserQuery = 
 }
 
 export async function renameSessionInCurrentProject(request: RenameSessionRequest, projectCwd?: string): Promise<SessionManageResponse> {
+  const deps = getBridgeDeps();
+  const env = deps.env ?? process.env;
+  const config = resolveBridgeRuntimeConfig(env, projectCwd);
   const nextName = request.name.trim();
 
   if (!nextName) {
@@ -2104,19 +2224,6 @@ export async function renameSessionInCurrentProject(request: RenameSessionReques
       name: request.name,
     });
   }
-
-  // Cloud mode: session files live on the remote machine; file-based rename
-  // is unavailable and the browser has no session list to resolve paths from.
-  if (projectCwd && isCloudProjectRef(projectCwd)) {
-    return buildSessionManageError("not_found", "Session browsing is not available in cloud mode", {
-      sessionPath: request.sessionPath,
-      name: nextName,
-    });
-  }
-
-  const deps = getBridgeDeps();
-  const env = deps.env ?? process.env;
-  const config = resolveBridgeRuntimeConfig(env, projectCwd);
 
   const sessions = await loadSessionBrowserSessionsViaChildProcess(config);
   const targetSession = findCurrentProjectSession(sessions, request.sessionPath);
@@ -2213,10 +2320,6 @@ async function resolveBootOnboardingState(deps: BridgeServiceDeps, env: NodeJS.P
 }
 
 export async function collectCurrentProjectOnboardingState(projectCwd?: string): Promise<OnboardingState> {
-  // Cloud mode: auth lives on the remote machine — never run local onboarding.
-  if (projectCwd && isCloudProjectRef(projectCwd)) {
-    return legacyOnboardingStateFromNeeded(false);
-  }
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
   return await resolveBootOnboardingState(deps, env);
@@ -2235,18 +2338,6 @@ export async function collectSelectiveLiveStatePayload(
   domains: BridgeSelectiveLiveStateDomain[] = ["auto", "workspace", "resumable_sessions"],
   projectCwd?: string,
 ): Promise<BridgeSelectiveLiveStatePayload> {
-  // Cloud mode: workspace/auto/session domains read the local disk of the Next
-  // host, which is meaningless — return only the live bridge snapshot.
-  if (projectCwd && isCloudProjectRef(projectCwd)) {
-    const cloudBridge = getProjectBridgeServiceForCwd(projectCwd);
-    try {
-      await cloudBridge.ensureStarted();
-    } catch {
-      // Still return the latest bridge failure snapshot for inspection.
-    }
-    return { bridge: cloudBridge.getSnapshot() };
-  }
-
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
   const config = resolveBridgeRuntimeConfig(env, projectCwd);
@@ -2288,55 +2379,6 @@ export async function collectSelectiveLiveStatePayload(
 }
 
 export async function collectBootPayload(projectCwd?: string): Promise<BridgeBootPayload> {
-  // Cloud mode: workspace/auto/session payloads read the Next host's local
-  // disk, which is meaningless — boot returns a minimal scaffold plus the
-  // live cloud bridge snapshot.
-  if (projectCwd && isCloudProjectRef(projectCwd)) {
-    const ref = decodeCloudProjectRef(projectCwd);
-    const cloudBridge = getProjectBridgeServiceForCwd(projectCwd);
-    try {
-      await cloudBridge.ensureStarted();
-    } catch {
-      // Boot still returns the bridge failure snapshot for inspection.
-    }
-    return {
-      project: {
-        cwd: ref.alias,
-        sessionsDir: "",
-        packageRoot: "",
-      },
-      workspace: {
-        milestones: [],
-        active: {
-          phase: "pre-planning",
-        },
-        scopes: [
-          {
-            scope: "project",
-            label: "project",
-            kind: "project",
-          },
-        ],
-        validationIssues: [],
-      },
-      auto: collectTestOnlyFallbackAutoDashboardData(),
-      onboarding: legacyOnboardingStateFromNeeded(false),
-      onboardingNeeded: false,
-      resumableSessions: [],
-      bridge: cloudBridge.getSnapshot(),
-      projectDetection: {
-        kind: "blank",
-        signals: {
-          hasGsdFolder: false,
-          hasPlanningFolder: false,
-          hasGitRepo: false,
-          hasPackageJson: false,
-          fileCount: 0,
-        },
-      },
-    };
-  }
-
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
   const config = resolveBridgeRuntimeConfig(env, projectCwd);
@@ -2454,10 +2496,7 @@ export function emitProjectLiveStateInvalidation(
 }
 
 export async function sendBridgeInput(input: BridgeInput, projectCwd?: string): Promise<RpcResponse | null> {
-  // Cloud mode: onboarding is a local-machine concern — the remote daemon
-  // enforces its own readiness and role-based restrictions.
-  const isCloud = Boolean(projectCwd && isCloudProjectRef(projectCwd));
-  if (!isCloud && !isReadOnlyBridgeInput(input)) {
+  if (!isReadOnlyBridgeInput(input)) {
     const onboarding = await collectOnboardingState();
     if (onboarding.locked) {
       return buildBridgeLockedResponse(input, onboarding);

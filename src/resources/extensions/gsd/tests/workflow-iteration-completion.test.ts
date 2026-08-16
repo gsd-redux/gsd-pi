@@ -18,7 +18,6 @@ test("completeWorkflowIteration resets recovery counters and clears recent error
 
   completeWorkflowIteration(state, {
     emitIterationEnd: () => {},
-    saveStuckState: () => {},
     logIterationComplete: () => {},
   });
 
@@ -36,9 +35,8 @@ test("completeWorkflowIteration runs completion side effects in loop order", () 
     recentErrorMessages: ["temporary"],
   }, {
     emitIterationEnd: () => calls.push("emit"),
-    saveStuckState: () => calls.push("save"),
     logIterationComplete: () => calls.push("log"),
   });
 
-  assert.deepEqual(calls, ["emit", "save", "log"]);
+  assert.deepEqual(calls, ["emit", "log"]);
 });

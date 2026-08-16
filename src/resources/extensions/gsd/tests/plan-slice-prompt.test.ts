@@ -286,6 +286,7 @@ test("research-slice prompt substitutes skillActivation", () => {
 test("plan-milestone prompt substitutes skillActivation", () => {
   const result = loadPrompt("plan-milestone", {
     workingDirectory: fixtureRoot,
+    projectGsdPath: ".gsd",
     milestoneId: "M001",
     milestoneTitle: "Test Milestone",
     milestonePath: ".gsd/milestones/M001",
@@ -308,6 +309,7 @@ test("plan-milestone prompt substitutes skillActivation", () => {
 test("plan-milestone prompt: compact planning gates survive template substitution", () => {
   const result = loadPrompt("plan-milestone", {
     workingDirectory: fixtureRoot,
+    projectGsdPath: ".gsd",
     milestoneId: "M001",
     milestoneTitle: "Test Milestone",
     milestonePath: ".gsd/milestones/M001",

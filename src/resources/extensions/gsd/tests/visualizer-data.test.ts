@@ -61,19 +61,13 @@ test("loadVisualizerData hydrates milestones, captures, stats, and health fields
     const msDir = join(base, ".gsd", "milestones", "M001");
     const sliceDir = join(msDir, "slices", "S01");
     mkdirSync(sliceDir, { recursive: true });
-    writeFileSync(
-      join(msDir, "M001-ROADMAP.md"),
-      [
-        "# M001: Visualizer",
-        "",
-        "## Slices",
-        "- [ ] **S01: Build UI** `risk:low` `depends:[]`",
-      ].join("\n"),
-    );
-    writeFileSync(
-      join(sliceDir, "S01-PLAN.md"),
-      "# S01 Plan\n\n## Tasks\n- [ ] **T01: Render data** `est:10m`\n",
-    );
+    // Hierarchy is DB-authoritative post-cutover: seed the DB so M001/S01
+    // derive from DB rows. loadVisualizerData reopens the project DB after it
+    // is closed here.
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "M001: Visualizer", status: "active" });
+    insertSlice({ milestoneId: "M001", id: "S01", title: "Build UI", status: "pending", sequence: 1 });
+    closeDatabase();
     writeFileSync(
       join(base, ".gsd", "CAPTURES.md"),
       [
@@ -98,6 +92,7 @@ test("loadVisualizerData hydrates milestones, captures, stats, and health fields
     assert.ok(data.health);
     assert.ok(data.criticalPath.milestonePath.length >= 1);
   } finally {
+    closeDatabase();
     rmSync(base, { recursive: true, force: true });
   }
 });

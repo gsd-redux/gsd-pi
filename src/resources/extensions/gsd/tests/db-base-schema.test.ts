@@ -55,6 +55,7 @@ describe("db-base-schema", () => {
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS schema_version")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS tasks")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS quality_gates")));
+    assert.ok(db.execCalls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS liveness_block_signatures")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE INDEX IF NOT EXISTS idx_tasks_active")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE VIEW IF NOT EXISTS active_decisions")));
     assert.ok(db.execCalls.some((sql) => sql.includes("CREATE VIEW IF NOT EXISTS active_memories")));

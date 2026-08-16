@@ -58,6 +58,8 @@ export * from "./db/writers/memory.js";
 export * from "./db/writers/reconcile.js";
 export * from "./db/writers/import-restore.js";
 export * from "./db/writers/lifecycle-commands.js";
+export * from "./db/writers/projection-kind-remediation.js";
+export * from "./db/writers/liveness-backstop.js";
 export { executeDomainOperation } from "./db/domain-operation.js";
 export type {
   DomainJsonValue,
@@ -1132,6 +1134,51 @@ export function saveReworkBrief(entry: {
     }
   });
   return { briefId };
+}
+
+/**
+ * Exit code substituted when a `verification_evidence` row carries a NULL or
+ * non-numeric `exit_code`. Non-zero so unknown exit codes can never be read as
+ * a success by the verification gate (#1591).
+ */
+const UNKNOWN_VERIFICATION_EXIT_CODE = 1;
+
+/** Coerce a raw SQLite column value to a finite number, else `undefined`. */
+function toFiniteNumber(raw: unknown): number | undefined {
+  if (raw === null || raw === undefined || raw === "") return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Read the structured verification evidence staged for a Task by
+ * `gsd_task_complete` (#1591). Host verification consumes this for any Task:
+ * the gate only lets it short-circuit command discovery when the Task's plan
+ * `verify` is prose and every evidence record reports a passing verdict with a
+ * zero exit code. Rows with a NULL or non-numeric `exit_code` are reported as
+ * `UNKNOWN_VERIFICATION_EXIT_CODE` so they cannot qualify as passing.
+ */
+export function getTaskVerificationEvidence(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): Array<{ command: string; exitCode: number; verdict: string; durationMs?: number }> {
+  if (!getDbOrNull()!) return [];
+  const rows = getDbOrNull()!.prepare(
+    `SELECT command, exit_code, verdict, duration_ms
+     FROM verification_evidence
+     WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid
+     ORDER BY id`,
+  ).all({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId }) as Array<Record<string, unknown>>;
+  return rows.map((row) => {
+    const durationMs = toFiniteNumber(row.duration_ms);
+    return {
+      command: String(row.command ?? ""),
+      exitCode: toFiniteNumber(row.exit_code) ?? UNKNOWN_VERIFICATION_EXIT_CODE,
+      verdict: String(row.verdict ?? ""),
+      ...(durationMs !== undefined ? { durationMs } : {}),
+    };
+  });
 }
 
 export function getBlockingReworkFindingsForTask(

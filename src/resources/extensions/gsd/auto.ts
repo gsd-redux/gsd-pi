@@ -3,13 +3,14 @@
 /**
  * GSD Auto Mode — Fresh Session Per Unit
  *
- * State machine driven by .gsd/ files on disk. Each "unit" of work
- * (plan slice, execute task, complete slice) gets a fresh session via
+ * State machine driven by the project database and the UnitRun
+ * (`unit_dispatches` row with status claimed|running; ADR-048). Each "unit"
+ * of work (plan slice, execute task, complete slice) gets a fresh session via
  * the stashed ctx.newSession() pattern.
  *
- * The extension reads disk state after each agent_end, determines the
- * next unit type, creates a fresh session, and injects a focused prompt
- * telling the LLM which files to read and what to do.
+ * After each agent_end, the orchestrator decides the next unit, claims it in
+ * the same advance() step, creates a fresh session, and injects a focused
+ * prompt telling the LLM which files to read and what to do.
  */
 
 import type {
@@ -198,7 +199,7 @@ import {
   verifyExpectedArtifact,
 } from "./auto-recovery.js";
 import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
-import { resolveDispatch, DISPATCH_RULES } from "./auto-dispatch.js";
+import { resolveDispatch, DISPATCH_RULES, milestoneIdsDispatchCompatible } from "./auto-dispatch.js";
 import { getErrorMessage } from "./error-utils.js";
 import { recoverFailedMigration } from "./migrate-external.js";
 import { initRegistry, convertDispatchRules } from "./rule-registry.js";
@@ -237,6 +238,7 @@ import { writeUnitRuntimeRecord } from "./unit-runtime.js";
 import { countPendingCaptures } from "./captures.js";
 import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
 import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
+import { formatWedgeRefusalNotice, getOpenWedge } from "./auto-liveness-backstop.js";
 import { getValidationBlockMessageForBase } from "./validation-block-guard.js";
 import { getUnmergedMilestoneBlockMessageForBase } from "./unmerged-milestone-guard.js";
 import { clearSessionModelOverride } from "./session-model-override.js";
@@ -584,6 +586,44 @@ function handlePausedSessionResumeRecovery(
   state.pausedUnitType = null;
   state.pausedUnitId = null;
   return { skippedReplay: false };
+}
+
+/**
+ * Route a paused-session resume against current project state (#1643 / #1654).
+ *
+ * The pre-existing checks only discarded the pin when the paused milestone was
+ * gone or closed. A milestone that is still open but no longer the project's
+ * active milestone (superseded — e.g. a new milestone reordered ahead of it)
+ * passed both checks, got pinned into `session.currentMilestoneId`, and then
+ * every dispatch iteration hit the milestone-mismatch guard and stopped —
+ * a permanent wedge with no field escape short of hand-editing the
+ * `paused_session` runtime_kv row. Per ADR-047 the guard stays; this makes the
+ * exit reachable by never restoring a superseded pin in the first place.
+ *
+ * Id comparison uses the dispatch guard's own normalization
+ * (`milestoneIdsDispatchCompatible`, #1317) so bare-vs-suffixed aliases of the
+ * same milestone never count as superseded.
+ */
+export type PausedSessionResumeRoute =
+  | { route: "restore" }
+  | { route: "discard"; reason: "missing" | "terminal" }
+  | { route: "adopt-active"; activeMilestoneId: string };
+
+export function routePausedSessionResume(args: {
+  milestoneDirExists: boolean;
+  summaryIsTerminal: boolean;
+  pausedMilestoneId: string;
+  activeMilestoneId: string | null | undefined;
+}): PausedSessionResumeRoute {
+  if (!args.milestoneDirExists) return { route: "discard", reason: "missing" };
+  if (args.summaryIsTerminal) return { route: "discard", reason: "terminal" };
+  if (
+    args.activeMilestoneId
+    && !milestoneIdsDispatchCompatible(args.activeMilestoneId, args.pausedMilestoneId)
+  ) {
+    return { route: "adopt-active", activeMilestoneId: args.activeMilestoneId };
+  }
+  return { route: "restore" };
 }
 
 export function _handlePausedSessionResumeRecoveryForTest(
@@ -2600,6 +2640,32 @@ export async function startAuto(
     return;
   }
 
+  // ADR-047 §5: while an unacknowledged wedge record exists, auto-mode
+  // refuses to re-enter and reprints the exit instructions — restarting is no
+  // longer a silent counter reset. `/gsd auto --resume-wedge <id>` is the one
+  // sanctioned re-entry.
+  if (!(await ensureDbOpen(base))) {
+    ctx.ui.notify(
+      "Auto-mode blocked — liveness backstop unavailable: workflow database could not be opened. Run `/gsd doctor --fix` before retrying.",
+      "error",
+    );
+    return;
+  }
+  const openWedgeResult = getOpenWedge(normalizeRealPath(base) || base);
+  if (!openWedgeResult.ok) {
+    ctx.ui.notify(
+      `Auto-mode blocked — liveness backstop unavailable: ${openWedgeResult.error}. Run \`/gsd doctor --fix\` before retrying.`,
+      "error",
+    );
+    return;
+  }
+  const openWedge = openWedgeResult.wedge;
+  if (openWedge) {
+    ctx.ui.notify(`Auto-mode blocked — ${formatWedgeRefusalNotice(openWedge)}`, "error");
+    debugLog("startAuto", { phase: "wedge-blocked", wedgeId: openWedge.wedgeId, base });
+    return;
+  }
+
   const freshStartAssessment = await (interruptedAssessment
     ?? (() => {
       return ensureDbOpen(base).then(() => assessInterruptedSession(base));
@@ -2680,10 +2746,33 @@ export async function startAuto(
               }
             }
           }
-          if (!mDir || summaryIsTerminal) {
+          // #1643 / #1644 share this seam: `routePausedSessionResume` subsumes
+          // `getSupersedingActiveMilestoneId` here — it discards a missing or
+          // terminal pin and, instead of merely starting fresh on a superseded
+          // pin, adopts the project's current active milestone.
+          const resumeRoute = routePausedSessionResume({
+            milestoneDirExists: !!mDir,
+            summaryIsTerminal,
+            pausedMilestoneId: meta.milestoneId,
+            activeMilestoneId: freshStartAssessment.state?.activeMilestone?.id ?? null,
+          });
+          if (resumeRoute.route === "discard") {
             clearPausedSession("paused-session DB cleanup failed (milestone gone/complete)");
             ctx.ui.notify(
-              `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
+              `Paused milestone ${meta.milestoneId} is ${resumeRoute.reason === "missing" ? "missing" : "already complete"}. Starting fresh.`,
+              "info",
+            );
+          } else if (resumeRoute.route === "adopt-active") {
+            // #1643: the paused milestone is still open but a different
+            // milestone is now the project's active one. Restoring the stale
+            // pin would wedge every iteration on the dispatch mismatch guard,
+            // so clear the row and adopt the active milestone (mirroring
+            // shouldAdoptActiveMilestone semantics in auto/orchestrator.ts).
+            clearPausedSession("paused-session DB cleanup failed (milestone superseded)");
+            s.currentMilestoneId = resumeRoute.activeMilestoneId;
+            s.milestoneLeaseToken = null;
+            ctx.ui.notify(
+              `Paused milestone ${meta.milestoneId} was superseded — ${resumeRoute.activeMilestoneId} is now the project's active milestone. Adopting ${resumeRoute.activeMilestoneId}; ${meta.milestoneId} remains open for later dispatch.`,
               "info",
             );
           } else {

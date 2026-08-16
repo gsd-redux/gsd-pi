@@ -358,6 +358,11 @@ console.log('\n=== complete-task: handler happy path ===');
     assertMatch(summaryContent, /## What Happened/, 'summary should have What Happened section');
     assertMatch(summaryContent, /## Verification Evidence/, 'summary should have Verification Evidence section');
     assertMatch(summaryContent, /npm run test:unit/, 'summary evidence should contain command');
+    assertMatch(summaryContent, /<!-- gsd:state-version=\d+:\d+ -->/, 'summary should carry the canonical projection stamp');
+    const summaryArtifact = adapter.prepare(
+      "SELECT full_content FROM artifacts WHERE artifact_type = 'SUMMARY' AND task_id = 'T01'"
+    ).get();
+    assertEq(summaryArtifact?.['full_content'], summaryContent, 'summary artifact should match stamped disk bytes');
 
     // (d) Verify plan checkbox changed to [x]
     const planContent = fs.readFileSync(planPath, 'utf-8');

@@ -38,6 +38,7 @@ import {
   executeDomainOperation,
   type DomainJsonValue,
 } from "../db/domain-operation.ts";
+import { SCHEMA_VERSION } from "../db/engine.ts";
 import type { LegacyImportForwardRepairPlan } from "../legacy-import-forward-repair-plan.ts";
 import { _getAdapter, closeDatabase, openDatabase } from "../gsd-db.ts";
 import {
@@ -516,12 +517,12 @@ test("state changing during backup verification returns a retryable stale assess
 test("unsupported database schema refuses before backup inspection", () => {
   const prepared = prepareCase();
   rmSync(prepared.backup.backup_ref);
-  db().prepare("INSERT INTO schema_version (version, applied_at) VALUES (46, '2026-07-17T00:00:00.000Z')").run();
+  db().prepare(`INSERT INTO schema_version (version, applied_at) VALUES (${SCHEMA_VERSION + 1}, '2026-07-17T00:00:00.000Z')`).run();
   const result = assessLegacyImportRestore(assessmentInput(prepared));
   assert.equal(result.decision, "refused");
   assert.equal(result.stage, "authority");
   assert.equal(result.reasonCode, "DATABASE_SCHEMA_UNSUPPORTED");
-  assert.equal(result.facts.observedDatabaseSchemaVersion, 46);
+  assert.equal(result.facts.observedDatabaseSchemaVersion, SCHEMA_VERSION + 1);
 });
 
 test("table-less foreign database refuses with a structured unsupported-schema assessment", () => {

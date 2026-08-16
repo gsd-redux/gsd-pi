@@ -66,6 +66,28 @@ export interface ModelSelectionResult {
   appliedThinkingLevel?: ReturnType<ExtensionAPI["getThinkingLevel"]> | null;
 }
 
+const PROVIDER_ALIAS_GROUPS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["github-copilot", "copilot"],
+];
+
+function providerAliases(provider: string): Set<string> {
+  const normalized = provider.toLowerCase();
+  for (const group of PROVIDER_ALIAS_GROUPS) {
+    if (group.includes(normalized)) {
+      return new Set(group);
+    }
+  }
+  return new Set([normalized]);
+}
+
+function sameProvider(a: string, b: string): boolean {
+  return providerAliases(a).has(b.toLowerCase());
+}
+
+function normalizeModelIdToken(modelId: string): string {
+  return modelId.trim().toLowerCase();
+}
+
 export interface PreferredModelConfig {
   primary: string;
   fallbacks: string[];
@@ -1084,26 +1106,30 @@ export function resolveModelId<T extends { id: string; provider: string }>(
   currentProvider: string | undefined,
 ): T | undefined {
   if (!modelId) return undefined;
-  const slashIdx = modelId.indexOf("/");
+  const requestedModelId = modelId.trim();
+  const slashIdx = requestedModelId.indexOf("/");
 
   if (slashIdx !== -1) {
-    const maybeProvider = modelId.substring(0, slashIdx);
-    const id = modelId.substring(slashIdx + 1);
+    const maybeProvider = requestedModelId.substring(0, slashIdx);
+    const id = requestedModelId.substring(slashIdx + 1);
+    const normalizedId = normalizeModelIdToken(id);
 
     const knownProviders = new Set(availableModels.map(m => m.provider.toLowerCase()));
-    if (knownProviders.has(maybeProvider.toLowerCase())) {
+    const requestedProviderAliases = providerAliases(maybeProvider);
+    const knownProviderMatch = [...requestedProviderAliases].some(p => knownProviders.has(p));
+    if (knownProviderMatch) {
       const match = availableModels.find(
-        m => m.provider.toLowerCase() === maybeProvider.toLowerCase()
-          && m.id.toLowerCase() === id.toLowerCase(),
+        m => requestedProviderAliases.has(m.provider.toLowerCase())
+          && normalizeModelIdToken(m.id) === normalizedId,
       );
       if (match) return match;
     }
 
     // Try matching the full string as a model ID (OpenRouter-style)
-    const lower = modelId.toLowerCase();
+    const lower = normalizeModelIdToken(requestedModelId);
     return availableModels.find(
-      m => m.id.toLowerCase() === lower
-        || `${m.provider}/${m.id}`.toLowerCase() === lower,
+      m => normalizeModelIdToken(m.id) === lower
+        || normalizeModelIdToken(`${m.provider}/${m.id}`) === lower,
     );
   }
 
@@ -1113,14 +1139,16 @@ export function resolveModelId<T extends { id: string; provider: string }>(
   // context, tool visibility, and cost characteristics (#2905).  Bare IDs in
   // PREFERENCES.md must resolve to the canonical API provider, not to an
   // extension wrapper that happens to be the current session provider.
-  const candidates = availableModels.filter(m => m.id === modelId);
+  const normalizedBareId = normalizeModelIdToken(requestedModelId);
+  const candidates = availableModels.filter(m => normalizeModelIdToken(m.id) === normalizedBareId);
   if (candidates.length === 0) return undefined;
   if (candidates.length === 1) return candidates[0];
 
   // When the user's current provider is claude-code (set by startup migration
   // or explicit selection), honour it for bare IDs.  Routing back to anthropic
   // would undo the migration and hit the third-party subscription block (#3772).
-  if (currentProvider === "claude-code") {
+  const normalizedCurrentProvider = currentProvider?.toLowerCase();
+  if (normalizedCurrentProvider && sameProvider(normalizedCurrentProvider, "claude-code")) {
     const ccMatch = candidates.find(m => m.provider === "claude-code");
     if (ccMatch) return ccMatch;
   }
@@ -1131,15 +1159,15 @@ export function resolveModelId<T extends { id: string; provider: string }>(
   const EXTENSION_PROVIDERS = new Set(["claude-code"]);
 
   // Prefer currentProvider only when it is a first-class API provider
-  if (currentProvider && !EXTENSION_PROVIDERS.has(currentProvider)) {
-    const providerMatch = candidates.find(m => m.provider === currentProvider);
+  if (normalizedCurrentProvider && !EXTENSION_PROVIDERS.has(normalizedCurrentProvider)) {
+    const providerMatch = candidates.find(m => sameProvider(m.provider, normalizedCurrentProvider));
     if (providerMatch) return providerMatch;
   }
 
   // Subscription/OAuth routes beat pay-per-token API when the same model ID
   // exists on multiple providers. Order matters — first match wins.
   for (const provider of BARE_ID_SUBSCRIPTION_PROVIDER_PRECEDENCE) {
-    const match = candidates.find(m => m.provider === provider);
+    const match = candidates.find(m => sameProvider(m.provider, provider));
     if (match) return match;
   }
 

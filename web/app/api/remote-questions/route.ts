@@ -2,7 +2,6 @@ import { homedir } from "node:os"
 import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
-import { cloudModeLocalRouteGuard } from "../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -147,8 +146,6 @@ interface RemoteQuestionsResponse {
 // ─── GET ──────────────────────────────────────────────────────────────────────
 
 export async function GET(): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const prefsPath = getPreferencesPath()
 
@@ -230,8 +227,6 @@ export async function GET(): Promise<Response> {
 // ─── POST ─────────────────────────────────────────────────────────────────────
 
 export async function POST(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const body = await request.json() as Record<string, unknown>
     const { channel, channelId, timeoutMinutes: rawTimeout, pollIntervalSeconds: rawPoll } = body as {
@@ -314,8 +309,6 @@ export async function POST(request: Request): Promise<Response> {
 // ─── DELETE ───────────────────────────────────────────────────────────────────
 
 export async function DELETE(): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const prefsPath = getPreferencesPath()
 
@@ -355,8 +348,6 @@ export async function DELETE(): Promise<Response> {
 // ─── PATCH (save bot token) ───────────────────────────────────────────────────
 
 export async function PATCH(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   try {
     const body = await request.json() as Record<string, unknown>
     const { channel, token } = body as { channel: unknown; token: unknown }

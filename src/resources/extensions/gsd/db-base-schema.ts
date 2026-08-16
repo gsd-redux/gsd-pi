@@ -2,6 +2,7 @@
 // File Purpose: Base table, index, and view DDL for the GSD database facade.
 
 import type { DbAdapter } from "./db-adapter.js";
+import { createRequiredSchemaObjects } from "./db-required-schema.js";
 
 export interface BaseSchemaHooks {
   tryCreateMemoriesFts(db: DbAdapter): boolean;
@@ -414,4 +415,10 @@ export function createBaseSchemaObjects(db: DbAdapter, hooks: BaseSchemaHooks): 
   db.exec("CREATE VIEW IF NOT EXISTS active_decisions AS SELECT * FROM decisions WHERE superseded_by IS NULL");
   db.exec("CREATE VIEW IF NOT EXISTS active_requirements AS SELECT * FROM requirements WHERE superseded_by IS NULL");
   db.exec("CREATE VIEW IF NOT EXISTS active_memories AS SELECT * FROM memories WHERE superseded_by IS NULL");
+
+  // ADR-047 liveness backstop: block-signature counters + wedge records.
+  // Registered as idempotent base objects (not a numbered migration) so the
+  // backstop's restart-surviving ledger exists on every open without moving
+  // the schema-version boundary the legacy-import contract pins at v46.
+  createRequiredSchemaObjects(db);
 }

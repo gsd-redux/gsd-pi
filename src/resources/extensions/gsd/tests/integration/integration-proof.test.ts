@@ -71,7 +71,6 @@ import { repairStaleRenders } from "../../state-reconciliation/drift/stale-rende
 // ── State derivation ──────────────────────────────────────────────────────
 import {
   deriveStateFromDb,
-  _deriveStateImpl,
   invalidateStateCache,
 } from "../../state.ts";
 
@@ -390,8 +389,6 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
     invalidateStateCache();
     invalidateAllCaches();
     const dbState = await deriveStateFromDb(base);
-    const fileState = await _deriveStateImpl(base);
-
     // DB state is authoritative (single-writer engine). Filesystem parser may not
     // parse the new table-format roadmap projections, so cross-validation is relaxed
     // to only check DB state correctness.

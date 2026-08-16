@@ -11,9 +11,15 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadFile, parseSummary } from "../gsd/files.js";
-import { parseRoadmap, parsePlan } from "../gsd/parsers-legacy.js";
 import {
-  resolveMilestoneFile,
+  getMilestone,
+  getMilestoneSlices,
+  getSlice,
+  getSliceTasks,
+  isDbAvailable,
+} from "../gsd/gsd-db.js";
+import { openExistingWorkflowDatabase } from "../gsd/db-workspace.js";
+import {
   resolveSliceFile,
   resolveTaskFile,
 } from "../gsd/paths.js";
@@ -68,6 +74,78 @@ export function _setGhCloseOverridesForTest(overrides: {
 } | null): void {
   _ghCloseIssueImpl = overrides?.closeIssue ?? ghCloseIssue;
   _ghCloseMilestoneImpl = overrides?.closeMilestone ?? ghCloseMilestone;
+}
+
+// ─── DB-Backed Sync Data ────────────────────────────────────────────────────
+
+/**
+ * Post-cutover the DB is the read authority for project state; roadmap/plan
+ * markdown is a pure projection. Issue/PR body data is sourced from DB rows.
+ */
+function ensureSyncDb(basePath: string): void {
+  if (isDbAvailable()) return;
+  openExistingWorkflowDatabase(basePath);
+}
+
+export interface MilestoneSyncData {
+  title: string;
+  vision: string;
+  successCriteria: string[];
+  slices: Array<{ id: string; title: string }>;
+}
+
+/** Milestone title/vision/criteria/slice list for GitHub body rendering. */
+export function loadMilestoneSyncData(mid: string): MilestoneSyncData | null {
+  if (!isDbAvailable()) return null;
+  const milestone = getMilestone(mid);
+  if (!milestone) return null;
+  return {
+    title: milestone.title,
+    vision: milestone.vision,
+    successCriteria: milestone.success_criteria,
+    slices: getMilestoneSlices(mid).map((s) => ({ id: s.id, title: s.title })),
+  };
+}
+
+export interface SliceSyncTask {
+  id: string;
+  title: string;
+  description: string;
+  files?: string[];
+  verify?: string;
+}
+
+export interface SliceSyncData {
+  title: string;
+  goal: string;
+  mustHaves: string[];
+  demo: string;
+  tasks: SliceSyncTask[];
+}
+
+/** Slice goal/must-haves/demo plus task list for GitHub body rendering. */
+export function loadSliceSyncData(mid: string, sid: string): SliceSyncData | null {
+  if (!isDbAvailable()) return null;
+  const slice = getSlice(mid, sid);
+  if (!slice) return null;
+  return {
+    title: slice.title,
+    goal: slice.goal,
+    // The PLAN projection renders its "Must-Haves" bullets from the slice
+    // success_criteria column, so those lines are the DB-side must-haves.
+    mustHaves: slice.success_criteria
+      .split(/\n+/)
+      .map((line) => line.trim().replace(/^[-*]\s+/, ""))
+      .filter(Boolean),
+    demo: slice.demo,
+    tasks: getSliceTasks(mid, sid).map((t) => ({
+      id: t.id,
+      title: t.title,
+      description: t.description,
+      ...(t.files.length > 0 ? { files: t.files } : {}),
+      ...(t.verify ? { verify: t.verify } : {}),
+    })),
+  };
 }
 
 // ─── Entry Point ────────────────────────────────────────────────────────────
@@ -155,13 +233,11 @@ async function syncMilestonePlan(
   // Skip if already synced
   if (getMilestoneRecord(mapping, mid)) return;
 
-  // Load roadmap data
-  const roadmapPath = resolveMilestoneFile(basePath, mid, "ROADMAP");
-  if (!roadmapPath) return;
-  const content = await loadFile(roadmapPath);
-  if (!content) return;
+  // Load milestone data from the DB (post-cutover read authority)
+  ensureSyncDb(basePath);
+  const roadmap = loadMilestoneSyncData(mid);
+  if (!roadmap) return;
 
-  const roadmap = parseRoadmap(content);
   const title = `${mid}: ${roadmap.title || "Milestone"}`;
 
   // Create GitHub Milestone
@@ -237,58 +313,54 @@ async function syncSlicePlan(
   }
   const milestoneRecord = getMilestoneRecord(mapping, mid);
 
-  // Load slice plan
-  const planPath = resolveSliceFile(basePath, mid, sid, "PLAN");
-  if (!planPath) return;
-  const content = await loadFile(planPath);
-  if (!content) return;
+  // Load slice plan data from the DB (post-cutover read authority)
+  ensureSyncDb(basePath);
+  const plan = loadSliceSyncData(mid, sid);
+  if (!plan) return;
 
-  const plan = parsePlan(content);
   const sliceBranch = `milestone/${mid}/${sid}`;
 
   // Create task sub-issues first (so we can link them in the PR body)
   const taskIssueNumbers: Array<{ id: string; title: string; issueNumber?: number }> = [];
 
-  if (plan.tasks) {
-    for (const task of plan.tasks) {
-      // Skip if already synced
-      if (getTaskRecord(mapping, mid, sid, task.id)) {
-        const existing = getTaskRecord(mapping, mid, sid, task.id)!;
-        taskIssueNumbers.push({ id: task.id, title: task.title, issueNumber: existing.issueNumber });
-        continue;
-      }
+  for (const task of plan.tasks) {
+    // Skip if already synced
+    if (getTaskRecord(mapping, mid, sid, task.id)) {
+      const existing = getTaskRecord(mapping, mid, sid, task.id)!;
+      taskIssueNumbers.push({ id: task.id, title: task.title, issueNumber: existing.issueNumber });
+      continue;
+    }
 
-      const taskBody = formatTaskIssueBody({
-        id: task.id,
-        title: task.title,
-        description: task.description,
-        files: task.files,
-        verifyCriteria: task.verify ? [task.verify] : undefined,
+    const taskBody = formatTaskIssueBody({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      files: task.files,
+      verifyCriteria: task.verify ? [task.verify] : undefined,
+    });
+
+    const taskResult = ghCreateIssue(basePath, {
+      repo: mapping.repo,
+      title: `${mid}/${sid}/${task.id}: ${task.title}`,
+      body: taskBody,
+      labels: config.labels,
+      milestone: milestoneRecord?.ghMilestoneNumber,
+      parentIssue: milestoneRecord?.issueNumber,
+    });
+
+    if (taskResult.ok) {
+      setTaskRecord(mapping, mid, sid, task.id, {
+        issueNumber: taskResult.data!,
+        lastSyncedAt: new Date().toISOString(),
+        state: "open",
       });
+      taskIssueNumbers.push({ id: task.id, title: task.title, issueNumber: taskResult.data! });
 
-      const taskResult = ghCreateIssue(basePath, {
-        repo: mapping.repo,
-        title: `${mid}/${sid}/${task.id}: ${task.title}`,
-        body: taskBody,
-        labels: config.labels,
-        milestone: milestoneRecord?.ghMilestoneNumber,
-        parentIssue: milestoneRecord?.issueNumber,
-      });
-
-      if (taskResult.ok) {
-        setTaskRecord(mapping, mid, sid, task.id, {
-          issueNumber: taskResult.data!,
-          lastSyncedAt: new Date().toISOString(),
-          state: "open",
-        });
-        taskIssueNumbers.push({ id: task.id, title: task.title, issueNumber: taskResult.data! });
-
-        if (config.project) {
-          ghAddToProject(basePath, mapping.repo, config.project, taskResult.data!);
-        }
-      } else {
-        taskIssueNumbers.push({ id: task.id, title: task.title });
+      if (config.project) {
+        ghAddToProject(basePath, mapping.repo, config.project, taskResult.data!);
       }
+    } else {
+      taskIssueNumbers.push({ id: task.id, title: task.title });
     }
   }
 
@@ -319,11 +391,9 @@ async function ensureSlicePullRequest(
   if (!sliceRecord) return null;
   if (sliceRecord.prNumber) return sliceRecord.prNumber;
 
-  const planPath = resolveSliceFile(basePath, mid, sid, "PLAN");
-  if (!planPath) return null;
-  const content = await loadFile(planPath);
-  if (!content) return null;
-  const plan = parsePlan(content);
+  ensureSyncDb(basePath);
+  const plan = loadSliceSyncData(mid, sid);
+  if (!plan) return null;
 
   const sliceBranch = sliceRecord.branch || `milestone/${mid}/${sid}`;
   const milestoneBranch = `milestone/${mid}`;

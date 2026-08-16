@@ -39,6 +39,8 @@ use std::os::windows::fs::OpenOptionsExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
+use std::os::windows::io::IntoRawHandle;
+#[cfg(windows)]
 use std::path::Path;
 
 #[cfg(unix)]
@@ -100,6 +102,7 @@ static MUTATION_BOUNDARY_FAULT: DisabledMutationBoundaryFault = DisabledMutation
 #[cfg(windows)]
 #[link(name = "kernel32")]
 extern "system" {
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
     fn GetFileInformationByHandle(
         handle: *mut std::ffi::c_void,
         information: *mut WindowsFileInformation,
@@ -1559,8 +1562,19 @@ impl ProjectionRootIdentityLock {
     }
 
     #[napi]
-    pub fn close(&mut self) {
-        self.file.take();
+    pub fn close(&mut self) -> Result<()> {
+        let Some(file) = self.file.take() else {
+            return Ok(());
+        };
+        #[cfg(windows)]
+        {
+            return close_windows_root_directory(file);
+        }
+        #[cfg(not(windows))]
+        {
+            drop(file);
+            Ok(())
+        }
     }
 }
 
@@ -1908,12 +1922,23 @@ fn projection_error(error: impl std::fmt::Display) -> Error {
     )
 }
 
+#[cfg(any(windows, test))]
+fn is_windows_sharing_violation(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(32)
+}
+
 /// Windows open/create/scan failures must name the path they faulted on: the
 /// exclusively held (share_mode(0)) projection root rejects any by-path re-open
 /// with ERROR_SHARING_VIOLATION (os error 32), and a bare "projection root
 /// operation failed" gives no way to tell which open collided with the hold.
 #[cfg(windows)]
-fn projection_path_error(path: &Path, error: impl std::fmt::Display) -> Error {
+fn projection_path_error(path: &Path, error: std::io::Error) -> Error {
+    if is_windows_sharing_violation(&error) {
+        return projection_error(format!(
+            "transient projection root sharing violation at {}: another process holds an incompatible handle ({error})",
+            path.display(),
+        ));
+    }
     projection_error(format!("{}: {error}", path.display()))
 }
 
@@ -2008,6 +2033,19 @@ fn open_windows_root_directory(path: &Path) -> Result<File> {
         ));
     }
     Ok(file)
+}
+
+#[cfg(windows)]
+fn close_windows_root_directory(file: File) -> Result<()> {
+    // Transfer ownership out of `File` and close the root handle explicitly so
+    // close failures reach JavaScript instead of being discarded by `File`'s
+    // infallible Drop. This is the only handle whose sharing contract excludes
+    // another projection mutation owner.
+    let handle = file.into_raw_handle();
+    if unsafe { CloseHandle(handle) } == 0 {
+        return Err(projection_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -6333,6 +6371,21 @@ fn rename_relative_between_exclusive(
         Status::GenericFailure,
         "identity-bound recursive publication is unavailable on this platform".to_owned(),
     ))
+}
+
+#[cfg(test)]
+mod sharing_violation_tests {
+    use super::is_windows_sharing_violation;
+
+    #[test]
+    fn windows_sharing_violation_is_the_only_transient_projection_error() {
+        assert!(is_windows_sharing_violation(
+            &std::io::Error::from_raw_os_error(32)
+        ));
+        assert!(!is_windows_sharing_violation(
+            &std::io::Error::from_raw_os_error(5)
+        ));
+    }
 }
 
 #[cfg(all(test, unix))]

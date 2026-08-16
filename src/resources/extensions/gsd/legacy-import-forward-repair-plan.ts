@@ -830,6 +830,13 @@ function compileTarget(
   if (instruction.action === "adopt-lifecycle") {
     return lifecycleTarget(instruction, instructionIndex, input, compiledTargets);
   }
+  if (instruction.action === "seed-quality-gate") {
+    // The seeded Q8 row is companion authority for a created slice. Revert
+    // retains created hierarchy rows as cancelled lifecycle tombstones (see
+    // lifecycleTarget), so the gate row stays beside its slice; a Q8 row on a
+    // cancelled slice is inert because complete-slice never runs for it.
+    return target(instruction, instructionIndex, "preserve", "QUALITY_GATE_RETAINED_WITH_HIERARCHY");
+  }
   return target(instruction, instructionIndex, "preserve", "APPLICATION_PRESERVED_TARGET");
 }
 

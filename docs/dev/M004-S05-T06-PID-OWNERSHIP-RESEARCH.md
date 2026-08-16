@@ -13,18 +13,17 @@ identity. Keep the random owner nonce for intent update/cleanup ownership, and
 use the existing hard-link/inode recovery-claim pattern so a contender cannot
 unlink a replacement owner's intent.
 
-The implementation extracted and hardened the process-identity logic already
-used by the cloud-runtime start lock:
+The retained implementation carries the ownership proof directly in live
+restore:
 
-- the state and lock persist `pid` plus `process_start_identity`
-  ([`runtime-process.ts:20-34`](../../packages/gsd-cloud/src/runtime-process.ts));
-- liveness requires both PID existence and an equal start identity
-  ([`runtime-process.ts:450-479`](../../packages/gsd-cloud/src/runtime-process.ts));
-- recovery hard-links the lock to a private claim and rechecks device/inode
-  before unlinking the public path
-  ([`runtime-process.ts:341-380`](../../packages/gsd-cloud/src/runtime-process.ts)); and
-- signaling rechecks the identity immediately before sending the signal
-  ([`runtime-process.ts:687-700`](../../packages/gsd-cloud/src/runtime-process.ts)).
+- the restore intent persists `ownerPid`, `ownerProcessStartIdentity`, and
+  `ownerNonce`
+  ([`legacy-import-live-restore.ts:255-261`](../../src/resources/extensions/gsd/legacy-import-live-restore.ts));
+- liveness requires PID existence plus the same process-start identity
+  ([`legacy-import-live-restore.ts:674-696`](../../src/resources/extensions/gsd/legacy-import-live-restore.ts)); and
+- recovery hard-links the intent to a private claim, validates its owner, and
+  rechecks file identity before unlinking the public path
+  ([`legacy-import-live-restore.ts:948-976`](../../src/resources/extensions/gsd/legacy-import-live-restore.ts)).
 
 The live-restore intent contains:
 
@@ -91,8 +90,8 @@ timestamps, or PID-only ownership.
    untouched. Never turn age into proof of death.
 6. To reclaim, hard-link the observed intent inode to a unique recovery-claim
    path, repeat the ownership check, verify the public intent still has the
-   claim's device/inode, then unlink it. This is the cloud-runtime pattern and
-   closes the check/unlink replacement-owner race.
+   claim's device/inode, then unlink it. This is the retained live-restore
+   recovery-claim pattern and closes the check/unlink replacement-owner race.
 7. Immediately before every intent transition and cleanup, require the same
    nonce and process-start identity already required at acquisition.
 
@@ -126,17 +125,11 @@ explicit operator-visible error; silently reclaiming it would contradict the
 
 ## Regression coverage
 
-The cloud-runtime cases remain the behavioral template:
-
-- replacement-owner inode protection
-  ([`runtime-process.test.ts:331-369`](../../packages/gsd-cloud/src/runtime-process.test.ts));
-- abandoned recovery claims do not block acquisition
-  ([`runtime-process.test.ts:371-401`](../../packages/gsd-cloud/src/runtime-process.test.ts)); and
-- an aged live owner is never reclaimed solely because of age
-  ([`runtime-process.test.ts:403-447`](../../packages/gsd-cloud/src/runtime-process.test.ts)).
-
-Restore-specific coverage in `legacy-import-live-restore.test.ts` proves exact
-owner contention, missing-owner reclaim, and live PID reuse. The concurrent
-reclaimer case in `legacy-import-live-restore-fault.test.ts` proves an abandoned
-intent cleaner cannot unlink a replacement owner's inode. Platform-specific
-identity probes are covered in `process-start-identity.test.ts`.
+Coverage in
+[`legacy-import-live-restore.test.ts:379-425`](../../src/resources/extensions/gsd/tests/legacy-import-live-restore.test.ts)
+proves missing-owner reclaim and live PID reuse. The concurrent reclaimer case
+in
+[`legacy-import-live-restore-fault.test.ts:1071-1107`](../../src/resources/extensions/gsd/tests/legacy-import-live-restore-fault.test.ts)
+proves an abandoned-intent cleaner cannot unlink a replacement owner's inode.
+Platform-specific identity probes remain covered in
+[`process-start-identity.test.ts`](../../src/resources/extensions/gsd/tests/process-start-identity.test.ts).

@@ -1,16 +1,12 @@
 // Project/App: gsd-pi
 // File Purpose: Shared helpers used across auto-loop phase modules.
 
-import { setRuntimeKv } from "../db/runtime-kv.js";
 import { debugLog } from "../debug-logger.js";
-import { normalizeRealPath } from "../paths.js";
 import { resolveWorktreeProjectRoot, normalizeWorktreePathForCompare } from "../worktree-root.js";
 import { decideVerificationRetry, verificationRetryKey } from "./verification-retry-policy.js";
 import type { AutoSession } from "./session.js";
 import type { IterationContext, IterationData, LoopState, PhaseResult } from "./types.js";
 import type { Phase } from "../types.js";
-
-const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 
 /** Compare two paths for physical identity, tolerating trailing slashes and symlinks. */
 export function isSamePathLocal(a: string, b: string): boolean {
@@ -21,21 +17,6 @@ export function isIsolatedWorktreeSession(s: AutoSession): boolean {
   return Boolean(s.originalBasePath)
     && Boolean(s.basePath)
     && !isSamePathLocal(s.originalBasePath, s.basePath);
-}
-
-export function persistStuckRecoveryAttempts(s: AutoSession, loopState: LoopState): void {
-  const scopeId = normalizeRealPath(
-    s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath),
-  );
-  if (!scopeId) return;
-  try {
-    setRuntimeKv("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY, loopState.stuckRecoveryAttempts);
-  } catch (err) {
-    debugLog("autoLoop", {
-      phase: "save-stuck-state-failed",
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
 }
 
 export async function applyVerificationRetryPolicy(

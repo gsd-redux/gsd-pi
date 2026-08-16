@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { DISPATCH_RULES } from "../auto-dispatch.ts";
 import type { DispatchContext, DispatchAction } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
+import { createWorkspace, scopeMilestone } from "../workspace.ts";
 
 // ─── State helpers ────────────────────────────────────────────────────────
 
@@ -232,6 +233,39 @@ test("dispatch-rule-coverage: pre-planning, has CONTEXT + RESEARCH → plan-mile
     },
     "pre-planning has research",
   );
+});
+
+test("dispatch-rule-coverage: plan-milestone refreshes stale session scope", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-disp-cov-plan-scope-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeMilestoneFile(tmp, "M001", "CONTEXT", "# Prior Milestone Context\n");
+  writeMilestoneFile(tmp, "M002", "CONTEXT", "# Current Milestone Context\n");
+  writeMilestoneFile(tmp, "M002", "RESEARCH", "# Current Milestone Research\n");
+
+  const rule = DISPATCH_RULES.find(
+    (candidate) => candidate.name === "pre-planning (has research) → plan-milestone",
+  );
+  assert.ok(rule, "plan-milestone rule should exist");
+
+  const ctx = makeCtx(
+    tmp,
+    makeState({
+      phase: "pre-planning",
+      activeMilestone: { id: "M002", title: "Current Milestone" },
+    }),
+    "M002",
+  );
+  ctx.session = {
+    scope: scopeMilestone(createWorkspace(tmp), "M001"),
+  } as DispatchContext["session"];
+
+  const result = await rule.match(ctx);
+  assert.ok(result?.action === "dispatch");
+  assert.match(result.prompt, /Current Milestone Context/);
+  assert.doesNotMatch(result.prompt, /Prior Milestone Context/);
+  assert.match(result.prompt, /\.gsd\/milestones\/M002\/M002-CONTEXT\.md/);
+  assert.doesNotMatch(result.prompt, /\.gsd\/milestones\/M001\/M001-CONTEXT\.md/);
 });
 
 test("dispatch-rule-coverage: planning with active slice and skip_research → plan-slice", async (t) => {

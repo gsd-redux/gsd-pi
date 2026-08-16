@@ -27,7 +27,9 @@ async function createConnectedClient(options?: {
 }) {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
 
-  const { server } = await createMcpServer(createSessionManagerStub() as never)
+  const { server } = await createMcpServer(createSessionManagerStub() as never, {
+    includeWorkflowTools: false,
+  })
   const client = new Client({
     name: 'test-client',
     version: '0.0.0',

@@ -618,10 +618,10 @@ test("reopen and cancel survive projection obstruction while stale artifacts and
     shouldBlockAutoUnitToolCall(
       "execute-task",
       "gsd_task_recovery_resume",
-      { recoveryActionId: "worker-cannot-self-authorize" },
+      { recoveryActionId: "execute-task-repair" },
       `M001/S01/${artifactTaskId}`,
     ).block,
-    true,
+    false,
   );
   const uatTools = buildRunUatCanonicalToolNames();
   for (const lifecycleTool of ["gsd_task_recovery_resume", "gsd_task_reopen", "gsd_slice_reopen"]) {

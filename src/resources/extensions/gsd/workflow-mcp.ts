@@ -1,9 +1,10 @@
 import { execSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { getRequiredWorkflowToolsForUnit } from "./unit-tool-contracts.js";
 import { mcpToolMatchesBaseName } from "./mcp-tool-name.js";
+import { resolveWorktreeProjectRoot } from "./worktree-root.js";
 import {
   supportsStructuredQuestions,
   usesWorkflowMcpTransport,
@@ -44,13 +45,7 @@ export function resolveWorkflowMcpProjectRoot(sessionCwd: string): string {
     resolved = resolve(sessionCwd);
   }
 
-  const worktreesMarker = `${sep}.gsd${sep}worktrees${sep}`;
-  const markerIndex = resolved.indexOf(worktreesMarker);
-  if (markerIndex > 0) {
-    return resolved.slice(0, markerIndex);
-  }
-
-  return resolved;
+  return resolveWorktreeProjectRoot(resolved);
 }
 
 /** Workflow MCP tools are validated by transport compatibility, not pi tool-compat profiles. */

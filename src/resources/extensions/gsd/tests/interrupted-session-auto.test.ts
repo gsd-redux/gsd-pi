@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { _handlePausedSessionResumeRecoveryForTest } from "../auto.ts";
+import { _handlePausedSessionResumeRecoveryForTest, startAuto } from "../auto.ts";
+import { autoSession } from "../auto-runtime-state.ts";
 import { assessInterruptedSession } from "../interrupted-session.ts";
 import {
   openDatabase,
@@ -16,9 +17,10 @@ import {
 import { registerAutoWorker } from "../db/auto-workers.ts";
 import { claimMilestoneLease } from "../db/milestone-leases.ts";
 import { recordDispatchClaim } from "../db/unit-dispatches.ts";
-import { setRuntimeKv } from "../db/runtime-kv.ts";
+import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.ts";
 import {
   PAUSED_SESSION_KV_KEY,
+  type InterruptedSessionAssessment,
   type PausedSessionMetadata,
 } from "../interrupted-session.ts";
 import { normalizeRealPath } from "../paths.ts";
@@ -173,6 +175,82 @@ test("direct /gsd auto stale paused-session metadata is treated as stale when no
   } finally {
     cleanup(base);
   }
+});
+
+test("direct /gsd auto never restores a paused milestone superseded by the active milestone", async (t) => {
+  const base = makeTmpBase();
+  const priorProjectId = process.env.GSD_PROJECT_ID;
+  process.env.GSD_PROJECT_ID = "invalid project id";
+  t.after(() => {
+    if (priorProjectId === undefined) delete process.env.GSD_PROJECT_ID;
+    else process.env.GSD_PROJECT_ID = priorProjectId;
+    autoSession.reset();
+    cleanup(base);
+  });
+
+  const pausedMilestoneId = "M016-5b17xo";
+  const activeMilestoneId = "M018-6b0xxe";
+  const milestoneDir = join(base, ".gsd", "milestones", pausedMilestoneId);
+  mkdirSync(milestoneDir, { recursive: true });
+  writeFileSync(join(milestoneDir, `${pausedMilestoneId}-CONTEXT.md`), "# Paused milestone\n");
+  openFixtureDb(base);
+  insertMilestone({ id: pausedMilestoneId, title: "Paused milestone", status: "active" });
+  writePausedSession(base, pausedMilestoneId);
+
+  const interrupted: InterruptedSessionAssessment = {
+    classification: "recoverable",
+    lock: null,
+    pausedSession: {
+      milestoneId: pausedMilestoneId,
+      originalBasePath: base,
+    },
+    state: {
+      activeMilestone: { id: activeMilestoneId, title: "Current milestone" },
+      phase: "pre-planning",
+    } as InterruptedSessionAssessment["state"],
+    recovery: null,
+    recoveryPrompt: null,
+    recoveryToolCallCount: 0,
+    artifactSatisfied: false,
+    hasResumableDiskState: true,
+    isBootstrapCrash: false,
+  };
+  const notifications: string[] = [];
+  const ctx = {
+    ui: {
+      notify: (message: string) => notifications.push(message),
+    },
+    sessionManager: {
+      getSessionId: () => "superseded-paused-session-test",
+    },
+    modelRegistry: {
+      getAvailable: () => [],
+      isProviderRequestReady: () => false,
+    },
+    model: undefined,
+  } as unknown as Parameters<typeof startAuto>[0];
+  const pi = {
+    getThinkingLevel: () => "off",
+  } as unknown as Parameters<typeof startAuto>[1];
+
+  await startAuto(ctx, pi, base, false, { interrupted });
+
+  assert.equal(getRuntimeKv("global", "", PAUSED_SESSION_KV_KEY), null);
+  // #1644 required that the stale pin never be restored; #1643 goes one step
+  // further and adopts the project's current active milestone instead of
+  // starting from no milestone at all.
+  assert.notEqual(
+    autoSession.currentMilestoneId,
+    pausedMilestoneId,
+    "superseded milestone must not be pinned",
+  );
+  assert.equal(autoSession.currentMilestoneId, activeMilestoneId);
+  assert.ok(notifications.some((message) =>
+    message.includes(`Paused milestone ${pausedMilestoneId} was superseded`)
+    && message.includes(activeMilestoneId)
+  ));
+  assert.ok(notifications.some((message) => message.includes("GSD_PROJECT_ID must contain only")),
+    "clearing the stale pause should continue through fresh bootstrap");
 });
 
 test("direct /gsd auto source only resumes paused-session metadata for recoverable state with real recovery signals", async () => {

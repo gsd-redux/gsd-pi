@@ -355,7 +355,8 @@ test('Scenario 4: Completion state mapping', () => {
   const doneSlice = result.milestones[0]?.slices[0];
   const activeSlice = result.milestones[0]?.slices[1];
 
-  assert.ok(doneSlice?.done === true, 'completion: done phase → done slice');
+  // #1606 fix: done-phase has plan 02 without a summary → slice must NOT be marked done.
+  assert.ok(doneSlice?.done === false, 'completion: #1606: done phase with pending task → slice NOT done');
   assert.ok(activeSlice?.done === false, 'completion: active phase → not-done slice');
   assert.ok(doneSlice?.tasks[0]?.done === true, 'completion: plan with summary → done task');
   assert.ok(doneSlice?.tasks[1]?.done === false, 'completion: plan without summary → not-done task');
@@ -366,7 +367,8 @@ test('Scenario 4: Completion state mapping', () => {
   assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.provides, ['feature-01'], 'completion: summary provides from frontmatter');
   assert.deepStrictEqual(doneSlice?.tasks[0]?.summary?.keyFiles, ['file-01.ts'], 'completion: summary keyFiles from frontmatter');
   assert.ok(doneSlice?.tasks[0]?.summary?.whatHappened?.includes('Summary body') ?? false, 'completion: summary whatHappened from body');
-  assert.ok(doneSlice?.summary !== null, 'completion: done slice has slice summary');
+  // #1606: since doneSlice is now done=false, no slice summary is generated.
+  assert.ok(doneSlice?.summary === null, 'completion: #1606: partially-done slice has null summary');
   assert.ok(activeSlice?.summary === null, 'completion: active slice has null summary');
   assert.deepStrictEqual(doneSlice?.tasks[0]?.estimate, '2h', 'completion: task estimate from summary duration');
 });
@@ -708,3 +710,76 @@ test('Scenario 15: Empty research', () => {
 });
 
 // ─── Results ───────────────────────────────────────────────────────────────
+
+
+// ─── Scenario 4b: #1606 regression — fully-done slice ───────────────────────
+
+test('Scenario 4b: #1606 — slice with all tasks done IS marked done', () => {
+  const project = emptyProject({
+    roadmap: flatRoadmap([roadmapEntry(1, 'all-done-phase', true)]),
+    phases: {
+      '1-all-done-phase': makePhase('1-all-done-phase', 1, 'all-done-phase', {
+        plans: { '01': makePlan('01'), '02': makePlan('02') },
+        summaries: {
+          '01': makeSummary('01'),
+          '02': makeSummary('02'),  // both plans have summaries
+        },
+      }),
+    },
+  });
+
+  const result = transformToGSD(project);
+  const slice = result.milestones[0]?.slices[0];
+
+  assert.ok(slice?.done === true, '#1606: slice with all tasks done must be marked done');
+  assert.ok(slice?.tasks[0]?.done === true, '#1606: task with summary → done');
+  assert.ok(slice?.tasks[1]?.done === true, '#1606: task with summary → done');
+  assert.ok(slice?.summary !== null, '#1606: fully-done slice has slice summary');
+});
+
+// ─── Scenario 4c: #1607 regression — decision file field extraction ──────────
+
+test('Scenario 4c: #1607 — decision file with structured sections extracts fields', () => {
+  const structuredDecision = `# Choose Postgres as primary datastore
+
+## Choice
+Postgres with Prisma ORM
+
+## Rationale
+Postgres provides strong ACID guarantees and Prisma offers type-safe migrations.
+The team has existing Postgres expertise.
+
+## Scope
+Infrastructure and data layer decisions
+`;
+
+  const project = emptyProject({
+    roadmap: flatRoadmap([]),
+    decisions: [{ fileName: '001-choose-database.md', content: structuredDecision }],
+  });
+
+  const result = transformToGSD(project);
+  assert.ok(result.decisionsContent.length > 0, '#1607: decision content should be generated');
+  assert.ok(result.decisionsContent.includes('Postgres with Prisma ORM'), '#1607: Choice section extracted');
+  assert.ok(result.decisionsContent.includes('Postgres provides strong ACID'), '#1607: Rationale section extracted');
+  assert.ok(!result.decisionsContent.includes('Migrated from legacy summary key-decisions'), '#1607: fabricated rationale must not appear');
+  assert.ok(!result.decisionsContent.includes('Choose Postgres as primary datastore | Choose Postgres'), '#1607: decision title must not appear in Choice column');
+});
+
+test('Scenario 4d: #1607 — decision file without structured sections preserves body', () => {
+  const unstructuredDecision = `# Use TypeScript strict mode
+
+We decided to enable strict mode in all packages because it catches a large class
+of bugs at compile time and improves long-term maintainability.
+`;
+
+  const project = emptyProject({
+    roadmap: flatRoadmap([]),
+    decisions: [{ fileName: '002-typescript-strict.md', content: unstructuredDecision }],
+  });
+
+  const result = transformToGSD(project);
+  assert.ok(result.decisionsContent.includes('decided to enable strict mode'), '#1607: body preserved in rationale when no sections found');
+  assert.ok(result.decisionsContent.includes('(not parsed -- see migration source)'), '#1607: choice falls back gracefully');
+  assert.ok(!result.decisionsContent.includes('Migrated from legacy summary key-decisions'), '#1607: fabricated rationale must not appear');
+});

@@ -85,7 +85,7 @@ gsd --mode mcp
 
 Compatible with Claude Desktop, VS Code Copilot, and any MCP host.
 
-MCP mode also exposes the workflow adapter tools used by headless and cloud runtimes:
+MCP mode also exposes the workflow adapter tools used by headless and MCP clients:
 
 - Session control tools: `gsd_execute`, `gsd_status`, `gsd_result`, `gsd_cancel`, `gsd_resolve_blocker`
 - Project state and read-only tools: `gsd_query`, `gsd_progress`, `gsd_roadmap`, `gsd_history`, `gsd_doctor`, `gsd_captures`, `gsd_knowledge`, `gsd_graph`

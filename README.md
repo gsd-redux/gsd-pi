@@ -28,16 +28,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for release-by-release fixes and [Legacy Rele
 ## Latest Release Highlights
 
 <!-- release-highlights:start -->
-Latest release: **v1.11.0**
+Latest release: **v1.15.0**
 
-- **gsd:** Add canonical database foundation (#1426).
-- **gsd-cloud:** Add macOS cloud monitor app and runtime telemetry (#1399).
-- **Added:** Add workflow authority baseline gate (#1422).
-- **issue:** [Feature]: Support using pi-llama-cpp for local models (#1425).
-- **issue:** [Bug]: GPT-5.6 ships as the nonexistent bare `gpt-5.6` slug — the real routable models are gpt-5.6-sol/terra/luna (#1424).
-- **issue:** Fix(doctor): artifact_file_missing false positive for active-worktree artifacts; checkbox_db_status_divergence regression on plan-slice re-dispatch (#1420).
-- **issue:** Planning_subagents should support user-defined planning agents.
-- **issue:** Auto-verification.js writes VERIFY.json to legacy tasks/ subdir in flat-phase projects.
+- **model-router:** Add claude-sonnet-5 to model capability registries.
+- **tools:** Add gsd_requirement_list/get and gsd_decision_list/get (#1608).
+- **pi-ai:** Add missing kimi-coding subscription models to catalog.
+- **pi-ai:** Add Kimi Code (subscription) OAuth provider.
+- **ci:** Retrigger PR checks.
+- **gsd:** Deepen projection delivery ownership.
+- **gsd:** Own slice companion gate lifecycle.
+- **gsd:** Register required schema features once.
 
 <!-- release-highlights:end -->
 
@@ -194,9 +194,7 @@ Then use slash commands inside the GSD session:
 | --- | --- |
 | `src/` | Core runtime resources and bundled extensions |
 | `packages/` | Workspace packages used by the CLI, agent, TUI, RPC, and native bridge |
-| `apps/` | Standalone native apps, such as the GSD Cloud Monitor menu bar app |
 | `native/` | Native engine packaging and platform binaries |
-| `studio/` | Desktop studio app |
 | `web/` | Web UI and API surface |
 | `docs/` | User and developer documentation |
 | `scripts/` | Build, release, migration, and maintenance scripts |

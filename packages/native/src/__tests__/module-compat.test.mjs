@@ -62,6 +62,13 @@ describe("@gsd/native module compatibility (#2861)", () => {
     }
   });
 
+  test("package exports the file-identity subpath used by GSD workflow executors", () => {
+    assert.deepEqual(pkg.exports?.["./file-identity"], {
+      types: "./dist/file-identity/index.d.ts",
+      default: "./dist/file-identity/index.js",
+    });
+  });
+
   test(
     "compiled CJS output loads under a parent package with type: module (regression guard for #2861)",
     () => {

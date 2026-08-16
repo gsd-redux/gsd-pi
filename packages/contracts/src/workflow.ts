@@ -201,6 +201,14 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 		auditEvent: "workflow.task.recovery.resume",
 	},
 	{
+		canonicalName: "gsd_task_settle",
+		aliases: [],
+		schemaId: "workflow.task.settle",
+		executorId: "executeTaskSettle",
+		writePolicy: "write",
+		auditEvent: "workflow.task.settle",
+	},
+	{
 		canonicalName: "gsd_slice_reopen",
 		aliases: ["gsd_reopen_slice"],
 		schemaId: "workflow.slice.reopen",
@@ -295,6 +303,38 @@ export const WORKFLOW_TOOL_CONTRACTS = [
 		executorId: "executeMemoryGraph",
 		writePolicy: "read",
 		auditEvent: "workflow.memory.graph",
+	},
+	{
+		canonicalName: "gsd_requirement_list",
+		aliases: [],
+		schemaId: "workflow.requirement.list",
+		executorId: "executeRequirementList",
+		writePolicy: "read",
+		auditEvent: "workflow.requirement.list",
+	},
+	{
+		canonicalName: "gsd_requirement_get",
+		aliases: [],
+		schemaId: "workflow.requirement.get",
+		executorId: "executeRequirementGet",
+		writePolicy: "read",
+		auditEvent: "workflow.requirement.get",
+	},
+	{
+		canonicalName: "gsd_decision_list",
+		aliases: [],
+		schemaId: "workflow.decision.list",
+		executorId: "executeDecisionList",
+		writePolicy: "read",
+		auditEvent: "workflow.decision.list",
+	},
+	{
+		canonicalName: "gsd_decision_get",
+		aliases: [],
+		schemaId: "workflow.decision.get",
+		executorId: "executeDecisionGet",
+		writePolicy: "read",
+		auditEvent: "workflow.decision.get",
 	},
 ] as const satisfies readonly WorkflowToolContractMetadata[];
 

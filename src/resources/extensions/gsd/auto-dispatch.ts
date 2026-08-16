@@ -57,6 +57,8 @@ import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning, logError } from "./workflow-logger.js";
 import { dirname, join, sep } from "node:path";
 import { hasImplementationArtifacts } from "./milestone-implementation-evidence.js";
+import { isFlatPhaseMigrationInFlight } from "./flat-phase-migration.js";
+import { composeToolAffordanceReminder } from "./unit-context-composer.js";
 import {
   buildDiscussMilestonePrompt,
   buildDiscussProjectPrompt,
@@ -84,6 +86,7 @@ import {
   loadRoadmapCompletedSliceCandidates,
 } from "./auto-prompts.js";
 import { readPendingTaskRecoveryContext } from "./task-recovery-domain-operation.js";
+import { readTerminalTaskRecoveryAbort } from "./artifact-verification.js";
 import { checkNeedsRunUat } from "./uat-dispatch.js";
 import { normalizeModelFieldConfig, resolveModelWithFallbacksForUnit, resolveThinkingLevelForUnit } from "./preferences-models.js";
 import { resolveUokFlags } from "./uok/flags.js";
@@ -133,6 +136,8 @@ import {
   formatCloseoutProofBlock,
   proveMilestoneCloseout,
 } from "./milestone-closeout-proof.js";
+import { throwIfTransientProjectionLockError } from "./projection-root-errors.js";
+import { createWorkspace, scopeMilestone } from "./workspace.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -468,7 +473,11 @@ function isBareSuffixedMilestoneAlias(left: string, right: string): boolean {
   );
 }
 
-function milestoneIdsDispatchCompatible(left: string, right: string): boolean {
+// Exported for the paused-session resume validation in auto.ts (#1643): the
+// same bare-vs-suffixed normalization (#1317) that the dispatch mismatch guard
+// applies must be used when deciding whether a paused milestone was superseded,
+// or alias ids would false-mismatch and discard a legitimately resumable pause.
+export function milestoneIdsDispatchCompatible(left: string, right: string): boolean {
   return left === right || isBareSuffixedMilestoneAlias(left, right);
 }
 
@@ -778,6 +787,30 @@ export function isVerificationNotApplicable(value: string): boolean {
   return /^(?:none(?:[\s._\u2014-]+[\s\S]*)?|n\/?a(?:[\s._\u2014-]+[\s\S]*)?|not[\s._-]+(?:applicable|required|needed|provided)|no[\s._-]+operational[\s\S]*)$/i.test(v);
 }
 
+function readExecuteTaskTerminalAbort(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+): Extract<DispatchAction, { action: "stop" }> | null {
+  if (!isDbAvailable()) return null;
+  let terminalAbort: ReturnType<typeof readTerminalTaskRecoveryAbort>;
+  try {
+    terminalAbort = readTerminalTaskRecoveryAbort(milestoneId, sliceId, taskId);
+  } catch (err) {
+    return {
+      action: "stop",
+      reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: ${err instanceof Error ? err.message : String(err)}`,
+      level: "error",
+    };
+  }
+  if (!terminalAbort) return null;
+  return {
+    action: "stop",
+    reason: `Cannot dispatch execute-task ${milestoneId}/${sliceId}/${taskId}: canonical Task Attempt recovery already aborted (recoveryActionId: ${terminalAbort.recoveryActionId}). Resume it with gsd_task_recovery_resume.`,
+    level: "error",
+  };
+}
+
 // ─── Rules ────────────────────────────────────────────────────────────────
 
 export const DISPATCH_RULES: DispatchRule[] = [
@@ -853,6 +886,15 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // "never discussed" and re-dispatches discuss-milestone after task
       // closeout instead of continuing execution (#1317).
       const artifactBasePath = resolveArtifactBasePath(basePath, mid, session);
+      // The layout migration moves .gsd/milestones/ aside before rendering
+      // .gsd/phases/, so mid-flight the slice plans exist in neither layout.
+      // A dispatch landing in that window reads "never discussed" and re-plans a
+      // milestone that is already fully planned in the DB, discarding the plan.
+      // Startup dispatch races the migration on every run, so decline to decide
+      // while the layout is converting; the next iteration sees a settled tree.
+      // Scoped to a migration actually in flight — a settled legacy project must
+      // still reach this rule (#4671).
+      if (isFlatPhaseMigrationInFlight(artifactBasePath)) return null;
       if (hasMilestonePassedDiscuss(artifactBasePath, mid)) return null;
       // Align with the plan-v2 gate's lookup semantics: whitespace-only counts
       // as missing, and an auto worktree may fall back to GSD_PROJECT_ROOT.
@@ -1072,7 +1114,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
     // Deep mode stage gate: workflow preferences not yet captured.
     // This used to dispatch an agent unit, but the step is deterministic
     // defaults-writing. Keep it in-process so missing preferences cannot loop
-    // on the same no-input unit until stuck detection fires.
+    // on the same no-input unit until the liveness backstop trips.
     name: "deep: pre-planning (no workflow prefs) → workflow-preferences",
     match: async ({ state, basePath, prefs }) => {
       if (prefs?.planning_depth !== "deep") return null;
@@ -1260,13 +1302,21 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "pre-planning (has research) → plan-milestone",
-    match: async ({ state, mid, midTitle, basePath }) => {
+    match: async ({ state, mid, midTitle, basePath, session }) => {
       if (state.phase !== "pre-planning") return null;
+      const milestoneScope = session?.scope?.milestoneId === mid
+        ? session.scope
+        : scopeMilestone(createWorkspace(basePath), mid);
       return {
         action: "dispatch",
         unitType: "plan-milestone",
         unitId: mid,
-        prompt: await buildPlanMilestonePrompt(mid, midTitle, basePath),
+        prompt: await buildPlanMilestonePrompt(
+          mid,
+          midTitle,
+          basePath,
+          milestoneScope,
+        ),
       };
     },
   },
@@ -1756,6 +1806,42 @@ export const DISPATCH_RULES: DispatchRule[] = [
         !existsSync(projectionTaskPlanPath) &&
         !tasksEmbeddedInSlicePlan
       ) {
+        // #1640: a fresh worktree created after an incomplete-milestone
+        // teardown starts with no .gsd markdown (the tree is gitignored), even
+        // though the authoritative DB rows for the active slice survive. The
+        // DB is the single source of truth and the PLAN projection is always
+        // re-renderable from it, so heal the gap here instead of stopping
+        // (#1520) or burning plan-slice retries (#909). renderPlanFromDb
+        // resolves the existing descriptor dir via resolveMilestonePath /
+        // targetSliceFile, so the heal lands beside the phase's other
+        // artifacts rather than at a hardcoded canonical path.
+        let planRenderError: string | null = null;
+        if (!resolveSliceFile(artifactBasePath, mid, sid, "PLAN")) {
+          try {
+            const { renderPlanFromDb } = await import("./markdown-renderer.js");
+            const rendered = await renderPlanFromDb(artifactBasePath, mid, sid);
+            process.stderr.write(
+              `gsd-projection-heal: re-rendered missing slice PLAN for ${unitId} from the DB at ${rendered.planPath}\n`,
+            );
+          } catch (err) {
+            // A Windows sharing violation is transient contention, not a DB
+            // projection gap. Preserve it as a typed throw so Recovery
+            // Classification routes through the loop's existing retry budget.
+            throwIfTransientProjectionLockError(err);
+            // Fail loud below: a DB that genuinely lacks the slice rows is a
+            // real error, and the stop diagnosis reports it verbatim.
+            planRenderError = err instanceof Error ? err.message : String(err);
+            logWarning(
+              "dispatch",
+              `slice PLAN re-render from DB failed for ${unitId}: ${planRenderError}`,
+            );
+          }
+          if (slicePlanHasEmbeddedTasks(artifactBasePath, mid, sid)) {
+            session?.missingTaskPlanRetryCount?.delete(unitId);
+            // PLAN restored — fall through to the normal execute-task rule.
+            return null;
+          }
+        }
         // #1520: if the slice plan with embedded tasks exists at the original
         // project root but not in the active worktree, the root→worktree state
         // projection is broken or stale. Re-planning the slice cannot repair a
@@ -1772,7 +1858,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           session?.missingTaskPlanRetryCount?.delete(unitId);
           return {
             action: "stop",
-            reason: `${unitId}: the slice plan with embedded tasks exists at the project root but is missing from the active worktree — the root→worktree state projection is broken or stale, and re-planning cannot fix that. Run /gsd doctor to repair the projection, then run /gsd auto to resume.`,
+            reason: `${unitId}: the slice plan with embedded tasks exists at the project root but is missing from the active worktree, and re-rendering it from the workflow database failed${planRenderError ? ` (${planRenderError})` : ""} — re-planning cannot fix a projection gap. Run /gsd rebuild markdown to restore projections from the authoritative DB, then run /gsd auto to resume.`,
             level: "error",
           };
         }
@@ -1838,6 +1924,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (retryUnitId) {
         const { milestone: retryMid, slice: retrySid, task: retryTid } = parseUnitId(retryUnitId);
         if (retryMid === mid && retrySid === sid && retryTid) {
+          const retryAbort = readExecuteTaskTerminalAbort(retryMid, retrySid, retryTid);
+          if (retryAbort) return retryAbort;
           const retryTitle = state.activeTask?.id === retryTid
             ? state.activeTask.title
             : retryTid;
@@ -1861,6 +1949,8 @@ export const DISPATCH_RULES: DispatchRule[] = [
       if (!state.activeTask) return null;
       const tid = state.activeTask.id;
       const tTitle = state.activeTask.title;
+      const terminalAbort = readExecuteTaskTerminalAbort(mid, sid, tid);
+      if (terminalAbort) return terminalAbort;
 
       return {
         action: "dispatch",
@@ -2074,6 +2164,22 @@ function applyLanguageDirectiveToDispatch(
   return { ...action, prompt: `${directive}\n\n${action.prompt}` };
 }
 
+/**
+ * Repeat the unit's allowed tool tokens at the very end of the dispatched prompt.
+ *
+ * `## Tool Surface` already carries this, but it lands ~4% into a 14K-character
+ * prompt (measured on validate-milestone: offset 627, 13,731 characters after it)
+ * and units kept reaching for `bash`, `gsd_uat_exec`, and subagent `"review"`
+ * regardless. Applied at the dispatch seam so every unit gets it from one place,
+ * rather than editing each prompt builder's tail.
+ */
+function appendToolAffordanceToDispatch(action: DispatchAction): DispatchAction {
+  if (action.action !== "dispatch" || !action.prompt || !action.unitType) return action;
+  const reminder = composeToolAffordanceReminder(action.unitType);
+  if (!reminder || action.prompt.trimEnd().endsWith(reminder)) return action;
+  return { ...action, prompt: `${action.prompt.trimEnd()}\n\n${reminder}` };
+}
+
 // ─── Resolver ─────────────────────────────────────────────────────────────
 
 /**
@@ -2170,7 +2276,7 @@ export async function resolveDispatch(
         level: "error",
       };
     }
-    return applyLanguageDirectiveToDispatch(action, ctx.prefs);
+    return applyLanguageDirectiveToDispatch(appendToolAffordanceToDispatch(action), ctx.prefs);
   }
 
   for (const rule of DISPATCH_RULES) {
@@ -2189,7 +2295,7 @@ export async function resolveDispatch(
           matchedRule: rule.name,
         };
       }
-      return applyLanguageDirectiveToDispatch(action, ctx.prefs);
+      return applyLanguageDirectiveToDispatch(appendToolAffordanceToDispatch(action), ctx.prefs);
     }
   }
 

@@ -117,7 +117,19 @@ test("checkNeedsRunUat skips slices that already have an ASSESSMENT verdict", as
 
 test("auto-prompts keeps the compatibility checkNeedsRunUat wrapper", async (t) => {
   const base = createFixtureBase();
-  t.after(() => rmSync(base, { recursive: true, force: true }));
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  // The wrapper derives its own candidates from DB rows (the roadmap checkbox
+  // read it replaced is gone), so S01 must be a completed row for the wrapper
+  // to have anything to dispatch.
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable());
+  insertMilestone({ id: "M001", title: "UAT dispatch", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", risk: "low", depends: [] });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Next slice", status: "pending", risk: "low", depends: ["S01"] });
 
   writeRoadmap(base, "M001");
   writeSliceFile(

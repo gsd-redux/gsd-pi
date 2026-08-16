@@ -1,9 +1,9 @@
 // Project/App: gsd-pi
-// File Purpose: ADR-017 drift handler for external (gsd-core) markdown edits.
+// File Purpose: Observe external .gsd edits and retain the opt-in legacy drift handler.
 //
 // gsd-pi's DB is canonical, while .gsd/*.md is a readable projection. External
-// modeled edits are detected and surfaced as actionable blockers; runtime
-// reconciliation never imports them into canonical authority.
+// modeled edits are reported to the Projection Worker for preservation. Runtime
+// reconciliation does not register the legacy blocker handler below.
 
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -129,13 +129,13 @@ function dbProjectionMatches(
  * - Sha match → no record (gsd-pi's own write or no change).
  * - Sha mismatch → one record per drifted file, scoped to its recorded entities.
  */
-function detectExternalMarkdownEdit(
-  _state: GSDState,
-  ctx: DriftContext,
+export function observeExternalMarkdownEdits(
+  basePath: string,
+  dryRun = false,
 ): ExternalMarkdownEditDrift[] {
-  const marker = readCompatMarker(ctx.basePath, {
-    healInvalidKeys: !ctx.dryRun,
-    quarantineInvalid: !ctx.dryRun,
+  const marker = readCompatMarker(basePath, {
+    healInvalidKeys: !dryRun,
+    quarantineInvalid: !dryRun,
   });
   const entries = Object.entries(marker.projections);
   if (entries.length === 0) return [];
@@ -143,12 +143,12 @@ function detectExternalMarkdownEdit(
   const records: ExternalMarkdownEditDrift[] = [];
   let markerChanged = false;
   for (const [projectionPath, entry] of entries) {
-    const abs = join(ctx.basePath, ".gsd", projectionPath);
+    const abs = join(basePath, ".gsd", projectionPath);
     if (!existsSync(abs)) continue;
     const actual = computeProjectionSha(readFileSync(abs, "utf-8"));
     if (actual === entry.sha) continue;
     if (dbProjectionMatches(projectionPath, entry, actual)) {
-      if (!ctx.dryRun) {
+      if (!dryRun) {
         marker.projections[projectionPath] = {
           sha: actual,
           entities: entry.entities,
@@ -181,7 +181,7 @@ function detectExternalMarkdownEdit(
   if (markerChanged) {
     marker.lastWriter = "gsd-pi";
     marker.lastProjectedAt = new Date().toISOString();
-    writeCompatMarker(ctx.basePath, marker);
+    writeCompatMarker(basePath, marker);
   }
   return records;
 }
@@ -206,7 +206,8 @@ function repairExternalMarkdownEdit(
 
 export const externalMarkdownEditHandler: DriftHandler<ExternalMarkdownEditDrift> = {
   kind: "external-markdown-edit",
-  detect: detectExternalMarkdownEdit,
+  detect: (_state: GSDState, ctx: DriftContext) =>
+    observeExternalMarkdownEdits(ctx.basePath, ctx.dryRun),
   blocker: externalMarkdownEditBlocker,
   repair: repairExternalMarkdownEdit,
 };

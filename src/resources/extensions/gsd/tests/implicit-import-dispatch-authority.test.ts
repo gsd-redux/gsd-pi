@@ -188,7 +188,7 @@ afterEach(() => {
   temporaryDirectories.clear();
 });
 
-test("cold planning-only dispatch blocks instead of capturing or adopting Markdown", async () => {
+test("cold planning-only reconciliation ignores Markdown without capturing or adopting it", async () => {
   const base = makeWorkspace();
   cpSync(PLANNING_FIXTURE, join(base, ".planning"), { recursive: true });
   const databaseBefore = durableSnapshot();
@@ -198,7 +198,11 @@ test("cold planning-only dispatch blocks instead of capturing or adopting Markdo
 
   const result = await reconcileBeforeDispatch(base);
 
-  assertExplicitImportBlocker(result);
+  assert.equal(
+    result.blockers.some((blocker) => /external modeled edit/i.test(blocker)),
+    false,
+    "projection observation is not a workflow blocker",
+  );
   assertNoExternalImportRepair(result);
   assert.deepEqual(durableSnapshot(), databaseBefore, "canonical authority and lineage remain exact");
   assert.deepEqual(markerBytes(base), markerBefore, "inactive/default marker remains exact");

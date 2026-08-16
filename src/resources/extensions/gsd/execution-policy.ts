@@ -27,6 +27,15 @@ export interface ExecutionPolicy {
     context: { basePath: string },
   ): Promise<"continue" | "retry" | "pause" | "abort">;
 
+  verifyWithEvidence?(
+    unitType: string,
+    unitId: string,
+    context: { basePath: string },
+  ): Promise<{
+    outcome: "continue" | "retry" | "pause" | "abort";
+    inputPayload: string;
+  }>;
+
   /** Return true only when the configured verification boundary explicitly requires a person. */
   requiresHumanVerification?(unitType: string, unitId: string): boolean;
 

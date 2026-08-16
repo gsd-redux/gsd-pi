@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { deriveState, invalidateStateCache, _deriveStateImpl, deriveStateFromDb, isGhostMilestone } from '../state.ts';
+import { deriveState, invalidateStateCache, deriveStateFromDb, isGhostMilestone } from '../state.ts';
 import { readCachedDeriveState, writeCachedDeriveState } from '../state/derive/cache.ts';
 import type { GSDState } from '../types.ts';
 import {
@@ -140,9 +140,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/slices/S01/tasks/T01-PLAN.md', '# T01 Plan');
       writeFile(base, 'REQUIREMENTS.md', REQUIREMENTS_CONTENT);
 
-      // Derive state from the explicit legacy file-only path (no DB)
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       // Now open DB, insert matching artifacts + milestone hierarchy
       openDatabase(':memory:');
@@ -175,26 +172,12 @@ describe('derive-state-db', async () => {
       invalidateStateCache();
       const dbState = await deriveState(base);
 
-      // Field-by-field equality
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'db-match: phase matches');
-      assert.deepStrictEqual(dbState.activeMilestone?.id, fileState.activeMilestone?.id, 'db-match: activeMilestone.id matches');
-      assert.deepStrictEqual(dbState.activeMilestone?.title, fileState.activeMilestone?.title, 'db-match: activeMilestone.title matches');
-      assert.deepStrictEqual(dbState.activeSlice?.id, fileState.activeSlice?.id, 'db-match: activeSlice.id matches');
-      assert.deepStrictEqual(dbState.activeSlice?.title, fileState.activeSlice?.title, 'db-match: activeSlice.title matches');
-      assert.deepStrictEqual(dbState.activeTask?.id, fileState.activeTask?.id, 'db-match: activeTask.id matches');
-      assert.deepStrictEqual(dbState.activeTask?.title, fileState.activeTask?.title, 'db-match: activeTask.title matches');
-      assert.deepStrictEqual(dbState.blockers, fileState.blockers, 'db-match: blockers match');
-      assert.deepStrictEqual(dbState.registry.length, fileState.registry.length, 'db-match: registry length matches');
-      assert.deepStrictEqual(dbState.registry[0]?.status, fileState.registry[0]?.status, 'db-match: registry[0] status matches');
-      assert.deepStrictEqual(dbState.requirements?.active, fileState.requirements?.active, 'db-match: requirements.active matches');
-      assert.deepStrictEqual(dbState.requirements?.validated, fileState.requirements?.validated, 'db-match: requirements.validated matches');
-      assert.deepStrictEqual(dbState.requirements?.total, fileState.requirements?.total, 'db-match: requirements.total matches');
-      assert.deepStrictEqual(dbState.progress?.milestones?.done, fileState.progress?.milestones?.done, 'db-match: milestones.done matches');
-      assert.deepStrictEqual(dbState.progress?.milestones?.total, fileState.progress?.milestones?.total, 'db-match: milestones.total matches');
-      assert.deepStrictEqual(dbState.progress?.slices?.done, fileState.progress?.slices?.done, 'db-match: slices.done matches');
-      assert.deepStrictEqual(dbState.progress?.slices?.total, fileState.progress?.slices?.total, 'db-match: slices.total matches');
-      assert.deepStrictEqual(dbState.progress?.tasks?.done, fileState.progress?.tasks?.done, 'db-match: tasks.done matches');
-      assert.deepStrictEqual(dbState.progress?.tasks?.total, fileState.progress?.tasks?.total, 'db-match: tasks.total matches');
+      assert.equal(dbState.phase, 'executing');
+      assert.equal(dbState.activeMilestone?.id, 'M001');
+      assert.equal(dbState.activeSlice?.id, 'S01');
+      assert.equal(dbState.activeTask?.id, 'T01');
+      assert.equal(dbState.progress?.tasks?.done, 1);
+      assert.equal(dbState.progress?.tasks?.total, 2);
 
       closeDatabase();
     } finally {
@@ -433,26 +416,6 @@ describe('derive-state-db', async () => {
     assert.deepStrictEqual(state.registry, [], 'disk-import: registry remains DB-only');
   });
 
-  // ─── Test 5: Legacy requirements counting from disk ────────────────────
-  test('derive-state-db: explicit legacy derivation counts requirements from disk content', async () => {
-    const base = createFixtureBase();
-    try {
-      // Write minimal milestone dir (needed for milestone discovery)
-      mkdirSync(join(base, '.gsd', 'milestones', 'M001'), { recursive: true });
-      // Write REQUIREMENTS.md to disk (DB content is no longer used by deriveState)
-      writeFile(base, 'REQUIREMENTS.md', REQUIREMENTS_CONTENT);
-
-      invalidateStateCache();
-      const state = await _deriveStateImpl(base);
-
-      // Explicit legacy derivation still reads requirements from disk.
-      assert.deepStrictEqual(state.requirements?.active, 2, 'req-from-disk: requirements.active = 2');
-      assert.deepStrictEqual(state.requirements?.validated, 1, 'req-from-disk: requirements.validated = 1');
-      assert.deepStrictEqual(state.requirements?.total, 3, 'req-from-disk: requirements.total = 3');
-    } finally {
-      cleanup(base);
-    }
-  });
 
   // ─── Test 6: DB content with multi-milestone registry ─────────────────
   test('derive-state-db: multi-milestone from DB', async () => {
@@ -625,9 +588,6 @@ describe('derive-state-db', async () => {
       // Create milestone dir on disk with a CONTEXT file (not a ghost)
       writeFile(base, 'milestones/M001/M001-CONTEXT.md', '# M001: First\n\nSome context.');
 
-      // Filesystem-only state
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       // Now open DB, populate hierarchy
       openDatabase(':memory:');
@@ -636,12 +596,6 @@ describe('derive-state-db', async () => {
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);
 
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'pre-plan-db: phase matches');
-      assert.deepStrictEqual(dbState.activeMilestone?.id, fileState.activeMilestone?.id, 'pre-plan-db: activeMilestone.id matches');
-      assert.deepStrictEqual(dbState.activeSlice, fileState.activeSlice, 'pre-plan-db: activeSlice matches');
-      assert.deepStrictEqual(dbState.activeTask, fileState.activeTask, 'pre-plan-db: activeTask matches');
-      assert.deepStrictEqual(dbState.registry.length, fileState.registry.length, 'pre-plan-db: registry length matches');
-      assert.deepStrictEqual(dbState.registry[0]?.status, fileState.registry[0]?.status, 'pre-plan-db: registry[0] status matches');
 
       closeDatabase();
     } finally {
@@ -660,8 +614,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/slices/S01/tasks/.gitkeep', '');
       writeFile(base, 'milestones/M001/slices/S01/tasks/T01-PLAN.md', '# T01 Plan');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       // Build matching DB state
       openDatabase(':memory:');
@@ -680,7 +632,6 @@ describe('derive-state-db', async () => {
       assert.deepStrictEqual(dbState.activeTask?.id, 'T01', 'exec-db: activeTask is T01');
       assert.deepStrictEqual(dbState.progress?.tasks?.done, 1, 'exec-db: tasks.done = 1');
       assert.deepStrictEqual(dbState.progress?.tasks?.total, 2, 'exec-db: tasks.total = 2');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'exec-db: phase matches filesystem');
 
       closeDatabase();
     } finally {
@@ -711,8 +662,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/slices/S01/tasks/.gitkeep', '');
       writeFile(base, 'milestones/M001/slices/S01/tasks/T01-PLAN.md', '# T01 Plan');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
@@ -725,7 +674,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'summarizing', 'summarize-db: phase is summarizing');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'summarize-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeSlice?.id, 'S01', 'summarize-db: activeSlice is S01');
       assert.deepStrictEqual(dbState.activeTask, null, 'summarize-db: activeTask is null');
 
@@ -753,8 +701,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-VALIDATION.md', '---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nPassed.');
       writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Summary\n\nDone.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Done Milestone', status: 'complete' });
@@ -764,7 +710,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'complete', 'complete-db: phase is complete');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'complete-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.registry.length, 1, 'complete-db: registry has 1 entry');
       assert.deepStrictEqual(dbState.registry[0]?.status, 'complete', 'complete-db: M001 is complete');
 
@@ -794,8 +739,6 @@ describe('derive-state-db', async () => {
 `;
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', blockedRoadmap);
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Blocked Test', status: 'active' });
@@ -807,7 +750,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'blocked', 'blocked-db: phase is blocked when no slice deps are satisfied');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'blocked-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeSlice, null, 'blocked-db: no activeSlice is selected through unmet deps');
       assert.ok(dbState.blockers.some(b => b.includes('No slice eligible')), 'blocked-db: blocker explains no eligible slice');
 
@@ -826,8 +768,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-PARKED.md', 'Parked for now.');
       writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002: Active After Park\n\nReady.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'parked' });
@@ -836,7 +776,6 @@ describe('derive-state-db', async () => {
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);
 
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'parked-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M002', 'parked-db: activeMilestone is M002');
       assert.ok(dbState.registry.some(e => e.id === 'M001' && e.status === 'parked'), 'parked-db: M001 is parked in registry');
 
@@ -863,8 +802,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', doneRoadmap);
       // No VALIDATION file → validating-milestone phase
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Validate Test', status: 'active' });
@@ -874,7 +811,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'validating-milestone', 'validate-db: phase is validating-milestone');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'validate-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'validate-db: activeMilestone is M001');
 
       closeDatabase();
@@ -955,8 +891,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-VALIDATION.md',
         '---\nverdict: needs-remediation\nremediation_round: 1\n---\n\n# Validation\nNeeds fixes.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Stuck Remediation', status: 'active' });
@@ -973,7 +907,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'blocked', 'remediation-stuck-db: phase is blocked');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'remediation-stuck-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'remediation-stuck-db: activeMilestone is M001');
       assert.ok(
         dbState.blockers.some(b => b.includes('needs-remediation') && b.includes('M001')),
@@ -1011,8 +944,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-VALIDATION.md',
         '---\nverdict: needs-attention\nremediation_round: 0\n---\n\n# Validation\nNeeds attention.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Needs Attention', status: 'active' });
@@ -1029,7 +960,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'blocked', 'needs-attention-db: phase is blocked');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'needs-attention-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'needs-attention-db: activeMilestone is M001');
       assert.deepStrictEqual(dbState.registry[0]?.status, 'active', 'needs-attention-db: milestone stays active, not parked');
       assert.ok(
@@ -1060,8 +990,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', doneRoadmap);
       writeFile(base, 'milestones/M001/M001-VALIDATION.md', '---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nPassed.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Complete Test', status: 'active' });
@@ -1078,7 +1006,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'completing-milestone', 'completing-db: phase is completing-milestone');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'completing-db: phase matches filesystem');
 
       closeDatabase();
     } finally {
@@ -1097,8 +1024,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M001/slices/S01/tasks/T01-PLAN.md', '# T01 Plan');
       writeFile(base, 'milestones/M001/slices/S01/S01-REPLAN-TRIGGER.md', 'Replan triggered.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
@@ -1119,7 +1044,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'replanning-slice', 'replan-db: phase is replanning-slice');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'replan-db: phase matches filesystem');
       assert.ok(
         Object.hasOwn(dbState, 'activeWorkspace'),
         'replan-db: state preserves explicit activeWorkspace field for auto-loop consumers',
@@ -1200,8 +1124,6 @@ describe('derive-state-db', async () => {
       writeFile(base, 'milestones/M002/M002-CONTEXT.md', '---\ndepends_on:\n  - M001\n---\n\n# M002: Second\n\nDepends on M001.');
       writeFile(base, 'milestones/M003/M003-CONTEXT.md', '---\ndepends_on:\n  - M002\n---\n\n# M003: Third\n\nDepends on M002.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'First', status: 'complete', depends_on: [] });
@@ -1213,10 +1135,7 @@ describe('derive-state-db', async () => {
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);
 
-      assert.deepStrictEqual(dbState.registry.length, fileState.registry.length, 'multi-deps-db: registry length matches');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M002', 'multi-deps-db: activeMilestone is M002 (M001 complete, M003 dep unmet)');
-      assert.deepStrictEqual(dbState.activeMilestone?.id, fileState.activeMilestone?.id, 'multi-deps-db: activeMilestone matches filesystem');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'multi-deps-db: phase matches filesystem');
 
       // Check registry statuses
       const m1reg = dbState.registry.find(e => e.id === 'M001');
@@ -1306,8 +1225,6 @@ describe('derive-state-db', async () => {
       // Real milestone
       writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002: Real\n\nReal milestone.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       // Only insert M002 — M001 has no DB row (simulates row loss / never inserted)
@@ -1318,7 +1235,6 @@ describe('derive-state-db', async () => {
 
       // Ghost should be skipped — M002 should be active
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M002', 'ghost-db: activeMilestone is M002 (ghost skipped)');
-      assert.deepStrictEqual(dbState.activeMilestone?.id, fileState.activeMilestone?.id, 'ghost-db: matches filesystem');
       // Ghost should not appear in registry
       assert.ok(!dbState.registry.some(e => e.id === 'M001'), 'ghost-db: M001 not in registry');
 
@@ -1335,8 +1251,6 @@ describe('derive-state-db', async () => {
     try {
       writeFile(base, 'milestones/M001/M001-CONTEXT-DRAFT.md', '# M001: Draft\n\nDraft content.');
 
-      invalidateStateCache();
-      const fileState = await _deriveStateImpl(base);
 
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'Draft', status: 'needs-discussion' });
@@ -1345,7 +1259,6 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       assert.deepStrictEqual(dbState.phase, 'needs-discussion', 'discuss-db: phase is needs-discussion');
-      assert.deepStrictEqual(dbState.phase, fileState.phase, 'discuss-db: phase matches filesystem');
 
       closeDatabase();
     } finally {
@@ -1376,12 +1289,14 @@ describe('derive-state-db', async () => {
       const dbState = await deriveStateFromDb(base);
 
       // A content-less queued shell (no CONTEXT, no CONTEXT-DRAFT, no slices)
-      // is a phantom and must NOT be promoted to active (#1524).
+      // is a phantom and must NOT be promoted to active (#1524). Readiness
+      // comes from the artifacts table, so derive must not probe the milestone
+      // directory on disk.
       assert.equal(dbState.activeMilestone, null, 'single-resolve: content-less queued shell is not promoted');
       assert.equal(
         phaseDirExistsChecks,
-        3,
-        'single-resolve: one directory resolve plus two artifact probes re-check the milestone directory via resolveFile',
+        0,
+        'single-resolve: live derive does not probe the milestone directory for CONTEXT files',
       );
 
       closeDatabase();
@@ -1502,6 +1417,10 @@ describe('derive-state-db', async () => {
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'First', status: 'complete' });
       insertMilestone({ id: 'M002', title: 'Second', status: 'queued' });
+      insertArtifactRow('milestones/M002/M002-CONTEXT.md', '# M002 Context\n\nPlanned milestone.', {
+        artifact_type: 'CONTEXT',
+        milestone_id: 'M002',
+      });
 
       // isGhostMilestone should NOT treat M002 as ghost when DB row + content files exist
       assert.ok(!isGhostMilestone(base, 'M002'), 'ghost-dbrow: M002 with DB row and content is NOT a ghost');

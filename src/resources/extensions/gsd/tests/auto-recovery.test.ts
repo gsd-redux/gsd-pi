@@ -12,6 +12,7 @@ import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArti
 import { resolveMilestoneFile } from "../paths.ts";
 import { _getAdapter, openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow, insertTask, insertAssessment, getMilestone, getMilestoneCommitAttributionShas, getTask, getSlice, saveGateResult, updateMilestoneStatus } from "../gsd-db.ts";
 import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import { recordFailureAndSelectRecovery } from "../task-recovery-domain-operation.ts";
 import { internalExecutionInvocation } from "../execution-invocation.ts";
 import { readEvents } from "../workflow-events.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
@@ -22,7 +23,6 @@ import {
   type LifecycleIdentity,
 } from "../db/writers/lifecycle-commands.ts";
 import { clearParseCache } from "../files.ts";
-import { parseRoadmap } from "../parsers-legacy.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
 import { writeIntegrationBranch } from "../git-service.ts";
@@ -51,6 +51,27 @@ function cleanup(base: string): void {
   try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
 }
 
+/**
+ * Open a DB under `base` and seed milestone M001 with the given slice rows.
+ * Slice state is DB-authoritative (ADR-017), so verification fixtures that
+ * exercise artifact/path resolution still need the rows to exist.
+ */
+function seedMilestoneSlices(base: string, slices: Array<{ id: string; status: string }>): void {
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  for (const slice of slices) {
+    insertSlice({
+      milestoneId: "M001",
+      id: slice.id,
+      title: `${slice.id} Slice`,
+      status: slice.status,
+      risk: "low",
+      depends: [],
+    });
+  }
+}
+
 function makeTmpProject(): string {
   const dir = mkdtempSync(join(tmpdir(), "auto-recovery-"));
   mkdirSync(join(dir, ".gsd"), { recursive: true });
@@ -69,7 +90,9 @@ function makeTmpProject(): string {
   return dir;
 }
 
-function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
+function seedCanonicalTaskAttempt(
+  outcome?: "succeeded" | "failed",
+): { attemptId: string; resultId: string | undefined } {
   const db = _getAdapter();
   assert.ok(db);
   db.exec(`
@@ -104,16 +127,18 @@ function seedCanonicalTaskAttempt(outcome?: "succeeded" | "failed"): void {
     milestoneLeaseToken: 7,
     coordinationDispatchId: Number(dispatch?.["id"]),
   });
+  let resultId: string | undefined;
   if (outcome) {
-    settleTaskAttempt({
+    resultId = settleTaskAttempt({
       invocation: internalExecutionInvocation(`test:artifact-recovery:settle:${outcome}`),
       attemptId: claim.attemptId,
       outcome,
       failureClass: outcome === "succeeded" ? "none" : "executor-failed",
       summary: `executor ${outcome}`,
       output: {},
-    });
+    }).resultId;
   }
+  return { attemptId: claim.attemptId, resultId };
 }
 
 function runGit(base: string, args: string[]): void {
@@ -382,6 +407,7 @@ test("complete-slice verification accepts artifacts rendered in the project root
     ].join("\n"));
     writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# S01 Summary\nDone.");
     writeFileSync(join(sliceDir, "S01-UAT.md"), "# S01 UAT\nPass.");
+    seedMilestoneSlices(base, [{ id: "S01", status: "complete" }]);
 
     const worktree = join(base, ".gsd", "worktrees", "M001");
     mkdirSync(join(worktree, ".gsd", "milestones", "M001", "slices", "S01"), { recursive: true });
@@ -472,6 +498,28 @@ test("resolveExpectedArtifactPath returns correct path for all slice-level types
     assert.ok(uatResult!.includes("ASSESSMENT"));
   } finally {
     cleanup(base);
+  }
+});
+
+test("refreshRecoveryDbForArtifact reports unsupported unit recovery as read-only (#1662)", () => {
+  const units = [
+    ["research-slice", "M001/S01"],
+    ["validate-milestone", "M001"],
+    ["plan-milestone", "M001"],
+    ["complete-slice", "M001/S01"],
+    ["run-uat", "M001/S01"],
+  ] as const;
+
+  for (const [unitType, unitId] of units) {
+    assert.deepEqual(
+      refreshRecoveryDbForArtifact(unitType, unitId, process.cwd()),
+      {
+        ok: true,
+        advanced: false,
+        reason: `${unitType}-attempt-read-only-verified`,
+        message: `artifact verified on disk for ${unitType} ${unitId} (no DB write)`,
+      },
+    );
   }
 });
 
@@ -567,10 +615,18 @@ test("refreshRecoveryDbForArtifact accepts canonical verify and route Result hea
     true,
     "a succeeded Result at verify is sufficient without SUMMARY or PLAN projections",
   );
+  // #1622: acceptance is read-only — the task row is never written here, so the
+  // result must say so instead of passing for a DB refresh.
   assert.deepEqual(
     refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", first),
-    { ok: true },
+    {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: "canonical Task Attempt verified at the verify stage (no DB write)",
+    },
   );
+  assert.equal(getTask("M001", "S01", "T01")?.status, "pending", "recovery must not advance the task row");
 
   closeDatabase();
   const second = makeTmpProject();
@@ -583,8 +639,46 @@ test("refreshRecoveryDbForArtifact accepts canonical verify and route Result hea
   );
   assert.deepEqual(
     refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", second),
-    { ok: true },
+    {
+      ok: true,
+      advanced: false,
+      reason: "execute-task-attempt-read-only-verified",
+      message: "canonical Task Attempt verified at the route stage (no DB write)",
+    },
   );
+});
+
+test("refreshRecoveryDbForArtifact refuses execute-task recovery after a terminal agent abort (#1622)", () => {
+  const dir = makeTmpProject();
+  insertTask({ milestoneId: "M001", sliceId: "S01", id: "T01", title: "Task", status: "pending" });
+  const attempt = seedCanonicalTaskAttempt("failed");
+  assert.ok(attempt.resultId);
+  const route = recordFailureAndSelectRecovery({
+    invocation: internalExecutionInvocation("test:artifact-recovery:route:abort"),
+    attemptId: attempt.attemptId,
+    resultId: attempt.resultId!,
+    owner: "agent",
+    classification: { failureKind: "fatal" },
+    summary: "host verification never committed",
+    evidence: { unitType: "execute-task", unitId: "M001/S01/T01" },
+    rationale: "Terminal agent-owned abort",
+  });
+  assert.equal(route.action, "abort");
+
+  // The artifact still verifies (the Attempt is parked at the route stage), so
+  // without the guard stuck recovery reports success and re-dispatches into an
+  // instant `task-recovery-abort` break.
+  assert.equal(verifyExpectedArtifact("execute-task", "M001/S01/T01", dir), true);
+
+  const result = refreshRecoveryDbForArtifact("execute-task", "M001/S01/T01", dir);
+
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.equal(result.fatal, true);
+  assert.equal(result.reason, "execute-task-recovery-aborted");
+  assert.ok(result.message.includes(route.recoveryActionId));
+  assert.ok(result.message.includes("gsd_task_recovery_resume"));
+  assert.ok(result.message.includes("gsd recover"));
 });
 
 test("refreshRecoveryDbForArtifact closes complete-milestone DB row when artifacts exist but DB is stale (#5568)", async () => {
@@ -955,54 +1049,6 @@ test("buildLoopRemediationSteps returns null for unknown type", () => {
   }
 });
 
-// ─── verifyExpectedArtifact: parse cache collision regression ─────────────
-
-test("verifyExpectedArtifact detects roadmap [x] change despite parse cache", () => {
-  // Regression test: cacheKey collision when [ ] → [x] doesn't change
-  // file length or first/last 100 chars. Without the fix, parseRoadmap
-  // returns stale cached data with done=false even though the file has [x].
-  const base = makeTmpBase();
-  try {
-    // Build a roadmap long enough that the [x] change is outside the first/last 100 chars
-    const padding = "A".repeat(200);
-    const roadmapBefore = [
-      `# M001: Test Milestone ${padding}`,
-      "",
-      "## Slices",
-      "",
-      "- [ ] **S01: First slice** `risk:low`",
-      "",
-      `## Footer ${padding}`,
-    ].join("\n");
-    const roadmapAfter = roadmapBefore.replace("- [ ] **S01:", "- [x] **S01:");
-
-    // Verify lengths are identical (the key collision condition)
-    assert.equal(roadmapBefore.length, roadmapAfter.length);
-
-    // Populate parse cache with the pre-edit roadmap
-    const before = parseRoadmap(roadmapBefore);
-    const sliceBefore = before.slices.find(s => s.id === "S01");
-    assert.ok(sliceBefore);
-    assert.equal(sliceBefore!.done, false);
-
-    // Now write the post-edit roadmap to disk and create required artifacts
-    const roadmapPath = join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md");
-    writeFileSync(roadmapPath, roadmapAfter);
-    const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-SUMMARY.md");
-    writeFileSync(summaryPath, "# Summary\nDone.");
-    const uatPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-UAT.md");
-    writeFileSync(uatPath, "# UAT\nPassed.");
-
-    // verifyExpectedArtifact should see the [x] despite the parse cache
-    // having the [ ] version. The fix clears the parse cache inside verify.
-    const verified = verifyExpectedArtifact("complete-slice", "M001/S01", base);
-    assert.equal(verified, true, "verifyExpectedArtifact should return true when roadmap has [x]");
-  } finally {
-    clearParseCache();
-    cleanup(base);
-  }
-});
-
 test("verifyExpectedArtifact accepts DB-complete slice when roadmap projection is stale", () => {
   const base = makeTmpBase();
   try {
@@ -1114,12 +1160,34 @@ test("verifyExpectedArtifact accepts plan-slice with completed tasks", () => {
   }
 });
 
-test("verifyExpectedArtifact treats complete-slice as satisfied when summary, UAT, and roadmap checkbox exist", () => {
+test("verifyExpectedArtifact treats complete-slice as satisfied when summary, UAT, and the DB slice row are complete", () => {
   const base = makeTmpBase();
   try {
     const milestoneDir = join(base, ".gsd", "milestones", "M001");
     const sliceDir = join(milestoneDir, "slices", "S01");
     mkdirSync(sliceDir, { recursive: true });
+    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\nDone.\n");
+    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\nPassed.\n");
+    seedMilestoneSlices(base, [{ id: "S01", status: "complete" }]);
+
+    assert.equal(
+      verifyExpectedArtifact("complete-slice", "M001/S01", base),
+      true,
+      "complete-slice should verify when expected artifact and state mutation are already satisfied",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact rejects complete-slice when the DB slice row is unreadable, even with a checked roadmap", () => {
+  const base = makeTmpBase();
+  try {
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    const sliceDir = join(milestoneDir, "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    // A checked roadmap projection must never stand in for the DB slice row:
+    // slice completion is DB-authoritative (ADR-017) and fails closed.
     writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
       "# M001: Test Milestone",
       "",
@@ -1138,40 +1206,8 @@ test("verifyExpectedArtifact treats complete-slice as satisfied when summary, UA
 
     assert.equal(
       verifyExpectedArtifact("complete-slice", "M001/S01", base),
-      true,
-      "complete-slice should verify when expected artifact and state mutation are already satisfied",
-    );
-  } finally {
-    cleanup(base);
-  }
-});
-
-test("verifyExpectedArtifact rejects complete-slice when roadmap checkbox is still unchecked", () => {
-  const base = makeTmpBase();
-  try {
-    const milestoneDir = join(base, ".gsd", "milestones", "M001");
-    const sliceDir = join(milestoneDir, "slices", "S01");
-    mkdirSync(sliceDir, { recursive: true });
-    writeFileSync(join(milestoneDir, "M001-ROADMAP.md"), [
-      "# M001: Test Milestone",
-      "",
-      "## Slices",
-      "",
-      "- [ ] **S01: First slice** `risk:low`",
-      "",
-      "## Boundary Map",
-      "",
-      "- S01 → terminal",
-      "  - Produces: done",
-      "  - Consumes: nothing",
-    ].join("\n"));
-    writeFileSync(join(sliceDir, "S01-SUMMARY.md"), "# Summary\nDone.\n");
-    writeFileSync(join(sliceDir, "S01-UAT.md"), "# UAT\nPassed.\n");
-
-    assert.equal(
-      verifyExpectedArtifact("complete-slice", "M001/S01", base),
       false,
-      "complete-slice should remain unsatisfied when roadmap state still requires the unit to run",
+      "complete-slice should remain unsatisfied when the DB cannot confirm the slice is complete",
     );
   } finally {
     cleanup(base);
@@ -2095,6 +2131,21 @@ test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)",
     execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
     execFileSync("git", ["commit", "-m", "feat: implementation"], { cwd: base, stdio: "ignore" });
 
+    // Closeout is DB-authoritative (ADR-017): the closeout proof must clear
+    // before implementation evidence is consulted at all. The invariant under
+    // test is still "real implementation files are honored" — this fixture
+    // simply had no DB to prove closeout against.
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Done Slice", status: "complete" });
+    insertAssessment({
+      path: "milestones/M001/M001-VALIDATION.md",
+      milestoneId: "M001",
+      status: "pass",
+      scope: "milestone-validation",
+      fullContent: "verdict: pass",
+    });
+
     const result = verifyExpectedArtifact("complete-milestone", "M001", base);
     assert.equal(result, true, "complete-milestone should pass verification with implementation files");
   } finally {
@@ -2113,6 +2164,20 @@ test("verifyExpectedArtifact complete-milestone passes on main retry with milest
     writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md"), "# Summary");
     execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
     execFileSync("git", ["commit", "-m", "feat: implementation already on main\n\nGSD-Task: S01/T01"], { cwd: base, stdio: "ignore" });
+
+    // Closeout is DB-authoritative (ADR-017) — seed the closed milestone so the
+    // proof clears and the assertion still isolates its real subject: a
+    // self-diff between HEAD and main must not by itself fail verification.
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Done Slice", status: "complete" });
+    insertAssessment({
+      path: "milestones/M001/M001-VALIDATION.md",
+      milestoneId: "M001",
+      status: "pass",
+      scope: "milestone-validation",
+      fullContent: "verdict: pass",
+    });
 
     const result = verifyExpectedArtifact("complete-milestone", "M001", base);
     assert.equal(result, true, "complete-milestone should not fail solely because HEAD vs main is a self-diff");
@@ -2618,6 +2683,11 @@ test("#4414: verifyExpectedArtifact parallel-research succeeds when all research
   try {
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S02", "tasks"), { recursive: true });
     mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S03", "tasks"), { recursive: true });
+    seedMilestoneSlices(base, [
+      { id: "S01", status: "pending" },
+      { id: "S02", status: "pending" },
+      { id: "S03", status: "pending" },
+    ]);
 
     // Minimal roadmap with three slices
     writeFileSync(
@@ -2681,6 +2751,11 @@ test("parallel-research verification accepts canonical project artifacts from a 
     const milestoneDir = join(base, ".gsd", "milestones", "M001");
     mkdirSync(join(milestoneDir, "slices", "S02", "tasks"), { recursive: true });
     mkdirSync(join(milestoneDir, "slices", "S03", "tasks"), { recursive: true });
+    seedMilestoneSlices(base, [
+      { id: "S01", status: "pending" },
+      { id: "S02", status: "pending" },
+      { id: "S03", status: "pending" },
+    ]);
 
     writeFileSync(
       join(milestoneDir, "M001-ROADMAP.md"),

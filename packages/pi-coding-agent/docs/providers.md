@@ -19,6 +19,7 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - Cursor Agent (local `cursor-agent` CLI)
 - GitHub Copilot
+- Kimi Code
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
@@ -41,6 +42,11 @@ Set `CURSOR_AGENT_BIN` if the binary is not on `PATH`. Set `GSD_CURSOR_DISABLE=1
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
+
+### Kimi Code
+
+- Requires a Kimi Code subscription
+- Uses a browser-based device authorization flow
 
 ## API Keys
 

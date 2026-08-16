@@ -70,11 +70,10 @@ test("resolveEngineOptionalDependencyVersion keeps prerelease publishes on stabl
   assert.equal(resolveEngineOptionalDependencyVersion("1.0.2-rc.1"), "1.0.2-rc.1");
 });
 
-test("version sync includes cloud-mcp-gateway so dev stamps keep workspace links", () => {
-  assert.ok(
-    RELEASE_WORKSPACE_PACKAGE_DIRS.includes("packages/cloud-mcp-gateway"),
-    "cloud-mcp-gateway must be synced during dev version stamping",
-  );
+test("version sync keeps daemon and excludes retired cloud products", () => {
+  assert.ok(RELEASE_WORKSPACE_PACKAGE_DIRS.includes("packages/daemon"));
+  assert.ok(!RELEASE_WORKSPACE_PACKAGE_DIRS.includes("packages/cloud-mcp-gateway"));
+  assert.ok(!RELEASE_WORKSPACE_PACKAGE_DIRS.includes("packages/gsd-cloud"));
 });
 
 test("syncVersionSurfaces rewrites internal deps to the stamped prerelease version", () => {
@@ -87,35 +86,35 @@ test("syncVersionSurfaces rewrites internal deps to the stamped prerelease versi
       `${JSON.stringify({ name: "@opengsd/gsd-pi", version: "1.0.2" }, null, 2)}\n`,
     );
 
-    mkdirSync(join(root, "packages", "mcp-server"), { recursive: true });
+    mkdirSync(join(root, "packages", "rpc-client"), { recursive: true });
     writeFileSync(
-      join(root, "packages", "mcp-server", "package.json"),
+      join(root, "packages", "rpc-client", "package.json"),
       `${JSON.stringify({
-        name: "@opengsd/mcp-server",
+        name: "@opengsd/rpc-client",
         version: "1.0.2",
       }, null, 2)}\n`,
     );
 
-    mkdirSync(join(root, "packages", "cloud-mcp-gateway"), { recursive: true });
+    mkdirSync(join(root, "packages", "daemon"), { recursive: true });
     writeFileSync(
-      join(root, "packages", "cloud-mcp-gateway", "package.json"),
+      join(root, "packages", "daemon", "package.json"),
       `${JSON.stringify({
-        name: "@opengsd/cloud-mcp-gateway",
+        name: "@opengsd/daemon",
         version: "1.0.2",
         dependencies: {
-          "@opengsd/mcp-server": "^1.0.2",
+          "@opengsd/rpc-client": "^1.0.2",
         },
       }, null, 2)}\n`,
     );
 
     syncVersionSurfaces(root, devVersion);
 
-    const mcpServer = JSON.parse(readFileSync(join(root, "packages", "mcp-server", "package.json"), "utf8"));
-    const gateway = JSON.parse(readFileSync(join(root, "packages", "cloud-mcp-gateway", "package.json"), "utf8"));
+    const rpcClient = JSON.parse(readFileSync(join(root, "packages", "rpc-client", "package.json"), "utf8"));
+    const daemon = JSON.parse(readFileSync(join(root, "packages", "daemon", "package.json"), "utf8"));
 
-    assert.equal(mcpServer.version, devVersion);
-    assert.equal(gateway.version, devVersion);
-    assert.equal(gateway.dependencies["@opengsd/mcp-server"], "workspace:*");
+    assert.equal(rpcClient.version, devVersion);
+    assert.equal(daemon.version, devVersion);
+    assert.equal(daemon.dependencies["@opengsd/rpc-client"], "workspace:*");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

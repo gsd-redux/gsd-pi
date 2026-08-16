@@ -457,10 +457,10 @@ await done;
 
 ```json
 // ❌ WRONG
-"test:tokens": "node --test studio/test/tokens.test.mjs"
+"test:tokens": "node --test web/lib/__tests__/example.test.ts"
 
 // ✅ CORRECT
-"test:tokens": "node --experimental-strip-types --test studio/test/tokens.test.mjs"
+"test:tokens": "node --experimental-strip-types --test web/lib/__tests__/example.test.ts"
 ```
 
 ## Security

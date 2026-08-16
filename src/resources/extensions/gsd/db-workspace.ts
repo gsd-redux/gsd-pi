@@ -18,6 +18,7 @@ import {
   getDbStatus,
   getDbProvider,
   isDbAvailable,
+  isSchemaTooNewError,
   _getAdapter,
   openDatabase,
   openDatabaseByScope,
@@ -87,7 +88,8 @@ export type WorkflowDatabaseOpenReason =
   | "created-empty"
   | "missing-database"
   | "missing-gsd-dir"
-  | "open-failed";
+  | "open-failed"
+  | "schema-too-new";
 
 export type WorkflowDatabaseOpenResult =
   | {
@@ -100,6 +102,14 @@ export type WorkflowDatabaseOpenResult =
       reason: "missing-database" | "missing-gsd-dir" | "open-failed";
       location: WorkflowDatabaseLocation;
       error?: Error;
+    }
+  | {
+      // Refuse-newer version skew: the typed engine error (with its exact
+      // message) is ALWAYS attached so read seams can surface it loudly.
+      ok: false;
+      reason: "schema-too-new";
+      location: WorkflowDatabaseLocation;
+      error: Error;
     };
 
 export type WorkflowDatabaseStatus = ReturnType<typeof getDbStatus>;
@@ -157,11 +167,22 @@ export function openWorkflowDatabase(basePath: string): WorkflowDatabaseOpenResu
       location,
     };
   } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (isSchemaTooNewError(error)) {
+      // Refuse-newer version skew stays distinguishable — never collapse it
+      // into a generic open-failed that read seams degrade silently on.
+      return {
+        ok: false,
+        reason: "schema-too-new",
+        location,
+        error,
+      };
+    }
     return {
       ok: false,
       reason: "open-failed",
       location,
-      error: err instanceof Error ? err : new Error(String(err)),
+      error,
     };
   }
 }

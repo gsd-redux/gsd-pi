@@ -2,8 +2,8 @@
 // File Purpose: Workflow DB open helpers for state derivation.
 
 import type { GSDState } from '../../types.js';
-import { getAllMilestones, isDbAvailable, setMilestoneQueueOrder } from '../../gsd-db.js';
-import { openExistingWorkflowDatabase } from '../../db-workspace.js';
+import { getAllMilestones, isDbAvailable, isSchemaTooNewError, setMilestoneQueueOrder } from '../../gsd-db.js';
+import { openExistingWorkflowDatabase, type WorkflowDatabaseOpenResult } from '../../db-workspace.js';
 import { loadQueueOrder, sortByQueueOrder } from '../../queue-order.js';
 
 export function syncQueueOrderProjectionToDb(basePath: string): void {
@@ -18,9 +18,28 @@ export function syncQueueOrderProjectionToDb(basePath: string): void {
 }
 
 export function ensureExistingWorkflowDbOpen(basePath: string): boolean {
-  const opened = isDbAvailable() || openExistingWorkflowDatabase(basePath).ok;
-  if (opened) syncQueueOrderProjectionToDb(basePath);
-  return opened;
+  if (isDbAvailable()) {
+    syncQueueOrderProjectionToDb(basePath);
+    return true;
+  }
+  let result: WorkflowDatabaseOpenResult;
+  try {
+    result = openExistingWorkflowDatabase(basePath);
+  } catch (err) {
+    // Defensive: if an open path ever throws the typed refuse-newer error
+    // directly instead of returning a "schema-too-new" result, it must still
+    // refuse loudly rather than degrade to empty state.
+    if (isSchemaTooNewError(err)) throw err;
+    throw err;
+  }
+  if (!result.ok && result.reason === "schema-too-new") {
+    // Version skew is not generic DB unavailability: throw the typed error
+    // (exact engine message attached) so state-read surfaces refuse loudly
+    // instead of emitting a degraded all-zero snapshot (T003 spike).
+    throw result.error;
+  }
+  if (result.ok) syncQueueOrderProjectionToDb(basePath);
+  return result.ok;
 }
 
 export function buildDbUnavailableState(): GSDState {

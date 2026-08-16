@@ -24,6 +24,13 @@ export const BROWSER_ACTION_RE = /\b(?:open(?:ed)?|navigate(?:d)?|click(?:ed)?|t
 export const BROWSER_ASSERTION_RE = /\b(?:assert(?:ed|ion)?|observed|confirmed|verified|expected|visible|text|count|label|strikethrough|localstorage|screenshot|snapshot|passed)\b/i;
 const NON_REQUIREMENT_BROWSER_HEADING_RE = /^(?:not\s+proven|not\s+covered|out\s+of\s+scope|deferred|follow-?ups?|known\s+limitations|notes\s+for\s+tester)\b/i;
 const NON_REQUIREMENT_BROWSER_LINE_RE = /\b(?:deferred|not\s+proven|not\s+covered|out\s+of\s+scope|future\s+slice|follow-?up|no\s+(?:live\s+)?browser|without\s+(?:a\s+)?browser|not\s+(?:a\s+)?browser)\b/i;
+// The negations above only fire when the negator sits directly beside "browser".
+// A negated *list* — "no runtime behavior, server, UI, or browser interaction is
+// involved" — separates them, so the line fell through and matched
+// `browser interaction` as a requirement. That escalated a slice whose UAT said
+// browsers were irrelevant into one demanding browser verification. Bounded to a
+// single clause so a genuine requirement in the next sentence still counts.
+const NEGATED_BROWSER_CLAUSE_RE = /\b(?:no|without|not)\b[^.;:!?]{0,60}\bbrowser\b/i;
 
 export function compactTextParts(parts: Array<string | string[] | null | undefined>): string {
   return parts.flatMap((part) => Array.isArray(part) ? part : [part])
@@ -51,7 +58,11 @@ export function hasBrowserRequiredText(text: string): boolean {
       if (!inNonRequirementSection && BROWSER_REQUIREMENT_RE.test(title)) return true;
       continue;
     }
-    if (inNonRequirementSection || NON_REQUIREMENT_BROWSER_LINE_RE.test(line)) continue;
+    if (
+      inNonRequirementSection ||
+      NON_REQUIREMENT_BROWSER_LINE_RE.test(line) ||
+      NEGATED_BROWSER_CLAUSE_RE.test(line)
+    ) continue;
     if (BROWSER_REQUIREMENT_RE.test(line)) return true;
   }
   return false;

@@ -639,6 +639,13 @@ function validateMilestoneId(milestoneId: string): void {
 
 // ─── Implementation core ─────────────────────────────────────────────────
 
+/** Start an independent auto run without inheriting a prior run's failure. */
+export function prepareIsolationForNewRun(
+  s: Pick<AutoSession, "isolationDegraded">,
+): void {
+  s.isolationDegraded = false;
+}
+
 /**
  * Shared implementation of milestone entry. Called by both
  * `WorktreeLifecycle.enterMilestone` and the legacy
@@ -792,13 +799,18 @@ export function _enterMilestoneCore(
     getIsolationMode(basePath);
 
   if (s.isolationDegraded) {
-    if (mode === "worktree") {
+    if (mode === "worktree" || mode === "branch") {
       try {
         lifecycleEnterBranchMode(deps, basePath, milestoneId);
         s.basePath = basePath;
         rebuildGitService(s, deps);
         invalidateAllCaches();
-        ctx.notify(isolationDegradedFallbackGuidance(milestoneId), "warning");
+        if (mode === "branch") s.isolationDegraded = false;
+        if (mode === "worktree") {
+          ctx.notify(isolationDegradedFallbackGuidance(milestoneId), "warning");
+        } else {
+          ctx.notify(`Recovered branch isolation on milestone/${milestoneId}.`, "info");
+        }
         return { ok: true, mode: "branch", path: basePath };
       } catch (err) {
         debugLog("WorktreeLifecycle", {

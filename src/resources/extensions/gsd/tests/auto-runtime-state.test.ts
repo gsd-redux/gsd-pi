@@ -27,8 +27,10 @@ test("getAutoRuntimeSnapshot includes orchestration phase when available", () =>
   autoSession.orchestration = {
     async start() { return { kind: "stopped" as const, reason: "test" }; },
     async advance() { return { kind: "stopped" as const, reason: "test" }; },
+    async settle() {},
     async completeActiveUnit() {},
     async retryActiveUnit() {},
+    async abandonActiveUnit() {},
     async resume() { return { kind: "stopped" as const, reason: "test" }; },
     async stop() { return { kind: "stopped" as const, reason: "test" }; },
     getStatus() {
@@ -46,6 +48,18 @@ test("getAutoRuntimeSnapshot includes orchestration phase when available", () =>
   assert.equal(snap.toolSurface, null);
 
   autoSession.reset();
+});
+
+test("getAutoRuntimeSnapshot includes session isolation fallback state", (t) => {
+  autoSession.reset();
+  t.after(() => autoSession.reset());
+  autoSession.isolationDegraded = true;
+  autoSession.strandedRecoveryIsolationMode = "branch";
+
+  const snap = getAutoRuntimeSnapshot();
+
+  assert.equal(snap.isolationDegraded, true);
+  assert.equal(snap.strandedRecoveryIsolationMode, "branch");
 });
 
 test("getAutoRuntimeSnapshot includes the active typed tool-surface snapshot", () => {

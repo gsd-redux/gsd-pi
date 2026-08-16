@@ -122,6 +122,27 @@ test('handleReopenTask: commits canonical ready with legacy pending', async () =
   }
 });
 
+test('handleReopenTask: restores the slice pending Q8 companion gate', async (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+  seedCompleteTask();
+
+  const result = await handleReopenTask({
+    milestoneId: 'M001', sliceId: 'S01', taskId: 'T01', reason: 'regression found',
+  }, base, invocation('test/public-reopen/restore-q8'));
+
+  assert.ok(!('error' in result));
+  const adapter = _getAdapter();
+  assert.ok(adapter);
+  assert.deepEqual(adapter.prepare(`
+    SELECT gate_id, scope, status
+    FROM quality_gates
+    WHERE milestone_id = 'M001' AND slice_id = 'S01'
+      AND gate_id = 'Q8' AND (task_id = '' OR task_id IS NULL)
+  `).all(), [{ gate_id: 'Q8', scope: 'slice', status: 'pending' }]);
+});
+
 test('handleReopenTask: projection cleanup failure cannot roll back committed recovery', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

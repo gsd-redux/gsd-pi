@@ -11,6 +11,7 @@ import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { VerificationEvidenceRow } from "./db-verification-evidence-rows.js";
 import type { Decision, GateRow, Requirement } from "./types.js";
 import { atomicWriteAsync, atomicWriteSync } from "./atomic-write.js";
+import { buildStateContract } from "./state-contract.js";
 import {
   getAllDecisionsFromMemories,
   getDeletedDecisionIdsFromMemories,
@@ -19,7 +20,7 @@ import { backfillDecisionsToMemories } from "./memory-backfill.js";
 import { invalidateAllCaches } from "./cache.js";
 import { logWarning } from "./workflow-logger.js";
 import { readFileSync, existsSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 // ─── Manifest Types ──────────────────────────────────────────────────────
 
@@ -362,7 +363,6 @@ export function snapshotState(): StateManifest {
 // ─── writeManifest ───────────────────────────────────────────────────────
 
 interface ManifestWriteState {
-  filePath: string;
   latestJson: string | null;
   inFlightJson: string | null;
   /** Set by sync exit flush so an in-flight async write cannot leave stale data on disk. */
@@ -374,12 +374,12 @@ const manifestWrites = new Map<string, ManifestWriteState>();
 let processTeardownFlushInstalled = false;
 let beforeExitFlushStarted = false;
 
-function manifestWriteKey(basePath: string): string {
-  return resolve(basePath);
-}
-
 function manifestFilePath(basePath: string): string {
   return join(resolve(basePath), ".gsd", "state-manifest.json");
+}
+
+function stateContractFilePath(basePath: string): string {
+  return join(resolve(basePath), ".gsd", "state.json");
 }
 
 function describeError(err: unknown): string {
@@ -398,15 +398,15 @@ async function drainManifestWrites(key: string, state: ManifestWriteState): Prom
       state.latestJson = null;
       state.inFlightJson = json;
       try {
-        await atomicWriteAsync(state.filePath, json);
+        await atomicWriteAsync(key, json);
         if (state.syncFlushJson !== null) {
-          atomicWriteSync(state.filePath, state.syncFlushJson);
+          atomicWriteSync(key, state.syncFlushJson);
           break;
         }
         lastWriteError = null;
       } catch (err) {
         lastWriteError = err;
-        logManifestWriteFailure(state.filePath, err);
+        logManifestWriteFailure(key, err);
       } finally {
         state.inFlightJson = null;
       }
@@ -422,12 +422,11 @@ async function drainManifestWrites(key: string, state: ManifestWriteState): Prom
   }
 }
 
-function enqueueManifestWrite(basePath: string, json: string): void {
-  const key = manifestWriteKey(basePath);
+function enqueueManifestWrite(filePath: string, json: string): void {
+  const key = filePath;
   let state = manifestWrites.get(key);
   if (!state) {
     state = {
-      filePath: manifestFilePath(basePath),
       latestJson: null,
       inFlightJson: null,
       syncFlushJson: null,
@@ -445,13 +444,20 @@ function enqueueManifestWrite(basePath: string, json: string): void {
 }
 
 /**
- * Queue current DB state for an async atomic write to .gsd/state-manifest.json.
- * Uses JSON.stringify with 2-space indent for git three-way merge friendliness.
+ * Queue current DB state for an async atomic write to .gsd/state-manifest.json,
+ * plus the state contract v1 projection to .gsd/state.json (read by external
+ * tools like GSD Workbench). The contract deliberately tracks this write
+ * boundary: every skill step boundary uses writeManifest/writeManifestAndFlush,
+ * while placeholder milestone inserts, queue-order reconciliation, and out-of-
+ * band edits refresh on the next skill run as allowed by contract v1 rule 2 and
+ * ADR-0004. Uses JSON.stringify with 2-space indent for git three-way merge
+ * friendliness.
  */
 export function writeManifest(basePath: string): void {
   const manifest = snapshotState();
-  const json = JSON.stringify(manifest, null, 2);
-  enqueueManifestWrite(basePath, json);
+  enqueueManifestWrite(manifestFilePath(basePath), JSON.stringify(manifest, null, 2));
+  const contract = buildStateContract(manifest.milestones, manifest.slices, manifest.exported_at);
+  enqueueManifestWrite(stateContractFilePath(basePath), JSON.stringify(contract, null, 2));
 }
 
 export async function writeManifestAndFlush(basePath: string): Promise<void> {
@@ -468,10 +474,19 @@ async function flushManifestByKey(key: string): Promise<void> {
 }
 
 /**
- * Wait for any queued manifest write for this base path to become durable.
+ * Wait for every queued write under this base path (state-manifest.json and
+ * the state contract projection) to become durable.
  */
 export async function flushManifest(basePath: string): Promise<void> {
-  await flushManifestByKey(manifestWriteKey(basePath));
+  const prefix = join(resolve(basePath), ".gsd") + sep;
+  const results = await Promise.allSettled(
+    Array.from(manifestWrites.keys())
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => flushManifestByKey(key)),
+  );
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+  }
 }
 
 export async function flushAllManifests(): Promise<void> {
@@ -483,13 +498,13 @@ function flushAllManifestsSync(): void {
     const json = state.latestJson ?? state.inFlightJson;
     if (json === null) continue;
     try {
-      atomicWriteSync(state.filePath, json);
+      atomicWriteSync(key, json);
       state.latestJson = null;
       state.inFlightJson = null;
       state.syncFlushJson = json;
       manifestWrites.delete(key);
     } catch (err) {
-      logManifestWriteFailure(state.filePath, err);
+      logManifestWriteFailure(key, err);
     }
   }
 }

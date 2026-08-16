@@ -24,6 +24,7 @@ test("plan-milestone prompt renders compact DB-backed planning guidance", async 
     milestoneId: "M001",
     milestoneTitle: "Reduce prompt cost",
     workingDirectory: fixtureRoot,
+    projectGsdPath: ".gsd",
     inlinedContext: "## Roadmap\n\nUse the roadmap template.",
     outputPath: ".gsd/milestones/M001/M001-ROADMAP.md",
     skillDiscoveryMode: "filtered",

@@ -17,7 +17,9 @@ import {
   worktreeBranchName,
   worktreePath,
   pruneEphemeralGhostWorktreeDirectories,
+  removeStaleWorktreeDirectory,
 } from "../worktree-manager.ts";
+import { GSD_GIT_ERROR, GSDError } from "../errors.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -166,6 +168,25 @@ describe("createWorktree", () => {
     assert.ok(existsSync(join(info.path, ".git")), "new worktree has .git marker");
     run("git rev-parse --git-dir", info.path);
   });
+});
+
+test("stale worktree cleanup gives actionable guidance for EACCES", () => {
+  const cause = Object.assign(new Error("permission denied"), { code: "EACCES" });
+
+  assert.throws(
+    () => removeStaleWorktreeDirectory("/project/.gsd-worktrees/M010", "M010", () => {
+      throw cause;
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof GSDError);
+      assert.equal(error.code, GSD_GIT_ERROR);
+      assert.equal(error.cause, cause);
+      assert.match(error.message, /EACCES/);
+      assert.match(error.message, /owned by another user/);
+      assert.match(error.message, /ownership or permissions/);
+      return true;
+    },
+  );
 });
 
 describe("createWorktree — duplicate rejection", () => {

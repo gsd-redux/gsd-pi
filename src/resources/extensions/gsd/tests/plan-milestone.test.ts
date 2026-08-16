@@ -22,7 +22,7 @@ import {
 } from '../gsd-db.ts';
 import { handlePlanMilestone as handlePlanMilestoneWithInvocation } from '../tools/plan-milestone.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
-import { parseRoadmap } from '../parsers-legacy.ts';
+import { parseProjectionRoadmap as parseRoadmap } from '../schemas/parsers.ts';
 
 function handlePlanMilestone(
   params: Parameters<typeof handlePlanMilestoneWithInvocation>[0],

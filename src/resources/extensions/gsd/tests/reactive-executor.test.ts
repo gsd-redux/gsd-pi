@@ -14,6 +14,7 @@ import {
   clearReactiveState,
 } from "../reactive-graph.ts";
 import { validatePreferences } from "../preferences-validation.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.ts";
 import type { ReactiveExecutionState } from "../types.ts";
 import { parseUnitId } from "../unit-id.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
@@ -21,6 +22,29 @@ import {
   _getPlannedKeyFilesForTest,
   _parseReactiveBatchTaskIdsForTest,
 } from "../auto-post-unit.ts";
+
+/**
+ * Open a DB under `repo` and seed M001/S01 with the given task rows.
+ * `loadSliceTaskIO` takes its task list (ids, titles, done) from the DB
+ * (ADR-017) and reads only the per-task PLAN files for IO signatures, so the
+ * graph fixtures below need real rows even though they are testing dispatch.
+ */
+function seedSliceTasks(repo: string, tasks: Array<{ id: string; title: string; status?: string }>): void {
+  mkdirSync(join(repo, ".gsd"), { recursive: true });
+  openDatabase(join(repo, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ milestoneId: "M001", id: "S01", title: "Test Slice", status: "in_progress", risk: "low", depends: [] });
+  tasks.forEach((task, index) => {
+    insertTask({
+      milestoneId: "M001",
+      sliceId: "S01",
+      id: task.id,
+      title: task.title,
+      status: task.status ?? "pending",
+      sequence: index,
+    });
+  });
+}
 
 // ─── Preference Validation ────────────────────────────────────────────────
 
@@ -115,6 +139,11 @@ test("reactive dispatch requires enabled config and multiple ready tasks", async
   try {
     const gsd = join(repo, ".gsd", "milestones", "M001", "slices", "S01");
     mkdirSync(join(gsd, "tasks"), { recursive: true });
+    seedSliceTasks(repo, [
+      { id: "T01", title: "First" },
+      { id: "T02", title: "Second" },
+      { id: "T03", title: "Third" },
+    ]);
 
     // Slice plan with 3 tasks
     writeFileSync(
@@ -209,6 +238,7 @@ test("reactive dispatch requires enabled config and multiple ready tasks", async
     assert.equal(selected.length, 2);
     assert.deepEqual(selected, ["T01", "T02"]);
   } finally {
+    closeDatabase();
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -280,6 +310,10 @@ test("reactive dispatch falls back when graph is ambiguous (task without IO)", a
   try {
     const gsd = join(repo, ".gsd", "milestones", "M001", "slices", "S01");
     mkdirSync(join(gsd, "tasks"), { recursive: true });
+    seedSliceTasks(repo, [
+      { id: "T01", title: "A" },
+      { id: "T02", title: "B" },
+    ]);
 
     writeFileSync(
       join(gsd, "S01-PLAN.md"),
@@ -311,6 +345,7 @@ test("reactive dispatch falls back when graph is ambiguous (task without IO)", a
     const graph = deriveTaskGraph(taskIO);
     assert.equal(isGraphAmbiguous(graph), true, "Graph should be ambiguous");
   } finally {
+    closeDatabase();
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -320,6 +355,10 @@ test("single ready task falls through to sequential", async () => {
   try {
     const gsd = join(repo, ".gsd", "milestones", "M001", "slices", "S01");
     mkdirSync(join(gsd, "tasks"), { recursive: true });
+    seedSliceTasks(repo, [
+      { id: "T01", title: "First" },
+      { id: "T02", title: "Second" },
+    ]);
 
     writeFileSync(
       join(gsd, "S01-PLAN.md"),
@@ -353,6 +392,7 @@ test("single ready task falls through to sequential", async () => {
     assert.equal(ready.length, 1);
     assert.deepEqual(ready, ["T01"]);
   } finally {
+    closeDatabase();
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -418,6 +458,11 @@ test("completed tasks are not re-dispatched on next iteration", async () => {
     const gsd = join(repo, ".gsd", "milestones", "M001", "slices", "S01");
     mkdirSync(join(gsd, "tasks"), { recursive: true });
     mkdirSync(join(repo, ".gsd", "runtime"), { recursive: true });
+    seedSliceTasks(repo, [
+      { id: "T01", title: "Done", status: "complete" },
+      { id: "T02", title: "Pending" },
+      { id: "T03", title: "Also Pending" },
+    ]);
 
     writeFileSync(
       join(gsd, "S01-PLAN.md"),
@@ -464,6 +509,7 @@ test("completed tasks are not re-dispatched on next iteration", async () => {
     // Only T03 should be ready
     assert.deepEqual(ready2, ["T03"]);
   } finally {
+    closeDatabase();
     rmSync(repo, { recursive: true, force: true });
   }
 });

@@ -31,6 +31,7 @@ export const BUNDLED_COST_TABLE: ModelCostEntry[] = [
   { id: "claude-opus-4-6", inputPer1k: 0.005, outputPer1k: 0.025, updatedAt: "2026-04-16" },
   { id: "claude-opus-4-7", inputPer1k: 0.005, outputPer1k: 0.025, updatedAt: "2026-04-16" },
   { id: "claude-opus-4-8", inputPer1k: 0.005, outputPer1k: 0.025, updatedAt: "2026-05-28" },
+  { id: "claude-opus-5", inputPer1k: 0.005, outputPer1k: 0.025, updatedAt: "2026-08-12" },
   { id: "claude-fable-5", inputPer1k: 0.010, outputPer1k: 0.050, updatedAt: "2026-06-09" },
   { id: "claude-sonnet-4-6", inputPer1k: 0.003, outputPer1k: 0.015, updatedAt: "2025-03-15" },
   { id: "claude-haiku-4-5", inputPer1k: 0.0008, outputPer1k: 0.004, updatedAt: "2025-03-15" },
@@ -71,6 +72,9 @@ export const BUNDLED_COST_TABLE: ModelCostEntry[] = [
   { id: "gpt-5.6-sol", inputPer1k: 0.005, outputPer1k: 0.03, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.01, outputPer1k: 0.045 }], updatedAt: "2026-07-11" },
   { id: "gpt-5.6-terra", inputPer1k: 0.0025, outputPer1k: 0.015, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.005, outputPer1k: 0.0225 }], updatedAt: "2026-07-11" },
   { id: "gpt-5.6-luna", inputPer1k: 0.001, outputPer1k: 0.006, tiers: [{ inputTokensAbove: 272000, inputPer1k: 0.002, outputPer1k: 0.009 }], updatedAt: "2026-07-11" },
+
+  // GitHub Copilot
+  { id: "mai-code-1.1-flash", inputPer1k: 0.0002, outputPer1k: 0.0012, updatedAt: "2026-08-14" },
 
   // Google
   { id: "gemini-2.0-flash", inputPer1k: 0.0001, outputPer1k: 0.0004, updatedAt: "2025-03-15" },

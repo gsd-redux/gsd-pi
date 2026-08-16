@@ -38,6 +38,7 @@ import {
   nativeAddPaths,
   nativeCheckoutBranch,
   nativeConflictFiles,
+  nativeIsCurrentUnbornBranch,
   nativeLsFiles,
   nativeMergeAbort,
   nativeWorkingTreeStatus,
@@ -197,6 +198,8 @@ export function checkoutBranchWithStashGuard(
   branch: string,
   reason: string,
 ): void {
+  if (nativeIsCurrentUnbornBranch(basePath, branch)) return;
+
   let stashMarker: string | null = null;
   let stashed = false;
 

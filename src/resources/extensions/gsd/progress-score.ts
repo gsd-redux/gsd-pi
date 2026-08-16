@@ -7,7 +7,7 @@
  *   - Red: stuck (loops, persistent errors, no activity)
  *
  * Purely derived — no stored state. Reads from doctor-proactive health
- * tracking, stuck detection counters, and working-tree activity.
+ * tracking, consecutive-error health signals, and working-tree activity.
  */
 
 import {

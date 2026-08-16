@@ -43,7 +43,7 @@ import { gsdHome } from "./gsd-home.js";
 import {
   gsdRoot, milestonesDir, legacyMilestonesDir, resolveMilestoneFile,
   resolveSliceFile, resolveSlicePath, resolveGsdRootFile, relGsdRootFile,
-  relMilestoneFile, relSliceFile, clearPathCache,
+  relMilestoneFile, relSliceFile, relSlicePath, clearPathCache,
 } from "./paths.js";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
@@ -104,7 +104,7 @@ import {
 } from "./preparation.js";
 import { verifyExpectedArtifact } from "./auto-recovery.js";
 import { countPlanMilestoneRoadmapSlices } from "./artifact-verification.js";
-import type { MilestoneScope } from "./workspace.js";
+import { createWorkspace, scopeMilestone, type MilestoneScope } from "./workspace.js";
 import { clearPendingGate, extractDepthVerificationMilestoneId, getPendingGate } from "./bootstrap/write-gate.js";
 import {
   _getPendingAutoStart,
@@ -931,7 +931,6 @@ function resolveAvailableModel<T extends { id: string; provider: string }>(
  * Used by all three "new milestone" paths (first ever, no active, all complete).
  */
 function buildDiscussPrompt(nextId: string, preamble: string, basePath: string, pi: ExtensionAPI, ctx: ExtensionCommandContext, preparationContext?: string): string {
-  const milestoneRel = `.gsd/milestones/${nextId}`;
   const structuredQuestionsAvailable = getStructuredQuestionsAvailability(pi, ctx);
   const inlinedTemplates = [
     inlineTemplate("project", "Project"),
@@ -945,8 +944,8 @@ function buildDiscussPrompt(nextId: string, preamble: string, basePath: string, 
     preamble,
     preparationContext: preparationContext ?? "",
     structuredQuestionsAvailable,
-    contextPath: `${milestoneRel}/${nextId}-CONTEXT.md`,
-    roadmapPath: `${milestoneRel}/${nextId}-ROADMAP.md`,
+    contextPath: relMilestoneFile(basePath, nextId, "CONTEXT"),
+    roadmapPath: relMilestoneFile(basePath, nextId, "ROADMAP"),
     inlinedTemplates,
     commitInstruction: buildDocsCommitInstruction(`docs(${nextId}): context, requirements, and roadmap`),
     multiMilestoneCommitInstruction: buildDocsCommitInstruction("docs: project plan — N milestones"),
@@ -970,7 +969,6 @@ function prependLanguageDirective(basePath: string, prompt: string): string {
  * Uses the discuss-headless prompt template with seed context injected.
  */
 function buildHeadlessDiscussPrompt(nextId: string, seedContext: string, basePath: string): string {
-  const milestoneRel = `.gsd/milestones/${nextId}`;
   const inlinedTemplates = [
     inlineTemplate("project", "Project"),
     inlineTemplate("requirements", "Requirements"),
@@ -981,8 +979,8 @@ function buildHeadlessDiscussPrompt(nextId: string, seedContext: string, basePat
   return prependLanguageDirective(basePath, loadPrompt("discuss-headless", {
     milestoneId: nextId,
     seedContext,
-    contextPath: `${milestoneRel}/${nextId}-CONTEXT.md`,
-    roadmapPath: `${milestoneRel}/${nextId}-ROADMAP.md`,
+    contextPath: relMilestoneFile(basePath, nextId, "CONTEXT"),
+    roadmapPath: relMilestoneFile(basePath, nextId, "ROADMAP"),
     inlinedTemplates,
     commitInstruction: buildDocsCommitInstruction(`docs(${nextId}): context, requirements, and roadmap`),
     multiMilestoneCommitInstruction: buildDocsCommitInstruction("docs: project plan — N milestones"),
@@ -1274,8 +1272,8 @@ export async function buildDiscussSlicePrompt(
     ? capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`)
     : `## Inlined Context\n\n_(no context files found yet — go in blind and ask broad questions)_`;
 
-  const sliceDirPath = `.gsd/milestones/${mid}/slices/${sid}`;
-  const sliceContextPath = `${sliceDirPath}/${sid}-CONTEXT.md`;
+  const sliceDirPath = relSlicePath(base, mid, sid);
+  const sliceContextPath = relSliceFile(base, mid, sid, "CONTEXT");
 
   // When re-discussing, inject a preamble so the agent treats this as an update interview
   const rediscussPreamble = options?.rediscuss
@@ -2521,7 +2519,12 @@ export async function showSmartEntry(
         setPendingAutoStart(basePath, { ctx, pi, basePath, milestoneId, step: stepMode });
         await dispatchWorkflow(
           pi,
-          await buildPlanMilestonePrompt(milestoneId, milestoneTitle, basePath),
+          await buildPlanMilestonePrompt(
+            milestoneId,
+            milestoneTitle,
+            basePath,
+            scopeMilestone(createWorkspace(basePath), milestoneId),
+          ),
           "gsd-run",
           ctx,
           "plan-milestone",

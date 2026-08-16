@@ -16,6 +16,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AutoSession } from "./session.js";
 import type { AutoTerminalOutcome } from "./contracts.js";
+import { isUnitAlreadyActiveSkip } from "./contracts.js";
+import { settleIterationRun, type IterationRunOutcome } from "./iteration-run.js";
 import type { LoopDeps, StopAutoOptions } from "./loop-deps.js";
 import type { GSDState } from "../types.js";
 import {
@@ -31,8 +33,12 @@ import {
   resetSessionTimeoutState,
   restoreTaskHostVerificationContext,
 } from "./unit-phase.js";
-import { STUCK_WINDOW_SIZE } from "./dispatch-history.js";
 import { debugLog } from "../debug-logger.js";
+import { markBlockedStopReason } from "../stop-notice.js";
+import {
+  formatWedgeTripNotice,
+  recordNonAdvancingOutcome,
+} from "../auto-liveness-backstop.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import { resolveEngine } from "../engine-resolver.js";
@@ -43,7 +49,6 @@ import {
   markCompleted as markDispatchCompleted,
   markFailed as markDispatchFailed,
   getRecentForUnit as getRecentDispatchesForUnit,
-  getRecentUnitKeysForProjectRoot,
   markLatestActiveForWorkerCanceled,
 } from "../db/unit-dispatches.js";
 import {
@@ -53,7 +58,6 @@ import {
   milestoneLeaseTtlSeconds,
 } from "../db/milestone-leases.js";
 import { heartbeatAutoWorker, getAutoWorker, markWorkerCrashed } from "../db/auto-workers.js";
-import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { scheduleSidecarQueue } from "../uok/execution-graph.js";
 import { normalizeRealPath } from "../paths.js";
@@ -69,7 +73,6 @@ import {
   decideMinRequestInterval,
   decideWorkflowLoop,
   formatDispatchExceptionSummary,
-  formatUnhandledDispatchErrorSummary,
   resolveUnitRequestTimestamp,
   shouldUseCustomEnginePath,
 } from "./workflow-kernel.js";
@@ -78,7 +81,6 @@ import {
   saveCustomVerifyRetryCounts,
 } from "./custom-verify-retry-store.js";
 import {
-  settleDispatchCompleted,
   settleDispatchFailed,
   settleDispatchIfNeeded,
 } from "./workflow-dispatch-ledger.js";
@@ -108,13 +110,16 @@ import { handleCustomEngineDispatchOutcome } from "./workflow-custom-engine-disp
 import { buildCustomEngineIterationData } from "./workflow-custom-engine-iteration.js";
 import { handleCustomEngineVerifyRetry } from "./workflow-custom-engine-retry.js";
 import {
+  composeVerificationInputPayload,
   handleCustomEngineTaskVerifyOutcome,
   handleCustomEngineVerifyPause,
   handleCustomEngineVerifyRetryOutcome,
+  type VerificationRead,
 } from "./workflow-custom-engine-verify-outcome.js";
 import { handleCustomEngineReconcile } from "./workflow-custom-engine-reconcile.js";
 import { handleCustomEngineReconcileOutcome } from "./workflow-custom-engine-reconcile-outcome.js";
 import { formatLeaseConflictNotice } from "./lease-conflict-notice.js";
+import { resolveLoopSanctionedExit } from "./loop-sanctioned-exits.js";
 import { setAutoOutcomeWidget, unitVerb } from "../auto-dashboard.js";
 import {
   isTaskExecutionReadyForHostVerification,
@@ -125,14 +130,17 @@ import {
   requestCustomTaskHumanReviewFromUi,
   resolvePendingCustomTaskHumanReview,
   runCustomEngineHostVerification,
+  type HostVerificationEvidence,
 } from "./custom-task-host-verification.js";
 import {
   claimTaskAttempt,
+  interruptOrphanedTaskAttempts,
   readLatestTaskAttempt,
   readTaskAttempt,
   settleTaskAttempt,
 } from "../task-execution-domain-operation.js";
 import { publishVerifiedTaskCompletion } from "../task-completion-compatibility-adapter.js";
+import { readTaskTechnicalVerdict } from "../task-verification-domain-operation.js";
 import {
   readTaskRecoveryRoute,
   recordFailureAndSelectRecovery,
@@ -196,19 +204,6 @@ function resolveCompletionStopFromOutcome(
   };
 }
 
-// ── Stuck detection persistence (#3704) ──────────────────────────────────
-// Phase C migration: stuck-state.json deleted in favor of DB-backed
-// equivalents. recentUnits is rebuilt from unit_dispatches (Phase B
-// ledger) on session start; stuckRecoveryAttempts persists in runtime_kv
-// under a stable project scope (soft state per the runtime_kv invariant). Single-host
-// SQLite WAL only — multi-host would need a real coordinator.
-//
-// When no worker is registered (DB unavailable, fresh project), both
-// helpers degrade to the empty-state fallback that #3704 already
-// tolerates — same behavior as a fresh session.
-const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
-const MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS = 3;
-const MAX_CONSECUTIVE_ORCHESTRATION_SKIPS = 3;
 const WORKER_HEARTBEAT_INTERVAL_MS = milestoneLeaseTtlSeconds() * 500;
 const ORCHESTRATION_MISSING_REASON =
   "Auto Orchestration Module is not wired; cannot dispatch built-in GSD Unit.";
@@ -217,6 +212,7 @@ const TASK_EXECUTION_CUTOVER_DEPS = {
   readLatestTaskAttempt,
   readTaskAttempt,
   readTaskRecoveryRoute,
+  readTaskTechnicalVerdict,
   routeTaskFailure: recordFailureAndSelectRecovery,
   settleTaskAttempt,
 };
@@ -225,48 +221,30 @@ const VERIFIED_TASK_PUBLICATION_DEPS = {
   readLatestTaskAttempt,
 };
 
-function stableStuckStateScopeId(s: AutoSession): string {
-  return normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath));
-}
-
-function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; stuckRecoveryAttempts: number } {
-  const scopeId = stableStuckStateScopeId(s);
-  if (!scopeId) return { recentUnits: [], stuckRecoveryAttempts: 0 };
-  try {
-    // Scope the stuck window to the CURRENT session (trace_id) so stale
-    // finalize-retry entries from previous sessions don't fire detectStuck
-    // Rule 1 on the first iteration — killing auto-mode before any new
-    // dispatch runs (#852). A prior session's two consecutive finalize-retry
-    // failures would otherwise permanently block every new session.
-    //
-    // s.currentTraceId is only set inside the first loop iteration (line ~443),
-    // so at this call-site it is always null for a fresh session. Return []
-    // directly in that case — no prior dispatch has occurred in this session,
-    // so the stuck window is trivially empty and the DB query is skipped.
-    const recentUnits =
-      s.currentTraceId != null
-        ? getRecentUnitKeysForProjectRoot(scopeId, STUCK_WINDOW_SIZE, s.currentTraceId)
-        : [];
-    const stuckRecoveryAttempts =
-      getRuntimeKv<number>("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY) ?? 0;
-    return { recentUnits, stuckRecoveryAttempts };
-  } catch (err) {
-    debugLog("autoLoop", { phase: "load-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
-    return { recentUnits: [], stuckRecoveryAttempts: 0 };
+function recordLoopNonAdvancingOutcome(
+  s: AutoSession,
+  input: {
+    guardId: string;
+    unitType: string;
+    unitId: string;
+    inputPayload: string;
+    sanctionedExit?: string;
+  },
+): string | null {
+  const scopeId = normalizeRealPath(
+    s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath),
+  ) || s.basePath;
+  const result = recordNonAdvancingOutcome({
+    scopeId,
+    guardId: input.guardId,
+    unitType: input.unitType,
+    unitId: input.unitId,
+    inputPayload: input.inputPayload,
+  }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+  if ('error' in result) {
+    return `liveness backstop unavailable: ${result.error}. Repair the workflow database with \`/gsd doctor --fix\` before resuming auto-mode.`;
   }
-}
-
-function saveStuckState(s: AutoSession, state: LoopState): void {
-  const scopeId = stableStuckStateScopeId(s);
-  if (!scopeId) return;
-  // recentUnits is automatically derived from unit_dispatches by the
-  // dispatch ledger writes in openDispatchClaim — no separate persistence
-  // needed. Only the soft retry counter needs a runtime_kv row.
-  try {
-    setRuntimeKv("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY, state.stuckRecoveryAttempts);
-  } catch (err) {
-    debugLog("autoLoop", { phase: "save-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
-  }
+  return result.tripped ? formatWedgeTripNotice(result.wedge) : null;
 }
 
 function logDispatchLedgerWriteFailure(err: unknown): void {
@@ -437,34 +415,38 @@ async function closeOutCrashedUnit(
   err: unknown,
 ): Promise<void> {
   const summary = formatDispatchExceptionSummary({ error: err });
-  abortActiveUnitTurn(ctx);
   try {
-    emitOpenUnitEndForUnit(
-      s.basePath,
-      iterData.unitType,
-      iterData.unitId,
-      "cancelled",
-      {
-        message: summary,
-        category: "unit-exception",
-        isTransient: false,
-      },
-    );
-    writeUnitRuntimeRecord(
-      s.basePath,
-      iterData.unitType,
-      iterData.unitId,
-      s.currentUnit?.startedAt ?? Date.now(),
-      {
-        phase: "crashed",
-        lastProgressAt: Date.now(),
-        lastProgressKind: "unit-exception",
-      },
-    );
-  } catch (closeoutErr) {
-    logWarning("dispatch", `unit crash closeout failed: ${closeoutErr instanceof Error ? closeoutErr.message : String(closeoutErr)}`);
+    abortActiveUnitTurn(ctx);
+    try {
+      emitOpenUnitEndForUnit(
+        s.basePath,
+        iterData.unitType,
+        iterData.unitId,
+        "cancelled",
+        {
+          message: summary,
+          category: "unit-exception",
+          isTransient: false,
+        },
+      );
+      writeUnitRuntimeRecord(
+        s.basePath,
+        iterData.unitType,
+        iterData.unitId,
+        s.currentUnit?.startedAt ?? Date.now(),
+        {
+          phase: "crashed",
+          lastProgressAt: Date.now(),
+          lastProgressKind: "unit-exception",
+        },
+      );
+    } catch (closeoutErr) {
+      logWarning("dispatch", `unit crash closeout failed: ${closeoutErr instanceof Error ? closeoutErr.message : String(closeoutErr)}`);
+    }
+    await snapshotCrashedUnitWork(ctx, s, deps, iterData);
+  } finally {
+    s.clearCurrentUnit();
   }
-  await snapshotCrashedUnitWork(ctx, s, deps, iterData);
 }
 
 /**
@@ -484,16 +466,27 @@ export async function autoLoop(
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   resetSessionTimeoutState();
+  if (s.workerId && s.currentMilestoneId) {
+    const repaired = interruptOrphanedTaskAttempts({
+      workerId: s.workerId,
+      milestoneId: s.currentMilestoneId,
+    });
+    if (repaired.milestoneLeaseToken !== null) {
+      s.milestoneLeaseToken = repaired.milestoneLeaseToken;
+    }
+    if (repaired.attemptIds.length > 0) {
+      debugLog("autoLoop", {
+        phase: "orphaned-task-attempts-interrupted",
+        attemptIds: repaired.attemptIds,
+      });
+    }
+  }
   let iteration = 0;
   const dispatchContract = options?.dispatchContract ?? "legacy-direct";
   const unitDispatchDeps = createExecutionGraphUnitDispatchDeps();
-  // Load persisted stuck state so counters survive session restarts (#3704)
-  const persisted = loadStuckState(s);
   // Load persisted verification retry state so the exhausted-unit guard fires on restart (#651)
   hydrateCustomVerifyRetryCounts(s, { logFailure: logCustomVerifyRetryLoadFailure });
   const loopState: LoopState = {
-    recentUnits: persisted.recentUnits,
-    stuckRecoveryAttempts: persisted.stuckRecoveryAttempts,
     consecutiveFinalizeTimeouts: 0,
     consecutiveDispatchCount: new Map<string, number>(),
     lastDispatchedKey: null,
@@ -501,9 +494,6 @@ export async function autoLoop(
   };
   let consecutiveErrors = 0;
   let consecutiveCooldowns = 0;
-  let consecutiveAlreadyActiveSkips = 0;
-  let consecutiveOrchestrationSkips = 0;
-  let lastOrchestrationSkipKey: string | null = null;
   const recentErrorMessages: string[] = [];
   const workerHeartbeatDeps = {
     heartbeatAutoWorker,
@@ -520,6 +510,17 @@ export async function autoLoop(
       phase: "lease-refresh-missed",
       ...details,
     }),
+  };
+  const pauseForTaskRecoveryAbort = async (reason: string): Promise<void> => {
+    if (!reason.startsWith("task-recovery-abort")) return;
+    ctx.ui.notify(
+      `Task recovery requires a verified repair before auto-mode can continue. ${reason}`,
+      "warning",
+    );
+    await deps.pauseAuto(ctx, pi, {
+      message: reason,
+      category: "unknown",
+    });
   };
 
   while (s.active) {
@@ -558,11 +559,39 @@ export async function autoLoop(
         s.currentTurnId = null;
       },
     });
+    let pendingLoopLiveness: {
+      guardId: string;
+      inputPayload: string;
+      unitType: string;
+      unitId: string;
+    } | null = null;
+    let pendingStopAuto: {
+      reason?: string;
+      options?: StopAutoOptions;
+    } | null = null;
+    let ownsUnitExecution = false;
+    let runClosed = false;
+    let abnormalUnitExitReason = "unit exited without clean closeout";
+    const deferStopAuto: LoopDeps["stopAuto"] = async (_ctx, _pi, reason, options) => {
+      pendingStopAuto ??= { reason, options };
+    };
+    const iterationDeps = new Proxy(deps, {
+      get(target, property, receiver) {
+        return property === "stopAuto"
+          ? deferStopAuto
+          : Reflect.get(target, property, receiver);
+      },
+    });
     const finishTurn = (
       status: "completed" | "failed" | "paused" | "stopped" | "skipped" | "retry",
       failureClass: "none" | "unknown" | "manual-attention" | "timeout" | "execution" | "verification" | "closeout" | "git" = "none",
-      error?: string,
+      error: string | undefined,
+      guardId: string | null,
+      inputPayload?: string,
     ): void => {
+      if (!runClosed) {
+        abnormalUnitExitReason = error ?? guardId ?? status;
+      }
       turnReporter.finish({
         unitType: observedUnitType,
         unitId: observedUnitId,
@@ -570,69 +599,52 @@ export async function autoLoop(
         failureClass,
         error,
       });
+      if (guardId) {
+        pendingLoopLiveness = {
+          guardId,
+          inputPayload: inputPayload ?? error ?? guardId,
+          unitType: observedUnitType ?? "orchestration",
+          unitId: observedUnitId ?? s.currentMilestoneId ?? "workflow",
+        };
+      }
     };
     turnReporter.start();
 
-    const iterationDecision = decideWorkflowLoop({
-      active: s.active,
-      iteration,
-      maxIterations: MAX_LOOP_ITERATIONS,
-      hasCommandContext: true,
-      sessionLockValid: true,
-    });
-    if (iterationDecision.action === "stop" && iterationDecision.reason === "max-iterations") {
-      debugLog("autoLoop", {
-        phase: "exit",
-        reason: iterationDecision.reason,
-        iteration,
-      });
-      await deps.stopAuto(
-        ctx,
-        pi,
-        `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
-      );
-      finishTurn("stopped", "manual-attention", "max-iterations");
-      break;
-    }
-
-    // ── Memory pressure check (#3331) ──
-    // Graceful shutdown before OOM killer sends SIGKILL.
-    if (shouldCheckMemoryPressure(iteration, MEMORY_CHECK_INTERVAL)) {
-      const mem = measureMemoryPressure();
-      debugLog("autoLoop", { phase: "memory-check", ...mem });
-      const memoryDecision = decideMemoryPressure({ ...mem, iteration });
-      if (memoryDecision.action === "stop") {
-        logWarning("dispatch", memoryDecision.warningMessage);
-        await deps.stopAuto(ctx, pi, memoryDecision.stopMessage);
-        finishTurn("stopped", "timeout", memoryDecision.turnError);
-        break;
-      }
-    }
-
-    const commandContextDecision = decideWorkflowLoop({
-      active: s.active,
-      iteration,
-      maxIterations: MAX_LOOP_ITERATIONS,
-      hasCommandContext: typeof s.cmdCtx?.newSession === "function",
-      sessionLockValid: true,
-    });
-    if (commandContextDecision.action === "stop" && commandContextDecision.reason === "missing-command-context") {
-      debugLog("autoLoop", { phase: "exit", reason: "no-cmdCtx" });
-      if (s.currentUnit) {
-        await deps.autoCommitUnit?.(
-          s.basePath,
-          s.currentUnit.type,
-          s.currentUnit.id,
-          ctx,
-        );
-      }
-      await deps.stopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
-      finishTurn("stopped", "manual-attention", commandContextDecision.reason);
-      break;
-    }
-
     let dispatchId: number | null = null;
     let dispatchSettled = false;
+    let iterData: IterationData | undefined;
+    const closeRun = async (
+      outcome: IterationRunOutcome,
+      reason: string,
+    ): Promise<void> => {
+      if (runClosed) return;
+      const unit = (observedUnitType && observedUnitId
+        ? { unitType: observedUnitType, unitId: observedUnitId }
+        : null)
+        ?? (iterData
+          ? { unitType: iterData.unitType, unitId: iterData.unitId }
+          : null);
+      if (!unit && dispatchId === null) return;
+      runClosed = true;
+      dispatchSettled = await settleIterationRun(
+        {
+          dispatchId,
+          unitType: unit?.unitType ?? "orchestration",
+          unitId: unit?.unitId ?? s.currentMilestoneId ?? "workflow",
+        },
+        outcome,
+        reason,
+        dispatchSettled,
+        {
+          markFailed: markDispatchFailed,
+          markCompleted: markDispatchCompleted,
+          logWriteFailure: logDispatchLedgerWriteFailure,
+          completeActiveUnit: s.orchestration?.completeActiveUnit?.bind(s.orchestration),
+          retryActiveUnit: s.orchestration?.retryActiveUnit?.bind(s.orchestration),
+          abandonActiveUnit: s.orchestration?.abandonActiveUnit?.bind(s.orchestration),
+        },
+      );
+    };
     let iterationEndEmitted = false;
     const emitIterationEnd = (details: Record<string, unknown> = {}): void => {
       if (iterationEndEmitted) return;
@@ -648,18 +660,78 @@ export async function autoLoop(
         recentErrorMessages,
       }, {
         emitIterationEnd: () => emitIterationEnd(),
-        saveStuckState: () => saveStuckState(s, loopState),
         logIterationComplete: () => debugLog("autoLoop", { phase: "iteration-complete", iteration }),
       });
     };
-    let stuckStatePersistedThisIteration = false;
     const finishIncompleteIteration = (details: Record<string, unknown>): void => {
       emitIterationEnd(details);
-      saveStuckState(s, loopState);
-      stuckStatePersistedThisIteration = true;
     };
 
+    // ── Shared adjudication boundary (ADR-047) ──────────────────────────────
+    // The try opens BEFORE the preflight exits (max-iteration, memory pressure,
+    // missing command context) so their pending block signatures reach the
+    // finally that adjudicates them. Breaking out of the loop from inside a try
+    // still runs its finally, so a preflight exit persists a wedge instead of
+    // silently recurring after every restart (#1672).
     try {
+      const iterationDecision = decideWorkflowLoop({
+        active: s.active,
+        iteration,
+        maxIterations: MAX_LOOP_ITERATIONS,
+        hasCommandContext: true,
+        sessionLockValid: true,
+      });
+      if (iterationDecision.action === "stop" && iterationDecision.reason === "max-iterations") {
+        debugLog("autoLoop", {
+          phase: "exit",
+          reason: iterationDecision.reason,
+          iteration,
+        });
+        await deferStopAuto(
+          ctx,
+          pi,
+          `Safety: loop exceeded ${MAX_LOOP_ITERATIONS} iterations — possible runaway`,
+        );
+        finishTurn("stopped", "manual-attention", "max-iterations", "max-iterations");
+        break;
+      }
+
+      // ── Memory pressure check (#3331) ──
+      // Graceful shutdown before OOM killer sends SIGKILL.
+      if (shouldCheckMemoryPressure(iteration, MEMORY_CHECK_INTERVAL)) {
+        const mem = (deps.measureMemoryPressure ?? measureMemoryPressure)();
+        debugLog("autoLoop", { phase: "memory-check", ...mem });
+        const memoryDecision = decideMemoryPressure({ ...mem, iteration });
+        if (memoryDecision.action === "stop") {
+          logWarning("dispatch", memoryDecision.warningMessage);
+          await deferStopAuto(ctx, pi, memoryDecision.stopMessage);
+          finishTurn("stopped", "timeout", memoryDecision.turnError, "memory-pressure");
+          break;
+        }
+      }
+
+      const commandContextDecision = decideWorkflowLoop({
+        active: s.active,
+        iteration,
+        maxIterations: MAX_LOOP_ITERATIONS,
+        hasCommandContext: typeof s.cmdCtx?.newSession === "function",
+        sessionLockValid: true,
+      });
+      if (commandContextDecision.action === "stop" && commandContextDecision.reason === "missing-command-context") {
+        debugLog("autoLoop", { phase: "exit", reason: "no-cmdCtx" });
+        if (s.currentUnit) {
+          await deps.autoCommitUnit?.(
+            s.basePath,
+            s.currentUnit.type,
+            s.currentUnit.id,
+            ctx,
+          );
+        }
+        await deferStopAuto(ctx, pi, commandContextDecision.message, { preserveWorktree: true });
+        finishTurn("stopped", "manual-attention", commandContextDecision.reason, "missing-command-context");
+        break;
+      }
+
       // ── Blanket try/catch: one bad iteration must not kill the session
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
@@ -697,13 +769,21 @@ export async function autoLoop(
         },
       });
       if (sessionLockOutcome.action === "stop" && sessionLockOutcome.reason === "session-lock-lost") {
-        finishTurn("stopped", "manual-attention", sessionLockOutcome.reason);
+        finishTurn("stopped", "manual-attention", sessionLockOutcome.reason, "session-lock-lost");
         break;
       }
 
-      const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
+      const ic: IterationContext = {
+        ctx,
+        pi,
+        s,
+        deps: iterationDeps,
+        prefs,
+        iteration,
+        flowId,
+        nextSeq,
+      };
       journalReporter.emit("iteration-start", { iteration });
-      let iterData: IterationData;
 
       // ── Custom engine path ──────────────────────────────────────────────
       // When activeEngineId is a non-dev value, the custom engine drives its own
@@ -736,9 +816,9 @@ export async function autoLoop(
           isComplete: engineState.isComplete,
         });
         if (engineState.isComplete) {
-          finishTurn("completed");
+          finishTurn("completed", "none", undefined, null);
           emitIterationEnd({ status: "completed", reason: "custom-engine-complete" });
-          await deps.stopAuto(ctx, pi, "Workflow complete");
+          await deferStopAuto(ctx, pi, "Workflow complete");
           break;
         }
 
@@ -750,11 +830,17 @@ export async function autoLoop(
         const dispatchFlow = await handleCustomEngineDispatchOutcome({
           decision: engineDispatchDecision,
           deps: {
-            stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+            stopAuto: reason => deferStopAuto(ctx, pi, reason),
           },
         });
         if (dispatchFlow.action === "break") {
-          finishTurn("stopped", "manual-attention", "custom-engine-dispatch-stop");
+          finishTurn(
+            "stopped",
+            "manual-attention",
+            dispatchFlow.inputPayload,
+            "custom-engine-dispatch-stop",
+            dispatchFlow.inputPayload,
+          );
           finishIncompleteIteration({
             status: "stopped",
             reason: "custom-engine-dispatch-stop",
@@ -763,14 +849,14 @@ export async function autoLoop(
           break;
         }
         if (dispatchFlow.action === "continue") {
-          finishTurn("skipped");
+          finishTurn("skipped", "none", "custom-engine-dispatch-skip", "custom-engine-dispatch-skip");
           emitIterationEnd({ status: "skipped", reason: "custom-engine-dispatch-skip" });
           continue;
         }
 
         // dispatch.action === "dispatch"
         if (dispatch.action !== "dispatch") {
-          finishTurn("skipped");
+          finishTurn("skipped", "none", "custom-engine-dispatch-mismatch", "custom-engine-dispatch-mismatch");
           emitIterationEnd({ status: "skipped", reason: "custom-engine-dispatch-mismatch" });
           continue;
         }
@@ -786,8 +872,9 @@ export async function autoLoop(
             ...details,
           }),
         });
-        observedUnitType = iterData.unitType;
-        observedUnitId = iterData.unitId;
+        const customIterData = iterData;
+        observedUnitType = customIterData.unitType;
+        observedUnitId = customIterData.unitId;
 
         let customDispatchId: number | null = null;
         let customDispatchSettled = false;
@@ -802,10 +889,16 @@ export async function autoLoop(
           unitId: iterData.unitId,
         });
         if (guardsResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "guard-break");
+          finishTurn(
+            "stopped",
+            "manual-attention",
+            guardsResult.reason,
+            guardsResult.reason,
+            guardsResult.inputPayload,
+          );
           finishIncompleteIteration({
             status: "stopped",
-            reason: "guard-break",
+            reason: guardsResult.reason,
             unitType: iterData.unitType,
             unitId: iterData.unitId,
             failureClass: "manual-attention",
@@ -832,21 +925,26 @@ export async function autoLoop(
             logClaimFailed: logDispatchClaimFailed,
           });
           if (claim.kind !== "opened") {
-            const reason = claim.kind === "skip" ? claim.reason : "dispatch claim degraded";
+            const reason = claim.kind === "skip" || claim.kind === "degraded"
+              ? claim.reason
+              : "dispatch claim degraded";
             throw new Error(`Custom engine execute-task requires a canonical coordination dispatch: ${reason}`);
           }
           customDispatchId = claim.dispatchId;
+          dispatchId = customDispatchId;
         }
         let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
         try {
+          s.unitExecutionInFlight = true;
+          ownsUnitExecution = true;
           unitPhaseResult = await runWithWorkerHeartbeat(
             s,
             workerHeartbeatDeps,
             WORKER_HEARTBEAT_INTERVAL_MS,
             () => (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
               {
-                unitType: iterData.unitType,
-                unitId: iterData.unitId,
+                unitType: customIterData.unitType,
+                unitId: customIterData.unitId,
                 dispatchId: customDispatchId,
                 workerId: s.workerId,
                 milestoneLeaseToken: s.milestoneLeaseToken,
@@ -859,7 +957,7 @@ export async function autoLoop(
               () => runUnitPhaseViaContract(
                 dispatchContract,
                 ic,
-                iterData,
+                customIterData,
                 loopState,
                 undefined,
                 unitDispatchDeps,
@@ -877,6 +975,7 @@ export async function autoLoop(
               markFailed: markDispatchFailed,
               logWriteFailure: logDispatchLedgerWriteFailure,
             }));
+          dispatchSettled = customDispatchSettled;
           throw err;
         }
         if (unitPhaseResult.action === "next") {
@@ -897,6 +996,9 @@ export async function autoLoop(
           if (customDispatchId !== null && !customDispatchSettled) {
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} after unit break`);
           }
+          dispatchSettled = customDispatchSettled;
+          await pauseForTaskRecoveryAbort(breakReason);
+          await closeRun("failed", breakReason);
           finishIncompleteIteration({
             status: "stopped",
             reason: breakReason,
@@ -904,7 +1006,7 @@ export async function autoLoop(
             unitId: iterData.unitId,
             failureClass: "execution",
           });
-          finishTurn("stopped", "execution", breakReason);
+          finishTurn("stopped", "execution", breakReason, "unit-break");
           break;
         }
         if (unitPhaseResult.action === "retry") {
@@ -916,6 +1018,8 @@ export async function autoLoop(
           if (customDispatchId !== null && !customDispatchSettled) {
             throw new Error(`Could not terminalize custom-engine dispatch ${customDispatchId} before unit retry`);
           }
+          dispatchSettled = customDispatchSettled;
+          await closeRun("canceled", unitPhaseResult.reason);
           finishIncompleteIteration({
             status: "retry",
             reason: unitPhaseResult.reason,
@@ -923,7 +1027,7 @@ export async function autoLoop(
             unitType: iterData.unitType,
             unitId: iterData.unitId,
           });
-          finishTurn("retry", "execution", unitPhaseResult.reason);
+          finishTurn("retry", "execution", unitPhaseResult.reason, "unit-retry");
           continue;
         }
 
@@ -942,12 +1046,12 @@ export async function autoLoop(
               unitType: iterData.unitType,
               unitId: iterData.unitId,
             });
-            finishTurn("retry", "verification", "custom-engine-task-replan-not-durable");
+            finishTurn("retry", "verification", "custom-engine-task-replan-not-durable", "custom-engine-task-replan");
             continue;
           }
           deps.clearUnitTimeout();
           completeIteration();
-          finishTurn("completed");
+          finishTurn("completed", "none", undefined, null);
           continue;
         }
 
@@ -965,13 +1069,37 @@ export async function autoLoop(
           });
         }
         const hostVerification = deps.customEngineHostVerificationBoundary ?? runCustomEngineHostVerification;
+        // ADR-047 §3: the signature must hash every input this turn read, in read
+        // order. Host verification can decide without ever reaching the policy
+        // (stored verdict, recovery route, missing repository, source drift),
+        // after catching a policy error, or a second time once interactive human
+        // review resolved the blocker. Each read appends here and
+        // composeVerificationInputPayload orders them, so a later decisive read
+        // can never be shadowed by an earlier one (#1674).
+        const verificationReads: VerificationRead[] = [];
         const verificationInput = {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           basePath: s.basePath,
           preferences: prefs,
           humanReviewPolicy,
-          verifyPolicy: () => policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath }),
+          recordHostEvidence: (evidence: HostVerificationEvidence) => {
+            verificationReads.push({ source: "host", evidence });
+          },
+          verifyPolicy: async () => {
+            if (policy.verifyWithEvidence) {
+              const result = await policy.verifyWithEvidence(
+                customIterData.unitType,
+                customIterData.unitId,
+                { basePath: s.basePath },
+              );
+              verificationReads.push({ source: "policy", evidence: result.inputPayload });
+              return result.outcome;
+            }
+            const outcome = await policy.verify(customIterData.unitType, customIterData.unitId, { basePath: s.basePath });
+            verificationReads.push({ source: "policy", evidence: JSON.stringify({ outcome }) });
+            return outcome;
+          },
         };
         let verifyResult = await hostVerification(verificationInput);
         if (verifyResult === "pause" &&
@@ -1004,9 +1132,14 @@ export async function autoLoop(
             });
           }
         }
+        const verificationInputPayload = composeVerificationInputPayload({
+          outcome: verifyResult,
+          reads: verificationReads,
+        });
         if (iterData.unitType === "execute-task" && (verifyResult === "retry" || verifyResult === "abort")) {
           const verifyFlow = handleCustomEngineTaskVerifyOutcome({
             outcome: verifyResult,
+            inputPayload: verificationInputPayload,
             finishTurn,
           });
           const reason = verifyResult === "abort"
@@ -1026,9 +1159,10 @@ export async function autoLoop(
           const verifyFlow = await handleCustomEngineVerifyPause({
             unitType: iterData.unitType,
             unitId: iterData.unitId,
+            inputPayload: verificationInputPayload,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
-              stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+              stopAuto: reason => deferStopAuto(ctx, pi, reason),
               reportPause: details => phaseReporter.report("custom-engine", "pause", details),
               finishTurn,
             },
@@ -1069,9 +1203,10 @@ export async function autoLoop(
           });
           const retryFlow = await handleCustomEngineVerifyRetryOutcome({
             outcome: retryOutcome,
+            inputPayload: verificationInputPayload,
             deps: {
               pauseAuto: () => deps.pauseAuto(ctx, pi),
-              stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+              stopAuto: reason => deferStopAuto(ctx, pi, reason),
               reportPause: details => phaseReporter.report("custom-engine", "pause", details),
               finishTurn,
             },
@@ -1096,15 +1231,33 @@ export async function autoLoop(
         }
 
         if (iterData.unitType === "execute-task") {
-          await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
-            unitType: iterData.unitType,
-            unitId: iterData.unitId,
-            workerId: s.workerId,
-            traceId: flowId,
-            turnId,
-            basePath: s.basePath,
-          }, VERIFIED_TASK_PUBLICATION_DEPS);
+          try {
+            await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              workerId: s.workerId,
+              traceId: flowId,
+              turnId,
+              basePath: s.basePath,
+            }, VERIFIED_TASK_PUBLICATION_DEPS);
+          } catch (publishErr) {
+            const publishReason = publishErr instanceof Error ? publishErr.message : String(publishErr);
+            await closeRun("failed", publishReason);
+            ctx.ui.notify(publishReason, "error");
+            finishIncompleteIteration({
+              status: "stopped",
+              reason: publishReason,
+              unitType: iterData.unitType,
+              unitId: iterData.unitId,
+              failureClass: "closeout",
+            });
+            finishTurn("stopped", "closeout", publishReason, "task-publication-failed");
+            await deferStopAuto(ctx, pi, publishReason);
+            break;
+          }
         }
+
+        await closeRun("completed", "custom-engine-iteration-complete");
 
         // Verification passed — mark step complete
         const reconcileOutcome = await handleCustomEngineReconcile({
@@ -1131,7 +1284,7 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
           deps: {
-            stopAuto: reason => deps.stopAuto(ctx, pi, reason),
+            stopAuto: reason => deferStopAuto(ctx, pi, reason),
             pauseAuto: () => deps.pauseAuto(ctx, pi),
             report: (action, details) => phaseReporter.report("custom-engine", action, details),
             finishTurn,
@@ -1166,7 +1319,7 @@ export async function autoLoop(
         const orchestration = s.orchestration;
         if (orchestration) {
           const existingPendingDispatch = s.pendingOrchestrationDispatch;
-          const orchestrationResult = existingPendingDispatch
+          let orchestrationResult = existingPendingDispatch
             ? {
                 kind: "advanced" as const,
                 unit: {
@@ -1174,8 +1327,30 @@ export async function autoLoop(
                   unitId: existingPendingDispatch.unitId,
                 },
                 stateSnapshot: existingPendingDispatch.state,
+                dispatchId: existingPendingDispatch.dispatchId ?? 0,
               }
             : await orchestration.advance();
+
+          if (
+            orchestrationResult.kind === "skipped" &&
+            isUnitAlreadyActiveSkip(orchestrationResult) &&
+            !s.unitExecutionInFlight
+          ) {
+            s.pendingOrchestrationDispatch = null;
+            await deferStopAuto(ctx, pi, markBlockedStopReason(orchestrationResult.reason));
+            finishTurn(
+              "stopped",
+              "none",
+              orchestrationResult.reason,
+              "orchestration-stale-active-unit",
+            );
+            finishIncompleteIteration({
+              status: "stopped",
+              reason: orchestrationResult.reason,
+              failureClass: "manual-attention",
+            });
+            break;
+          }
 
           if (orchestrationResult.kind === "blocked") {
             s.pendingOrchestrationDispatch = null;
@@ -1192,10 +1367,13 @@ export async function autoLoop(
               }, {
                 expectedCurrentUnit: null,
               });
-              finishTurn("paused", "manual-attention", "orchestration-blocked");
+              finishTurn("paused", "manual-attention", "orchestration-blocked", null);
             } else {
-              await deps.stopAuto(ctx, pi, blockMessage);
-              finishTurn("stopped", "manual-attention", "orchestration-blocked");
+              // Carry the blocked marker: the headless host picks its exit code
+              // from the reason string, so an unmarked blocked stop exits 0 and
+              // reports success over a milestone that never closed.
+              await deferStopAuto(ctx, pi, markBlockedStopReason(blockMessage));
+              finishTurn("stopped", "manual-attention", "orchestration-blocked", null);
             }
             finishIncompleteIteration({
               status: orchestrationResult.action === "pause" ? "paused" : "stopped",
@@ -1207,13 +1385,26 @@ export async function autoLoop(
 
           if (orchestrationResult.kind === "skipped") {
             s.pendingOrchestrationDispatch = null;
-            // Idempotent re-poll skips are benign (an active unit is still running).
-            // The orchestrator's own stuck-window detection handles the truly-stuck case.
-            // Do not count these toward the consecutive-skip streak.
-            if (orchestrationResult.reason === "idempotent advance: unit already active") {
+            if (isUnitAlreadyActiveSkip(orchestrationResult)) {
               emitIterationEnd({ skipped: true });
               completeIteration();
-              finishTurn("skipped");
+              if (s.unitExecutionInFlight) {
+                finishTurn("skipped", "none", undefined, null);
+                continue;
+              }
+              const staleState = orchestrationResult.stateSnapshot;
+              finishTurn(
+                "skipped",
+                "none",
+                [
+                  orchestrationResult.reason,
+                  staleState?.phase,
+                  staleState?.activeMilestone?.id,
+                  staleState?.activeSlice?.id,
+                  staleState?.activeTask?.id,
+                ].join("|"),
+                "orchestration-stale-active-unit",
+              );
               continue;
             }
             const skipState = orchestrationResult.stateSnapshot;
@@ -1224,43 +1415,49 @@ export async function autoLoop(
               skipState?.activeSlice?.id,
               skipState?.activeTask?.id,
             ].join("|");
-            consecutiveOrchestrationSkips = skipKey === lastOrchestrationSkipKey
-              ? consecutiveOrchestrationSkips + 1
-              : 1;
-            lastOrchestrationSkipKey = skipKey;
-            if (consecutiveOrchestrationSkips >= MAX_CONSECUTIVE_ORCHESTRATION_SKIPS) {
-              const msg = `Orchestration skipped ${consecutiveOrchestrationSkips} consecutive attempts without progress. Pausing auto-mode for manual recovery.`;
-              ctx.ui.notify(msg, "error");
-              await deps.pauseAuto(ctx, pi, {
-                message: msg,
-                category: "unknown",
-              }, {
-                expectedCurrentUnit: null,
-              });
-              finishTurn("paused", "manual-attention", orchestrationResult.reason ?? "orchestration-skipped");
-              finishIncompleteIteration({
-                status: "paused",
-                reason: orchestrationResult.reason ?? "orchestration-skipped",
-                failureClass: "manual-attention",
-              });
-              break;
-            }
             emitIterationEnd({ skipped: true });
             completeIteration();
-            finishTurn("skipped");
+            finishTurn("skipped", "none", skipKey, "orchestration-skip");
             continue;
           }
 
-          consecutiveOrchestrationSkips = 0;
-          lastOrchestrationSkipKey = null;
-
           if (orchestrationResult.kind === "paused") {
             s.pendingOrchestrationDispatch = null;
+            // ADR-047: transient-retry pauses (classifyFailure "retry" routes)
+            // previously looped invisibly — this branch neither incremented the
+            // error budget nor fed the liveness ledger, so a never-healing
+            // transient with identical text spun forever. Count them against
+            // the loop's EXISTING consecutive-error budget (reset by
+            // completeIteration on a genuinely advancing turn); exhaustion
+            // stops through the blocked path and records the outcome in the
+            // backstop ledger so a repeat exhaustion trips the wedge.
+            consecutiveErrors++;
+            const pausedMsg = orchestrationResult.reason ?? "orchestration transient pause";
+            recentErrorMessages.push(pausedMsg.length > 120 ? pausedMsg.slice(0, 120) + "..." : pausedMsg);
+            const pausedDecision = decideIterationErrorRecovery({
+              consecutiveErrors,
+              recentErrorMessages,
+              currentErrorMessage: pausedMsg,
+            });
+            if (pausedDecision.action === "stop") {
+              ctx.ui.notify(pausedDecision.notifyMessage, "error");
+              await deferStopAuto(ctx, pi, markBlockedStopReason(pausedDecision.stopMessage));
+              finishTurn("stopped", "execution", pausedMsg, "transient-retry-exhausted");
+              finishIncompleteIteration({
+                status: "stopped",
+                reason: pausedMsg,
+                failureClass: "execution",
+              });
+              break;
+            }
+            if (pausedDecision.action === "invalidate-and-retry") {
+              deps.invalidateAllCaches();
+            }
             finishIncompleteIteration({
               status: "paused",
               reason: orchestrationResult.reason,
             });
-            finishTurn("skipped");
+            finishTurn("skipped", "execution", pausedMsg, "orchestration-transient-pause");
             continue;
           }
 
@@ -1270,7 +1467,7 @@ export async function autoLoop(
               message: orchestrationResult.reason,
               category: "unknown",
             });
-            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`);
+            finishTurn("paused", "manual-attention", `orchestration-${orchestrationResult.kind}`, null);
             finishIncompleteIteration({
               status: "paused",
               reason: orchestrationResult.reason,
@@ -1287,17 +1484,34 @@ export async function autoLoop(
             );
             completionStop ??= resolveCompletionStopFromState(orchestrationResult.stateSnapshot);
             if (completionStop) {
-              await deps.stopAuto(ctx, pi, completionStop.reason, completionStop.options);
+              await deferStopAuto(ctx, pi, completionStop.reason, completionStop.options);
             } else {
-              await deps.stopAuto(ctx, pi, orchestrationResult.reason);
+              await deferStopAuto(
+                ctx,
+                pi,
+                orchestrationResult.reason,
+              );
             }
-            finishTurn("stopped", "manual-attention", "orchestration-stopped");
+            finishTurn(
+              "stopped",
+              "manual-attention",
+              orchestrationResult.reason,
+              completionStop || orchestrationResult.terminalOutcome ? null : "orchestration-stop",
+            );
             break;
           }
 
           if (orchestrationResult.kind !== "advanced") {
             s.pendingOrchestrationDispatch = null;
-            finishTurn("skipped");
+            // ADR-047 §3: the decisive input here is the unexpected outcome
+            // kind, so hash it rather than the constant label (#1674).
+            finishTurn(
+              "skipped",
+              "none",
+              "unknown orchestration outcome",
+              "orchestration-unknown-outcome",
+              JSON.stringify({ kind: orchestrationResult.kind }),
+            );
             continue;
           }
           const pendingDispatch = s.pendingOrchestrationDispatch;
@@ -1313,6 +1527,9 @@ export async function autoLoop(
             isRetry: false,
             previousTier: undefined,
           };
+          if (orchestrationResult.dispatchId > 0) {
+            dispatchId = orchestrationResult.dispatchId;
+          }
           const preDispatchResult = deps.runPreDispatchHooks(
             iterData.unitType,
             iterData.unitId,
@@ -1341,9 +1558,20 @@ export async function autoLoop(
               "info",
             );
             s.pendingOrchestrationDispatch = null;
+            observedUnitType = iterData.unitType;
+            observedUnitId = iterData.unitId;
             emitIterationEnd({ skipped: true });
             completeIteration();
-            finishTurn("skipped");
+            finishTurn(
+              "skipped",
+              "none",
+              JSON.stringify({
+                firedHooks: preDispatchResult.firedHooks,
+                unitType: iterData.unitType,
+                unitId: iterData.unitId,
+              }),
+              "pre-dispatch-hook-skip",
+            );
             continue;
           }
           if (preDispatchResult.action === "replace") {
@@ -1374,10 +1602,16 @@ export async function autoLoop(
             unitId: iterData.unitId,
           });
           if (guardsResult.action === "break") {
-            finishTurn("stopped", "manual-attention", "guard-break");
+            finishTurn(
+              "stopped",
+              "manual-attention",
+              guardsResult.reason,
+              guardsResult.reason,
+              guardsResult.inputPayload,
+            );
             finishIncompleteIteration({
               status: "stopped",
-              reason: "guard-break",
+              reason: guardsResult.reason,
               unitType: iterData.unitType,
               unitId: iterData.unitId,
               failureClass: "manual-attention",
@@ -1390,7 +1624,7 @@ export async function autoLoop(
             message: ORCHESTRATION_MISSING_REASON,
             category: "unknown",
           });
-          finishTurn("paused", "manual-attention", "orchestration-missing");
+          finishTurn("paused", "manual-attention", ORCHESTRATION_MISSING_REASON, "orchestration-missing");
           finishIncompleteIteration({
             status: "paused",
             reason: ORCHESTRATION_MISSING_REASON,
@@ -1420,12 +1654,14 @@ export async function autoLoop(
 
       await enforceMinRequestInterval(s, prefs);
 
-      // Phase B: claim a unit_dispatches row before invoking the unit. The
-      // partial unique index idx_unit_dispatches_active_per_unit prevents
-      // a second worker from claiming the same unit concurrently. When this
-      // process has a worker identity, make the milestone lease explicit before
-      // claiming so a step-mode handoff cannot leave us running with a stale
-      // in-memory token and no backing lease row.
+      if (!iterData) {
+        throw new Error("iteration data missing after dispatch");
+      }
+      const unitIterData = iterData;
+
+      if (dispatchId === null) {
+      // Sidecar (and pending-dispatch tests without a UnitRun id) still claim
+      // here. Canonical advance() already opened the unit_dispatches row.
       let leaseBeforeClaim = ensureDispatchLease(s, iterData.mid, {
         claimMilestoneLease,
         logLeaseRecovered: logDispatchLeaseRecovered,
@@ -1447,8 +1683,8 @@ export async function autoLoop(
           } else {
             const msg = leaseConflictNotice(iterData, retryLease.reason);
             ctx.ui.notify(msg, "error");
-            finishTurn("stopped", "execution", msg);
-            await deps.stopAuto(ctx, pi, msg);
+            finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
+            await deferStopAuto(ctx, pi, msg);
             break;
           }
         }
@@ -1456,12 +1692,13 @@ export async function autoLoop(
       if (leaseBeforeClaim.kind === "blocked" || leaseBeforeClaim.kind === "failed") {
         const msg = leaseConflictNotice(iterData, leaseBeforeClaim.reason);
         ctx.ui.notify(msg, "error");
-        finishTurn("stopped", "execution", msg);
-        await deps.stopAuto(ctx, pi, msg);
+        finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
+        await deferStopAuto(ctx, pi, msg);
         break;
       }
 
-      let dispatchClaim = openDispatchClaim(s, flowId, turnId, iterData, {
+      const openClaim = deps.openDispatchClaim ?? openDispatchClaim;
+      let dispatchClaim = openClaim(s, flowId, turnId, iterData, {
         getRecentDispatchesForUnit,
         recordDispatchClaim,
         markDispatchRunning,
@@ -1473,7 +1710,7 @@ export async function autoLoop(
           ? { kind: "opened", dispatchId: dispatchClaim.dispatchId }
           : dispatchClaim.kind === "skip"
             ? { kind: "skip", reason: dispatchClaim.reason }
-            : { kind: "degraded" },
+            : { kind: "degraded", reason: dispatchClaim.reason },
       );
       if (dispatchDecision.action === "skip" && dispatchDecision.reason === "stale-lease") {
         const leaseRecovery = ensureDispatchLease(s, iterData.mid, {
@@ -1482,7 +1719,7 @@ export async function autoLoop(
           logLeaseRecoveryFailed: logDispatchLeaseRecoveryFailed,
         }, { forceReclaim: true });
         if (leaseRecovery.kind === "ready") {
-          dispatchClaim = openDispatchClaim(s, flowId, turnId, iterData, {
+          dispatchClaim = openClaim(s, flowId, turnId, iterData, {
             getRecentDispatchesForUnit,
             recordDispatchClaim,
             markDispatchRunning,
@@ -1494,38 +1731,25 @@ export async function autoLoop(
               ? { kind: "opened", dispatchId: dispatchClaim.dispatchId }
               : dispatchClaim.kind === "skip"
                 ? { kind: "skip", reason: dispatchClaim.reason }
-                : { kind: "degraded" },
+                : { kind: "degraded", reason: dispatchClaim.reason },
           );
         } else {
           const msg = leaseConflictNotice(iterData, leaseRecovery.reason);
           ctx.ui.notify(msg, "error");
-          finishTurn("stopped", "execution", msg);
-          await deps.stopAuto(ctx, pi, msg);
+          finishTurn("stopped", "execution", msg, "milestone-lease-conflict");
+          await deferStopAuto(ctx, pi, msg);
           break;
         }
       }
       if (dispatchDecision.action === "skip") {
         if (dispatchDecision.reason === "stale-lease") {
-          consecutiveAlreadyActiveSkips = 0;
           const msg = leaseConflictNotice(iterData, "dispatch claim still failed after stale-lease recovery");
           ctx.ui.notify(msg, "error");
-          finishTurn("stopped", "execution", msg);
-          await deps.stopAuto(ctx, pi, msg);
+          finishTurn("stopped", "execution", msg, "dispatch-claim-stale-lease");
+          await deferStopAuto(ctx, pi, msg);
           break;
         }
-        if (dispatchDecision.reason === "already-active" || dispatchDecision.reason === "already_active") {
-          consecutiveAlreadyActiveSkips++;
-          if (consecutiveAlreadyActiveSkips >= MAX_CONSECUTIVE_ALREADY_ACTIVE_SKIPS) {
-            const msg = `Dispatch claim for ${iterData.unitType} ${iterData.unitId} remained already-active for ${consecutiveAlreadyActiveSkips} consecutive attempts. Pausing auto-mode for manual recovery.`;
-            ctx.ui.notify(msg, "error");
-            await deps.pauseAuto(ctx, pi);
-            finishTurn("paused", "manual-attention", msg);
-            break;
-          }
-        } else {
-          consecutiveAlreadyActiveSkips = 0;
-        }
-        finishTurn("skipped", "execution", dispatchDecision.reason);
+        finishTurn("skipped", "execution", dispatchDecision.reason, "dispatch-claim-skip");
         finishIncompleteIteration({
           status: "skipped",
           reason: dispatchDecision.reason,
@@ -1534,19 +1758,35 @@ export async function autoLoop(
         });
         continue;
       }
-      consecutiveAlreadyActiveSkips = 0;
+      if (dispatchDecision.action === "stop") {
+        const msg = dispatchDecision.message;
+        ctx.ui.notify(msg, "error");
+        finishTurn("stopped", "execution", msg, "dispatch-claim-degraded");
+        finishIncompleteIteration({
+          status: "stopped",
+          reason: msg,
+          unitType: iterData.unitType,
+          unitId: iterData.unitId,
+          failureClass: "execution",
+        });
+        await deferStopAuto(ctx, pi, msg);
+        break;
+      }
       dispatchId = dispatchDecision.dispatchId;
+      }
 
       let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
       try {
+        s.unitExecutionInFlight = true;
+        ownsUnitExecution = true;
         unitPhaseResult = await runWithWorkerHeartbeat(
           s,
           workerHeartbeatDeps,
           WORKER_HEARTBEAT_INTERVAL_MS,
           () => (deps.taskExecutionBoundary ?? runWithTaskExecutionAttempt)(
             {
-              unitType: iterData.unitType,
-              unitId: iterData.unitId,
+              unitType: unitIterData.unitType,
+              unitId: unitIterData.unitId,
               dispatchId,
               workerId: s.workerId,
               milestoneLeaseToken: s.milestoneLeaseToken,
@@ -1559,7 +1799,7 @@ export async function autoLoop(
             () => runUnitPhaseViaContract(
               dispatchContract,
               ic,
-              iterData,
+              unitIterData,
               loopState,
               sidecarItem,
               unitDispatchDeps,
@@ -1601,11 +1841,8 @@ export async function autoLoop(
       }
       if (unitPhaseResult.action === "break") {
         const breakReason = unitPhaseResult.reason ?? "unit-break";
-        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
-          settleDispatchFailed(dispatchId, breakReason, {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          }));
+        await closeRun("failed", breakReason);
+        await pauseForTaskRecoveryAbort(breakReason);
         finishIncompleteIteration({
           status: "stopped",
           reason: breakReason,
@@ -1613,15 +1850,11 @@ export async function autoLoop(
           unitId: iterData.unitId,
           failureClass: "execution",
         });
-        finishTurn("stopped", "execution", breakReason);
+        finishTurn("stopped", "execution", breakReason, "unit-break");
         break;
       }
       if (unitPhaseResult.action === "retry") {
-        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
-          settleDispatchFailed(dispatchId, unitPhaseResult.reason, {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          }));
+        await closeRun("canceled", unitPhaseResult.reason);
         finishIncompleteIteration({
           status: "retry",
           reason: unitPhaseResult.reason,
@@ -1629,7 +1862,7 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
         });
-        finishTurn("retry", "execution", unitPhaseResult.reason);
+        finishTurn("retry", "execution", unitPhaseResult.reason, "unit-retry");
         continue;
       }
 
@@ -1701,11 +1934,7 @@ export async function autoLoop(
             : { action: "next" },
       );
       if (finalizeDecision.action === "stop") {
-        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
-          settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          }));
+        await closeRun("failed", finalizeDecision.ledgerErrorSummary);
         finishIncompleteIteration({
           status: "stopped",
           reason: finalizeReason ?? "finalize-break",
@@ -1713,20 +1942,12 @@ export async function autoLoop(
           unitId: iterData.unitId,
           failureClass: finalizeDecision.failureClass,
         });
-        finishTurn("stopped", finalizeDecision.failureClass, finalizeDecision.turnError);
+        finishTurn("stopped", finalizeDecision.failureClass, finalizeDecision.turnError, "finalize-break");
         break;
       }
       if (finalizeDecision.action === "retry") {
         abortActiveUnitTurn(ctx);
-        dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
-          settleDispatchFailed(dispatchId, finalizeDecision.ledgerErrorSummary, {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          }));
-        await s.orchestration?.retryActiveUnit({
-          unitType: iterData.unitType,
-          unitId: iterData.unitId,
-        });
+        await closeRun("retry", finalizeDecision.ledgerErrorSummary);
         finishIncompleteIteration({
           status: "retry",
           reason: "finalize-retry",
@@ -1734,33 +1955,40 @@ export async function autoLoop(
           unitType: iterData.unitType,
           unitId: iterData.unitId,
         });
-        finishTurn("retry");
+        finishTurn("retry", "closeout", finalizeDecision.ledgerErrorSummary, "finalize-retry");
         continue;
       }
 
       if (iterData.unitType === "execute-task") {
-        await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
-          unitType: iterData.unitType,
-          unitId: iterData.unitId,
-          workerId: s.workerId,
-          traceId: flowId,
-          turnId,
-          basePath: s.basePath,
-        }, VERIFIED_TASK_PUBLICATION_DEPS);
+        try {
+          await (deps.taskPublicationBoundary ?? publishVerifiedTaskExecution)({
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            workerId: s.workerId,
+            traceId: flowId,
+            turnId,
+            basePath: s.basePath,
+          }, VERIFIED_TASK_PUBLICATION_DEPS);
+        } catch (publishErr) {
+          const publishReason = publishErr instanceof Error ? publishErr.message : String(publishErr);
+          await closeRun("failed", publishReason);
+          ctx.ui.notify(publishReason, "error");
+          finishIncompleteIteration({
+            status: "stopped",
+            reason: publishReason,
+            unitType: iterData.unitType,
+            unitId: iterData.unitId,
+            failureClass: "closeout",
+          });
+          finishTurn("stopped", "closeout", publishReason, "task-publication-failed");
+          await deferStopAuto(ctx, pi, publishReason);
+          break;
+        }
       }
 
-      dispatchSettled = settleDispatchIfNeeded(dispatchSettled, () =>
-        settleDispatchCompleted(dispatchId, {
-          markCompleted: markDispatchCompleted,
-          logWriteFailure: logDispatchLedgerWriteFailure,
-        }));
-      await s.orchestration?.completeActiveUnit({
-        unitType: iterData.unitType,
-        unitId: iterData.unitId,
-      });
+      await closeRun("completed", "iteration-complete");
       completeIteration();
-      stuckStatePersistedThisIteration = true;
-      finishTurn("completed");
+      finishTurn("completed", "none", undefined, null);
       if (finalizeDecision.action === "complete-and-break") {
         if (!s.completionStopInProgress) {
           s.preserveStepSurfaceAfterLoopExit = true;
@@ -1770,15 +1998,8 @@ export async function autoLoop(
     } catch (loopErr) {
       // ── Blanket catch: absorb unexpected exceptions, apply graduated recovery ──
       const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
-      if (dispatchId !== null && !dispatchSettled && !(loopErr instanceof ModelPolicyDispatchBlockedError)) {
-        dispatchSettled = settleDispatchFailed(
-          dispatchId,
-          formatUnhandledDispatchErrorSummary({ error: loopErr }),
-          {
-            markFailed: markDispatchFailed,
-            logWriteFailure: logDispatchLedgerWriteFailure,
-          },
-        );
+      if (!runClosed) {
+        abnormalUnitExitReason = msg;
       }
 
       // ── Pre-send model-policy block: not a retryable error (#4959 / #4850) ──
@@ -1818,7 +2039,7 @@ export async function autoLoop(
         observedUnitType = loopErr.unitType;
         observedUnitId = loopErr.unitId;
         await deps.pauseAuto(ctx, pi);
-        finishTurn(policyDecision.turnStatus, policyDecision.failureClass, msg);
+        finishTurn(policyDecision.turnStatus, policyDecision.failureClass, msg, "model-policy-dispatch");
         // Do NOT increment consecutiveErrors — the failure is configuration,
         // not a transient runtime fault.
         break;
@@ -1849,8 +2070,8 @@ export async function autoLoop(
           `${infraDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
           "error",
         );
-        await deps.stopAuto(ctx, pi, infraDecision.stopMessage);
-        finishTurn(infraDecision.turnStatus, infraDecision.failureClass, msg);
+        await deferStopAuto(ctx, pi, infraDecision.stopMessage);
+        finishTurn(infraDecision.turnStatus, infraDecision.failureClass, msg, "infrastructure-error");
         break;
       }
 
@@ -1883,14 +2104,14 @@ export async function autoLoop(
             `${cooldownDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
             "error",
           );
-          finishTurn("stopped", "timeout", msg);
-          await deps.stopAuto(ctx, pi, cooldownDecision.stopMessage);
+          finishTurn("stopped", "timeout", msg, "credential-cooldown-exhausted");
+          await deferStopAuto(ctx, pi, cooldownDecision.stopMessage);
           break;
         }
 
         ctx.ui.notify(cooldownDecision.notifyMessage, "warning");
         await new Promise(resolve => setTimeout(resolve, cooldownDecision.waitMs));
-        finishTurn("retry", "timeout", msg);
+        finishTurn("retry", "timeout", msg, "credential-cooldown");
         finishIncompleteIteration({
           status: "retry",
           reason: "cooldown-retry",
@@ -1918,8 +2139,8 @@ export async function autoLoop(
           `${errorDecision.notifyMessage}${crashNotePath ? ` Crash note: ${crashNotePath}` : ""} Run /gsd auto to resume from the last checkpoint.`,
           "error",
         );
-        await deps.stopAuto(ctx, pi, errorDecision.stopMessage);
-        finishTurn(errorDecision.turnStatus, "execution", msg);
+        await deferStopAuto(ctx, pi, errorDecision.stopMessage);
+        finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error-exhausted");
         break;
       }
       if (errorDecision.action === "invalidate-and-retry") {
@@ -1928,10 +2149,60 @@ export async function autoLoop(
       } else {
         ctx.ui.notify(errorDecision.notifyMessage, "warning");
       }
-      finishTurn(errorDecision.turnStatus, "execution", msg);
+      finishTurn(errorDecision.turnStatus, "execution", msg, "iteration-error");
     } finally {
-      if (!stuckStatePersistedThisIteration) {
-        saveStuckState(s, loopState);
+      if (!runClosed && (dispatchId !== null || (observedUnitType && observedUnitId))) {
+        await closeRun("failed", abnormalUnitExitReason);
+      }
+      if (ownsUnitExecution) {
+        s.unitExecutionInFlight = false;
+      }
+      let backstopReason: string | null = null;
+      if (pendingLoopLiveness) {
+        const liveness = pendingLoopLiveness as {
+          guardId: string;
+          inputPayload: string;
+          unitType: string;
+          unitId: string;
+        };
+        const adjudicateNonAdvancingOutcome =
+          deps.adjudicateNonAdvancingOutcome ?? recordLoopNonAdvancingOutcome;
+        backstopReason = adjudicateNonAdvancingOutcome(s, {
+          ...liveness,
+          // ADR-047 §5: the wedge must name the owning guard's real,
+          // state-mutating exit — not a generic "resolve the condition" —
+          // because the refusal notice after a restart can only reprint what
+          // was persisted here (#1672).
+          sanctionedExit: resolveLoopSanctionedExit({
+            guardId: liveness.guardId,
+            unitType: liveness.unitType,
+            unitId: liveness.unitId,
+            failurePayload: liveness.inputPayload,
+          }),
+        });
+        if (backstopReason) {
+          ctx.ui.notify(backstopReason, "error");
+          const queuedStop = pendingStopAuto as {
+            reason?: string;
+            options?: StopAutoOptions;
+          } | null;
+          pendingStopAuto = {
+            reason: markBlockedStopReason(
+              [queuedStop?.reason, backstopReason].filter((reason): reason is string => Boolean(reason)).join("\n"),
+            ),
+            options: queuedStop?.options,
+          };
+        }
+      }
+      if (pendingStopAuto) {
+        const stop = pendingStopAuto as {
+          reason?: string;
+          options?: StopAutoOptions;
+        };
+        await deps.stopAuto(ctx, pi, stop.reason, stop.options);
+      }
+      if (backstopReason) {
+        s.active = false;
       }
     }
   }

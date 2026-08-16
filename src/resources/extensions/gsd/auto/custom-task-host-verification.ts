@@ -33,12 +33,50 @@ import {
   type VerificationSourceSnapshot,
 } from "../verification-source-integrity.js";
 
+/**
+ * The stable decisive inputs a non-advancing host-verification path actually
+ * read (ADR-047 §3). The loop hashes each emission alongside the outcome.
+ */
+export interface HostVerificationEvidence {
+  path:
+    | "stored-verdict-human-review-open"
+    | "stored-verdict-human-review-dismissed"
+    | "stored-verdict-blocker-source-drift"
+    | "stored-verdict-blocker-failed"
+    | "stored-verdict-pending-human-review"
+    | "stored-verdict-failed"
+    | "stored-pass-source-drift"
+    | "missing-repository"
+    | "policy-error"
+    | "post-policy-source-drift"
+    | "post-policy-human-review"
+    | "post-policy-failed";
+  attemptId?: string;
+  /** Identity of the stored technical verdict this path read. */
+  verdict?: { verdictId: string; evidenceId: string; verdict: string };
+  /** Identity of the recovery blocker this path read. */
+  blocker?: { blockerId: string; blockerKind?: string; blockerStatus?: string };
+  failureKind?: string;
+  /** Repository targets the resolver could not find. */
+  missingRepositoryIds?: string[];
+  sourceRevisionBefore?: string;
+  sourceRevisionAfter?: string;
+  /** Message of the policy error this path caught. */
+  errorMessage?: string;
+  /** Durable recovery route selected for this failure, when one was routed. */
+  recovery?: { owner: string; action: string; status?: string };
+}
+
+type HostVerificationRecovery = { owner: string; action: string; status?: string };
+
 export interface CustomTaskHostVerificationInput {
   basePath: string;
   unitId: string;
   preferences?: GSDPreferences;
   humanReviewPolicy?: boolean;
   verifyPolicy(): Promise<VerificationOutcome>;
+  /** Receives the decisive inputs of a non-advancing host-verification path. */
+  recordHostEvidence?(evidence: HostVerificationEvidence): void;
 }
 
 export interface CustomEngineHostVerificationInput extends CustomTaskHostVerificationInput {
@@ -235,6 +273,7 @@ function routeFailedVerification(
   verdict: FailedVerdictIdentity,
   failureKind: "verification-failed" | "verification-drift" = "verification-failed",
   supersedesResolvedBlockerId?: string,
+  onRecovery?: (recovery: HostVerificationRecovery) => void,
 ): VerificationOutcome {
   if (!attempt.resultId) throw new Error("Custom Task host verification Result is missing");
   const routeIdentity = supersedesResolvedBlockerId
@@ -259,6 +298,7 @@ function routeFailedVerification(
     rationale: "Route custom-engine host verification through the durable recovery policy",
     ...(supersedesResolvedBlockerId ? { supersedesResolvedBlockerId } : {}),
   });
+  onRecovery?.({ owner: "agent", action: recovery.action, status: recovery.status });
   switch (recovery.action) {
     case "retry":
     case "repair":
@@ -275,9 +315,10 @@ function routeFailedVerification(
 function routeHumanReview(
   attempt: TaskExecutionAttemptSnapshot,
   verdict: FailedVerdictIdentity,
+  onRecovery?: (recovery: HostVerificationRecovery) => void,
 ): VerificationOutcome {
   if (!attempt.resultId) throw new Error("Custom Task human review Result is missing");
-  recordFailureAndSelectRecovery({
+  const recovery = recordFailureAndSelectRecovery({
     invocation: internalExecutionInvocation(`internal:auto:attempt.route:${attempt.resultId}`),
     attemptId: attempt.attemptId,
     resultId: attempt.resultId,
@@ -296,6 +337,7 @@ function routeHumanReview(
     },
     rationale: "The configured human-review policy assigns this subjective decision to the user.",
   });
+  onRecovery?.({ owner: "user", action: recovery.action, status: recovery.status });
   return "pause";
 }
 
@@ -317,45 +359,119 @@ async function runCustomTaskHostVerification(
     id: repository.id,
     cwd: repository.root,
   }));
+  // ADR-047 §3: every path below that returns without a policy verdict reports
+  // the identity it read, so the loop's fallback signature is as fine-grained
+  // as the host's actual decision inputs (#1674).
+  const emit = (evidence: HostVerificationEvidence): void => {
+    input.recordHostEvidence?.(evidence);
+  };
+  const emitRouted = (
+    evidence: HostVerificationEvidence,
+  ): ((recovery: HostVerificationRecovery) => void) =>
+    (recovery) => emit({ ...evidence, recovery });
+
   const existing = readTaskTechnicalVerdict(attempt.attemptId);
   if (existing && existing.verdict !== "pass") {
+    const storedVerdict = {
+      verdictId: existing.verdictId,
+      evidenceId: existing.evidenceId,
+      verdict: existing.verdict,
+    };
     const recovery = readTaskRecoveryRoute(attempt.attemptId);
     const blocker = recovery?.blocker ?? null;
     if (blocker?.blockerKind === "subjective_uat") {
-      if (blocker.blockerStatus === "open") return "pause";
-      if (blocker.blockerStatus === "dismissed") return "abort";
+      const blockerIdentity = {
+        blockerId: blocker.blockerId,
+        blockerKind: blocker.blockerKind,
+        blockerStatus: blocker.blockerStatus,
+      };
+      if (blocker.blockerStatus === "open") {
+        emit({
+          path: "stored-verdict-human-review-open",
+          attemptId: attempt.attemptId,
+          verdict: storedVerdict,
+          blocker: blockerIdentity,
+        });
+        return "pause";
+      }
+      if (blocker.blockerStatus === "dismissed") {
+        emit({
+          path: "stored-verdict-human-review-dismissed",
+          attemptId: attempt.attemptId,
+          verdict: storedVerdict,
+          blocker: blockerIdentity,
+        });
+        return "abort";
+      }
       const current = captureVerificationSourceSnapshot(targets);
       if (!current.ok || current.snapshot.aggregateRevision !== existing.testedSourceRevision) {
-        return routeFailedVerification(attempt, {
-          verdictId: existing.verdictId,
-          evidenceId: existing.evidenceId,
-          verdict: existing.verdict,
-        }, "verification-drift", blocker.blockerId);
+        return routeFailedVerification(
+          attempt,
+          storedVerdict,
+          "verification-drift",
+          blocker.blockerId,
+          emitRouted({
+            path: "stored-verdict-blocker-source-drift",
+            attemptId: attempt.attemptId,
+            verdict: storedVerdict,
+            blocker: blockerIdentity,
+            failureKind: "verification-drift",
+            sourceRevisionBefore: existing.testedSourceRevision,
+            sourceRevisionAfter: current.ok ? current.snapshot.aggregateRevision : "unavailable",
+          }),
+        );
       }
-      return routeFailedVerification(attempt, {
-        verdictId: existing.verdictId,
-        evidenceId: existing.evidenceId,
-        verdict: existing.verdict,
-      }, "verification-failed", blocker.blockerId);
+      return routeFailedVerification(
+        attempt,
+        storedVerdict,
+        "verification-failed",
+        blocker.blockerId,
+        emitRouted({
+          path: "stored-verdict-blocker-failed",
+          attemptId: attempt.attemptId,
+          verdict: storedVerdict,
+          blocker: blockerIdentity,
+          failureKind: "verification-failed",
+          sourceRevisionBefore: existing.testedSourceRevision,
+        }),
+      );
     }
     if (!recovery && isPendingTaskHumanReviewVerdict(attempt.attemptId, existing.verdictId)) {
-      return routeHumanReview(attempt, {
-        verdictId: existing.verdictId,
-        evidenceId: existing.evidenceId,
-        verdict: existing.verdict,
-      });
+      return routeHumanReview(
+        attempt,
+        storedVerdict,
+        emitRouted({
+          path: "stored-verdict-pending-human-review",
+          attemptId: attempt.attemptId,
+          verdict: storedVerdict,
+        }),
+      );
     }
     const failureKind = recovery?.failureKind === "verification-drift" || existing.supersedesVerdictId
       ? "verification-drift"
       : "verification-failed";
     const supersededBlockerId = readResolvedTaskHumanReviewBlocker(attempt.attemptId)?.blockerId;
-    return routeFailedVerification(attempt, {
+    return routeFailedVerification(
+      attempt,
+      storedVerdict,
+      failureKind,
+      supersededBlockerId,
+      emitRouted({
+        path: "stored-verdict-failed",
+        attemptId: attempt.attemptId,
+        verdict: storedVerdict,
+        failureKind,
+        sourceRevisionBefore: existing.testedSourceRevision,
+        ...(supersededBlockerId ? { blocker: { blockerId: supersededBlockerId } } : {}),
+      }),
+    );
+  }
+  if (existing) {
+    const storedVerdict = {
       verdictId: existing.verdictId,
       evidenceId: existing.evidenceId,
       verdict: existing.verdict,
-    }, failureKind, supersededBlockerId);
-  }
-  if (existing) {
+    };
     const current = captureVerificationSourceSnapshot(targets);
     if (current.ok && current.snapshot.aggregateRevision === existing.testedSourceRevision) {
       return "continue";
@@ -385,11 +501,26 @@ async function runCustomTaskHostVerification(
         },
       },
     });
-    return routeFailedVerification(attempt, {
-      verdictId: invalidated.verdictId,
-      evidenceId: invalidated.evidenceId,
-      verdict: "inconclusive",
-    }, "verification-drift", readTaskRecoveryBlocker(attempt.attemptId)?.blockerId);
+    const driftBlockerId = readTaskRecoveryBlocker(attempt.attemptId)?.blockerId;
+    return routeFailedVerification(
+      attempt,
+      {
+        verdictId: invalidated.verdictId,
+        evidenceId: invalidated.evidenceId,
+        verdict: "inconclusive",
+      },
+      "verification-drift",
+      driftBlockerId,
+      emitRouted({
+        path: "stored-pass-source-drift",
+        attemptId: attempt.attemptId,
+        verdict: storedVerdict,
+        failureKind: "verification-drift",
+        sourceRevisionBefore: existing.testedSourceRevision,
+        sourceRevisionAfter: currentSourceRevision,
+        ...(driftBlockerId ? { blocker: { blockerId: driftBlockerId } } : {}),
+      }),
+    );
   }
   if (!isTaskAttemptAwaitingVerification(attempt)) {
     throw new Error("Custom Task host verification requires a succeeded Attempt at the verify stage");
@@ -412,7 +543,18 @@ async function runCustomTaskHostVerification(
       startedAt,
       endedAt: new Date().toISOString(),
     });
-    return routeFailedVerification(attempt, { ...recorded, verdict: "inconclusive" });
+    return routeFailedVerification(
+      attempt,
+      { ...recorded, verdict: "inconclusive" },
+      "verification-failed",
+      undefined,
+      emitRouted({
+        path: "missing-repository",
+        failureKind: "verification-failed",
+        missingRepositoryIds: resolved.missingRepositoryIds,
+        errorMessage: before.error,
+      }),
+    );
   }
 
   const humanReviewApproval = approvedHumanReviewForSuccessor(
@@ -449,7 +591,18 @@ async function runCustomTaskHostVerification(
       endedAt: new Date().toISOString(),
       before: before.snapshot,
     });
-    return routeFailedVerification(attempt, { ...recorded, verdict: "inconclusive" });
+    return routeFailedVerification(
+      attempt,
+      { ...recorded, verdict: "inconclusive" },
+      "verification-failed",
+      undefined,
+      emitRouted({
+        path: "policy-error",
+        failureKind: "verification-failed",
+        sourceRevisionBefore: before.snapshot.aggregateRevision,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
   const after = captureVerificationSourceSnapshot(targets);
   const captureError = after.ok ? undefined : after.error;
@@ -485,9 +638,49 @@ async function runCustomTaskHostVerification(
   });
   if (verdict === "pass") return "continue";
   if (pendingHumanReview) {
-    return routeHumanReview(attempt, { ...recorded, verdict });
+    // ADR-047 §3: this pause is the host's final decision for the turn, so it
+    // reports what it read — the recorded verdict and the revision the policy
+    // ran against — instead of leaving the policy read as the whole signature.
+    return routeHumanReview(
+      attempt,
+      { ...recorded, verdict },
+      emitRouted({
+        path: "post-policy-human-review",
+        failureKind: "verification-failed",
+        sourceRevisionBefore: before.snapshot.aggregateRevision,
+      }),
+    );
   }
-  return routeFailedVerification(attempt, { ...recorded, verdict });
+  if (captureError || drifted) {
+    // ADR-047 §3: source drift is decided by both revisions, so both must reach
+    // the signature — a drift from revision A and a drift to revision B are
+    // different reads and must not collapse into one signature (#1674).
+    return routeFailedVerification(
+      attempt,
+      { ...recorded, verdict },
+      "verification-failed",
+      undefined,
+      emitRouted({
+        path: "post-policy-source-drift",
+        failureKind: "verification-failed",
+        sourceRevisionBefore: before.snapshot.aggregateRevision,
+        sourceRevisionAfter: after.ok ? after.snapshot.aggregateRevision : "unavailable",
+        ...(captureError ? { errorMessage: captureError } : {}),
+      }),
+    );
+  }
+  return routeFailedVerification(
+    attempt,
+    { ...recorded, verdict },
+    "verification-failed",
+    undefined,
+    emitRouted({
+      path: "post-policy-failed",
+      failureKind: "verification-failed",
+      sourceRevisionBefore: before.snapshot.aggregateRevision,
+      sourceRevisionAfter: after.ok ? after.snapshot.aggregateRevision : "unavailable",
+    }),
+  );
 }
 
 export async function runCustomEngineHostVerification(

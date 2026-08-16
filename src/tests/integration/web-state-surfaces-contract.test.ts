@@ -8,6 +8,17 @@ import { join } from "node:path";
 const workspaceIndex = await import(
   "../../resources/extensions/gsd/workspace-index.ts"
 );
+// `indexWorkspace` reads slices and tasks from the DB (post-cutover there is no
+// roadmap/plan markdown fallback), so every workspace-index fixture seeds rows.
+// The markdown files still decide milestone titles and artifact paths.
+const {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  isDbAvailable,
+  openDatabase,
+} = await import("../../resources/extensions/gsd/gsd-db.ts");
 const filesRoute = await import("../../../web/app/api/files/route.ts");
 
 // Re-import status helpers from the web-side module
@@ -37,12 +48,34 @@ function makeGsdFixture(): { root: string; gsdDir: string; cleanup: () => void }
 test("indexWorkspace extracts risk, depends, and demo from roadmap", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
 
-  t.after(() => { cleanup(); });
+  t.after(() => { closeDatabase(); cleanup(); });
 
   const milestoneDir = join(gsdDir, "milestones", "M001");
   const sliceDir = join(milestoneDir, "slices", "S01");
   const tasksDir = join(sliceDir, "tasks");
   mkdirSync(tasksDir, { recursive: true });
+
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable(), "fixture must have an open DB");
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Feature slice",
+    status: "pending",
+    risk: "high",
+    depends: ["S00"],
+    demo: "users can see the dashboard",
+    sequence: 1,
+  });
+  insertTask({
+    milestoneId: "M001",
+    sliceId: "S01",
+    id: "T01",
+    title: "Build thing",
+    status: "pending",
+    sequence: 1,
+  });
 
   writeFileSync(
     join(milestoneDir, "M001-ROADMAP.md"),
@@ -90,11 +123,25 @@ test("indexWorkspace extracts risk, depends, and demo from roadmap", async (t) =
 test("indexWorkspace handles slices without risk/depends/demo", async (t) => {
   const { root, gsdDir, cleanup } = makeGsdFixture();
 
-  t.after(() => { cleanup(); });
+  t.after(() => { closeDatabase(); cleanup(); });
 
   const milestoneDir = join(gsdDir, "milestones", "M001");
   const sliceDir = join(milestoneDir, "slices", "S01");
   mkdirSync(join(sliceDir, "tasks"), { recursive: true });
+
+  openDatabase(":memory:");
+  assert.ok(isDbAvailable(), "fixture must have an open DB");
+  insertMilestone({ id: "M001", title: "Minimal", status: "active" });
+  insertSlice({
+    milestoneId: "M001",
+    id: "S01",
+    title: "Done slice",
+    status: "complete",
+    risk: "low",
+    depends: [],
+    demo: "",
+    sequence: 1,
+  });
 
   writeFileSync(
     join(milestoneDir, "M001-ROADMAP.md"),
@@ -109,7 +156,8 @@ test("indexWorkspace handles slices without risk/depends/demo", async (t) => {
   const index = await workspaceIndex.indexWorkspace(root);
 
   const slice = index.milestones[0].slices[0];
-  // Parser defaults risk to "low" when not specified, demo to "" when no blockquote
+  // risk/depends/demo still reach the index through roadmapMeta: a low-risk slice
+  // with no dependencies and no demo line must survive as "low" / [] / "".
   assert.equal(slice.risk, "low");
   assert.deepEqual(slice.depends, []);
   assert.equal(slice.demo, "");

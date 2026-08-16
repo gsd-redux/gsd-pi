@@ -6,13 +6,8 @@ import { resolveConfigPath, loadConfig } from './config.js';
 import { Logger } from './logger.js';
 import { Daemon } from './daemon.js';
 import { install, uninstall, status } from './launchd.js';
-import { handleCloudRuntimeCommand } from './cloud-cli.js';
 
 const USAGE = `Usage: gsd-daemon [options]
-       gsd-daemon cloud status [--config <path>]
-       gsd-daemon cloud pair --gateway <url> --code <code> [--runtime-name <name>] [--config <path>]
-       gsd-daemon cloud connect [--config <path>] [--verbose]
-       gsd-daemon cloud disconnect [--config <path>]
 
 Options:
   --config <path>  Path to YAML config file (default: ~/.gsd/daemon.yaml)
@@ -24,14 +19,6 @@ Options:
 `;
 
 async function main(): Promise<void> {
-  if (process.argv[2] === 'cloud') {
-    await handleCloudRuntimeCommand(process.argv.slice(3), {
-      binaryName: 'gsd-daemon',
-      nestedCommandName: 'cloud',
-    });
-    return;
-  }
-
   const { values } = parseArgs({
     options: {
       config: { type: 'string', short: 'c' },

@@ -324,7 +324,7 @@ jobs:
       # Bootstrap path. Uses the SAME derived, complete package list as the
       # production release (scripts/publish-workspace-packages.sh) so the two
       # paths can't diverge — the old inline "contracts rpc-client mcp-server"
-      # list here is what dropped cloud-mcp-gateway + daemon from npm.
+      # list here previously dropped publishable workspace packages from npm.
       - name: Publish workspace packages
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.platform_packages_only != 'true'
         env:

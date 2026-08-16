@@ -18,6 +18,7 @@
  */
 
 import { logWarning } from "./workflow-logger.js";
+import { createHash } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -27,6 +28,18 @@ import { rewriteCommandWithRtk } from "../shared/rtk.js";
 
 /** Verification outcome type — matches ExecutionPolicy.verify() return type. */
 export type VerificationOutcome = "continue" | "retry" | "pause" | "abort";
+
+export interface CustomVerificationResult {
+  outcome: VerificationOutcome;
+  inputPayload: string;
+}
+
+function verificationResult(
+  outcome: VerificationOutcome,
+  evidence: Record<string, unknown>,
+): CustomVerificationResult {
+  return { outcome, inputPayload: JSON.stringify(evidence) };
+}
 
 /**
  * Run custom verification for a specific step in a workflow run.
@@ -44,17 +57,24 @@ export function runCustomVerification(
   runDir: string,
   stepId: string,
 ): VerificationOutcome {
+  return runCustomVerificationWithEvidence(runDir, stepId).outcome;
+}
+
+export function runCustomVerificationWithEvidence(
+  runDir: string,
+  stepId: string,
+): CustomVerificationResult {
   const def = readFrozenDefinition(runDir);
 
   const step = def.steps.find((s: StepDefinition) => s.id === stepId);
   if (!step) {
     // Step not found in definition — nothing to verify, continue
-    return "continue";
+    return verificationResult("continue", { policy: "none", reason: "step-not-found", stepId });
   }
 
   if (!step.verify) {
     // No verification policy configured — passthrough
-    return "continue";
+    return verificationResult("continue", { policy: "none", reason: "not-configured", stepId });
   }
 
   return dispatchPolicy(runDir, step, step.verify);
@@ -67,19 +87,18 @@ function dispatchPolicy(
   runDir: string,
   step: StepDefinition,
   verify: VerifyPolicy,
-): VerificationOutcome {
+): CustomVerificationResult {
   switch (verify.policy) {
     case "content-heuristic":
       return handleContentHeuristic(runDir, step, verify);
     case "shell-command":
       return handleShellCommand(runDir, verify);
     case "prompt-verify":
-      return "pause";
+      return verificationResult("pause", { policy: "prompt-verify" });
     case "human-review":
-      return "pause";
+      return verificationResult("pause", { policy: "human-review" });
     default:
-      // Unknown policy — safe default is pause
-      return "pause";
+      return verificationResult("pause", { policy: "unknown" });
   }
 }
 
@@ -98,47 +117,93 @@ function handleContentHeuristic(
   runDir: string,
   step: StepDefinition,
   verify: { policy: "content-heuristic"; minSize?: number; pattern?: string },
-): VerificationOutcome {
+): CustomVerificationResult {
   const produces = step.produces;
   if (!produces || produces.length === 0) {
-    return "continue";
+    return verificationResult("continue", { policy: "content-heuristic", reason: "no-outputs" });
   }
+
+  // ADR-047 §3: the block signature hashes the inputs this guard actually read,
+  // and with several outputs it reads several files before one of them fails.
+  // Recording only the failing file collapses "output a changed but b still
+  // fails" into the signature of "b fails", which falsely trips the liveness
+  // backstop at occurrence two (#1674). Each check is kept in `produces` order,
+  // with sizes for metadata reads and digests for content reads.
+  const reads: Array<{ path: string; exists: boolean; size?: number; digest?: string }> = [];
 
   for (const relPath of produces) {
     const absPath = resolve(runDir, relPath);
     // Path traversal guard
     if (!absPath.startsWith(resolve(runDir) + sep) && absPath !== resolve(runDir)) {
-      return "pause";
+      return verificationResult("pause", {
+        policy: "content-heuristic",
+        failure: "path-outside-run-directory",
+        path: relPath,
+        ...(reads.length > 0 ? { reads } : {}),
+      });
     }
 
     // 1. File existence
     if (!existsSync(absPath)) {
-      return "pause";
+      return verificationResult("pause", {
+        policy: "content-heuristic",
+        failure: "missing-file",
+        path: relPath,
+        reads: [...reads, { path: relPath, exists: false }],
+      });
     }
+
+    const read: { path: string; exists: true; size?: number; digest?: string } = {
+      path: relPath,
+      exists: true,
+    };
+    reads.push(read);
 
     // 2. Minimum size check
     if (verify.minSize !== undefined) {
       const stat = statSync(absPath);
+      read.size = stat.size;
       if (stat.size < verify.minSize) {
-        return "pause";
+        return verificationResult("pause", {
+          policy: "content-heuristic",
+          failure: "below-minimum-size",
+          path: relPath,
+          actualSize: stat.size,
+          minimumSize: verify.minSize,
+          reads,
+        });
       }
     }
 
     // 3. Pattern match check (with timeout guard against ReDoS)
     if (verify.pattern !== undefined) {
       const content = readFileSync(absPath, "utf-8");
+      read.digest = createHash("sha256").update(content, "utf8").digest("hex");
       try {
         if (!new RegExp(verify.pattern).test(content)) {
-          return "pause";
+          return verificationResult("pause", {
+            policy: "content-heuristic",
+            failure: "pattern-mismatch",
+            path: relPath,
+            pattern: verify.pattern,
+            reads,
+          });
         }
       } catch (e) {
         logWarning("engine", `content-heuristic regex failed: ${(e as Error).message}`);
-        return "pause";
+        return verificationResult("pause", {
+          policy: "content-heuristic",
+          failure: "invalid-pattern",
+          path: relPath,
+          pattern: verify.pattern,
+          reads,
+          error: (e as Error).message,
+        });
       }
     }
   }
 
-  return "continue";
+  return verificationResult("continue", { policy: "content-heuristic", reason: "checks-passed" });
 }
 
 /**
@@ -156,14 +221,18 @@ function handleContentHeuristic(
 function handleShellCommand(
   runDir: string,
   verify: { policy: "shell-command"; command: string },
-): VerificationOutcome {
+): CustomVerificationResult {
   // Guard: reject commands containing shell expansion patterns that suggest injection
   const dangerousPatterns = /\$\(|`|;\s*(rm|curl|wget|nc|bash|sh|eval)\b/;
   if (dangerousPatterns.test(verify.command)) {
     console.warn(
       `custom-verification: shell-command contains suspicious pattern, skipping: ${verify.command}`,
     );
-    return "pause";
+    return verificationResult("pause", {
+      policy: "shell-command",
+      command: verify.command,
+      failure: "suspicious-command",
+    });
   }
 
   const rewrittenCommand = rewriteCommandWithRtk(verify.command);
@@ -176,8 +245,20 @@ function handleShellCommand(
   });
 
   if (result.status === 0) {
-    return "continue";
+    return verificationResult("continue", {
+      policy: "shell-command",
+      command: verify.command,
+      exitCode: result.status,
+      signal: result.signal,
+      error: result.error?.message ?? null,
+    });
   }
 
-  return "retry";
+  return verificationResult("retry", {
+    policy: "shell-command",
+    command: verify.command,
+    exitCode: result.status,
+    signal: result.signal,
+    error: result.error?.message ?? null,
+  });
 }

@@ -223,7 +223,7 @@ const TOOL_SURFACE_GUIDANCE_BY_UNIT: Record<string, string> = {
   "execute-task":
     "Complete only this task via `gsd_task_complete`. Do not call `gsd_slice_complete`, `gsd_validate_milestone`, or `gsd_complete_milestone` — the orchestrator owns phase transitions.",
   "validate-milestone":
-    "Dispatch reviewer subagents in parallel, then persist the verdict via `gsd_validate_milestone`. Do not query `.gsd/gsd.db` directly — use `gsd_milestone_status` and inlined context.",
+    "Run shell verification commands through `gsd_exec` — `bash` is not available in this unit, and `gsd_uat_exec` belongs to run-uat. Dispatch `reviewer` subagents in parallel, then persist the verdict via `gsd_validate_milestone`. Do not query `.gsd/gsd.db` directly — use `gsd_milestone_status` and inlined context. Validation reports on the milestone as planned; it does not extend it. Call `gsd_reassess_roadmap` only when validation FAILS and the roadmap must change to fix it — never to add slices or scope to a milestone whose planned work is complete.",
   "complete-milestone":
     "Persist completion only through `gsd_complete_milestone` after verification passes. Do not query `.gsd/gsd.db` directly. Do not write `.gsd/PROJECT.md` or `.gsd/REQUIREMENTS.md` by hand — use `gsd_summary_save` and `gsd_requirement_update`.",
   "replan-slice":
@@ -298,29 +298,95 @@ function formatForbiddenWorkflowToolsLine(
  * unrestricted (`tools.mode: "all"`) units omit the block unless they have
  * unit-specific closeout guidance registered above.
  */
+/**
+ * Advertise the tokens the contract actually enforces.
+ *
+ * Read from `getUnitToolSurfaceContract` — the same table `AUTO_UNIT_SCOPED_TOOLS`
+ * and the enforcer derive from — so the instruction cannot drift from the rule.
+ * Every observed HARD BLOCK in the acceptance runs was a near-miss on a token the
+ * agent could not see until it was rejected (`gsd_uat_exec` for `gsd_exec`,
+ * subagent `"review"` for `"reviewer"`), so these are rendered verbatim and
+ * backticked rather than described in prose.
+ *
+ * Deliberately worded as "available here", not "the only tools you may use":
+ * generic tools like read/grep are unaffected by this list.
+ */
+function formatAllowedToolsLine(
+  unitType: string,
+  policy: ToolsPolicy | null,
+  style: "surface" | "reminder" = "surface",
+): string | null {
+  const allowedGsdTools = getUnitToolSurfaceContract(unitType)?.allowedGsdTools ?? [];
+  const subagents = policy && "allowedSubagents" in policy ? policy.allowedSubagents ?? [] : [];
+  const toolLabel = style === "surface" ? "GSD lifecycle tools available here" : "GSD lifecycle";
+  const agentLabel = style === "surface" ? "Subagent types available here" : "Subagents";
+  const parts: string[] = [];
+  if (allowedGsdTools.length > 0) {
+    parts.push(`${toolLabel}: ${allowedGsdTools.map((t) => `\`${t}\``).join(", ")}.`);
+  }
+  if (subagents.length > 0) {
+    parts.push(`${agentLabel}: ${subagents.map((a) => `\`${a}\``).join(", ")}.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
+/**
+ * Compact tail reminder of the tokens this unit's contract enforces.
+ *
+ * The same affordance also appears in `## Tool Surface`, but measurement showed
+ * that section lands ~4% into a 14K-character prompt with 13.7K characters after
+ * it — and the units kept reaching for `bash`, `gsd_uat_exec`, and subagent
+ * `"review"` anyway. Repeating it at the very end puts it where the model acts.
+ * Kept to one line: the tail is prime real estate and every unit prompt pays for it.
+ */
+export function composeToolAffordanceReminder(unitType: string, basePath?: string): string {
+  const manifest = resolveManifest(unitType);
+  const policy = manifest
+    ? resolveEffectivePlanningToolsPolicy(unitType, manifest.tools, basePath) ?? manifest.tools
+    : null;
+  const line = formatAllowedToolsLine(unitType, policy, "reminder");
+  if (!line) return "";
+  // Phrased as a name-reference, not a menu. Wording it as "available here" read
+  // as an invitation: acceptance run 13 saw validate-milestone reach for
+  // `gsd_reassess_roadmap` — permitted, and in its required set — to add a slice
+  // to a milestone whose planned work was already complete, and the run stopped
+  // terminating. Listing a token must not imply this unit should use it.
+  return `Reminder — if you call a GSD lifecycle tool or subagent here, it must be one of these exact names (near-miss variants are rejected): ${line} Listing a tool does not mean this unit needs it.`;
+}
+
 export function composeToolSurfaceInstructions(
   unitType: string,
   opts: ComposeToolSurfaceInstructionOptions,
 ): string {
+  // The manifest is optional here: two units (discuss-slice and
+  // execute-task-simple) carry an enforced tool contract without one, and
+  // returning early for them left their allowed set unadvertised.
   const manifest = resolveManifest(unitType);
-  if (!manifest) return "";
-
-  const effectiveTools = resolveEffectivePlanningToolsPolicy(unitType, manifest.tools, opts.basePath) ?? manifest.tools;
-  const unitGuidance = guidanceForUnitToolsPolicy(unitType, effectiveTools) ?? TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType];
-  const policyGuidance = unitGuidance ? null : guidanceForToolsPolicy(effectiveTools);
+  const effectiveTools = manifest
+    ? resolveEffectivePlanningToolsPolicy(unitType, manifest.tools, opts.basePath) ?? manifest.tools
+    : null;
+  const allowedLine = formatAllowedToolsLine(unitType, effectiveTools);
+  const unitGuidance = effectiveTools
+    ? guidanceForUnitToolsPolicy(unitType, effectiveTools) ?? TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType]
+    : TOOL_SURFACE_GUIDANCE_BY_UNIT[unitType];
+  const policyGuidance = unitGuidance || !effectiveTools ? null : guidanceForToolsPolicy(effectiveTools);
   const forbiddenLine = formatForbiddenWorkflowToolsLine(unitType, unitGuidance);
   const parts = [unitGuidance, policyGuidance, forbiddenLine].filter(
     (part): part is string => typeof part === "string" && part.length > 0,
   );
-  if (parts.length === 0) return "";
+  if (parts.length === 0 && !allowedLine) return "";
 
-  const body = parts.join(" ");
+  // The derived affordance gets its own line rather than being folded into the
+  // prose: it is a token list, and the failure mode it addresses is the model
+  // mis-typing a token it skim-read out of a paragraph.
+  const prose = parts.join(" ");
   if (opts.renderMode === "nested") {
-    return `Tool surface: ${body}`;
+    return `Tool surface: ${[allowedLine, prose].filter(Boolean).join(" ")}`;
   }
-
-  return ["## Tool Surface", "", body].join("\n");
+  const sections = [allowedLine, prose].filter((part): part is string => !!part).join("\n\n");
+  return `## Tool Surface\n\n${sections}`;
 }
+
 
 // ─── v2 surface (#4924) ───────────────────────────────────────────────────
 

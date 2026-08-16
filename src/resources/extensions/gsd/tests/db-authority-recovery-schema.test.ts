@@ -251,9 +251,8 @@ afterEach(() => {
   tempDirs.clear();
 });
 
-test("a fresh v45 database exposes the minimum authority recovery receipts", () => {
+test("a fresh current-schema database exposes the minimum authority recovery receipts", () => {
   assert.equal(openDatabase(databasePath()), true);
-  assert.equal(SCHEMA_VERSION, 45);
   assert.deepEqual(tableColumns("workflow_authority_cutovers"), [
     "operation_id",
     "project_id",
@@ -493,11 +492,10 @@ test("a genuine v44 migration backs up, rolls back on fault, and retries without
     /cutovers are immutable/i,
   );
   closeDatabase();
-  assert.equal(rawSchemaVersion(path), 45);
+  assert.equal(rawSchemaVersion(path), SCHEMA_VERSION);
 
   const restoredPath = join(path.slice(0, path.lastIndexOf("/")), "restored-v44.db");
   copyFileSync(`${path}.backup-v44`, restoredPath);
   assert.equal(openDatabase(restoredPath), true);
-  assert.equal(SCHEMA_VERSION, 45);
   assert.equal(tableColumns("workflow_authority_cutovers").length > 0, true);
 });

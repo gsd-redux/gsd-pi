@@ -16,6 +16,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { fileURLToPath } from 'node:url';
 
 import { SessionManager } from './session-manager.js';
 import { installGlobalErrorHandlers } from './cli-errors.js';
@@ -831,12 +832,25 @@ describe('SessionManager.resolveCLIPath', () => {
 
 describe('createMcpServer tool registration', () => {
   let sm: TestableSessionManager;
+  let previousExecutorsModule: string | undefined;
+  let previousWriteGateModule: string | undefined;
+  const workflowBridgeFixture = fileURLToPath(
+    new URL('../test-fixtures/workflow-bridge.mjs', import.meta.url),
+  );
 
   beforeEach(() => {
     sm = createManager();
+    previousExecutorsModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    previousWriteGateModule = process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    process.env.GSD_WORKFLOW_EXECUTORS_MODULE = workflowBridgeFixture;
+    process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = workflowBridgeFixture;
   });
 
   afterEach(async () => {
+    if (previousExecutorsModule === undefined) delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    else process.env.GSD_WORKFLOW_EXECUTORS_MODULE = previousExecutorsModule;
+    if (previousWriteGateModule === undefined) delete process.env.GSD_WORKFLOW_WRITE_GATE_MODULE;
+    else process.env.GSD_WORKFLOW_WRITE_GATE_MODULE = previousWriteGateModule;
     for (const mgr of allManagers) {
       await mgr.cleanup();
     }
@@ -844,7 +858,7 @@ describe('createMcpServer tool registration', () => {
   });
 
   it('creates server successfully with all required methods', async () => {
-    const { server } = await createMcpServer(sm);
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
     assert.ok(server);
     assert.ok(server.server);
     assert.equal(typeof server.server.elicitInput, 'function');
@@ -853,7 +867,7 @@ describe('createMcpServer tool registration', () => {
   });
 
   it('ask_user_questions passes the declared elicitation timeout and signal to the MCP SDK request', async () => {
-    const { server } = await createMcpServer(sm);
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
     const askTool = (server as any)._registeredTools?.ask_user_questions;
     assert.ok(askTool, 'ask_user_questions should be registered');
 
@@ -896,7 +910,7 @@ describe('createMcpServer tool registration', () => {
     delete process.env.GSD_MCP_ADVERTISE_ALIASES;
     delete process.env.GSD_MCP_HIDE_ALIASES;
     try {
-      const { server } = await createMcpServer(sm);
+      const { server } = await createMcpServer(sm, { includeWorkflowTools: true });
       const registeredTools = (server as any)._registeredTools ?? {};
       for (const canonical of ['gsd_summary_save', 'gsd_plan_milestone', 'gsd_plan_slice']) {
         assert.ok(registeredTools[canonical], `${canonical} should be advertised by default`);
@@ -920,7 +934,7 @@ describe('createMcpServer tool registration', () => {
     const previous = process.env.GSD_MCP_ADVERTISE_ALIASES;
     process.env.GSD_MCP_ADVERTISE_ALIASES = '1';
     try {
-      const { server } = await createMcpServer(sm);
+      const { server } = await createMcpServer(sm, { includeWorkflowTools: true });
       const registeredTools = (server as any)._registeredTools ?? {};
       for (const alias of ['gsd_save_summary', 'gsd_milestone_plan', 'gsd_slice_plan']) {
         assert.ok(registeredTools[alias], `${alias} should be advertised when restored`);
@@ -937,7 +951,7 @@ describe('createMcpServer tool registration', () => {
     process.env.GSD_MCP_ADVERTISE_ALIASES = '1';
     process.env.GSD_MCP_HIDE_ALIASES = '1';
     try {
-      const { server } = await createMcpServer(sm);
+      const { server } = await createMcpServer(sm, { includeWorkflowTools: true });
       const registeredTools = (server as any)._registeredTools ?? {};
       assert.ok(registeredTools.gsd_summary_save, 'canonical tool should remain advertised');
       assert.equal(registeredTools.gsd_save_summary, undefined);
@@ -967,7 +981,7 @@ describe('createMcpServer tool registration', () => {
 
   it('gsd_status accepts omitted sessionId when exactly one session is tracked', async () => {
     const sessionId = await sm.startSession('/tmp/tool-status-infer', { cliPath: '/usr/bin/gsd' });
-    const { server } = await createMcpServer(sm);
+    const { server } = await createMcpServer(sm, { includeWorkflowTools: false });
     const statusTool = (server as any)._registeredTools?.gsd_status;
 
     assert.ok(statusTool, 'gsd_status should be registered');

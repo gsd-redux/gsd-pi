@@ -92,7 +92,7 @@ function registeredToolHandler(tool: RegisteredMcpTool) {
 export async function createWorkflowMcpAdapterToolDefs(
 	sessionManager: SessionManager = new SessionManager(),
 ): Promise<GenericMcpToolDef[]> {
-	const { server } = await createMcpServer(sessionManager);
+	const { server } = await createMcpServer(sessionManager, { includeWorkflowTools: false });
 	const registeredTools = (server as unknown as McpServerWithRegisteredTools)._registeredTools ?? {};
 
 	const tools: GenericMcpToolDef[] = [];

@@ -4,17 +4,20 @@ MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other M
 
 Start GSD auto-mode sessions, poll progress, resolve blockers, and retrieve results — all through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
-This package exposes three tool surfaces:
+This package always exposes two bridge-independent tool surfaces:
 
 - session/read tools for starting and inspecting GSD sessions
 - MCP-native interactive tools for structured user input
-- headless-safe workflow tools for planning, completion, validation, reassessment, metadata persistence, and journal reads
+
+When workflow bridges are available, it also exposes headless-safe workflow tools for planning, completion, validation, reassessment, metadata persistence, and journal reads.
 
 ## Installation
 
 ```bash
 npm install @opengsd/mcp-server
 ```
+
+The published package installs without the bundled-only `@gsd/pi-ai` package. A standalone process starts with the bridge-independent tool surfaces; see [Workflow tools](#workflow-tools) to enable workflow mutation tools.
 
 Or with the monorepo workspace:
 
@@ -113,13 +116,13 @@ The workflow MCP surface includes:
 - `gsd_memory_query`
 - `gsd_memory_graph`
 
-By default, the packaged MCP server advertises only the canonical workflow tool names above. Legacy aliases are compatibility names and are not included in `tools/list` unless `GSD_MCP_ADVERTISE_ALIASES=1` is set. Prefer moving clients and prompts to canonical names before enabling aliases, because aliases duplicate schemas in the model-facing tool surface.
+When workflow bridges are enabled, the packaged MCP server advertises only the canonical workflow tool names above by default. Legacy aliases are compatibility names and are not included in `tools/list` unless `GSD_MCP_ADVERTISE_ALIASES=1` is set. Prefer moving clients and prompts to canonical names before enabling aliases, because aliases duplicate schemas in the model-facing tool surface.
 
 These tools use the same GSD workflow handlers as the native in-process tool path wherever a shared handler exists.
 
 Durable workflow mutations are atomic and replay-safe where they cross the canonical lifecycle boundary. Planning mutations (`gsd_plan_milestone`, `gsd_plan_slice`, `gsd_plan_task`, `gsd_replan_slice`, `gsd_replan_task`, and `gsd_reassess_roadmap`), task execution completion (`gsd_task_complete` / `gsd_complete_task`), repaired-abort resumption (`gsd_task_recovery_resume`), and adopted-Milestone validation, subjective UAT, completion, or reopen (`gsd_validate_milestone`, `gsd_prepare_milestone_subjective_uat`, `gsd_answer_milestone_subjective_uat`, `gsd_complete_milestone`, and `gsd_milestone_reopen`) prefer a nonblank private `_meta["io.opengsd/idempotency-key"]` value. A retry must resend the same value across requests and server processes. Claude Code clients may instead rely on the private `_meta["claudecode/toolUseId"]` value that Claude Code preserves across its MCP session-recovery retry; the server places that value in a reserved transport namespace. An explicit OpenGSD key takes precedence, and a malformed explicit key fails closed instead of falling back. Requests without either replay-stable identity fail before mutation. Subjective UAT answers additionally require an authenticated MCP session identity. This metadata is not a tool parameter and does not change the public tool schema or response. Canonical names and compatibility aliases resolve to the same operation identity.
 
-`gsd_task_recovery_resume` is a control-plane repair command, not an ordinary dispatched-unit tool. It requires the exact current abort `recoveryActionId`, a plain-language `repairSummary`, and non-empty structured `evidence`. It appends an immutable repair checkpoint and authorizes one lineage-linked Task Attempt; it does not delete the abort, reset its budget, mark the Task skipped, or authorize later Attempts.
+`gsd_task_recovery_resume` is a repair command exposed to `execute-task`, not an ordinary task-completion tool. It requires the exact current abort `recoveryActionId`, a plain-language `repairSummary`, and non-empty structured `evidence`. It appends an immutable repair checkpoint and authorizes one lineage-linked Task Attempt; it does not delete the abort, reset its budget, mark the Task skipped, or authorize later Attempts.
 
 **Opt-in aliases (kept for backwards compatibility — prefer the canonical name above):** `gsd_save_decision`, `gsd_update_requirement`, `gsd_save_requirement`, `gsd_save_summary`, `gsd_generate_milestone_id`, `gsd_milestone_plan`, `gsd_slice_plan`, `gsd_task_plan`, `gsd_slice_replan`, `gsd_complete_task`, `gsd_complete_slice`, `gsd_milestone_validate`, `gsd_milestone_complete`, `gsd_roadmap_reassess`, `gsd_reopen_task`, `gsd_reopen_slice`, `gsd_reopen_milestone`.
 
@@ -155,13 +158,11 @@ Secret handling differs by destination:
 Current support boundary:
 
 - when running inside the GSD monorepo checkout, the MCP server auto-discovers the shared workflow executor module
-- outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` to an importable `workflow-tool-executors` module path if you want the mutation tools enabled
+- a direct standalone install without workflow bridges serves the session, read, and interactive tools but omits workflow mutation tools
+- outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` and `GSD_WORKFLOW_WRITE_GATE_MODULE` to importable bridge module paths to enable workflow mutation tools
 - `ask_user_questions` and `secure_env_collect` require an MCP client that supports form elicitation
-- session/read tool implementations do not use this bridge, but the packaged CLI still warms it at startup so Claude Code never sees a partial workflow surface
 
-If the executor bridge cannot be loaded, the packaged CLI fails startup with a precise configuration error instead of silently degrading.
-
-Startup is fail-closed for the workflow bridge: `gsd-mcp-server` loads the workflow executor and write-gate bridge before it connects over stdio. If bridge warm-up fails, the MCP host sees a startup failure instead of a partially advertised tool surface.
+Configured workflow startup remains fail-closed: `gsd-mcp-server` loads the workflow executor and write-gate bridge before it connects over stdio. If either configured or co-located bridge fails to load, the MCP host sees a startup failure instead of a partially advertised workflow surface.
 
 The server also keeps a per-project PID registry at `$GSD_HOME/mcp-instances.json` (default `~/.gsd/mcp-instances.json`). On startup it terminates a previously registered `gsd-mcp-server` process for the same project when the saved PID still belongs to an MCP server, then records the current PID. On normal shutdown it removes only its own entry. Corrupt registry files are preserved as `.corrupt-<timestamp>` backups before a new registry is written.
 
@@ -286,7 +287,7 @@ Resolve a pending blocker in a session by sending a response to the blocked UI r
 | `GSD_WORKFLOW_EXECUTORS_MODULE` | Optional absolute path or `file:` URL for the shared GSD workflow executor module used by workflow mutation tools. |
 | `GSD_WORKFLOW_WRITE_GATE_MODULE` | Optional absolute path or `file:` URL for the shared write-gate module used by workflow mutation tools. |
 | `GSD_WORKFLOW_PROJECT_ROOT` | Canonical project root for workflow tools and the per-project MCP PID registry key. Defaults to the server's current working directory. |
-| `GSD_MCP_ADVERTISE_ALIASES` | Set to literal `1` to include legacy workflow aliases in the packaged MCP server's `tools/list`. Unset by default, so the server advertises canonical tool names only. |
+| `GSD_MCP_ADVERTISE_ALIASES` | Set to literal `1` to include legacy workflow aliases in the packaged MCP server's `tools/list`. When workflow bridges are enabled, leaving it unset exposes canonical workflow names only. |
 | `GSD_MCP_HIDE_ALIASES` | Legacy force-hide switch. Set to literal `1` to keep packaged MCP aliases hidden even when `GSD_MCP_ADVERTISE_ALIASES=1`. |
 | `GSD_ADVERTISE_TOOL_ALIASES` | Set to literal `1` to register legacy workflow aliases on the native in-process GSD tool surface. This does not affect the packaged MCP server; use `GSD_MCP_ADVERTISE_ALIASES` for `gsd-mcp-server`. |
 | `GSD_HOME` | Global GSD directory. Also controls where `mcp-instances.json` is stored. |

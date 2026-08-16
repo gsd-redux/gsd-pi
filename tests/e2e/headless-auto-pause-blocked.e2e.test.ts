@@ -50,6 +50,17 @@ function recoverFixture(dir: string): ReturnType<typeof gsdSync> {
 	return gsdSync(["headless", "recover", `--preview=${previewHash}`], { cwd: dir, timeoutMs: 30_000 });
 }
 
+function commitRecoveredMilestone(dir: string): void {
+	// Track projections so auto-start's migrateToExternalState aborts (#1364).
+	// An ignored in-project .gsd/ is eligible for that move, and pass-0
+	// reconciliation then flakes on roadmap-missing instead of the provider error.
+	commitPaths(dir, [
+		".gsd/milestones/M001/M001-CONTEXT.md",
+		".gsd/milestones/M001/M001-ROADMAP.md",
+		".gsd/milestones/M001/slices/S01/S01-PLAN.md",
+	], "test: seed recovered milestone projections");
+}
+
 function writeRecoveredMilestone(dir: string): void {
 	const milestoneDir = join(dir, ".gsd", "milestones", "M001");
 	const sliceDir = join(milestoneDir, "slices", "S01");
@@ -126,15 +137,71 @@ function writeCompletedConflictMilestone(dir: string): void {
 	writeFileSync(join(milestoneDir, "M001-SUMMARY.md"), "# M001 Summary\n\nDone.\n");
 }
 
+/**
+ * Mint the completed-but-unmerged survivor state the fixture needs.
+ *
+ * The recover import adopts every created hierarchy row into the canonical
+ * lifecycle (#1657), so a generic legacy write to `complete` is refused while
+ * the canonical lifecycle still reads `ready`. Complete the Milestone the way
+ * the canonical seam does: transition the lifecycle inside one
+ * `milestone.complete` Domain Operation (the only operation type
+ * trg_workflow_lifecycle_transition accepts for a completed Milestone), then
+ * project that status onto the legacy row. The event stays fixture-named so it
+ * is never mistaken for a real closeout receipt.
+ */
 async function markRecoveredMilestoneComplete(dir: string): Promise<void> {
 	const { closeAllWorkflowDatabases, openWorkflowDatabase } = await import(
 		"../../dist/resources/extensions/gsd/db-workspace.js"
 	);
-	const { updateMilestoneStatus } = await import("../../dist/resources/extensions/gsd/gsd-db.js");
+	const { executeDomainOperation } = await import(
+		"../../dist/resources/extensions/gsd/db/domain-operation.js"
+	);
+	const { adoptOrTransitionLifecycle, readDomainOperationFence } = await import(
+		"../../dist/resources/extensions/gsd/db/writers/lifecycle-commands.js"
+	);
+	const { projectCanonicalStatusToLegacy } = await import("../../dist/resources/extensions/gsd/gsd-db.js");
 	try {
 		const opened = openWorkflowDatabase(dir);
 		assert.equal(opened.ok, true, "recovered fixture database should open");
-		updateMilestoneStatus("M001", "complete", "2026-01-01T00:00:00.000Z");
+		const fence = readDomainOperationFence();
+		executeDomainOperation(
+			{
+				operationType: "milestone.complete",
+				idempotencyKey: "test/milestone-complete/M001",
+				expectedRevision: fence.revision,
+				expectedAuthorityEpoch: fence.authorityEpoch,
+				actorType: "test",
+				sourceTransport: "test",
+				payload: { milestoneId: "M001" },
+			},
+			(context) => {
+				adoptOrTransitionLifecycle(context, {
+					itemKind: "milestone",
+					milestoneId: "M001",
+					lifecycleStatus: "completed",
+				});
+				projectCanonicalStatusToLegacy(context, {
+					entity: "milestone",
+					milestoneId: "M001",
+					status: "complete",
+					completedAt: "2026-01-01T00:00:00.000Z",
+				});
+				return {
+					events: [{
+						eventType: "test.milestone.completed",
+						entityType: "milestone",
+						entityId: "M001",
+						payload: {},
+						destinations: ["projection"],
+					}],
+					projections: [{
+						projectionKey: "lifecycle/m001",
+						projectionKind: "milestone-lifecycle",
+						rendererVersion: "1",
+					}],
+				};
+			},
+		);
 	} finally {
 		closeAllWorkflowDatabases();
 	}
@@ -148,7 +215,7 @@ describe("headless auto pause e2e (fake LLM)", () => {
 		const project = createTmpProject({
 			git: true,
 			files: {
-				".gitignore": ".gsd/\n",
+				".gitignore": ".gsd/worktrees/\n",
 				"package.json": JSON.stringify({ type: "module", scripts: { test: "node --test test/answer.test.js" } }, null, 2) + "\n",
 				"src/answer.js": "export function answer() {\n\treturn \"pending\";\n}\n",
 				"test/answer.test.js": [
@@ -166,12 +233,17 @@ describe("headless auto pause e2e (fake LLM)", () => {
 		t.after(project.cleanup);
 		commitFixture(project.dir);
 		writeRecoveredMilestone(project.dir);
+		commitRecoveredMilestone(project.dir);
 
 		const recover = recoverFixture(project.dir);
 		assert.equal(
 			recover.code,
 			0,
 			`expected recover exit 0, got ${recover.code}. stderr=${recover.stderrClean.slice(0, 800)}`,
+		);
+		assert.ok(
+			existsSync(join(project.dir, ".gsd", "milestones", "M001", "M001-ROADMAP.md")),
+			"recovered ROADMAP must stay on disk so auto pass-0 cannot emit roadmap-missing",
 		);
 
 		const transcript = writeTranscript([

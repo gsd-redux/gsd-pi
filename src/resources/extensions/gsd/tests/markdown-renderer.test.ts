@@ -36,12 +36,15 @@ import {
   renderTaskPlanFromDb,
   renderRoadmapFromDb,
   detectStaleRenders,
+  detectProjectionDrift,
+  getCurrentProjectStateVersion,
+  stripProjectionStamp,
 } from '../markdown-renderer.ts';
 import { repairStaleRenders } from '../state-reconciliation/drift/stale-render.ts';
 import {
-  parseRoadmap,
-  parsePlan,
-} from '../parsers-legacy.ts';
+  parseProjectionRoadmap as parseRoadmap,
+  parseProjectionPlan as parsePlan,
+} from '../schemas/parsers.ts';
 import {
   parseSummary,
   parseTaskPlanFile,
@@ -844,6 +847,38 @@ test('── markdown-renderer: renderTaskSummary round-trip ──', async () =
   }
 });
 
+test('── markdown-renderer: renderTaskSummary skips in-progress without a succeeded attempt ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01']);
+
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice', status: 'pending' });
+    insertTask({
+      id: 'T01',
+      sliceId: 'S01',
+      milestoneId: 'M001',
+      title: 'Cancelled task with leaked summary',
+      status: 'in_progress',
+      fullSummaryMd: makeTaskSummaryContent('T01'),
+    });
+
+    const ok = await renderTaskSummary(tmpDir, 'M001', 'S01', 'T01');
+    assert.equal(ok, false, 'cancelled/in-progress leaked summaries must not project');
+    const summaryPath = path.join(
+      tmpDir, '.gsd', 'phases', '01-test', 'S01-T01-SUMMARY.md',
+    );
+    assert.equal(fs.existsSync(summaryPath), false, 'SUMMARY.md must not be written');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 test('── markdown-renderer: renderTaskSummary skips empty ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
@@ -870,6 +905,30 @@ test('── markdown-renderer: renderTaskSummary skips empty ──', async () 
     closeDatabase();
     cleanupDir(tmpDir);
   }
+});
+
+test('── markdown-renderer: task summary artifact failure is observable ──', async (t) => {
+  const tmpDir = makeTmpDir();
+  t.after(() => {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  });
+  openDatabase(path.join(tmpDir, '.gsd', 'gsd.db'));
+  clearAllCaches();
+
+  scaffoldDirs(tmpDir, 'M001', ['S01']);
+  insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice', status: 'pending' });
+  insertTask({
+    id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task', status: 'done',
+    fullSummaryMd: makeTaskSummaryContent('T01'),
+  });
+  _getAdapter()!.exec('DROP TABLE artifacts');
+
+  await assert.rejects(
+    () => renderTaskSummary(tmpDir, 'M001', 'S01', 'T01'),
+    /task summary projection.*artifact persistence failed/i,
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1768,3 +1827,100 @@ test('── markdown-renderer: renderRoadmapFromDb renders milestone with visio
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// State-version stamp (T008)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('── markdown-renderer: roadmap render is byte-identical to the pre-stamp format plus one stamp line ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01', 'S02']);
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Core', status: 'complete' });
+    insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Render', status: 'pending' });
+
+    const rendered = await renderRoadmapFromDb(tmpDir, 'M001');
+    assert.ok(!('skipped' in rendered), 'planned milestone renders');
+
+    // The pre-stamp byte stream for this fixture, per the FROZEN projection
+    // format contract. If renderRoadmapMarkdown's output changes, this test
+    // must go red — that is the byte-compatibility guard.
+    const preStampBytes = [
+      '# M001: Test',
+      '',
+      '**Vision:**',
+      '',
+      '## Slices',
+      '',
+      '- [x] **S01: Core** `risk:medium` `depends:[]`',
+      '  > After this:',
+      '',
+      '- [ ] **S02: Render** `risk:medium` `depends:[]`',
+      '  > After this:',
+      '',
+    ].join('\n');
+
+    const { revision, authorityEpoch } = getCurrentProjectStateVersion();
+    const stampLine = `<!-- gsd:state-version=${revision}:${authorityEpoch} -->\n`;
+
+    assert.strictEqual(
+      rendered.content,
+      preStampBytes + stampLine,
+      'returned content differs from the pre-stamp format ONLY by the stamp line',
+    );
+    assert.strictEqual(
+      fs.readFileSync(rendered.roadmapPath, 'utf-8'),
+      preStampBytes + stampLine,
+      'on-disk projection differs from the pre-stamp format ONLY by the stamp line',
+    );
+    assert.strictEqual(
+      stripProjectionStamp(rendered.content),
+      preStampBytes,
+      'stripping the stamp reproduces the pre-stamp bytes exactly',
+    );
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
+test('── markdown-renderer: stamped re-render is byte-stable (no stamp accumulation) ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01']);
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Core', status: 'pending' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task', status: 'pending' });
+
+    const first = await renderPlanFromDb(tmpDir, 'M001', 'S01');
+    const firstBytes = fs.readFileSync(first.planPath, 'utf-8');
+
+    // Re-render from unchanged DB state. The plan artifact replay path must
+    // not accumulate a second stamp line.
+    const second = await renderPlanFromDb(tmpDir, 'M001', 'S01');
+    const secondBytes = fs.readFileSync(second.planPath, 'utf-8');
+
+    assert.strictEqual(secondBytes, firstBytes, 're-render of unchanged DB state is byte-identical');
+    assert.strictEqual(
+      (secondBytes.match(/gsd:state-version=/g) ?? []).length,
+      1,
+      'projection carries exactly one state-version stamp',
+    );
+
+    // The returned content matches the on-disk bytes, stamp included.
+    assert.strictEqual(second.content, secondBytes, 'returned content equals on-disk bytes');
+
+    // A freshly rendered projection has no content drift against DB intent.
+    assert.deepStrictEqual(detectProjectionDrift(tmpDir), [], 'fresh render has no projection drift');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});

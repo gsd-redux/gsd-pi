@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import { writePlanningDirectory } from "../migrate/planning-writer.ts";
 import { applyPlanningProjectionWrites } from "../compat/planning-compat.ts";
-import { readCompatMarker } from "../compat/compat-marker.ts";
+import { readCompatMarker, writeCompatMarker } from "../compat/compat-marker.ts";
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, updateSliceStatus, updateTaskStatus } from "../gsd-db.ts";
 
 const tmpDirs: string[] = [];
@@ -29,6 +29,17 @@ function makeTmp(): string {
   });
   tmpDirs.push(base);
   return base;
+}
+
+function listFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const paths: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) paths.push(...listFiles(path));
+    else paths.push(path);
+  }
+  return paths;
 }
 afterEach(() => {
   closeDatabase();
@@ -92,6 +103,51 @@ test("writePlanningDirectory is idempotent: writing twice produces stable conten
   await writePlanningDirectory(base, "flat-phases");
   const roadmap2 = snap(join(base, ".planning", "ROADMAP.md"));
   assert.equal(roadmap2, roadmap1);
+});
+
+test("writePlanningDirectory preserves modeled edits with an empty active baseline", async () => {
+  const base = makeTmp();
+  const roadmapPath = join(base, ".planning", "ROADMAP.md");
+  mkdirSync(join(base, ".planning"), { recursive: true });
+  const edited = "# External planning roadmap\n";
+  writeFileSync(roadmapPath, edited, "utf-8");
+  const marker = readCompatMarker(base);
+  marker.planning = {
+    active: true,
+    layout: "flat-phases",
+    projections: {},
+    passthrough: {},
+  };
+  writeCompatMarker(base, marker);
+
+  await writePlanningDirectory(base, "flat-phases");
+
+  assert.notEqual(readFileSync(roadmapPath, "utf-8"), edited);
+  const quarantined = listFiles(join(base, ".gsd", "quarantine", "projections"));
+  assert.equal(quarantined.length, 1);
+  assert.equal(readFileSync(quarantined[0]!, "utf-8"), edited);
+});
+
+test("writePlanningDirectory does not quarantine stable matching unbaselined output", async () => {
+  const base = makeTmp();
+  await writePlanningDirectory(base, "flat-phases");
+  const roadmapContent = readFileSync(join(base, ".planning", "ROADMAP.md"), "utf-8");
+  const marker = readCompatMarker(base);
+  marker.planning = {
+    active: true,
+    layout: "flat-phases",
+    projections: {},
+    passthrough: {},
+  };
+  writeCompatMarker(base, marker);
+
+  await writePlanningDirectory(base, "flat-phases");
+
+  const quarantined = listFiles(join(base, ".gsd", "quarantine", "projections"));
+  assert.equal(
+    quarantined.some((path) => readFileSync(path, "utf-8") === roadmapContent),
+    false,
+  );
 });
 
 test("writePlanningDirectory does not emit an ingestible PLAN.md for a task-less (sketch) slice", async () => {

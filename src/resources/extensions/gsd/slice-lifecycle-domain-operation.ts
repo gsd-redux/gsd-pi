@@ -8,6 +8,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { SLICE_LIFECYCLE_PROJECTION_KIND } from "./projection-identity.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import {
   cancelSliceHierarchy,
@@ -172,7 +173,7 @@ export function cancelSlice(input: {
       }],
       projections: [{
         projectionKey: `lifecycle/${slice.milestoneId}/${slice.sliceId}`.toLowerCase(),
-        projectionKind: "slice-lifecycle",
+        projectionKind: SLICE_LIFECYCLE_PROJECTION_KIND,
         rendererVersion: "1",
       }],
     };
@@ -246,7 +247,7 @@ export function reopenSlice(input: {
       }],
       projections: [{
         projectionKey: `lifecycle/${slice.milestoneId}/${slice.sliceId}`.toLowerCase(),
-        projectionKind: "slice-lifecycle",
+        projectionKind: SLICE_LIFECYCLE_PROJECTION_KIND,
         rendererVersion: "1",
       }],
     };
@@ -437,7 +438,7 @@ export function completeSlice(input: {
       }],
       projections: [{
         projectionKey: `lifecycle/${slice.milestoneId}/${slice.sliceId}`.toLowerCase(),
-        projectionKind: "slice-lifecycle",
+        projectionKind: SLICE_LIFECYCLE_PROJECTION_KIND,
         rendererVersion: "1",
       }],
     };

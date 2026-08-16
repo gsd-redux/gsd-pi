@@ -23,9 +23,6 @@ const nextConfig = {
     'koffi',
     'node-pty',
     'proper-lockfile',
-    // Cloud mode (ADR-047): the CloudTransport WebSocket client must load the
-    // real ws package at runtime, not a webpack bundle.
-    'ws',
   ],
   // NodeNext-style .js extension imports in src/ must resolve to .ts source.
   // Turbopack doesn't support extensionAlias, so builds use --webpack flag.
