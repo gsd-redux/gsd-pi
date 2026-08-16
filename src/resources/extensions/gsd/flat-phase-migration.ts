@@ -1,6 +1,6 @@
 // Project/App: gsd-pi
 // File Purpose: One-time migration from legacy nested .gsd/milestones/ to
-// flat-phase .gsd/phases/. Runs on startup when the legacy structure is detected.
+// flat-phase .gsd/phases/. Used by startup and pre-reconciliation layout settlement.
 
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -432,7 +432,8 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
  * 5. Prune legacy milestones/ artifact rows
  * 6. Remove the renamed legacy tree
  *
- * Idempotent: if .gsd/milestones/ doesn't exist, returns immediately.
+ * Idempotent and resumable: no-ops when migration is complete and resumes an
+ * interrupted `.gsd/milestones.migrating/` tree when present.
  */
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;

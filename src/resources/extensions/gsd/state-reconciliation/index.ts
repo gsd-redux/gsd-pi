@@ -64,8 +64,12 @@ function stateBlockerDetails(state: GSDState): ReconciliationBlockerDetail[] {
 /**
  * Drift-driven pre-dispatch reconciliation per ADR-017.
  *
- * Lifecycle: derive → detect drift → apply repairs → re-derive. Capped at
- * MAX_PASSES (=2) cycles. The loop runs only when the prior pass fully
+ * Before non-dry-run detection, settles a pending flat-phase migration when
+ * the workflow DB is available and clears layout caches after a migration.
+ * Dry-run leaves migration state untouched.
+ *
+ * Repair lifecycle: derive → detect drift → apply repairs → re-derive.
+ * Capped at MAX_PASSES (=2) cycles. The loop runs only when the prior pass fully
  * succeeded but re-derive surfaces NEW drift (cascading repairs — e.g.
  * fixing milestone registration uncovers a downstream completion-timestamp
  * drift).

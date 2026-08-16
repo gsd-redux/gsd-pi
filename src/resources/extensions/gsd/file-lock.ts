@@ -17,6 +17,7 @@ export interface FileLockOptions {
   retries?: number;
   /** proper-lockfile stale threshold in ms (default 10000). */
   stale?: number;
+  /** Resolve the target before locking (default true); false keeps the lock beside the lexical path. */
   realpath?: boolean;
 }
 
