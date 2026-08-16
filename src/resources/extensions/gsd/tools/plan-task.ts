@@ -1,5 +1,6 @@
 import { clearParseCache } from "../files.js";
 import { assertVerifyIsShellCheckable } from "../verification-gate.js";
+import { normalizeVerifyCommandForVenv } from "../python-resolver.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { getGateIdsForTurn } from "../gate-registry.js";
@@ -165,6 +166,7 @@ export async function handlePlanTask(
   let params: PlanTaskParams;
   try {
     params = validateParams(rawParams);
+    params = { ...params, verify: normalizeVerifyCommandForVenv(params.verify, basePath) };
   } catch (err) {
     return { error: `validation failed: ${(err as Error).message}` };
   }

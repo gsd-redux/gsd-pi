@@ -9,6 +9,7 @@ import { invalidateStateCache } from "../state.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import { assertVerifyIsShellCheckable } from "../verification-gate.js";
+import { normalizeVerifyCommandForVenv } from "../python-resolver.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import {
   createRepositoryRegistryFromPreferences,
@@ -99,6 +100,7 @@ export async function handleReplanTask(
   let params: ReplanTaskParams;
   try {
     params = validateParams(rawParams);
+    params = { ...params, verify: normalizeVerifyCommandForVenv(params.verify, basePath) };
   } catch (err) {
     return { error: `validation failed: ${(err as Error).message}` };
   }
