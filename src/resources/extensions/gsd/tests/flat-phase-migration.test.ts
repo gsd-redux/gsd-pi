@@ -2,7 +2,7 @@
 // File Purpose: Tests the one-time migration from nested to flat-phase layout.
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync, existsSync, readdirSync, readFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -19,6 +19,7 @@ import { writeCompatMarker } from "../compat/compat-marker.ts";
 import { resolveMilestonePath } from "../paths.ts";
 
 const tmpDirs: string[] = [];
+const DIRECTORY_SYMLINK_TYPE = process.platform === "win32" ? "junction" : "dir";
 function makeTmp(options: { withTask?: boolean } = {}): string {
   const base = mkdtempSync(join(tmpdir(), `gsd-mig-${randomUUID()}`));
   // Create legacy nested structure
@@ -131,6 +132,56 @@ test("concurrent migrations in separate processes do not corrupt each other", as
   assert.equal(needsFlatPhaseMigration(base), false, "migration must be complete after the race");
   assert.equal(existsSync(join(base, ".gsd", "phases")), true, "flat-phase layout must exist");
   assert.equal(existsSync(join(base, ".gsd", "milestones")), false, "legacy layout must be gone");
+});
+
+test("migrateToFlatPhase supports a top-level .gsd symlink", async () => {
+  const base = makeTmp();
+  closeDatabase();
+  const externalRoot = mkdtempSync(join(tmpdir(), `gsd-mig-linked-${randomUUID()}`));
+  tmpDirs.push(externalRoot);
+  const externalGsd = join(externalRoot, "state");
+  renameSync(join(base, ".gsd"), externalGsd);
+  symlinkSync(externalGsd, join(base, ".gsd"), DIRECTORY_SYMLINK_TYPE);
+  openDatabase(join(externalGsd, "gsd.db"));
+
+  await migrateToFlatPhase(base);
+
+  assert.equal(existsSync(join(externalGsd, "phases")), true, "migration writes through canonical .gsd state");
+  assert.equal(existsSync(join(externalGsd, "milestones")), false, "canonical legacy layout is removed");
+});
+
+test("migrateToFlatPhase rejects a symlinked migration lock parent", async () => {
+  const base = makeTmp();
+  const outside = mkdtempSync(join(tmpdir(), `gsd-mig-outside-${randomUUID()}`));
+  tmpDirs.push(outside);
+  symlinkSync(outside, join(base, ".gsd", "migration"), DIRECTORY_SYMLINK_TYPE);
+
+  await assert.rejects(
+    migrateToFlatPhase(base),
+    /unsupported symbolic link or non-directory/,
+  );
+  assert.deepEqual(readdirSync(outside), [], "migration lock must not create state outside .gsd");
+});
+
+test("migrateToFlatPhase rejects a symlinked migration lock target", async () => {
+  const base = makeTmp();
+  const outsideRoot = mkdtempSync(join(tmpdir(), `gsd-mig-outside-${randomUUID()}`));
+  tmpDirs.push(outsideRoot);
+  const outsideTarget = join(outsideRoot, "target");
+  mkdirSync(outsideTarget);
+  const migrationRoot = join(base, ".gsd", "migration");
+  mkdirSync(migrationRoot);
+  symlinkSync(
+    outsideTarget,
+    join(migrationRoot, "flat-phase-migration"),
+    DIRECTORY_SYMLINK_TYPE,
+  );
+
+  await assert.rejects(
+    migrateToFlatPhase(base),
+    /unsupported symbolic link or non-directory/,
+  );
+  assert.equal(existsSync(`${outsideTarget}.lock`), false, "migration lock must not follow its target");
 });
 
 test("needsFlatPhaseMigration returns true when .gsd/milestones/ exists", () => {

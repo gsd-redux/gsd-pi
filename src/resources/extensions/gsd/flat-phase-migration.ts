@@ -47,6 +47,27 @@ function legacyMigratingPath(basePath: string): string {
   return join(basePath, ".gsd", LEGACY_MIGRATING_SEGMENT);
 }
 
+function ensureMigrationLockDirectory(path: string): void {
+  try {
+    mkdirSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`flat-phase migration lock path contains an unsupported symbolic link or non-directory: ${path}`);
+  }
+}
+
+function flatPhaseMigrationLockTarget(basePath: string): string {
+  const migrationRoot = join(gsdProjectionRoot(basePath), "migration");
+  ensureMigrationLockDirectory(migrationRoot);
+  const lockTarget = join(migrationRoot, "flat-phase-migration");
+  ensureMigrationLockDirectory(lockTarget);
+  return lockTarget;
+}
+
 function removeManagedPath(path: string): void {
   flatPhaseMigrationBoundaryForTest?.("before-remove", path);
   if (!existsSync(path)) return;
@@ -416,8 +437,7 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
 
-  const migrationLockTarget = join(basePath, ".gsd", "migration", "flat-phase-migration");
-  mkdirSync(migrationLockTarget, { recursive: true });
+  const migrationLockTarget = flatPhaseMigrationLockTarget(basePath);
 
   // Headless runs the gsd extension in two processes (host + RPC child) and both
   // fire session_start, so two migrations race over the same tree: one moves
@@ -441,7 +461,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
       // stale window therefore has to exceed the whole migration, not the gap
       // between keepalives, or a waiting process declares the lock dead and
       // steals it mid-render.
-      { retries: 30, stale: 600_000 },
+      { realpath: false, retries: 30, stale: 600_000 },
     );
   } catch (err) {
     // If the lock was stolen anyway, the holder's release() throws even though
