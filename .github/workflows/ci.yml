@@ -16,6 +16,10 @@ on:
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
       - 'LICENSE'
+  # Merge queue entries report ci-gate from this event. merge_group does not
+  # support path filters, so it is declared bare rather than mirroring the
+  # paths-ignore lists above.
+  merge_group:
   workflow_dispatch:
 
 permissions:
