@@ -154,6 +154,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "verification_commands",
   "verification_auto_fix",
   "verification_max_retries",
+  "verification_timeout_ms",
   "per_unit_cost_cap_usd",
   "unit_cost_spike_multiplier",
   "search_provider",
@@ -552,6 +553,8 @@ export interface GSDPreferences {
   verification_commands?: string[];
   verification_auto_fix?: boolean;
   verification_max_retries?: number;
+  /** Per-command host-verification spawn timeout in ms. Unset uses 120000. */
+  verification_timeout_ms?: number;
   per_unit_cost_cap_usd?: number;
   /** Multiplier over the rolling per-unit cost average that triggers a cost-spike pause. Default: 3.0. The `burn-max` token profile ignores this and never pauses on spikes. */
   unit_cost_spike_multiplier?: number;

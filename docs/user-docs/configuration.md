@@ -671,6 +671,7 @@ verification_commands:
   - npm run test
 verification_auto_fix: true       # auto-retry on failure (default: true)
 verification_max_retries: 2       # max retry attempts (default: 2)
+verification_timeout_ms: 120000   # per-command spawn timeout (default: 120000)
 ```
 
 | Field | Type | Default | Description |
@@ -678,6 +679,7 @@ verification_max_retries: 2       # max retry attempts (default: 2)
 | `verification_commands` | string[] | `[]` | Simple executable commands to run after task execution |
 | `verification_auto_fix` | boolean | `true` | Auto-retry when verification fails |
 | `verification_max_retries` | number | `2` | Maximum auto-fix retry attempts |
+| `verification_timeout_ms` | number | `120000` | Per-command host-verification timeout in milliseconds. Unset keeps the 120s default. A timeout is reported as `failureClass: timeout`, never as exit 127. |
 
 Verification commands must be simple executable commands. Shell piping (`|`) is supported, but logical OR (`||`) is rejected. GSD also rejects redirects (`>` and `<`), semicolons, backticks, and command substitution (`$(...)`) because verification is run as a controlled command list, not as an arbitrary shell program.
 

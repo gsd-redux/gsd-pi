@@ -50,7 +50,8 @@ import { join } from "node:path";
 import { resolveUokFlags } from "./uok/flags.js";
 import { UokGateRunner } from "./uok/gate-runner.js";
 import { verificationRetryKey } from "./auto/verification-retry-policy.js";
-import { decideVerificationVerdict } from "./verification-verdict.js";
+import { decideVerificationVerdict, describeHostVerificationRationale } from "./verification-verdict.js";
+import { DEFAULT_COMMAND_TIMEOUT_MS } from "./constants.js";
 import type { SliceRow } from "./db-task-slice-rows.js";
 import { getSlice } from "./gsd-db.js";
 import { getLedger } from "./metrics.js";
@@ -229,6 +230,9 @@ function recordHostTechnicalVerdict(input: {
         targetSourceRevisions,
         sourceRevisionAfter: input.sourceAfter?.aggregateRevision ?? "unavailable",
         sourceIntegrity: input.sourceError ?? "stable",
+        ...(input.result.checks.some((check) => check.failureClass === "timeout")
+          ? { failureClass: "timeout" }
+          : {}),
       },
     },
   });
@@ -238,6 +242,29 @@ interface FailedVerdictIdentity {
   verdictId: string;
   evidenceId: string;
   verdict: "fail" | "inconclusive";
+  rationale?: string;
+}
+
+function resolveVerificationTimeoutMs(prefs: GSDPreferences | undefined): number {
+  const raw = prefs?.verification_timeout_ms;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  return DEFAULT_COMMAND_TIMEOUT_MS;
+}
+
+export const _resolveVerificationTimeoutMsForTest = resolveVerificationTimeoutMs;
+
+function hostRecoveryRationale(
+  verdict: FailedVerdictIdentity,
+  extras?: { checkName?: string; observed?: string; expected?: string; nextAction?: string },
+): string {
+  return verdict.rationale ?? describeHostVerificationRationale({
+    verdict: verdict.verdict,
+    checkName: extras?.checkName ?? "host-verification",
+    observed: extras?.observed ?? verdict.verdict,
+    expected: extras?.expected ?? "pass",
+    evidenceRef: `${verdict.evidenceId} (verdict ${verdict.verdictId})`,
+    ...(extras?.nextAction ? { nextAction: extras.nextAction } : {}),
+  });
 }
 
 function routeHostTechnicalFailure(
@@ -263,13 +290,13 @@ function routeHostTechnicalFailure(
     classification: { failureKind },
     summary: failureKind === "verification-drift"
       ? "Stored host verification pass no longer matches the current source"
-      : "Built-in host verification did not pass",
+      : `Host verification ${verdict.verdict} for ${verdict.verdictId}`,
     evidence: {
       verdictId: verdict.verdictId,
       evidenceId: verdict.evidenceId,
       verdict: verdict.verdict,
     },
-    rationale: "Route built-in host verification through the durable recovery policy",
+    rationale: hostRecoveryRationale(verdict),
   } as const;
   // A response can be lost after its Domain Operation already committed (a
   // dropped connection, a fault injected between commit and return). Retrying
@@ -370,7 +397,12 @@ export function routeEvidenceCrossReferenceBlock(input: {
   const outcome = routeHostTechnicalFailure(
     authority,
     attempt,
-    { verdictId: recorded.verdictId, evidenceId: recorded.evidenceId, verdict: "fail" },
+    {
+      verdictId: recorded.verdictId,
+      evidenceId: recorded.evidenceId,
+      verdict: "fail",
+      rationale: `Safety evidence cross-reference: ${input.mismatch.reason}`,
+    },
     "verification-failed",
     undefined,
     (recoveryActionId, action) => {
@@ -398,7 +430,14 @@ function invalidateStoredHostPass(
     invocation: internalExecutionInvocation(`internal:auto:attempt.verify-drift:${verdict.verdictId}`),
     attemptId: attempt.attemptId,
     supersedesVerdictId: verdict.verdictId,
-    rationale: `Stored passing host verdict no longer matches the current verification source (${currentSourceRevision}).`,
+    rationale: describeHostVerificationRationale({
+      verdict: "inconclusive",
+      checkName: "gsd-source-integrity",
+      observed: `current source ${currentSourceRevision}`,
+      expected: `stored passing source ${verdict.testedSourceRevision}`,
+      evidenceRef: `db://host-verification/${attempt.attemptId}/source-drift`,
+      nextAction: "To become conclusive, re-run host verification against the current source, or restore the stored revision.",
+    }),
     evidence: {
       evidenceClass: "command",
       commandOrTool: "gsd-source-integrity",
@@ -776,6 +815,16 @@ export async function runPostUnitVerification(
         verdictId: replayedVerdict.verdictId,
         evidenceId: replayedVerdict.evidenceId,
         verdict: replayedVerdict.verdict,
+        rationale: describeHostVerificationRationale({
+          verdict: replayedVerdict.verdict,
+          checkName: "stored-host-verdict",
+          observed: replayedVerdict.verdict,
+          expected: "pass",
+          evidenceRef: `${replayedVerdict.evidenceId} (verdict ${replayedVerdict.verdictId})`,
+          nextAction: replayedVerdict.verdict === "inconclusive"
+            ? "To become conclusive, inspect that evidence and resume with matching verification."
+            : undefined,
+        }),
       }, replayedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort)
       : null;
     if (!replayedRecovery && !isTaskAttemptAwaitingVerification(latestAttempt)) {
@@ -858,6 +907,14 @@ export async function runPostUnitVerification(
         verdictId: invalidated.verdictId,
         evidenceId: invalidated.evidenceId,
         verdict: "inconclusive",
+        rationale: describeHostVerificationRationale({
+          verdict: "inconclusive",
+          checkName: "gsd-source-integrity",
+          observed: failureContext,
+          expected: "source matching the stored passing verdict",
+          evidenceRef: `${invalidated.evidenceId} (verdict ${invalidated.verdictId})`,
+          nextAction: "To become conclusive, re-run host verification against the current source, or restore the stored revision.",
+        }),
       }, "verification-drift", recordAbort);
       if (recovery === "abort") return "abort";
       return recordDurableVerificationRetry(s, retryKey, failureContext);
@@ -895,6 +952,7 @@ export async function runPostUnitVerification(
         preferenceCommands: prefs?.verification_commands ?? verificationTargets[0]?.preferenceCommands,
         taskPlanVerify,
         taskEvidence,
+        commandTimeoutMs: resolveVerificationTimeoutMs(prefs),
       });
     } else {
       result = runVerificationGateForTargets({
@@ -902,6 +960,7 @@ export async function runPostUnitVerification(
         preferenceCommands: prefs?.verification_commands,
         taskPlanVerify,
         taskEvidence,
+        commandTimeoutMs: resolveVerificationTimeoutMs(prefs),
       });
     }
 
@@ -1220,10 +1279,28 @@ export async function runPostUnitVerification(
       });
       canonicalVerdictWriteStarted = false;
       if (hostTechnicalVerdict !== "pass") {
+        const failingCheck = result.checks.find((check) => check.failureClass === "timeout")
+          ?? result.checks.find((check) => check.exitCode !== 0);
         durableRecovery = routeHostTechnicalFailure(taskAuthority, latestAttempt, {
           verdictId: recordedVerdict.verdictId,
           evidenceId: recordedVerdict.evidenceId,
           verdict: hostTechnicalVerdict,
+          rationale: describeHostVerificationRationale({
+            verdict: hostTechnicalVerdict,
+            checkName: failingCheck?.command ?? "host-verification",
+            observed: failingCheck?.failureClass === "timeout"
+              ? `timeout after ${failingCheck.durationMs}ms (exit ${failingCheck.exitCode})`
+              : failingCheck
+                ? `exit ${failingCheck.exitCode}`
+                : rationale,
+            expected: "exit 0 / pass",
+            evidenceRef: `db://host-verification/${latestAttempt.attemptId} (verdict ${recordedVerdict.verdictId})`,
+            nextAction: hostTechnicalVerdict === "inconclusive"
+              ? "To become conclusive, restore a stable source snapshot and matching evidence, then resume."
+              : failingCheck?.failureClass === "timeout"
+                ? "Raise verification_timeout_ms if this command is expected to run longer."
+                : undefined,
+          }),
         }, "verification-failed", recordAbort);
       }
 
@@ -1361,6 +1438,16 @@ export async function runPostUnitVerification(
         verdictId: storedVerdict.verdictId,
         evidenceId: storedVerdict.evidenceId,
         verdict: storedVerdict.verdict,
+        rationale: describeHostVerificationRationale({
+          verdict: storedVerdict.verdict,
+          checkName: "host-verification",
+          observed: message,
+          expected: "a completed host verdict",
+          evidenceRef: `${storedVerdict.evidenceId} (verdict ${storedVerdict.verdictId})`,
+          nextAction: storedVerdict.verdict === "inconclusive"
+            ? "To become conclusive, re-run host verification after the gate error is resolved."
+            : undefined,
+        }),
       }, storedVerdict.supersedesVerdictId ? "verification-drift" : "verification-failed", recordAbort);
       if (recovery === "abort") return "abort";
       const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);
@@ -1382,13 +1469,28 @@ export async function runPostUnitVerification(
         timestamp: Date.now(),
       },
       verdict: "inconclusive",
-      rationale: `Host verification errored before producing a verdict: ${message}`,
+      rationale: describeHostVerificationRationale({
+        verdict: "inconclusive",
+        checkName: "gsd-host-verification",
+        observed: message,
+        expected: "a completed host verdict",
+        evidenceRef: `db://host-verification/${recoverableAttempt.attemptId}`,
+        nextAction: "To become conclusive, re-run host verification after the gate error is resolved.",
+      }),
       sourceError: message,
     });
     const recovery = routeHostTechnicalFailure(recoverableAuthority, recoverableAttempt, {
       verdictId: recorded.verdictId,
       evidenceId: recorded.evidenceId,
       verdict: "inconclusive",
+      rationale: describeHostVerificationRationale({
+        verdict: "inconclusive",
+        checkName: "gsd-host-verification",
+        observed: message,
+        expected: "a completed host verdict",
+        evidenceRef: `${recorded.evidenceId} (verdict ${recorded.verdictId})`,
+        nextAction: "To become conclusive, re-run host verification after the gate error is resolved.",
+      }),
     }, "verification-failed", recordAbort);
     if (recovery === "abort") return "abort";
     const retryKey = verificationRetryKey(s.currentUnit.type, s.currentUnit.id);

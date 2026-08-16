@@ -709,6 +709,20 @@ function mergeDiscoverySource(
   return "none";
 }
 
+function isSpawnTimeout(
+  result: SpawnSyncReturns<string>,
+  error: NodeJS.ErrnoException & { killed?: boolean },
+): boolean {
+  if (error.code === "ETIMEDOUT") return true;
+  if (error.killed && (result.signal === "SIGTERM" || result.signal === "SIGKILL")) return true;
+  return /etimedout|timed out/i.test(error.message);
+}
+
+function isCommandNotFound(error: NodeJS.ErrnoException): boolean {
+  if (error.code === "ENOENT") return true;
+  return /enoent|not found/i.test(error.message);
+}
+
 /**
  * Run the verification gate: discover commands, execute each via spawnSync,
  * and return a structured result.
@@ -764,13 +778,30 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
     let exitCode: number;
     let stderr: string;
 
+    let failureClass: VerificationCheck["failureClass"];
     if (result.error) {
-      // Command not found or spawn failure
-      exitCode = 127;
-      stderr = truncate(
-        (result.stderr || "") + "\n" + (result.error as Error).message,
-        MAX_OUTPUT_BYTES,
-      );
+      const spawnError = result.error as NodeJS.ErrnoException & { killed?: boolean };
+      if (isSpawnTimeout(result, spawnError)) {
+        const limitMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
+        exitCode = 124;
+        failureClass = "timeout";
+        stderr = truncate(
+          `${result.stderr || ""}\ntimed out after ${limitMs}ms. Raise verification_timeout_ms if this command is expected to run longer.`.trim(),
+          MAX_OUTPUT_BYTES,
+        );
+      } else if (isCommandNotFound(spawnError)) {
+        exitCode = 127;
+        stderr = truncate(
+          (result.stderr || "") + "\n" + spawnError.message,
+          MAX_OUTPUT_BYTES,
+        );
+      } else {
+        exitCode = result.status ?? 1;
+        stderr = truncate(
+          (result.stderr || "") + "\n" + spawnError.message,
+          MAX_OUTPUT_BYTES,
+        );
+      }
     } else {
       // status is null when killed by signal — treat as failure
       exitCode = result.status ?? 1;
@@ -785,6 +816,7 @@ export function runVerificationGate(options: RunVerificationGateOptions): Verifi
       stdout: truncate(result.stdout, MAX_OUTPUT_BYTES),
       stderr: truncate(appendStderrWarning(stderr, warning), MAX_OUTPUT_BYTES),
       durationMs,
+      ...(failureClass ? { failureClass } : {}),
     });
   }
 

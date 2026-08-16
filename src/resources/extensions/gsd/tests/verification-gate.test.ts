@@ -938,6 +938,43 @@ test("validateVerificationCommand rejects logical OR fallback syntax", () => {
   }
 });
 
+test("runVerificationGate: timeout is failureClass timeout, not exit 127 (#1759)", () => {
+  const dir = makeTempDir("gsd-verify-timeout");
+  const result = withRtkDisabled(() => runVerificationGate({
+    cwd: dir,
+    preferenceCommands: ["sleep 5"],
+    commandTimeoutMs: 50,
+  }));
+  assert.equal(result.passed, false);
+  assert.equal(result.checks.length, 1);
+  assert.notEqual(result.checks[0]?.exitCode, 127);
+  assert.equal(result.checks[0]?.failureClass, "timeout");
+  assert.match(result.checks[0]?.stderr ?? "", /timed out after 50ms/);
+  assert.match(result.checks[0]?.stderr ?? "", /verification_timeout_ms/);
+});
+
+test("runVerificationGate: missing binary is still exit 127 (#1759)", () => {
+  const dir = makeTempDir("gsd-verify-enoent");
+  const result = withRtkDisabled(() => runVerificationGate({
+    cwd: dir,
+    preferenceCommands: ["__gsd_missing_binary_1783__"],
+  }));
+  assert.equal(result.passed, false);
+  assert.equal(result.checks[0]?.exitCode, 127);
+  assert.equal(result.checks[0]?.failureClass, undefined);
+});
+
+test("validatePreferences: verification_timeout_ms override and default (#1759)", () => {
+  const set = validatePreferences({ verification_timeout_ms: 2500.9 });
+  assert.equal(set.errors.length, 0);
+  assert.equal(set.preferences.verification_timeout_ms, 2500);
+  assert.equal((set.warnings ?? []).filter((w) => w.includes("unknown")).length, 0);
+  const unset = validatePreferences({});
+  assert.equal(unset.preferences.verification_timeout_ms, undefined);
+  const bad = validatePreferences({ verification_timeout_ms: 0 });
+  assert.ok(bad.errors.some((e) => e.includes("verification_timeout_ms")));
+});
+
 test("validateVerificationCommand rejects arbitrary semicolon command chaining", () => {
   const result = validateVerificationCommand("python3 tools/check-status.py; rm -rf output");
   assert.equal(result.ok, false);

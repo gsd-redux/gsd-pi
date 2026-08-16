@@ -22,6 +22,7 @@ import { classifyFailure } from "../recovery-classification.js";
 import type { PublishVerifiedTaskCompletionInput } from "../task-completion-compatibility-adapter.js";
 import { internalExecutionInvocation } from "../execution-invocation.js";
 import type { TaskTechnicalVerdictSnapshot } from "../task-verification-domain-operation.js";
+import { describeHostVerificationRationale } from "../verification-verdict.js";
 import type { UnitPhaseResult } from "./workflow-unit-dispatch.js";
 
 export interface TaskExecutionCutoverInput {
@@ -64,7 +65,7 @@ function routeStoredTechnicalFailure(
     resultId: attempt.resultId,
     owner: "agent",
     classification: { failureKind: "verification-failed" },
-    summary: "Built-in host verification did not pass",
+    summary: `Host verification ${verdict.verdict} for ${verdict.verdictId}`,
     evidence: {
       unitType: input.unitType,
       unitId: input.unitId,
@@ -72,7 +73,16 @@ function routeStoredTechnicalFailure(
       evidenceId: verdict.evidenceId,
       verdict: verdict.verdict,
     },
-    rationale: "Route built-in host verification through the durable recovery policy",
+    rationale: describeHostVerificationRationale({
+      verdict: verdict.verdict,
+      checkName: `${input.unitType} ${input.unitId}`,
+      observed: verdict.verdict,
+      expected: "pass",
+      evidenceRef: `${verdict.evidenceId} (verdict ${verdict.verdictId})`,
+      nextAction: verdict.verdict === "inconclusive"
+        ? "To become conclusive, inspect that evidence and resume with matching verification."
+        : undefined,
+    }),
   });
 }
 

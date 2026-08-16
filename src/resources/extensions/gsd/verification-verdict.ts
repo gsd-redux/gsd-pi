@@ -18,6 +18,23 @@ export interface VerificationVerdict {
 export const NO_HOST_CHECKS_FAILURE_CONTEXT =
   "No runnable host-owned verification command was discovered. Add project verification_commands in .gsd/PREFERENCES.md or a runnable task-plan Verify command, then resume with /gsd next.";
 
+/** Diagnostic recovery rationale: check, observed vs expected, evidence, next action (#1747). */
+export function describeHostVerificationRationale(input: {
+  verdict: "fail" | "inconclusive";
+  checkName: string;
+  observed: string;
+  expected: string;
+  evidenceRef: string;
+  nextAction?: string;
+}): string {
+  const next = input.nextAction
+    ? ` ${input.nextAction}`
+    : input.verdict === "inconclusive"
+      ? " To become conclusive, supply the missing or matching evidence and resume."
+      : "";
+  return `Host verification ${input.verdict}: check ${input.checkName} observed ${input.observed}, expected ${input.expected}. Evidence: ${input.evidenceRef}.${next}`;
+}
+
 export function decideVerificationVerdict(
   unitType: string,
   result: VerificationGateResult,

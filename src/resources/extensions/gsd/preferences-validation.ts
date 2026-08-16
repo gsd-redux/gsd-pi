@@ -1351,6 +1351,15 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  if (preferences.verification_timeout_ms !== undefined) {
+    const raw = preferences.verification_timeout_ms;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      validated.verification_timeout_ms = Math.floor(raw);
+    } else {
+      errors.push("verification_timeout_ms must be a positive number");
+    }
+  }
+
   if (preferences.per_unit_cost_cap_usd !== undefined) {
     const raw = preferences.per_unit_cost_cap_usd;
     if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {

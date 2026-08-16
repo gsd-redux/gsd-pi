@@ -89,6 +89,8 @@ export interface VerificationCheck {
   stdout: string;
   stderr: string;
   durationMs: number;
+  /** Distinct from exit 127: a spawn timeout, never command-not-found (#1759). */
+  failureClass?: "timeout";
 }
 
 /** A runtime error captured from bg-shell processes or browser console */

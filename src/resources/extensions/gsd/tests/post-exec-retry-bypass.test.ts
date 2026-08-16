@@ -557,15 +557,16 @@ describe("Post-execution blocking failure retry bypass", () => {
     assert.equal(routed.length, 1);
     const { invocation: routeInvocation, ...routeInput } = routed[0]!;
     assert.match(routeInvocation.idempotencyKey, /attempt\.route:result-test$/);
-    assert.deepEqual(routeInput, {
-      attemptId: "attempt-test",
-      resultId: "result-test",
-      owner: "agent",
-      classification: { failureKind: "verification-failed" },
-      summary: "Built-in host verification did not pass",
-      evidence: { verdictId: "verdict-1", evidenceId: "evidence-1", verdict: "inconclusive" },
-      rationale: "Route built-in host verification through the durable recovery policy",
-    });
+    assert.equal(routeInput.attemptId, "attempt-test");
+    assert.equal(routeInput.resultId, "result-test");
+    assert.equal(routeInput.owner, "agent");
+    assert.deepEqual(routeInput.classification, { failureKind: "verification-failed" });
+    assert.deepEqual(routeInput.evidence, { verdictId: "verdict-1", evidenceId: "evidence-1", verdict: "inconclusive" });
+    assert.match(String(routeInput.summary), /inconclusive/);
+    assert.match(String(routeInput.rationale), /gsd-source-integrity|source/);
+    assert.match(String(routeInput.rationale), /expected/i);
+    assert.doesNotMatch(String(routeInput.rationale), /Route built-in host verification through the durable recovery policy/);
+    assert.doesNotMatch(String(routeInput.summary), /Built-in host verification did not pass/);
   });
 
   test("Git snapshot failure records inconclusive without running verification commands", async () => {
