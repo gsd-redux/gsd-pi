@@ -378,6 +378,30 @@ export function readLatestTaskAttempt(
   return snapshot(row);
 }
 
+/**
+ * Every Task Attempt id for the lifecycle, newest first. Recovery scans must
+ * consider superseded Attempts, not just the latest (#1754 residual).
+ */
+export function readTaskAttemptIds(task: ClaimTaskAttemptInput["task"]): string[] {
+  const rows = getDb().prepare(`
+    SELECT attempt.attempt_id
+    FROM workflow_item_lifecycles lifecycle
+    JOIN workflow_execution_attempts attempt
+      ON attempt.lifecycle_id = lifecycle.lifecycle_id
+     AND attempt.project_id = lifecycle.project_id
+    WHERE lifecycle.item_kind = 'task'
+      AND lifecycle.milestone_id = :milestone_id
+      AND lifecycle.slice_id = :slice_id
+      AND lifecycle.task_id = :task_id
+    ORDER BY attempt.attempt_number DESC
+  `).all({
+    ":milestone_id": task.milestoneId,
+    ":slice_id": task.sliceId,
+    ":task_id": task.taskId,
+  }) as Array<Record<string, unknown>>;
+  return rows.map((row) => String(row["attempt_id"]));
+}
+
 export function claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt {
   const fence = readDomainOperationFence(input.invocation.idempotencyKey);
   let claimed: ClaimRunningAttemptResult | undefined;

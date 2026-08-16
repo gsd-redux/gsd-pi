@@ -2575,6 +2575,55 @@ export function registerDbTools(pi: ExtensionAPI): void {
 
 	registerWorkflowTool(pi, taskRecoveryResumeTool);
 
+	const taskSettleTool = {
+		name: "gsd_task_settle",
+		label: "Settle Task Attempt",
+		description:
+			"Operator tool: settle a Task's orphaned running Attempt as interrupted after a manual repair. " +
+			"Dry-run by default — prints the exact rows it would change; mutation requires apply: true. " +
+			"Human-gated: never called by auto mode.",
+		promptSnippet:
+			"Settle an orphaned running Task Attempt (dry-run first, apply: true to mutate)",
+		promptGuidelines: [
+			"Run without apply first and read the planned rows before mutating.",
+			"Only settles while the Attempt's own milestone lease is still held; a cross-process orphan whose lease is gone belongs to the next auto session's replacement-lease interrupt.",
+			"A second apply is a no-op — the tool is idempotent.",
+		],
+		parameters: Type.Object(
+			{
+				milestoneId: Type.String({ minLength: 1, description: "Milestone ID (e.g. M001)" }),
+				sliceId: Type.String({ minLength: 1, description: "Slice ID (e.g. S01)" }),
+				taskId: Type.String({ minLength: 1, description: "Task ID (e.g. T01)" }),
+				reason: Type.String({
+					minLength: 1,
+					description: "Operator rationale recorded on the settled Attempt Result",
+				}),
+				apply: Type.Optional(
+					Type.Boolean({
+						description: "Actually settle. Omit or false for a dry run that changes nothing.",
+					}),
+				),
+			},
+			{ additionalProperties: false },
+		),
+		execute: async (
+			toolCallId: string,
+			params: any,
+			_signal: AbortSignal | undefined,
+			_onUpdate: unknown,
+			ctx: unknown,
+		) => {
+			const { executeTaskSettle } = await loadWorkflowExecutors();
+			return executeTaskSettle(
+				params,
+				resolveWorkflowToolBasePath(ctx, params),
+				{ ...piExecutionInvocation("gsd_task_settle", toolCallId), actorType: "user" },
+			);
+		},
+	};
+
+	registerWorkflowTool(pi, taskSettleTool);
+
 	// ─── gsd_slice_reopen (gsd_reopen_slice alias) ─────────────────────────
 
 	const reopenSliceExecute = async (
