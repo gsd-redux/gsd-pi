@@ -33,6 +33,9 @@ pnpm run test:unit
 echo "── test:packages ──"
 pnpm run test:packages
 
+echo "── test:pi-ai (vitest) ──"
+pnpm --filter @gsd/pi-ai test
+
 echo "── test:integration ──"
 pnpm run test:integration
 
