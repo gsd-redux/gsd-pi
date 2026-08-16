@@ -20,6 +20,7 @@ import {
   insertMilestone,
   insertSlice,
   insertTask,
+  insertArtifact,
 } from "../gsd-db.ts";
 
 function createFixtureBase(): string {
@@ -32,6 +33,32 @@ function writeFile(base: string, relativePath: string, content: string): void {
   const full = join(base, ".gsd", relativePath);
   mkdirSync(join(full, ".."), { recursive: true });
   writeFileSync(full, content);
+}
+
+function seedMilestoneArtifact(
+  milestoneId: string,
+  artifactType: "CONTEXT" | "CONTEXT-DRAFT",
+  content: string,
+): void {
+  insertArtifact({
+    path: `milestones/${milestoneId}/${milestoneId}-${artifactType}.md`,
+    artifact_type: artifactType,
+    milestone_id: milestoneId,
+    slice_id: null,
+    task_id: null,
+    full_content: content,
+  });
+}
+
+function seedProjectSequence(content: string): void {
+  insertArtifact({
+    path: "PROJECT.md",
+    artifact_type: "PROJECT",
+    milestone_id: null,
+    slice_id: null,
+    task_id: null,
+    full_content: content,
+  });
 }
 
 describe("stale queued milestone selection (#3470)", () => {
@@ -107,7 +134,9 @@ describe("stale queued milestone selection (#3470)", () => {
 
     // M068: queued but has context (discussion started) — should be activatable
     insertMilestone({ id: "M068", title: "Queued With Context", status: "queued" });
-    writeFile(base, "milestones/M068/M068-CONTEXT.md", "# M068: Queued With Context\n\nDiscussion started.");
+    const queuedContext = "# M068: Queued With Context\n\nDiscussion started.";
+    writeFile(base, "milestones/M068/M068-CONTEXT.md", queuedContext);
+    seedMilestoneArtifact("M068", "CONTEXT", queuedContext);
 
     invalidateStateCache();
     const state = await deriveStateFromDb(base);
@@ -121,7 +150,9 @@ describe("stale queued milestone selection (#3470)", () => {
 
     // M068: queued but has draft (discussion in progress)
     insertMilestone({ id: "M068", title: "Queued With Draft", status: "queued" });
-    writeFile(base, "milestones/M068/M068-CONTEXT-DRAFT.md", "# M068: Queued With Draft\n\nDraft in progress.");
+    const queuedDraft = "# M068: Queued With Draft\n\nDraft in progress.";
+    writeFile(base, "milestones/M068/M068-CONTEXT-DRAFT.md", queuedDraft);
+    seedMilestoneArtifact("M068", "CONTEXT-DRAFT", queuedDraft);
 
     invalidateStateCache();
     const state = await deriveStateFromDb(base);
@@ -229,9 +260,7 @@ describe("stale queued milestone selection (#3470)", () => {
     // phantom) and must be promoted to active so the user can plan it.
     insertMilestone({ id: "M001", title: "Foundation", status: "queued" });
     insertMilestone({ id: "M002", title: "Polish", status: "queued" });
-    writeFile(
-      base,
-      "PROJECT.md",
+    seedProjectSequence(
       [
         "# Project",
         "",
@@ -314,7 +343,9 @@ describe("stale queued milestone selection (#3470)", () => {
 
     // M068: queued, no slices, has a CONTEXT-DRAFT — should resume discussion
     insertMilestone({ id: "M068", title: "Draft Only", status: "queued" });
-    writeFile(base, "milestones/M068/M068-CONTEXT-DRAFT.md", "# M068: Draft Only\n\nPartial context from first question round.");
+    const draftOnly = "# M068: Draft Only\n\nPartial context from first question round.";
+    writeFile(base, "milestones/M068/M068-CONTEXT-DRAFT.md", draftOnly);
+    seedMilestoneArtifact("M068", "CONTEXT-DRAFT", draftOnly);
 
     invalidateStateCache();
     const state = await deriveStateFromDb(base);
@@ -332,7 +363,9 @@ describe("stale queued milestone selection (#3470)", () => {
 
     // M020: a real resumable draft milestone encountered later.
     insertMilestone({ id: "M020", title: "Draft Later", status: "queued" });
-    writeFile(base, "milestones/M020/M020-CONTEXT-DRAFT.md", "# M020: Draft Later\n\nPartial context from an in-progress discussion.");
+    const laterDraft = "# M020: Draft Later\n\nPartial context from an in-progress discussion.";
+    writeFile(base, "milestones/M020/M020-CONTEXT-DRAFT.md", laterDraft);
+    seedMilestoneArtifact("M020", "CONTEXT-DRAFT", laterDraft);
 
     invalidateStateCache();
     const state = await deriveStateFromDb(base);

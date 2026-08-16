@@ -42,6 +42,7 @@ import type { GsdWorkspace, MilestoneScope } from "../workspace.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { createDbAdapter, type DbAdapter } from "../db-adapter.js";
 import { createBaseSchemaObjects } from "../db-base-schema.js";
+import { hasRequiredSchemaObjects } from "../db-required-schema.js";
 import { createCoordinationTablesV24 } from "../db-coordination-schema.js";
 import { createDbConnectionCache, type DbConnectionCacheEntry } from "../db-connection-cache.js";
 import { backupDatabaseBeforeMigration, isMigrationBackupError } from "../db-migration-backup.js";
@@ -88,6 +89,7 @@ import {
   applyMigrationV43MilestoneCompletion,
   applyMigrationV44MilestoneReopen,
   applyMigrationV45AuthorityRecovery,
+  applyMigrationV47SameLeaseAttemptSettlement,
 } from "../db-migration-steps.js";
 import {
   createCanonicalFoundationSchemaV31,
@@ -156,7 +158,7 @@ const providerLoader = createSqliteProviderLoader({
   nodeVersion: process.versions.node,
   writeStderr: (message: string) => process.stderr.write(message),
 });
-export const SCHEMA_VERSION = 46;
+export const SCHEMA_VERSION = 47;
 
 /**
  * PRAGMA application_id stamped on every gsd.db at V46 so binaries and
@@ -212,6 +214,7 @@ function assessStartupRepair(db: DbAdapter): StartupRepairAssessment {
     || !hasCanonicalOutboxInvariantsV31(db)
     || !hasVerificationEvidenceDedupIndex(db)
     || !hasRuntimeKvSchemaV25(db)
+    || !hasRequiredSchemaObjects(db)
     || (fts.supported && (!fts.schemaComplete || !fts.rebuildMarked));
   return {
     required,
@@ -402,6 +405,7 @@ function initSchema(
         applyMigrationV43MilestoneCompletion(db);
         applyMigrationV44MilestoneReopen(db);
         applyMigrationV45AuthorityRecovery(db);
+        applyMigrationV47SameLeaseAttemptSettlement(db);
 
         // Fresh install — all tables are created above with the full current schema,
         // so it is safe to create all migration-specific indexes here.  For existing
@@ -770,6 +774,15 @@ function migrateSchema(
       // user_version) so binaries and external tools can detect DB-authored
       // state cheaply.
       applyMigrationV46StateCutoverStamp(db);
+    }
+
+    if (currentVersion < 47) {
+      // V47 — same-lease Attempt settlement (#1740): recreate the
+      // dispatch-scope transition trigger so a worker holding its own lease
+      // can settle its own Attempt after its dispatch row is gone.
+      applyMigrationV47SameLeaseAttemptSettlement(db);
+      stampStateCutoverPragmas(db, 47);
+      recordSchemaVersion(db, 47);
     }
 
     if (_migrationFaultForTest) throw new Error("migration fault injected for test");
@@ -2045,10 +2058,11 @@ export function closeAllDatabases(): void {
  * Open (or reuse) the database connection scoped to the given workspace.
  *
  * Uses workspace.identityKey as the cache key, so sibling worktrees of the
- * same project resolve to the same connection. On a cache hit the existing
- * adapter is reactivated as the current connection without re-opening the
- * file. On a cache miss, delegates to openDatabase() for the full
- * open + schema-init + migration flow, then caches the result.
+ * same project resolve to the same connection. On a cache hit with complete
+ * startup invariants, the existing adapter is reactivated without re-opening
+ * the file. A cache hit that needs repair is closed and reopened through the
+ * guarded schema-init flow. On a cache miss, delegates to openDatabase() for
+ * the full open + schema-init + migration flow, then caches the result.
  *
  * When switching to a different workspace, the previously active connection
  * is preserved in the cache (not closed), so callers can switch back to it
@@ -2075,13 +2089,19 @@ export function openDatabaseByWorkspace(workspace: GsdWorkspace): boolean {
   }
   const validCached = _dbCache.get(key);
   if (validCached) {
-    // Reactivate the cached connection as the current singleton.
-    currentDb = validCached.db;
-    currentPath = validCached.dbPath;
-    currentPid = process.pid;
-    _dbOpenState.markAttempted();
-    _currentIdentityKey = key;
-    return true;
+    if (_replacementObservationDatabases.has(validCached.db) || !assessStartupRepair(validCached.db).required) {
+      currentDb = validCached.db;
+      currentPath = validCached.dbPath;
+      currentPid = process.pid;
+      _dbOpenState.markAttempted();
+      _currentIdentityKey = key;
+      return true;
+    }
+    if (currentDb === validCached.db) closeDatabase();
+    else {
+      closeCachedConnection(validCached, "workspace");
+      _dbCache.delete(key);
+    }
   }
 
   // Cache miss — need to open a new connection.
@@ -2268,7 +2288,15 @@ function openDatabaseInternal(path: string, allowReplacementWrite: boolean): boo
     } else {
       try {
         assertDatabaseAdapterMatchesPath(currentDb, path);
-        return true;
+        if (
+          path === ":memory:"
+          || _replacementObservationDatabases.has(currentDb)
+          || !assessStartupRepair(currentDb).required
+        ) {
+          return true;
+        }
+        closeDatabase();
+        _dbOpenState.markAttempted();
       } catch {
         closeDatabase();
       }

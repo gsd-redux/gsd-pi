@@ -377,7 +377,10 @@ describe("workflow MCP tools", () => {
     registerWorkflowTools(server as any);
 
     assert.equal(server.tools.length, WORKFLOW_TOOL_NAMES.length);
-    assert.deepEqual(server.tools.map((t) => t.name), [...WORKFLOW_TOOL_NAMES]);
+    assert.deepEqual(
+      server.tools.map((t) => t.name).sort(),
+      [...WORKFLOW_TOOL_NAMES].sort(),
+    );
   });
 
   it("omits backwards-compatibility aliases when advertiseAliases is false", () => {
@@ -386,7 +389,10 @@ describe("workflow MCP tools", () => {
 
     const toolNames = server.tools.map((t) => t.name);
     assert.equal(toolNames.length, CANONICAL_WORKFLOW_TOOL_NAMES.length);
-    assert.deepEqual(toolNames, [...CANONICAL_WORKFLOW_TOOL_NAMES]);
+    assert.deepEqual(
+      [...toolNames].sort(),
+      [...CANONICAL_WORKFLOW_TOOL_NAMES].sort(),
+    );
     for (const alias of WORKFLOW_TOOL_ALIAS_NAMES) {
       assert.ok(!toolNames.includes(alias), `alias ${alias} should not be advertised`);
     }
@@ -1799,6 +1805,10 @@ export const executeTaskRecoveryResume = async (params, projectDir, invocation) 
     writeFileSync(capturePath, JSON.stringify({ params, projectDir, invocation }, null, 2));
   }
   return { content: [{ type: "text", text: "mock task recovery resume" }] };
+};
+
+export const executeTaskSettle = async (params, projectDir, invocation) => {
+  return { content: [{ type: "text", text: "mock task settle" }] };
 };
 
 export const executeTaskComplete = async (params, projectDir, invocation) => {

@@ -58,6 +58,8 @@ export * from "./db/writers/memory.js";
 export * from "./db/writers/reconcile.js";
 export * from "./db/writers/import-restore.js";
 export * from "./db/writers/lifecycle-commands.js";
+export * from "./db/writers/projection-kind-remediation.js";
+export * from "./db/writers/liveness-backstop.js";
 export { executeDomainOperation } from "./db/domain-operation.js";
 export type {
   DomainJsonValue,

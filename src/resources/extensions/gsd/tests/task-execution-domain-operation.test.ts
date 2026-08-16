@@ -73,6 +73,10 @@ interface SettleTaskAttemptReceipt {
 
 interface TaskExecutionDomain {
   claimTaskAttempt(input: ClaimTaskAttemptInput): ClaimTaskAttemptReceipt;
+  interruptOrphanedTaskAttempts(input: {
+    workerId: string;
+    milestoneId: string;
+  }): { attemptIds: string[]; milestoneLeaseToken: number | null };
   settleTaskAttempt(input: SettleTaskAttemptInput): SettleTaskAttemptReceipt;
   readLatestTaskAttempt(task: ClaimTaskAttemptInput["task"]): AttemptSnapshot | null;
   readTaskAttempt(attemptId: string): AttemptSnapshot | null;
@@ -340,6 +344,54 @@ test("claimTaskAttempt rolls back when the claimed dispatch fence does not match
   }, before);
   assert.equal(count("workflow_execution_attempts"), 0);
   assert.equal(row("SELECT status FROM unit_dispatches WHERE id = " + dispatchId).status, "claimed");
+});
+
+test("interruptOrphanedTaskAttempts settles a running Attempt after its lease history is overwritten", async () => {
+  const { claimTaskAttempt, interruptOrphanedTaskAttempts } = await subject();
+  const { dispatchId } = seedFixture();
+  const claim = claimTaskAttempt(claimInput(dispatchId));
+  db().exec(`
+    UPDATE workers
+    SET last_heartbeat_at = '1970-01-01T00:00:00.000Z'
+    WHERE worker_id = 'worker-1';
+    UPDATE milestone_leases
+    SET fencing_token = 21, status = 'released'
+    WHERE milestone_id = 'M001';
+    INSERT INTO workers (
+      worker_id, host, pid, started_at, version, last_heartbeat_at, status,
+      project_root_realpath
+    ) VALUES (
+      'worker-2', 'test-host', 2, '2026-08-13T20:00:00.000Z', 'test',
+      '2099-08-13T20:00:00.000Z', 'active', '/tmp/project'
+    );
+  `);
+
+  db().exec(`UPDATE tasks SET full_summary_md = 'leaked staged summary' WHERE id = 'T01'`);
+
+  const repaired = interruptOrphanedTaskAttempts({
+    workerId: "worker-2",
+    milestoneId: "M001",
+  });
+
+  assert.deepEqual(repaired, {
+    attemptIds: [claim.attemptId],
+    milestoneLeaseToken: 22,
+  });
+  assert.deepEqual(row(`
+    SELECT attempt_state, settle_outcome, recovery_worker_id,
+           recovery_milestone_lease_token
+    FROM workflow_execution_attempts
+  `), {
+    attempt_state: "settled",
+    settle_outcome: "interrupted",
+    recovery_worker_id: "worker-2",
+    recovery_milestone_lease_token: 22,
+  });
+  assert.deepEqual(row(`
+    SELECT outcome, failure_class FROM workflow_attempt_results
+  `), { outcome: "interrupted", failure_class: "stale-worker" });
+  assert.equal(row("SELECT status FROM unit_dispatches").status, "failed");
+  assert.equal(row("SELECT full_summary_md FROM tasks").full_summary_md, "");
 });
 
 for (const contract of [

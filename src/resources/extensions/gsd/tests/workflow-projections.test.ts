@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { regenerateIfMissing, renderPlanContent, renderPlanProjection, renderStateProjection, renderSummaryProjection } from '../workflow-projections.ts';
 import type { SliceRow, TaskRow } from '../gsd-db.ts';
-import { closeDatabase, insertMilestone, insertSlice, insertTask, openDatabase } from '../gsd-db.ts';
+import { closeDatabase, getArtifactsByPathPrefix, insertMilestone, insertSlice, insertTask, openDatabase } from '../gsd-db.ts';
 import { clearPathCache, _clearGsdRootCache, normalizeRealPath, resolveMilestoneFile, resolveTaskFile } from '../paths.ts';
 import { invalidateStateCache } from '../state.ts';
 import { clearParseCache } from '../files.ts';
@@ -370,6 +370,7 @@ test('workflow-projections: regenerateIfMissing SUMMARY is idempotent for flat-p
       duration: '5m',
       keyFiles: ['src/example.ts'],
       keyDecisions: ['Use centralized task summary paths.'],
+      fullSummaryMd: '---\nid: T01\nparent: S01\nmilestone: M001\n---\n\n# T01: Completed the flat task.\n',
     });
 
     const summaryPath = join(phaseDir, 'S01-T01-SUMMARY.md');
@@ -381,7 +382,11 @@ test('workflow-projections: regenerateIfMissing SUMMARY is idempotent for flat-p
     assert.equal(first, true, 'first call regenerates the missing task summary');
     assert.equal(second, false, 'second call sees the flat-phase task summary and does not rewrite it');
     assert.equal(normalizeRealPath(resolveTaskFile(base, 'M001', 'S01', 'T01', 'SUMMARY') ?? ''), normalizeRealPath(summaryPath));
-    assert.match(readFileSync(summaryPath, 'utf-8'), /# T01: Completed the flat task\./);
+    const diskContent = readFileSync(summaryPath, 'utf-8');
+    const [artifact] = getArtifactsByPathPrefix('phases/01-milestone/S01-T01-SUMMARY.md');
+    assert.match(diskContent, /# T01: Completed the flat task\./);
+    assert.match(diskContent, /<!-- gsd:state-version=\d+:\d+ -->/);
+    assert.equal(artifact?.full_content, diskContent, 'artifact lineage stores the exact stamped disk bytes');
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
@@ -463,7 +468,7 @@ test('workflow-projections: renderSummaryProjection uses milestone title when cr
     const titleSummaryPath = join(base, '.gsd', 'phases', '01-milestone', 'S01-T01-SUMMARY.md');
     const idSummaryPath = join(base, '.gsd', 'phases', '01-m001', 'S01-T01-SUMMARY.md');
 
-    renderSummaryProjection(base, 'M001', 'S01', 'T01');
+    await renderSummaryProjection(base, 'M001', 'S01', 'T01');
 
     assert.ok(existsSync(titleSummaryPath), 'fresh summary projection uses the milestone title slug');
     assert.equal(existsSync(idSummaryPath), false, 'fresh summary projection does not create an id-slug orphan dir');

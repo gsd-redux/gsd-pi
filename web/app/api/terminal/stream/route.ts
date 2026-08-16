@@ -12,7 +12,6 @@ import {
   isAllowedTerminalCommand,
 } from "../../../../lib/pty-manager";
 import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
-import { cloudModeLocalRouteGuard } from "../../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,8 +19,6 @@ export const dynamic = "force-dynamic";
 const encoder = new TextEncoder();
 
 export async function GET(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   const url = new URL(request.url);
   const sessionId = url.searchParams.get("id") || "default";
   const command = url.searchParams.get("command") || undefined;

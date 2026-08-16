@@ -226,6 +226,14 @@ function preflight(plan: LegacyImportApplicationPlan): LegacyImportApplicationPl
       if (instruction.targetKind !== `${instruction.itemKind}-lifecycle` || instruction.targetKey !== targetKey) {
         fail("legacy import lifecycle target identity is inconsistent");
       }
+    } else if (instruction.action === "seed-quality-gate") {
+      if (
+        instruction.targetKind !== "slice-quality-gate"
+        || instruction.milestoneId.trim().length === 0
+        || instruction.sliceId.trim().length === 0
+        || (instruction.gateStatus !== "pending" && instruction.gateStatus !== "complete")
+        || instruction.targetKey !== `${instruction.milestoneId}/${instruction.sliceId}`
+      ) fail("legacy import quality gate instruction is invalid");
     } else if (instruction.action === "replace-slice-dependencies") {
       if (instruction.dependsOnSliceIds.includes(instruction.sliceId)) {
         fail("legacy import slice cannot depend on itself");
@@ -794,6 +802,39 @@ function adoptLifecycle(
   return resultFor(instruction, 1, 1);
 }
 
+function seedQualityGate(
+  occurredAt: string,
+  instruction: Extract<LegacyImportApplicationPlanInstruction, { action: "seed-quality-gate" }>,
+): LegacyImportApplicationInstructionResult {
+  // #1658: complete-slice hard-requires exactly one Q8 quality gate per slice,
+  // so every imported slice mints the row the canonical seam would have left
+  // behind — plan_slice seeds a pending scope:"slice" Q8 (insertGateRow), and
+  // completeSliceHierarchy closes it with verdict "omitted" when no
+  // Operational Readiness evidence exists. A legacy import carries no gate
+  // evidence, so completed slices adopt the omitted shape; no gate_runs ledger
+  // row is minted because no evaluation actually ran.
+  const complete = instruction.gateStatus === "complete";
+  const result = getDb().prepare(`
+    INSERT INTO quality_gates (
+      milestone_id, slice_id, gate_id, scope, task_id,
+      status, verdict, rationale, findings, evaluated_at
+    ) VALUES (
+      :milestone_id, :slice_id, 'Q8', 'slice', '',
+      :status, :verdict, :rationale, '', :evaluated_at
+    )
+  `).run({
+    ":milestone_id": instruction.milestoneId,
+    ":slice_id": instruction.sliceId,
+    ":status": instruction.gateStatus,
+    ":verdict": complete ? "omitted" : "",
+    ":rationale": complete ? "Seeded by legacy import — no Operational Readiness evidence available" : "",
+    ":evaluated_at": complete ? occurredAt : null,
+  });
+  const affected = changes(result);
+  if (affected !== 1) fail("legacy import quality gate seed must affect exactly one row");
+  return resultFor(instruction, 1, affected);
+}
+
 export function applyLegacyImportApplicationPlan(
   context: Readonly<DomainOperationContext>,
   plan: LegacyImportApplicationPlan,
@@ -811,6 +852,8 @@ export function applyLegacyImportApplicationPlan(
       instructionResults.push(deleteDependencies(instruction));
     } else if (instruction.action === "adopt-lifecycle") {
       instructionResults.push(adoptLifecycle(context, occurredAt, instruction));
+    } else if (instruction.action === "seed-quality-gate") {
+      instructionResults.push(seedQualityGate(occurredAt, instruction));
     } else if (
       instruction.action === "create-decision-memory"
       || instruction.action === "update-decision-memory"

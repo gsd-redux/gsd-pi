@@ -74,7 +74,6 @@ const MIGRATED_FILES = new Set([
   "preferences.ts",
   "commands-maintenance.ts",
   "commands-inspect.ts",
-  "safe-fs.ts",
   "markdown-renderer.ts",
   "md-importer.ts",
   "milestone-actions.ts",

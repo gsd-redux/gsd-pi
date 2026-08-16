@@ -11,7 +11,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveDispatch } from "../auto-dispatch.ts";
@@ -554,12 +554,12 @@ test("dispatch: missing task plan recovery logs root/worktree diagnostic when de
   // Flat-phase: no recovery diagnostic entry expected (tasks in slice plan)
 });
 
-test("dispatch: unprojected worktree stops with a projection diagnosis instead of plan-slice recovery — issue #1520", async (t) => {
-  // Incident shape: flat-phase slice plan with embedded tasks exists at the
-  // project root, but the active worktree's projection is incomplete — the
-  // milestone CONTEXT landed, the slice plan did not. Re-planning cannot fix
-  // a projection gap, so the rule must stop with an accurate diagnosis rather
-  // than burn plan-slice retries and blame "missing" task plans.
+test("dispatch: unprojected worktree re-renders the slice PLAN from the DB and proceeds — issues #1520/#1640", async (t) => {
+  // Incident shape (#1520): flat-phase slice plan with embedded tasks exists
+  // at the project root, but the active worktree's projection is incomplete —
+  // the milestone CONTEXT landed, the slice plan did not. The DB rows for the
+  // slice survive (DB is authoritative), so since #1640 the rule heals the
+  // gap by re-rendering the PLAN into the worktree instead of stopping.
   const tmp = mkdtempSync(join(tmpdir(), "gsd-1520-unprojected-"));
   t.after(() => removeWorkflowTestDirectory(tmp));
   scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
@@ -580,12 +580,87 @@ test("dispatch: unprojected worktree stops with a projection diagnosis instead o
   };
   const result = await resolveDispatch(makeContextFor(tmp, "M004", "S02", "T01", session));
 
+  assert.equal(result.action, "dispatch",
+    `expected dispatch, got ${result.action}${result.action === "stop" ? `: ${result.reason}` : ""}`);
+  assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
+    `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  // The PLAN was re-rendered into the worktree's existing descriptor dir.
+  const healedPlan = join(worktreeRoot, ".gsd", "phases", "04-test", "04-02-PLAN.md");
+  assert.ok(existsSync(healedPlan), `healed PLAN should exist at ${healedPlan}`);
+  assert.match(readFileSync(healedPlan, "utf-8"), /<tasks>/);
+  // No plan-slice retry budget was spent on a healable projection gap.
+  assert.equal(session.missingTaskPlanRetryCount.has("M004/S02"), false);
+});
+
+test("dispatch: fresh worktree with DB rows but no PLAN anywhere re-renders and proceeds — issue #1640", async (t) => {
+  // Teardown of an incomplete milestone deletes the worktree; .gsd markdown is
+  // gitignored, so on the next run the fresh worktree — and possibly the
+  // project root — has no slice PLAN at all while the DB rows survive. The
+  // dispatch path must re-render the PLAN from the DB and proceed.
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1640-fresh-worktree-"));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  scaffoldWorkflowDatabase(tmp, "M004", "S02", "T01");
+
+  // No slice PLAN anywhere — only milestone CONTEXT.
+  scaffoldMilestoneContext(tmp, "M004");
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M004");
+  mkdirSync(worktreeRoot, { recursive: true });
+  scaffoldMilestoneContext(worktreeRoot, "M004");
+
+  const session = {
+    basePath: worktreeRoot,
+    originalBasePath: tmp,
+    currentMilestoneId: "M004",
+    missingTaskPlanRetryCount: new Map<string, number>(),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M004", "S02", "T01", session));
+
+  assert.equal(result.action, "dispatch",
+    `expected dispatch, got ${result.action}${result.action === "stop" ? `: ${result.reason}` : ""}`);
+  assert.ok(result.action === "dispatch" && result.unitType === "execute-task",
+    `unitType should be execute-task, got: ${result.action === "dispatch" ? result.unitType : "(stop)"}`);
+  assert.ok(result.action === "dispatch" && result.unitId === "M004/S02/T01");
+  const healedPlan = join(worktreeRoot, ".gsd", "phases", "04-test", "04-02-PLAN.md");
+  assert.ok(existsSync(healedPlan), `healed PLAN should exist at ${healedPlan}`);
+  assert.equal(session.missingTaskPlanRetryCount.has("M004/S02"), false);
+});
+
+test("dispatch: unprojected worktree stops loud when the DB lacks the slice rows — issues #1520/#1640", async (t) => {
+  // When the DB genuinely lacks the slice rows the heal cannot render, and the
+  // sanctioned exit must be truthful: report the render failure and name the
+  // command that actually restores projections (/gsd rebuild markdown), not a
+  // doctor run that only re-renders milestone shells.
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-1640-no-db-rows-"));
+  t.after(() => removeWorkflowTestDirectory(tmp));
+  if (isDbAvailable()) closeDatabase();
+  mkdirSync(join(tmp, ".gsd"), { recursive: true });
+  assert.equal(openDatabase(join(tmp, ".gsd", "gsd.db")), true);
+  insertMilestone({ id: "M004", title: "Test Milestone", status: "active" });
+  // No slice or task rows — the DB cannot render the PLAN.
+
+  scaffoldMilestoneContext(tmp, "M004");
+  scaffoldSlicePlan(tmp, "M004", "S02");
+
+  const worktreeRoot = join(tmp, ".gsd", "worktrees", "M004");
+  mkdirSync(worktreeRoot, { recursive: true });
+  scaffoldMilestoneContext(worktreeRoot, "M004");
+
+  const session = {
+    basePath: worktreeRoot,
+    originalBasePath: tmp,
+    currentMilestoneId: "M004",
+    missingTaskPlanRetryCount: new Map<string, number>(),
+  };
+  const result = await resolveDispatch(makeContextFor(tmp, "M004", "S02", "T01", session));
+
   assert.equal(result.action, "stop",
     `expected stop, got ${result.action}${result.action === "dispatch" ? `/${result.unitType}` : ""}`);
   assert.ok(result.action === "stop");
   assert.equal(result.level, "error");
-  assert.match(result.reason, /projection/i);
   assert.match(result.reason, /M004\/S02/);
+  assert.match(result.reason, /re-rendering it from the workflow database failed/);
+  assert.match(result.reason, /rebuild markdown/);
+  assert.doesNotMatch(result.reason, /Run \/gsd doctor/);
   assert.doesNotMatch(result.reason, /Fix the task-plan files manually/);
   // No plan-slice retry budget was spent on an unfixable-by-replan condition.
   assert.equal(session.missingTaskPlanRetryCount.has("M004/S02"), false);

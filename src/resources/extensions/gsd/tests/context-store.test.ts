@@ -231,6 +231,31 @@ describe("context-store: query requirements", () => {
     assert.strictEqual(validated.length, 1, 'status filter validated returns 1');
     assert.strictEqual(validated[0]?.id, 'R002', 'validated returns R002');
   });
+
+  test("query requirements by class", () => {
+    openDatabase(':memory:');
+
+    insertRequirement({
+      id: 'R001', class: 'functional', status: 'active',
+      description: 'req A', why: 'w', source: 'M001', primary_owner: 'S01',
+      supporting_slices: '', validation: 'v', notes: '', full_content: '',
+      superseded_by: null,
+    });
+    insertRequirement({
+      id: 'R002', class: 'non-functional', status: 'active',
+      description: 'req B', why: 'w', source: 'M001', primary_owner: 'S01',
+      supporting_slices: '', validation: 'v', notes: '', full_content: '',
+      superseded_by: null,
+    });
+
+    const functional = queryRequirements({ class: 'functional' });
+    assert.strictEqual(functional.length, 1, 'class filter functional returns 1');
+    assert.strictEqual(functional[0]?.id, 'R001', 'functional returns R001');
+
+    const nonFunctional = queryRequirements({ class: 'non-functional' });
+    assert.strictEqual(nonFunctional.length, 1, 'class filter non-functional returns 1');
+    assert.strictEqual(nonFunctional[0]?.id, 'R002', 'non-functional returns R002');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { stringify } from "yaml";
-import { runCustomVerification } from "../custom-verification.ts";
+import { runCustomVerification, runCustomVerificationWithEvidence } from "../custom-verification.ts";
 import type { WorkflowDefinition } from "../definition-loader.ts";
 import { createFakeRtk } from "../../../../tests/rtk-test-utils.ts";
 
@@ -93,6 +93,14 @@ describe("content-heuristic policy", () => {
 
     const result = runCustomVerification(runDir, "step-1");
     assert.equal(result, "pause");
+
+    const detailed = runCustomVerificationWithEvidence(runDir, "step-1");
+    assert.deepEqual(JSON.parse(detailed.inputPayload), {
+      policy: "content-heuristic",
+      failure: "missing-file",
+      path: "report.md",
+      reads: [{ path: "report.md", exists: false }],
+    });
   });
 
   it("returns 'pause' when file exists but below minSize", () => {
@@ -225,6 +233,16 @@ describe("shell-command policy", () => {
 
     const result = runCustomVerification(runDir, "step-1");
     assert.equal(result, "retry");
+
+    const detailed = runCustomVerificationWithEvidence(runDir, "step-1");
+    assert.equal(detailed.outcome, "retry");
+    assert.deepEqual(JSON.parse(detailed.inputPayload), {
+      policy: "shell-command",
+      command: "test -f nonexistent-file.txt",
+      exitCode: 1,
+      signal: null,
+      error: null,
+    });
   });
 
   it("rewrites shell-command verification through RTK when available", () => {

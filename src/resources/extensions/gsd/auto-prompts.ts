@@ -18,7 +18,8 @@ import {
   resolveTasksDir, resolveTaskFiles, resolveTaskFile,
   taskIdFromTaskFileName,
   relMilestoneFile, relSliceFile, relSlicePath, relMilestonePath,
-  relTaskFile, resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile,
+  relTaskFile, resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile, targetMilestoneFile,
+  normalizeRealPath,
 } from "./paths.js";
 import { resolveInlineLevel, loadEffectiveGSDPreferences, renderLanguageDirectiveForPrompt } from "./preferences.js";
 import { createRepositoryRegistryFromPreferences } from "./repository-registry.js";
@@ -77,6 +78,7 @@ import {
   readPendingTaskRecoveryContext,
   type PendingTaskRecoveryContext,
 } from "./task-recovery-domain-operation.js";
+import type { MilestoneScope } from "./workspace.js";
 
 export { buildSkillActivationBlock, buildSkillDiscoveryVars };
 
@@ -592,54 +594,59 @@ export function buildRepoRegistryBlock(base: string): string {
  * @param mid  - Milestone ID (e.g. `"M001"`).
  * @param sid  - Optional slice ID (e.g. `"S01"`). When provided, the slice
  *   RESEARCH file is preferred over the milestone-level one.
+ * @param displayBase - Optional execution root that emitted paths are relative to.
  * @returns Markdown string of file path bullets, or a fallback instruction.
  */
 export function buildSourceFilePaths(
   base: string,
   mid: string,
   sid?: string,
+  displayBase?: string,
 ): string {
   const paths: string[] = [];
+  const displayPath = (absolutePath: string, defaultPath: string): string => displayBase
+    ? relative(normalizeRealPath(displayBase), absolutePath).split(sep).join("/") || "."
+    : defaultPath;
 
   const projectPath = resolveGsdRootFile(base, "PROJECT");
   if (existsSync(projectPath)) {
-    paths.push(`- **Project**: \`${relGsdRootFile("PROJECT")}\``);
+    paths.push(`- **Project**: \`${displayPath(projectPath, relGsdRootFile("PROJECT"))}\``);
   }
 
   const requirementsPath = resolveGsdRootFile(base, "REQUIREMENTS");
   if (existsSync(requirementsPath)) {
-    paths.push(`- **Requirements**: \`${relGsdRootFile("REQUIREMENTS")}\``);
+    paths.push(`- **Requirements**: \`${displayPath(requirementsPath, relGsdRootFile("REQUIREMENTS"))}\``);
   }
 
   const decisionsPath = resolveGsdRootFile(base, "DECISIONS");
   if (existsSync(decisionsPath)) {
-    paths.push(`- **Decisions**: \`${relGsdRootFile("DECISIONS")}\``);
+    paths.push(`- **Decisions**: \`${displayPath(decisionsPath, relGsdRootFile("DECISIONS"))}\``);
   }
 
   const queuePath = resolveGsdRootFile(base, "QUEUE");
   if (existsSync(queuePath)) {
-    paths.push(`- **Queue**: \`${relGsdRootFile("QUEUE")}\``);
+    paths.push(`- **Queue**: \`${displayPath(queuePath, relGsdRootFile("QUEUE"))}\``);
   }
 
   const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
   if (contextPath) {
-    paths.push(`- **Milestone Context**: \`${relMilestoneFile(base, mid, "CONTEXT")}\``);
+    paths.push(`- **Milestone Context**: \`${displayPath(contextPath, relMilestoneFile(base, mid, "CONTEXT"))}\``);
   }
 
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
   if (roadmapPath) {
-    paths.push(`- **Roadmap**: \`${relMilestoneFile(base, mid, "ROADMAP")}\``);
+    paths.push(`- **Roadmap**: \`${displayPath(roadmapPath, relMilestoneFile(base, mid, "ROADMAP"))}\``);
   }
 
   if (sid) {
     const researchPath = resolveSliceFile(base, mid, sid, "RESEARCH");
     if (researchPath) {
-      paths.push(`- **Slice Research**: \`${relSliceFile(base, mid, sid, "RESEARCH")}\``);
+      paths.push(`- **Slice Research**: \`${displayPath(researchPath, relSliceFile(base, mid, sid, "RESEARCH"))}\``);
     }
   } else {
     const researchPath = resolveMilestoneFile(base, mid, "RESEARCH");
     if (researchPath) {
-      paths.push(`- **Milestone Research**: \`${relMilestoneFile(base, mid, "RESEARCH")}\``);
+      paths.push(`- **Milestone Research**: \`${displayPath(researchPath, relMilestoneFile(base, mid, "RESEARCH"))}\``);
     }
   }
 
@@ -2123,12 +2130,29 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
   });
 }
 
-export async function buildPlanMilestonePrompt(mid: string, midTitle: string, base: string, level?: InlineLevel): Promise<string> {
+export async function buildPlanMilestonePrompt(
+  mid: string,
+  midTitle: string,
+  base: string,
+  milestoneScope: MilestoneScope,
+  level?: InlineLevel,
+): Promise<string> {
+  const projectBase = milestoneScope.workspace.projectRoot;
+  const promptBase = normalizeRealPath(base);
+  const displayProjectPath = (path: string): string => relative(promptBase, path).split(sep).join("/") || ".";
+  const rebaseInlineSource = (
+    body: string | null,
+    key: "PROJECT" | "REQUIREMENTS" | "DECISIONS",
+  ): string | null => body?.replace(
+    `Source: \`${relGsdRootFile(key)}\``,
+    `Source: \`${displayProjectPath(resolveGsdRootFile(projectBase, key))}\``,
+  ) ?? null;
   const inlineLevel = level ?? resolveInlineLevel();
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
-  const researchPath = resolveMilestoneFile(base, mid, "RESEARCH");
-  const researchRel = relMilestoneFile(base, mid, "RESEARCH");
+  const contextPath = milestoneScope.contextFile();
+  const contextRel = displayProjectPath(contextPath);
+  const researchPath = resolveMilestoneFile(projectBase, mid, "RESEARCH");
+  const researchTarget = researchPath ?? targetMilestoneFile(projectBase, mid, "RESEARCH", midTitle);
+  const researchRel = displayProjectPath(researchTarget);
 
   const inlined: string[] = [];
   const contextTelemetry: PromptContextTelemetryEntry[] = [];
@@ -2138,7 +2162,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   };
 
   // Inject phase handoff anchor from research phase (if available)
-  const researchAnchor = readPhaseAnchor(base, mid, "research-milestone");
+  const researchAnchor = readPhaseAnchor(projectBase, mid, "research-milestone");
   if (researchAnchor) {
     pushTracked("research-anchor", formatAnchorForPrompt(researchAnchor));
   } else {
@@ -2155,26 +2179,32 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     trackPromptContext(contextTelemetry, "milestone-research", "skipped", null, "missing");
   }
   const { inlinePriorMilestoneSummary } = await import("./files.js");
-  const priorSummaryInline = await inlinePriorMilestoneSummary(mid, base);
+  const priorSummaryInline = await inlinePriorMilestoneSummary(mid, projectBase);
   if (priorSummaryInline) {
     pushTracked("prior-milestone-summary", priorSummaryInline);
   } else {
     trackPromptContext(contextTelemetry, "prior-milestone-summary", "skipped", null, "missing");
   }
   if (inlineLevel === "full") {
-    const projectInline = await inlineProjectFromDb(base);
+    const projectInline = rebaseInlineSource(await inlineProjectFromDb(projectBase), "PROJECT");
     if (projectInline) {
       pushTracked("project", projectInline, inlineLevel);
     } else {
       trackPromptContext(contextTelemetry, "project", "skipped", null, "missing");
     }
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
+    const requirementsInline = rebaseInlineSource(
+      await inlineRequirementsFromDb(projectBase, mid, undefined, inlineLevel),
+      "REQUIREMENTS",
+    );
     if (requirementsInline) {
       pushTracked("requirements", requirementsInline, inlineLevel);
     } else {
       trackPromptContext(contextTelemetry, "requirements", "skipped", null, "missing");
     }
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
+    const decisionsInline = rebaseInlineSource(
+      await inlineDecisionsFromDb(projectBase, mid, undefined, inlineLevel),
+      "DECISIONS",
+    );
     if (decisionsInline) {
       pushTracked("decisions", decisionsInline, inlineLevel);
     } else {
@@ -2182,7 +2212,10 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     }
   } else if (inlineLevel === "standard") {
     trackPromptContext(contextTelemetry, "project", "skipped", null, "handled as on-demand path");
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
+    const requirementsInline = rebaseInlineSource(
+      await inlineRequirementsFromDb(projectBase, mid, undefined, inlineLevel),
+      "REQUIREMENTS",
+    );
     if (requirementsInline) {
       pushTracked("requirements", requirementsInline, inlineLevel);
     } else {
@@ -2200,17 +2233,17 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
       "",
       "Broader project context is available if roadmap planning needs it. Read only the source that answers the planning question:",
       "",
-      `- \`${relGsdRootFile("PROJECT")}\` - product/project narrative`,
-      `- \`${relGsdRootFile("DECISIONS")}\` - active architecture/product decisions`,
+      `- \`${displayProjectPath(resolveGsdRootFile(projectBase, "PROJECT"))}\` - product/project narrative`,
+      `- \`${displayProjectPath(resolveGsdRootFile(projectBase, "DECISIONS"))}\` - active architecture/product decisions`,
     ].join("\n");
     inlined.push(onDemandDocs);
     trackPromptContext(contextTelemetry, "project,decisions", "on-demand", onDemandDocs);
   }
-  const queuePath = resolveGsdRootFile(base, "QUEUE");
+  const queuePath = resolveGsdRootFile(projectBase, "QUEUE");
   if (existsSync(queuePath)) {
     const queueInline = await inlineFileSmart(
       queuePath,
-      relGsdRootFile("QUEUE"),
+      displayProjectPath(queuePath),
       "Project Queue",
       `${mid} ${midTitle}`,
     );
@@ -2219,7 +2252,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     trackPromptContext(contextTelemetry, "project-queue", "skipped", null, "missing");
   }
   // Scoped + budgeted — see issue #4719
-  const knowledgeInlinePM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
+  const knowledgeInlinePM = await inlineKnowledgeBudgeted(projectBase, extractKeywords(midTitle));
   if (knowledgeInlinePM) {
     pushTracked("knowledge", knowledgeInlinePM);
   } else {
@@ -2254,27 +2287,27 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   );
   const inlinedContext = prependContextModeToBlock(
     "plan-milestone",
-    base,
+    projectBase,
     cappedInlinedContext,
   );
   emitPromptContextTelemetry("plan-milestone", contextTelemetry, inlinedContext);
 
-  const outputRelPath = relMilestoneFile(base, mid, "ROADMAP");
-  const researchOutputPath = join(base, relMilestoneFile(base, mid, "RESEARCH"));
-  const secretsOutputPath = join(base, relMilestoneFile(base, mid, "SECRETS"));
+  const roadmapPath = milestoneScope.roadmapFile();
+  const secretsOutputPath = targetMilestoneFile(projectBase, mid, "SECRETS", midTitle);
   return loadPrompt("plan-milestone", {
     workingDirectory: base,
+    projectGsdPath: displayProjectPath(milestoneScope.workspace.contract.projectGsd),
     milestoneId: mid, milestoneTitle: midTitle,
-    milestonePath: relMilestonePath(base, mid, midTitle),
+    milestonePath: displayProjectPath(milestoneScope.milestoneDir()),
     contextPath: contextRel,
     researchPath: researchRel,
-    researchOutputPath,
-    outputPath: join(base, outputRelPath),
-    secretsOutputPath,
+    researchOutputPath: displayProjectPath(researchTarget),
+    outputPath: displayProjectPath(roadmapPath),
+    secretsOutputPath: displayProjectPath(secretsOutputPath),
     inlinedContext,
-    sourceFilePaths: buildSourceFilePaths(base, mid),
+    sourceFilePaths: buildSourceFilePaths(projectBase, mid, undefined, promptBase),
     skillActivation: buildSkillActivationBlock({
-      base,
+      base: projectBase,
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],

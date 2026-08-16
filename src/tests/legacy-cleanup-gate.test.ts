@@ -184,16 +184,13 @@ test("collectLegacyStatePathProof passes when no production caller, importer, or
   assert.match(renderLegacyStatePathProofSummary(result), /Status: PASS/);
 });
 
-test("the live repository proof is red — the legacy read path is still in production use", async () => {
+test("the live repository proof is green — the legacy read path is gone", async () => {
   const result = await collectLegacyStatePathProof({ root: process.cwd() });
 
   const files = [...new Set(result.offenders.map((o: { file: string }) => o.file))].sort();
 
-  assert.equal(result.ok, false, "greenness here would mean the rename, not the migration, closed the gate");
-  assert.ok(
-    result.offenders.some((o: { kind: string }) => o.kind === "legacyParserSymbol"),
-    `Expected relocated-symbol offenders. Offender files:\n  ${files.join("\n  ")}`,
-  );
+  assert.equal(result.ok, true, `legacy state-path offenders remain:\n  ${files.join("\n  ")}`);
+  assert.deepEqual(result.offenders, []);
 });
 
 test("renderLegacyCleanupGateSummary includes blockers", () => {

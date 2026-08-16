@@ -19,6 +19,7 @@ export type DoctorIssueCode =
   | "tracked_runtime_files"
   | "legacy_slice_branches"
   | "stale_crash_lock"
+  | "stale_paused_session"
   | "stale_parallel_session"
   | "orphaned_completed_units"
   | "stale_hook_state"
@@ -91,9 +92,14 @@ export type DoctorIssueCode =
   | "completed_milestone_reopened"
   | "db_duplicate_id"
   | "db_unavailable"
+  | "liveness_backstop_schema_missing"
   | "memories_fts_rebuild_missing"
   | "projection_drift"
   | "unresolved_projection_evidence"
+  // Orphaned execution Attempts (#1749)
+  | "orphaned_running_attempt"
+  // Pre-#1659 legacy import remediation (#1661)
+  | "lifecycle_projection_wrong_kind"
   // Milestone filesystem/DB drift (#4996)
   | "orphan_milestone_dir"
   | "orphan_milestone_db"

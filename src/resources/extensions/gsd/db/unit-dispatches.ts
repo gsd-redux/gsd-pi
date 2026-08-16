@@ -487,8 +487,7 @@ export function markLatestActiveForWorkerCanceled(workerId: string, reason: stri
 
 /**
  * Fetch the most recent N dispatches for a unit. Used by recordDispatchClaim
- * callers to compute attempt_n and by detect-stuck.ts (B3) to consult
- * retry budget before tripping the stuck verdict.
+ * callers to compute attempt_n.
  */
 export function getRecentForUnit(unitId: string, limit = 10): UnitDispatchRow[] {
   if (!isDbAvailable()) return [];
@@ -511,74 +510,26 @@ export function getLatestForUnit(unitId: string): UnitDispatchRow | null {
   return row ?? null;
 }
 
-/**
- * Phase C — return the most recent unit_id values for a worker, oldest-first.
- *
- * Drop-in replacement for the persistence side of stuck-state.json's
- * `recentUnits` field. The auto-loop uses this to seed loopState.recentUnits
- * on session start so the stuck-detector window survives a session restart
- * (#3704). Returned in oldest-first order to match the in-memory window
- * shape that detect-stuck.ts expects.
- */
-export function getRecentUnitKeysForWorker(
-  workerId: string,
-  limit = 20,
-): Array<{ key: string }> {
-  if (!isDbAvailable()) return [];
+export function getDispatchById(dispatchId: number): UnitDispatchRow | null {
+  if (!isDbAvailable()) return null;
   const db = _getAdapter()!;
-  const rows = db.prepare(
-    `SELECT unit_id FROM unit_dispatches
-     WHERE worker_id = :worker_id
-     ORDER BY started_at DESC, id DESC
-     LIMIT :limit`,
-  ).all({ ":worker_id": workerId, ":limit": limit }) as Array<{ unit_id: string }>;
-  // Reverse so callers consume oldest-first (sliding-window semantics).
-  return rows.reverse().map((r) => ({ key: r.unit_id }));
+  const row = db.prepare(
+    `SELECT * FROM unit_dispatches WHERE id = :id LIMIT 1`,
+  ).get({ ":id": dispatchId }) as UnitDispatchRow | undefined;
+  return row ?? null;
 }
 
-export function getRecentUnitKeysForProjectRoot(
-  projectRootRealpath: string,
-  limit = 20,
-  traceId?: string,
-): Array<{ key: string }> {
-  if (!isDbAvailable()) return [];
+/** The UnitRun for this worker: the claimed or running dispatch row. */
+export function getActiveForWorker(workerId: string): UnitDispatchRow | null {
+  if (!isDbAvailable()) return null;
   const db = _getAdapter()!;
-  // When a trace_id is provided, scope the window to the current session so
-  // stale finalize-retry entries from PREVIOUS sessions don't fire detectStuck
-  // Rule 1 on the first iteration of a new session — killing auto-mode before
-  // any new dispatch runs. Without this, a project that had two consecutive
-  // finalize-retry failures in a prior session is permanently stuck: every
-  // fresh session loads those stale errors and immediately declares stuck.
-  if (traceId) {
-    const rows = db.prepare(
-      `SELECT ud.unit_type, ud.unit_id
-       FROM unit_dispatches ud
-       INNER JOIN workers w ON w.worker_id = ud.worker_id
-       WHERE w.project_root_realpath = :project_root_realpath
-         AND w.status != 'crashed'
-         AND ud.trace_id = :trace_id
-       ORDER BY ud.started_at DESC, ud.id DESC
-       LIMIT :limit`,
-    ).all({
-      ":project_root_realpath": projectRootRealpath,
-      ":trace_id": traceId,
-      ":limit": limit,
-    }) as Array<{ unit_type: string; unit_id: string }>;
-    return rows.reverse().map((r) => ({ key: `${r.unit_type}/${r.unit_id}` }));
-  }
-  const rows = db.prepare(
-    `SELECT ud.unit_type, ud.unit_id
-     FROM unit_dispatches ud
-     INNER JOIN workers w ON w.worker_id = ud.worker_id
-     WHERE w.project_root_realpath = :project_root_realpath
-       AND w.status != 'crashed'
-     ORDER BY ud.started_at DESC, ud.id DESC
-     LIMIT :limit`,
-  ).all({
-    ":project_root_realpath": projectRootRealpath,
-    ":limit": limit,
-  }) as Array<{ unit_type: string; unit_id: string }>;
-  return rows.reverse().map((r) => ({ key: `${r.unit_type}/${r.unit_id}` }));
+  const row = db.prepare(
+    `SELECT * FROM unit_dispatches
+     WHERE worker_id = :worker_id AND status IN ('claimed','running')
+     ORDER BY id DESC
+     LIMIT 1`,
+  ).get({ ":worker_id": workerId }) as UnitDispatchRow | undefined;
+  return row ?? null;
 }
 
 /**

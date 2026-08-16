@@ -8,7 +8,7 @@
 
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -19,6 +19,8 @@ import { WorktreeStateProjection } from "../worktree-state-projection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 import { writeGraph, readGraph, type WorkflowGraph, type GraphStep } from "../graph.ts";
 import { SourceObservationStore } from "../source-observations.js";
+import { closeDatabase, openDatabase } from "../gsd-db.js";
+import { recordNonAdvancingOutcome } from "../auto-liveness-backstop.js";
 import { stringify } from "yaml";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -44,6 +46,10 @@ async function resolveNextAgentEnd(timeoutMs = 3_000): Promise<void> {
 
 afterEach(() => {
   _resetPendingResolve();
+  // Close the singleton workflow database while its temp dir still exists —
+  // closing it after the directory is gone raises a disk I/O error that leaves
+  // the stale handle installed for the next case.
+  closeDatabase();
   for (const d of tmpDirs) {
     try { rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* Windows EPERM — OS cleans up temp dirs */ }
   }
@@ -114,6 +120,7 @@ function makeLoopSession(overrides?: Record<string, unknown>) {
     originalBasePath: "",
     currentMilestoneId: null,
     currentUnit: null,
+    unitExecutionInFlight: false,
     currentUnitRouting: null,
     sourceObservations: new SourceObservationStore(),
     completedUnits: [],
@@ -163,6 +170,11 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
   const callLog: string[] = [];
 
   const baseDeps: LoopDeps = {
+    // These loop-integration cases run against a bare temp run dir with no
+    // workflow DB, so the ADR-047 backstop would fail closed on its first
+    // non-advancing turn and stop the loop before the behaviour under test.
+    // Backstop adjudication has its own coverage in auto-loop.test.ts.
+    adjudicateNonAdvancingOutcome: () => null,
     lockBase: () => "/tmp/test-lock",
     buildSnapshotOpts: () => ({}),
     stopAuto: async (_ctx, _pi, reason) => {
@@ -269,9 +281,129 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
   return { ...baseDeps, ...overrides, callLog };
 }
 
+interface VerificationObservation {
+  inputPayload: string;
+  count: number;
+  tripped: boolean;
+}
+
+async function runVerificationScenario(input: {
+  runDir: string;
+  mutateFiles: () => void;
+  observations: VerificationObservation[];
+  hostBoundary?: NonNullable<LoopDeps["customEngineHostVerificationBoundary"]>;
+}): Promise<void> {
+  input.mutateFiles();
+  _resetPendingResolve();
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const session = makeLoopSession({
+    activeEngineId: "custom",
+    activeRunDir: input.runDir,
+    basePath: input.runDir,
+  });
+  const deps = makeMockDeps({
+    ...(input.hostBoundary ? { customEngineHostVerificationBoundary: input.hostBoundary } : {}),
+    adjudicateNonAdvancingOutcome: (_session, outcome) => {
+      const recorded = recordNonAdvancingOutcome({
+        scopeId: realpathSync(input.runDir),
+        guardId: outcome.guardId,
+        unitType: outcome.unitType,
+        unitId: outcome.unitId,
+        inputPayload: outcome.inputPayload,
+      }, outcome.sanctionedExit ? { sanctionedExit: outcome.sanctionedExit } : undefined);
+      if (outcome.guardId === "custom-engine-verify") {
+        input.observations.push({
+          inputPayload: outcome.inputPayload,
+          count: recorded.count,
+          tripped: recorded.tripped,
+        });
+      }
+      return null;
+    },
+    pauseAuto: async () => {
+      session.active = false;
+    },
+    stopAuto: async (_ctx, _pi, reason) => {
+      deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+      session.active = false;
+    },
+  });
+
+  const resolver = setInterval(() => {
+    if (_hasPendingResolveForTest()) {
+      resolveAgentEnd({ messages: [{ role: "assistant" }] });
+    }
+  }, 25);
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      autoLoop(ctx, pi, session, deps),
+      new Promise((_, reject) =>
+        timeout = setTimeout(() => {
+          session.active = false;
+          resolveAgentEnd({ messages: [{ role: "assistant" }] });
+          reject(new Error(`autoLoop did not stop; log=${deps.callLog.join(",")}`));
+        }, 5_000),
+      ),
+    ]);
+  } finally {
+    clearInterval(resolver);
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────
 
-describe("Custom engine loop integration", () => {
+// concurrency 1: these cases share process-global state — the pending
+// agent_end resolver and the singleton workflow database — so two DB-backed
+// cases running at once would close each other's database mid-run.
+describe("Custom engine loop integration", { concurrency: 1 }, () => {
+  it("threads custom-engine runGuards ids and budget inputs through adjudication", async () => {
+    _resetPendingResolve();
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "guarded-step" })], "guarded-workflow");
+    writeGraph(runDir, graph);
+    writeDefinition(runDir, graph.steps, "guarded-workflow");
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeLoopSession({
+      activeEngineId: "custom",
+      activeRunDir: runDir,
+      basePath: runDir,
+    });
+    let adjudicated: { guardId: string; inputPayload: string } | undefined;
+    const deps = makeMockDeps({
+      loadEffectiveGSDPreferences: () => ({
+        preferences: { budget_ceiling: 5, budget_enforcement: "pause" },
+      } as any),
+      getLedger: () => ({ units: [{}] } as any),
+      getProjectTotals: () => ({ cost: 10 } as any),
+      getNewBudgetAlertLevel: () => 100,
+      getBudgetAlertLevel: () => 100,
+      getBudgetEnforcementAction: () => "pause",
+      adjudicateNonAdvancingOutcome: (_session, input) => {
+        adjudicated = { guardId: input.guardId, inputPayload: input.inputPayload };
+        return null;
+      },
+    });
+
+    await autoLoop(ctx, pi, s, deps);
+
+    assert.equal(adjudicated?.guardId, "budget-pause");
+    assert.deepEqual(JSON.parse(adjudicated!.inputPayload), {
+      budgetCeiling: 5,
+      totalCost: 10,
+      budgetPct: 2,
+      enforcement: "pause",
+      effectiveAction: "pause",
+      hookAction: null,
+      newBudgetAlertLevel: 100,
+      thresholdPct: 100,
+    });
+  });
+
   it("dispatches a 3-step workflow through autoLoop and all steps complete", async () => {
     _resetPendingResolve();
 
@@ -555,7 +687,7 @@ describe("Custom engine loop integration", () => {
     assert.equal(turnResults.length, 1);
     assert.equal(turnResults[0].status, "stopped");
     assert.equal(turnResults[0].failureClass, "manual-attention");
-    assert.match(turnResults[0].error ?? "", /custom-engine-dispatch-stop/);
+    assert.match(turnResults[0].error ?? "", /Workflow blocked: no pending steps are ready/);
     assert.ok(
       deps.callLog.includes("journal:iteration-end"),
       `blocked workflow should emit iteration-end; log=${deps.callLog.join(",")}`,
@@ -910,6 +1042,400 @@ describe("Custom engine loop integration", () => {
     assert.equal(pi2.calls.length, 2, "second session should exhaust after attempts 3 and 4");
     const stopEntry = deps2.callLog.find((e: string) => e.startsWith("stopAuto:"));
     assert.match(stopEntry ?? "", /requested retry 4 times without passing/);
+  });
+
+  it("#1672: custom-engine stop persists its signature before database teardown", async (t) => {
+    // Gap 1 (#1672): the custom-engine verification adapters used to call
+    // finishTurn with three arguments, so pendingLoopLiveness stayed unset and
+    // a verification retry could recur forever without a block signature.
+    // Every retry turn must now hand the adjudication boundary a guard id and
+    // an actionable sanctioned exit.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "retry-step" })], "retry-liveness");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "retry-liveness",
+      steps: [{
+        id: "retry-step",
+        name: "retry-step",
+        prompt: "Do retry-step",
+        produces: "retry-step/output.md",
+        verify: { policy: "shell-command", command: "exit 1" },
+      }],
+    }));
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const s = makeLoopSession({
+      activeEngineId: "custom",
+      activeRunDir: runDir,
+      basePath: runDir,
+    });
+    const dbPath = join(runDir, ".gsd", "gsd.db");
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(dbPath);
+    t.after(() => {
+      try { closeDatabase(); } catch { /* noop */ }
+    });
+    let stopOutcome: {
+      guardId: string;
+      unitType: string;
+      unitId: string;
+      inputPayload: string;
+      sanctionedExit?: string;
+    } | undefined;
+    const verifyOutcomes: Array<{
+      guardId: string;
+      inputPayload: string;
+      count: number;
+      tripped: boolean;
+    }> = [];
+    const deps = makeMockDeps({
+      adjudicateNonAdvancingOutcome: (_session, input) => {
+        const recorded = recordNonAdvancingOutcome({
+          scopeId: realpathSync(runDir),
+          guardId: input.guardId,
+          unitType: input.unitType,
+          unitId: input.unitId,
+          inputPayload: input.inputPayload,
+        }, input.sanctionedExit ? { sanctionedExit: input.sanctionedExit } : undefined);
+        if (input.guardId === "custom-engine-verify") {
+          verifyOutcomes.push({
+            guardId: input.guardId,
+            inputPayload: input.inputPayload,
+            count: recorded.count,
+            tripped: recorded.tripped,
+          });
+          stopOutcome = input;
+        }
+        return null;
+      },
+      stopAuto: async (_ctx, _pi, reason) => {
+        deps.callLog.push(`stopAuto:${reason ?? "no-reason"}`);
+        s.active = false;
+        closeDatabase();
+      },
+    });
+
+    const resolver = setInterval(() => {
+      if (_hasPendingResolveForTest()) {
+        resolveAgentEnd({ messages: [{ role: "assistant" }] });
+      }
+    }, 25);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        autoLoop(ctx, pi, s, deps),
+        new Promise((_, reject) =>
+          timeout = setTimeout(() => {
+            s.active = false;
+            resolveAgentEnd({ messages: [{ role: "assistant" }] });
+            reject(new Error(
+              `autoLoop did not stop; log=${deps.callLog.join(",")}`,
+            ));
+          }, 3_000),
+        ),
+      ]);
+    } finally {
+      clearInterval(resolver);
+      if (timeout) clearTimeout(timeout);
+    }
+
+    assert.ok(stopOutcome, "the exhausted custom-engine verification stop must reach adjudication");
+    assert.equal(verifyOutcomes.length, 4, "every verification retry, including exhaustion, must reach adjudication");
+    const retryEvidence = verifyOutcomes.slice(0, 3).map((outcome) => JSON.parse(outcome.inputPayload));
+    assert.deepEqual(retryEvidence, [
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+      { policy: "shell-command", command: "exit 1", exitCode: 1, signal: null, error: null },
+    ]);
+    assert.equal(verifyOutcomes[0]?.tripped, false);
+    assert.equal(verifyOutcomes[1]?.tripped, true, "identical engine evidence must trip at occurrence two");
+
+    // Changed-evidence fidelity is proven through production in the #1674
+    // case below; synthesising payloads here would pass even if the loop
+    // collapsed distinct engine evidence.
+    assert.equal(stopOutcome.guardId, "custom-engine-verify");
+    assert.match(stopOutcome.sanctionedExit ?? "", /`\/gsd forensics`/);
+    openDatabase(dbPath);
+    const repeated = recordNonAdvancingOutcome({
+      scopeId: realpathSync(runDir),
+      guardId: stopOutcome.guardId,
+      unitType: stopOutcome.unitType,
+      unitId: stopOutcome.unitId,
+      inputPayload: stopOutcome.inputPayload,
+    }, stopOutcome.sanctionedExit ? { sanctionedExit: stopOutcome.sanctionedExit } : undefined);
+    assert.equal(repeated.tripped, true, "the stop signature must survive database reopen as occurrence one");
+  });
+
+  it("#1674: differing custom verification content keeps distinct signatures through autoLoop", async () => {
+    // ADR-047 §3: a block signature hashes the inputs the guard actually read.
+    // Pattern verification reads the produced file's content, so two runs whose
+    // nonmatching content differs must persist different signatures (no false
+    // trip), while two runs with identical content must trip at occurrence two.
+    // Everything here is driven through autoLoop — the verification evidence is
+    // built by production custom verification and threaded by the loop.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "content-step" })], "content-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "content-fidelity",
+      steps: [{
+        id: "content-step",
+        name: "content-step",
+        prompt: "Do content-step",
+        produces: ["content-step/output.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "content-step"), { recursive: true });
+    const outputPath = join(runDir, "content-step", "output.md");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+
+    const verifyOutcomes: VerificationObservation[] = [];
+
+    const runWithContent = async (content: string): Promise<void> => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => writeFileSync(outputPath, content),
+        observations: verifyOutcomes,
+      });
+    };
+
+    await runWithContent("bad-1\n");
+    await runWithContent("bad-2\n");
+    await runWithContent("bad-2\n");
+
+    assert.equal(
+      verifyOutcomes.length,
+      3,
+      "each pattern-mismatch pause must reach adjudication once",
+    );
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "distinct nonmatching content must produce distinct verification evidence",
+    );
+    assert.equal(verifyOutcomes[0]?.tripped, false);
+    assert.equal(
+      verifyOutcomes[0]?.count,
+      1,
+      "the first mismatch is occurrence one",
+    );
+    assert.equal(
+      verifyOutcomes[1]?.tripped,
+      false,
+      "changed content must not trip the backstop at occurrence two",
+    );
+    assert.equal(
+      verifyOutcomes[1]?.count,
+      1,
+      "changed content starts its own signature counter",
+    );
+    assert.equal(
+      payloads[1],
+      payloads[2],
+      "identical content must produce identical verification evidence",
+    );
+    assert.equal(
+      verifyOutcomes[2]?.tripped,
+      true,
+      "identical evidence must trip at occurrence two",
+    );
+  });
+
+  it("#1674: every output the content guard read stays in the signature through autoLoop", async () => {
+    // ADR-047 §3: the guard reads each `produces` entry in order before one of
+    // them fails, so all of those reads are signature inputs. Recording only the
+    // failing file collapsed "output a changed while b still fails" into the
+    // signature of "b fails" and falsely tripped the wedge at occurrence two.
+    // Driven entirely through autoLoop: production content verification builds
+    // the evidence and the loop threads it to adjudication.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "multi-step" })], "multi-output-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "multi-output-fidelity",
+      steps: [{
+        id: "multi-step",
+        name: "multi-step",
+        prompt: "Do multi-step",
+        produces: ["multi-step/a.md", "multi-step/b.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "multi-step"), { recursive: true });
+    const matchingPath = join(runDir, "multi-step", "a.md");
+    const failingPath = join(runDir, "multi-step", "b.md");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+
+    const verifyOutcomes: VerificationObservation[] = [];
+
+    const runWithMatchingOutput = async (matchingContent: string): Promise<void> => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {
+          writeFileSync(matchingPath, matchingContent);
+          writeFileSync(failingPath, "bad\n");
+        },
+        observations: verifyOutcomes,
+      });
+    };
+
+    await runWithMatchingOutput("ok-1\n");
+    await runWithMatchingOutput("ok-2\n");
+    await runWithMatchingOutput("ok-2\n");
+
+    assert.equal(verifyOutcomes.length, 3, "each mismatch pause must reach adjudication once");
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "a changed matching output must produce distinct evidence even though the same output fails",
+    );
+    assert.equal(verifyOutcomes[1]?.tripped, false, "a changed read must not trip the backstop");
+    assert.equal(verifyOutcomes[1]?.count, 1, "the changed read starts its own signature counter");
+    assert.equal(payloads[1], payloads[2], "identical reads must produce identical evidence");
+    assert.equal(verifyOutcomes[2]?.tripped, true, "identical reads must trip at occurrence two");
+  });
+
+  it("#1674: min-size evidence includes every preceding size read through autoLoop", async () => {
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "size-step" })], "multi-size-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "multi-size-fidelity",
+      steps: [{
+        id: "size-step",
+        name: "size-step",
+        prompt: "Do size-step",
+        produces: ["size-step/a.md", "size-step/b.md"],
+        verify: { policy: "content-heuristic", minSize: 5 },
+      }],
+    }));
+    mkdirSync(join(runDir, "size-step"), { recursive: true });
+    const passingPath = join(runDir, "size-step", "a.md");
+    const failingPath = join(runDir, "size-step", "b.md");
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+
+    const observations: VerificationObservation[] = [];
+    const runWithPassingSize = async (content: string): Promise<void> => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {
+          writeFileSync(passingPath, content);
+          writeFileSync(failingPath, "x");
+        },
+        observations,
+      });
+    };
+
+    await runWithPassingSize("1234567890");
+    await runWithPassingSize("12345678901");
+    await runWithPassingSize("12345678901");
+
+    assert.equal(observations.length, 3);
+    const payloads = observations.map((outcome) => outcome.inputPayload);
+    assert.notEqual(payloads[0], payloads[1], "changing a preceding size read must change evidence");
+    assert.deepEqual(JSON.parse(payloads[1] ?? "{}").reads, [
+      { path: "size-step/a.md", exists: true, size: 11 },
+      { path: "size-step/b.md", exists: true, size: 1 },
+    ]);
+    assert.equal(observations[1]?.tripped, false);
+    assert.equal(payloads[1], payloads[2]);
+    assert.equal(observations[2]?.tripped, true);
+  });
+
+  it("#1674: the loop composes host evidence over the policy read that preceded it", async () => {
+    // ADR-047 §3: one verification turn can read twice — the policy, then the
+    // host boundary's own decisive inputs (post-policy source drift here, and a
+    // second host call once interactive human review resolves the blocker).
+    // First-write-wins kept the stale policy read, so two different host
+    // decisions behind one policy failure shared a signature and tripped the
+    // wedge falsely at occurrence two. The host boundary is injected through its
+    // production seam so the loop's composition is what is under test; the stub
+    // mirrors the real boundary's post-policy source-drift path.
+    _resetPendingResolve();
+
+    const runDir = makeTmpDir();
+    const graph = makeGraph([makeStep({ id: "compose-step" })], "compose-fidelity");
+    writeGraph(runDir, graph);
+    writeFileSync(join(runDir, "DEFINITION.yaml"), stringify({
+      version: 1,
+      name: "compose-fidelity",
+      steps: [{
+        id: "compose-step",
+        name: "compose-step",
+        prompt: "Do compose-step",
+        produces: ["compose-step/output.md"],
+        verify: { policy: "content-heuristic", pattern: "^ok" },
+      }],
+    }));
+    mkdirSync(join(runDir, "compose-step"), { recursive: true });
+    writeFileSync(join(runDir, "compose-step", "output.md"), "unchanged-failure\n");
+
+    mkdirSync(join(runDir, ".gsd"), { recursive: true });
+    openDatabase(join(runDir, ".gsd", "gsd.db"));
+
+    const verifyOutcomes: VerificationObservation[] = [];
+
+    const runWithHostDecision = async (sourceRevisionAfter: string): Promise<void> => {
+      await runVerificationScenario({
+        runDir,
+        mutateFiles: () => {},
+        observations: verifyOutcomes,
+        hostBoundary: async (input) => {
+          await input.verifyPolicy();
+          input.recordHostEvidence?.({
+            path: "post-policy-source-drift",
+            sourceRevisionBefore: "sha256:before",
+            sourceRevisionAfter,
+          });
+          return "pause";
+        },
+      });
+    };
+
+    await runWithHostDecision("sha256:after-1");
+    await runWithHostDecision("sha256:after-2");
+    await runWithHostDecision("sha256:after-2");
+
+    assert.equal(verifyOutcomes.length, 3, "each host pause must reach adjudication once");
+    const payloads = verifyOutcomes.map((outcome) => outcome.inputPayload);
+    assert.notEqual(
+      payloads[0],
+      payloads[1],
+      "a different host decision behind an identical policy read must produce distinct evidence",
+    );
+    assert.ok(
+      payloads[0]?.includes("sha256:after-1"),
+      `the composed payload must carry the host read; got ${payloads[0]}`,
+    );
+    assert.ok(
+      payloads[0]?.includes("content-heuristic"),
+      `the composed payload must keep the policy read it followed; got ${payloads[0]}`,
+    );
+    assert.equal(verifyOutcomes[1]?.tripped, false, "a changed host decision must not trip the backstop");
+    assert.equal(payloads[1], payloads[2], "identical reads must produce identical evidence");
+    assert.equal(verifyOutcomes[2]?.tripped, true, "identical reads must trip at occurrence two");
   });
 
   it("two-step workflow drives both steps to complete and stops when isComplete fires", async () => {

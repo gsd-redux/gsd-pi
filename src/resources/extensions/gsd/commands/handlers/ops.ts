@@ -143,6 +143,11 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
     await handleDbRestoreBackup(ctx, projectRoot(), trimmed.replace(/^db restore-backup\s*/, "").trim());
     return true;
   }
+  if (trimmed === "task settle" || trimmed.startsWith("task settle ")) {
+    const { handleTaskSettle } = await import("../../commands-task-settle.js");
+    await handleTaskSettle(trimmed.replace(/^task settle\s*/, "").trim(), ctx, projectRoot());
+    return true;
+  }
   if (trimmed === "sync" || trimmed.startsWith("sync ")) {
     await handleSync(ctx, projectRoot(), trimmed.replace(/^sync\s*/, "").trim());
     return true;

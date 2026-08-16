@@ -423,16 +423,27 @@ export function pruneEphemeralGhostWorktreeDirectories(basePath: string): string
   return removed;
 }
 
-export function removeStaleWorktreeDirectory(wtPath: string, name: string): void {
+export function removeStaleWorktreeDirectory(
+  wtPath: string,
+  name: string,
+  removeDirectory: typeof rmSync = rmSync,
+): void {
   logWarning(
     "reconcile",
     `Removing stale worktree directory (not registered with git): ${wtPath}`,
     { worktree: name },
   );
   try {
-    rmSync(wtPath, { recursive: true, force: true });
+    removeDirectory(wtPath, { recursive: true, force: true });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException)?.code;
+    if (code === "EACCES") {
+      throw new GSDError(
+        GSD_GIT_ERROR,
+        `Cannot remove stale worktree directory at ${wtPath} (EACCES: permission denied). It may contain files owned by another user, such as files created with sudo or by a container. Fix the directory ownership or permissions, or remove it manually, then retry.`,
+        { cause: error as Error },
+      );
+    }
     if (code === "EPERM" || code === "EBUSY") {
       throw new GSDError(
         GSD_GIT_ERROR,
@@ -1088,6 +1099,7 @@ const SKIP_EXACT = [
   ".gsd/auto.lock",
   ".gsd/metrics.json",
   ".gsd/state-manifest.json",
+  ".gsd/state.json",
   ".gsd/doctor-history.jsonl",
   ".gsd/event-log.jsonl",
 ];

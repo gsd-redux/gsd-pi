@@ -28,16 +28,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for release-by-release fixes and [Legacy Rele
 ## Latest Release Highlights
 
 <!-- release-highlights:start -->
-Latest release: **v1.12.0**
+Latest release: **v1.15.0**
 
-- **Added:** Add gsd update --models to refresh the model catalog without a full upgrade.
-- **web:** Per-surface nav registry with host-supplied entries.
-- **gsd:** Add forward import repair.
-- **gsd:** Add crash-safe live import restore.
-- **gsd:** Add pure restore assessment.
-- **gsd:** Add typed authority cutover.
-- **gsd:** Add authority recovery receipt schema.
-- **gsd:** Route explicit recover through import application.
+- **model-router:** Add claude-sonnet-5 to model capability registries.
+- **tools:** Add gsd_requirement_list/get and gsd_decision_list/get (#1608).
+- **pi-ai:** Add missing kimi-coding subscription models to catalog.
+- **pi-ai:** Add Kimi Code (subscription) OAuth provider.
+- **ci:** Retrigger PR checks.
+- **gsd:** Deepen projection delivery ownership.
+- **gsd:** Own slice companion gate lifecycle.
+- **gsd:** Register required schema features once.
 
 <!-- release-highlights:end -->
 
@@ -194,9 +194,7 @@ Then use slash commands inside the GSD session:
 | --- | --- |
 | `src/` | Core runtime resources and bundled extensions |
 | `packages/` | Workspace packages used by the CLI, agent, TUI, RPC, and native bridge |
-| `apps/` | Standalone native apps, such as the GSD Cloud Monitor menu bar app |
 | `native/` | Native engine packaging and platform binaries |
-| `studio/` | Desktop studio app |
 | `web/` | Web UI and API surface |
 | `docs/` | User and developer documentation |
 | `scripts/` | Build, release, migration, and maintenance scripts |

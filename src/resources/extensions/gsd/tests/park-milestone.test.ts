@@ -179,6 +179,10 @@ test('getActiveMilestoneId skips parked', async () => {
       createMilestone(base, 'M002', { withRoadmap: true });
       clearCaches();
 
+      assert.ok(openDatabase(join(base, '.gsd', 'gsd.db')), 'database opens');
+      insertMilestone({ id: 'M001', title: 'Parked', status: 'active' });
+      insertMilestone({ id: 'M002', title: 'Active', status: 'active' });
+
       parkMilestone(base, 'M001', 'Testing');
 
       const activeId = await getActiveMilestoneId(base);

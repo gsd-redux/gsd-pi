@@ -326,7 +326,7 @@ describe("legacy preview identity", () => {
       ...input.base,
       database_schema_version: 44 as typeof LEGACY_IMPORT_BASE_DATABASE_SCHEMA_VERSION,
     };
-    assert.throws(() => sealLegacyImportPreview(input), /database schema 46/);
+    assert.throws(() => sealLegacyImportPreview(input), /database schema 47/);
   });
 
   test("legacy preview identity rejects import kinds the application receipt cannot store", () => {
@@ -695,6 +695,36 @@ describe("legacy preview base snapshot", () => {
         && error.context.row_set === "decision_memories"
         && error.context.identity === '{"source_decision_id":"D001"}',
     );
+  });
+
+  test("legacy preview base snapshot identifies assessments by their primary-key path", () => {
+    const fixture = sourceFixture({
+      readRows(rowSet) {
+        if (rowSet !== "assessments") return [];
+        return [
+          {
+            path: ".gsd/phases/01-foundation/T01-ASSESSMENT.md",
+            milestone_id: "M001",
+            slice_id: "S01",
+            task_id: "T01",
+            scope: "task",
+          },
+          {
+            path: ".gsd/phases/01-foundation/tasks/T01-ASSESSMENT.md",
+            milestone_id: "M001",
+            slice_id: "S01",
+            task_id: "T01",
+            scope: "task",
+          },
+        ];
+      },
+    });
+
+    const snapshot = captureLegacyImportBaseSnapshot(fixture);
+    assert.deepEqual(snapshot.rows.map((row) => row.identity), [
+      '{"path":".gsd/phases/01-foundation/T01-ASSESSMENT.md"}',
+      '{"path":".gsd/phases/01-foundation/tasks/T01-ASSESSMENT.md"}',
+    ]);
   });
 
   test("legacy preview base snapshot rejects integers that cannot be hashed exactly", () => {

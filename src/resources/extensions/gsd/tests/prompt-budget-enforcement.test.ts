@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { buildExecuteTaskPrompt, buildPlanSlicePrompt, buildReactiveExecutePrompt, buildResearchSlicePrompt, inlineDependencySummaries } from "../auto-prompts.js";
 import { buildDiscussSlicePrompt } from "../guided-flow.js";
 import { computeBudgets, truncateAtSectionBoundary } from "../context-budget.js";
+import { relSlicePath } from "../paths.js";
 import {
   closeDatabase,
   insertMilestone,
@@ -806,6 +807,18 @@ describe("prompt-budget: execute-task inline cap (039)", () => {
 });
 
 describe("prompt-budget: discuss-slice inline cap (039)", () => {
+  it("uses the flat-phase context target in its write contract", async (t) => {
+    const base = createFixtureBase();
+    t.after(() => cleanup(base));
+    mkdirSync(join(base, ".gsd", "phases", "01-foundation"), { recursive: true });
+
+    const prompt = await buildDiscussSlicePrompt("M001", "S01", "Current", base);
+    const expectedPath = relSlicePath(base, "M001", "S01");
+
+    assert.ok(prompt.includes(expectedPath), `prompt must write ${expectedPath}`);
+    assert.doesNotMatch(prompt, /\.gsd\/milestones\/M001/);
+  });
+
   it("prepends the configured response language", async () => {
     const base = createFixtureBase();
     const gsdHome = mkdtempSync(join(tmpdir(), "gsd-discuss-slice-language-home-"));

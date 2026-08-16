@@ -40,6 +40,7 @@ import {
 import {
   type PlanningInvocation,
 } from "../planning-invocation.js";
+import { ensurePendingSliceQ8 } from "../db/writers/slice-companion-state.js";
 
 
 export interface PlanSliceTaskInput {
@@ -585,7 +586,7 @@ export async function handlePlanSlice(
             insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: gid, scope: "task", taskId: task.taskId });
           }
         }
-        insertGateRow({ milestoneId: params.milestoneId, sliceId: params.sliceId, gateId: "Q8", scope: "slice" });
+        ensurePendingSliceQ8(context, params);
       },
     });
     operationStatus = receipt.status;

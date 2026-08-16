@@ -12,10 +12,11 @@ import { ALWAYS_PRESERVED_SHIM_TOOL_NAMES } from "@gsd/pi-ai";
 import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
 
-import { buildMilestoneFileName, canonicalPhaseDirName, clearPathCache, milestonesDir, legacyMilestonesDir, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
+import { buildMilestoneFileName, canonicalPhaseDirName, clearPathCache, milestonesDir, legacyMilestonesDir, relMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { applyAskUserQuestionsGateResult, clearDiscussionFlowState, currentWriteGateSnapshot, formatPendingAskUserQuestionsGateMessage, formatTimedOutAskUserQuestionsGateMessage, hostWriteGateAdapter, isApprovalGateVerifiedInSnapshot, isDepthConfirmationAnswer, isMilestoneDepthVerifiedInSnapshot, isQueuePhaseActive, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, shouldBlockWorktreeBash, shouldBlockWorktreeWrite, isGateQuestionId, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId, type WriteGateSnapshot } from "./write-gate.js";
 import { canonicalToolName } from "../engine-hook-contract.js";
 import { resolveManifest } from "../unit-context-manifest.js";
+import { getIsolationMode, resolveEffectiveUnitIsolationMode } from "../preferences.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import {
@@ -952,10 +953,25 @@ async function saveDiscussionQuestionRound(
       "Use it so `/gsd` can resume the in-flight milestone discussion.",
       "",
     ].join("\n");
-  await saveFile(
-    draftPath,
-    `${draftHeader.trimEnd()}\n\n## Captured Question Round — ${timestamp}\n\n${exchange}`,
-  );
+  const draftContent = `${draftHeader.trimEnd()}\n\n## Captured Question Round — ${timestamp}\n\n${exchange}`;
+  await saveFile(draftPath, draftContent);
+
+  try {
+    const { ensureDbOpen } = await import("./dynamic-tools.js");
+    if (await ensureDbOpen(basePath)) {
+      const { insertArtifact } = await import("../gsd-db.js");
+      insertArtifact({
+        path: relMilestoneFile(basePath, milestoneId, "CONTEXT-DRAFT").replace(/^\.gsd\//, ""),
+        artifact_type: "CONTEXT-DRAFT",
+        milestone_id: milestoneId,
+        slice_id: null,
+        task_id: null,
+        full_content: draftContent,
+      });
+    }
+  } catch (err) {
+    safetyLogWarning("guided", `failed to persist CONTEXT-DRAFT artifact for ${milestoneId}: ${(err as Error).message}`);
+  }
 }
 
 function withDepthGateDisplayReason<T extends { block: boolean; reason?: string }>(
@@ -1588,6 +1604,7 @@ export function registerHooks(
     // subagent dispatch. Closes the b23 bug class where a discuss-milestone
     // turn used the host Edit tool to modify user source files.
     const dash = getAutoRuntimeSnapshot();
+    const writeGateBasePath = dash.basePath ?? discussionBasePath;
 
     // ScheduleWakeup is registered by the GSD extension so auto-mode can
     // continue the same unit session after long external waits.
@@ -1625,25 +1642,37 @@ export function registerHooks(
     // Block planning-write tools from landing code at the project root when
     // git.isolation=worktree but auto-mode hasn't created the milestone
     // worktree yet. Without this, writes silently orphan outside git history.
-    if (isToolCallEventType("write", event) || isToolCallEventType("edit", event)) {
-      const wtGuard = shouldBlockWorktreeWrite(
-        event.toolName,
-        event.input.path,
-        dash.basePath ?? discussionBasePath,
-        isAutoActive(),
-        dash.currentUnit?.type,
+    if (
+      isToolCallEventType("write", event)
+      || isToolCallEventType("edit", event)
+      || isToolCallEventType("bash", event)
+    ) {
+      const effectiveIsolationMode = resolveEffectiveUnitIsolationMode(
+        getIsolationMode(writeGateBasePath),
+        dash.isolationDegraded,
+        dash.strandedRecoveryIsolationMode,
       );
-      if (wtGuard.block) return wtGuard;
-    }
 
-    if (isToolCallEventType("bash", event)) {
-      const wtBashGuard = shouldBlockWorktreeBash(
-        event.input.command,
-        dash.basePath ?? discussionBasePath,
-        isAutoActive(),
-        dash.currentUnit?.type,
-      );
-      if (wtBashGuard.block) return wtBashGuard;
+      if (isToolCallEventType("bash", event)) {
+        const wtBashGuard = shouldBlockWorktreeBash(
+          event.input.command,
+          writeGateBasePath,
+          dash.active,
+          dash.currentUnit?.type,
+          effectiveIsolationMode,
+        );
+        if (wtBashGuard.block) return wtBashGuard;
+      } else {
+        const wtGuard = shouldBlockWorktreeWrite(
+          event.toolName,
+          event.input.path,
+          writeGateBasePath,
+          dash.active,
+          dash.currentUnit?.type,
+          effectiveIsolationMode,
+        );
+        if (wtGuard.block) return wtGuard;
+      }
     }
 
     // ── Single-writer engine: block direct writes to STATE.md ──────────

@@ -159,6 +159,7 @@ describe("doctor fix hints", () => {
   test("fixable issue codes instruct /gsd doctor fix, not bare /gsd doctor", () => {
     const fixableCodes = [
       "stale_crash_lock",
+      "stale_paused_session",
       "stale_parallel_session",
       "orphaned_auto_worktree",
       "gitignore_missing_patterns",

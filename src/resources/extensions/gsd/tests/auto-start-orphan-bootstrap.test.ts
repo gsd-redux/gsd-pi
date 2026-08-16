@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { bootstrapAutoSession } from "../auto-start.ts";
 import { AutoSession } from "../auto/session.ts";
+import type { InterruptedSessionAssessment } from "../interrupted-session.ts";
 import {
   closeDatabase,
   insertMilestone,
@@ -248,6 +249,26 @@ function makeCtx(notifications: Array<{ message: string; level?: string }>) {
     },
   };
 }
+
+test("fresh bootstrap clears isolation degradation from a prior auto run (#1689)", async () => {
+  const s = new AutoSession();
+  s.isolationDegraded = true;
+  const notifications: Array<{ message: string; level?: string }> = [];
+
+  const ready = await bootstrapAutoSession(
+    s,
+    makeCtx(notifications) as any,
+    {} as any,
+    tmpdir(),
+    false,
+    false,
+    {} as any,
+    {} as unknown as InterruptedSessionAssessment,
+  );
+
+  assert.equal(ready, false, "the system temp root should stop bootstrap at directory validation");
+  assert.equal(s.isolationDegraded, false, "fresh bootstrap must not inherit degradation");
+});
 
 test("bootstrap aborts before starting next milestone when completed orphan merge fails", async () => {
   const base = makeRepoWithUnmergedCompletedMilestone();

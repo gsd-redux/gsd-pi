@@ -821,6 +821,32 @@ test("isLikelyCommand: prose descriptions are rejected", () => {
   assert.equal(isLikelyCommand("Build succeeds without errors or warnings"), false);
 });
 
+test("isLikelyCommand: lowercase prose is rejected, including a leading file path", () => {
+  // Every prose case above announces itself with a capital letter or a comma.
+  // Lowercase prose fell through to "command" and got executed: the gate ran
+  // `greet/hello.txt exists and contains "hello"`, which tried to execute the
+  // .txt file and failed with exit 126 "Permission denied" — failing the gate
+  // for a task that had actually succeeded.
+  assert.equal(isLikelyCommand('greet/hello.txt exists and contains "hello"'), false);
+  assert.equal(isLikelyCommand("./out/report.txt exists and contains the summary"), false);
+  assert.equal(isLikelyCommand("the migration is complete and the table exists"), false);
+
+  // Real commands with a path-like or bare first token still pass.
+  assert.equal(isLikelyCommand("./scripts/verify.sh"), true);
+  assert.equal(isLikelyCommand("./scripts/check.sh --strict --quiet"), true);
+  assert.equal(isLikelyCommand("mytool build release"), true);
+});
+
+test("discoverCommands: a prose verify field is not run as a shell command", () => {
+  const dir = makeTempDir("gsd-verify-prose");
+  const result = discoverCommands({
+    cwd: dir,
+    taskPlanVerify: 'greet/hello.txt exists and contains "hello"',
+  });
+  assert.deepEqual(result.commands, [], "prose must not become a runnable check");
+  assert.notEqual(result.source, "task-plan");
+});
+
 test("isLikelyCommand: known command word followed by English prose is rejected (issue #1567)", () => {
   assert.equal(isLikelyCommand("git log shows the scaffold commit on branch x"), false);
   assert.equal(isLikelyCommand("make builds the firmware without errors at repo root"), false);

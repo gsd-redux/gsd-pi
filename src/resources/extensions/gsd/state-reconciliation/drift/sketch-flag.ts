@@ -15,7 +15,7 @@ import {
   isDbAvailable,
   setSliceSketchFlag,
 } from "../../gsd-db.js";
-import { parseLegacyPlan as parsePlan } from "../../schemas/parsers.js";
+import { parseProjectionPlan as parsePlan } from "../../schemas/parsers.js";
 import { resolveSliceFile } from "../../paths.js";
 import type { GSDState } from "../../types.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";

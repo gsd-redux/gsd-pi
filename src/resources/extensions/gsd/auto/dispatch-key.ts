@@ -9,8 +9,8 @@
  * ids themselves contain "/" (M001/S01/T01) — the first segment is the unit
  * type.
  *
- * Leaf node in the import DAG: both dispatch-history.ts and detect-stuck.ts
- * consume this grammar, so it lives below them.
+ * Leaf node in the import DAG: the orchestrator and the ADR-047 liveness
+ * backstop consume this grammar, so it lives below them.
  */
 
 /** Build the canonical dispatch key for a unit. One format, one home. */

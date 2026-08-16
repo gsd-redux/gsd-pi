@@ -7,6 +7,7 @@
 | `/gsd` | Step mode：一次执行一个工作单元，并在每步之间暂停 |
 | `/gsd next` | 显式 Step mode（与 `/gsd` 相同） |
 | `/gsd auto` | 自动模式：research、plan、execute、commit，然后重复 |
+| `/gsd auto --resume-wedge <id>` | 在执行获准的恢复操作后，确认指定的 liveness wedge 并重新进入自动模式 |
 | `/gsd quick` | 在不经过完整 planning 开销的情况下，执行一个带 GSD 保证的 quick task（原子提交、状态跟踪） |
 | `/gsd stop` | 优雅地停止自动模式 |
 | `/gsd pause` | 暂停自动模式（保留状态，可用 `/gsd auto` 恢复） |
@@ -367,7 +368,7 @@ gsd --mode mcp
 
 服务会注册 agent 会话中的全部工具，并把 MCP 的 `tools/list` 与 `tools/call` 请求映射到 GSD 的工具定义上。连接会一直保持，直到底层 transport 关闭。
 
-MCP 模式也会暴露 headless 和 cloud runtime 使用的 GSD workflow adapter 工具：
+MCP 模式也会暴露供 headless 和 MCP 客户端使用的 GSD workflow adapter 工具：
 
 - 会话控制工具：`gsd_execute`、`gsd_status`、`gsd_result`、`gsd_cancel`、`gsd_resolve_blocker`
 - 项目状态和只读工具：`gsd_query`、`gsd_progress`、`gsd_roadmap`、`gsd_history`、`gsd_doctor`、`gsd_captures`、`gsd_knowledge`、`gsd_graph`

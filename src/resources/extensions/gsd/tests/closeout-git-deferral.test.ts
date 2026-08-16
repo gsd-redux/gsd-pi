@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { postUnitPreVerification, shouldDeferCloseoutGitAction, type PostUnitContext } from "../auto-post-unit.ts";
@@ -17,8 +17,24 @@ import {
   insertVerificationEvidence,
   openDatabase,
 } from "../gsd-db.ts";
-import { recordToolCall, recordToolResult, resetEvidence } from "../safety/evidence-collector.ts";
-import { claimTaskAttempt, settleTaskAttempt } from "../task-execution-domain-operation.ts";
+import {
+  recordToolCall,
+  recordToolResult,
+  resetEvidence,
+  saveEvidenceToDisk,
+} from "../safety/evidence-collector.ts";
+import {
+  claimTaskAttempt,
+  readLatestTaskAttempt,
+  settleTaskAttempt,
+} from "../task-execution-domain-operation.ts";
+import { readTaskRecoveryRoute } from "../task-recovery-domain-operation.ts";
+import { recaptureVerifiedSourceAfterDeferredCloseout } from "../auto/verified-source-recapture.ts";
+import { captureVerificationSourceSnapshot } from "../verification-source-integrity.ts";
+import {
+  readTaskTechnicalVerdict,
+  recordTaskTechnicalVerdict,
+} from "../task-verification-domain-operation.ts";
 import { cleanup, git, makeTempRepo } from "./test-utils.ts";
 
 function settleCanonicalTaskForHostVerification(basePath: string): void {
@@ -83,7 +99,7 @@ test("non execute-task units keep pre-verification closeout git action", () => {
   assert.equal(shouldDeferCloseoutGitAction("complete-slice"), false);
 });
 
-test("blocking evidence-xref commits deferred execute-task work before pausing", async () => {
+test("blocking evidence-xref routes recovery and clears evidence before pausing", async () => {
   const base = makeTempRepo("gsd-evidence-xref-commit-before-pause-");
 
   try {
@@ -127,6 +143,7 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
     resetEvidence();
     recordToolCall("call-1", "bash", { command: "npm test" });
     recordToolResult("call-1", "bash", "Command exited with code 1\nfailed\n", true);
+    saveEvidenceToDisk(base, "M001", "S01", "T01");
 
     const s = new AutoSession();
     s.active = true;
@@ -156,7 +173,10 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
       skipWorktreeSync: true,
     });
 
-    assert.equal(result, "dispatched");
+    // #1641 / #1642 / #1649: the blocking branch now settles/routes the Attempt
+    // and returns the dedicated "evidence-xref-blocked" signal so finalize never
+    // enters the verified-task publication boundary.
+    assert.equal(result, "evidence-xref-blocked");
     assert.equal(pauseCalled, true);
     assert.ok(
       notifications.some((message) => message.includes("claimed passing verification")),
@@ -166,8 +186,82 @@ test("blocking evidence-xref commits deferred execute-task work before pausing",
     const commitMessage = git(base, "log", "-1", "--pretty=%B");
     assert.match(commitMessage, /^feat: Added app entrypoint/m);
     assert.match(commitMessage, /GSD-Task: S01\/T01/);
+
+    const attempt = readLatestTaskAttempt({
+      milestoneId: "M001",
+      sliceId: "S01",
+      taskId: "T01",
+    });
+    assert.equal(attempt?.nextStage, "route");
+    const recovery = attempt ? readTaskRecoveryRoute(attempt.attemptId) : null;
+    assert.equal(recovery?.action, "remediate");
+    assert.ok(recovery?.recoveryActionId, "blocking mismatch must mint a recovery action");
+    assert.equal(
+      existsSync(join(base, ".gsd", "safety", "evidence-M001-S01-T01.json")),
+      false,
+      "blocking mismatch must clear persisted evidence before pausing",
+    );
   } finally {
     resetEvidence();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("deferred closeout source recapture invalidates a stale passing verdict", () => {
+  const base = makeTempRepo("gsd-source-recapture-");
+  try {
+    writeFileSync(join(base, ".gitignore"), ".gsd/\n");
+    writeFileSync(join(base, "tracked.txt"), "verified\n");
+    git(base, "add", ".gitignore", "tracked.txt");
+    git(base, "commit", "-m", "fixture");
+
+    openDatabase(":memory:");
+    insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+    insertTask({
+      id: "T01",
+      sliceId: "S01",
+      milestoneId: "M001",
+      title: "Add app entrypoint",
+      status: "in_progress",
+    });
+    settleCanonicalTaskForHostVerification(base);
+    const attempt = readLatestTaskAttempt({ milestoneId: "M001", sliceId: "S01", taskId: "T01" });
+    assert.ok(attempt);
+    const source = captureVerificationSourceSnapshot([{ id: "root", cwd: base }]);
+    assert.equal(source.ok, true, source.ok ? undefined : source.error);
+    recordTaskTechnicalVerdict({
+      invocation: {
+        idempotencyKey: "fixture:source-recapture:verdict",
+        sourceTransport: "internal",
+        actorType: "agent",
+      },
+      attemptId: attempt.attemptId,
+      testedSourceRevision: source.snapshot.aggregateRevision,
+      verdict: "pass",
+      rationale: "Host verification passed before deferred closeout git.",
+      evidence: {
+        evidenceClass: "command",
+        commandOrTool: "npm test",
+        workingDirectory: base,
+        startedAt: "2026-07-12T00:02:00.000Z",
+        endedAt: "2026-07-12T00:02:01.000Z",
+        exitCode: 0,
+        observation: "passed",
+        durableOutputRef: "db://host-verification/attempt-1",
+        environment: { runner: "node-test", platform: "test" },
+      },
+    });
+
+    writeFileSync(join(base, "tracked.txt"), "rewritten by pre-commit hook\n");
+    assert.equal(recaptureVerifiedSourceAfterDeferredCloseout({
+      unitType: "execute-task",
+      unitId: "M001/S01/T01",
+      basePath: base,
+    }), "retry");
+    assert.equal(readTaskTechnicalVerdict(attempt.attemptId)?.verdict, "inconclusive");
+  } finally {
     closeDatabase();
     cleanup(base);
   }

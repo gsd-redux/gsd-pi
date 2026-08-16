@@ -38,7 +38,6 @@ export {
 
 // Re-export shared helpers.
 export {
-  persistStuckRecoveryAttempts,
   isSamePathLocal,
   isIsolatedWorktreeSession,
   _resolveReportBasePath,
@@ -111,13 +110,21 @@ export async function runGuards(
       }
 
       debugLog("autoLoop", { phase: "exit", reason: isBacktrack ? "user-backtrack" : "user-stop" });
-      return { action: "break", reason: isBacktrack ? "user-backtrack" : "user-stop" };
+      return {
+        action: "break",
+        reason: isBacktrack ? "user-backtrack" : "user-stop",
+        inputPayload: JSON.stringify(stopCaptures.map((capture) => ({
+          id: capture.id,
+          text: capture.text,
+          classification: capture.classification,
+        }))),
+      };
     }
   } catch (e) {
     // Fail-closed: if anything in the stop guard throws, break the loop
     // rather than silently continuing and dropping user halt intent
     debugLog("guards", { phase: "stop-guard-error", error: String(e) });
-    return { action: "break", reason: "stop-guard-error" };
+    return { action: "break", reason: "stop-guard-error", inputPayload: String(e) };
   }
 
   // Budget ceiling guard
@@ -183,13 +190,23 @@ export async function runGuards(
       }
 
       if (threshold.pct === 100 && effectiveAction !== "none") {
+        const inputPayload = JSON.stringify({
+          budgetCeiling,
+          totalCost,
+          budgetPct,
+          enforcement,
+          effectiveAction,
+          hookAction: hookAction ?? null,
+          newBudgetAlertLevel,
+          thresholdPct: threshold.pct,
+        });
         // 100% — special enforcement logic (halt/pause/warn)
         const msg = `Budget ceiling ${deps.formatCost(budgetCeiling)} reached (spent ${deps.formatCost(totalCost)}).`;
         if (effectiveAction === "halt") {
           deps.sendDesktopNotification("GSD", msg, "error", "budget", basename(s.originalBasePath || s.basePath));
           await deps.stopAuto(ctx, pi, "Budget ceiling reached");
           debugLog("autoLoop", { phase: "exit", reason: "budget-halt" });
-          return { action: "break", reason: "budget-halt" };
+          return { action: "break", reason: "budget-halt", inputPayload };
         }
         if (effectiveAction === "pause") {
           ctx.ui.notify(
@@ -200,7 +217,7 @@ export async function runGuards(
           deps.logCmuxEvent(prefs, msg, "warning");
           await deps.pauseAuto(ctx, pi);
           debugLog("autoLoop", { phase: "exit", reason: "budget-pause" });
-          return { action: "break", reason: "budget-pause" };
+          return { action: "break", reason: "budget-pause", inputPayload };
         }
         ctx.ui.notify(`${msg} Continuing (enforcement: warn).`, "warning");
         deps.sendDesktopNotification("GSD", msg, "warning", "budget", basename(s.originalBasePath || s.basePath));
@@ -245,7 +262,11 @@ export async function runGuards(
       );
       await deps.pauseAuto(ctx, pi);
       debugLog("autoLoop", { phase: "exit", reason: "context-window" });
-      return { action: "break", reason: "context-window" };
+      return {
+        action: "break",
+        reason: "context-window",
+        inputPayload: JSON.stringify({ contextPercent, contextThreshold }),
+      };
     }
   }
 

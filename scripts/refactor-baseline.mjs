@@ -289,7 +289,6 @@ export async function collectWorkspaceMetrics(root) {
     "scripts",
     "docs",
     "vscode-extension",
-    "studio",
   ];
   const areas = [];
   for (const area of trackedAreas) {

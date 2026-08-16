@@ -171,7 +171,6 @@ function buildReport() {
   const allTests = collectTestFiles(ROOT);
   const thinAreas = [
     { area: 'web/', tests: countByPrefix(allTests, 'web/'), sources: countSourceFiles(join(ROOT, 'web')) },
-    { area: 'studio/', tests: countByPrefix(allTests, 'studio/'), sources: countSourceFiles(join(ROOT, 'studio')) },
     { area: 'vscode-extension/', tests: countByPrefix(allTests, 'vscode-extension/'), sources: countSourceFiles(join(ROOT, 'vscode-extension')) },
   ].filter(row => row.sources > 0 && row.tests / row.sources < 0.05);
 

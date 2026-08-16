@@ -21,6 +21,7 @@ export {
   noop as executeTaskComplete,
   noop as executeTaskReopen,
   noop as executeTaskRecoveryResume,
+  noop as executeTaskSettle,
   noop as executeSliceReopen,
   noop as executeSkipSlice,
   noop as executeMilestoneReopen,

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { buildCompleteMilestonePrompt, buildPlanMilestonePrompt } from "../auto-prompts.ts";
+import { createWorkspace, scopeMilestone } from "../workspace.ts";
 import {
   closeDatabase,
   insertMilestone,
@@ -77,7 +78,7 @@ function validationMetadata(): string {
 test("plan-milestone prompt includes tiny untyped project classification and one-slice guidance", async () => {
   const base = makeRepo({ "index.html": "<!doctype html>\n<title>Test</title>\n" });
   try {
-    const prompt = await buildPlanMilestonePrompt("M001", "Polish static page", base, "minimal");
+    const prompt = await buildPlanMilestonePrompt("M001", "Polish static page", base, scopeMilestone(createWorkspace(base), "M001"), "minimal");
     assert.match(prompt, /\*\*Kind:\*\* untyped-existing/);
     assert.match(prompt, /\*\*Content files:\*\* 1/);
     assert.match(prompt, /`index\.html`/);
@@ -94,7 +95,7 @@ test("plan-milestone prompt includes small untyped project 1-2 slice guidance", 
     "styles.css": "body {}",
   });
   try {
-    const prompt = await buildPlanMilestonePrompt("M001", "Polish static files", base, "minimal");
+    const prompt = await buildPlanMilestonePrompt("M001", "Polish static files", base, scopeMilestone(createWorkspace(base), "M001"), "minimal");
     assert.match(prompt, /\*\*Kind:\*\* untyped-existing/);
     assert.match(prompt, /\*\*Content files:\*\* 3/);
     assert.match(prompt, /Prefer 1-2 slices/);
@@ -109,7 +110,7 @@ test("plan-milestone prompt keeps normal guidance for typed projects", async () 
     "src/index.js": "console.log('ok');\n",
   });
   try {
-    const prompt = await buildPlanMilestonePrompt("M001", "Update app", base, "minimal");
+    const prompt = await buildPlanMilestonePrompt("M001", "Update app", base, scopeMilestone(createWorkspace(base), "M001"), "minimal");
     assert.match(prompt, /\*\*Kind:\*\* typed-existing/);
     assert.match(prompt, /Use normal ecosystem-aware planning guidance/);
     assert.doesNotMatch(prompt, /Prefer exactly one slice/);
@@ -127,7 +128,7 @@ test("plan-milestone standard prompt keeps project and decisions on-demand", asy
     ".gsd/DECISIONS.md": "# Decisions\n\nPlan decision body.\n",
   });
   try {
-    const prompt = await buildPlanMilestonePrompt("M001", "Update app", base, "standard");
+    const prompt = await buildPlanMilestonePrompt("M001", "Update app", base, scopeMilestone(createWorkspace(base), "M001"), "standard");
     assert.match(prompt, /### On-demand Planning Context/);
     assert.match(prompt, /`\.gsd\/PROJECT\.md`/);
     assert.match(prompt, /`\.gsd\/DECISIONS\.md`/);
@@ -135,6 +136,38 @@ test("plan-milestone standard prompt keeps project and decisions on-demand", asy
     assert.doesNotMatch(prompt, /Plan broad project body/);
     assert.doesNotMatch(prompt, /Plan decision body/);
   } finally {
+    cleanupRepo(base);
+  }
+});
+
+test("plan-milestone resolves Project artifacts from a canonical milestone worktree", async () => {
+  const base = makeRepo({
+    "package.json": "{\"scripts\":{\"test\":\"node --test\"}}\n",
+    ".gsd/PROJECT.md": "# Project\n\nCanonical project context.\n",
+    ".gsd/REQUIREMENTS.md": "# Requirements\n\nCanonical requirements.\n",
+    ".gsd/DECISIONS.md": "# Decisions\n\nCanonical decisions.\n",
+  });
+  const worktree = join(base, ".gsd-worktrees", "M001");
+  git(base, ["worktree", "add", "--detach", worktree, "HEAD"]);
+  rmSync(join(worktree, ".gsd"), { recursive: true, force: true });
+
+  try {
+    const projectRoadmap = "../../.gsd/milestones/M001/M001-ROADMAP.md";
+
+    for (const level of ["standard", "full"] as const) {
+      const prompt = await buildPlanMilestonePrompt("M001", "Update app", worktree, scopeMilestone(createWorkspace(worktree), "M001"), level);
+
+      assert.match(prompt, /Project state root: `\.\.\/\.\.\/\.gsd`/);
+      assert.match(prompt, /`\.\.\/\.\.\/\.gsd\/PROJECT\.md`/);
+      assert.match(prompt, /`\.\.\/\.\.\/\.gsd\/REQUIREMENTS\.md`/);
+      assert.match(prompt, /`\.\.\/\.\.\/\.gsd\/DECISIONS\.md`/);
+      assert.match(prompt, /Source: `\.\.\/\.\.\/\.gsd\/milestones\/M001\/M001-CONTEXT\.md`/);
+      assert.ok(prompt.includes(projectRoadmap), "roadmap output should target Project state through a worktree-relative path");
+      assert.doesNotMatch(prompt, /`\.gsd\/(?:PROJECT|REQUIREMENTS|DECISIONS)\.md`/);
+      assert.ok(!prompt.includes(join(worktree, ".gsd")), "prompt must not reference a worktree-local .gsd directory");
+    }
+  } finally {
+    git(base, ["worktree", "remove", "--force", worktree]);
     cleanupRepo(base);
   }
 });

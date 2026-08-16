@@ -16,7 +16,7 @@ import {
   hasImplementationArtifacts,
   reconcileMergeState,
 } from "../../auto-recovery.ts";
-import { parsePlan } from "../../parsers-legacy.ts";
+import { parseProjectionPlan as parsePlan } from "../../schemas/parsers.ts";
 import { parseTaskPlanFile } from "../../files.ts";
 import {
   openDatabase,

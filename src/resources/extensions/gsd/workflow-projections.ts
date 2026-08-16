@@ -17,16 +17,16 @@ import type { MilestoneRow } from "./db-milestone-artifact-rows.js";
 import type { SliceRow, TaskRow } from "./db-task-slice-rows.js";
 import type { VerificationEvidenceRow } from "./db-verification-evidence-rows.js";
 import { atomicWriteSync } from "./atomic-write.js";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
-import { renderPlanFromDb, renderRoadmapFromDb } from "./markdown-renderer.js";
+import { renderPlanFromDb, renderRoadmapFromDb, writeTaskSummaryProjection } from "./markdown-renderer.js";
 import { readManifest } from "./workflow-manifest.js";
-import { gsdRoot, resolveMilestoneFile, resolveSliceFile, resolveTaskFile, targetTaskFile } from "./paths.js";
+import { gsdRoot, resolveMilestoneFile, resolveSliceFile, resolveTaskFile } from "./paths.js";
 import { removeOwnedPlanProjection } from "./projection-cleanup.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ export function renderPlanContent(sliceRow: SliceRow, taskRows: TaskRow[]): stri
 
 /**
  * Render PLAN.md projection to disk for a specific slice.
- * Queries DB via helper functions, renders content, writes via atomicWriteSync.
+ * Queries DB via helper functions and persists through the canonical projection writer.
  */
 export function renderPlanProjection(basePath: string, milestoneId: string, sliceId: string): void {
   const sliceRows = getMilestoneSlices(milestoneId);
@@ -324,19 +324,19 @@ ${taskRow.key_files && taskRow.key_files.length > 0 ? taskRow.key_files.map(f =>
 
 /**
  * Render SUMMARY.md projection to disk for a specific task.
- * Queries DB via helper functions, renders content, writes via atomicWriteSync.
+ * Queries DB via helper functions, renders content, and persists through the
+ * canonical task-summary projection seam.
  */
-export function renderSummaryProjection(basePath: string, milestoneId: string, sliceId: string, taskId: string): void {
+export async function renderSummaryProjection(basePath: string, milestoneId: string, sliceId: string, taskId: string): Promise<boolean> {
   const taskRows = getSliceTasks(milestoneId, sliceId);
   const taskRow = taskRows.find(t => t.id === taskId);
-  if (!taskRow) return;
+  if (!taskRow) return false;
 
   const evidenceRows = getVerificationEvidence(milestoneId, sliceId, taskId);
   const content = renderSummaryContent(taskRow, sliceId, milestoneId, evidenceRows);
 
-  const summaryPath = targetTaskFile(basePath, milestoneId, sliceId, taskId, "SUMMARY", getMilestone(milestoneId)?.title);
-  mkdirSync(dirname(summaryPath), { recursive: true });
-  atomicWriteSync(summaryPath, content);
+  await writeTaskSummaryProjection(basePath, milestoneId, sliceId, taskId, content);
+  return true;
 }
 
 // ─── STATE.md Projection ────────────────────────────────────────────────
@@ -514,7 +514,7 @@ export async function renderAllProjections(
 
     for (const task of doneTasks) {
       try {
-        renderSummaryProjection(basePath, milestoneId, slice.id, task.id);
+        await renderSummaryProjection(basePath, milestoneId, slice.id, task.id);
       } catch (err) {
         stale = true;
         logWarning("projection", `renderSummaryProjection failed for ${milestoneId}/${slice.id}/${task.id}: ${(err as Error).message}`);
@@ -566,8 +566,9 @@ export async function regenerateIfMissing(
     for (const task of doneTasks) {
       if (!resolveTaskFile(basePath, milestoneId, sliceId, task.id, "SUMMARY")) {
         try {
-          renderSummaryProjection(basePath, milestoneId, sliceId, task.id);
-          regenerated++;
+          if (await renderSummaryProjection(basePath, milestoneId, sliceId, task.id)) {
+            regenerated++;
+          }
         } catch (err) {
           logWarning("projection", `regenerateIfMissing SUMMARY failed for ${task.id}: ${(err as Error).message}`);
         }

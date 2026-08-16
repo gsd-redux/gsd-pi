@@ -5,10 +5,8 @@ const path = require("node:path");
 
 const RELEASE_WORKSPACE_PACKAGE_DIRS = [
   "extensions/google-search",
-  "packages/cloud-mcp-gateway",
   "packages/contracts",
   "packages/daemon",
-  "packages/gsd-cloud",
   "packages/gsd-agent-core",
   "packages/gsd-agent-modes",
   "packages/mcp-server",
@@ -31,7 +29,6 @@ const PLATFORM_PACKAGE_DIRS = [
 const INTERNAL_PACKAGE_NAMES = new Set([
   "@gsd/agent-core",
   "@gsd/agent-modes",
-  "@opengsd/cloud-mcp-gateway",
   "@opengsd/contracts",
   "@opengsd/daemon",
   "@opengsd/mcp-server",

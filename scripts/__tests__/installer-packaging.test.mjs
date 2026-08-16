@@ -67,7 +67,6 @@ test("workspace package bins point to checked-in shims instead of ignored dist o
   const packages = [
     "packages/pi-ai/package.json",
     "packages/mcp-server/package.json",
-    "packages/cloud-mcp-gateway/package.json",
     "packages/daemon/package.json",
   ];
 

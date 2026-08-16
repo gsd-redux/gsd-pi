@@ -13,7 +13,12 @@
 
 import type { ExecutionPolicy } from "./execution-policy.js";
 import type { RecoveryAction, CloseoutResult } from "./engine-types.js";
-import { runCustomVerification, type VerificationOutcome } from "./custom-verification.js";
+import {
+  runCustomVerification,
+  runCustomVerificationWithEvidence,
+  type CustomVerificationResult,
+  type VerificationOutcome,
+} from "./custom-verification.js";
 import { readFrozenDefinition } from "./custom-workflow-engine.js";
 import { parseUnitId } from "./unit-id.js";
 
@@ -22,6 +27,11 @@ export class CustomExecutionPolicy implements ExecutionPolicy {
 
   constructor(runDir: string) {
     this.runDir = runDir;
+  }
+
+  private stepId(unitId: string): string {
+    const { milestone, slice, task } = parseUnitId(unitId);
+    return task ?? slice ?? milestone;
   }
 
   /** No workspace preparation needed for custom workflows. */
@@ -50,14 +60,19 @@ export class CustomExecutionPolicy implements ExecutionPolicy {
     unitId: string,
     _context: { basePath: string },
   ): Promise<VerificationOutcome> {
-    const { milestone, slice, task } = parseUnitId(unitId);
-    const stepId = task ?? slice ?? milestone;
-    return runCustomVerification(this.runDir, stepId);
+    return runCustomVerification(this.runDir, this.stepId(unitId));
+  }
+
+  async verifyWithEvidence(
+    _unitType: string,
+    unitId: string,
+    _context: { basePath: string },
+  ): Promise<CustomVerificationResult> {
+    return runCustomVerificationWithEvidence(this.runDir, this.stepId(unitId));
   }
 
   requiresHumanVerification(_unitType: string, unitId: string): boolean {
-    const { milestone, slice, task } = parseUnitId(unitId);
-    const stepId = task ?? slice ?? milestone;
+    const stepId = this.stepId(unitId);
     const step = readFrozenDefinition(this.runDir).steps.find((candidate) => candidate.id === stepId);
     return step?.verify?.policy === "human-review";
   }

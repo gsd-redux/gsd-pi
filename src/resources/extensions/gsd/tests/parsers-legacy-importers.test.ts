@@ -1,37 +1,24 @@
-// Structural invariant: the legacy markdown state parsers are banned from
-// decision paths (ADR-017).
+// Structural invariant: the legacy markdown state-path is gone (T020/T022).
 //
 // The DB is the single source of truth; `.gsd/*.md` files are projections.
 // Dispatch/gate/completion code must read state via gsd-db queries (e.g.
 // getMilestoneSliceSummaries), never by parsing markdown projections.
 //
-// KEYED ON SYMBOLS, NOT THE MODULE SPECIFIER (T033). T012 relocated the legacy
-// parsers byte-identically from parsers-legacy.ts to schemas/parsers.ts, and
-// the wave-3 consumer migration mostly rewrote the import path around unchanged
-// call sites. A registry keyed on the `parsers-legacy` specifier alone reads
-// "one importer left" while seven modules parse legacy markdown via the same
-// functions at their new home. This registry therefore counts a module as a
-// legacy-parser consumer when it references `parseLegacyRoadmap`/`parseLegacyPlan`
-// OR imports the parsers-legacy shim. It mirrors, and must stay in agreement
-// with, scripts/legacy-state-path-proof.mjs.
+// KEYED ON SYMBOLS, NOT THE MODULE SPECIFIER (T033). This registry counts a
+// module as a legacy-parser consumer when it references
+// `parseLegacyRoadmap`/`parseLegacyPlan` OR imports a module named
+// `parsers-legacy`. Projection parsers live under `parseProjection*` in
+// schemas/parsers.ts and are not this path. Mirrors
+// scripts/legacy-state-path-proof.mjs.
 //
-// Two assertions:
+// Assertions:
 // 1. Decision-path modules must NOT consume the legacy parsers (hard ban).
-// 2. Every other consumer must be on the explicit allowlist below, each with
-//    a one-line justification naming the task that retires it (or `none` when
-//    no task owns it yet). When this test fails, do not extend the allowlist
-//    for a decision path — add/extend a query in db/queries.ts and read the DB
-//    instead.
-//
-// End state: T020 deletes the parsers-legacy shim and T022 deletes state.ts's
-// pre-migration fallback, but both are gated on the allowlist reaching empty —
-// which now requires the seven relocated-symbol consumers to be addressed
-// first. The allowlist only ever shrinks: a new entry is a regression, not a
-// migration step.
+// 2. Zero production importers of the retired symbols or shim.
+// 3. parsers-legacy.ts does not exist.
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const extensionsDir = join(process.cwd(), "src/resources/extensions");
@@ -56,35 +43,11 @@ const BANNED_DECISION_PATHS = new Set([
   "gsd/tools/complete-slice.ts",
 ]);
 
-// Tolerated consumers, each with a justification naming the task that retires
-// it, or `none` when no task owns it yet. Anything not listed here (and not
-// under a tests/ directory) fails the test. `none` is not an excuse — it is the
-// honest record that the legacy read path is still in production use and that
-// T020/T022 are unreachable until these are addressed.
-const ALLOWED_IMPORTERS = new Set([
-  // pre-migration fallback: `_deriveStateImpl` must work before the DB exists.
-  // Only remaining importer of the parsers-legacy shim — retired by T022.
-  "gsd/state.ts",
-  // verify-time reads of ROADMAP/PLAN projections. Retired by: none.
-  "gsd/artifact-verification.ts",
-  // doctor diagnostic reads PLAN task checkboxes. Retired by: none.
-  "gsd/doctor-engine-checks.ts",
-  // roadmap self-read-back during projection render. Retired by: none.
-  "gsd/markdown-renderer.ts",
-  // markdown → DB import, parses by design. Retired by: none.
-  "gsd/md-importer.ts",
-  // pre-migration detection, parses by design. Retired by: none.
-  "gsd/migration-auto-check.ts",
-  // drift detection compares both sources by design. Retired by: none.
-  "gsd/state-reconciliation/drift/roadmap.ts",
-  // drift detection compares both sources by design. Retired by: none.
-  "gsd/state-reconciliation/drift/sketch-flag.ts",
-]);
+const SHIM_PATH = join(process.cwd(), "src/resources/extensions/gsd/parsers-legacy.ts");
 
-// The re-export shim itself, and the declaration home of the relocated
-// symbols. Neither is a consumer; T020 deletes the shim once the allowlist is
-// empty, and the symbols retire with their last caller.
-const SELF_PATHS = new Set(["gsd/parsers-legacy.ts", "gsd/schemas/parsers.ts"]);
+// The declaration home of the projection parsers is not a consumer of the
+// retired symbols.
+const SELF_PATHS = new Set(["gsd/schemas/parsers.ts"]);
 
 // Specifier anywhere in a string literal — covers `from '…'`, `import('…')`,
 // `require('…')`, the side-effect form (`import './parsers-legacy.js';`) and
@@ -201,24 +164,22 @@ test("decision-path modules do not consume the legacy parsers (ADR-017)", () => 
   );
 });
 
-test("every legacy-parser consumer is on the explicit allowlist", () => {
-  const unexpected = findImporters().filter((rel) => !ALLOWED_IMPORTERS.has(rel));
+test("zero production importers of retired legacy parser symbols or shim", () => {
+  const importers = findImporters();
   assert.deepEqual(
-    unexpected,
+    importers,
     [],
-    `New legacy-parser consumer(s) detected:\n  ${unexpected.join("\n  ")}\n` +
-      `If this is migration/drift/display-only code, add it to ALLOWED_IMPORTERS ` +
-      `with a one-line justification naming the retiring task (or \`none\`). If it ` +
-      `makes dispatch/gate/completion decisions, read the DB instead (db/queries.ts).`,
+    `Retired legacy-parser consumer(s) detected:\n  ${importers.join("\n  ")}\n` +
+      `Projection reads must use parseProjection* from schemas/parsers.ts. ` +
+      `Decision paths must read the DB (db/queries.ts). Do not reintroduce ` +
+      `parseLegacyRoadmap, parseLegacyPlan, or parsers-legacy.`,
   );
 });
 
-test("allowlist has no stale entries", () => {
-  const importers = new Set(findImporters());
-  const stale = [...ALLOWED_IMPORTERS].filter((rel) => !importers.has(rel));
-  assert.deepEqual(
-    stale,
-    [],
-    `Allowlist entries no longer consume the legacy parsers — remove them:\n  ${stale.join("\n  ")}`,
+test("parsers-legacy.ts does not exist", () => {
+  assert.equal(
+    existsSync(SHIM_PATH),
+    false,
+    "parsers-legacy.ts was deleted in T020; re-adding it is a regression",
   );
 });

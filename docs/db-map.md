@@ -55,6 +55,7 @@ After commit: regenerate markdown artifacts → write to disk → invalidate cac
 - Keyed by workspace `identityKey` (realpath of project root)
 - Sibling worktrees share the same `.gsd/gsd.db` via SQLite WAL
 - Only one connection is "active" at a time; others cached for fast re-activation
+- Fresh, active, and cached opens verify the registered non-versioned schema invariants described under [ADR-047 liveness ledger](#adr-047-liveness-ledger-non-versioned) before reuse.
 - On process exit: close without checkpointing; coordinated maintenance owns checkpoint and vacuum
 - Before file-backed schema migrations, `db-migration-backup.ts` checkpoints WAL and replaces `.gsd/gsd.db.backup-vN` with a copy of the database being migrated. The copy must report the expected schema version and pass SQLite `quick_check`; checkpoint, copy, or validation failures warn and fail closed before migration DDL.
 
@@ -118,6 +119,8 @@ history below explains each migration without duplicating that live value.
 | V43 | **Milestone completion transition**: permits only a causally matching `milestone.complete` operation to move a Milestone lifecycle directly to canonical `completed` |
 | V44 | **Hierarchy reopen authorization**: permits terminal-to-`ready` transitions only through the matching Task, Slice, or Milestone reopen operation for each hierarchy level |
 | V45 | **Authority recovery receipts**: immutable, operation-bound receipts for Authority Cutover, pre-later-write Import Restore, and retained-Application Forward Repair |
+| V46 | **State-DB cutover stamp**: records schema version 46 and stamps `PRAGMA application_id` and `PRAGMA user_version`; adds no tables |
+| V47 | **Same-lease Attempt settlement** (#1740): extends the Attempt dispatch-scope transition trigger so a worker holding its own milestone lease can settle its own running Attempt after its coordination dispatch is gone; adds no tables |
 
 ---
 
@@ -577,7 +580,7 @@ Fallback: LIKE scan if FTS5 unavailable
 
 ---
 
-### 3c. Auto-Mode Coordination (V24)
+### 3c. Auto-Mode Coordination (V24 and ADR-047)
 
 #### `workers`
 ```
@@ -671,6 +674,18 @@ result_json  TEXT
 ```
 - Index: `idx_command_queue_pending` (target_worker, claimed_at)
 - Claiming is a read-then-write path and uses `immediateTransaction()` so WAL workers serialize before selecting the pending row instead of failing a deferred write upgrade with `SQLITE_BUSY_SNAPSHOT`.
+
+---
+
+#### ADR-047 liveness ledger (non-versioned)
+
+`db-required-schema.ts` is the registration and completeness authority for
+non-versioned schema features required on every database open. It currently
+registers the ADR-047 liveness feature; `db-liveness-backstop-schema.ts` owns
+that feature's table and open-wedge-index DDL. Startup repair and `/gsd doctor`
+query the same registry, so missing required objects trigger guarded startup
+maintenance without changing `schema_version`, `application_id`, or
+`user_version`; doctor records a detected repair.
 
 ---
 
@@ -1930,6 +1945,14 @@ not part of this legacy manifest surface. Restore and hierarchy-replacement
 paths now refuse to run when adopted lifecycle rows exist, preventing the
 legacy snapshot from deleting canonical history.
 
+`.gsd/state.json` is the GSD state contract v1 projection for external readers
+such as GSD Workbench. Its schema is owned by `gsd-workbench`'s
+`docs/state-contract/v1.md`; this repository writes contract `1.0.0` with flavor
+`pi` whenever it writes the legacy state manifest. The projection describes the
+active milestone and its slices and includes a deliberately approximate,
+stale-tolerant next-command hint. It is a local runtime projection, not a restore
+or worktree-merge input.
+
 `reconcileWorktreeDb` merges hidden-worktree legacy correctness rows back into the main
 DB, including hierarchy, requirements, artifacts, memories, replan history,
 assessments, quality gates, slice dependencies, verification evidence, gate
@@ -1979,6 +2002,11 @@ execution evidence remain authoritative.
 | `gsd_save_gate_result` | quality_gates | quality_gates, gate_runs (same transaction) | — |
 | `capture_thought` | memories | memories | KNOWLEDGE.md projection for Patterns/Lessons (both backfilled and newly captured) |
 | `memory_query` | memories, memories_fts, memory_embeddings | memories (hit_count++) | — |
+
+Slice lifecycle writers own the taskless Q8 companion gate. Planning or
+replanning a Slice, and reopening its Task, Slice, or Milestone hierarchy,
+must establish exactly one Q8 row for that Slice and reset it to `pending`;
+duplicate companion rows fail the operation instead of being silently retained.
 
 The six planning mutations above commit legacy hierarchy changes, lifecycle
 adoption or transition, one domain event/outbox destination, Projection Work,

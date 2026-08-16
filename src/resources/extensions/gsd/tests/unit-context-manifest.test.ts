@@ -116,6 +116,7 @@ test("Context Mode: every manifest declares the expected contextMode lane", () =
     "replan-slice": "planning",
     "reassess-roadmap": "planning",
     "execute-task": "execution",
+    "replan-task": "planning",
     "reactive-execute": "execution",
     "quick-task": "execution",
     "run-uat": "verification",

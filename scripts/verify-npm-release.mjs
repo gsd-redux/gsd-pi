@@ -3,8 +3,8 @@
 //
 // Pre-release gate: confirm EVERY package that must reach npm for a release is
 // actually published at the target version, BEFORE the GitHub release is cut.
-// Two releases previously shipped with @opengsd/cloud-mcp-gateway and
-// @opengsd/daemon missing from npm; this turns that class of failure into a hard,
+// Two releases previously shipped with publishable workspaces missing from npm;
+// this turns that class of failure into a hard,
 // loud stop instead of a silent half-release.
 //
 // Usage:

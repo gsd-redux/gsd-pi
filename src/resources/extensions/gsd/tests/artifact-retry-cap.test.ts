@@ -19,7 +19,6 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detectStuck } from "../auto/detect-stuck.ts";
 import { AutoSession } from "../auto/session.ts";
 import { MAX_ARTIFACT_VERIFICATION_RETRIES } from "../auto-post-unit.ts";
 
@@ -46,21 +45,6 @@ test("#2007 bug 1: retry state keeps attempt separate from failure context", () 
     assert.equal(s.pendingVerificationRetry.attempt, attempt);
     assert.equal(s.pendingVerificationRetry.failureContext, failureContext);
   }
-});
-
-// ─── Bug 2: stuck detection must see all dispatches ──────────────────────────
-
-test("#2007 bug 2: recentUnits.push is unconditional — not gated on pendingVerificationRetry", () => {
-  const window = [
-    { key: "execute-task:M001/S01/T01" },
-    { key: "execute-task:M001/S01/T01" },
-    { key: "execute-task:M001/S01/T01" },
-  ];
-
-  assert.match(
-    detectStuck(window, { pendingRetry: true, retryAttempt: 2 })?.reason ?? "",
-    /3 consecutive times|3 times in last 3 attempts/,
-  );
 });
 
 test("#2007 bug 2: pendingVerificationRetry state is available for dispatch regression coverage", () => {

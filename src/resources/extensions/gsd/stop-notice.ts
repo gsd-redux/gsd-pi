@@ -13,6 +13,17 @@ export function isBlockedStopReason(reason?: string | null): boolean {
   return /^Blocked:\s*/i.test(reason ?? "");
 }
 
+/**
+ * Mark a reason as a blocked stop.
+ *
+ * The headless host derives its exit code from this marker alone, so a stop the
+ * orchestrator classified as `kind: "blocked"` must carry it — otherwise the run
+ * reports 0 (complete) over work that never finished. Idempotent.
+ */
+export function markBlockedStopReason(reason: string): string {
+  return isBlockedStopReason(reason) ? reason : `Blocked: ${reason}`;
+}
+
 /** Strip the "Blocked: " marker for display. */
 export function stopNoticeDisplayReason(reason?: string | null): string {
   return (reason ?? "").replace(/^Blocked:\s*/i, "").trim();
@@ -44,9 +55,16 @@ export function formatVerdictRejectedNotice(message: string): string {
 
 export const PAUSED_NOTICE_PREFIXES = ["auto-mode paused", "step-mode paused"] as const;
 
+/** Prefixes formatStopNoticePrefix produces for a blocked stop. */
+export const BLOCKED_NOTICE_PREFIXES = ["auto-mode blocked", "step-mode blocked"] as const;
+
 export const TERMINAL_NOTICE_PREFIXES = [
   "auto-mode stopped",
   "step-mode stopped",
+  // A blocked stop ends the run exactly like a plain stop — it just carries a
+  // different exit code. Omitting these left the host without a terminal signal
+  // for the one outcome that most needs to be reported.
+  ...BLOCKED_NOTICE_PREFIXES,
   "auto-mode complete",
   "no active milestone",
   "auto-mode idle",
@@ -95,6 +113,11 @@ export function isInteractiveMenuUnavailableNotice(message: string): boolean {
 export function isBlockedNoticeMessage(message: string): boolean {
   return (
     message.includes("blocked:") ||
+    // formatStopNoticePrefix emits "Auto-mode blocked — reason" (em-dash, no
+    // colon), so the "blocked:" test above never matched the very notice this
+    // module's own formatter produces. A blocked stop then read as an ordinary
+    // stop and headless exited 0 over an unfinished milestone.
+    BLOCKED_NOTICE_PREFIXES.some((prefix) => message.startsWith(prefix)) ||
     message.startsWith("verdict rejected") ||
     (isPauseNotice(message) && !isNonBlockingPauseNotice(message)) ||
     isManualResolutionNotice(message) ||

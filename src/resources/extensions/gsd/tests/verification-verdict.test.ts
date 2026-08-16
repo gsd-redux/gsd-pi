@@ -69,6 +69,44 @@ test("execute-task command failure remains retryable verification failure", () =
   assert.equal(verdict.retryable, true);
 });
 
+test("blocking runtime errors provide failure context when host checks pass", () => {
+  const verdict = decideVerificationVerdict(
+    "execute-task",
+    makeResult({
+      passed: false,
+      discoverySource: "package-json",
+      checks: [
+        {
+          command: "npm test",
+          exitCode: 0,
+          stdout: "ok",
+          stderr: "",
+          durationMs: 10,
+        },
+      ],
+      runtimeErrors: [
+        {
+          source: "bg-shell",
+          severity: "crash",
+          message: "vite preview exited with code 143",
+          blocking: true,
+        },
+        {
+          source: "browser",
+          severity: "warning",
+          message: "non-blocking console warning",
+          blocking: false,
+        },
+      ],
+    }),
+  );
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.reason, "checks-failed");
+  assert.equal(verdict.retryable, true);
+  assert.equal(verdict.failureContext, "[bg-shell] vite preview exited with code 143");
+});
+
 test("execute-task passes when a discovered host check succeeds", () => {
   const verdict = decideVerificationVerdict(
     "execute-task",

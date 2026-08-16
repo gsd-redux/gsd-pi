@@ -23,6 +23,9 @@ import {
 import { MergeConflictError } from "../git-service.ts";
 import { summarizeWorktreeTelemetry } from "../worktree-telemetry.ts";
 import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
+import { AutoSession } from "../auto/session.ts";
+import { postUnitPreVerification } from "../auto-post-unit.ts";
+import { clearGSDPreferencesCache } from "../preferences.ts";
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -228,6 +231,49 @@ describe("mergeSliceToMain", () => {
 
     const summary = summarizeWorktreeTelemetry(dir);
     assert.equal(summary.sliceMergeConflicts, 1);
+  });
+
+  test("post-unit slice merge failures stop through the supplied loop dependency", async () => {
+    writeFileSync(
+      join(dir, ".gsd", "PREFERENCES.md"),
+      "---\ngit:\n  isolation: worktree\n  collapse_cadence: slice\n---\n",
+    );
+    writeFileSync(join(dir, ".gitignore"), ".gsd/worktrees/\n.gsd/STATE.md\n");
+    writeFileSync(join(dir, "shared.txt"), "base version\n");
+    git(["add", "."], dir);
+    git(["commit", "-m", "configure slice cadence"], dir);
+
+    const worktree = join(dir, ".gsd", "worktrees", "M001");
+    mkdirSync(join(dir, ".gsd", "worktrees"), { recursive: true });
+    git(["worktree", "add", "-b", "milestone/M001", worktree, "main"], dir);
+    commitFile(worktree, "shared.txt", "slice version\n", "slice change");
+    commitFile(dir, "shared.txt", "main version\n", "main change");
+    clearGSDPreferencesCache();
+
+    const session = new AutoSession();
+    session.active = true;
+    session.basePath = worktree;
+    session.originalBasePath = dir;
+    session.currentMilestoneId = "M001";
+    session.setCurrentUnit({ type: "complete-slice", id: "M001/S01", startedAt: Date.now() });
+    const stopCalls: Array<{ reason?: string; pi: unknown }> = [];
+    const pi = {} as any;
+
+    const result = await postUnitPreVerification({
+      s: session,
+      ctx: { ui: { notify: () => {} } } as any,
+      pi,
+      buildSnapshotOpts: () => ({}),
+      lockBase: () => dir,
+      stopAuto: async (_ctx, receivedPi, reason) => {
+        stopCalls.push({ reason, pi: receivedPi });
+      },
+      pauseAuto: async () => {},
+      updateProgressWidget: () => {},
+    }, { skipSettleDelay: true, skipWorktreeSync: true });
+
+    assert.equal(result, "dispatched");
+    assert.deepEqual(stopCalls, [{ reason: "slice-merge-conflict on S01", pi }]);
   });
 
   test("restores cwd even when merge fails (dirty working tree)", () => {

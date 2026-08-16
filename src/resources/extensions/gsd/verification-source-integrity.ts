@@ -10,6 +10,7 @@ import type { GSDPreferences } from "./preferences-types.js";
 import {
   createRepositoryRegistryFromPreferences,
   defaultRepositoryTargets,
+  deriveRepositoryTargetsFromPlannedPaths,
   type RegisteredRepository,
 } from "./repository-registry.js";
 
@@ -82,7 +83,22 @@ export function resolveVerificationRepositoryTargets(
   const taskTargets = task?.target_repositories?.length ? task.target_repositories : null;
   const sliceTargets = slice?.target_repositories?.length ? slice.target_repositories : null;
   const explicitIds = taskTargets ?? sliceTargets;
-  const requestedIds = explicitIds ?? defaultRepositoryTargets(registry);
+  // Without stored targets, honor where the task's files actually live before
+  // falling back to the registry default — in parent mode the default fans out
+  // to every child repo, which a root-targeting task can never satisfy (#1630).
+  const derivedIds = explicitIds
+    ? null
+    : deriveRepositoryTargetsFromPlannedPaths(registry, task?.files ?? []);
+  // Nothing derivable either (no task, or no path-shaped planned files): a
+  // parent workspace verifies the orchestration root rather than fanning out
+  // across every child repository (#1656).
+  const parentWorkspaceFallback = registry.mode === "parent" && registry.byId.has("project")
+    ? ["project"]
+    : null;
+  const requestedIds = explicitIds
+    ?? derivedIds
+    ?? parentWorkspaceFallback
+    ?? defaultRepositoryTargets(registry);
   const repositories: RegisteredRepository[] = [];
   const missingRepositoryIds: string[] = [];
   const seen = new Set<string>();

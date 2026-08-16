@@ -412,8 +412,13 @@ export function claimProjectionMaintenance(databasePath: string): () => void {
 function projectionDatabasePath(filePath: string): string | null {
   let current = dirname(resolve(filePath));
   while (current !== dirname(current)) {
-    if (basename(current).toLocaleLowerCase("en-US") === ".gsd") {
+    const name = basename(current).toLocaleLowerCase("en-US");
+    if (name === ".gsd") {
       return pathExistsFailClosed(current) ? join(current, "gsd.db") : null;
+    }
+    if (name === ".planning") {
+      const gsdPath = join(dirname(current), ".gsd");
+      return pathExistsFailClosed(gsdPath) ? join(gsdPath, "gsd.db") : null;
     }
     current = dirname(current);
   }

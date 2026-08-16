@@ -13,7 +13,6 @@ import {
   isAllowedTerminalCommand,
 } from "../../../../lib/pty-manager";
 import { requireProjectCwd } from "../../../../../src/web/bridge-service.ts";
-import { cloudModeLocalRouteGuard } from "../../../../lib/cloud-mode.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,14 +25,10 @@ function getNextIndex(): number {
 }
 
 export async function GET(): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   return Response.json({ sessions: listSessions() });
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   const projectCwd = requireProjectCwd(request);
   const id = `term-${getNextIndex()}`;
   let command: string | undefined;
@@ -56,8 +51,6 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 export async function DELETE(request: Request): Promise<Response> {
-  const cloudGuard = cloudModeLocalRouteGuard();
-  if (cloudGuard) return cloudGuard;
   const url = new URL(request.url);
   const id = url.searchParams.get("id");
   if (!id) {

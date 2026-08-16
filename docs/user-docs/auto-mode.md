@@ -60,7 +60,7 @@ When closeout or post-unit review finds task-specific rework, GSD can persist a 
 
 `.gsd/QUEUE-ORDER.json` is the special durable reorder contract for milestone queue order. Commands such as `/gsd rethink` and `/gsd phase` write it when an operator reorders milestones; when the runtime database is open, GSD mirrors that order into `milestones.sequence`. State derivation also replays an existing `QUEUE-ORDER.json` into the database before choosing the active milestone, which repairs stale DB sequence for prompt-driven reorder flows without making arbitrary markdown projections runtime authority.
 
-In worktree mode, the project-root database remains authoritative runtime state, while artifact/projection writes render under the active worktree-local `.gsd/`. Those worktree markdown projections are not treated as runtime state fallbacks. If the database is unavailable, runtime state derivation refuses to silently rebuild from markdown. Use explicit recovery/import commands, or run `/gsd migrate` when markdown is the intended source.
+In worktree mode, source-code execution remains rooted in the active worktree and the project-root database remains authoritative runtime state. Plan Milestone resolves canonical Project-state artifacts through the project root while expressing their paths relative to the worktree; it does not treat a worktree-local `.gsd/` as Project state. Other units may render non-authoritative projections under the active worktree-local `.gsd/`, but neither projection location is a runtime state fallback. If the database is unavailable, runtime state derivation refuses to silently rebuild from markdown. Use explicit recovery/import commands, or run `/gsd migrate` when markdown is the intended source.
 
 ### Single-Host Runtime Constraint
 
@@ -140,7 +140,7 @@ Common block reasons and operator actions:
 | `preflight-unmerged-conflicts` | Milestone merge preflight found unresolved Git conflict stages in the working tree (shared with the global workspace git gate). | Resolve conflicts manually (`git status`, fix files, stage resolutions), then run `/gsd auto` to resume. Auto mode **pauses** on pre-dispatch health gate product conflicts; an unrecoverable git probe **stops** the loop. |
 | `preflight-dirty-overlap` | Milestone merge preflight found local dirty files that overlap files changed by the milestone branch. | Commit or stash your local edits manually, or move them out of the way, then rerun `/gsd auto`. |
 
-Recovery classification now treats deterministic policy, tool-schema, stale-worker, and invalid-worktree failures as non-transient stops. Provider failures still use provider-specific transient classification and may retry automatically, while verification drift and unknown runtime failures escalate for inspection because repeating the same dispatch can preserve the drift.
+Recovery classification now treats deterministic policy, tool-schema, stale-worker, and invalid-worktree failures as non-transient stops. A Windows projection-root sharing violation is normalized as transient and consumes the existing transient-execution retry budget; sustained contention still exhausts that budget and stops. Provider failures still use provider-specific transient classification and may retry automatically, while genuine projection gaps, verification drift, and unknown runtime failures escalate for inspection because repeating the same dispatch can preserve the drift.
 
 ### Preference Diagnostics at Preflight
 
@@ -230,17 +230,15 @@ For a single-repository task, or a parent workspace task where no repository has
 
 Transient git failures such as `.git/index.lock` contention still use the short git retry path. If a parent workspace partially committed some repositories before another repository's hook rejected the commit, GSD pauses instead of re-running the task, because redoing the task could duplicate work that is already committed in the successful repositories.
 
-### Stuck Detection
+### Liveness Backstop
 
-GSD uses a sliding-window analysis to detect stuck loops. Instead of a simple "same unit dispatched twice" counter, the detector examines recent dispatch history for repeated patterns — catching cycles like A→B→A→B as well as single-unit repeats. On detection, GSD retries once with a deep diagnostic prompt. If it fails again, auto mode stops so you can intervene.
+GSD records every non-advancing auto-mode outcome in the project database using the guard, target unit, and a hash of the inputs that guard read. A second occurrence with the same hash trips a persisted wedge even when other units ran between the two occurrences or the process restarted.
 
-The sliding-window approach reduces false positives on legitimate retries (e.g., verification failures that self-correct) while catching genuine stuck loops faster.
+When a wedge trips, auto mode stops with blocked exit code 10, prints the guard and its sanctioned recovery, and refuses to re-enter while the wedge remains unacknowledged. Apply the printed recovery first, then run `/gsd auto --resume-wedge <id>` to acknowledge that wedge, clear its counter, and re-enter auto mode. The backstop never repairs workflow state itself; an ineffective recovery trips again on the second unchanged occurrence.
 
 ### Consecutive Dispatch Blocker
 
-Auto mode also enforces a same-unit consecutive dispatch cap for `complete-milestone`, `validate-milestone`, and `research-slice`. The loop allows two consecutive dispatches of the same unit in the same phase and stops before a third attempt with a repeat-cap warning that instructs you to run `/gsd resume` after intervention.
-
-Auto mode also tracks consecutive dispatch-claim skips with reason `already-active`. If the same unit claim returns `already-active` 3 times in a row, auto mode pauses and surfaces a manual-recovery warning instead of spinning indefinitely on claim retries.
+Auto mode also retains a last-resort same-unit consecutive dispatch cap for every unit type. If that cap is reached, auto mode stops with a repeat-cap warning that instructs you to run `/gsd resume` after intervention. Repeated non-advancing outcomes, including `already-active` claim skips, normally trip the database-persisted liveness backstop first.
 
 ### Artifact Verification Retries
 
@@ -360,7 +358,7 @@ The auto-loop is structured as a linear phase pipeline rather than recursive dis
 2. **Dispatch** — execute the unit with a focused prompt
 3. **Post-Unit** — close out the unit, update caches, run cleanup
 4. **Verification** — optional validation gate (lint, test, etc.)
-5. **Stuck Detection** — sliding-window pattern analysis
+5. **Liveness Backstop** — persist and adjudicate non-advancing outcomes
 
 This linear flow is easier to debug, uses less memory (no recursive call stack), and provides cleaner error recovery since each phase has well-defined entry and exit conditions.
 

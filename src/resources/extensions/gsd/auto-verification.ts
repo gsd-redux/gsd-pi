@@ -20,7 +20,13 @@ import { resolveMilestoneValidationVerdict } from "./milestone-validation-verdic
 import { isMilestoneLifecycleAdopted } from "./db/milestone-closeout-readiness.js";
 import { hasPendingMilestoneSubjectiveUat } from "./milestone-subjective-uat-domain-operation.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices, getTaskVerificationEvidence } from "./gsd-db.js";
+import {
+  getMilestoneSlices,
+  getSliceTasks,
+  getTask,
+  getTaskVerificationEvidence,
+  isDbAvailable,
+} from "./gsd-db.js";
 import type { TaskRow } from "./db-task-slice-rows.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import type { GSDPreferences } from "./preferences-types.js";
@@ -56,7 +62,7 @@ import {
   readLatestTaskAttempt,
   type TaskExecutionAttemptSnapshot,
 } from "./task-execution-domain-operation.js";
-import { recordFailureAndSelectRecovery } from "./task-recovery-domain-operation.js";
+import { recordFailureAndSelectRecovery, type TaskRecoveryReceipt } from "./task-recovery-domain-operation.js";
 import {
   invalidateTaskTechnicalPass,
   readTaskTechnicalVerdict,
@@ -243,6 +249,10 @@ function routeHostTechnicalFailure(
   // tool needs the exact recoveryActionId. Hand it back so the caller can surface it
   // on the finalize break reason instead of discarding it here (#1593).
   recordAbort?: (recoveryActionId: string) => void,
+  // Invoked for EVERY routed decision (not just aborts) so callers that must
+  // surface the sanctioned exit on the first pause — e.g. the safety
+  // evidence-xref block (#1641) — can report the minted recoveryActionId.
+  onRouted?: (recoveryActionId: string, action: TaskRecoveryReceipt["action"]) => void,
 ): "retry" | "abort" {
   if (!attempt.resultId) throw new Error("Host verification Attempt Result is missing");
   const routeInput = {
@@ -271,6 +281,7 @@ function routeHostTechnicalFailure(
   } catch {
     recovery = authority.routeTaskFailure(routeInput);
   }
+  onRouted?.(recovery.recoveryActionId, recovery.action);
   switch (recovery.action) {
     case "retry":
     case "repair":
@@ -288,6 +299,92 @@ function routeHostTechnicalFailure(
 }
 
 export const _routeHostTechnicalFailureForTest = routeHostTechnicalFailure;
+
+export interface EvidenceCrossReferenceBlockResult {
+  recoveryActionId: string;
+  action: TaskRecoveryReceipt["action"];
+  outcome: "retry" | "abort";
+}
+
+/**
+ * Settle a blocking safety evidence cross-reference mismatch through the
+ * canonical verdict + route seam (#1641 / #1649).
+ *
+ * The safety harness detects a Task that claimed passing verification which the
+ * recorded execution contradicts. Before this seam existed the blocking branch
+ * was a pure read (notify → pause), which left the Attempt wedged at
+ * settled/succeeded/verify forever: no recoveryActionId was minted, so
+ * `gsd_task_recovery_resume` had no key to accept, and every resume replayed
+ * the identical finalize sequence.
+ *
+ * This records the withheld verdict as a durable failing host Technical
+ * Verdict (which advances the kernel checkpoint to the route stage, ending the
+ * awaiting-verification wedge) and routes the failure through the same durable
+ * recovery policy the verification gate uses — same idempotency key, same
+ * classification — so any later gate pass over this Attempt replays rather
+ * than conflicts.
+ */
+export function routeEvidenceCrossReferenceBlock(input: {
+  attempt: VerificationAttemptSnapshot;
+  basePath: string;
+  mismatch: {
+    command: string;
+    claimedExitCode: number;
+    actualExitCode: number | null;
+    reason: string;
+  };
+  taskAuthority?: TaskVerificationAuthority;
+}): EvidenceCrossReferenceBlockResult {
+  const authority = input.taskAuthority ?? defaultTaskVerificationAuthority;
+  const attempt = input.attempt;
+  if (!isTaskAttemptAwaitingVerification(attempt)) {
+    throw new Error("Evidence cross-reference block requires an Attempt awaiting verification");
+  }
+  const nowIso = new Date().toISOString();
+  const recorded = authority.recordTaskTechnicalVerdict({
+    invocation: internalExecutionInvocation(`internal:auto:safety-evidence-xref:${attempt.attemptId}`),
+    attemptId: attempt.attemptId,
+    testedSourceRevision: "unavailable",
+    verdict: "fail",
+    rationale: `Safety evidence cross-reference: ${input.mismatch.reason}`,
+    evidence: {
+      evidenceClass: "command",
+      commandOrTool: input.mismatch.command || "gsd-safety-evidence-xref",
+      workingDirectory: input.basePath,
+      startedAt: nowIso,
+      endedAt: nowIso,
+      exitCode: input.mismatch.actualExitCode ?? 1,
+      observation: "failed",
+      durableOutputRef: `db://safety-evidence-xref/${attempt.attemptId}`,
+      environment: {
+        node: process.version,
+        platform: process.platform,
+        claimedExitCode: input.mismatch.claimedExitCode,
+        // Machine-readable discriminator: this verdict was synthesized from an
+        // evidence contradiction, not a host verification run (#1641).
+        verificationPolicy: 'safety-evidence-xref',
+      },
+    },
+  });
+  let routed: { recoveryActionId: string; action: TaskRecoveryReceipt["action"] } | null = null;
+  const outcome = routeHostTechnicalFailure(
+    authority,
+    attempt,
+    { verdictId: recorded.verdictId, evidenceId: recorded.evidenceId, verdict: "fail" },
+    "verification-failed",
+    undefined,
+    (recoveryActionId, action) => {
+      routed = { recoveryActionId, action };
+    },
+  );
+  if (!routed) {
+    throw new Error("Safety evidence cross-reference routing did not record a recovery action");
+  }
+  return {
+    ...(routed as { recoveryActionId: string; action: TaskRecoveryReceipt["action"] }),
+    outcome,
+  };
+}
 
 function invalidateStoredHostPass(
   authority: TaskVerificationAuthority,
@@ -1099,7 +1196,8 @@ export async function runPostUnitVerification(
         : "fail";
     let durableRecovery: "retry" | "abort" | null = null;
     if (mid && sid && tid) {
-      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result);
+      let rationale = verdict.failureContext || postExecFailureSummary || formatFailureContext(result) ||
+        "Host-owned technical verification failed.";
       if (sourceError) {
         rationale = sourceError;
       } else if (postExecInfrastructureError) {

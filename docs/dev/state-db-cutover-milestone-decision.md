@@ -242,3 +242,23 @@ decision's scope. No invariant is dropped, and no gate change may be read as
 implicitly reversing D005: D005 is superseded only where this document says so
 (filesystem-state authority), and remains authoritative everywhere else until
 a future separate, explicit lifecycle read-cutover decision.
+
+## Closeout evidence
+
+Recorded 2026-08-12 at wave-4 closeout (T023). Timebox waiver: cutover release
+v1.13.0 (2026-08-08); subsequent stables v1.14.0 and v1.15.0; remaining ≥60-day
+calendar window waived by the project owner ("finish all waves").
+
+| Command | Verdict |
+|---|---|
+| `pnpm run verify:pr` | `build:core` PASS; `typecheck:extensions` PASS; `gate:lifecycle-shadow-no-cutover` PASS. `test:unit` Wave 4 files green. This checkout's `.gsd/gsd.db` is schema v47 vs code `SCHEMA_VERSION` 46, so five command/read-cli tests throw `SchemaTooNew` locally; that is environmental, not a wave-4 regression. |
+| `pnpm run baseline:refactor:gate` | PASS (34/34) |
+| `pnpm run baseline:refactor:phase0` | PASS (140/140) |
+| `pnpm run gate:lifecycle-shadow-no-cutover` | PASS (Structural 7/7, Behavioral 11/11) |
+| `pnpm run legacy:cleanup:evidence --file <fresh>` then `legacy:cleanup:gate --file <same>` | PASS (all legacy counters 0; proof zero offenders) |
+| `node scripts/legacy-state-path-proof.mjs` | PASS (zero offenders) |
+| `pnpm run verify:fast` | PASS |
+
+Deferred out of this milestone (unchanged): canonical lifecycle read-authority
+cutover under M003/D005; Phase 5 DB split; separately sequenced product cleanup.
+

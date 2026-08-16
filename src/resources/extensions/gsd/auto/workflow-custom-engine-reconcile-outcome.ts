@@ -12,8 +12,10 @@ export interface HandleCustomEngineReconcileOutcomeDeps {
   ) => void;
   finishTurn: (
     status: "completed" | "paused" | "stopped",
-    failureClass?: "manual-attention",
-    error?: string,
+    failureClass: "none" | "manual-attention",
+    error: string | undefined,
+    guardId: string | null,
+    inputPayload?: string,
   ) => void;
 }
 
@@ -33,13 +35,13 @@ export async function handleCustomEngineReconcileOutcome(input: {
   if (decision.action === "complete-workflow") {
     await input.deps.stopAuto(decision.stopReason);
     input.deps.report("milestone-complete", details);
-    input.deps.finishTurn("completed");
+    input.deps.finishTurn("completed", "none", undefined, null);
     return { action: "break" };
   }
   if (decision.action === "pause") {
     await input.deps.pauseAuto();
     input.deps.report("pause", details);
-    input.deps.finishTurn("paused", "manual-attention");
+    input.deps.finishTurn("paused", "manual-attention", input.outcome.reason, "custom-engine-reconcile", input.outcome.reason);
     return { action: "break" };
   }
   if (decision.action === "stop") {
@@ -48,11 +50,11 @@ export async function handleCustomEngineReconcileOutcome(input: {
       ...details,
       reason: input.outcome.reason,
     });
-    input.deps.finishTurn("stopped", "manual-attention", input.outcome.reason);
+    input.deps.finishTurn("stopped", "manual-attention", input.outcome.reason, "custom-engine-reconcile", input.outcome.reason);
     return { action: "break" };
   }
 
   input.deps.report("continue", details);
-  input.deps.finishTurn("completed");
+  input.deps.finishTurn("completed", "none", undefined, null);
   return { action: "continue" };
 }

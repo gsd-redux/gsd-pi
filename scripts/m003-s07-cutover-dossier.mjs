@@ -26,10 +26,6 @@ export const PROOF_OUTCOMES = Object.freeze([
 ]);
 export const COMPATIBILITY_IDS = Object.freeze([
   "runtime-disagreement",
-  "frozen-public-response",
-  "mode-transport-matrix",
-  "unadopted-import",
-  "unadopted-reconcile",
   "same-status-repair",
   "park-unpark",
   "discard",
@@ -46,26 +42,6 @@ export const COMPATIBILITY_WITNESSES = Object.freeze([
     id: "runtime-disagreement",
     file: "src/resources/extensions/gsd/tests/semantic-shadow-no-cutover.test.ts",
     title: "legacy milestone status remains public when canonical lifecycle disagrees",
-  },
-  {
-    id: "frozen-public-response",
-    file: "src/resources/extensions/gsd/tests/semantic-shadow-contract.test.ts",
-    title: "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor",
-  },
-  {
-    id: "mode-transport-matrix",
-    file: "src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts",
-    title: "all supported modes and transports preserve the frozen response and exact observation identity",
-  },
-  {
-    id: "unadopted-import",
-    file: "src/resources/extensions/gsd/tests/md-importer-adopted-authority.test.ts",
-    title: "unadopted re-import keeps existing checkbox completion behavior",
-  },
-  {
-    id: "unadopted-reconcile",
-    file: "src/resources/extensions/gsd/tests/workflow-reconcile.test.ts",
-    title: "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path",
   },
   {
     id: "same-status-repair",
@@ -121,7 +97,7 @@ export const COMPATIBILITY_WITNESSES = Object.freeze([
 export const COMMAND_INVENTORY = Object.freeze([
   {
     id: "semantic-shadow-capstone",
-    command: "pnpm exec tsx --test --test-concurrency=1 src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-mode-matrix.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
+    command: "pnpm exec tsx --test --test-concurrency=1 src/resources/extensions/gsd/tests/semantic-shadow-capstone.test.ts src/resources/extensions/gsd/tests/semantic-shadow-soak.test.ts packages/mcp-server/src/workflow-tools-parity.test.ts",
     stage: "post_generation",
     verdict: "required",
   },

@@ -13,6 +13,7 @@ import { readFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { createProjectionDirectorySync, removeProjectionFileSync } from "./atomic-write.js";
 import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus, isHiddenFromRoadmap, toStatus } from "./status-guards.js";
+import { readLatestTaskAttempt } from "./task-execution-domain-operation.js";
 import { dirname, join } from "node:path";
 import {
   getAllMilestones,
@@ -49,7 +50,7 @@ import {
   buildSliceFileName,
 } from "./paths.js";
 import { saveFile, clearParseCache, registerCacheClearCallback } from "./files.js";
-import { parseLegacyRoadmap } from "./schemas/parsers.js";
+import { parseProjectionRoadmap } from "./schemas/parsers.js";
 import { invalidateStateCache } from "./state.js";
 import { clearPathCache, milestonesDir, legacyMilestonesDir, isLegacyMilestonesLayout, resolveMilestonePath, relSliceFile, canonicalPhaseDirName } from "./paths.js";
 import { readCompatMarker, writeCompatMarker, computeProjectionSha, deriveCompatProjectionKey } from "./compat/compat-marker.js";
@@ -68,34 +69,46 @@ import {
 // entities) here; invalidateCaches() drains it and refreshes .gsd/.compat.json
 // so the next reconcile pass sees gsd-pi's own writes as expected. This is the
 // feedback-loop-prevention mechanism for cross-tool compatibility.
-const _pendingProjectionWrites: Array<{ basePath: string; projectionPath: string; entities: string[] }> = [];
+const _pendingProjectionWrites: Array<{
+  basePath: string;
+  projectionPath: string;
+  entities: string[];
+  sha: string;
+}> = [];
 
-function recordProjectionWrite(basePath: string, projectionPath: string, entities: string[]): void {
-  _pendingProjectionWrites.push({ basePath, projectionPath, entities });
+function recordProjectionWrite(
+  basePath: string,
+  projectionPath: string,
+  entities: string[],
+  content: string,
+): void {
+  _pendingProjectionWrites.push({
+    basePath,
+    projectionPath,
+    entities,
+    sha: computeProjectionSha(content),
+  });
 }
 
 function flushProjectionWritesToMarker(): void {
   if (_pendingProjectionWrites.length === 0) return;
   // Group by basePath (defensive — multiple projects are unusual but possible).
-  const byBase = new Map<string, Map<string, string[]>>();
+  const byBase = new Map<string, Map<string, { entities: string[]; sha: string }>>();
   for (const w of _pendingProjectionWrites) {
     let bucket = byBase.get(w.basePath);
     if (!bucket) { bucket = new Map(); byBase.set(w.basePath, bucket); }
-    bucket.set(w.projectionPath, w.entities);
+    bucket.set(w.projectionPath, { entities: w.entities, sha: w.sha });
   }
   _pendingProjectionWrites.length = 0;
 
   for (const [basePath, writes] of byBase) {
     try {
       const marker = readCompatMarker(basePath);
-      for (const [projectionPath, entities] of writes) {
-        const abs = join(basePath, ".gsd", projectionPath);
-        if (existsSync(abs)) {
-          marker.projections[projectionPath] = {
-            sha: computeProjectionSha(readFileSync(abs, "utf-8")),
-            entities,
-          };
-        }
+      for (const [projectionPath, write] of writes) {
+        marker.projections[projectionPath] = {
+          sha: write.sha,
+          entities: write.entities,
+        };
       }
       marker.lastWriter = "gsd-pi";
       marker.lastProjectedAt = new Date().toISOString();
@@ -122,6 +135,19 @@ const TRAILING_STATE_VERSION_STAMP_RE = /<!-- gsd:state-version=\d+:\d+ -->[ \t]
 export interface ProjectStateVersion {
   revision: number;
   authorityEpoch: number;
+}
+
+export class ProjectionWriteError extends Error {
+  readonly stage = "artifact-persistence" as const;
+
+  constructor(artifactPath: string, artifactType: string, taskScoped: boolean, cause: unknown) {
+    const scope = taskScoped ? "task " : "";
+    super(
+      `${scope}${artifactType} projection artifact persistence failed: ${artifactPath}`,
+      cause instanceof Error ? { cause } : undefined,
+    );
+    this.name = "ProjectionWriteError";
+  }
 }
 
 /**
@@ -275,9 +301,16 @@ async function writeAndStore(
       task_id: opts.task_id ?? null,
       full_content: stamped,
     });
-  } catch {
-    // Non-fatal: file is on disk, DB is best-effort
-    logWarning("renderer", `failed to update artifact in DB: ${artifactPath}`);
+  } catch (error) {
+    // Disk is a rebuildable projection, but callers must not report success
+    // without its authoritative artifact lineage. The unstored disk copy is
+    // intentionally left for drift reconciliation and post-mortem evidence.
+    throw new ProjectionWriteError(
+      artifactPath,
+      opts.artifact_type,
+      Boolean(opts.task_id),
+      error,
+    );
   }
 
   // Record the projection write so invalidateCaches() can refresh the compat
@@ -288,7 +321,7 @@ async function writeAndStore(
     if (opts.milestone_id) entities.push(opts.milestone_id);
     if (opts.milestone_id && opts.slice_id) entities.push(`${opts.milestone_id}/${opts.slice_id}`);
     if (opts.milestone_id && opts.slice_id && opts.task_id) entities.push(`${opts.milestone_id}/${opts.slice_id}/${opts.task_id}`);
-    recordProjectionWrite(basePath, artifactPath, entities);
+    recordProjectionWrite(basePath, artifactPath, entities, stamped);
   }
 
   invalidateCaches();
@@ -425,6 +458,13 @@ function renderSlicePlanMarkdown(slice: SliceRow, tasks: TaskRow[], gates: GateR
 
   lines.push(`# ${slice.id}: ${slice.title || slice.id}`);
   lines.push("");
+  // State the DB identities explicitly. Under flat-phase layout this file lives
+  // at .gsd/phases/01-m001/01-01-PLAN.md, and an agent with only the path to go
+  // on infers milestoneId "01-m001"/sliceId "01-01" — which the tool contract
+  // rejects, since it demands the DB identities M001/S01.
+  lines.push(`**Milestone:** ${slice.milestone_id}`);
+  lines.push(`**Slice:** ${slice.id}`);
+  lines.push("");
   lines.push(`**Goal:** ${slice.goal}`);
   lines.push(`**Demo:** ${slice.demo}`);
   lines.push("");
@@ -529,6 +569,19 @@ function getActivePlanTasks(milestoneId: string, sliceId: string): TaskRow[] {
   return getSliceTasks(milestoneId, sliceId).filter((task) => task.status !== "skipped");
 }
 
+function planProjectionPath(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  outputPath?: string,
+): string {
+  if (outputPath) return outputPath;
+  const existingPlanPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
+  if (existingPlanPath) return existingPlanPath;
+  const milestoneTitle = getMilestone(milestoneId)?.title;
+  return join(basePath, relSliceFile(basePath, milestoneId, sliceId, "PLAN", milestoneTitle));
+}
+
 export async function renderPlanFromDb(
   basePath: string,
   milestoneId: string,
@@ -550,10 +603,7 @@ export async function renderPlanFromDb(
   // flat-phase: phases/NN-slug/NN-MM-PLAN.md).
   // Pass the milestone title so the fallback flat-phase dir uses the human-readable
   // slug ("05-milestone-five") rather than the bare ID slug ("05-m005").
-  const milestoneTitle = getMilestone(milestoneId)?.title;
-  const existingPlanPath = resolveSliceFile(basePath, milestoneId, sliceId, "PLAN");
-  const defaultPlanPath = existingPlanPath ?? join(basePath, relSliceFile(basePath, milestoneId, sliceId, "PLAN", milestoneTitle));
-  const absPath = outputPath ?? defaultPlanPath;
+  const absPath = planProjectionPath(basePath, milestoneId, sliceId, outputPath);
   createProjectionDirectorySync(dirname(absPath));
   const artifactPath = toArtifactPath(absPath, basePath);
   const sliceGates = getGateResults(milestoneId, sliceId, "slice");
@@ -858,21 +908,53 @@ export async function renderTaskSummary(
 ): Promise<boolean> {
   const task = getTask(milestoneId, sliceId, taskId);
   const status = task ? toStatus(task.status) : null;
-  if (!task || (status !== "in_progress" && status !== "complete") || !task.full_summary_md) {
-    return false; // No summary to render — skip silently
+  if (!task || !task.full_summary_md) {
+    return false;
+  }
+  if (status === "complete") {
+    // Published completions keep projecting.
+  } else if (status === "in_progress") {
+    const attempt = readLatestTaskAttempt({ milestoneId, sliceId, taskId });
+    if (!attempt || attempt.outcome === "interrupted") {
+      return false;
+    }
+  } else {
+    return false;
   }
 
+  await writeTaskSummaryProjection(
+    basePath,
+    milestoneId,
+    sliceId,
+    taskId,
+    task.full_summary_md,
+  );
+
+  return true;
+}
+
+/**
+ * Persist task-summary projection bytes through the canonical projection seam.
+ * Callers may render content differently, but stamping, disk placement,
+ * artifact lineage, compatibility markers, and cache invalidation stay here.
+ */
+export async function writeTaskSummaryProjection(
+  basePath: string,
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  content: string,
+): Promise<{ artifactPath: string; content: string }> {
   const absPath = targetTaskFile(basePath, milestoneId, sliceId, taskId, "SUMMARY", getMilestone(milestoneId)?.title);
   const artifactPath = toArtifactPath(absPath, basePath);
 
-  await writeAndStore(absPath, artifactPath, task.full_summary_md, {
+  const stamped = await writeAndStore(absPath, artifactPath, content, {
     artifact_type: "SUMMARY",
     milestone_id: milestoneId,
     slice_id: sliceId,
     task_id: taskId,
   }, basePath);
-
-  return true;
+  return { artifactPath, content: stamped };
 }
 
 // ─── Slice Summary Rendering ──────────────────────────────────────────────
@@ -1129,20 +1211,10 @@ function parseProjectionByIdentity(path: string, parse: (content: string) => unk
 // a hand-edit is drift while a stamp-only difference is not. Reasons keep the
 // "in roadmap" / "in plan" markers the stale-render repair dispatch keys on.
 
-function roadmapRenderIntentDrift(
-  basePath: string,
-  milestone: MilestoneRow,
-  slices: SliceRow[],
-): StaleEntry | null {
-  const roadmapPath = targetMilestoneFile(basePath, milestone.id, "ROADMAP", milestone.title);
-  if (!existsSync(roadmapPath)) return null;
-  const intent = renderRoadmapMarkdown(milestone, slices);
-  const actual = readFileSync(roadmapPath, "utf-8");
-  if (stripProjectionStamp(actual) === intent) return null;
-  return {
-    path: roadmapPath,
-    reason: `roadmap for ${milestone.id} differs from DB render intent (content drift in roadmap)`,
-  };
+interface ProjectionRenderIntent {
+  path: string;
+  content: string;
+  reason: string;
 }
 
 function planRenderIntentDrift(
@@ -1153,53 +1225,138 @@ function planRenderIntentDrift(
 ): StaleEntry | null {
   const planPath = resolveSliceFile(basePath, milestoneId, slice.id, "PLAN");
   if (!planPath || !existsSync(planPath)) return null;
-  const gates = getGateResults(milestoneId, slice.id, "slice");
-  const intent = renderSlicePlanMarkdown(slice, tasks, gates);
+  const intent = renderSlicePlanMarkdown(
+    slice,
+    tasks,
+    getGateResults(milestoneId, slice.id, "slice"),
+  );
   const actual = readFileSync(planPath, "utf-8");
-  if (stripProjectionStamp(actual) === intent) return null;
+  if (stripProjectionStamp(actual) === stripProjectionStamp(intent)) return null;
   return {
     path: planPath,
     reason: `plan for ${milestoneId}/${slice.id} differs from DB render intent (content drift in plan)`,
   };
 }
 
-/**
- * Detect content drift between on-disk ROADMAP/PLAN projections and the
- * current DB render intent. A projection whose stamp matches the current DB
- * revision/epoch but whose content was hand-edited IS drift; a stamp-only
- * difference is NOT. Diagnostic primitive like detectStaleRenders — the
- * detect+repair composition lives in state-reconciliation/drift/stale-render.ts
- * (T013 wires the stamp short-circuit there).
- */
-export function detectProjectionDrift(basePath: string): StaleEntry[] {
-  const stale: StaleEntry[] = [];
-  const milestones = getAllMilestones();
+function projectionRenderIntents(basePath: string): ProjectionRenderIntent[] {
+  const intents = new Map<string, ProjectionRenderIntent>();
+  const record = (path: string, content: string, reason: string): void => {
+    intents.set(path, { path, content, reason });
+  };
 
-  for (const milestone of milestones) {
-    const slices = getMilestoneSlices(milestone.id).filter((slice) => slice.status !== "skipped");
+  for (const milestone of getAllMilestones()) {
+    const slices = getMilestoneSlices(milestone.id);
+    const roadmapSlices = slices.filter((slice) => !isHiddenFromRoadmap(slice.status));
+    if (roadmapSlices.length > 0 || milestone.vision.trim()) {
+      record(
+        targetMilestoneFile(basePath, milestone.id, "ROADMAP", milestone.title),
+        renderRoadmapMarkdown(milestone, roadmapSlices),
+        `roadmap for ${milestone.id} differs from DB render intent (content drift in roadmap)`,
+      );
+    }
 
-    // Roadmap — skip the unplanned-milestone case renderRoadmapFromDb refuses.
-    if (!(slices.length === 0 && !milestone.vision.trim())) {
+    const milestoneComplete = toStatus(milestone.status) === "complete";
+    for (const artifact of getMilestoneScopedArtifacts(milestone.id)) {
+      const artifactType = artifact.artifact_type.toUpperCase();
+      if (artifact.artifact_type === "ROADMAP") continue;
+      if (artifactType === "SUMMARY" && !milestoneComplete) continue;
+      if (!artifact.full_content.trim()) continue;
+      record(
+        targetMilestoneFile(basePath, milestone.id, artifact.artifact_type, milestone.title),
+        artifact.full_content,
+        `${artifactType} for ${milestone.id} differs from DB render intent`,
+      );
+    }
+
+    if (milestoneComplete) {
       try {
-        const entry = roadmapRenderIntentDrift(basePath, milestone, slices);
-        if (entry) stale.push(entry);
-      } catch (e) {
-        logWarning("renderer", `roadmap drift check failed: ${(e as Error).message}`);
+        const completion = readMilestoneCompletionProjection(milestone.id);
+        if (completion) {
+          record(
+            targetMilestoneFile(basePath, milestone.id, "SUMMARY", milestone.title),
+            renderMilestoneSummaryMarkdown(milestone.id, completion.completedAt, completion.closeout),
+            `summary for ${milestone.id} differs from DB render intent`,
+          );
+        }
+      } catch (error) {
+        logWarning("renderer", `milestone summary drift check failed: ${(error as Error).message}`);
       }
     }
 
     for (const slice of slices) {
-      const tasks = getActivePlanTasks(milestone.id, slice.id);
-      if (tasks.length === 0) continue; // the renderer never emits taskless plans
-      try {
-        const entry = planRenderIntentDrift(basePath, milestone.id, slice, tasks);
-        if (entry) stale.push(entry);
-      } catch (e) {
-        logWarning("renderer", `plan drift check failed: ${(e as Error).message}`);
+      const sliceComplete = toStatus(slice.status) === "complete";
+      for (const artifact of getSliceScopedArtifacts(milestone.id, slice.id)) {
+        const artifactType = artifact.artifact_type.toUpperCase();
+        if (!artifact.full_content.trim()) continue;
+        if ((artifactType === "SUMMARY" || artifactType === "UAT") && !sliceComplete) continue;
+        if (artifactType === "PLAN") continue;
+        record(
+          join(basePath, relSliceFile(basePath, milestone.id, slice.id, artifactType)),
+          artifact.full_content,
+          `${artifactType} for ${milestone.id}/${slice.id} differs from DB render intent`,
+        );
+      }
+
+      const activeTasks = getActivePlanTasks(milestone.id, slice.id);
+      if (activeTasks.length > 0) {
+        record(
+          planProjectionPath(basePath, milestone.id, slice.id),
+          renderSlicePlanMarkdown(
+            slice,
+            activeTasks,
+            getGateResults(milestone.id, slice.id, "slice"),
+          ),
+          `plan for ${milestone.id}/${slice.id} differs from DB render intent (content drift in plan)`,
+        );
+      }
+
+      if (sliceComplete && slice.full_summary_md) {
+        record(
+          targetSliceFile(basePath, milestone.id, slice.id, "SUMMARY", milestone.title),
+          slice.full_summary_md,
+          `summary for ${milestone.id}/${slice.id} differs from DB render intent`,
+        );
+      }
+      if (sliceComplete && slice.full_uat_md) {
+        record(
+          targetSliceFile(basePath, milestone.id, slice.id, "UAT", milestone.title),
+          slice.full_uat_md,
+          `UAT for ${milestone.id}/${slice.id} differs from DB render intent`,
+        );
+      }
+
+      for (const task of getSliceTasks(milestone.id, slice.id)) {
+        const taskStatus = toStatus(task.status);
+        if ((taskStatus !== "in_progress" && taskStatus !== "complete") || !task.full_summary_md) continue;
+        record(
+          targetTaskFile(basePath, milestone.id, slice.id, task.id, "SUMMARY", milestone.title),
+          task.full_summary_md,
+          `summary for ${milestone.id}/${slice.id}/${task.id} differs from DB render intent`,
+        );
       }
     }
   }
 
+  return [...intents.values()];
+}
+
+/**
+ * Detect content drift between renderer-owned on-disk projections and current
+ * DB render intent. State-version stamps do not participate in the comparison.
+ */
+export function detectProjectionDrift(basePath: string): StaleEntry[] {
+  const stale: StaleEntry[] = [];
+  for (const intent of projectionRenderIntents(basePath)) {
+    if (!existsSync(intent.path)) continue;
+    try {
+      const actual = readFileSync(intent.path, "utf-8");
+      if (stripProjectionStamp(actual) !== stripProjectionStamp(intent.content)) {
+        stale.push({ path: intent.path, reason: intent.reason });
+      }
+    } catch (e) {
+      logWarning("renderer", `projection drift check failed: ${(e as Error).message}`);
+    }
+  }
   return stale;
 }
 
@@ -1234,7 +1391,7 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
     const roadmapPath = targetMilestoneFile(basePath, milestone.id, "ROADMAP", milestone.title);
     if (existsSync(roadmapPath)) {
       try {
-        const parsed = parseProjectionByIdentity(roadmapPath, parseLegacyRoadmap) as ReturnType<typeof parseLegacyRoadmap>;
+        const parsed = parseProjectionByIdentity(roadmapPath, parseProjectionRoadmap) as ReturnType<typeof parseProjectionRoadmap>;
 
         for (const slice of slices) {
           const isCompleteInDb = isClosedStatus(slice.status);
@@ -1346,7 +1503,7 @@ function detectStaleRendersImpl(basePath: string): StaleEntry[] {
  * markdown parsers directly.
  */
 export function roadmapRenderMarksSliceDone(roadmapContent: string, sliceId: string): boolean {
-  return parseLegacyRoadmap(roadmapContent).slices.some((slice) => slice.id === sliceId && slice.done);
+  return parseProjectionRoadmap(roadmapContent).slices.some((slice) => slice.id === sliceId && slice.done);
 }
 
 // ─── Stale Repair ─────────────────────────────────────────────────────────

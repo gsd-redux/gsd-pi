@@ -7,6 +7,10 @@ import { recoveryRemediation } from "./guidance.js";
 import { isTerminalToolSurfaceError } from "./tool-surface-readiness.js";
 import { ReconciliationFailedError } from "./state-reconciliation.js";
 import { IllegalPhaseTransitionError } from "./state-transition-matrix.js";
+import {
+  isTransientProjectionLockError,
+  ProjectionLockTransientError,
+} from "./projection-root-errors.js";
 
 export type RecoveryFailureKind =
   | "tool-schema"
@@ -19,6 +23,7 @@ export type RecoveryFailureKind =
   | "verification-drift"
   | "reconciliation-drift"
   | "illegal-transition"
+  | "projection-lock-transient"
   | "provider"
   | "runtime-unknown";
 
@@ -51,6 +56,8 @@ export function classifyFailure(input: RecoveryClassificationInput): RecoveryCla
       ? "reconciliation-drift"
       : input.error instanceof IllegalPhaseTransitionError
         ? "illegal-transition"
+        : input.error instanceof ProjectionLockTransientError
+          ? "projection-lock-transient"
         : input.failureKind ?? inferFailureKind(message);
 
   if (failureKind === "provider") {
@@ -91,6 +98,7 @@ const FAILURE_TAXONOMY: Record<
   "verification-drift": { action: "escalate", label: "Verification drift" },
   "reconciliation-drift": { action: "escalate", label: "Reconciliation drift" },
   "illegal-transition": { action: "escalate", label: "Illegal phase transition" },
+  "projection-lock-transient": { action: "retry", label: "Projection root busy" },
   "runtime-unknown": { action: "escalate", label: null },
 };
 
@@ -102,6 +110,7 @@ function inferFailureKind(message: string): RecoveryFailureKind {
   // would otherwise route it to retry. See #783.
   if (isTerminalToolSurfaceError(message)) return "runtime-unknown";
   if (isToolUnavailableError(message)) return "tool-unavailable";
+  if (isTransientProjectionLockError(message)) return "projection-lock-transient";
   if (/tool contract|auto-unit tool scope|phase-boundary gate|not permitted.*own/i.test(message)) return "tool-contract";
   if (/lifecycle progression|required artifact|missing .*assessment|missing .*closeout|cannot legally (?:advance|progress)/i.test(message)) return "lifecycle-progression";
   if (/schema|invalid.*tool|tool.*invalid|enum/i.test(message)) return "tool-schema";

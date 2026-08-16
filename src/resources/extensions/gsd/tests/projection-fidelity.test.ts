@@ -217,7 +217,7 @@ test('projection-fidelity: hand-edited projection content is detected as stale',
     assert.ok(planDrift, 'hand-edited plan is detected as stale');
     assert.ok(
       planDrift!.reason.includes('in plan'),
-      'drift reason keeps the repair-dispatch "in plan" marker',
+      `drift reason keeps the repair-dispatch "in plan" marker; got: ${planDrift!.reason}`,
     );
 
     // The untouched roadmap must not be flagged.

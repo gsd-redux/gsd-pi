@@ -11,9 +11,8 @@ import {
   rmdirSync, unlinkSync, writeFileSync, constants as fsConstants,
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { deriveState } from "./state.js";
-import { gsdProjectionRoot, gsdRoot } from "./paths.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { logWarning } from "./workflow-logger.js";
 import {
@@ -22,7 +21,6 @@ import {
   loadVerifiedRecoverApplication,
   prepareVerifiedRecoverApplication,
   type PreparedVerifiedRecoverApplication,
-  refreshWorkflowDatabaseFromDisk,
 } from "./db-workspace.js";
 import {
   executeLegacyImportRecoveryAction,
@@ -32,7 +30,16 @@ import {
   formatLegacyImportForwardRepairChoice,
   parseLegacyImportForwardRepairChoices,
 } from "./legacy-import-forward-repair-choice-token.js";
+import { LegacyImportBaseSnapshotError } from "./legacy-import-preview-base.js";
 import { LEGACY_IMPORT_RESTORE_ASSESSMENT_CONSENT_SCHEMA_VERSION, type LegacyImportRestoreAssessmentConsent } from "./legacy-import-restore-assessment.js";
+import {
+  preserveProjectionChanges,
+  rebuildMarkdownProjectionsFromDb,
+  type RebuildMarkdownProjectionsResult,
+} from "./projection-worker.js";
+
+export { rebuildMarkdownProjectionsFromDb };
+export type { RebuildMarkdownProjectionsResult };
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
@@ -686,58 +693,14 @@ export async function handleRecover(
     );
     ctx.ui.notify(lines.join("\n"), "success");
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    const details = err instanceof LegacyImportBaseSnapshotError
+      ? ` [${err.code}] context=${JSON.stringify(err.context)}`
+      : "";
+    const msg = `${message}${details}`;
     logWarning("command", `recover failed: ${msg}`);
     ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
   }
-}
-
-function normalizeArtifactPath(value: string): string {
-  return value.replace(/\\/g, "/");
-}
-
-function pathWithin(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel.length === 0 || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-function artifactPathForDb(basePath: string, absPath: string): string {
-  const projectionRoot = gsdProjectionRoot(basePath);
-  const root = pathWithin(projectionRoot, absPath) ? projectionRoot : gsdRoot(basePath);
-  return normalizeArtifactPath(relative(root, absPath));
-}
-
-function quarantineRelativePath(basePath: string, absPath: string): string {
-  for (const root of [gsdProjectionRoot(basePath), gsdRoot(basePath)]) {
-    if (pathWithin(root, absPath)) {
-      return normalizeArtifactPath(relative(root, absPath));
-    }
-  }
-  return normalizeArtifactPath(absPath.replace(/^[/\\]+/, ""));
-}
-
-function uniquePath(path: string): string {
-  if (!existsSync(path)) return path;
-  let idx = 2;
-  while (existsSync(`${path}.${idx}`)) idx++;
-  return `${path}.${idx}`;
-}
-
-function resolveDiskArtifactPath(basePath: string, artifactPath: string): string {
-  if (isAbsolute(artifactPath)) return artifactPath;
-  const candidates = [
-    join(gsdProjectionRoot(basePath), artifactPath),
-    join(gsdRoot(basePath), artifactPath),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
-}
-
-function quarantineProjectionFile(basePath: string, absPath: string, stamp: string): string {
-  const rel = quarantineRelativePath(basePath, absPath);
-  const target = uniquePath(join(gsdProjectionRoot(basePath), "quarantine", "projections", stamp, rel));
-  mkdirSync(dirname(target), { recursive: true });
-  renameSync(absPath, target);
-  return target;
 }
 
 type RebuildTarget = "markdown" | "database" | "usage";
@@ -749,67 +712,11 @@ function parseRebuildTarget(args: string): RebuildTarget {
   return "usage";
 }
 
-export interface RebuildMarkdownProjectionsResult {
-  rendered: number;
-  skipped: number;
-  errors: string[];
-  quarantined: number;
-  quarantinedPaths: string[];
-}
-
 /**
- * Re-render markdown planning projections from the authoritative DB.
+ * `/gsd sync` — preserve external projection edits and re-project from the DB.
  *
- * Quarantines open-unit SUMMARY files that contradict DB status before
- * rendering. Safe to call after milestone merge/transition or during startup
- * self-heal when the DB holds rows markdown lacks.
- */
-export async function rebuildMarkdownProjectionsFromDb(
-  basePath: string,
-): Promise<RebuildMarkdownProjectionsResult> {
-  const { deleteArtifactByPath } = await import("./gsd-db.js");
-  const { detectArtifactDbDrift } = await import("./state-reconciliation/drift/artifact-db.js");
-  const { renderAllFromDb } = await import("./markdown-renderer.js");
-  const { invalidateStateCache } = await import("./state.js");
-
-  invalidateStateCache();
-  refreshWorkflowDatabaseFromDisk();
-
-  const state = await deriveState(basePath);
-  const drifts = detectArtifactDbDrift(state, { basePath, state });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const quarantined: string[] = [];
-  const seen = new Set<string>();
-
-  for (const drift of drifts) {
-    if (drift.kind !== "artifact-db-status-divergence") continue;
-    if (drift.artifactType !== "SUMMARY" || !drift.artifactPath) continue;
-    const absPath = resolveDiskArtifactPath(basePath, drift.artifactPath);
-    if (seen.has(absPath) || !existsSync(absPath)) continue;
-    seen.add(absPath);
-    const artifactDbPath = artifactPathForDb(basePath, absPath);
-    const target = quarantineProjectionFile(basePath, absPath, stamp);
-    deleteArtifactByPath(artifactDbPath);
-    quarantined.push(target);
-  }
-
-  const rendered = await renderAllFromDb(basePath);
-  invalidateStateCache();
-
-  return {
-    rendered: rendered.rendered,
-    skipped: rendered.skipped,
-    errors: rendered.errors,
-    quarantined: quarantined.length,
-    quarantinedPaths: quarantined,
-  };
-}
-
-/**
- * `/gsd sync` — inspect external projection edits and re-project when safe.
- *
- * Runs the ADR-017 reconcile pipeline, stops for modeled authority conflicts,
- * then re-projects from the DB and refreshes the compat marker when unblocked.
+ * Projection observation preserves modeled external bytes without importing
+ * them. Workflow-state reconciliation can still block the rebuild.
  *
  * Accepts `--dry-run` to report what would change without writing.
  */
@@ -820,7 +727,6 @@ export async function handleSync(
 ): Promise<void> {
   const { isDbAvailable } = await import("./gsd-db.js");
   const { reconcileBeforeDispatch } = await import("./state-reconciliation/index.js");
-  const { renderAllFromDb } = await import("./markdown-renderer.js");
   const { writeCompatMarker, readCompatMarker } = await import("./compat/compat-marker.js");
 
   const dryRun = args.trim() === "--dry-run";
@@ -833,12 +739,9 @@ export async function handleSync(
   const lines: string[] = ["gsd sync: checking projections against the database…"];
 
   try {
+    const observation = await preserveProjectionChanges(basePath, dryRun);
     const result = await reconcileBeforeDispatch(basePath, { dryRun });
-    const refreshedPlanningPassthrough = result.repaired.flatMap(
-      (record) => record.kind === "external-planning-edit" && record.passthrough
-        ? [record.projectionPath]
-        : [],
-    );
+    const refreshedPlanningPassthrough = observation.refreshedPassthrough;
     if (refreshedPlanningPassthrough.length > 0) {
       lines.push(
         `  Planning passthrough checksums ${dryRun ? "to refresh" : "refreshed"}: ${refreshedPlanningPassthrough.length}`,
@@ -858,12 +761,29 @@ export async function handleSync(
     }
 
     if (dryRun) {
+      if (observation.preserved.length > 0) {
+        lines.push("", `  Projection edits to preserve: ${observation.preserved.length}`);
+        for (const evidence of observation.preserved) {
+          lines.push(`    • ${evidence.sourcePath}`);
+        }
+      }
       lines.push("", "  (dry-run: no repairs, projection, or marker writes performed)");
       ctx.ui.notify(lines.join("\n"), "info");
       return;
     }
 
-    const renderResult = await renderAllFromDb(basePath);
+    const renderResult = await rebuildMarkdownProjectionsFromDb(basePath);
+    const quarantinedPaths = [
+      ...observation.preserved.map((evidence) => evidence.quarantinePath),
+      ...renderResult.quarantinedPaths,
+    ];
+    if (quarantinedPaths.length > 0) {
+      lines.push(
+        "",
+        `  Preserved external projection edits: ${quarantinedPaths.length}`,
+      );
+      for (const path of quarantinedPaths) lines.push(`    • ${path}`);
+    }
     if (renderResult.errors.length > 0) {
       lines.push("", "  ⚠ Projection errors:");
       for (const e of renderResult.errors) lines.push(`    • ${e}`);
@@ -902,8 +822,8 @@ export async function handleSync(
  * `gsd rebuild markdown` — Re-render markdown projections from the authoritative DB.
  *
  * This is the DB-first realignment command. It does not import markdown into the
- * DB. Completion SUMMARY files that contradict open DB rows are preserved
- * under `.gsd/quarantine/projections/` before DB projections are rendered.
+ * DB. Externally changed modeled projection bytes are preserved under
+ * `.gsd/quarantine/projections/` before DB projections are rendered.
  */
 export async function handleRebuild(ctx: ExtensionCommandContext, basePath: string, args = ""): Promise<void> {
   const { isDbAvailable: dbAvailable } = await import("./gsd-db.js");

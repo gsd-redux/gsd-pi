@@ -178,6 +178,25 @@ export async function runFinalize(
     clearFinalizingUnit();
     return { action: "break", reason: dispatchedReason };
   }
+  if (preResult === "evidence-xref-blocked") {
+    // A blocking safety evidence mismatch withheld the verdict and routed the
+    // Attempt through the canonical recovery seam (#1641 / #1649). The reason
+    // is deliberately NOT a complete-and-break reason: decideFinalizeResult
+    // must stop the loop here so the verified-task publication boundary — which
+    // correctly throws without a passing host Technical Verdict — is never
+    // entered. Carry the recoveryActionId so the sanctioned exit reaches the
+    // journal, the dispatch ledger, and the operator (mirrors #1593).
+    const safetyRecovery = s.lastSafetyBlockRecovery;
+    const recoveryId = safetyRecovery?.recoveryActionId
+      ? `recoveryActionId: ${safetyRecovery.recoveryActionId}; `
+      : "";
+    const safetyReason = safetyRecovery
+      ? `safety-evidence-block (${recoveryId}${safetyRecovery.resumeInstruction})`
+      : "safety-evidence-block";
+    debugLog("autoLoop", { phase: "exit", reason: safetyReason });
+    clearFinalizingUnit();
+    return { action: "break", reason: safetyReason };
+  }
   if (preResult === "retry") {
     if (sidecarItem) {
       // Sidecar artifact retries are skipped — just continue

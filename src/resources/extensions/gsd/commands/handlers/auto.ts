@@ -66,6 +66,18 @@ export function parseModelFlag(input: string): { modelQuery: string | null; rest
 }
 
 /**
+ * Parse the ADR-047 `--resume-wedge <id>` flag from the auto command string.
+ * Acknowledging a wedge is the one sanctioned re-entry after the liveness
+ * backstop trips; it clears that signature's counter and lets auto start.
+ */
+export function parseResumeWedgeFlag(input: string): { resumeWedgeId: string | null; rest: string } {
+  const match = input.match(/--resume-wedge\s+(\S+)/);
+  if (!match) return { resumeWedgeId: null, rest: input };
+  const rest = input.replace(match[0], "").replace(/\s+/g, " ").trim();
+  return { resumeWedgeId: match[1], rest };
+}
+
+/**
  * Extract a milestone ID (e.g. M016 or M001-a3b4c5) from the command string.
  * Returns the matched ID and the remaining string with the ID removed.
  * The milestone ID pattern matches the format used by findMilestoneIds: M\d+ with
@@ -111,7 +123,8 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
   }
 
   if (trimmed === "auto" || trimmed.startsWith("auto ")) {
-    const { modelQuery, rest: afterModel } = parseModelFlag(trimmed);
+    const { resumeWedgeId, rest: afterWedge } = parseResumeWedgeFlag(trimmed);
+    const { modelQuery, rest: afterModel } = parseModelFlag(afterWedge);
     const { yoloSeedFile, rest: afterYolo } = parseYoloFlag(afterModel);
     const { milestoneId, rest: afterMilestone } = parseMilestoneTarget(afterYolo);
     const verboseMode = afterMilestone.includes("--verbose");
@@ -119,6 +132,28 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
     if (debugMode) enableDebug(projectRoot());
     if (!(await guardRemoteSession(ctx, pi))) return true;
     const basePath = projectRoot();
+
+    // ADR-047 §5: explicit wedge acknowledgment — clears the tripped
+    // signature's counter so the entry gate lets auto-mode re-enter.
+    if (resumeWedgeId) {
+      const { ensureDbOpen } = await import("../../bootstrap/dynamic-tools.js");
+      if (!(await ensureDbOpen(basePath))) {
+        ctx.ui.notify("Cannot acknowledge wedge: workflow database unavailable.", "error");
+        return true;
+      }
+      const { acknowledgeWedge } = await import("../../auto-liveness-backstop.js");
+      const { normalizeRealPath } = await import("../../paths.js");
+      const ack = acknowledgeWedge(normalizeRealPath(basePath) || basePath, resumeWedgeId);
+      if (!ack.ok) {
+        ctx.ui.notify(`Cannot acknowledge wedge ${resumeWedgeId}: ${ack.reason}`, "error");
+        return true;
+      }
+      ctx.ui.notify(
+        `Wedge ${resumeWedgeId} acknowledged — its block-signature counter is cleared. Re-entering auto-mode.`,
+        "info",
+      );
+    }
+
     if (await hasUnresolvedCloseoutBlocker(ctx, basePath)) return true;
     notifyPreferenceDiagnostics(ctx, basePath, { surface: "auto-preflight" });
 

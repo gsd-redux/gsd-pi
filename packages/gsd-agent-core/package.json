@@ -1,6 +1,6 @@
 {
   "name": "@gsd/agent-core",
-  "version": "1.12.0",
+  "version": "1.15.0",
   "description": "GSD session orchestration layer on top of @gsd/pi-coding-agent",
   "type": "module",
   "gsd": {

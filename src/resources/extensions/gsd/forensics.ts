@@ -40,7 +40,7 @@ import {
 } from "./command-feedback.js";
 import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
 import { summarizeWorktreeTelemetry, percentile, type WorktreeTelemetrySummary } from "./worktree-telemetry.js";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1041,7 +1041,10 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
   const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "-").slice(0, 19);
   const filePath = join(dir, `report-${ts}.md`);
 
-  const redact = (s: string) => redactForGitHub(s, basePath);
+  const workspaceRepoIds = Object.keys(
+    loadEffectiveGSDPreferences(basePath)?.preferences?.workspace?.repositories ?? {},
+  );
+  const redact = (s: string) => redactForGitHub(s, basePath, workspaceRepoIds);
 
   const sections: string[] = [
     `# GSD Forensic Report`,
@@ -1062,7 +1065,7 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
   if (report.anomalies.length > 0) {
     sections.push(`## Anomalies Detected (${report.anomalies.length})`, ``);
     for (const a of report.anomalies) {
-      sections.push(`### [${a.severity.toUpperCase()}] ${a.type}: ${a.summary}`);
+      sections.push(`### [${a.severity.toUpperCase()}] ${a.type}: ${redact(a.summary)}`);
       if (a.unitType) sections.push(`- Unit: ${a.unitType}/${a.unitId ?? ""}`);
       sections.push(`- ${redact(a.details)}`, ``);
     }
@@ -1099,7 +1102,7 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
   // Doctor issues
   if (report.doctorIssues.length > 0) {
     sections.push(`## Doctor Issues`, ``);
-    sections.push(formatDoctorIssuesForPrompt(report.doctorIssues), ``);
+    sections.push(redact(formatDoctorIssuesForPrompt(report.doctorIssues)), ``);
   }
 
   // Crash lock
@@ -1384,7 +1387,24 @@ function formatReportForPrompt(report: ForensicReport): string {
 
 // ─── Redaction ────────────────────────────────────────────────────────────────
 
-function redactForGitHub(text: string, basePath: string): string {
+/**
+ * Usernames that identify nobody in particular. Redacting these would mangle
+ * unrelated prose ("root cause", "admin panel") for no privacy gain.
+ */
+const GENERIC_USERNAMES = new Set(["root", "admin", "administrator", "user", "ubuntu", "runner", "node"]);
+
+/** Current OS username, or null when the platform can't resolve one. */
+function currentUsername(): string | null {
+  try {
+    const name = userInfo().username?.trim();
+    if (!name || name.length < 3) return null;
+    return GENERIC_USERNAMES.has(name.toLowerCase()) ? null : name;
+  } catch {
+    return null;
+  }
+}
+
+export function redactForGitHub(text: string, basePath: string, repoIds: readonly string[] = []): string {
   let result = text;
 
   // Build regex that matches both / and \ separator variants (Windows)
@@ -1402,6 +1422,23 @@ function redactForGitHub(text: string, basePath: string): string {
     result = result.replace(pathRe(gsdHomePath), "~/.gsd");
   }
   result = result.replace(pathRe(homedir()), "~");
+
+  // Workspace-declared repository IDs leak project structure (VERIFY.json command
+  // entries prefix each check with `[<repo-id>]`). The bare-word replacement also
+  // covers the bracketed form. "project" is the implicit self repo — replacing it
+  // would mangle unrelated prose, and it identifies nothing.
+  repoIds
+    .filter((id) => id && id !== "project")
+    .forEach((id, i) => {
+      result = result.replace(new RegExp(`\\b${esc(id)}\\b`, "gi"), `child-repo-${i + 1}`);
+    });
+
+  // Bare OS username occurrences (e.g. the owner/group columns of `ls -la` output
+  // captured in error traces) survive the homedir path replacement above.
+  const username = currentUsername();
+  if (username) {
+    result = result.replace(new RegExp(`\\b${esc(username)}\\b`, "gi"), "<user>");
+  }
 
   // Strip API key patterns
   result = result.replace(/sk-[a-zA-Z0-9]{20,}/g, "sk-***");

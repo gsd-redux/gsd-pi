@@ -82,6 +82,44 @@ afterEach(() => {
   tempDirectories.clear();
 });
 
+// #1657: hierarchy creates now always mint lifecycle authority, so retained
+// Application verification expects a lifecycle row per created hierarchy row.
+function seedLifecycleRow(
+  itemKind: "milestone" | "slice" | "task",
+  milestoneId: string,
+  sliceId: string | null,
+): void {
+  const lifecycleStatus = 'ready';
+  db().prepare(`INSERT OR IGNORE INTO workflow_operations (
+      operation_id, project_id, operation_type, idempotency_key,
+      expected_revision, resulting_revision, expected_authority_epoch, resulting_authority_epoch,
+      actor_type, source_transport, request_hash, created_at
+    ) VALUES (
+      'seed-lifecycle-operation', :project_id, 'test.seed', 'seed-lifecycle-operation',
+      0, 1, 0, 0,
+      'test', 'internal', :request_hash, '2026-07-17T00:00:00.000Z'
+    )`).run({
+    ":project_id": projectId(),
+    ":request_hash": hashLegacyImportValue("seed-lifecycle-operation"),
+  });
+  db().prepare(`INSERT INTO workflow_item_lifecycles (
+      lifecycle_id, project_id, item_kind, milestone_id, slice_id, task_id,
+      lifecycle_status, state_version, created_at, updated_at,
+      last_operation_id, last_project_revision, last_authority_epoch
+    ) VALUES (
+      :lifecycle_id, :project_id, :item_kind, :milestone_id, :slice_id, NULL,
+      :lifecycle_status, 0, '2026-07-17T00:00:00.000Z', '2026-07-17T00:00:00.000Z',
+      'seed-lifecycle-operation', 1, 0
+    )`).run({
+    ":lifecycle_id": `lifecycle-${itemKind}-${milestoneId}${sliceId === null ? "" : `-${sliceId}`}`,
+    ":project_id": projectId(),
+    ":item_kind": itemKind,
+    ":milestone_id": milestoneId,
+    ":slice_id": sliceId,
+    ":lifecycle_status": lifecycleStatus,
+  });
+}
+
 // ─── Sealed Preview scaffolding (mirrors the pure plan compiler contract) ────
 
 function source(label: string): LegacyImportPreviewSource {
@@ -256,6 +294,7 @@ test("result verification detects canonical authority advancing after the retain
   ]);
   const plan = compileLegacyImportApplicationPlan(preview);
   db().prepare("INSERT INTO milestones (id, title, status) VALUES ('M001', 'Pocket Notes', 'active')").run();
+  seedLifecycleRow("milestone", "M001", null);
   const evidence = evidenceFor(preview, plan);
   verifyLegacyImportApplicationResult(evidence);
 
@@ -273,6 +312,10 @@ const ASSESSMENT_PATH = ".gsd/milestones/M001/slices/S01/UAT.md";
 function seedAssessmentHierarchy(status = "pass"): void {
   db().prepare("INSERT INTO milestones (id, title) VALUES ('M001', 'Milestone')").run();
   db().prepare("INSERT INTO slices (milestone_id, id, title) VALUES ('M001', 'S01', 'Foundation')").run();
+  // #1658: an applied import seeds a Q8 companion gate per created slice, and
+  // target verification now asserts it exists.
+  db().prepare(`INSERT INTO quality_gates (milestone_id, slice_id, gate_id, scope, task_id, status)
+    VALUES ('M001', 'S01', 'Q8', 'slice', '', 'pending')`).run();
   db().prepare(`INSERT INTO assessments (path, milestone_id, slice_id, task_id, status, scope, full_content)
     VALUES (:path, 'M001', 'S01', NULL, :status, 'run-uat', '# UAT\n\nPass.')`).run({
     ":path": ASSESSMENT_PATH,
@@ -311,6 +354,8 @@ test("result verification matches assessment creates and detects content drift",
   assert.ok(assessment?.action === "create");
   assert.equal(typeof assessment.identity["path"], "string");
   seedAssessmentHierarchy();
+  seedLifecycleRow("milestone", "M001", null);
+  seedLifecycleRow("slice", "M001", "S01");
 
   verifyLegacyImportApplicationTargets(evidenceFor(preview, plan));
   verifyLegacyImportApplicationResult(evidenceFor(preview, plan));
@@ -419,6 +464,7 @@ function planFor(
     replaceSliceDependencies: instructions.filter((entry) => entry.action === "replace-slice-dependencies").length,
     deleteSliceDependencies: instructions.filter((entry) => entry.action === "delete-slice-dependencies").length,
     adoptLifecycle: instructions.filter((entry) => entry.action === "adopt-lifecycle").length,
+    seedQualityGate: instructions.filter((entry) => entry.action === "seed-quality-gate").length,
   };
   const affectedTargets = instructions
     .filter((entry) => entry.action !== "preserve")

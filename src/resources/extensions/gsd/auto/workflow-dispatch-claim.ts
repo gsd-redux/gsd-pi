@@ -7,7 +7,7 @@ import type { IterationData } from "./types.js";
 export type DispatchClaimOutcome =
   | { kind: "opened"; dispatchId: number }
   | { kind: "skip"; reason: "already-active" | "stale-lease"; existingId?: number; existingWorker?: string }
-  | { kind: "degraded" };
+  | { kind: "degraded"; reason: string };
 
 export type DispatchLeaseOutcome =
   | { kind: "ready"; token: number; recovered: boolean }
@@ -133,9 +133,11 @@ export function openDispatchClaim(
   iterData: IterationData,
   deps: OpenDispatchClaimDeps,
 ): DispatchClaimOutcome {
-  if (!s.workerId || typeof s.milestoneLeaseToken !== "number") return { kind: "degraded" };
+  if (!s.workerId || typeof s.milestoneLeaseToken !== "number") {
+    return { kind: "degraded", reason: "missing-worker-or-lease" };
+  }
   const mid = iterData.mid;
-  if (!mid) return { kind: "degraded" };
+  if (!mid) return { kind: "degraded", reason: "missing-milestone" };
 
   const recent = deps.getRecentDispatchesForUnit(iterData.unitId, 1);
   const attemptN = (recent[0]?.attempt_n ?? 0) + 1;
@@ -176,6 +178,6 @@ export function openDispatchClaim(
     return { kind: "opened", dispatchId: claim.dispatchId };
   } catch (err) {
     deps.logClaimFailed(err);
-    return { kind: "degraded" };
+    return { kind: "degraded", reason: err instanceof Error ? err.message : String(err) };
   }
 }

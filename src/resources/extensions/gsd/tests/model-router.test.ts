@@ -2,6 +2,10 @@
 // File Purpose: Verifies model routing decisions and legacy provider-default telemetry.
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 import {
   resolveModelForComplexity,
@@ -13,6 +17,7 @@ import {
   scoreEligibleModels,
   getEligibleModels,
   MODEL_CAPABILITY_PROFILES,
+  MODEL_CAPABILITY_TIER,
 } from "../model-router.js";
 import type { DynamicRoutingConfig, RoutingDecision, ModelCapabilities } from "../model-router.js";
 import type { ClassificationResult } from "../complexity-classifier.js";
@@ -30,6 +35,18 @@ const AVAILABLE_MODELS = [
   "claude-haiku-4-5",
   "gpt-4o-mini",
 ];
+
+test("routes MAI Code 1.1 Flash as a light-tier model", () => {
+  const result = resolveModelForComplexity(
+    makeClassification("light"),
+    { primary: "claude-opus-4-6", fallbacks: [] },
+    { ...defaultRoutingConfig(), enabled: true },
+    ["claude-opus-4-6", "mai-code-1.1-flash"],
+  );
+
+  assert.equal(result.modelId, "mai-code-1.1-flash");
+  assert.equal(result.wasDowngraded, true);
+});
 
 // ─── Passthrough when disabled ───────────────────────────────────────────────
 
@@ -1322,5 +1339,176 @@ describe("getModelTier unknown default", () => {
     assert.ok(standardModels.includes("totally-unknown-model-abc"), "Unknown model should be in standard tier");
     assert.equal(lightModels.length, 0, "Unknown model should NOT be in light tier");
     assert.equal(heavyModels.length, 0, "Unknown model should NOT be in heavy tier");
+  });
+});
+
+// --- claude-sonnet-5 catalog regression (v1.12.0 gap) ---
+// Discovered during Edelman Studio M010 model-routing config: claude-sonnet-5 was
+// absent from MODEL_CAPABILITY_TIER, causing isKnownModel() to return false and
+// the #2192 routing-bypass path to activate for any phase configured with sonnet-5.
+
+test("claude-sonnet-5 is classified as standard tier in MODEL_CAPABILITY_TIER", () => {
+  assert.equal(
+    MODEL_CAPABILITY_TIER["claude-sonnet-5"],
+    "standard",
+    "claude-sonnet-5 must be in the tier map so isKnownModel() returns true",
+  );
+});
+
+test("claude-sonnet-5 as ceiling: standard task is NOT bypassed - routing applies normally", () => {
+  // With sonnet-5 now a known model, resolveModelForComplexity must NOT hit the
+  // #2192 bail-out. A standard task with a sonnet-5 ceiling should stay on sonnet-5.
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-4-8" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "standard", reason: "test", downgraded: false },
+    { primary: "claude-sonnet-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+  );
+  assert.equal(result.modelId, "claude-sonnet-5", "standard task with sonnet-5 ceiling should use sonnet-5");
+  assert.equal(result.wasDowngraded, false, "should not be downgraded when task tier matches ceiling");
+  assert.ok(!result.reason?.includes("not in the known tier map"), "must not hit #2192 bypass reason");
+});
+
+test("claude-sonnet-5 as ceiling: light task IS downgraded to haiku - routing not bypassed", () => {
+  // Confirms that with sonnet-5 as a known model, dynamic routing correctly
+  // downgrades light tasks to tier_models.light (haiku) instead of bypassing.
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-4-8" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "light", reason: "test", downgraded: false },
+    { primary: "claude-sonnet-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-8"],
+  );
+  assert.equal(result.modelId, "claude-haiku-4-5", "light task with sonnet-5 ceiling must downgrade to haiku");
+  assert.equal(result.wasDowngraded, true);
+});
+
+// --- claude-opus-5 catalog coverage (upstream #1588) ---
+// claude-opus-5 must be present in the capability registries so isKnownModel()
+// returns true and routing decisions are not bypassed via the #2192 path.
+
+test("claude-opus-5 is classified as heavy tier in MODEL_CAPABILITY_TIER", () => {
+  assert.equal(
+    MODEL_CAPABILITY_TIER["claude-opus-5"],
+    "heavy",
+    "claude-opus-5 must be in the tier map so isKnownModel() returns true",
+  );
+});
+
+test("claude-opus-5 as ceiling: heavy task is NOT bypassed - routing applies normally", () => {
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-5" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "heavy", reason: "test", downgraded: false },
+    { primary: "claude-opus-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"],
+  );
+  assert.equal(result.modelId, "claude-opus-5", "heavy task with opus-5 ceiling should use opus-5");
+  assert.equal(result.wasDowngraded, false, "should not be downgraded when task tier matches ceiling");
+  assert.ok(!result.reason?.includes("not in the known tier map"), "must not hit #2192 bypass reason");
+});
+
+test("claude-opus-5 as ceiling: light task IS downgraded to haiku - routing not bypassed", () => {
+  const config = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    tier_models: { light: "claude-haiku-4-5", standard: "claude-sonnet-5", heavy: "claude-opus-5" },
+  };
+  const result = resolveModelForComplexity(
+    { tier: "light", reason: "test", downgraded: false },
+    { primary: "claude-opus-5", fallbacks: [] },
+    config,
+    ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"],
+  );
+  assert.equal(result.modelId, "claude-haiku-4-5", "light task with opus-5 ceiling must downgrade to haiku");
+  assert.equal(result.wasDowngraded, true);
+});
+
+// ─── Duplicate registry keys (#1707 regression) ──────────────────────────────
+// The Sonnet 5 rollout appended a second "claude-sonnet-5" entry to three
+// registries (MODEL_CAPABILITY_TIER, MODEL_COST_PER_1K_INPUT,
+// MODEL_CAPABILITY_PROFILES) instead of editing the existing rows. Duplicate
+// object-literal keys are a hard TypeScript error (TS1117), so `pnpm build`
+// failed with three diagnostics. Runtime behavior cannot observe a duplicate
+// key (the last assignment silently wins), so the regression test walks the
+// module's real object literals through the TypeScript AST.
+
+describe("model-router registry keys", () => {
+  test("no object literal declares the same key twice (TS1117)", () => {
+    const routerPath = join(dirname(fileURLToPath(import.meta.url)), "..", "model-router.ts");
+    // allow-source-grep: AST structural linter for duplicate object-literal
+    // keys; it walks real PropertyAssignment nodes, not source text.
+    const source = ts.createSourceFile(
+      routerPath,
+      readFileSync(routerPath, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+
+    const duplicates: string[] = [];
+
+    function keyOf(prop: ts.ObjectLiteralElementLike): string | undefined {
+      if (!ts.isPropertyAssignment(prop)) return undefined;
+      const name = prop.name;
+      if (ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+      if (ts.isIdentifier(name)) return name.text;
+      return undefined;
+    }
+
+    function visit(node: ts.Node): void {
+      if (ts.isObjectLiteralExpression(node)) {
+        const seen = new Set<string>();
+        for (const prop of node.properties) {
+          const key = keyOf(prop);
+          if (!key) continue;
+          if (seen.has(key)) {
+            const { line } = source.getLineAndCharacterOfPosition(prop.getStart(source));
+            duplicates.push(`${key} (line ${line + 1})`);
+          }
+          seen.add(key);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(source);
+
+    assert.deepEqual(
+      duplicates,
+      [],
+      `model-router.ts declares duplicate object-literal keys, which fails the build with TS1117: ${duplicates.join(", ")}`,
+    );
+  });
+
+  test("claude-sonnet-5 keeps one consistent entry across tier, cost, and capability registries", () => {
+    assert.equal(MODEL_CAPABILITY_TIER["claude-sonnet-5"], "standard");
+    assert.deepEqual(MODEL_CAPABILITY_PROFILES["claude-sonnet-5"], {
+      coding: 90,
+      debugging: 85,
+      research: 80,
+      reasoning: 87,
+      speed: 55,
+      longContext: 80,
+      instruction: 88,
+    });
+    // The cost table is module-private; observe its sonnet-5 row through the
+    // cheapest-first ordering of standard-tier eligibility (0.003 vs 0.00125).
+    assert.deepEqual(
+      getEligibleModels("standard", ["claude-sonnet-5", "gemini-2.5-pro"], defaultRoutingConfig()),
+      ["gemini-2.5-pro", "claude-sonnet-5"],
+    );
   });
 });

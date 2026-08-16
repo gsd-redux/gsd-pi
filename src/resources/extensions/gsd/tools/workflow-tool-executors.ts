@@ -52,6 +52,7 @@ import {
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import type { DomainJsonValue } from "../db/domain-operation.js";
 import { resumeTaskRecovery } from "../task-recovery-domain-operation.js";
+import { applyTaskSettle, planTaskSettle } from "../task-settle.js";
 import type { CompleteSliceParams, EscalationOption } from "../types.js";
 import { handleCompleteSlice } from "./complete-slice.js";
 import type { PlanMilestoneParams } from "./plan-milestone.js";
@@ -89,7 +90,7 @@ import { flushWorkflowProjections } from "../projection-flush.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { parseProject } from "../schemas/parsers.js";
 import { autoSession, getAutoRuntimeSnapshot, isAutoActive } from "../auto-runtime-state.js";
-import { renderPlanFromDb } from "../markdown-renderer.js";
+import { renderPlanFromDb, writeTaskSummaryProjection } from "../markdown-renderer.js";
 import { readUnitHarnessAbort, type UnitHarnessAbortRecord } from "../unit-runtime.js";
 import {
   prepareUatRun,
@@ -436,6 +437,7 @@ async function mirrorArtifactToActiveWorktreeProjection(
   basePath: string,
   relativePath: string,
   content: string,
+  required: boolean = false,
 ): Promise<void> {
   const contract = resolveGsdPathContract(basePath);
   if (!contract.worktreeGsd) return;
@@ -451,6 +453,7 @@ async function mirrorArtifactToActiveWorktreeProjection(
     logWarning("tool", `gsd_summary_save worktree projection mirror failed: ${(err as Error).message}`, {
       path: relativePath,
     });
+    if (required) throw err;
   }
 }
 
@@ -673,18 +676,33 @@ export async function executeSummarySave(
       }
     }
 
-    await saveArtifactToDb(
-      {
-        path: relativePath,
-        artifact_type: params.artifact_type,
-        content: contentToSave,
-        milestone_id: isRootArtifact ? undefined : params.milestone_id,
-        slice_id: isRootArtifact ? undefined : params.slice_id,
-        task_id: isRootArtifact ? undefined : params.task_id,
-      },
-      basePath,
-    );
-    await mirrorArtifactToActiveWorktreeProjection(basePath, relativePath, contentToSave);
+    const isTaskSummary = params.artifact_type === "SUMMARY" && !!params.milestone_id && !!params.slice_id && !!params.task_id;
+    let projectedContent = contentToSave;
+    if (isTaskSummary) {
+      const contract = resolveGsdPathContract(basePath);
+      const projection = await writeTaskSummaryProjection(
+        contract.projectRoot,
+        params.milestone_id!,
+        params.slice_id!,
+        params.task_id!,
+        contentToSave,
+      );
+      relativePath = projection.artifactPath;
+      projectedContent = projection.content;
+    } else {
+      await saveArtifactToDb(
+        {
+          path: relativePath,
+          artifact_type: params.artifact_type,
+          content: contentToSave,
+          milestone_id: isRootArtifact ? undefined : params.milestone_id,
+          slice_id: isRootArtifact ? undefined : params.slice_id,
+          task_id: isRootArtifact ? undefined : params.task_id,
+        },
+        basePath,
+      );
+    }
+    await mirrorArtifactToActiveWorktreeProjection(basePath, relativePath, projectedContent, isTaskSummary);
 
     if (params.artifact_type === "CONTEXT" && !params.task_id) {
       try {
@@ -801,6 +819,13 @@ export interface TaskRecoveryResumeExecutorParams {
   recoveryActionId: string;
   repairSummary: string;
   evidence: Record<string, DomainJsonValue>;
+}
+export interface TaskSettleExecutorParams {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  reason: string;
+  apply?: boolean;
 }
 export type ReopenSliceExecutorParams = ReopenSliceParams;
 export type SkipSliceExecutorParams = SkipSliceParams;
@@ -1097,6 +1122,79 @@ export async function executeTaskRecoveryResume(
     return {
       content: [{ type: "text", text: `Error resuming task recovery: ${msg}` }],
       details: { operation: "task_recovery_resume", error: msg },
+      isError: true,
+    };
+  }
+}
+
+export async function executeTaskSettle(
+  params: TaskSettleExecutorParams,
+  basePath: string = process.cwd(),
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen(basePath);
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot settle task attempt." }],
+      details: { operation: "task_settle", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  const task = {
+    milestoneId: params.milestoneId,
+    sliceId: params.sliceId,
+    taskId: params.taskId,
+  };
+  const unit = `${task.milestoneId}/${task.sliceId}/${task.taskId}`;
+  try {
+    if (!params.apply) {
+      const plan = planTaskSettle(task, params.reason);
+      if (plan.rows.length === 0) {
+        return {
+          content: [{ type: "text", text: `gsd_task_settle (dry run): ${unit} has no running Attempt — nothing to do.` }],
+          details: { operation: "task_settle", dryRun: true, rows: [] },
+        };
+      }
+      const lines = plan.rows.map(
+        (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+      );
+      return {
+        content: [{
+          type: "text",
+          text: `gsd_task_settle (dry run) — no changes made:\n${lines.join("\n")}\nRe-run with apply: true to settle.`,
+        }],
+        details: { operation: "task_settle", dryRun: true, rows: plan.rows },
+      };
+    }
+    const result = applyTaskSettle({ invocation, task, reason: params.reason });
+    if (!result.settled) {
+      return {
+        content: [{ type: "text", text: `gsd_task_settle: ${unit} has no running Attempt — nothing to do.` }],
+        details: { operation: "task_settle", dryRun: false, rows: [], settled: false },
+      };
+    }
+    return {
+      content: [{
+        type: "text",
+        text: `Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`,
+      }],
+      details: {
+        operation: "task_settle",
+        dryRun: false,
+        settled: true,
+        attemptId: result.rows[0].attemptId,
+        resultId: result.resultId,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `task settle failed: ${msg}`, {
+      tool: "gsd_task_settle",
+      error: String(err),
+    });
+    return {
+      content: [{ type: "text", text: `Error settling task attempt: ${msg}` }],
+      details: { operation: "task_settle", error: msg },
       isError: true,
     };
   }
@@ -1873,16 +1971,34 @@ export async function executePlanMilestone(
       const heldLease = getMilestoneLease(params.milestoneId);
       if (heldLease?.status === "held" && Date.parse(heldLease.expires_at) > Date.now()) {
         const holder = getAutoWorker(heldLease.worker_id);
-        // Let the one-shot claim path recover stale same-process worker rows.
-        const projectRoot = normalizeRealPath(basePath);
-        const isOurAutoLease = isAutoActive() && heldLease.worker_id === autoSession.workerId;
-        const holderIsOneShotReentrantPeer = !isAutoActive()
-          && !!holder
+        // Let one-shot and resumed-auto claim paths recover stale
+        // same-process worker rows.
+        const activeAutoWorkerId = isAutoActive() ? autoSession.workerId : null;
+        const isOurAutoLease = !!activeAutoWorkerId && heldLease.worker_id === activeAutoWorkerId;
+        const holderIsReentrantPeer = !!holder
           && holder.host === hostname()
-          && holder.pid === process.pid
-          && holder.project_root_realpath === projectRoot;
-        if (holder?.status === "active" && !isOurAutoLease && !holderIsOneShotReentrantPeer) {
-          return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+          && holder.pid === process.pid;
+        if (holder?.status === "active" && !isOurAutoLease) {
+          if (!holderIsReentrantPeer) {
+            return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+          }
+
+          if (isAutoActive()) {
+            // Active auto without a worker row (e.g. after a setup-race pause
+            // detached it) cannot reclaim here, and the one-shot claim path
+            // below is skipped while auto is active. Fail closed instead of
+            // planning against a lease we do not own.
+            if (!activeAutoWorkerId) {
+              return milestoneLeaseConflictResult(params.milestoneId, heldLease.worker_id, heldLease.expires_at);
+            }
+            const reclaimed = claimMilestoneLease(activeAutoWorkerId, params.milestoneId);
+            if (!reclaimed.ok) {
+              return milestoneLeaseConflictResult(params.milestoneId, reclaimed.byWorker, reclaimed.expiresAt);
+            }
+            autoSession.currentMilestoneId = params.milestoneId;
+            autoSession.milestoneLeaseToken = reclaimed.token;
+            markWorkerStopping(heldLease.worker_id);
+          }
         }
       }
     }

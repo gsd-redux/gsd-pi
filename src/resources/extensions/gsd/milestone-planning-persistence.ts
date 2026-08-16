@@ -283,9 +283,14 @@ async function renderPlanArtifacts(
     }
     return renderResult.roadmapPath;
   } catch (renderErr) {
-    logWarning("tool", `plan_milestone — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
+    // #1634: DB rows stay committed on purpose — the DB is the authority and
+    // ROADMAP.md is only a projection. The roadmap-missing drift handler
+    // detects the absent file and re-renders it on the next reconciliation
+    // pass, so a failed render is transient drift, never a permanently
+    // orphaned milestone.
+    logWarning("tool", `plan_milestone — render failed (DB plan kept; roadmap-missing drift repair re-renders ROADMAP.md on the next reconciliation pass): ${(renderErr as Error).message}`);
     invalidateStateCache();
-    return { error: `render failed: ${(renderErr as Error).message}` };
+    return { error: `render failed: ${(renderErr as Error).message}. The milestone plan is saved in the DB; ROADMAP.md will be re-rendered by drift reconciliation on the next dispatch (or run /gsd sync).` };
   }
 }
 

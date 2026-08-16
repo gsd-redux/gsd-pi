@@ -4,7 +4,7 @@
  *
  * Without this guard, needs-remediation + allSlicesDone causes a loop:
  * complete-milestone dispatched → agent refuses (correct) → no SUMMARY
- * → re-dispatch → repeat until stuck detection fires.
+ * → re-dispatch → repeat until the liveness backstop trips.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";

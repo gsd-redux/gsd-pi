@@ -81,6 +81,12 @@ Render entry points (all route through the single `writeAndStore` seam in
 `renderTaskSummary`, `renderReplanFromDb`, `renderAssessmentFromDb`, and the
 sweep `renderAllFromDb`.
 
+Every task-summary producer routes through `writeTaskSummaryProjection`, which
+owns layout-aware placement and delegates stamping, disk persistence, artifact
+lineage, compatibility-marker updates, and cache invalidation to
+`writeAndStore`. A lineage-write failure is surfaced to the caller; the disk
+copy remains a non-authoritative projection for reconciliation evidence.
+
 ### 2.3 What the freeze covers
 
 Frozen: file names, directory shapes, both layouts, section ordering, heading
@@ -172,7 +178,6 @@ repo:
 | Surface | What it reads | Evidence |
 |---|---|---|
 | `@opengsd/mcp-server` | Raw `.gsd/STATE.md` contents returned to MCP clients; milestone `SUMMARY` **existence** as a completion signal; `.gsd/` artifact parsing (STATE.md, milestone ROADMAPs, slice PLANs) in its graph build | `packages/mcp-server/src/server.ts:278`, `:308`, `:1486` |
-| `packages/daemon` | `.gsd/STATE.md` text and milestone `SUMMARY` existence via the local tool executor | `packages/daemon/src/local-tool-executor.ts:285`, `:322` |
 | `integrations/hermes` (Python) | Requires `.gsd/` with `STATE.md` present; an absent/empty `STATE.md` is documented as the cause of an empty snapshot | `integrations/hermes/docs/setup.md:35`, `:235`; fixture `integrations/hermes/tests/fixtures/minimal-project/.gsd/STATE.md` |
 
 Because the format is frozen and the stamp is ignore-safe, none of these

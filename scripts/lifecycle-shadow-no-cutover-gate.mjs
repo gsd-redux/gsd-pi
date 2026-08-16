@@ -15,7 +15,6 @@ export const LIFECYCLE_SHADOW_SOURCE_FILES = Object.freeze({
   eligibility: "src/resources/extensions/gsd/parallel-eligibility.ts",
   dispatch: "src/resources/extensions/gsd/dispatch-guard.ts",
   resolver: "src/resources/extensions/gsd/auto-dispatch.ts",
-  retry: "src/resources/extensions/gsd/auto/detect-stuck.ts",
   state: "src/resources/extensions/gsd/state/derive/from-db.ts",
   validation: "src/resources/extensions/gsd/milestone-validation-verdict.ts",
   gate: "scripts/lifecycle-shadow-no-cutover-gate.mjs",
@@ -62,13 +61,6 @@ const DECISION_IMPORT_POLICY = Object.freeze({
       "./worktree.js#detectWorktreeName",
     ]),
   },
-  retry: {
-    required: new Set(["../db/unit-dispatches.js#getLatestForUnit"]),
-    approved: new Set([
-      "./dispatch-key.js#parseDispatchKey",
-      "../db/unit-dispatches.js#getLatestForUnit",
-    ]),
-  },
   state: {
     required: new Set([
       "../../milestone-validation-verdict.js#resolveMilestoneValidationVerdict",
@@ -77,6 +69,10 @@ const DECISION_IMPORT_POLICY = Object.freeze({
       "../../guidance.js#needsAttentionBlockerGuidance",
       "../../guidance.js#needsRemediationBlockerGuidance",
       "../../milestone-validation-verdict.js#resolveMilestoneValidationVerdict",
+      // handleAllSlicesDone → buildDerivedState → loadRecentDecisionsFromDb
+      // (#1720): recentDecisions come from DB/memories, not markdown.
+      "../../context-store.js#queryDecisionsFromMemories",
+      "../../context-store.js#queryDecisions",
     ]),
   },
   validation: {
@@ -98,18 +94,6 @@ function witness(id, file, title) {
 export const LIFECYCLE_SHADOW_BEHAVIORAL_WITNESSES = Object.freeze([
   witness("runtime-disagreement", "semantic-shadow-no-cutover.test.ts",
     "legacy milestone status remains public when canonical lifecycle disagrees"),
-  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
-  witness("frozen-public-response", "semantic-shadow-contract.test.ts",
-    "keeps milestone status byte/deep-equal across native Pi and the shared workflow executor"),
-  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
-  witness("mode-transport-matrix", "semantic-shadow-mode-matrix.test.ts",
-    "all supported modes and transports preserve the frozen response and exact observation identity"),
-  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
-  witness("unadopted-import", "md-importer-adopted-authority.test.ts",
-    "unadopted re-import keeps existing checkbox completion behavior"),
-  // ADR-046 timebox: delete after 2 stable releases + >=60 days post-cutover release (T021)
-  witness("unadopted-reconcile", "workflow-reconcile.test.ts",
-    "unadopted legacy Milestone completion remains an explicit reconciliation compatibility path"),
   witness("same-status-repair", "adopted-lifecycle-bypass-closure.test.ts",
     "same-status completion timestamp repair remains available when adopted state is aligned"),
   witness("park-unpark", "park-db-sync.test.ts", "unparkMilestone updates DB status to 'active' (#2694)"),
@@ -663,12 +647,6 @@ export function analyzeLifecycleShadowSources(sources) {
       DECISION_IMPORT_POLICY.dispatch,
     )],
     ["dispatch-resolver-no-canonical-read", () => analyzeResolveDispatchBoundary(sources.resolver)],
-    ["retry-ledger-authority", () => analyzeDecisionBoundary(
-      SOURCE_FILES.retry,
-      sources.retry,
-      ["retryBudgetSuppresses", "rowInsideRetryBudget"],
-      DECISION_IMPORT_POLICY.retry,
-    )],
     ["state-derivation-authority", () => analyzeDecisionBoundary(
       SOURCE_FILES.state,
       sources.state,

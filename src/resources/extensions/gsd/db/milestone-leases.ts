@@ -124,7 +124,7 @@ export function claimMilestoneLease(
 
     // Step 2: takeover. Conditional UPDATE — only succeeds if the existing
     // lease is expired/released, or if the claimant is a re-entrant worker row
-    // for the same live host/PID/project. The latter prevents a single
+    // for the same live host/PID. The latter prevents a single
     // orchestrator process from blocking on its own previous worker token.
     // Fencing token is incremented by SQL (`fencing_token + 1`) so the new
     // holder's token monotonically exceeds the prior holder's. db.changes()
@@ -149,7 +149,6 @@ export function claimMilestoneLease(
                   AND claimant.status = 'active'
                   AND holder.host = claimant.host
                   AND holder.pid = claimant.pid
-                  AND holder.project_root_realpath = claimant.project_root_realpath
               ))`,
     ).run({
       ":milestone_id": milestoneId,

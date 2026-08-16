@@ -14,8 +14,6 @@ Simplified Chinese translation: [`zh-CN/`](./zh-CN/).
 | [Auto Mode](./user-docs/auto-mode.md) | How autonomous execution works — the state machine, crash recovery, and steering |
 | [Commands Reference](./user-docs/commands.md) | All commands, keyboard shortcuts, and CLI flags |
 | [Remote Questions](./user-docs/remote-questions.md) | Discord and Slack integration for headless auto-mode |
-| [Cloud MCP Gateway](./user-docs/cloud-mcp-gateway.md) | Run a gateway, pair a local runtime, and connect remote MCP clients |
-| [GSD Cloud Monitor](../apps/gsd-cloud-monitor/README.md) | macOS menu bar app for monitoring and controlling the standalone `gsd-cloud` agent |
 | [Configuration](./user-docs/configuration.md) | Preferences, model selection, git settings, and token profiles |
 | [Project-local Runtime Contract](./user-docs/local-runtime-contract.md) | Authoritative startup, health, seed, and teardown guidance for agents and subagents |
 | [Provider Setup](./user-docs/providers.md) | Step-by-step setup for OpenRouter, Ollama, LM Studio, vLLM, and all supported providers |

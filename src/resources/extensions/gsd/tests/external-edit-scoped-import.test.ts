@@ -195,19 +195,19 @@ test("scoped import keeps markdown authority for the in-scope (drifted) mileston
   );
 });
 
-test("no-opts import is unchanged: markdown checkbox wins (pins the default)", (t) => {
+test("no-opts import keeps existing DB status (T021)", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
   seedTwoMilestonesWithReopenedB(base);
 
-  // No scope → full markdown authority, exactly as before #027. Initial-migration
-  // and gsd-core full-import semantics must not silently change.
+  // Unscoped re-import is no longer markdown-authoritative. Existing rows keep
+  // DB status; only statusAuthoritativeMilestones may opt a milestone back in.
   migrateHierarchyToDb(base);
 
   assert.equal(
     getSlice("M002", "S01")?.status,
-    "complete",
-    "without a scope, the stale checkbox closes the slice — today's behavior",
+    "pending",
+    "without a scope, a stale checkbox must not close an existing slice",
   );
 });
 

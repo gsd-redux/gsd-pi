@@ -42,8 +42,8 @@ import {
 } from '../markdown-renderer.ts';
 import { repairStaleRenders } from '../state-reconciliation/drift/stale-render.ts';
 import {
-  parseLegacyRoadmap as parseRoadmap,
-  parseLegacyPlan as parsePlan,
+  parseProjectionRoadmap as parseRoadmap,
+  parseProjectionPlan as parsePlan,
 } from '../schemas/parsers.ts';
 import {
   parseSummary,
@@ -847,6 +847,38 @@ test('── markdown-renderer: renderTaskSummary round-trip ──', async () =
   }
 });
 
+test('── markdown-renderer: renderTaskSummary skips in-progress without a succeeded attempt ──', async () => {
+  const tmpDir = makeTmpDir();
+  const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+  clearAllCaches();
+
+  try {
+    scaffoldDirs(tmpDir, 'M001', ['S01']);
+
+    insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice', status: 'pending' });
+    insertTask({
+      id: 'T01',
+      sliceId: 'S01',
+      milestoneId: 'M001',
+      title: 'Cancelled task with leaked summary',
+      status: 'in_progress',
+      fullSummaryMd: makeTaskSummaryContent('T01'),
+    });
+
+    const ok = await renderTaskSummary(tmpDir, 'M001', 'S01', 'T01');
+    assert.equal(ok, false, 'cancelled/in-progress leaked summaries must not project');
+    const summaryPath = path.join(
+      tmpDir, '.gsd', 'phases', '01-test', 'S01-T01-SUMMARY.md',
+    );
+    assert.equal(fs.existsSync(summaryPath), false, 'SUMMARY.md must not be written');
+  } finally {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  }
+});
+
 test('── markdown-renderer: renderTaskSummary skips empty ──', async () => {
   const tmpDir = makeTmpDir();
   const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
@@ -873,6 +905,30 @@ test('── markdown-renderer: renderTaskSummary skips empty ──', async () 
     closeDatabase();
     cleanupDir(tmpDir);
   }
+});
+
+test('── markdown-renderer: task summary artifact failure is observable ──', async (t) => {
+  const tmpDir = makeTmpDir();
+  t.after(() => {
+    closeDatabase();
+    cleanupDir(tmpDir);
+  });
+  openDatabase(path.join(tmpDir, '.gsd', 'gsd.db'));
+  clearAllCaches();
+
+  scaffoldDirs(tmpDir, 'M001', ['S01']);
+  insertMilestone({ id: 'M001', title: 'Test', status: 'active' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice', status: 'pending' });
+  insertTask({
+    id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task', status: 'done',
+    fullSummaryMd: makeTaskSummaryContent('T01'),
+  });
+  _getAdapter()!.exec('DROP TABLE artifacts');
+
+  await assert.rejects(
+    () => renderTaskSummary(tmpDir, 'M001', 'S01', 'T01'),
+    /task summary projection.*artifact persistence failed/i,
+  );
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

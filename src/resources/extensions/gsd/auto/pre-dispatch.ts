@@ -25,7 +25,6 @@ import { atomicWriteSync } from "../atomic-write.js";
 import { logWarning } from "../workflow-logger.js";
 import { debugLog } from "../debug-logger.js";
 import {
-  persistStuckRecoveryAttempts,
   _resolveDispatchGuardBasePath,
   shouldRunPlanV2Gate,
   isSamePathLocal,
@@ -429,9 +428,6 @@ export async function runPreDispatch(
     s.unitDispatchCount.clear();
     s.unitRecoveryCount.clear();
     s.unitLifetimeDispatches.clear();
-    loopState.recentUnits.length = 0;
-    loopState.stuckRecoveryAttempts = 0;
-    persistStuckRecoveryAttempts(s, loopState);
 
     // Worktree lifecycle on milestone transition — merge current, enter next.
     // #2909 / #5538-followup: preflight stash + always-on postflight pop.

@@ -25,7 +25,7 @@ import {
 import { handlePlanSlice as handlePlanSliceWithInvocation } from '../tools/plan-slice.ts';
 import { handlePlanTask as handlePlanTaskWithInvocation } from '../tools/plan-task.ts';
 import { internalPlanningInvocation } from '../planning-invocation.ts';
-import { parsePlan } from '../parsers-legacy.ts';
+import { parseProjectionPlan as parsePlan } from '../schemas/parsers.ts';
 import { deriveState, invalidateStateCache } from '../state.ts';
 
 function handlePlanSlice(

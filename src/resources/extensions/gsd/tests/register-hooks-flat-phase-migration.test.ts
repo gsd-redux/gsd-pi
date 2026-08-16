@@ -1,5 +1,6 @@
 // Project/App: gsd-pi
-// File Purpose: Verifies session bootstrap fails closed on unrepresented legacy Markdown.
+// File Purpose: Verifies session bootstrap fails closed on legacy Markdown whose
+// identities the canonical database does not hold.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -48,7 +49,7 @@ function makeContext(basePath: string) {
   };
 }
 
-test("session_start rejects unrepresented legacy Markdown with explicit recovery guidance", async (t) => {
+test("session_start rejects legacy Markdown identities absent from the DB with explicit recovery guidance", async (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-bootstrap-flat-migration-"));
   t.after(() => {
     closeDatabase();
@@ -57,11 +58,14 @@ test("session_start rejects unrepresented legacy Markdown with explicit recovery
 
   mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
   writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-CONTEXT.md"), "# M001: Foundation\n", "utf-8");
+  // M999 has no canonical DB identity, so the legacy tree carries state the
+  // database does not hold and only explicit recovery may import it. Known
+  // identities (M001) are archived and rebuilt from the DB instead.
+  mkdirSync(join(base, ".gsd", "milestones", "M999"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "milestones", "M999", "M999-CONTEXT.md"), "# M999: Unknown\n", "utf-8");
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Foundation", status: "active" });
   closeDatabase();
-
-  writeFileSync(join(base, ".gsd-backups"), "not a directory\n", "utf-8");
 
   const sessionStart = createSessionStartHandler();
 
@@ -70,4 +74,10 @@ test("session_start rejects unrepresented legacy Markdown with explicit recovery
     /flat-phase migration.*\/gsd recover/,
   );
   assert.ok(existsSync(join(base, ".gsd", "milestones", "M001")), "legacy layout should remain for recovery");
+  assert.ok(existsSync(join(base, ".gsd", "milestones", "M999")), "unknown identity should remain for recovery");
+  assert.equal(
+    existsSync(join(base, ".gsd-backups")),
+    false,
+    "rejection must happen before the migration touches disk",
+  );
 });

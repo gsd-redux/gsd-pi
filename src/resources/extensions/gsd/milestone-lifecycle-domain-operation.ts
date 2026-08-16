@@ -8,6 +8,7 @@ import {
   type DomainOperationResult,
 } from "./db/domain-operation.js";
 import { getDb } from "./db/engine.js";
+import { MILESTONE_LIFECYCLE_PROJECTION_KIND } from "./projection-identity.js";
 import { readMilestoneCloseoutAuthorization } from "./db/milestone-closeout-readiness.js";
 import { readDomainOperationFence } from "./db/writers/lifecycle-commands.js";
 import type { LifecycleShadowRecord } from "./db/writers/lifecycle-commands.js";
@@ -456,7 +457,7 @@ export function reopenMilestone(input: {
         }],
         projections: [{
           projectionKey: `lifecycle/${milestoneId}`.toLowerCase(),
-          projectionKind: "milestone-lifecycle",
+          projectionKind: MILESTONE_LIFECYCLE_PROJECTION_KIND,
           rendererVersion: "1",
         }],
       };
@@ -545,7 +546,7 @@ export function completeMilestone(input: {
         }],
         projections: [{
           projectionKey: `lifecycle/${milestoneId}`.toLowerCase(),
-          projectionKind: "milestone-lifecycle",
+          projectionKind: MILESTONE_LIFECYCLE_PROJECTION_KIND,
           rendererVersion: "1",
         }],
       };

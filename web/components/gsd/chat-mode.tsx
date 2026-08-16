@@ -11,7 +11,6 @@ import { Input } from "@/components/ui/input"
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { ChatMessage, TuiPrompt } from "@/lib/pty-chat-parser"
-import { canCloudMutate } from "@/lib/cloud-client"
 import { PendingImage, processImageFile, generateImageId, MAX_PENDING_IMAGES } from "@/lib/image-utils"
 import { clampSelectIndex, getSingleSelectKeyAction } from "@/lib/select-keyboard"
 import {
@@ -171,12 +170,6 @@ interface ChatModeHeaderProps {
 function ChatModeHeader({ onPrimaryAction, onSecondaryAction }: ChatModeHeaderProps) {
   const state = useGSDWorkspaceState()
 
-  // Cloud viewer role (ADR-047): workflow actions are read-only.
-  const [cloudReadOnly, setCloudReadOnly] = useState(false)
-  useEffect(() => {
-    setCloudReadOnly(!canCloudMutate())
-  }, [])
-
   const boot = state.boot
   const workspace = boot?.workspace ?? null
   const auto = boot?.auto ?? null
@@ -225,15 +218,15 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction }: ChatModeHeaderPr
             <button
               data-testid="chat-primary-action"
               onClick={handlePrimary}
-              disabled={workflowAction.disabled || cloudReadOnly}
+              disabled={workflowAction.disabled}
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors",
                 workflowAction.primary.variant === "destructive"
                   ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   : "bg-primary text-primary-foreground hover:bg-primary/90",
-                (workflowAction.disabled || cloudReadOnly) && "cursor-not-allowed opacity-50",
+                workflowAction.disabled && "cursor-not-allowed opacity-50",
               )}
-              title={cloudReadOnly ? "Read-only viewer session" : workflowAction.disabledReason}
+              title={workflowAction.disabledReason}
             >
               {state.commandInFlight ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -250,12 +243,12 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction }: ChatModeHeaderPr
               key={action.command}
               data-testid={`chat-secondary-action-${action.command}`}
               onClick={() => onSecondaryAction(action.command)}
-              disabled={workflowAction.disabled || cloudReadOnly}
+              disabled={workflowAction.disabled}
               className={cn(
                 "inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium transition-colors hover:bg-accent",
-                (workflowAction.disabled || cloudReadOnly) && "cursor-not-allowed opacity-50",
+                workflowAction.disabled && "cursor-not-allowed opacity-50",
               )}
-              title={cloudReadOnly ? "Read-only viewer session" : workflowAction.disabledReason}
+              title={workflowAction.disabledReason}
             >
               {action.label}
             </button>
@@ -1137,13 +1130,6 @@ function ChatInputBar({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const dragCounterRef = useRef(0)
 
-  // Cloud viewer role (ADR-047): the prompt input is hidden. Resolved
-  // post-hydration so SSR and the first client render agree.
-  const [cloudReadOnly, setCloudReadOnly] = useState(false)
-  useEffect(() => {
-    setCloudReadOnly(!canCloudMutate())
-  }, [])
-
   // Cleanup blob URLs on unmount
   useEffect(() => {
     return () => {
@@ -1294,11 +1280,6 @@ function ChatInputBar({
 
   return (
     <div className="flex-shrink-0 border-t border-border bg-card px-4 py-3 backdrop-blur-sm">
-      {cloudReadOnly ? (
-        <div className="flex items-center justify-center py-1 text-xs text-muted-foreground">
-          Read-only viewer session — prompt input is hidden.
-        </div>
-      ) : (
       <div
         className="flex items-end gap-2"
         onDrop={handleDrop}
@@ -1489,7 +1470,6 @@ function ChatInputBar({
           </TooltipProvider>
         )}
       </div>
-      )}
     </div>
   )
 }
@@ -1568,13 +1548,6 @@ function InlineUiRequest({ request }: { request: PendingUiRequest }) {
   const { respondToUiRequest, dismissUiRequest } = useGSDWorkspaceActions()
   const isSubmitting = useGSDWorkspaceState().commandInFlight === "extension_ui_response"
 
-  // Cloud viewer role (ADR-047): approvals are read-only.
-  const [cloudReadOnly, setCloudReadOnly] = useState(false)
-  useEffect(() => {
-    setCloudReadOnly(!canCloudMutate())
-  }, [])
-  const disabled = isSubmitting || cloudReadOnly
-
   const handleSubmit = useCallback((value: Record<string, unknown>) => {
     void respondToUiRequest(request.id, value)
   }, [respondToUiRequest, request.id])
@@ -1592,22 +1565,17 @@ function InlineUiRequest({ request }: { request: PendingUiRequest }) {
         {request.title && (
           <p className="mb-2.5 text-sm font-medium text-foreground">{request.title}</p>
         )}
-        {cloudReadOnly && (
-          <p className="mb-2 text-xs text-muted-foreground">
-            Read-only viewer session — responses are disabled.
-          </p>
-        )}
         {request.method === "select" && (
-          <InlineSelect request={request} onSubmit={handleSubmit} disabled={disabled} />
+          <InlineSelect request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
         )}
         {request.method === "confirm" && (
-          <InlineConfirm request={request} onSubmit={handleSubmit} onDismiss={handleDismiss} disabled={disabled} />
+          <InlineConfirm request={request} onSubmit={handleSubmit} onDismiss={handleDismiss} disabled={isSubmitting} />
         )}
         {request.method === "input" && (
-          <InlineInput request={request} onSubmit={handleSubmit} disabled={disabled} />
+          <InlineInput request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
         )}
         {request.method === "editor" && (
-          <InlineEditor request={request} onSubmit={handleSubmit} disabled={disabled} />
+          <InlineEditor request={request} onSubmit={handleSubmit} disabled={isSubmitting} />
         )}
       </div>
     </div>
@@ -2079,13 +2047,6 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
   const [terminalFontSize] = useTerminalFontSize()
   const [renderTimestamp] = useState(() => Date.now())
 
-  // Cloud viewer role (ADR-047): inline prompt answers and placeholder CTAs
-  // are mutations — disabled for viewers.
-  const [cloudReadOnly, setCloudReadOnly] = useState(false)
-  useEffect(() => {
-    setCloudReadOnly(!canCloudMutate())
-  }, [])
-
   const connected = state.connectionState === "connected"
   const isStreaming = state.boot?.bridge.sessionState?.isStreaming ?? false
   const bridge = state.boot?.bridge ?? null
@@ -2254,10 +2215,6 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
     void submitInput(data.replace(/\r$/, ""))
   }, [submitInput])
 
-  // Viewers get no prompt submit handler — ChatBubble hides TUI prompts
-  // entirely when onSubmitPrompt is undefined.
-  const promptSubmit = cloudReadOnly ? undefined : handlePromptSubmit
-
   const hasTimelineContent = completedTimeline.length > 0 || streamingTimeline.length > 0
 
   const renderTimelineItem = useCallback((item: TimelineItem) => {
@@ -2267,7 +2224,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
           <ChatBubble
             key={item.message.id}
             message={item.message}
-            onSubmitPrompt={promptSubmit}
+            onSubmitPrompt={handlePromptSubmit}
           />
         )
       case "thinking":
@@ -2326,7 +2283,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
       case "ui-request":
         return <InlineUiRequest key={item.request.id} request={item.request} />
     }
-  }, [promptSubmit, renderTimestamp])
+  }, [handlePromptSubmit, renderTimestamp])
 
   const completedTimelineRows = useMemo(
     () => completedTimeline.map(renderTimelineItem),
@@ -2373,7 +2330,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
           <PlaceholderState
             connected={connected}
             runningLabel={isStreaming ? "responding" : undefined}
-            primaryAction={cloudReadOnly ? null : placeholderCTA}
+            primaryAction={placeholderCTA}
             onPrimaryAction={handlePlaceholderCTA}
           />
         ) : (

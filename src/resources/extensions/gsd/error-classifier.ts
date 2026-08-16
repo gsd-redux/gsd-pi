@@ -83,8 +83,9 @@ const TOOL_SURFACE_NOT_READY_RE = new RegExp(TOOL_SURFACE_NOT_READY, "i");
 // Provider rejected the request shape for the selected model (400 bad request,
 // grammar limits, etc.). Not transient — try a different model/fallback.
 // Context-window 400s stay in SERVER_RE (checked earlier).
+// Anthropic cache_control.ttl block-ordering 400s (#1709).
 const MODEL_ERROR_RE =
-  /\b400\b.*\binvalid argument\b|\binvalid argument\b.*\b400\b|grammar is too complex|\b400\b.*\binvalid params\b(?!.*context)|invalid json payload.*unknown name ["'](?:const|patternProperties)["']|input_schema: JSON schema is invalid/i;
+  /\b400\b.*\binvalid argument\b|\binvalid argument\b.*\b400\b|grammar is too complex|\b400\b.*\binvalid params\b(?!.*context)|invalid json payload.*unknown name ["'](?:const|patternProperties)["']|input_schema: JSON schema is invalid|\b400\b.*\bcache_control\.ttl\b/i;
 // Provider adapters throw "No API key for provider: X" at request time when a
 // stored credential is expired or unrefreshable — selection-time hasAuth()
 // passed, but no usable key materialized. This is exactly the condition

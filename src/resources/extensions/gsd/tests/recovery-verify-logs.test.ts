@@ -350,7 +350,7 @@ test("gate-evaluate verify logs a recovery warning when the pending-gates DB que
 
 // ─── fail-closed verification witnesses ────────────────────────────────────
 // plan-milestone parses the artifact's own content (does it declare slices?),
-// so its parse-failure catch survives the DB cutover; parseLegacyRoadmap is
+// so its parse-failure catch survives the DB cutover; parseProjectionRoadmap is
 // internally defensive against every malformed input, so that catch is
 // unreachable without the _setRoadmapParserFnForTests seam.
 // complete-slice and parallel-research instead read slice state from the DB.

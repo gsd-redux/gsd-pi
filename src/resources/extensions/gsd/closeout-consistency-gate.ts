@@ -33,6 +33,8 @@ import {
 } from "./db/milestone-closeout-readiness.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { captureMilestoneVerificationSourceRevision } from "./verification-source-integrity.js";
+import { resolveRepositoryProjectRoot } from "./repository-registry.js";
+import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { atomicWriteSync, removeProjectionFileSync } from "./atomic-write.js";
 
 export const CLOSEOUT_CONSISTENCY_BLOCKED_REASON = "closeout-consistency-blocked";
@@ -80,7 +82,10 @@ function isFileBackedDbPath(path: string | null): boolean {
 function artifactBasePathFromDb(): string | undefined {
   const dbPath = getWorkflowDatabasePath();
   if (!isFileBackedDbPath(dbPath)) return undefined;
-  return dirname(dirname(dbPath!));
+  const dbBasePath = dirname(dirname(dbPath!));
+  return existsSync(join(dbBasePath, ".git"))
+    ? dbBasePath
+    : resolveRepositoryProjectRoot(process.cwd());
 }
 
 function allSlicesHaveCloseoutSummaryEvidence(milestoneId: string, artifactBasePath: string): boolean {
@@ -214,7 +219,16 @@ export function checkCloseoutConsistencyGate(
   }
   let canonicalAuthorization = null;
   if (adoptedMilestone) {
-    const artifactBasePath = options.artifactBasePath ?? artifactBasePathFromDb();
+    // Resolve the tree the milestone actually executed in. Under worktree
+    // isolation validation runs inside .gsd-worktrees/<id> and records that
+    // tree's revision; computing the current revision from the project root
+    // compares two different working trees, so the authorization could never
+    // match and the merge blocked with "validation authorization is not
+    // current" on a milestone the DB had already marked complete.
+    const artifactBasePath = resolveCanonicalMilestoneRoot(
+      options.artifactBasePath ?? artifactBasePathFromDb() ?? "",
+      milestoneId,
+    ) || options.artifactBasePath || artifactBasePathFromDb();
     if (!artifactBasePath) {
       return blocked(
         "validation-not-pass",

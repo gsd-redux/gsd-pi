@@ -103,10 +103,7 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 For each built-in provider, pi maintains a list of tool-capable models, updated with every release. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
-**Subscriptions:**
-- Anthropic Claude Pro/Max
-- OpenAI ChatGPT Plus/Pro (Codex)
-- GitHub Copilot
+**Subscriptions:** See [docs/providers.md#subscriptions](docs/providers.md#subscriptions) for the current providers and setup details.
 
 **API keys:**
 - Anthropic

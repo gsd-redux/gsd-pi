@@ -32,6 +32,7 @@ import type { MinimalModelRegistry } from "./context-budget.js";
 import { pauseAuto } from "./auto.js";
 import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { getUnitWorkflowDispatchReadinessErrorForModel } from "./tool-contract.js";
+import { createWorkspace, scopeMilestone } from "./workspace.js";
 
 export function parseDirectDispatchPhase(raw: string): { phase: string; milestoneId?: string } {
   const tokens = raw.trim().split(/\s+/).filter(Boolean);
@@ -135,7 +136,12 @@ export async function dispatchDirectPhase(
       } else {
         unitType = "plan-milestone";
         unitId = mid;
-        prompt = await buildPlanMilestonePrompt(mid, midTitle, dispatchBase);
+        prompt = await buildPlanMilestonePrompt(
+          mid,
+          midTitle,
+          dispatchBase,
+          scopeMilestone(createWorkspace(dispatchBase), mid),
+        );
       }
       break;
     }

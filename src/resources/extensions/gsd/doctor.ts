@@ -1,8 +1,13 @@
 import { existsSync } from "node:fs";
 
 import { loadFile, saveFile } from "./files.js";
-import { getMilestoneSlices } from "./gsd-db.js";
-import { openExistingWorkflowDatabase } from "./db-workspace.js";
+import { _getAdapter, getMilestoneSlices, isDbAvailable } from "./gsd-db.js";
+import {
+  openExistingWorkflowDatabase,
+  openWorkflowDatabaseIsolated,
+  resolveWorkflowDatabaseLocation,
+} from "./db-workspace.js";
+import { hasRequiredSchemaFeature } from "./db-required-schema.js";
 import { resolveMilestoneFile, milestonesDir, legacyMilestonesDir, resolveGsdRootFile } from "./paths.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -28,6 +33,41 @@ export { runEnvironmentChecks, runFullEnvironmentChecks, formatEnvironmentReport
 export { computeProgressScore, computeProgressScoreWithContext, formatProgressLine, formatProgressReport, type ProgressScore, type ProgressLevel } from "./progress-score.js";
 
 export { validateTitle } from "./validation.js";
+
+function inspectLivenessBackstopSchema(basePath: string): boolean | undefined {
+  const databasePath = resolveWorkflowDatabaseLocation(basePath).projectDb;
+  if (!existsSync(databasePath)) return undefined;
+  const db = openWorkflowDatabaseIsolated(databasePath);
+  if (!db) return undefined;
+  try {
+    return hasRequiredSchemaFeature(db, "liveness-backstop");
+  } catch {
+    return undefined;
+  } finally {
+    db.close();
+  }
+}
+
+function recordLivenessBackstopStartupRepair(
+  wasComplete: boolean | undefined,
+  issues: DoctorIssue[],
+  fixesApplied: string[],
+): void {
+  if (wasComplete !== false) return;
+  const repaired = isDbAvailable() && hasRequiredSchemaFeature(_getAdapter()!, "liveness-backstop");
+  issues.push({
+    severity: repaired ? "info" : "error",
+    code: "liveness_backstop_schema_missing",
+    scope: "project",
+    unitId: "project",
+    message: repaired
+      ? "The ADR-047 liveness backstop schema was missing when doctor started and was repaired through guarded database startup maintenance."
+      : "The ADR-047 liveness backstop schema is missing. Run `/gsd doctor --fix` to repair it before starting auto-mode.",
+    file: ".gsd/gsd.db",
+    fixable: true,
+  });
+  if (repaired) fixesApplied.push("repaired liveness backstop schema through guarded startup maintenance");
+}
 
 function validatePreferenceShape(preferences: GSDPreferences): string[] {
   const issues: string[] = [];
@@ -163,10 +203,13 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
   const dryRun = options?.dryRun === true;
   const fixLevel = options?.fixLevel ?? "all";
 
+  const livenessBackstopSchemaWasComplete = inspectLivenessBackstopSchema(basePath);
+
   // CLI doctor can run before any tool handler has opened the DB. Runtime
   // health checks need the existing project DB to surface DB-backed crash
   // locks, paused sessions, and coordination rows.
   openExistingWorkflowDatabase(basePath);
+  recordLivenessBackstopStartupRepair(livenessBackstopSchemaWasComplete, issues, fixesApplied);
 
   // Issue codes that represent completion state transitions — creating summary
   // stubs, marking slices/milestones done in the roadmap. These belong to the

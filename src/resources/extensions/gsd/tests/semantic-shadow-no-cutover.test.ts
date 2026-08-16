@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { detectStuck } from "../auto/detect-stuck.ts";
 import { resolveDispatch } from "../auto-dispatch.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
 import { executeDomainOperation } from "../db/domain-operation.ts";
@@ -30,7 +29,6 @@ import {
 import { analyzeParallelEligibility } from "../parallel-eligibility.ts";
 import { deriveStateFromDb, invalidateStateCache } from "../state.ts";
 import { executeMilestoneStatus } from "../tools/workflow-tool-executors.ts";
-import type { WindowEntry } from "../auto/types.ts";
 
 const tempDirectories = new Set<string>();
 
@@ -104,15 +102,6 @@ function writeMilestoneContext(base: string, milestoneId: string): void {
   writeFileSync(join(directory, "CONTEXT.md"), `# ${milestoneId}\n`);
 }
 
-function repeatedWindow(unitKey: string): WindowEntry[] {
-  return [
-    { key: unitKey },
-    { key: "other-unit" },
-    { key: unitKey },
-    { key: "third-unit" },
-    { key: unitKey },
-  ];
-}
 
 test("legacy milestone status remains public when canonical lifecycle disagrees", async () => {
   const base = makeProject("gsd-no-cutover-status-");
@@ -282,55 +271,6 @@ test("resolveDispatch keeps legacy milestone status authoritative when canonical
   });
   assert.equal(complete.action, "stop");
   assert.match(complete.reason, /Milestone M002 is closed/);
-});
-
-test("dispatch retry ledger remains authoritative when canonical lifecycle disagrees", () => {
-  const base = makeProject("gsd-no-cutover-retry-");
-  insertMilestone({ id: "M001", title: "Retry", status: "active" });
-  insertSlice({ id: "S01", milestoneId: "M001", title: "Retry slice", status: "active", depends: [] });
-  insertTask({
-    id: "T01",
-    sliceId: "S01",
-    milestoneId: "M001",
-    title: "Legacy pending task",
-    status: "pending",
-  });
-  seedLifecycle({
-    itemKind: "task",
-    milestoneId: "M001",
-    sliceId: "S01",
-    taskId: "T01",
-    lifecycleStatus: "completed",
-  }, "retry-task");
-  assert.equal(readLifecycleStatus("task"), "completed");
-
-  const workerId = registerAutoWorker({ projectRootRealpath: base });
-  const lease = claimMilestoneLease(workerId, "M001");
-  assert.equal(lease.ok, true);
-  if (!lease.ok) return;
-  const claim = recordDispatchClaim({
-    traceId: "no-cutover-retry",
-    workerId,
-    milestoneLeaseToken: lease.token,
-    milestoneId: "M001",
-    unitType: "execute-task",
-    unitId: "M001/S01/T01",
-    attemptN: 1,
-    maxAttempts: 3,
-  });
-  assert.equal(claim.ok, true);
-  if (!claim.ok) return;
-  markFailed(claim.dispatchId, { errorSummary: "transient", retryAfterMs: 60_000 });
-
-  const unitKey = "execute-task:M001/S01/T01";
-  assert.equal(detectStuck(repeatedWindow(unitKey)), null, "future ledger retry suppresses stuck");
-  const db = _getAdapter();
-  assert.ok(db);
-  db.prepare(
-    "UPDATE unit_dispatches SET next_run_at = '1970-01-01T00:00:00.000Z' WHERE id = :id",
-  ).run({ ":id": claim.dispatchId });
-  assert.ok(detectStuck(repeatedWindow(unitKey)), "expired ledger retry re-enables stuck");
-  assert.equal(readLifecycleStatus("task"), "completed", "canonical disagreement stayed constant");
 });
 
 test("legacy validation assessment steers state when canonical lifecycle disagrees", async () => {

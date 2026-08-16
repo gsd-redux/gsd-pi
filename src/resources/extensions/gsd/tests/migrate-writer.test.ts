@@ -16,9 +16,9 @@ import {
   formatState,
 } from '../migrate/writer.ts';
 import {
-  parseRoadmap,
-  parsePlan,
-} from '../parsers-legacy.ts';
+  parseProjectionRoadmap as parseRoadmap,
+  parseProjectionPlan as parsePlan,
+} from '../schemas/parsers.ts';
 import {
   parseSummary,
   parseRequirementCounts,

@@ -14,6 +14,7 @@ import {
 export interface PlanningProjectionWrite {
   relPath: string;
   entities: string[];
+  sha?: string;
   passthrough?: boolean;
 }
 
@@ -64,7 +65,7 @@ export function applyPlanningProjectionWrites(
     const abs = join(basePath, ".planning", write.relPath);
     if (!existsSync(abs)) continue;
     const entry = {
-      sha: computeProjectionSha(readFileSync(abs, "utf-8")),
+      sha: write.sha ?? computeProjectionSha(readFileSync(abs, "utf-8")),
       entities: write.entities,
     };
     const map = write.passthrough ? marker.planning.passthrough : marker.planning.projections;

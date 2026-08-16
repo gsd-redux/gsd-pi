@@ -27,6 +27,8 @@ import {
   insertMilestone,
   insertSlice,
   insertTask,
+  insertDecision,
+  insertArtifact,
 } from '../gsd-db.ts';
 
 // ─── Fixture Helpers ───────────────────────────────────────────────────────
@@ -136,12 +138,29 @@ describe('derive-seam-authority', () => {
       .replace('- [ ] **T01:', '- [x] **T01:')
       .replace('- [x] **T02:', '- [ ] **T02:'));
     writeFile(base, 'STATE.md', STATE_PROJECTION);
+    writeFile(base, 'DECISIONS.md', [
+      '# Decisions',
+      '',
+      '| # | When / Context | Scope | Decision | Choice | Rationale | Revisable | Made By |',
+      '|---|----------------|-------|----------|--------|-----------|----------|---------|',
+      '| D001 | Now | global | Projection-only decision | Ignore | DB is authority | Yes | human |',
+      '',
+    ].join('\n'));
+    writeFile(base, 'PROJECT.md', [
+      '# Project',
+      '',
+      '## Milestone Sequence',
+      '',
+      '- [ ] M099: Phantom From Disk - Must not steer derive.',
+      '',
+    ].join('\n'));
 
     invalidateStateCache();
     const after = await deriveState(base);
 
     assert.deepStrictEqual(after, before, 'seam: derived state is byte-identical after projection edits');
     assert.equal(after.activeTask?.id, 'T01', 'seam: plan-projection edit does not flip the active task');
+    assert.deepStrictEqual(after.recentDecisions, [], 'seam: DECISIONS.md projection does not populate recentDecisions');
   });
 
   // (b) DB unavailable: the seam fails closed via buildDbUnavailableState.
@@ -179,9 +198,6 @@ describe('derive-seam-authority', () => {
   // (c) The live derive path does not open markdown projections for parsing.
   // Spy on both fs.readFileSync and fs.promises.readFile (the two read
   // channels used under the seam) and assert no state projection is read.
-  // Note: deriveState appends recentDecisions by reading DECISIONS.md itself
-  // (seam-owned enrichment, not projection authority), so DECISIONS.md is
-  // deliberately excluded from the forbidden set.
   test('derive-seam-authority: live derive path never opens markdown projections', async (t) => {
     const base = createFixtureBase();
 
@@ -209,6 +225,8 @@ describe('derive-seam-authority', () => {
     });
 
     writeProjectionFixture(base);
+    writeFile(base, 'DECISIONS.md', '| D001 | Now | global | Disk | Ignore | x | Yes | human |\n');
+    writeFile(base, 'PROJECT.md', '# Project\n\n## Milestone Sequence\n\n- [ ] M099: Disk Only\n');
 
     assert.equal(openDatabase(':memory:'), true);
     insertDbHierarchy();
@@ -219,6 +237,8 @@ describe('derive-seam-authority', () => {
 
     const projectionReads = readPaths.filter(p =>
       /STATE\.md$/i.test(p)
+      || /DECISIONS\.md$/i.test(p)
+      || /PROJECT\.md$/i.test(p)
       || /-ROADMAP\.md$/i.test(p)
       || /-PLAN\.md$/i.test(p)
       || /-SUMMARY\.md$/i.test(p)
@@ -230,5 +250,96 @@ describe('derive-seam-authority', () => {
       [],
       `live derive path must not open markdown projections, read: ${projectionReads.join(', ')}`,
     );
+  });
+
+  test('derive-seam-authority: recentDecisions come from DB rows, not DECISIONS.md', async (t) => {
+    const base = createFixtureBase();
+    t.after(() => {
+      closeDatabase();
+      cleanup(base);
+    });
+
+    writeProjectionFixture(base);
+    writeFile(base, 'DECISIONS.md', [
+      '# Decisions',
+      '',
+      '| # | When / Context | Scope | Decision | Choice | Rationale | Revisable | Made By |',
+      '|---|----------------|-------|----------|--------|-----------|----------|---------|',
+      '| D999 | Disk | global | Projection-only decision | Ignore | not authority | Yes | human |',
+      '',
+    ].join('\n'));
+
+    assert.equal(openDatabase(':memory:'), true);
+    insertDbHierarchy();
+    insertDecision({
+      id: 'D001',
+      when_context: 'Now',
+      scope: 'global',
+      decision: 'DB is authority',
+      choice: 'Query the decisions table',
+      rationale: 'Live derive must not parse DECISIONS.md',
+      revisable: 'Yes',
+      made_by: 'human',
+      source: 'discussion',
+      superseded_by: null,
+    });
+
+    invalidateStateCache();
+    const state = await deriveState(base);
+    assert.equal(state.recentDecisions.length, 1, 'seam: one DB decision is surfaced');
+    assert.match(
+      state.recentDecisions[0] ?? '',
+      /D001 \(Now\): DB is authority -> Query the decisions table/,
+      'seam: recentDecisions format matches DB fields',
+    );
+    assert.ok(
+      !state.recentDecisions.some((line) => line.includes('D999') || line.includes('Projection-only')),
+      'seam: DECISIONS.md projection is not mixed into recentDecisions',
+    );
+  });
+
+  test('derive-seam-authority: PROJECT.md on disk does not promote a queued shell', async (t) => {
+    const base = createFixtureBase();
+    t.after(() => {
+      closeDatabase();
+      cleanup(base);
+    });
+
+    writeFile(base, 'PROJECT.md', [
+      '# Project',
+      '',
+      '## Milestone Sequence',
+      '',
+      '- [ ] M001: Foundation - Disk projection only.',
+      '',
+    ].join('\n'));
+
+    assert.equal(openDatabase(':memory:'), true);
+    insertMilestone({ id: 'M001', title: 'Foundation', status: 'queued' });
+
+    invalidateStateCache();
+    const fromDisk = await deriveState(base);
+    assert.equal(fromDisk.activeMilestone, null, 'seam: disk PROJECT.md must not promote a queued shell');
+
+    insertArtifact({
+      path: 'PROJECT.md',
+      artifact_type: 'PROJECT',
+      milestone_id: null,
+      slice_id: null,
+      task_id: null,
+      full_content: [
+        '# Project',
+        '',
+        '## Milestone Sequence',
+        '',
+        '- [ ] M001: Foundation - Establish the first runnable slice.',
+        '',
+      ].join('\n'),
+    });
+
+    invalidateStateCache();
+    const fromDb = await deriveState(base);
+    assert.equal(fromDb.activeMilestone?.id, 'M001', 'seam: PROJECT artifact promotes the in-sequence shell');
+    assert.equal(fromDb.phase, 'pre-planning', 'seam: in-sequence shell goes to pre-planning');
   });
 });

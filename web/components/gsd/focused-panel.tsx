@@ -20,7 +20,6 @@ import {
   useGSDWorkspaceActions,
   useGSDWorkspaceState,
 } from "@/lib/gsd-workspace-store"
-import { canCloudMutate } from "@/lib/cloud-client"
 import { clampSelectIndex, getSingleSelectKeyAction } from "@/lib/select-keyboard"
 import { cn } from "@/lib/utils"
 
@@ -321,14 +320,6 @@ export function FocusedPanel() {
   const current = pending[0] ?? null
   const isSubmitting = workspace.commandInFlight === "extension_ui_response"
 
-  // Cloud viewer role (ADR-047): approvals are read-only. Resolved
-  // post-hydration; the panel content only renders when a request is open.
-  const [cloudReadOnly, setCloudReadOnly] = useState(false)
-  useEffect(() => {
-    setCloudReadOnly(!canCloudMutate())
-  }, [])
-  const disabled = isSubmitting || cloudReadOnly
-
   const handleSubmit = (response: Record<string, unknown>) => {
     if (!current) return
     void respondToUiRequest(current.id, response)
@@ -374,17 +365,12 @@ export function FocusedPanel() {
             </SheetHeader>
 
             <div className="flex-1 overflow-y-auto px-4 py-2">
-              {cloudReadOnly && (
-                <p className="mb-2 text-xs text-muted-foreground">
-                  Read-only viewer session — responses are disabled.
-                </p>
-              )}
               <RequestBody
                 key={current.id}
                 request={current}
                 onSubmit={handleSubmit}
                 onCancel={handleDismiss}
-                disabled={disabled}
+                disabled={isSubmitting}
               />
             </div>
 
@@ -393,7 +379,7 @@ export function FocusedPanel() {
                 variant="ghost"
                 size="sm"
                 onClick={handleDismiss}
-                disabled={disabled}
+                disabled={isSubmitting}
                 className="text-muted-foreground"
               >
                 Dismiss

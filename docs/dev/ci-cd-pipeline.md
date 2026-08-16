@@ -152,6 +152,7 @@ Content inside fenced code blocks (` ``` `) is excluded — patterns in code exa
 - **Smoke tests** (`npm run test:smoke`) — against the freshly built `dist/loader.js`, then again in `prerelease-verify` against the globally installed published package
 - **Native platform packages** (`npm run verify:native-platform-packages`) and **package validation** (`npm run validate-pack`)
 - **Live regression tests** (`npm run test:live-regression`) — against the installed prerelease binary, and again against the release build in `prod-release`
+- **Auto-mode acceptance bed** (`npm run test:auto-acceptance`) — a blocking `prerelease-verify` gate against the globally installed published binary; `channel=latest` must pass this gate on `@dev` before production release planning can begin
 - **Live LLM tests** (`npm run test:live`, `npm run test:live-workflow`) — `prod-release` only, `continue-on-error: true` (non-blocking warnings)
 - **Release verification** (`node scripts/verify-npm-release.mjs <version>`) — final gate confirming the main, engine, and workspace packages are all on npm at the release version before the tag is pushed
 
@@ -160,7 +161,7 @@ Content inside fenced code blocks (` ``` `) is excluded — patterns in code exa
 1. In GitHub Actions, run **NPM Publish**.
 2. Set `channel` to `dev` or `next`. `dev` defaults to the `main` branch and `next` defaults to the `next` branch; override with the `ref` input for a standalone publish from another branch or SHA.
 3. Leave `publish_auth` at `trusted` (OIDC) unless you are bootstrapping a package that does not exist on npm yet — see [First-time packages](#first-time-packages-bootstrap-with-token).
-4. `prerelease-publish` builds, stamps the prerelease version, runs the gates, publishes with `--tag <channel>`, and polls npm until the version installs. `prerelease-verify` then installs the published package globally and runs smoke + live-regression tests against it.
+4. `prerelease-publish` builds, stamps the prerelease version, runs the gates, publishes with `--tag <channel>`, and polls npm until the version installs. `prerelease-verify` then installs the published package globally and runs the installed-binary gates listed above.
 
 Nothing moves to `@latest` as a side effect of this. A production release is a separate dispatch.
 
@@ -254,11 +255,12 @@ There is no recorded-fixture replay system. The suites that exercise a real bina
 ```bash
 npm run test:smoke             # tests/smoke — CLI smoke tests against GSD_SMOKE_BINARY
 npm run test:live-regression   # tests/live-regression — runtime regressions against an installed binary
+npm run test:auto-acceptance   # tests/acceptance-bed — auto milestone flow against an installed binary
 npm run test:live              # tests/live — real provider calls, needs API keys (GSD_LIVE_TESTS=1)
 npm run test:live-workflow     # tests/live-workflow — real end-to-end workflow run
 ```
 
-`test:smoke` and `test:live-regression` read `GSD_SMOKE_BINARY` — point it at
+`test:smoke`, `test:live-regression`, and `test:auto-acceptance` read `GSD_SMOKE_BINARY` — point it at
 `dist/loader.js` for a local build or at `$(which gsd)` for an installed
 package, exactly as `npm-publish.yml` does.
 

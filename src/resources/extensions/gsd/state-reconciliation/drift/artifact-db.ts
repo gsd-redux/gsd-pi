@@ -31,6 +31,7 @@ import { removeProjectionTreeSync } from "../../atomic-write.js";
 import { invalidateStateCache } from "../../state.js";
 import type { GSDState } from "../../types.js";
 import { isAfter, latestExplicitReopenAt } from "../../milestone-reopen-events.js";
+import { isCanonicalStagedTaskSummaryProjection } from "../../task-summary-projection-classification.js";
 import type { DriftContext, DriftHandler, DriftRecord } from "../types.js";
 
 type DiskSliceIdDivergenceDrift = Extract<
@@ -52,6 +53,7 @@ type ArtifactStatusRow = {
   milestone_id: string | null;
   slice_id: string | null;
   task_id: string | null;
+  full_content: string;
   imported_at: string | null;
 };
 
@@ -66,7 +68,7 @@ function safeListArtifactRows(milestoneId: string): ArtifactStatusRow[] {
   try {
     return adapter
       .prepare(
-        `SELECT path, artifact_type, milestone_id, slice_id, task_id, imported_at
+        `SELECT path, artifact_type, milestone_id, slice_id, task_id, full_content, imported_at
          FROM artifacts
          WHERE milestone_id = :mid
          ORDER BY imported_at, path`,
@@ -169,6 +171,7 @@ function detectArtifactDbStatusDriftForMilestone(
         row.slice_id === slice.id &&
         row.task_id,
     );
+    const currentStagedTaskIds = new Set<string>();
 
     if (tasks.length === 0 && summaryRows.length > 0) {
       addUniqueDrift(drifts, seen, {
@@ -200,6 +203,22 @@ function detectArtifactDbStatusDriftForMilestone(
         continue;
       }
       if (isClosedStatus(task.status)) continue;
+      if (isCanonicalStagedTaskSummaryProjection(basePath, {
+        path: row.path,
+        milestoneId: row.milestone_id,
+        sliceId: row.slice_id,
+        taskId: row.task_id,
+        fullContent: row.full_content,
+      }, {
+        milestoneId,
+        sliceId: slice.id,
+        taskId: task.id,
+        status: task.status,
+        fullSummaryMd: task.full_summary_md,
+      })) {
+        currentStagedTaskIds.add(task.id);
+        continue;
+      }
       addUniqueDrift(drifts, seen, {
         kind: "artifact-db-status-divergence",
         milestoneId,
@@ -214,6 +233,7 @@ function detectArtifactDbStatusDriftForMilestone(
 
     for (const task of tasks) {
       if (isClosedStatus(task.status)) continue;
+      if (currentStagedTaskIds.has(task.id)) continue;
       const diskTaskSummary = resolveTaskFile(
         basePath,
         milestoneId,

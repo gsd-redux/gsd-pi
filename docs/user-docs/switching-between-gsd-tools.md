@@ -22,11 +22,11 @@ Then open the other tool. The commit preserves reviewable markdown edits, but it
 When you open a project in gsd-pi, it runs a reconciliation pass that:
 
 1. Compares every `.gsd/*.md` file against its recorded baseline in `.gsd/.compat.json`.
-2. Blocks modeled external edits instead of importing or overwriting them.
-3. Re-projects markdown from the DB only when no blocker is present.
+2. Preserves externally edited modeled files under `.gsd/quarantine/projections/` instead of importing or overwriting their bytes.
+3. Re-projects markdown from the DB while valid database-backed work continues.
 4. Updates `.gsd/.compat.json` after a successful projection.
 
-This is automatic. When modeled files drift, review the blocker and make an explicit authority choice before continuing.
+This is automatic. Projection drift does not become workflow authority or block otherwise valid work; review the preserved copy if you need to recover an external edit.
 
 ## `/gsd sync` — mid-session switch
 
@@ -36,7 +36,7 @@ If you switch tools while gsd-pi is running (e.g., a teammate edits `.gsd/plan.m
 /gsd sync
 ```
 
-This checks projections against the database. Modeled drift blocks without importing, rendering over the edit, or advancing the marker; safe `.planning/` passthrough changes only refresh their checksums. With no blockers, sync re-projects from the database. Use `--dry-run` to inspect without repairs, projection, or marker writes:
+This checks projections against the database. Modeled drift is preserved under `.gsd/quarantine/projections/` without being imported, then sync re-projects from the database. Safe `.planning/` passthrough changes only refresh their checksums. Workflow-state blockers can still stop sync. Use `--dry-run` to list projection edits that would be preserved without repairs, projection, or marker writes:
 
 ```
 /gsd sync --dry-run
@@ -66,7 +66,7 @@ If your project uses gsd-core's `.planning/` layout (flat `phases/NN-name/` dire
 
 - `/gsd migrate` previews and imports the hierarchy through a verified Import Application, then records the layout in `.gsd/.compat.json` only after publication succeeds.
 - On every projection, gsd-pi writes back to `.planning/` using that recorded layout. Cancelled slices and tasks are omitted, and obsolete tracked phase plan files are removed.
-- `/gsd sync` blocks modeled gsd-core `.planning/` edits and points to the explicit migration flow; `/gsd doctor` reports `.planning/` drift separately from `.gsd/` drift.
+- `/gsd sync` preserves modeled gsd-core `.planning/` edits before restoring the database-backed projection; `/gsd doctor` reports `.planning/` drift separately from `.gsd/` drift.
 
 **Un-modeled docs** (phase `DISCUSSION-LOG.md`, `PATTERNS.md`, `REVIEWS.md`, `codebase/`, `research/`) are pass-through: gsd-pi detects edits to them but never overwrites them. They are gsd-core-owned.
 
@@ -74,7 +74,7 @@ If your project uses gsd-core's `.planning/` layout (flat `phases/NN-name/` dire
 
 ## Conflicts: same entity edited in both
 
-If both tools edit the *same* entity, gsd-pi does not choose a last writer: `/gsd sync` blocks the modeled markdown drift and preserves both the database and edited files. Use the matching gsd-pi planning or reopen tool when the database is correct. If markdown intentionally contains state missing from a damaged database, use the evidence-bound `/gsd recover` flow; use `/gsd migrate` for `.planning/`. Git review remains the final safety net — that's why the "commit before switching" workflow matters.
+If both tools edit the *same* entity, gsd-pi does not choose a last writer: `/gsd sync` keeps the database authoritative, preserves the edited modeled file under `.gsd/quarantine/projections/`, and restores the database-backed projection. Use the matching gsd-pi planning or reopen tool when the database is correct. If markdown intentionally contains state missing from a damaged database, use the evidence-bound `/gsd recover` flow; use `/gsd migrate` for `.planning/`. Git review remains the final safety net — that's why the "commit before switching" workflow matters.
 
 ## Troubleshooting
 

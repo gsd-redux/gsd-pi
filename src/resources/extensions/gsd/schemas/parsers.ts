@@ -4,10 +4,9 @@
 // JSON Schema validation. The parsers are intentionally minimal — they only
 // extract the structure the validators care about, not full semantic content.
 //
-// This module is also the non-legacy home of the shared hierarchy markdown
-// parsers (parseLegacyRoadmap / parseLegacyPlan), relocated byte-identically
-// from parsers-legacy.ts by T012 (state-DB cutover). parsers-legacy.ts
-// re-exports them under their original names until T020 deletes that module.
+// This module is the home of the shared hierarchy markdown parsers
+// (parseProjectionRoadmap / parseProjectionPlan), relocated from the deleted
+// parsers-legacy.ts shim (T012/T020).
 
 import { extractSection, parseBullets, extractBoldField, extractAllSections, registerCacheClearCallback } from '../files.js';
 import { splitFrontmatter } from '../../shared/frontmatter.js';
@@ -369,10 +368,8 @@ export function parseRoadmap(content: string): ParsedRoadmap {
 
 // ─── Shared hierarchy markdown parsers (relocated from parsers-legacy.ts, T012) ─
 //
-// Moved byte-identically; only the exported identifiers gained the `Legacy`
-// prefix to avoid colliding with the validation-flavored parseRoadmap above.
-// parsers-legacy.ts re-exports these under their original names
-// (parseRoadmap / parsePlan) until T020 deletes that module.
+// Moved byte-identically; T020 renamed the exports to parseProjectionRoadmap /
+// parseProjectionPlan so they cannot be mistaken for live-path state parsers.
 
 // ─── Parse Cache (local to this module) ───────────────────────────────────
 
@@ -409,7 +406,7 @@ registerCacheClearCallback(clearLegacyParseCache);
 
 // ─── Roadmap Parser ────────────────────────────────────────────────────────
 
-export function parseLegacyRoadmap(content: string): Roadmap {
+export function parseProjectionRoadmap(content: string): Roadmap {
   return cachedParse(content, 'roadmap', _parseRoadmapImpl);
 }
 
@@ -518,7 +515,7 @@ function _parseRoadmapImpl(content: string): Roadmap {
 
 // ─── Slice Plan Parser ─────────────────────────────────────────────────────
 
-export function parseLegacyPlan(content: string): SlicePlan {
+export function parseProjectionPlan(content: string): SlicePlan {
   return cachedParse(content, 'plan', _parsePlanImpl);
 }
 
