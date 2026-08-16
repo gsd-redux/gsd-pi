@@ -44,6 +44,7 @@ same-stem test file.
 | `src/` + GSD extension | `node --test` on compiled `dist-test/` | `test:unit` | Primary app unit tests; compile via `test:compile` |
 | Extension integration suites | `node --test` + `resolve-ts.mjs` | `test:integration` | ollama, async-jobs, browser-tools, search-the-web, bg-shell, slash-commands |
 | `packages/*` | `node --test` (compiled to dist-test) | `test:packages` | Every linkable package must have ≥1 test (`verify:workspace-coverage`) |
+| `@gsd/pi-ai` vitest | `vitest --run` | `pnpm --filter @gsd/pi-ai test` | Wired into CI `build` and `verify:merge`; not covered by `test:packages` |
 | Extensions with ≥5 source files | `tests/*.test.*` required | `verify:extension-coverage` | Enforced in `verify:merge` |
 | `scripts/__tests__` | `node --test` | `verify:fast` | CI contract/policy regressions |
 | `tests/e2e/` | `node --test` against built binary | `test:e2e` | Requires `GSD_SMOKE_BINARY=dist/loader.js` |
@@ -57,7 +58,7 @@ same-stem test file.
 When `heavy-code-changed=true`, CI runs the Linux build and test stack in one job to avoid repeated checkout/setup/install/artifact restore overhead:
 
 1. `build` — compile, web host, `validate-pack`, workspace coverage gate
-2. `build` — compiled unit tests, package tests, integration tests, and e2e smoke
+2. `build` — compiled unit tests, package tests, `@gsd/pi-ai` vitest, integration tests, and e2e smoke
 3. `build` — Docker e2e when `docker-changed=true`
 
 Native package tests are skipped in the main Linux package-test step unless native/portability paths changed; otherwise a full Rust native rebuild can dominate unrelated CI runs.
