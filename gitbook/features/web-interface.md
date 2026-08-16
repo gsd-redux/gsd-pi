@@ -23,9 +23,11 @@ gsd --web --host 0.0.0.0 --port 8080 --allowed-origins "https://example.com"
 | `--allowed-origins` | (none) | Comma-separated CORS origins |
 | `--no-auth` | disabled | Disable the built-in bearer token gate |
 
-`--no-auth` leaves the web interface unprotected unless another layer controls access. By default, GSD only allows unauthenticated web mode on loopback hosts such as `127.0.0.1`, `localhost`, `::1`, or another `127.x.x.x` address. If you combine `--no-auth` or `GSD_WEB_NO_AUTH=1` with a non-loopback bind such as `--host 0.0.0.0`, startup is refused.
+`--no-auth` leaves the web interface unprotected unless another layer controls access.
 
-To deliberately run unauthenticated web mode on a LAN-facing host, set `GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1` in the same environment:
+**Unauthenticated LAN interlock.** `--no-auth` (or `GSD_WEB_NO_AUTH=1`) disables the built-in bearer token. On a non-loopback bind such as `--host 0.0.0.0`, that would expose terminal and file APIs to anyone who can reach the host. GSD therefore refuses startup unless `GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1` is also set. Loopback hosts (`127.0.0.1`, `localhost`, `::1`, other `127.x.x.x` addresses) are exempt — `--no-auth` works there without the override.
+
+To deliberately run unauthenticated web mode on a LAN-facing host, set `GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1` in the same environment (see [CLI flags](../reference/cli-flags.md) for POSIX, PowerShell, and CMD examples):
 
 ```bash
 GSD_WEB_ALLOW_UNAUTHENTICATED_LAN=1 gsd --web --host 0.0.0.0 --no-auth
