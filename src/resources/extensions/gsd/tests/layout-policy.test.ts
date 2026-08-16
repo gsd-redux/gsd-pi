@@ -44,6 +44,11 @@ test("milestoneIdToPhaseNum extracts the numeric portion", () => {
 test("sliceIdToPlanNum extracts the numeric portion", () => {
   assert.equal(sliceIdToPlanNum("S01"), 1);
   assert.equal(sliceIdToPlanNum("S03"), 3);
+  assert.equal(sliceIdToPlanNum("S1"), 1);
+  assert.equal(sliceIdToPlanNum("S01-replan"), 1);
+  assert.equal(sliceIdToPlanNum("S02-db-repair"), 2);
+  assert.equal(sliceIdToPlanNum("s03-x"), 3);
+  assert.equal(sliceIdToPlanNum("garbage"), 1);
 });
 
 test("derivePhaseSlug is stable and deterministic", () => {
