@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 import type { DoctorIssue } from "./doctor-types.js";
@@ -36,6 +36,99 @@ import { resolveCanonicalMilestoneRoot } from "./worktree-manager.js";
 import { isCanonicalStagedTaskSummaryProjection } from "./task-summary-projection-classification.js";
 
 const USER_AUTHORED_ARTIFACT_TYPES = new Set(["CONTEXT", "RESEARCH"]);
+
+interface RunningAttemptRow {
+  attempt_id: string;
+  worker_id: string | null;
+  milestone_lease_token: number | null;
+  milestone_id: string;
+  slice_id: string;
+  task_id: string;
+}
+
+/**
+ * A running Attempt is orphaned when no live process can settle it: its
+ * milestone lease is not currently held, or the lease-holding worker's OS
+ * process is gone (#1749). Mirrors the lease/liveness semantics auto-mode uses
+ * for dead lease holders, but reports instead of interrupting.
+ */
+function reportOrphanedRunningAttempts(
+  adapter: ReturnType<typeof _getAdapter> & object,
+  basePath: string,
+  issues: DoctorIssue[],
+): void {
+  const running = adapter.prepare(`
+    SELECT attempt.attempt_id, attempt.worker_id, attempt.milestone_lease_token,
+           lifecycle.milestone_id, lifecycle.slice_id, lifecycle.task_id
+    FROM workflow_execution_attempts attempt
+    JOIN workflow_item_lifecycles lifecycle
+      ON lifecycle.lifecycle_id = attempt.lifecycle_id
+     AND lifecycle.project_id = attempt.project_id
+    WHERE attempt.attempt_state = 'running'
+      AND lifecycle.item_kind = 'task'
+  `).all() as unknown as RunningAttemptRow[];
+  if (running.length === 0) return;
+
+  let projectRoot = basePath;
+  try {
+    projectRoot = realpathSync(basePath);
+  } catch {
+    // keep the unresolved basePath
+  }
+
+  for (const attempt of running) {
+    const lease = attempt.worker_id === null || attempt.milestone_lease_token === null
+      ? undefined
+      : adapter.prepare(`
+          SELECT 1 AS held
+          FROM milestone_leases
+          WHERE milestone_id = :milestone_id
+            AND worker_id = :worker_id
+            AND fencing_token = :fencing_token
+            AND status = 'held'
+            AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        `).get({
+          ":milestone_id": attempt.milestone_id,
+          ":worker_id": attempt.worker_id,
+          ":fencing_token": attempt.milestone_lease_token,
+        });
+    if (lease) {
+      const worker = adapter.prepare(`
+        SELECT pid, status, project_root_realpath
+        FROM workers WHERE worker_id = :worker_id
+      `).get({ ":worker_id": attempt.worker_id }) as
+        | { pid: number; status: string; project_root_realpath: string }
+        | undefined;
+      const processDead = worker !== undefined &&
+        worker.status === "active" &&
+        worker.project_root_realpath === projectRoot &&
+        Number.isInteger(worker.pid) && worker.pid > 0 &&
+        worker.pid !== process.pid &&
+        (() => {
+          try {
+            process.kill(worker.pid, 0);
+            return false;
+          } catch (err) {
+            return (err as NodeJS.ErrnoException).code !== "EPERM";
+          }
+        })();
+      if (!processDead) continue;
+    }
+    const unitId = `${attempt.milestone_id}/${attempt.slice_id}/${attempt.task_id}`;
+    issues.push({
+      severity: "error",
+      code: "orphaned_running_attempt",
+      scope: "task",
+      unitId,
+      message:
+        `Task ${unitId} has an orphaned running Attempt (${attempt.attempt_id}) with no live process or lease. ` +
+        "Settle it with gsd_task_settle (dry-run first, then apply: true) — doctor --fix will not settle it for you.",
+      file: ".gsd/gsd.db",
+      fixable: false,
+    });
+  }
+}
+
 
 function relativeFile(basePath: string, filePath: string): string {
   return relative(basePath, filePath).split("\\").join("/");
@@ -579,6 +672,17 @@ export async function checkEngineHealth(
         }
       } catch {
         // Non-fatal — duplicate ID check failed
+      }
+
+      // e. Orphaned running Task Attempts (#1749): a running Attempt whose
+      // milestone lease is gone or whose worker process is dead wedges every
+      // downstream lifecycle operation ("running Attempt descendant"). The
+      // operator repair is gsd_task_settle; doctor --fix must never settle on
+      // its own — settling is a human judgment call.
+      try {
+        reportOrphanedRunningAttempts(adapter, basePath, issues);
+      } catch {
+        // Non-fatal — orphaned running Attempt check failed
       }
 
       // e. Completed milestone dispatch history but DB reopened without an explicit reopen event.

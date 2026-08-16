@@ -232,7 +232,6 @@ describe("google-shared convertTools", () => {
 				runtime: {
 					type: "string",
 					enum: ["bash", "node", "python"],
-					description: "Interpreter: bash (-c), node (-e), or python3 (-c).",
 				},
 			},
 			required: ["runtime"],
@@ -260,7 +259,6 @@ describe("google-shared convertTools", () => {
 		expect(runtime?.mode).toEqual({
 			type: "string",
 			enum: ["build", "query"],
-			description: "build = recompute graph, query = inspect edges",
 		});
 	});
 
@@ -394,7 +392,6 @@ describe("google-shared convertTools", () => {
 		expect(properties?.keyFiles).toEqual({
 			type: "array",
 			items: { type: "string" },
-			description: "Key files created or modified",
 		});
 		expect(properties?.verificationEvidence).toEqual({
 			type: "array",
@@ -405,7 +402,6 @@ describe("google-shared convertTools", () => {
 					exitCode: { type: "number" },
 				},
 				required: ["command", "exitCode"],
-				description: "Structured object preferred; a plain string fallback is also accepted.",
 			},
 		});
 	});

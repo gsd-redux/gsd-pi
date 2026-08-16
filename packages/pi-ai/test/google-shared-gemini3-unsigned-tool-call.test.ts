@@ -62,7 +62,7 @@ function makeContext(model: { api: string; provider: string; id: string }, thoug
 }
 
 describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () => {
-	it("does not add skip_thought_signature_validator for unsigned Google Gen AI tool calls", () => {
+	it("adds skip_thought_signature_validator for unsigned Google Gen AI tool calls", () => {
 		const model = makeGemini3Model("google-generative-ai", "google");
 		const contents = convertMessages(model, makeContext({ ...model, id: "other-model" }));
 
@@ -71,25 +71,23 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 		const functionCallParts = modelTurn?.parts?.filter((p) => p.functionCall !== undefined) ?? [];
 		expect(functionCallParts).toHaveLength(2);
-		expect(functionCallParts[0]?.thoughtSignature).toBeUndefined();
-		expect(functionCallParts[1]?.thoughtSignature).toBeUndefined();
-		expect(JSON.stringify(modelTurn)).not.toContain("skip_thought_signature_validator");
+		expect(functionCallParts[0]?.thoughtSignature).toBe("skip_thought_signature_validator");
+		expect(functionCallParts[1]?.thoughtSignature).toBe("skip_thought_signature_validator");
 
 		const textParts = modelTurn?.parts?.filter((p) => p.text !== undefined) ?? [];
 		const historicalText = textParts.filter((p) => p.text?.includes("Historical context"));
 		expect(historicalText).toHaveLength(0);
 	});
 
-	it("does not add skip_thought_signature_validator for unsigned Vertex tool calls", () => {
+	it("adds skip_thought_signature_validator for unsigned Vertex tool calls", () => {
 		const model = makeGemini3Model("google-vertex", "google-vertex");
 		const contents = convertMessages(model, makeContext(model));
 		const modelTurn = contents.find((c) => c.role === "model");
 		const functionCallParts = modelTurn?.parts?.filter((p) => p.functionCall !== undefined) ?? [];
 
 		expect(functionCallParts).toHaveLength(2);
-		expect(functionCallParts[0]?.thoughtSignature).toBeUndefined();
-		expect(functionCallParts[1]?.thoughtSignature).toBeUndefined();
-		expect(JSON.stringify(modelTurn)).not.toContain("skip_thought_signature_validator");
+		expect(functionCallParts[0]?.thoughtSignature).toBe("skip_thought_signature_validator");
+		expect(functionCallParts[1]?.thoughtSignature).toBe("skip_thought_signature_validator");
 	});
 
 	it("preserves valid thoughtSignature when present for the same provider and model", () => {
@@ -101,7 +99,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 
 		expect(functionCallParts).toHaveLength(2);
 		expect(functionCallParts[0]?.thoughtSignature).toBe(validSig);
-		expect(functionCallParts[1]?.thoughtSignature).toBeUndefined();
+		expect(functionCallParts[1]?.thoughtSignature).toBe("skip_thought_signature_validator");
 	});
 
 	it("does not add a thoughtSignature for non-Gemini-3 models", () => {

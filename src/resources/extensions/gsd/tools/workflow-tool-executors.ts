@@ -52,6 +52,7 @@ import {
 import type { ExecutionInvocation } from "../execution-invocation.js";
 import type { DomainJsonValue } from "../db/domain-operation.js";
 import { resumeTaskRecovery } from "../task-recovery-domain-operation.js";
+import { applyTaskSettle, planTaskSettle } from "../task-settle.js";
 import type { CompleteSliceParams, EscalationOption } from "../types.js";
 import { handleCompleteSlice } from "./complete-slice.js";
 import type { PlanMilestoneParams } from "./plan-milestone.js";
@@ -819,6 +820,13 @@ export interface TaskRecoveryResumeExecutorParams {
   repairSummary: string;
   evidence: Record<string, DomainJsonValue>;
 }
+export interface TaskSettleExecutorParams {
+  milestoneId: string;
+  sliceId: string;
+  taskId: string;
+  reason: string;
+  apply?: boolean;
+}
 export type ReopenSliceExecutorParams = ReopenSliceParams;
 export type SkipSliceExecutorParams = SkipSliceParams;
 export type ReopenMilestoneExecutorParams = ReopenMilestoneParams;
@@ -1114,6 +1122,79 @@ export async function executeTaskRecoveryResume(
     return {
       content: [{ type: "text", text: `Error resuming task recovery: ${msg}` }],
       details: { operation: "task_recovery_resume", error: msg },
+      isError: true,
+    };
+  }
+}
+
+export async function executeTaskSettle(
+  params: TaskSettleExecutorParams,
+  basePath: string = process.cwd(),
+  invocation: ExecutionInvocation,
+): Promise<ToolExecutionResult> {
+  const dbAvailable = await ensureDbOpen(basePath);
+  if (!dbAvailable) {
+    return {
+      content: [{ type: "text", text: "Error: GSD database is not available. Cannot settle task attempt." }],
+      details: { operation: "task_settle", error: "db_unavailable" },
+      isError: true,
+    };
+  }
+  const task = {
+    milestoneId: params.milestoneId,
+    sliceId: params.sliceId,
+    taskId: params.taskId,
+  };
+  const unit = `${task.milestoneId}/${task.sliceId}/${task.taskId}`;
+  try {
+    if (!params.apply) {
+      const plan = planTaskSettle(task, params.reason);
+      if (plan.rows.length === 0) {
+        return {
+          content: [{ type: "text", text: `gsd_task_settle (dry run): ${unit} has no running Attempt — nothing to do.` }],
+          details: { operation: "task_settle", dryRun: true, rows: [] },
+        };
+      }
+      const lines = plan.rows.map(
+        (row) => `  attempt ${row.attemptId}: ${row.currentStatus} → ${row.targetStatus} — ${row.rationale}`,
+      );
+      return {
+        content: [{
+          type: "text",
+          text: `gsd_task_settle (dry run) — no changes made:\n${lines.join("\n")}\nRe-run with apply: true to settle.`,
+        }],
+        details: { operation: "task_settle", dryRun: true, rows: plan.rows },
+      };
+    }
+    const result = applyTaskSettle({ invocation, task, reason: params.reason });
+    if (!result.settled) {
+      return {
+        content: [{ type: "text", text: `gsd_task_settle: ${unit} has no running Attempt — nothing to do.` }],
+        details: { operation: "task_settle", dryRun: false, rows: [], settled: false },
+      };
+    }
+    return {
+      content: [{
+        type: "text",
+        text: `Settled Attempt ${result.rows[0].attemptId} as interrupted (${unit}).`,
+      }],
+      details: {
+        operation: "task_settle",
+        dryRun: false,
+        settled: true,
+        attemptId: result.rows[0].attemptId,
+        resultId: result.resultId,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError("tool", `task settle failed: ${msg}`, {
+      tool: "gsd_task_settle",
+      error: String(err),
+    });
+    return {
+      content: [{ type: "text", text: `Error settling task attempt: ${msg}` }],
+      details: { operation: "task_settle", error: msg },
       isError: true,
     };
   }
