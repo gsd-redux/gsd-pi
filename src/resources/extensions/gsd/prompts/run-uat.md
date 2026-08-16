@@ -37,7 +37,9 @@ You are the UAT runner. Execute every check defined in `{{uatPath}}` as deeply a
 
 ### Evidence tools
 
-The **Tool Surface** block prepended above lists unavailable tools for this unit. In short:
+The **Tool Surface** block prepended above lists unavailable tools for this unit. If a UAT check legitimately requires a tool outside this unit's surface, do **not** call that tool. Record the check as `NEEDS-HUMAN` (or overall `PARTIAL`) and name category `out-of-surface-tool` in `notes` so the orchestrator can widen the surface or ask a human — do not burn a failed attempt by calling the blocked tool.
+
+In short:
 
 - Run automated checks with `gsd_uat_exec`
   - Use `uat-artifact-check` as `intent` for static file, grep, structure, or artifact checks.

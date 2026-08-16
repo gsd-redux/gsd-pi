@@ -68,7 +68,7 @@ export function classifyFailure(input: RecoveryClassificationInput): RecoveryCla
       action: transient ? "retry" : "escalate",
       reason: message,
       exitReason: `provider-${providerClass.kind}`,
-      remediation: recoveryRemediation(transient ? "provider-transient" : "provider-permanent"),
+      remediation: recoveryRemediation(transient ? "provider-transient" : "provider-permanent", message),
       providerClass: providerClass.kind,
     };
   }
@@ -79,7 +79,7 @@ export function classifyFailure(input: RecoveryClassificationInput): RecoveryCla
     action,
     reason: label ? `${label}${unitSuffix(input)}: ${message}` : message,
     exitReason: failureKind,
-    remediation: recoveryRemediation(failureKind),
+    remediation: recoveryRemediation(failureKind, message),
   };
 }
 

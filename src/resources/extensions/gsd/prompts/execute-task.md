@@ -46,6 +46,8 @@ You execute. The inlined task plan is authoritative. Verify referenced files and
 
 **Phase boundary:** Complete only `{{taskId}}`. Do NOT call `gsd_slice_complete`, `gsd_validate_milestone`, `gsd_complete_milestone`, complete any other task, or spawn `Workflow`. The orchestrator owns slice/milestone closure and phase transitions.
 
+**Out-of-surface blocker:** If the plan legitimately requires a tool outside this unit's surface (for example `gsd_requirement_*` or slice-closure tools), do **not** call that tool. Call `gsd_task_complete` with `blockerDiscovered: true` and name category `out-of-surface-tool` in `narrative` / `knownIssues`. The orchestrator routes that category to a surface-widening or human path instead of a generic failed attempt.
+
 **Background process rule:** never run bare `command &`. Redirect output first, e.g. `command > /dev/null 2>&1 &`, or use `bg_shell` when available.
 
 ## Gates And Verification
@@ -71,7 +73,7 @@ You write task closeout artifacts; **GSD auto-mode** decides when the task is ac
 - For downstream-impacting ambiguity that cannot be resolved from code, plans, or decisions, include an `escalation` object with question, options, recommendation, rationale, and `continueWithDefault`.
 - Capture meaningful architecture/pattern/observability decisions with `gsd_capture_thought` (or MCP-scoped `mcp__...__gsd_capture_thought`) when workflow MCP tools are presented; capture non-obvious gotchas or conventions only when they save future investigation.
 - Use the inlined Task Summary template below. Read `{{taskSummaryTemplatePath}}` only if the inlined template is absent or visibly truncated.
-- Call `gsd_task_complete` with camelCase fields `milestoneId`, `sliceId`, `taskId`, `oneLiner`, `narrative`, `verification`, and `verificationEvidence`. Include `blockerDiscovered: true` when a stale-path safety failure or other plan-invalidating blocker prevents execution.
+- Call `gsd_task_complete` with camelCase fields `milestoneId`, `sliceId`, `taskId`, `oneLiner`, `narrative`, `verification`, and `verificationEvidence`. Include `blockerDiscovered: true` when a stale-path safety failure, out-of-surface-tool need, or other plan-invalidating blocker prevents execution.
 - The DB-backed tool is the canonical write path. Do **not** manually write `{{taskSummaryPath}}` or edit PLAN.md checkboxes; the tool renders the summary and updates state.
 - Do not run git commands; the system commits from your summary.
 

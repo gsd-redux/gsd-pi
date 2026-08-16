@@ -424,6 +424,24 @@ console.log('\n── Loop guard: non-exempt repeatable tools get high cap ─�
 // default cap (6), not the repeatable cap (15).
 // ═══════════════════════════════════════════════════════════════════════════
 
+console.log('\n── Loop guard: gsd_plan_task is inherently repeatable (#1739) ──');
+
+{
+  resetToolCallLoopGuard();
+  for (let i = 1; i <= 8; i++) {
+    const result = checkToolCallLoop('gsd_plan_task', { taskId: `T0${i}`, title: `Task ${i}` });
+    assert.ok(result.block === false, `distinct gsd_plan_task call ${i} should be allowed`);
+  }
+
+  resetToolCallLoopGuard();
+  for (let i = 1; i <= 4; i++) {
+    const result = checkToolCallLoop('gsd_plan_task', { taskId: 'T01', title: 'Same' });
+    assert.ok(result.block === false, `identical gsd_plan_task call ${i} should be allowed`);
+  }
+  const identicalBlocked = checkToolCallLoop('gsd_plan_task', { taskId: 'T01', title: 'Same' });
+  assert.ok(identicalBlocked.block === true, '7th identical-args gsd_plan_task must still trip Guard 1');
+}
+
 console.log('\n── Loop guard: ToolSearch (excluded from repeatable set) hits default cap ──');
 
 {

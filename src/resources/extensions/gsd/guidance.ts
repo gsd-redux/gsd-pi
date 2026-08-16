@@ -54,13 +54,21 @@ const RECOVERY_REMEDIATION: Record<RecoveryGuidanceKey, string> = {
     "A derived Phase edge rejected by the Phase Transition Invariant survived reconciliation; inspect deriveState and the State Reconciliation Module before resuming.",
   "projection-lock-transient":
     "Another Windows process temporarily holds the projection root. Retry through the existing transient budget; if contention persists, use `/gsd doctor` to inspect stale workers and orphaned worktrees.",
-  "runtime-unknown": "Inspect the runtime error and add a dedicated classification if it is repeatable.",
+  "runtime-unknown":
+    "Inspect the observed runtime error, then recover with /gsd doctor and /gsd auto. If it repeats, add a dedicated recovery classification.",
   "provider-transient": "Retry after the provider/network condition clears.",
   "provider-permanent": "Inspect provider credentials, model entitlement, or request shape.",
 };
 
-export function recoveryRemediation(key: RecoveryGuidanceKey): string {
-  return RECOVERY_REMEDIATION[key];
+export function recoveryRemediation(key: RecoveryGuidanceKey, observedError?: string): string {
+  const catalog = RECOVERY_REMEDIATION[key];
+  if (key !== "runtime-unknown") return catalog;
+  const observed = observedError?.trim() || "an unclassified runtime error";
+  return (
+    `Runtime error: ${observed}. ` +
+    `Recovery options: inspect that error, run /gsd doctor, then /gsd auto to resume. ` +
+    `If it repeats, add a dedicated recovery classification.`
+  );
 }
 
 // ─── Milestone validation blockers ──────────────────────────────────────

@@ -134,6 +134,7 @@ test("run-uat prompt branches on dynamic UAT mode and supports runtime evidence"
   assert.match(prompt, /live-runtime/);
   assert.match(prompt, /browser\/runtime\/network/i);
   assert.match(prompt, /NEEDS-HUMAN/);
+  assert.match(prompt, /out-of-surface-tool/);
   assert.doesNotMatch(prompt, /uatType:\s*artifact-driven/);
   assert.doesNotMatch(prompt, /Call `gsd_summary_save`/);
 });

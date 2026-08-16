@@ -53,6 +53,7 @@ test("execute-task prompt renders compact execution and completion gates", async
   assert.match(prompt, /Build real behavior/);
   assert.match(prompt, /Background process rule/);
   assert.match(prompt, /blocker_discovered: true/);
+  assert.match(prompt, /out-of-surface-tool/);
   assert.match(prompt, /Use the inlined Task Summary template below/);
   assert.match(prompt, /Read `C:\\Users\\Test\\.gsd\\agent\\extensions\\gsd\\templates\\task-summary\.md` only if the inlined template is absent or visibly truncated/);
   assert.match(prompt, /### Output Template: Task Summary/);
