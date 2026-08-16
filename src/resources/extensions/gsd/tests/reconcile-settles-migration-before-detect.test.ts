@@ -22,6 +22,11 @@ import {
   openDatabase,
 } from "../gsd-db.ts";
 import { needsFlatPhaseMigration } from "../flat-phase-migration.ts";
+import {
+  acquireSessionLock,
+  releaseSessionLock,
+  validateSessionLock,
+} from "../session-lock.ts";
 import { reconcileBeforeDispatch } from "../state-reconciliation.ts";
 import type { GSDState } from "../types.ts";
 
@@ -92,14 +97,19 @@ function flatRoadmapPath(base: string): string {
   return join(base, ".gsd", "phases", "01-test", "01-ROADMAP.md");
 }
 
-test("reconcile settles a pending flat-phase migration before detecting drift", async (t) => {
+test("reconcile settles a pending flat-phase migration while the session lock is held", async (t) => {
   const base = makeBase("gsd-recon-mig-pending-");
-  t.after(() => cleanup(base));
+  t.after(() => {
+    releaseSessionLock(base);
+    cleanup(base);
+  });
 
   openDatabase(join(base, ".gsd", "gsd.db"));
   seedDb();
   writeLegacyTree(join(base, ".gsd"));
   assert.equal(needsFlatPhaseMigration(base), true, "fixture must need migration");
+  const sessionLock = acquireSessionLock(base);
+  assert.equal(sessionLock.acquired, true, "production session lock must be held");
 
   const result = await reconcileBeforeDispatch(base, {
     invalidateStateCache: () => {},
@@ -115,6 +125,7 @@ test("reconcile settles a pending flat-phase migration before detecting drift", 
   assert.ok(existsSync(flatRoadmapPath(base)), "migration must have rendered the flat-phase ROADMAP");
   assert.equal(existsSync(join(base, ".gsd", "milestones")), false, "legacy tree must be gone after settling");
   assert.equal(needsFlatPhaseMigration(base), false, "layout must be settled afterwards");
+  assert.equal(validateSessionLock(base), true, "reconciliation must preserve the session lock");
 
   // Convergence proof: a second pass detects nothing.
   const second = await reconcileBeforeDispatch(base, {

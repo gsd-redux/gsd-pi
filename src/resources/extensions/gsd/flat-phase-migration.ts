@@ -416,6 +416,9 @@ export function pruneStaleFlatPhaseBackups(basePath: string): number {
 export async function migrateToFlatPhase(basePath: string): Promise<void> {
   if (!needsFlatPhaseMigration(basePath)) return;
 
+  const migrationLockTarget = join(basePath, ".gsd", "migration", "flat-phase-migration");
+  mkdirSync(migrationLockTarget, { recursive: true });
+
   // Headless runs the gsd extension in two processes (host + RPC child) and both
   // fire session_start, so two migrations race over the same tree: one moves
   // milestones/ aside or clears phases/ while the other is mid-render, and the
@@ -425,7 +428,7 @@ export async function migrateToFlatPhase(basePath: string): Promise<void> {
   // entire projection and can legitimately run for minutes on a large project.
   try {
     await withFileLock(
-      join(basePath, ".gsd"),
+      migrationLockTarget,
       async () => {
         // Re-check under the lock: the winner may have completed the migration
         // while this process was waiting, which makes the loser a clean no-op
